@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from .._attrs import _populate_attrs_from_geo_info
+from .._attrs import _populate_attrs_from_geo_info, _set_nodata_attrs
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
@@ -296,8 +296,12 @@ def read_geotiff_dask(source: str, *,
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    if nodata_attr is not None:
-        attrs['nodata'] = nodata_attr
+    # ``masked_nodata`` reflects the declared dask graph dtype: a float
+    # graph means every chunk runs the sentinel-to-NaN promotion (or
+    # already arrived as float), so the in-memory array is NaN-masked.
+    # An integer graph means each chunk keeps the literal sentinel
+    # value. See issue #1988.
+    _set_nodata_attrs(attrs, nodata_attr, array_dtype=target_dtype)
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks

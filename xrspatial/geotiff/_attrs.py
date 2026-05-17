@@ -152,15 +152,48 @@ def _extent_to_window(transform, file_height, file_width,
     return (row_start, col_start, row_stop, col_stop)
 
 
+def _set_nodata_attrs(attrs: dict, nodata, *, array_dtype) -> None:
+    """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
+
+    Splits the two meanings previously fused into ``attrs['nodata']``
+    (issue #1988):
+
+    * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
+      source dtype. Set whenever the source declared one, regardless of
+      whether the array is float-with-NaN or int-with-sentinels.
+    * ``attrs['masked_nodata']`` -- boolean flag. ``True`` iff the in-
+      memory array has been NaN-masked (i.e. it is float dtype and the
+      reader's sentinel-to-NaN step ran). ``False`` iff the array still
+      carries the literal integer sentinel value.
+
+    Callers pass ``array_dtype`` as the final post-mask, post-cast dtype
+    of the array that will be wrapped in the returned DataArray. The
+    float/non-float split drives the ``masked_nodata`` value: any float
+    output is treated as NaN-aware (NaN is the sentinel proxy), any
+    integer output still carries the raw sentinel.
+
+    ``masked_nodata`` is only emitted when ``nodata is not None``. With
+    no declared sentinel, the flag is meaningless and its absence is the
+    signal.
+    """
+    if nodata is None:
+        return
+    attrs['nodata'] = nodata
+    attrs['masked_nodata'] = bool(np.dtype(array_dtype).kind == 'f')
+
+
 def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None:
     """Populate ``attrs`` with all GeoTIFF metadata from ``geo_info``.
 
     Centralised so the eager numpy, dask, and GPU read paths emit the
     same attrs keys for the same input file. Mutates ``attrs`` in place.
 
-    The ``nodata`` attr is intentionally NOT set here because each caller
-    sets it next to its own nodata-masking step (the value's presence in
-    attrs signals "this array has been NaN-masked").
+    The ``nodata`` / ``masked_nodata`` pair is intentionally NOT set
+    here because each caller pairs them with its own nodata-masking step
+    via :func:`_set_nodata_attrs`. The pair carries two distinct
+    signals: ``nodata`` is the declared file sentinel (always set when
+    the source declared one), and ``masked_nodata`` is a boolean for
+    whether the in-memory array has been NaN-masked (issue #1988).
 
     ``window`` is a ``(r0, c0, r1, c1)`` tuple for windowed reads; when
     set, the emitted ``attrs['transform']`` shifts the origin to the

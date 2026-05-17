@@ -20,7 +20,7 @@ import warnings
 import numpy as np
 import xarray as xr
 
-from .._attrs import _populate_attrs_from_geo_info
+from .._attrs import _populate_attrs_from_geo_info, _set_nodata_attrs
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
 )
@@ -393,13 +393,18 @@ def read_geotiff_gpu(source: str, *,
             # sentinel otherwise (#1809).
             nodata = geo_info.nodata
             if nodata is not None:
-                attrs['nodata'] = nodata
                 mask_value = getattr(_stripped_geo, '_mask_nodata', nodata)
                 arr_gpu = _apply_nodata_mask_gpu(arr_gpu, mask_value)
             if dtype is not None:
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
                 arr_gpu = arr_gpu.astype(target)
+            # ``attrs['nodata']`` + ``attrs['masked_nodata']`` reflect the
+            # post-mask, post-cast array dtype (issue #1988).
+            _set_nodata_attrs(
+                attrs, nodata,
+                array_dtype=np.dtype(str(arr_gpu.dtype)),
+            )
             # ``read_to_array`` already applied window + band slicing, so
             # ``arr_gpu`` is at output shape. Compute coords for that
             # shape without re-slicing. Mirror the eager-numpy /
@@ -707,8 +712,11 @@ def read_geotiff_gpu(source: str, *,
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    if nodata is not None:
-        attrs['nodata'] = nodata
+    # ``attrs['nodata']`` + ``attrs['masked_nodata']`` reflect the
+    # post-mask, post-cast array dtype (issue #1988).
+    _set_nodata_attrs(
+        attrs, nodata, array_dtype=np.dtype(str(arr_gpu.dtype)),
+    )
 
     # Apply window/band slicing post-decode. Coords are derived from the
     # sliced array so the (y, x) labels line up with the user's requested
@@ -1153,8 +1161,9 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    if nodata is not None:
-        attrs['nodata'] = nodata
+    # ``masked_nodata`` reflects the declared dask graph dtype; mirrors
+    # the dask+numpy backend contract (issue #1988).
+    _set_nodata_attrs(attrs, nodata, array_dtype=declared_dtype)
 
     if name is None:
         import os
