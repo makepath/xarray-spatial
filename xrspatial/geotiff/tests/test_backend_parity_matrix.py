@@ -256,15 +256,23 @@ def assert_parity(
     on-disk fixture, used to build the eager-numpy reference.
 
     The eager-numpy read of the same file is the reference for the pixel
-    array, coord values, dtype, dims, and transform tuple. Attrs are
-    asserted against the spec rather than against the reference, so a
-    bug that drops an attr in *every* backend still fails this cell.
+    array, coord values, dims, and transform tuple. ``spec.dtype`` and
+    ``spec.expected_crs_epsg`` / ``spec.expected_nodata`` are asserted
+    against the actual independently of the reference, so a bug that
+    silently changes them in *every* backend still fails this cell.
     """
     ref = open_geotiff(str(path))
 
     # Pixel array, dtype, shape.
+    actual_arr = _materialise(da)
     _assert_pixels_equal(
-        _materialise(ref), _materialise(da), label=label,
+        _materialise(ref), actual_arr, label=label,
+    )
+
+    # Dtype against the spec, not just against the reference. Catches a
+    # silent upcast that the reference would also exhibit.
+    assert actual_arr.dtype == spec.dtype, (
+        f"{label}: dtype {actual_arr.dtype} != spec dtype {spec.dtype}"
     )
 
     # Dims + order.
