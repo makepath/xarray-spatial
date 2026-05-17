@@ -80,7 +80,7 @@ ALLOWED_COMPRESSION = {
     "none", "deflate", "lzw", "lerc", "jpeg", "packbits", "zstd",
 }
 ALLOWED_PHOTOMETRIC = {"minisblack", "miniswhite", "rgb", "ycbcr"}
-ALLOWED_PATTERN = {"ramp", "checker", "noise", "uniform"}
+ALLOWED_PATTERN = {"ramp", "checker", "noise", "uniform", "noise_with_corners"}
 ALLOWED_PREDICTOR = {1, 2, 3}
 
 
@@ -163,6 +163,16 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
         raise ManifestError(
             f"{fid}: pixel_pattern must be one of {sorted(ALLOWED_PATTERN)}"
         )
+
+    # noise_with_corners needs at least 2x2 so the four corners are
+    # distinct pixels; otherwise the corner stamping silently collapses.
+    if entry["pixel_pattern"] == "noise_with_corners":
+        if entry.get("width", 0) < 2 or entry.get("height", 0) < 2:
+            raise ManifestError(
+                f"{fid}: pixel_pattern 'noise_with_corners' requires "
+                f"width >= 2 and height >= 2, got "
+                f"{entry.get('width')}x{entry.get('height')}"
+            )
 
     # dtype must be a recognised numpy dtype.
     try:
@@ -291,7 +301,7 @@ def _make_pixels(entry: dict[str, Any]) -> np.ndarray:
         cols = np.arange(w)[None, :]
         single = ((rows // 8 + cols // 8) % 2).astype(np.float64)
         flat = np.broadcast_to(single, (bands, h, w)).reshape(-1).astype(np.float64)
-    elif pattern == "noise":
+    elif pattern in ("noise", "noise_with_corners"):
         rng = np.random.default_rng(int(entry.get("pixel_seed", 0)))
         flat = rng.random(n)
     elif pattern == "uniform":
@@ -304,13 +314,76 @@ def _make_pixels(entry: dict[str, Any]) -> np.ndarray:
         # Map [0, 1) for noise / [0, n) for ramp into the dtype range.
         if pattern in ("ramp", "checker", "uniform"):
             arr = flat % (info.max - info.min + 1) + info.min
-        else:  # noise
+        else:  # noise / noise_with_corners
             arr = flat * (info.max - info.min) + info.min
         arr = arr.astype(dtype)
     else:
         arr = flat.astype(dtype)
 
-    return arr.reshape(bands, h, w)
+    arr = arr.reshape(bands, h, w)
+
+    # ``noise_with_corners`` plants the dtype's min and max sentinels in the
+    # four corner pixels of every band so dtype-edge handling gets exercised
+    # by the corpus. Floats keep noise as-is; a NaN sentinel is a separate
+    # property tracked by Phase 2 PR 6 (nodata).
+    if pattern == "noise_with_corners" and dtype.kind in ("i", "u"):
+        info = np.iinfo(dtype)
+        lo = dtype.type(info.min)
+        hi = dtype.type(info.max)
+        arr[:, 0, 0] = lo
+        arr[:, 0, -1] = hi
+        arr[:, -1, 0] = hi
+        arr[:, -1, -1] = lo
+
+    _stamp_nodata_pixels(arr, entry)
+    return arr
+
+
+def _stamp_nodata_pixels(arr: np.ndarray, entry: dict[str, Any]) -> None:
+    """Plant a few sentinel pixels at deterministic positions.
+
+    The corpus nodata fixtures (#1930, Phase 2 PR 6) need the oracle to
+    exercise nodata-masking semantics, not just the tag round-trip.
+    Noise / ramp / uniform patterns are vanishingly unlikely to hit the
+    sentinel value on their own for wide integer dtypes (a 16x16 uint16
+    raster sees each value with probability 1/65536 per cell), so we
+    stamp a small set of cells in-place after pattern generation.
+
+    The cells (top-left, centre, bottom-right) are fixed so re-runs stay
+    byte-stable. We stamp only when ``nodata`` resolves to an actual
+    sentinel value:
+
+    * a numeric sentinel for integer / float rasters
+    * NaN for float rasters with ``nodata: "nan"``
+    * the dtype max for ``nodata: "miniswhite"`` (white-as-min)
+    """
+    nd = entry.get("nodata")
+    if nd is None:
+        return
+    dtype = arr.dtype
+    # ``bool`` is a subclass of ``int``; reject it explicitly so a
+    # ``nodata: true`` manifest entry can't slip a 1 into the raster.
+    # The write-side gate is #1990; this is the matching read-side gate.
+    if isinstance(nd, bool):
+        return
+    if isinstance(nd, (int, float)):
+        sentinel: Any = nd
+    elif nd == "nan":
+        if dtype.kind != "f":
+            return
+        sentinel = np.nan
+    elif nd == "miniswhite":
+        if dtype.kind not in ("i", "u"):
+            return
+        sentinel = np.iinfo(dtype).max
+    else:  # pragma: no cover - validate() rejects other shapes
+        return
+    h = arr.shape[-2]
+    w = arr.shape[-1]
+    positions = ((0, 0), (h // 2, w // 2), (h - 1, w - 1))
+    for b in range(arr.shape[0]):
+        for r, c in positions:
+            arr[b, r, c] = sentinel
 
 
 def _resolve_crs(crs_spec: dict[str, Any] | None):
@@ -384,8 +457,11 @@ def _rasterio_kwargs(entry: dict[str, Any]) -> dict[str, Any]:
                 kwargs["max_z_error"] = float(max_z)
 
     if entry["byte_order"] == "big":
-        # GDAL endian creation option.
-        kwargs["endian"] = "big"
+        # GDAL GTiff driver ENDIANNESS creation option. rasterio forwards
+        # unknown uppercase kwargs to GDAL as creation options verbatim;
+        # the lowercase ``endian`` kwarg is intercepted by rasterio and
+        # silently dropped, so we route through the GDAL name directly.
+        kwargs["ENDIANNESS"] = "BIG"
 
     nd = entry.get("nodata")
     if isinstance(nd, (int, float)):
