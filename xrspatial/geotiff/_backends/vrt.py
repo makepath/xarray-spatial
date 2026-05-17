@@ -13,6 +13,7 @@ import math
 import numpy as np
 import xarray as xr
 
+from .._attrs import _ATTRS_CONTRACT_VERSION
 from .._coords import (
     coords_from_pixel_geometry as _coords_from_pixel_geometry,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
@@ -193,7 +194,10 @@ def read_vrt(source: str, *,
     else:
         coords = {}
 
-    attrs = {}
+    # VRT builds its attrs dict inline rather than going through
+    # ``_populate_attrs_from_geo_info``; stamp the contract version here
+    # so both code paths emit the same marker.
+    attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
     if vrt.crs_wkt:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
         if epsg is not None:
@@ -562,7 +566,10 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # eager reads share the same x/y arrays.
     gt = vrt.geo_transform
     coords = {}
-    attrs = {}
+    # Mirrors the eager VRT branch: this code path bypasses
+    # ``_populate_attrs_from_geo_info``, so the contract version is
+    # stamped inline using the shared constant to stay in lockstep.
+    attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
         coord_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)
