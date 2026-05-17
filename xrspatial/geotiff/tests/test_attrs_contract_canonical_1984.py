@@ -49,6 +49,9 @@ in the contract page and the ``_attrs.py`` module docstring as well.
 """
 from __future__ import annotations
 
+import importlib.util
+import re
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -62,6 +65,12 @@ _CONTRACT_KEY = '_xrspatial_geotiff_contract'
 # Every key the canonical tier guarantees round-trip stable. Keep the
 # order consistent with the contract docs so a diff here lines up with
 # a diff in ``attrs_contract.rst``.
+#
+# ``raster_type`` is canonical but absent from this constant: the
+# implicit default 'area' is encoded as *absence* of the attr, so the
+# "must be present after round-trip" check below cannot express it.
+# The dedicated ``test_raster_type_*`` tests at the bottom of this
+# file lock both branches.
 _CANONICAL_KEYS = (
     'crs',
     'crs_wkt',
@@ -76,6 +85,20 @@ _CANONICAL_KEYS = (
     _CONTRACT_KEY,
 )
 
+
+def _gpu_available() -> bool:
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+
 # Fixture values, written into ``attrs`` on the synthetic DataArray and
 # compared to the read-back attrs after round-trip. ``transform`` is
 # pinned by ``y`` / ``x`` coords so we expect that exact 6-tuple back.
@@ -83,10 +106,18 @@ _NODATA_SENTINEL = -9999.0
 _X_RES = 300.0
 _Y_RES = 300.0
 _RES_UNIT = 'inch'
-_GDAL_META = {'AREA_OR_POINT': 'Area', 'TIFFTAG_SOFTWARE': 'xrspatial-1984'}
+# The shared fixture leaves raster_type unset (= implicit 'area'). The
+# point-specific test rebuilds the attrs dict so the two raster_type
+# branches do not share state. Keep ``_GDAL_META`` free of an
+# ``AREA_OR_POINT`` entry so the fixture stays consistent under both
+# branches.
+_GDAL_META = {'TIFFTAG_SOFTWARE': 'xrspatial-1984'}
 # Software tag (305, ASCII). Picked because it is benign (no spatial
 # interpretation, no security filter) and tifffile decodes it as-is.
-# Count must include the trailing NUL byte.
+# Count must include the trailing NUL byte. The Software identity also
+# appears as ``gdal_metadata['TIFFTAG_SOFTWARE']`` above; the two are
+# independent channels (a raw TIFF tag vs an entry in the GDAL_METADATA
+# XML payload) and the writer does not synchronise them.
 _SOFTWARE_STR = 'xrspatial-canonical-1984'
 _EXTRA_TAGS = [(305, 2, len(_SOFTWARE_STR) + 1, _SOFTWARE_STR)]
 # ``crs_wkt`` is round-tripped via attrs['crs'] (the EPSG code drives
@@ -174,12 +205,13 @@ def test_crs_roundtrip(canonical_roundtrip):
 
 def test_crs_wkt_roundtrip(canonical_roundtrip):
     """``crs_wkt`` is reader-emitted from the EPSG code. Pin presence
-    and the substring guarantee callers rely on -- the exact WKT string
-    is PROJ-version dependent, but ``WGS 84`` always appears."""
+    and the CRS-identity substring callers rely on. The exact WKT is
+    PROJ-version dependent, so match ``WGS 84`` / ``WGS_1984`` / ``WGS-84``
+    with one regex rather than a single literal."""
     rd, _ = canonical_roundtrip
     wkt = rd.attrs['crs_wkt']
     assert isinstance(wkt, str) and len(wkt) > 0
-    assert 'WGS 84' in wkt, (
+    assert re.search(r'WGS[\s_-]?84|WGS_1984', wkt), (
         f"crs_wkt round-trip lost the CRS identity: {wkt!r}"
     )
 
@@ -258,6 +290,67 @@ def test_contract_version_roundtrip(canonical_roundtrip):
     coverage lives in ``test_attrs_contract_version_1984.py``."""
     rd, _ = canonical_roundtrip
     assert rd.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Per-backend coverage for canonical-key *presence*.
+#
+# The 7-PR plan in issue #1984 asked for "one fixture per backend with
+# explicit assertions that every canonical key is present and round-trips
+# byte-equivalent through write -> read". Read-time backends share
+# ``_populate_attrs_from_geo_info``, so per-key value round-trips are
+# pinned once (above) on the eager numpy path. What the per-backend
+# check guards against is a backend skipping the shared helper or
+# building its attrs dict independently; the version-stamp test does
+# this for one canonical key, and the loop below does it for the rest.
+# ---------------------------------------------------------------------------
+
+
+def _open_eager(path):
+    return open_geotiff(path)
+
+
+def _open_dask(path):
+    return open_geotiff(path, chunks=2)
+
+
+def _open_gpu(path):
+    return open_geotiff(path, gpu=True)
+
+
+def _open_dask_gpu(path):
+    return open_geotiff(path, gpu=True, chunks=2)
+
+
+_BACKEND_OPENERS = [
+    pytest.param(_open_eager, id='eager-numpy'),
+    pytest.param(_open_dask, id='dask-numpy'),
+    pytest.param(_open_gpu, id='gpu', marks=_gpu_only),
+    pytest.param(_open_dask_gpu, id='dask-gpu', marks=_gpu_only),
+]
+
+
+@pytest.mark.parametrize('opener', _BACKEND_OPENERS)
+def test_canonical_keys_present_per_backend(tmp_path, opener):
+    """Each read backend emits the full canonical key set.
+
+    Writes the canonical fixture once with the eager writer (only the
+    eager + dask writers exist; the GPU writer is exercised in its own
+    parity tests), then re-reads it through every supported backend and
+    asserts presence. Value-level round-trip is checked by the per-key
+    tests above; this loop guards against a backend that bypasses
+    ``_populate_attrs_from_geo_info``.
+    """
+    da, _ = _make_canonical_da()
+    path = str(tmp_path / f'canonical_{opener.__name__}.tif')
+    to_geotiff(da, path)
+
+    rd = opener(path)
+    missing = sorted(k for k in _CANONICAL_KEYS if k not in rd.attrs)
+    assert missing == [], (
+        f"{opener.__name__}: canonical attrs missing after round-trip: "
+        f"{missing}. attrs keys present: {sorted(rd.attrs.keys())}"
+    )
 
 
 # ---------------------------------------------------------------------------
