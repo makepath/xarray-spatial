@@ -73,7 +73,15 @@
 #                              "checker"      block checker for compression
 #                              "noise"        seeded numpy.random (seed below)
 #                              "uniform"      single constant value
-#   pixel_seed:       int    Seed for "noise" patterns. Default 0.
+#                              "noise_with_corners"
+#                                             seeded noise (same as "noise")
+#                                             with the four corner pixels of
+#                                             each band forced to the dtype's
+#                                             min/max sentinels. Integer-only
+#                                             corner stamping; floats keep
+#                                             noise as-is.
+#   pixel_seed:       int    Seed for "noise" and "noise_with_corners"
+#                            patterns. Default 0.
 #   pixel_value:      number Constant for "uniform" patterns.
 #
 #   tags:             list   Optional. Free-form tags used to filter the
@@ -151,6 +159,394 @@ fixtures:
       rtol: 0.0
       lossy: false
 
+  # Phase 2 PR 3 (#1930): layout x byte_order cross product on a single
+  # small uint16 raster. Same shape, same nodata, same compression-free
+  # encoding across all four; the only variation is tiled-vs-stripped and
+  # little-vs-big endian. uint16 is the smallest dtype where byte order
+  # is observable on disk.
+  - id: stripped_le_uint16
+    description: >-
+      32x32 uint16 raster, stripped layout, little-endian. Baseline for
+      the layout x byte_order matrix.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: little
+    layout: stripped
+    blocksize: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, stripped, little_endian, layout_endian_matrix]
+
+  - id: tiled_le_uint16
+    description: >-
+      32x32 uint16 raster, tiled layout (16-pixel tiles), little-endian.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: little
+    layout: tiled
+    tile_size: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, tiled, little_endian, layout_endian_matrix]
+
+  - id: stripped_be_uint16
+    description: >-
+      32x32 uint16 raster, stripped layout, big-endian. Exercises byte
+      swap on read against the little-endian sibling.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: big
+    layout: stripped
+    blocksize: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, stripped, big_endian, layout_endian_matrix]
+
+  - id: tiled_be_uint16
+    description: >-
+      32x32 uint16 raster, tiled layout (16-pixel tiles), big-endian.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: big
+    layout: tiled
+    tile_size: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, tiled, big_endian, layout_endian_matrix]
+
+  # ---------------------------------------------------------------------
+  # Phase 2 PR 4 -- dtype variants (#1930).
+  #
+  # Eight single-band fixtures, one per supported dtype. All entries
+  # inherit the manifest defaults (stripped layout, blocksize 64,
+  # compression=none, minisblack, EPSG:4326, fixed transform) and override
+  # only ``dtype``, ``pixel_pattern``, ``pixel_seed``, and pixel dimensions
+  # (20 x 20 -- chosen so the float64 file stays under the 4 kB ceiling).
+  # Integer dtypes use the ``noise_with_corners`` pattern, which
+  # plants the dtype's min and max sentinels in the four corner pixels so
+  # readers exercise the dtype-edge values. Float dtypes use plain
+  # ``noise``; a NaN-in-pixels variant is the job of Phase 2 PR 6 (nodata).
+  # Each fixture uses a unique ``pixel_seed`` so dtypes do not share bit
+  # patterns once written.
+  # ---------------------------------------------------------------------
+  - id: dtype_int8
+    description: >-
+      Single-band int8 stripped uncompressed; corner pixels carry the int8
+      min/max sentinels.
+    width: 20
+    height: 20
+    dtype: int8
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1001
+    tags: [fast, dtype, int8]
+  - id: dtype_uint8
+    description: >-
+      Single-band uint8 stripped uncompressed; corner pixels carry the
+      uint8 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: uint8
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1002
+    tags: [fast, dtype, uint8]
+  - id: dtype_int16
+    description: >-
+      Single-band int16 stripped uncompressed; corner pixels carry the
+      int16 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: int16
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1003
+    tags: [fast, dtype, int16]
+  - id: dtype_uint16
+    description: >-
+      Single-band uint16 stripped uncompressed; corner pixels carry the
+      uint16 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: uint16
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1004
+    tags: [fast, dtype, uint16]
+  - id: dtype_int32
+    description: >-
+      Single-band int32 stripped uncompressed; corner pixels carry the
+      int32 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: int32
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1005
+    tags: [fast, dtype, int32]
+  - id: dtype_uint32
+    description: >-
+      Single-band uint32 stripped uncompressed; corner pixels carry the
+      uint32 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: uint32
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1006
+    tags: [fast, dtype, uint32]
+  - id: dtype_float32
+    description: >-
+      Single-band float32 stripped uncompressed. NaN-in-pixels handling is
+      deferred to Phase 2 PR 6 (nodata).
+    width: 20
+    height: 20
+    dtype: float32
+    pixel_pattern: noise
+    pixel_seed: 1007
+    tags: [fast, dtype, float32]
+  - id: dtype_float64
+    description: >-
+      Single-band float64 stripped uncompressed. NaN-in-pixels handling is
+      deferred to Phase 2 PR 6 (nodata).
+    width: 20
+    height: 20
+    dtype: float64
+    pixel_pattern: noise
+    pixel_seed: 1008
+    tags: [fast, dtype, float64]
+
+  # ---------------------------------------------------------------------
+  # Phase 2 PR 5 -- compression coverage.
+  #
+  # Five major codecs across six entries: uncompressed (none), deflate
+  # (with predictor 2 over int and predictor 3 over float), lzw (with
+  # predictor 2 over int), lerc on float, and jpeg in YCbCr on uint8.
+  # The jpeg entry is intrinsically lossy; the oracle is called with
+  # lossy=True for that one.
+  #
+  # Source data uses the "checker" pattern so compression has structure
+  # to exploit; arrays are kept tiny (under 8 KB target file size).
+  # LERC and JPEG availability depends on the GDAL build; the smoke
+  # test skips those cells when the codec is unavailable.
+  # ---------------------------------------------------------------------
+
+  - id: compression_none_uint8
+    description: >-
+      Baseline uncompressed uint8. Establishes the size floor and exercises
+      the no-codec write path for parity with the compressed cells.
+    width: 64
+    height: 64
+    dtype: uint8
+    compression: none
+    predictor: 1
+    pixel_pattern: checker
+    tags: [compression, none]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_deflate_predictor2_uint16
+    description: >-
+      Deflate with predictor 2 (horizontal differencing) on uint16.
+      Predictor 2 is the standard integer predictor; this is the most
+      common deflate configuration in the wild.
+    width: 64
+    height: 64
+    dtype: uint16
+    compression: deflate
+    predictor: 2
+    compression_level: 6
+    pixel_pattern: checker
+    tags: [compression, deflate, predictor2]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_deflate_predictor3_float32
+    description: >-
+      Deflate with predictor 3 (floating-point predictor) on float32.
+      Predictor 3 is float-only and exercises the byte-shuffled write
+      path that hit issue #1313.
+    width: 64
+    height: 64
+    dtype: float32
+    compression: deflate
+    predictor: 3
+    compression_level: 6
+    pixel_pattern: checker
+    tags: [compression, deflate, predictor3, float]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_lzw_predictor2_int16
+    description: >-
+      LZW with predictor 2 on signed int16. Covers the LZW codec branch
+      and the signed-integer predictor combination.
+    width: 64
+    height: 64
+    dtype: int16
+    compression: lzw
+    predictor: 2
+    pixel_pattern: checker
+    tags: [compression, lzw, predictor2]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_lerc_float32
+    description: >-
+      LERC on float32 with a small max_z_error. LERC is bit-exact only
+      when max_z_error is 0; this fixture asserts the lossless setting
+      (max_z_error 0) so it is comparable to the other codecs.
+    width: 64
+    height: 64
+    dtype: float32
+    compression: lerc
+    predictor: 1
+    max_z_error: 0.0
+    pixel_pattern: checker
+    tags: [compression, lerc, float]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_jpeg_uint8_ycbcr
+    description: >-
+      JPEG in YCbCr photometric on 3-band uint8 tiled raster. JPEG is
+      intrinsically lossy; the oracle is invoked with lossy=True for
+      this cell. Strict bit-exact comparison is expected to fail.
+    width: 64
+    height: 64
+    bands: 3
+    dtype: uint8
+    layout: tiled
+    tile_size: 32
+    compression: jpeg
+    predictor: 1
+    compression_level: 75
+    photometric: ycbcr
+    pixel_pattern: checker
+    tags: [compression, jpeg, lossy, ycbcr]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: true
+
+  # ----- Phase 2 PR 6: nodata sentinels (issue #1930) -----
+  # Three fixtures, one per nodata convention. Each one places at least
+  # one pixel on the sentinel so the oracle's nodata-masking semantics
+  # are exercised, not just the tag round-trip. Per-fixture pixel_seed
+  # keeps the noise pattern stable across regenerations.
+  - id: nodata_int_sentinel_uint16
+    description: >-
+      uint16 raster with an explicit integer nodata sentinel (0). A
+      handful of pixels are forced to 0 so the masked-data path is
+      reachable once a read backend lands in Phase 3.
+    width: 16
+    height: 16
+    dtype: uint16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930006
+    tags: [fast, nodata, int_sentinel]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: nodata_nan_float32
+    description: >-
+      float32 raster with NaN nodata. A few cells are written as NaN so
+      the oracle's NaN-aware equality (equal_nan=True) is the only path
+      that can pass.
+    width: 16
+    height: 16
+    dtype: float32
+    nodata: "nan"
+    pixel_pattern: noise
+    pixel_seed: 1930007
+    tags: [fast, nodata, nan]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: nodata_miniswhite_uint8
+    description: >-
+      uint8 raster with photometric=miniswhite and no explicit nodata
+      tag. Per the TIFF spec, white-as-min means the dtype max value
+      (255 for uint8) acts as the "background" sentinel. The fixture
+      seeds a few pixels at 255 so backends that honour the photometric
+      tag have something to invert.
+    width: 16
+    height: 16
+    dtype: uint8
+    photometric: miniswhite
+    nodata: miniswhite
+    pixel_pattern: noise
+    pixel_seed: 1930008
+    tags: [fast, nodata, miniswhite, photometric]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  # Phase 2 PR 8: CRS representation variants. Three fixtures, one per
+  # CRS encoding the manifest allows. Pixel content is irrelevant; the
+  # contract under test is what the GeoTIFF tags say about the CRS.
+  - id: crs_epsg_3857
+    description: >-
+      EPSG-coded CRS. Web Mercator (EPSG:3857). Exercises the
+      straight EPSG path in the oracle.
+    width: 8
+    height: 8
+    dtype: uint8
+    crs:
+      epsg: 3857
+    transform: [10.0, 0.0, -8000000.0, 0.0, -10.0, 5000000.0]
+    tags: [fast, crs, epsg]
+  - id: crs_wkt_utm10n
+    description: >-
+      WKT-encoded CRS for EPSG:32610 (UTM 10N), but with AUTHORITY
+      blocks stripped so the WKT is not byte-identical to what
+      rasterio emits for from_epsg(32610). Exercises the oracle's
+      EPSG-code-equality fallback added in PR #1991.
+    width: 8
+    height: 8
+    dtype: uint8
+    crs:
+      wkt: 'PROJCS["WGS 84 / UTM zone 10N",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",-123],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",0],UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+    transform: [10.0, 0.0, 500000.0, 0.0, -10.0, 4500000.0]
+    tags: [fast, crs, wkt]
+  - id: crs_citation_only
+    description: >-
+      Citation-only CRS: a user-supplied name with no AUTHORITY tag
+      and no formally registered EPSG code. PROJ round-trips it as a
+      generic geographic CRS keyed only by name. Exercises the
+      oracle's non-EPSG WKT fallback.
+    width: 8
+    height: 8
+    dtype: uint8
+    crs:
+      citation: User-provided projection, no formal EPSG/WKT
+    transform: [0.001, 0.0, -120.0, 0.0, -0.001, 45.0]
+    tags: [fast, crs, citation]
+
+  # ---------------------------------------------------------------------
+  # Phase 2 PR 9 -- GDAL_METADATA + extra_tags (#1930).
+  #
+  # Two fixtures exercising the cross-domain GDAL metadata path and the
+  # arbitrary-tag pass-through path.
+  # ---------------------------------------------------------------------
   - id: gdal_metadata_namespaced_uint16
     description: >-
       Stripped uint16 with GDAL_METADATA entries across multiple domains
