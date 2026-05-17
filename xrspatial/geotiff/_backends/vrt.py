@@ -194,6 +194,9 @@ def read_vrt(source: str, *,
     else:
         coords = {}
 
+    # VRT builds its attrs dict inline rather than going through
+    # ``_populate_attrs_from_geo_info``; stamp the contract version here
+    # so both code paths emit the same marker.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
     if vrt.crs_wkt:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
@@ -563,6 +566,9 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # eager reads share the same x/y arrays.
     gt = vrt.geo_transform
     coords = {}
+    # Mirrors the eager VRT branch: this code path bypasses
+    # ``_populate_attrs_from_geo_info``, so the contract version is
+    # stamped inline using the shared constant to stay in lockstep.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt

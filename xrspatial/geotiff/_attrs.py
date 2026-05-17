@@ -107,6 +107,11 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     the outer window through this helper so the resulting DataArray
     advertises the windowed transform. The GPU path does not currently
     expose a windowed read, so it passes ``window=None``.
+
+    ``attrs['_xrspatial_geotiff_contract']`` is stamped unconditionally
+    as the first step. Any pre-existing value on the passed-in dict is
+    overwritten with the current ``_ATTRS_CONTRACT_VERSION``; callers
+    pass freshly built dicts, so this is the intended behaviour.
     """
     # Stamp the contract version first so every read path that funnels
     # through this helper carries the marker. The VRT backends build
