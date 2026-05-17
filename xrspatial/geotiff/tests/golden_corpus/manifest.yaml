@@ -490,3 +490,44 @@ fixtures:
       atol: 0.0
       rtol: 0.0
       lossy: false
+
+  # Phase 2 PR 8: CRS representation variants. Three fixtures, one per
+  # CRS encoding the manifest allows. Pixel content is irrelevant; the
+  # contract under test is what the GeoTIFF tags say about the CRS.
+  - id: crs_epsg_3857
+    description: >-
+      EPSG-coded CRS. Web Mercator (EPSG:3857). Exercises the
+      straight EPSG path in the oracle.
+    width: 8
+    height: 8
+    dtype: uint8
+    crs:
+      epsg: 3857
+    transform: [10.0, 0.0, -8000000.0, 0.0, -10.0, 5000000.0]
+    tags: [fast, crs, epsg]
+  - id: crs_wkt_utm10n
+    description: >-
+      WKT-encoded CRS for EPSG:32610 (UTM 10N), but with AUTHORITY
+      blocks stripped so the WKT is not byte-identical to what
+      rasterio emits for from_epsg(32610). Exercises the oracle's
+      EPSG-code-equality fallback added in PR #1991.
+    width: 8
+    height: 8
+    dtype: uint8
+    crs:
+      wkt: 'PROJCS["WGS 84 / UTM zone 10N",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",-123],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",0],UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+    transform: [10.0, 0.0, 500000.0, 0.0, -10.0, 4500000.0]
+    tags: [fast, crs, wkt]
+  - id: crs_citation_only
+    description: >-
+      Citation-only CRS: a user-supplied name with no AUTHORITY tag
+      and no formally registered EPSG code. PROJ round-trips it as a
+      generic geographic CRS keyed only by name. Exercises the
+      oracle's non-EPSG WKT fallback.
+    width: 8
+    height: 8
+    dtype: uint8
+    crs:
+      citation: User-provided projection, no formal EPSG/WKT
+    transform: [0.001, 0.0, -120.0, 0.0, -0.001, 45.0]
+    tags: [fast, crs, citation]

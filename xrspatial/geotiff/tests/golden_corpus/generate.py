@@ -397,9 +397,11 @@ def _resolve_crs(crs_spec: dict[str, Any] | None):
     if "wkt" in crs_spec:
         return CRS.from_wkt(str(crs_spec["wkt"]))
     if "citation" in crs_spec:
-        # Citation-only: a WKT with just a GEOGCS / PROJCS name and no
-        # numeric parameters. Useful for exercising the "we have a CRS
-        # name but no projection" code path. Phase 2 PR 8 fills this in.
+        # Citation-only: a WKT keyed only by name, no AUTHORITY tag and
+        # no numeric projection parameters. Exercises the oracle's
+        # non-EPSG WKT fallback (Phase 2 PR 8 of #1930). PROJ does not
+        # resolve this to an EPSG code; on round-trip libgeotiff mutates
+        # the WKT (axis order, UNIT AUTHORITY) but preserves to_dict().
         return CRS.from_wkt(
             f'GEOGCS["{crs_spec["citation"]}",DATUM["unknown",SPHEROID["unknown",6378137,0]],'
             'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]'
