@@ -305,6 +305,56 @@ def test_first_raising_check_short_circuits():
         unregister_read_metadata_check(later)
 
 
+def test_dispatch_is_safe_against_registry_mutation_read():
+    """A check that mutates the read registry must not skip later checks.
+
+    The dispatcher iterates over a snapshot of the registry, so a check
+    that registers or unregisters another callable (whether on purpose
+    or via an import side effect) cannot reshape the live list mid-loop
+    and skip a sibling check or visit one twice.
+    """
+    seen: list[str] = []
+
+    def mutating(ctx):
+        seen.append("mutating")
+        # Self-unregister mid-dispatch; the live list would otherwise
+        # shift left and the iterator would skip ``second``.
+        unregister_read_metadata_check(mutating)
+
+    def second(ctx):
+        seen.append("second")
+
+    register_read_metadata_check(mutating)
+    register_read_metadata_check(second)
+    try:
+        validate_read_metadata({})
+        assert seen == ["mutating", "second"]
+    finally:
+        unregister_read_metadata_check(mutating)
+        unregister_read_metadata_check(second)
+
+
+def test_dispatch_is_safe_against_registry_mutation_write():
+    """Write hook mirrors the read-side snapshot guarantee."""
+    seen: list[str] = []
+
+    def mutating(ctx):
+        seen.append("mutating")
+        unregister_write_metadata_check(mutating)
+
+    def second(ctx):
+        seen.append("second")
+
+    register_write_metadata_check(mutating)
+    register_write_metadata_check(second)
+    try:
+        validate_write_metadata({})
+        assert seen == ["mutating", "second"]
+    finally:
+        unregister_write_metadata_check(mutating)
+        unregister_write_metadata_check(second)
+
+
 def test_none_context_is_treated_as_empty_mapping():
     """Calling ``validate_*_metadata()`` with no args must not crash a check."""
     seen: list[object] = []

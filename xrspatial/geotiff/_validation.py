@@ -411,7 +411,12 @@ def validate_read_metadata(context: Mapping[str, Any] | None = None) -> None:
     if not _READ_METADATA_CHECKS:
         return
     ctx: Mapping[str, Any] = {} if context is None else context
-    for check in _READ_METADATA_CHECKS:
+    # Iterate over a snapshot. A check that registers or unregisters another
+    # check during dispatch (whether on purpose or via an import side effect)
+    # would otherwise reshape the list mid-loop and skip or repeat entries.
+    # The cost is one tuple per dispatch, paid only when at least one check
+    # is registered.
+    for check in tuple(_READ_METADATA_CHECKS):
         check(ctx)
 
 
@@ -425,5 +430,6 @@ def validate_write_metadata(context: Mapping[str, Any] | None = None) -> None:
     if not _WRITE_METADATA_CHECKS:
         return
     ctx: Mapping[str, Any] = {} if context is None else context
-    for check in _WRITE_METADATA_CHECKS:
+    # Snapshot for the same reason as the read hook above.
+    for check in tuple(_WRITE_METADATA_CHECKS):
         check(ctx)
