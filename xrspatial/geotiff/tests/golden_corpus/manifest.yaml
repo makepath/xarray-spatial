@@ -64,7 +64,15 @@
 #                              "checker"      block checker for compression
 #                              "noise"        seeded numpy.random (seed below)
 #                              "uniform"      single constant value
-#   pixel_seed:       int    Seed for "noise" patterns. Default 0.
+#                              "noise_with_corners"
+#                                             seeded noise (same as "noise")
+#                                             with the four corner pixels of
+#                                             each band forced to the dtype's
+#                                             min/max sentinels. Integer-only
+#                                             corner stamping; floats keep
+#                                             noise as-is.
+#   pixel_seed:       int    Seed for "noise" and "noise_with_corners"
+#                            patterns. Default 0.
 #   pixel_value:      number Constant for "uniform" patterns.
 #
 #   tags:             list   Optional. Free-form tags used to filter the
@@ -204,3 +212,99 @@ fixtures:
     pixel_pattern: noise
     pixel_seed: 1930
     tags: [fast, tiled, big_endian, layout_endian_matrix]
+
+  # ---------------------------------------------------------------------
+  # Phase 2 PR 4 -- dtype variants (#1930).
+  #
+  # Eight single-band fixtures, one per supported dtype. All entries
+  # inherit the manifest defaults (stripped layout, blocksize 64,
+  # compression=none, minisblack, EPSG:4326, fixed transform) and override
+  # only ``dtype``, ``pixel_pattern``, ``pixel_seed``, and pixel dimensions
+  # (20 x 20 -- chosen so the float64 file stays under the 4 kB ceiling).
+  # Integer dtypes use the ``noise_with_corners`` pattern, which
+  # plants the dtype's min and max sentinels in the four corner pixels so
+  # readers exercise the dtype-edge values. Float dtypes use plain
+  # ``noise``; a NaN-in-pixels variant is the job of Phase 2 PR 6 (nodata).
+  # Each fixture uses a unique ``pixel_seed`` so dtypes do not share bit
+  # patterns once written.
+  # ---------------------------------------------------------------------
+  - id: dtype_int8
+    description: >-
+      Single-band int8 stripped uncompressed; corner pixels carry the int8
+      min/max sentinels.
+    width: 20
+    height: 20
+    dtype: int8
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1001
+    tags: [fast, dtype, int8]
+  - id: dtype_uint8
+    description: >-
+      Single-band uint8 stripped uncompressed; corner pixels carry the
+      uint8 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: uint8
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1002
+    tags: [fast, dtype, uint8]
+  - id: dtype_int16
+    description: >-
+      Single-band int16 stripped uncompressed; corner pixels carry the
+      int16 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: int16
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1003
+    tags: [fast, dtype, int16]
+  - id: dtype_uint16
+    description: >-
+      Single-band uint16 stripped uncompressed; corner pixels carry the
+      uint16 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: uint16
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1004
+    tags: [fast, dtype, uint16]
+  - id: dtype_int32
+    description: >-
+      Single-band int32 stripped uncompressed; corner pixels carry the
+      int32 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: int32
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1005
+    tags: [fast, dtype, int32]
+  - id: dtype_uint32
+    description: >-
+      Single-band uint32 stripped uncompressed; corner pixels carry the
+      uint32 min/max sentinels.
+    width: 20
+    height: 20
+    dtype: uint32
+    pixel_pattern: noise_with_corners
+    pixel_seed: 1006
+    tags: [fast, dtype, uint32]
+  - id: dtype_float32
+    description: >-
+      Single-band float32 stripped uncompressed. NaN-in-pixels handling is
+      deferred to Phase 2 PR 6 (nodata).
+    width: 20
+    height: 20
+    dtype: float32
+    pixel_pattern: noise
+    pixel_seed: 1007
+    tags: [fast, dtype, float32]
+  - id: dtype_float64
+    description: >-
+      Single-band float64 stripped uncompressed. NaN-in-pixels handling is
+      deferred to Phase 2 PR 6 (nodata).
+    width: 20
+    height: 20
+    dtype: float64
+    pixel_pattern: noise
+    pixel_seed: 1008
+    tags: [fast, dtype, float64]
