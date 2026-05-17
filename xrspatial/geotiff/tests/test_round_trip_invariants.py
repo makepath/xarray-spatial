@@ -338,8 +338,10 @@ class TestPixelIsPointRoundTrip:
               raster_type=1, compression='none', tiled=False)
 
         da1 = open_geotiff(path)
-        assert da1.attrs.get('raster_type') is None
+        assert 'raster_type' not in da1.attrs, (
+            "PixelIsArea default must not surface as an explicit "
+            "'raster_type' attr; absence is the canonical signal")
 
         da2 = _read_write_read(da1, tmp_path, "pia")
-        assert da2.attrs.get('raster_type') is None
+        assert 'raster_type' not in da2.attrs
         _assert_fixed_point(da1, da2)
