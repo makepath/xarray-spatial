@@ -39,19 +39,22 @@ from xrspatial.geotiff._attrs import (
 from xrspatial.geotiff._geotags import GeoInfo
 
 
-# (attr_name, GeoInfo field name, sample value).
+# (attr_name, sample value). The attr name doubles as the ``GeoInfo``
+# field name: every deprecated attr in this PR is stored on
+# :class:`GeoInfo` under the same identifier it lands in ``attrs``
+# under, so a single column is enough.
 #
 # Sample values mirror what the GeoTIFF spec would put in each
 # secondary GeoKey for WGS 84 (EPSG:4326). The exact values do not
 # matter for the warning assertion, but using realistic ones keeps the
 # test useful as documentation.
 _DEPRECATED_CASES = [
-    ('crs_name',        'crs_name',        'WGS 84'),
-    ('geog_citation',   'geog_citation',   'WGS 84'),
-    ('datum_code',      'datum_code',      6326),
-    ('angular_units',   'angular_units',   'degree'),
-    ('semi_major_axis', 'semi_major_axis', 6378137.0),
-    ('inv_flattening',  'inv_flattening',  298.257223563),
+    ('crs_name',        'WGS 84'),
+    ('geog_citation',   'WGS 84'),
+    ('datum_code',      6326),
+    ('angular_units',   'degree'),
+    ('semi_major_axis', 6378137.0),
+    ('inv_flattening',  298.257223563),
 ]
 
 
@@ -81,16 +84,28 @@ def test_deprecated_cases_cover_all_attrs():
     )
 
 
+def test_deprecated_cases_has_no_duplicates():
+    """Length-equality guard so a duplicate row in ``_DEPRECATED_CASES``
+    cannot be silently absorbed by the set comparison in
+    ``test_deprecated_cases_cover_all_attrs``."""
+    assert len(_DEPRECATED_CASES) == len(_DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS), (
+        f"length mismatch: _DEPRECATED_CASES has {len(_DEPRECATED_CASES)} "
+        f"rows but _DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS has "
+        f"{len(_DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS)} entries. Likely cause: "
+        f"a duplicate attr row in _DEPRECATED_CASES."
+    )
+
+
 @pytest.mark.parametrize(
-    'attr,field,value',
+    'attr,value',
     _DEPRECATED_CASES,
     ids=[c[0] for c in _DEPRECATED_CASES],
 )
-def test_warns_on_emission(attr, field, value):
+def test_warns_on_emission(attr, value):
     """Each deprecated geographic-GeoKey attr fires a DeprecationWarning
     with the canonical wording when ``_populate_attrs_from_geo_info``
     emits it."""
-    info = _geo_info_with(**{field: value})
+    info = _geo_info_with(**{attr: value})
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
@@ -109,18 +124,18 @@ def test_warns_on_emission(attr, field, value):
 
 
 @pytest.mark.parametrize(
-    'attr,field,value',
+    'attr,value',
     _DEPRECATED_CASES,
     ids=[c[0] for c in _DEPRECATED_CASES],
 )
-def test_emission_still_present(attr, field, value):
+def test_emission_still_present(attr, value):
     """Deprecation-period contract: the attr value still lands in attrs.
 
     Removal is a later PR. If a reader change drops the emission
     entirely while this test still expects presence, the failure here
     is the signal to bump the contract version and move the attr from
     the deprecated tier to the removed tier in the docstring."""
-    info = _geo_info_with(**{field: value})
+    info = _geo_info_with(**{attr: value})
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', DeprecationWarning)
