@@ -18,10 +18,12 @@ normally rejects; the ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` env
 var (the same hatch every other in-process HTTP test uses) opens the
 loopback path for tests.
 
-The shared parity gaps (``_PARITY_GAPS``) carry over from the eager /
-dask / GPU modules: the codec and attrs layers are the same. The
-current COG fixture is ``cog_internal_overview_uint16`` which is not
-in any gap or skip list, so the HTTP path should pass cleanly.
+The current corpus has one COG fixture (``cog_internal_overview_uint16``)
+which is not subject to any of the parity gaps the eager / dask / GPU
+modules flag (no integer nodata, EPSG-coded CRS, single band), so this
+module ships without a ``_PARITY_GAPS`` table. If a future COG fixture
+hits one of the shared gaps, mirror the eager module's tables and the
+``_build_param`` plumbing here.
 """
 from __future__ import annotations
 
@@ -47,16 +49,30 @@ FIXTURES_DIR = (
 )
 
 
+def _resolved_fixtures() -> list[dict]:
+    """Return manifest entries with defaults merged, sorted by id."""
+    manifest = generate.load_manifest()
+    entries = generate.validate(manifest)
+    entries.sort(key=lambda e: e["id"])
+    return entries
+
+
 def _cog_fixture_ids() -> list[str]:
     """Return manifest ids for fixtures the COG HTTP reader can serve.
 
     Only ``cog: true`` entries qualify. Returns sorted ids for stable
     parametrize output.
     """
-    manifest = generate.load_manifest()
-    entries = generate.validate(manifest)
-    ids = sorted(e["id"] for e in entries if e.get("cog"))
-    return ids
+    return [e["id"] for e in _resolved_fixtures() if e.get("cog")]
+
+
+def _is_lossy(fixture_id: str) -> bool:
+    """Look up the lossy flag for a fixture id from the manifest."""
+    for e in _resolved_fixtures():
+        if e["id"] == fixture_id:
+            tol = e.get("tolerance") or {}
+            return bool(tol.get("lossy", False))
+    return False
 
 
 class _RangeHandler(http.server.BaseHTTPRequestHandler):
@@ -147,15 +163,19 @@ def test_http_cog_parity(fixture_id: str, allow_private_http) -> None:
     with open(path, "rb") as f:
         payload = f.read()
 
-    httpd, _thread = _serve(payload)
+    httpd, thread = _serve(payload)
     try:
         host, port = httpd.server_address
         url = f"http://{host}:{port}/{fixture_id}.tif"
         candidate = open_geotiff(url)
-        compare_to_oracle(path, candidate)
+        compare_to_oracle(path, candidate, lossy=_is_lossy(fixture_id))
     finally:
         httpd.shutdown()
         httpd.server_close()
+        # Daemon threads exit on process tear-down, but joining here
+        # makes test-by-test cleanup deterministic and surfaces a hang
+        # if ``shutdown()`` ever stops returning.
+        thread.join(timeout=2.0)
 
 
 def test_at_least_one_cog_fixture_exists() -> None:
