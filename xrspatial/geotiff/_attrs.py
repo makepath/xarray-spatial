@@ -487,6 +487,15 @@ def _validate_read_geo_info(
     registered check picks. The hook is a no-op when no check is
     registered, so callers can use this helper unconditionally without
     coupling each backend to the current check list.
+
+    Note: the transform tuple built here is always axis-aligned
+    (``b == 0`` / ``d == 0``) because ``_transform_tuple_from_pixel_geometry``
+    only carries origin + pixel size, and the upstream TIFF reader
+    rejects rotated ``ModelTransformationTag`` entries with
+    ``NotImplementedError`` in ``_geotags._extract_transform_and_georef``
+    before we reach this helper. The rotated-transform check therefore
+    fires only on the VRT path, which builds its context from the GDAL
+    ``geo_transform`` via ``_gdal_geotransform_to_affine_tuple``.
     """
     from ._validation import validate_read_metadata
     transform_for_check = (

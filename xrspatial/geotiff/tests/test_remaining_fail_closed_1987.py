@@ -162,12 +162,19 @@ def _write_minimal_tiff_with_wkt(path: str, wkt: str) -> None:
     Path(path).write_bytes(bytes(out))
 
 
-def _write_rotated_vrt(path: Path, source_basename: str) -> None:
-    """Build a VRT whose GeoTransform carries a non-zero rotation term."""
+def _write_rotated_vrt(
+    path: Path,
+    source_basename: str,
+    *,
+    geo_transform: str = '0.0, 1.0, 0.5, 0.0, 0.0, -1.0',
+) -> None:
+    """Build a VRT carrying ``geo_transform``. Default value rotates on
+    the x-axis (GDAL ``GT[2] = 0.5``); pass a different string to
+    exercise the row-axis (``GT[4]``) branch."""
     Path(path).write_text(
         '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
         '  <SRS>EPSG:4326</SRS>\n'
-        '  <GeoTransform>0.0, 1.0, 0.5, 0.0, 0.0, -1.0</GeoTransform>\n'
+        f'  <GeoTransform>{geo_transform}</GeoTransform>\n'
         '  <VRTRasterBand dataType="Float32" band="1">\n'
         '    <SimpleSource>\n'
         f'      <SourceFilename relativeToVRT="1">{source_basename}'
@@ -292,6 +299,22 @@ def test_read_rotated_vrt_opt_in_passes(tmp_path):
     assert da.shape == (4, 4)
 
 
+def test_read_rejects_row_axis_rotated_vrt(tmp_path):
+    """The ``d`` term (GDAL ``GT[4]``, rasterio ``Affine`` index 3) is
+    the row-axis rotation; the sibling test above only sets the column
+    rotation. Pin that the row-axis branch raises too."""
+    src = tmp_path / 'flat_d.tif'
+    _write_minimal_tiff_with_wkt(str(src), 'EPSG:4326')
+    vrt = tmp_path / 'rotated_d.vrt'
+    _write_rotated_vrt(
+        vrt, os.path.basename(src),
+        geo_transform='0.0, 1.0, 0.0, 0.0, 0.5, -1.0',
+    )
+
+    with pytest.raises(RotatedTransformError):
+        open_geotiff(str(vrt))
+
+
 # ---------------------------------------------------------------------------
 # NonUniformCoordsError.
 # ---------------------------------------------------------------------------
@@ -339,6 +362,19 @@ def test_write_accepts_integer_coord_sentinel(tmp_path):
     }
     da = _da(coords=coords)
     to_geotiff(da, str(tmp_path / 'int_sentinel.tif'))
+
+
+def test_write_rejects_constant_float_coords(tmp_path):
+    """A float coord array whose first two values are equal makes the
+    derived pixel step zero. The check refuses rather than emitting a
+    zero-step GeoTransform."""
+    coords = {
+        'y': np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float64),
+        'x': np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float64),
+    }
+    da = _da(coords=coords)
+    with pytest.raises(NonUniformCoordsError, match='constant'):
+        to_geotiff(da, str(tmp_path / 'constant_y.tif'))
 
 
 # ---------------------------------------------------------------------------

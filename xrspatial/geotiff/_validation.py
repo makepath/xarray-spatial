@@ -796,6 +796,21 @@ def _check_read_rotated_transform(context: Mapping[str, Any]) -> None:
 register_read_metadata_check(_check_read_rotated_transform)
 
 
+def _gdal_geotransform_to_affine_tuple(gt) -> tuple | None:
+    """Reorder a GDAL ``GeoTransform`` 6-tuple into rasterio ``Affine``
+    layout for ``_check_read_rotated_transform``.
+
+    GDAL:    ``(origin_x, pixel_width, b, origin_y, d, pixel_height)``
+    rasterio:``(pixel_width, b, origin_x, d, pixel_height, origin_y)``
+
+    Returns ``None`` when ``gt`` is ``None`` so callers can pass the
+    result straight into a validation context dict.
+    """
+    if gt is None:
+        return None
+    return (gt[1], gt[2], gt[0], gt[4], gt[5], gt[3])
+
+
 # ---------------------------------------------------------------------------
 # Mixed band metadata read check (issue #1987 PR 5)
 # ---------------------------------------------------------------------------

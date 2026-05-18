@@ -166,9 +166,38 @@ def read_vrt(source: str, *,
             band_nodata=band_nodata,
         )
 
+    # Issue #1987 ambiguous-metadata checks for the eager VRT path. Parse
+    # the VRT XML up front and validate before ``_read_vrt_internal``
+    # touches any pixel data, so a rejected file does not first
+    # materialise the full mosaic into host memory. The parsed
+    # ``VRTDataset`` is threaded into the internal reader via ``parsed=``
+    # so we don't double-parse the XML.
+    import os as _os
+    from .._validation import (
+        validate_read_metadata,
+        _gdal_geotransform_to_affine_tuple,
+    )
+    from .._vrt import parse_vrt as _parse_vrt, _read_vrt_xml
+    _xml_str = _read_vrt_xml(source)
+    _vrt_dir = _os.path.dirname(_os.path.abspath(source))
+    _parsed_vrt = _parse_vrt(_xml_str, _vrt_dir)
+    validate_read_metadata({
+        'allow_rotated': allow_rotated,
+        'allow_unparseable_crs': allow_unparseable_crs,
+        'transform': _gdal_geotransform_to_affine_tuple(
+            _parsed_vrt.geo_transform
+        ),
+        'crs_wkt': _parsed_vrt.crs_wkt,
+        'band_nodata': band_nodata,
+        'band_nodata_values': (
+            [b.nodata for b in _parsed_vrt.bands]
+            if _parsed_vrt.bands else None
+        ),
+    })
+
     arr, vrt = _read_vrt_internal(
         source, window=window, band=band, max_pixels=max_pixels,
-        missing_sources=missing_sources,
+        missing_sources=missing_sources, parsed=_parsed_vrt,
     )
 
     if name is None:
@@ -199,29 +228,6 @@ def read_vrt(source: str, *,
         )
     else:
         coords = {}
-
-    # Issue #1987 ambiguous-metadata checks for the VRT path. VRT builds
-    # its own attrs dict and does not go through ``_validate_read_geo_info``;
-    # call the validator directly with a VRT-shaped context. The GDAL
-    # geo_transform is reordered to the rasterio Affine layout the
-    # rotated-transform check expects.
-    from .._validation import validate_read_metadata
-    _transform_for_check = None
-    if gt is not None:
-        _transform_for_check = (
-            gt[1], gt[2], gt[0], gt[4], gt[5], gt[3],
-        )
-    _band_nodata_values = (
-        [b.nodata for b in vrt.bands] if vrt.bands else None
-    )
-    validate_read_metadata({
-        'allow_rotated': allow_rotated,
-        'allow_unparseable_crs': allow_unparseable_crs,
-        'transform': _transform_for_check,
-        'crs_wkt': vrt.crs_wkt,
-        'band_nodata': band_nodata,
-        'band_nodata_values': _band_nodata_values,
-    })
 
     # VRT builds its attrs dict inline rather than going through
     # ``_populate_attrs_from_geo_info``; stamp the contract version here
@@ -418,23 +424,19 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # Issue #1987 ambiguous-metadata checks on the chunked VRT path. Run
     # before the band-count validator below so a rejected file does not
     # produce side effects.
-    from .._validation import validate_read_metadata
-    _gt = vrt.geo_transform
-    _transform_for_check = None
-    if _gt is not None:
-        _transform_for_check = (
-            _gt[1], _gt[2], _gt[0], _gt[4], _gt[5], _gt[3],
-        )
-    _band_nodata_values = (
-        [b.nodata for b in vrt.bands] if vrt.bands else None
+    from .._validation import (
+        validate_read_metadata,
+        _gdal_geotransform_to_affine_tuple,
     )
     validate_read_metadata({
         'allow_rotated': allow_rotated,
         'allow_unparseable_crs': allow_unparseable_crs,
-        'transform': _transform_for_check,
+        'transform': _gdal_geotransform_to_affine_tuple(vrt.geo_transform),
         'crs_wkt': vrt.crs_wkt,
         'band_nodata': band_nodata,
-        'band_nodata_values': _band_nodata_values,
+        'band_nodata_values': (
+            [b.nodata for b in vrt.bands] if vrt.bands else None
+        ),
     })
 
     # Validate ``band`` against the parsed band count, matching the
