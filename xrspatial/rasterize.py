@@ -1517,6 +1517,12 @@ def _normalize_chunks(chunks, height, width):
     else:
         rchunk, cchunk = chunks
 
+    # Both axes must have positive chunk sizes. A zero would loop forever
+    # below; a negative would diverge.
+    if rchunk <= 0 or cchunk <= 0:
+        raise ValueError(
+            f"chunks must be positive, got ({rchunk}, {cchunk})")
+
     row_chunks = []
     remaining = height
     while remaining > 0:
@@ -2232,6 +2238,13 @@ def rasterize(
             x_res = y_res = float(resolution)
         else:
             x_res, y_res = float(resolution[0]), float(resolution[1])
+        # Reject non-finite or non-positive resolution before dimension math.
+        # Without this, inf/-1 quietly produce a 1x1 raster, 0 raises an
+        # opaque ZeroDivisionError, and nan raises an int-conversion error.
+        for r in (x_res, y_res):
+            if not np.isfinite(r) or r <= 0:
+                raise ValueError(
+                    f"resolution must be finite and > 0, got {resolution!r}")
         final_width = max(int(np.ceil((xmax - xmin) / x_res)), 1)
         final_height = max(int(np.ceil((ymax - ymin) / y_res)), 1)
     elif like_width is not None:

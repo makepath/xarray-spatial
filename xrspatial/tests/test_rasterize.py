@@ -342,6 +342,28 @@ class TestValidation:
                       width=101, height=100, bounds=(0, 0, 1, 1),
                       max_pixels=10_000)
 
+    @pytest.mark.parametrize("bad", [0, -1, -0.5, float('inf'),
+                                     -float('inf'), float('nan')])
+    def test_invalid_resolution_scalar(self, bad):
+        with pytest.raises(ValueError, match="resolution must be finite"):
+            rasterize([(box(0, 0, 1, 1), 1.0)],
+                      resolution=bad, bounds=(0, 0, 1, 1))
+
+    @pytest.mark.parametrize("bad", [(0, 1), (1, 0), (-1, 1), (1, float('nan')),
+                                     (float('inf'), 1)])
+    def test_invalid_resolution_tuple(self, bad):
+        with pytest.raises(ValueError, match="resolution must be finite"):
+            rasterize([(box(0, 0, 1, 1), 1.0)],
+                      resolution=bad, bounds=(0, 0, 1, 1))
+
+    @pytest.mark.parametrize("bad", [0, -1, (0, 1), (1, -1)])
+    def test_invalid_chunks(self, bad):
+        # chunks=0 used to hang (issue #2066); negative diverged.
+        with pytest.raises(ValueError, match="chunks must be positive"):
+            rasterize([(box(0, 0, 1, 1), 1.0)],
+                      width=10, height=10, bounds=(0, 0, 1, 1),
+                      chunks=bad)
+
 
 # ---------------------------------------------------------------------------
 # all_touched mode
