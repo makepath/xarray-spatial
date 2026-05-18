@@ -13,12 +13,35 @@ $ARGUMENTS
 3. Increment the **patch** component: `X.Y.Z` -> `X.Y.(Z+1)`.
 4. Store the new version string (without `v` prefix) for later steps.
 
-## Step 2 -- Create a release branch
+## Step 2 -- Create a release branch in a worktree
+
+The main checkout MUST stay on `main` -- the release branch lives in a
+dedicated worktree. All remaining steps (changelog edits, commit,
+push, PR) run from that worktree.
 
 ```bash
-git checkout main && git pull
-git checkout -b release/vX.Y.Z
+RELEASE_MAIN="$(git rev-parse --show-toplevel)"
+git -C "$RELEASE_MAIN" fetch origin main
+RELEASE_MAIN_BRANCH="$(git -C "$RELEASE_MAIN" branch --show-current)"
+if [ "$RELEASE_MAIN_BRANCH" = "main" ]; then
+  git -C "$RELEASE_MAIN" pull --ff-only origin main
+fi
+git -C "$RELEASE_MAIN" worktree add \
+  ".claude/worktrees/release-vX.Y.Z" -b "release/vX.Y.Z" origin/main
+RELEASE_WT="$RELEASE_MAIN/.claude/worktrees/release-vX.Y.Z"
+cd "$RELEASE_WT"
 ```
+
+Verify isolation -- assert ALL of the following before continuing:
+- `$(pwd)` equals `$RELEASE_WT`.
+- `git branch --show-current` is `release/vX.Y.Z`.
+- `git -C "$RELEASE_MAIN" branch --show-current` is still `main`
+  (the main checkout's branch did NOT change).
+
+For every remaining step, use paths anchored at `$RELEASE_WT` for
+Edit / Read / Write tool calls -- do NOT edit files under
+`$RELEASE_MAIN`. Re-check `pwd` and the current branch before
+every `git commit`.
 
 ## Step 3 -- Update CHANGELOG.md
 
@@ -61,13 +84,24 @@ gh pr merge <PR_NUMBER> --merge --delete-branch
 
 ## Step 7 -- Tag the release
 
+Tagging happens from the main checkout (NOT the release worktree),
+because the merged commit lives on `main`:
+
 ```bash
-git checkout main && git pull
+cd "$RELEASE_MAIN"
+git checkout main
+git pull --ff-only origin main
 git tag -a vX.Y.Z -m "Version X.Y.Z"
 git push origin vX.Y.Z
 ```
 
 Do **not** sign the tag (`-s` flag omitted).
+
+After tagging, remove the release worktree -- the branch was already
+deleted by `gh pr merge --delete-branch`:
+```bash
+git -C "$RELEASE_MAIN" worktree remove "$RELEASE_WT" --force
+```
 
 ## Step 8 -- Create a GitHub release
 

@@ -23,13 +23,52 @@ through all ten steps below. The prompt is: $ARGUMENTS
 5. Create the issue with `gh issue create` using the drafted title, body, and labels.
 6. Capture the new issue number for later steps.
 
-## Step 2 -- Create a Git Worktree
+## Step 2 -- Create a Git Worktree (Isolation Contract)
 
-1. Create a new branch and worktree using the issue number:
-   ```
+The user's main checkout MUST remain on `main` for the entire rockout
+run. All implementation, tests, docs, commits, and the PR push happen
+inside a dedicated worktree on a feature branch. If you ever commit
+from the main checkout, you have breached this contract.
+
+1. From the main checkout, create a new branch and worktree using the
+   issue number:
+   ```bash
    git worktree add .claude/worktrees/issue-<NUMBER> -b issue-<NUMBER>
    ```
-2. Switch the working directory to the new worktree for all remaining steps.
+
+2. Capture the worktree path and verify isolation before doing
+   anything else. Run this exact block and check every assertion:
+   ```bash
+   ROCKOUT_WT="$(git -C .claude/worktrees/issue-<NUMBER> rev-parse --show-toplevel)"
+   ROCKOUT_MAIN="$(git rev-parse --show-toplevel)"
+   ROCKOUT_BRANCH="$(git -C "$ROCKOUT_WT" branch --show-current)"
+   echo "wt=$ROCKOUT_WT main=$ROCKOUT_MAIN branch=$ROCKOUT_BRANCH"
+   ```
+
+   Assert ALL of the following. If any fails, STOP, do NOT touch
+   files or make commits, and report the failure to the user:
+   - `$ROCKOUT_WT` ends in `.claude/worktrees/issue-<NUMBER>`.
+   - `$ROCKOUT_WT` is NOT equal to `$ROCKOUT_MAIN` (you are not in
+     the main checkout).
+   - `$ROCKOUT_BRANCH` is `issue-<NUMBER>` (not `main`, not `master`).
+   - `git -C "$ROCKOUT_MAIN" branch --show-current` is still `main`
+     (or `master`) -- the main checkout's branch did NOT change.
+
+3. `cd "$ROCKOUT_WT"` so subsequent Bash calls run inside the
+   worktree by default.
+
+4. For every Read / Edit / Write tool call from this point on, use
+   paths anchored at `$ROCKOUT_WT` (or worktree-relative paths after
+   the `cd`). NEVER pass an absolute path that resolves to
+   `$ROCKOUT_MAIN/...` -- that bypasses the worktree and writes into
+   the user's main checkout.
+
+5. Before EVERY `git commit` you run (in any step below), re-check:
+   ```bash
+   [ "$(pwd)" = "$ROCKOUT_WT" ] || { echo "CWD drift"; exit 1; }
+   [ "$(git branch --show-current)" = "issue-<NUMBER>" ] || { echo "branch drift"; exit 1; }
+   ```
+   A failed re-check is an isolation breach. Stop and report it.
 
 ## Step 3 -- Implement the Change
 
@@ -151,7 +190,11 @@ Address every Blocker, then work through Suggestions and Nits in that order.
 
 ## General Rules
 
-- Work entirely within the worktree created in Step 2.
+- Work entirely within the worktree created in Step 2. The main
+  checkout MUST stay on `main` for the duration of the run -- never
+  `git checkout`, `git switch`, `git commit`, `git add`, or edit a
+  file inside `$ROCKOUT_MAIN`. Run the Step 2.5 pre-commit re-check
+  before every commit.
 - Commit progress after each major step with a clear commit message referencing
   the issue number (e.g. `Add flood velocity function (#42)`).
 - Run `/humanizer` on any text destined for GitHub (issue body, PR description,
