@@ -25,7 +25,7 @@ is present, and pass-through keys are kept when the writer can
 reconstruct them from canonical state.
 
 The contract version is recorded in ``attrs['_xrspatial_geotiff_contract']``
-(currently ``1``). Consumers can branch on this integer if the tier
+(currently ``2``). Consumers can branch on this integer if the tier
 split changes in a future release.
 
 Canonical (xrspatial owns these; round-trip stable):
@@ -72,54 +72,26 @@ from canonical state, otherwise dropped on round-trip):
 - ``colormap``: raw uint16 RGB triples from the TIFF ColorMap tag (320),
   attached to single-band paletted images.
 
-Deprecated (will be removed in a future release; see issue #1984):
+Removed in contract v2 (issue #2016):
 
-These attrs are still emitted on read for one release cycle, but each
-emission triggers a ``DeprecationWarning``. The writer's
-``build_geo_tags`` only emits the primary CRS GeoKey and citation for
-each CRS axis (horizontal / projected / vertical), so the secondary
-GeoKeys these attrs derive from are never written and the values do
-not survive a write -> read round-trip. Callers should stop relying
-on them and use ``crs`` / ``crs_wkt`` instead.
+The following keys were emitted by older xrspatial releases under a
+deprecation warning and have been removed from the reader as of
+contract version ``2``. Reads no longer surface them on
+``DataArray.attrs``; downstream code that accessed them via
+``attrs[key]`` will now see ``KeyError``. Switch to ``attrs.get(key)``
+or derive the value from ``crs`` / ``crs_wkt`` with :mod:`pyproj`.
 
-Geographic-CRS GeoKey attrs:
-
-- ``crs_name``: human-readable CRS name from the GeoKey directory.
-- ``geog_citation``: GeographicTypeGeoKey citation string.
-- ``datum_code``: GeogGeodeticDatumGeoKey value.
-- ``angular_units``: GeogAngularUnitsGeoKey value.
-- ``semi_major_axis``: GeogSemiMajorAxisGeoKey value.
-- ``inv_flattening``: GeogInvFlatteningGeoKey value.
-
-Projected-CRS GeoKey attrs:
-
-- ``linear_units``: ProjLinearUnitsGeoKey value. The writer's
-  ``build_geo_tags`` only emits the primary ``GEOKEY_PROJECTED_CS_TYPE``
-  and never the secondary projected GeoKeys, so this attr cannot be
-  reconstructed on round-trip.
-- ``projection_code``: ProjectionGeoKey value. Same root cause as
-  ``linear_units``: the writer never emits the underlying GeoKey, so
-  the value cannot survive a round-trip.
-
-Vertical-CRS GeoKey attrs:
-
-- ``vertical_crs``: VerticalCSTypeGeoKey value. The writer never emits
-  the vertical GeoKey block, so this attr cannot round-trip.
-- ``vertical_citation``: VerticalCitationGeoKey value. Same deprecation
-  reason as ``vertical_crs``.
-- ``vertical_units``: VerticalUnitsGeoKey value. Same deprecation reason
-  as ``vertical_crs``.
-Colormap variants (different root cause: photometric gate, not GeoKey):
-
-- ``colormap_rgba``: RGBA palette array, only emitted on read when the
-  source file is Photometric==3 (palette). The writer never selects
-  Photometric=3, so this attr does not round-trip. Reshape
+* Geographic-CRS GeoKey attrs: ``crs_name``, ``geog_citation``,
+  ``datum_code``, ``angular_units``, ``semi_major_axis``,
+  ``inv_flattening``.
+* Projected-CRS GeoKey attrs: ``linear_units``, ``projection_code``.
+* Vertical-CRS GeoKey attrs: ``vertical_crs``, ``vertical_citation``,
+  ``vertical_units``.
+* Colormap variants: ``colormap_rgba``, ``cmap``. Reshape
   ``attrs['colormap']`` to ``(n_colors, 3)`` and append an alpha
-  channel in caller code if needed.
-- ``cmap``: matplotlib ``ListedColormap`` built from the palette. Same
-  Photometric==3 gate, same round-trip gap. Construct a
-  ``ListedColormap`` from ``attrs['colormap']`` in caller code if
-  needed.
+  channel in caller code, or construct a
+  :class:`matplotlib.colors.ListedColormap` from
+  ``attrs['colormap']`` in caller code.
 
 Migration recipe (the canonical replacement is ``crs`` / ``crs_wkt``
 plus a one-liner with :mod:`pyproj` when a derived value is needed)::
@@ -189,231 +161,16 @@ _TIFF_SHORT = 3
 # changes. Downstream code reads ``attrs['_xrspatial_geotiff_contract']``
 # to learn which attrs-contract revision produced the array. See issue
 # #1984 and ``docs/source/user_guide/attrs_contract.rst``.
-_ATTRS_CONTRACT_VERSION = 1
+#
+# Version 2 (issue #2016) drops the 13 deprecated GeoKey-derived and
+# matplotlib-colormap attrs that v1 still emitted under a
+# ``DeprecationWarning``. Downstream code that read those keys via
+# ``attrs[key]`` now sees ``KeyError`` rather than the deprecated value.
+_ATTRS_CONTRACT_VERSION = 2
 
 
 # String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
 _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
-
-
-# Geographic-CRS GeoKey-derived attrs scheduled for removal (issue #1984
-# PR 7). The writer's ``build_geo_tags`` only emits the primary
-# GEOKEY_GEOGRAPHIC_TYPE, never the secondary geographic GeoKeys these
-# attrs are derived from. The values therefore never round-trip. Keep
-# emitting them for one release cycle so external callers can migrate,
-# then drop the emission entirely.
-_DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS = (
-    'crs_name',
-    'geog_citation',
-    'datum_code',
-    'angular_units',
-    'semi_major_axis',
-    'inv_flattening',
-)
-
-
-# Per-category reason clauses spliced into the deprecation warning by
-# :func:`_emit_deprecated_geokey_attr`. Kept here so the wording stays
-# in lockstep across the three GeoKey-axis tiers (geographic, projected,
-# vertical) and so the test suite can match the canonical strings
-# verbatim.
-_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS = (
-    "the writer cannot reconstruct it from the canonical CRS"
-)
-_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS = (
-    "the writer cannot reconstruct vertical-CRS GeoKeys"
-)
-
-
-# Shared wording for the colormap-variants slice of the PR 7 deprecation
-# series. The root cause is a different one (the writer cannot set
-# ``Photometric=3``) so the GeoKey-tier reason templates above don't
-# fit; these constants are spliced into ``_emit_deprecated_attr`` with
-# a per-attr migration recipe so users see how to derive an RGBA palette
-# or matplotlib ``ListedColormap`` from canonical ``attrs['colormap']``.
-_DEPRECATED_COLORMAP_REASON = (
-    "the writer cannot set Photometric=3 so it does not round-trip"
-)
-_DEPRECATED_CMAP_MIGRATION = (
-    "Construct a ListedColormap from attrs['colormap'] in caller code "
-    "if needed"
-)
-_DEPRECATED_COLORMAP_RGBA_MIGRATION = (
-    "Reshape attrs['colormap'] to (n_colors, 3) and append an alpha "
-    "channel in caller code if needed"
-)
-
-
-def _deprecated_geokey_warning(name: str, *, reason: str) -> str:
-    """Warning text for a deprecated GeoKey-derived attr.
-
-    ``reason`` is the per-category clause that explains why the value
-    will not round-trip; the rest of the message is fixed so callers
-    only have to keep track of the short reason string. The wording is
-    pinned by ``test_warning_message_format`` (geographic tier) and by
-    sibling tests for the projected / vertical tiers, so any tweak
-    here needs to land alongside an update to those tests.
-    """
-    return (
-        f"xrspatial.geotiff: attrs[{name!r}] is deprecated; {reason} "
-        f"so it will not round-trip. It will be removed in a future "
-        f"release. See issue #1984."
-    )
-
-
-def _deprecated_geographic_geokey_warning(name: str) -> str:
-    """Warning text shared by every deprecated geographic-GeoKey attr.
-
-    Thin shim over :func:`_deprecated_geokey_warning` that fixes the
-    reason clause to the geographic-tier wording. Retained so existing
-    callers (notably the unit tests that pin the canonical wording)
-    keep working unchanged.
-    """
-    return _deprecated_geokey_warning(
-        name, reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
-    )
-
-
-def _stacklevel_to_external_caller() -> int:
-    """Return a ``stacklevel`` that points the warning at the first frame
-    outside :mod:`xrspatial.geotiff`.
-
-    A fixed ``stacklevel`` is brittle here because the call chain to
-    ``warnings.warn`` differs by backend:
-
-    * numpy path: ``open_geotiff`` -> emit helper -> ``warn`` (3 frames).
-    * dask path: ``open_geotiff`` -> ``read_geotiff_dask`` ->
-      ``_populate_attrs_from_geo_info`` -> emit helper -> ``warn`` (5
-      frames).
-    * direct callers of ``read_geotiff_dask`` / ``read_to_array`` (used
-      internally and in tests) shorten the chain by one.
-
-    Walk the stack from the warn-site outward and stop at the first
-    frame whose module is not ``xrspatial.geotiff*``. Returning a value
-    one greater than the index of that frame matches
-    :func:`warnings.warn` semantics (level 1 = the warn line itself).
-
-    Today the warnings are :class:`DeprecationWarning`, which Python
-    silences by default for library code; the stacklevel mostly affects
-    the test suite. Get it right now so a future change to a louder
-    category (e.g. :class:`FutureWarning`) does not surface the warning
-    as if it came from ``_attrs.py``.
-    """
-    import sys
-
-    # Frame 0 is this function; frame 1 is the warn-site (the caller of
-    # this helper). Start the search at frame 1 so the returned level
-    # maps directly to the ``stacklevel`` argument passed to
-    # ``warnings.warn`` inside the warn-site.
-    frame = sys._getframe(1)
-    level = 1
-    while frame is not None:
-        mod = frame.f_globals.get('__name__', '')
-        is_internal = (
-            mod == 'xrspatial.geotiff'
-            or (mod.startswith('xrspatial.geotiff.')
-                and not mod.startswith('xrspatial.geotiff.tests'))
-        )
-        if not is_internal:
-            return level
-        frame = frame.f_back
-        level += 1
-    # Fell off the top of the stack without finding an external caller;
-    # fall back to a value that at least skips the warn-site itself.
-    return 2
-
-
-def _emit_deprecated_geokey_attr(attrs: dict, name: str, value,
-                                 *, reason: str) -> None:
-    """Emit a deprecated GeoKey-derived attr with a ``DeprecationWarning``.
-
-    Generic helper shared by the geographic, projected, and vertical
-    deprecation tiers (issue #1984 PR 7). ``reason`` is the per-category
-    clause that explains why the value will not round-trip; it is
-    spliced into the warning text by :func:`_deprecated_geokey_warning`.
-    Use :data:`_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS` for the
-    geographic and projected tiers (both lose the value because the
-    writer cannot reconstruct it from the canonical CRS) and
-    :data:`_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS` for the vertical
-    tier (the writer skips the entire vertical GeoKey block).
-
-    Sets ``attrs[name] = value`` after the warning so the read-side
-    emission stays alive for one release cycle and external callers
-    have time to migrate to ``crs`` / ``crs_wkt``.
-
-    The ``stacklevel`` is computed by walking past every
-    ``xrspatial.geotiff*`` frame so the warning is attributed to the
-    user's call site (e.g. ``open_geotiff(...)``) rather than to one of
-    the internal read paths.
-    """
-    warnings.warn(
-        _deprecated_geokey_warning(name, reason=reason),
-        DeprecationWarning,
-        stacklevel=_stacklevel_to_external_caller(),
-    )
-    attrs[name] = value
-
-
-def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
-    """Geographic-tier wrapper around :func:`_emit_deprecated_geokey_attr`.
-
-    Kept as a thin shim so the geographic emission sites in
-    :func:`_populate_attrs_from_geo_info` stay readable and so a future
-    diff touching only the geographic tier does not need to repeat the
-    ``reason=`` clause at every call site.
-    """
-    _emit_deprecated_geokey_attr(
-        attrs, name, value,
-        reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
-    )
-
-
-def _emit_deprecated_attr(
-    attrs: dict,
-    name: str,
-    value,
-    *,
-    reason: str,
-    migration: str | None = None,
-) -> None:
-    """Emit a deprecated attr with a ``DeprecationWarning`` and a
-    per-attr migration recipe.
-
-    Sibling of :func:`_emit_deprecated_geokey_attr` that adds support
-    for an optional ``migration`` clause spliced into the warning. The
-    GeoKey-tier helper uses a fixed sentence ("... so it will not
-    round-trip ..."); the colormap-variants tier needs to point users
-    at how to derive an RGBA palette or matplotlib ``ListedColormap``
-    from canonical ``attrs['colormap']``, which doesn't fit that
-    template. A follow-up may unify the two helpers; for now they live
-    side-by-side because the warning-text contracts are pinned by
-    separate test suites and converging them is out of scope for the
-    colormap slice.
-
-    Warning text shape::
-
-        xrspatial.geotiff: attrs['<name>'] is deprecated; <reason>
-        <migration?> It will be removed in a future release. See
-        issue #1984.
-
-    The ``stacklevel`` is taken from
-    :func:`_stacklevel_to_external_caller` so the warning is attributed
-    to the user's call site, matching the GeoKey-tier slices.
-    """
-    parts = [
-        f"xrspatial.geotiff: attrs[{name!r}] is deprecated;",
-        reason.rstrip('.') + '.',
-    ]
-    if migration:
-        parts.append(migration.rstrip('.') + '.')
-    parts.append("It will be removed in a future release. See issue #1984.")
-    warnings.warn(
-        ' '.join(parts),
-        DeprecationWarning,
-        stacklevel=_stacklevel_to_external_caller(),
-    )
-    attrs[name] = value
-
 
 
 def _extent_to_window(transform, file_height, file_width,
@@ -581,48 +338,16 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
             window=window,
         )
 
-    if geo_info.crs_name is not None:
-        _emit_deprecated_geographic_geokey(attrs, 'crs_name', geo_info.crs_name)
-    if geo_info.geog_citation is not None:
-        _emit_deprecated_geographic_geokey(
-            attrs, 'geog_citation', geo_info.geog_citation)
-    if geo_info.datum_code is not None:
-        _emit_deprecated_geographic_geokey(
-            attrs, 'datum_code', geo_info.datum_code)
-    if geo_info.angular_units is not None:
-        _emit_deprecated_geographic_geokey(
-            attrs, 'angular_units', geo_info.angular_units)
-    if geo_info.linear_units is not None:
-        _emit_deprecated_geokey_attr(
-            attrs, 'linear_units', geo_info.linear_units,
-            reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
-        )
-    if geo_info.semi_major_axis is not None:
-        _emit_deprecated_geographic_geokey(
-            attrs, 'semi_major_axis', geo_info.semi_major_axis)
-    if geo_info.inv_flattening is not None:
-        _emit_deprecated_geographic_geokey(
-            attrs, 'inv_flattening', geo_info.inv_flattening)
-    if geo_info.projection_code is not None:
-        _emit_deprecated_geokey_attr(
-            attrs, 'projection_code', geo_info.projection_code,
-            reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
-        )
-    if geo_info.vertical_epsg is not None:
-        _emit_deprecated_geokey_attr(
-            attrs, 'vertical_crs', geo_info.vertical_epsg,
-            reason=_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS,
-        )
-    if geo_info.vertical_citation is not None:
-        _emit_deprecated_geokey_attr(
-            attrs, 'vertical_citation', geo_info.vertical_citation,
-            reason=_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS,
-        )
-    if geo_info.vertical_units is not None:
-        _emit_deprecated_geokey_attr(
-            attrs, 'vertical_units', geo_info.vertical_units,
-            reason=_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS,
-        )
+    # Contract v2 (issue #2016) removed the 13 secondary GeoKey-derived
+    # attrs that v1 emitted under a ``DeprecationWarning`` (``crs_name``,
+    # ``geog_citation``, ``datum_code``, ``angular_units``,
+    # ``semi_major_axis``, ``inv_flattening``, ``linear_units``,
+    # ``projection_code``, ``vertical_crs``, ``vertical_citation``,
+    # ``vertical_units``). The underlying ``GeoInfo`` fields are still
+    # populated by the GeoKey parser because ``_synthesize_user_defined_wkt``
+    # consumes ``geog_citation`` (and siblings) to fill ``crs_wkt`` for
+    # user-defined CRSes; the reader no longer surfaces them as
+    # separate user-visible attrs.
 
     if geo_info.gdal_metadata is not None:
         attrs['gdal_metadata'] = geo_info.gdal_metadata
@@ -645,26 +370,12 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
         attrs['resolution_unit'] = _unit_names.get(
             geo_info.resolution_unit, str(geo_info.resolution_unit))
 
-    if geo_info.colormap is not None:
-        try:
-            from matplotlib.colors import ListedColormap
-            _emit_deprecated_attr(
-                attrs, 'cmap',
-                ListedColormap(geo_info.colormap, name='tiff_palette'),
-                reason=_DEPRECATED_COLORMAP_REASON,
-                migration=_DEPRECATED_CMAP_MIGRATION,
-            )
-            _emit_deprecated_attr(
-                attrs, 'colormap_rgba', geo_info.colormap,
-                reason=_DEPRECATED_COLORMAP_REASON,
-                migration=_DEPRECATED_COLORMAP_RGBA_MIGRATION,
-            )
-        except ImportError:
-            _emit_deprecated_attr(
-                attrs, 'colormap_rgba', geo_info.colormap,
-                reason=_DEPRECATED_COLORMAP_REASON,
-                migration=_DEPRECATED_COLORMAP_RGBA_MIGRATION,
-            )
+    # Contract v2 (issue #2016) removed ``attrs['cmap']`` and
+    # ``attrs['colormap_rgba']``. The canonical ``attrs['colormap']``
+    # (raw uint16 RGB triples from TIFF tag 320) is still emitted below
+    # via the ``extra_tags`` scan; callers that need an RGBA palette or
+    # a :class:`matplotlib.colors.ListedColormap` should build one from
+    # ``attrs['colormap']`` directly.
 
     if geo_info.extra_tags is not None:
         for _tag_id, _tt, _tc, _tv in geo_info.extra_tags:

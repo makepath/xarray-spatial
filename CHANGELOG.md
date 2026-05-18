@@ -5,6 +5,7 @@
 ### Unreleased
 
 #### Bug fixes and improvements
+- Remove read-side emission of the 13 deprecated GeoTIFF attrs (`crs_name`, `geog_citation`, `datum_code`, `angular_units`, `semi_major_axis`, `inv_flattening`, `linear_units`, `projection_code`, `vertical_crs`, `vertical_citation`, `vertical_units`, `colormap_rgba`, `cmap`) and bump `attrs['_xrspatial_geotiff_contract']` from 1 to 2. Downstream code that read these via `attrs[key]` now sees `KeyError`; migrate to `attrs.get(key)` or derive the value from `attrs['crs']` / `attrs['crs_wkt']` with pyproj. The `.xrs.plot()` accessor still surfaces palette colormaps by building a `ListedColormap` from the canonical `attrs['colormap']`. (#2016)
 - Deprecate read-side emission of geographic-CRS GeoKey attrs (crs_name, geog_citation, datum_code, angular_units, semi_major_axis, inv_flattening); the writer cannot reconstruct them so they do not round-trip. These attrs still emit for now but trigger a DeprecationWarning. Removal planned for a future release. (#1984)
 - Deprecate read-side emission of projected-CRS GeoKey attrs (linear_units, projection_code); the writer cannot reconstruct them so they do not round-trip. These attrs still emit for now but trigger a DeprecationWarning. Removal planned for a future release. (#1984)
 - Deprecate read-side emission of vertical-CRS GeoKey attrs (vertical_crs, vertical_citation, vertical_units); the writer does not emit vertical GeoKeys so they do not round-trip. These attrs still emit for now but trigger a DeprecationWarning. Removal planned for a future release. (#1984)

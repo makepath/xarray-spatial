@@ -319,16 +319,11 @@ class TestTagPassThrough:
         in_path = str(tmp_path / 'colormap_in_1484.tif')
         _make_palette_uint8_tiff(in_path, pixels, palette)
 
-        # Reading a Photometric=3 fixture trips the deprecation warnings
-        # for ``attrs['cmap']`` and ``attrs['colormap_rgba']`` (issue
-        # #1984 PR 7). Those are pinned in
-        # ``test_attrs_pr7_deprecate_colormap_variants_1984.py``; here
-        # we just want to verify ``attrs['colormap']`` still round-trips
-        # and the noise would otherwise leak into this file's report.
-        import warnings as _w
-        with _w.catch_warnings():
-            _w.simplefilter('ignore', DeprecationWarning)
-            da = open_geotiff(in_path)
+        # Contract v2 (issue #2016) removed the ``cmap`` /
+        # ``colormap_rgba`` emit sites; the read no longer fires a
+        # ``DeprecationWarning`` on Photometric=3 fixtures and the
+        # ``catch_warnings`` shim is no longer needed here.
+        da = open_geotiff(in_path)
         assert da.dtype == np.uint8
         assert 'colormap' in da.attrs
         # Raw uint16 ColorMap: 3 * 256 = 768 entries
