@@ -1073,22 +1073,26 @@ def packbits_decompress(data: bytes, expected_size: int = 0) -> bytes:
 
     cap = _max_output_with_margin(expected_size)
     if cap > 0:
-        # Allocate one extra byte so the kernel can detect overflow by
-        # filling the cap and then attempting one more write.
-        dst = np.empty(cap + 1, dtype=np.uint8)
+        # dst sized exactly to the cap; the kernel returns -1 the moment
+        # out_pos would reach write_limit (= cap), so we never need a
+        # sentinel byte past the cap.
+        dst = np.empty(cap, dtype=np.uint8)
         n = _packbits_decode_kernel(src, src_len, dst, cap)
     else:
         # No cap supplied. PackBits expands by at most 128:1 (a single
-        # replicate header byte yields 128 output bytes), so this bound is
-        # tight enough to keep the decoder bounded even on adversarial input
-        # while still always fitting the legitimate output.
+        # replicate header byte yields 128 output bytes), so this bound
+        # is tight enough to keep the decoder bounded even on adversarial
+        # input while still always fitting the legitimate output. The
+        # reader path always supplies expected_size, so this branch is
+        # only hit by direct callers and round-trip tests where the
+        # peak allocation is acceptable.
         worst_case = src_len * 128
         dst = np.empty(worst_case, dtype=np.uint8)
         n = _packbits_decode_kernel(src, src_len, dst, 0)
 
     if n < 0:
         raise ValueError(
-            f"packbits decode exceeded expected size: cap is {cap} "
+            f"packbits decode exceeded expected size: cap is {cap} bytes "
             f"(expected {expected_size}).  Likely a decompression bomb."
         )
     return bytes(dst[:n])
