@@ -60,6 +60,15 @@
 #                            Implies layout=tiled and overviews built by
 #                            the driver. The `compression` / `predictor`
 #                            entries are forwarded to the COG driver.
+#   sparse:           bool   Optional. If true, pass SPARSE_OK=TRUE to the
+#                            GDAL GTiff driver so the writer may elide
+#                            all-zero (or all-nodata) tiles. The on-disk
+#                            TileByteCounts entry for an elided tile is
+#                            0; the reader reconstructs the tile as
+#                            implicit zeros. Requires layout=tiled.
+#                            Mutually exclusive with cog=true (the COG
+#                            copy step rewrites the file and drops the
+#                            sparse encoding).
 #   gdal_metadata:    map    Optional. Written into the GDAL_METADATA tag as
 #                            {<domain>: {<item>: <str>}}. Domain "" is the
 #                            default. Used to exercise XML escaping and the
@@ -661,3 +670,71 @@ fixtures:
     cog: true
     pixel_pattern: ramp
     tags: [fast, tiled, overviews, cog]
+
+  # ---------------------------------------------------------------------
+  # Phase 4 PR (#1930): planar-separate (BSQ) and sparse-tiled coverage.
+  #
+  # The corpus through Phase 3 ships only ``planar_config: contig`` (BIP)
+  # rasters and only fully-populated strip/tile byte counts. These two
+  # fixtures close those holes:
+  #
+  # * ``planar_separate_uint8_rgb`` flips ``planar_config`` to
+  #   ``separate`` (BSQ / PLANARCONFIG=2). The reader has a distinct code
+  #   path for band-major storage and parity across backends had been
+  #   asserted only indirectly via the JPEG-YCbCr cell (which is lossy
+  #   and uses contig + ycbcr photometric).
+  #
+  # * ``sparse_tiled_uint16`` exercises GDAL's SPARSE_OK=TRUE creation
+  #   option. With a uniform zero pattern and deflate, GDAL elides every
+  #   tile (TileByteCounts all read 0 on disk) and the reader has to
+  #   reconstruct the implicit zeros. Real cloud-optimised GeoTIFFs do
+  #   this routinely; the corpus did not.
+  # ---------------------------------------------------------------------
+  - id: planar_separate_uint8_rgb
+    description: >-
+      3-band uint8 RGB raster, planar_config=separate (BSQ). Bands are
+      stored as three contiguous planes rather than pixel-interleaved.
+      Deflate + predictor 2 keeps the file inside the 12 KB per-fixture
+      budget. The noise pattern gives each band distinct pixel content
+      so a hypothetical band-permutation or band-duplication bug in the
+      BSQ decode path surfaces as a pixel mismatch rather than passing
+      silently.
+    width: 32
+    height: 32
+    bands: 3
+    dtype: uint8
+    layout: tiled
+    tile_size: 16
+    planar_config: separate
+    compression: deflate
+    predictor: 2
+    photometric: rgb
+    pixel_pattern: noise
+    pixel_seed: 1930042
+    tags: [fast, planar, separate, multiband]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: sparse_tiled_uint16
+    description: >-
+      Single-band uint16 tiled raster (64x64, 16-px tiles -> 4x4 tile
+      grid = 16 tiles). Written with SPARSE_OK=TRUE and a uniform value
+      of 0, so GDAL elides every tile and TileByteCounts reads 0 for
+      each entry on disk. The reader reconstructs the implicit zeros on
+      decode.
+    width: 64
+    height: 64
+    dtype: uint16
+    layout: tiled
+    tile_size: 16
+    compression: deflate
+    sparse: true
+    pixel_pattern: uniform
+    pixel_value: 0
+    tags: [fast, tiled, sparse]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
