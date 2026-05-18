@@ -44,6 +44,7 @@ from .._validation import (
     _validate_3d_writer_dims,
     _validate_nodata_arg,
     _validate_tile_size_arg,
+    _validate_writer_spatial_shape,
     validate_write_metadata,
 )
 from .._writer import write
@@ -270,6 +271,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         _validate_tile_size_arg(tile_size)
 
     _validate_nodata_arg(nodata)
+
+    # Issue #2075: reject zero-height / zero-width inputs before any
+    # dispatch decision. Clip / window pipelines naturally produce empty
+    # rasters and the writers used to accept them, produce a TIFF whose
+    # IFD claimed shape ``(0, N)`` / ``(N, 0)``, and surface a generic
+    # "Invalid image dimensions" only at read time. Fail closed at the
+    # entry point with a message that names the offending dim.
+    _shape = getattr(data, 'shape', None)
+    _dims = getattr(data, 'dims', None)
+    _validate_writer_spatial_shape(_shape, _dims)
 
     # Issue #1987 ambiguous-metadata checks. The hook is a no-op
     # when no check is registered, so this call is safe even if every

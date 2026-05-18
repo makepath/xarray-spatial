@@ -1567,6 +1567,16 @@ def write(data: np.ndarray, path: str, *,
         Per-pixel error budget for LERC compression. ``0.0`` (default)
         is lossless. Only valid with ``compression='lerc'``.
     """
+    # Issue #2075: reject empty spatial shapes before any IFD layout
+    # math runs. ``to_geotiff`` already guards this for DataArray inputs,
+    # but ``write`` is also called directly by tests and by the GPU
+    # path, so guard here too. ``write`` always receives band-last
+    # arrays (eager moveaxis ran upstream), so the ndim-based pair
+    # picked by ``_validate_writer_spatial_shape`` without ``dims`` is
+    # correct.
+    from ._validation import _validate_writer_spatial_shape
+    _validate_writer_spatial_shape(getattr(data, 'shape', None))
+
     comp_tag = _compression_tag(compression)
     pred_int = normalize_predictor(predictor, data.dtype, comp_tag)
 
@@ -1894,6 +1904,14 @@ def write_streaming(dask_data, path: str, *,
         raise NotImplementedError(
             "Streaming dask write to cloud storage is not yet supported. "
             "Use .compute() first or write to a .vrt file.")
+
+    # Issue #2075: reject empty spatial shapes before tile/strip count
+    # math (``math.ceil(width / tw)`` etc. below at the layout block)
+    # silently produces zero entries. ``to_geotiff`` already validates
+    # this upstream, but direct callers of ``write_streaming`` go
+    # through here too.
+    from ._validation import _validate_writer_spatial_shape
+    _validate_writer_spatial_shape(getattr(dask_data, 'shape', None))
 
     height, width = dask_data.shape[:2]
     samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
