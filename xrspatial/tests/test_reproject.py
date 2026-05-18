@@ -2020,6 +2020,19 @@ class TestItrfShapeMismatch:
             itrf_transform(lon, lat, h=h,
                            src='ITRF2014', tgt='ITRF2020', epoch=2024.0)
 
+    def test_itrf_rejects_multidim_h_vs_1d_lonlat(self):
+        # h=(1,3) vs lon=(3,) used to slip past the broadcast_shapes
+        # pre-check (they broadcast to (1,3)) and then fail downstream
+        # with numpy's raw broadcast_to error against the raveled 1-D
+        # lon_arr. Confirm the public API now raises with shape info.
+        from xrspatial.reproject import itrf_transform
+        lon = np.array([-74.0, 0.0, 45.0])
+        lat = np.array([40.7, 0.0, 10.0])
+        h = np.array([[5.0, 6.0, 7.0]])
+        with pytest.raises(ValueError, match=r"h shape .* lon shape"):
+            itrf_transform(lon, lat, h=h,
+                           src='ITRF2014', tgt='ITRF2020', epoch=2024.0)
+
 
 class TestNodataFiniteness:
     def test_detect_nodata_rejects_inf(self):

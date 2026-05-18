@@ -321,22 +321,31 @@ def itrf_transform(lon, lat, h=0.0, *, src, tgt, epoch):
         )
     lon_arr = np.atleast_1d(lon_in).ravel()
     lat_arr = np.atleast_1d(lat_in).ravel()
-    # h is broadcast against lon. A non-scalar h that does not broadcast
-    # to lon's shape would, after the broadcast attempt below, silently
-    # truncate or repeat values; numpy's broadcast_to raises for true
-    # incompat shapes, but we want the same wording as the lon/lat check
-    # when shapes don't even match in size.
+    # h must broadcast against the raveled, 1-D lon_arr (not the original
+    # lon shape). Compare against lon_arr.shape directly so that shapes
+    # like h=(1,3) vs lon=(3,), which broadcast against the original 2-D
+    # lon but not against its 1-D raveled form, are rejected here with
+    # the same wording as the lon/lat check rather than leaking numpy's
+    # broadcast_to error from below.
     h_in = np.asarray(h, dtype=np.float64)
-    if h_in.ndim != 0 and h_in.shape != lon_in.shape:
+    if h_in.ndim != 0 and h_in.shape != lon_arr.shape:
         # Allow numpy's broadcasting to attempt anyway (it handles e.g.
         # 1-element arrays), but pre-empt obviously bad shapes so the
-        # error message is specific to the public API.
+        # error message is specific to the public API. The broadcast
+        # result must equal lon_arr.shape exactly, not merely succeed:
+        # e.g. h=(1,3) and lon_arr=(3,) broadcast to (1,3) which would
+        # then fail at np.broadcast_to(..., lon_arr.shape) below.
         try:
-            np.broadcast_shapes(h_in.shape, lon_in.shape)
-        except ValueError:
+            broadcast_result = np.broadcast_shapes(h_in.shape, lon_arr.shape)
+        except ValueError as e:
             raise ValueError(
                 f"itrf_transform(): h shape {h_in.shape} cannot be "
-                f"broadcast to lon shape {lon_in.shape}."
+                f"broadcast to lon shape {lon_arr.shape}."
+            ) from e
+        if broadcast_result != lon_arr.shape:
+            raise ValueError(
+                f"itrf_transform(): h shape {h_in.shape} cannot be "
+                f"broadcast to lon shape {lon_arr.shape}."
             )
     h_arr = np.broadcast_to(np.atleast_1d(h_in), lon_arr.shape).copy()
 
