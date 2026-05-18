@@ -74,8 +74,19 @@ from canonical state, otherwise dropped on round-trip):
 - ``vertical_units``: VerticalUnitsGeoKey value.
 - ``image_description``: TIFF ImageDescription tag.
 - ``extra_samples``: TIFF ExtraSamples tag.
-- ``colormap``, ``colormap_rgba``, ``cmap``: palette data attached to
-  single-band paletted images.
+- ``colormap``: raw uint16 RGB triples from the TIFF ColorMap tag (320),
+  attached to single-band paletted images.
+
+Deprecated (will be removed in a future release; see issue #1984):
+
+- ``colormap_rgba``: RGBA palette array, only emitted on read when the
+  source file is Photometric==3 (palette). The writer never selects
+  Photometric=3, so this attr does not round-trip. Construct an RGBA
+  palette from ``attrs['colormap']`` in caller code if needed.
+- ``cmap``: matplotlib ``ListedColormap`` built from the palette. Same
+  Photometric==3 gate, same round-trip gap. Construct a
+  ``ListedColormap`` from ``attrs['colormap']`` in caller code if
+  needed.
 """
 from __future__ import annotations
 
@@ -286,10 +297,37 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     if geo_info.colormap is not None:
         try:
             from matplotlib.colors import ListedColormap
+            warnings.warn(
+                "xrspatial.geotiff: attrs['cmap'] is deprecated; the writer "
+                "cannot set Photometric=3 so it does not round-trip. "
+                "Construct a ListedColormap from attrs['colormap'] in caller "
+                "code if needed. It will be removed in a future release. "
+                "See issue #1984.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             attrs['cmap'] = ListedColormap(
                 geo_info.colormap, name='tiff_palette')
+            warnings.warn(
+                "xrspatial.geotiff: attrs['colormap_rgba'] is deprecated; "
+                "the writer cannot set Photometric=3 so it does not "
+                "round-trip. Construct a ListedColormap from "
+                "attrs['colormap'] in caller code if needed. It will be "
+                "removed in a future release. See issue #1984.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             attrs['colormap_rgba'] = geo_info.colormap
         except ImportError:
+            warnings.warn(
+                "xrspatial.geotiff: attrs['colormap_rgba'] is deprecated; "
+                "the writer cannot set Photometric=3 so it does not "
+                "round-trip. Construct a ListedColormap from "
+                "attrs['colormap'] in caller code if needed. It will be "
+                "removed in a future release. See issue #1984.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             attrs['colormap_rgba'] = geo_info.colormap
 
     if geo_info.extra_tags is not None:
