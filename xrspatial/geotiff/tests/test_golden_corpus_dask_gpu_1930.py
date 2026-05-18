@@ -63,25 +63,27 @@ _PARITY_GAPS: dict[str, str] = {
     ),
 }
 
-_DASK_GPU_SKIPS: dict[str, str] = {
-    "compression_jpeg_uint8_ycbcr": (
-        "JPEG-YCbCr decode is not implemented on the GPU read path. "
-        "With on_gpu_failure='strict' the read raises rather than "
-        "CPU-falling-back, so the test fails before reaching the "
-        "oracle. Identical failure mode to the pure-GPU backend (see "
-        "_GPU_SKIPS in test_golden_corpus_gpu_1930.py). The shared "
-        "multi-band axis-order gap that previously surfaced on the "
-        "eager / dask paths is closed by _normalise_axis_order in "
-        "_oracle.py; on the dask+GPU backend the decode error wins "
-        "first."
-    ),
-}
+# Empty: failures unique to the dask+GPU combo (eager / dask / pure-
+# GPU all pass) would land here. Kept around as the documented home
+# for such gaps.
+_DASK_GPU_SKIPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
         "MinIsWhite photometric inversion: xrspatial inverts pixels per "
         "#1797; rasterio leaves them raw. Covered by "
         "test_miniswhite_backend_parity_1797.py."
+    ),
+    "compression_jpeg_uint8_ycbcr": (
+        "JPEG-YCbCr decode is not implemented on the GPU read path and "
+        "the dask+GPU pipeline cannot fall back to CPU per chunk: the "
+        "decode error surfaces at .compute() time regardless of "
+        "on_gpu_failure mode. The pure-GPU backend handles the same "
+        "fixture by routing through on_gpu_failure='auto' (CPU "
+        "fallback yields a single numpy array, not a dask graph), but "
+        "that escape hatch does not exist for the chunked path. Plain "
+        "skip rather than xfail because no foreseeable fix exists: "
+        "implementing nvCOMP JPEG-YCbCr decode is its own project."
     ),
 }
 
