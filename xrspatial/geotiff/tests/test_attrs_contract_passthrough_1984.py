@@ -101,19 +101,17 @@ def _roundtrip(tmp_path, da, name='roundtrip.tif'):
 
 # (key, crs_to_use, value_set_on_write_or_None, expected_outcome)
 #
-# ``crs_to_use``: 4326 for geographic GeoKey-derived keys, 32633 for
-# projected ones. The CRS pins which GeoKeys the writer would emit if it
-# emitted any; today it emits only the EPSG code, but the test brackets
-# both branches anyway.
+# ``crs_to_use``: the CRS attached to the test DataArray; 4326 is
+# fine for every remaining key.
 #
 # ``value_set_on_write``: the value the test sets on ``da.attrs`` before
-# write. ``None`` means "do not set this key" (the test only needs the
-# CRS to be present so any reconstruction would have a path to fire).
+# write.
 #
-# ``expected``: one of ``'reconstructible'`` or ``'dropped'``.
-#   - reconstructible: key must be present in read-back attrs AND, when a
-#     value was supplied, must equal that value.
-#   - dropped: key must be absent from read-back attrs.
+# ``expected``: ``'reconstructible'`` (key must be present in the
+# read-back attrs and equal to the written value) or ``'dropped'``
+# (key must be absent). After contract v2 (issue #2016), every
+# row carries ``'reconstructible'``; the ``'dropped'`` arm is kept
+# so a future addition can use it without restructuring the test.
 _PASSTHROUGH_CASES = [
     # Non-GeoKey tag passthroughs. The writer folds these into extra_tags
     # via _merge_friendly_extra_tags, so the reader can rebuild them.
@@ -153,12 +151,6 @@ def test_passthrough_key_roundtrip(tmp_path, key, crs, value, expected):
     attrs = {}
     if value is not None:
         attrs[key] = value
-    # For colormap-derived keys we still need an attrs payload that
-    # actually puts a colormap tag on disk; setting ``colormap`` itself
-    # does that, so probe ``colormap_rgba`` / ``cmap`` via a separate
-    # write that does NOT include a colormap. The contract for those two
-    # keys is "absent on round-trip unless Photometric=3", and the
-    # writer never selects Photometric=3 from attrs alone.
     da = _make_da(crs=crs, attrs=attrs)
     # Single-band uint8 needed for the colormap tag to be valid in TIFF.
     if key == 'colormap':

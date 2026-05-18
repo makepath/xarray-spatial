@@ -173,7 +173,6 @@ _ATTRS_CONTRACT_VERSION = 2
 _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
 
 
-
 def _extent_to_window(transform, file_height, file_width,
                       y_min, y_max, x_min, x_max):
     """Convert geographic extent to pixel window (row_start, col_start, row_stop, col_stop).

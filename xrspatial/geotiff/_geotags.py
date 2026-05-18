@@ -332,10 +332,11 @@ def _synthesize_user_defined_wkt(
     Returns a WKT string when pyproj is installed and the GeoKeys
     expose enough of the ellipsoid to feed ``pyproj.CRS.from_dict``,
     otherwise ``None``. The synthesized CRS is name-stripped (PROJ
-    drops the GEOGCS name on ``to_dict()`` anyway), so callers that
-    need the user-supplied name should still consult
-    ``attrs['geog_citation']`` -- this helper exists to close the
-    canonical-CRS parity gap, not to round-trip the citation field.
+    drops the GEOGCS name on ``to_dict()`` anyway). The underlying
+    ``GeoInfo.geog_citation`` field is consumed elsewhere in the
+    reader, but contract v2 (issue #2016) stopped surfacing it on
+    ``DataArray.attrs``; this helper exists to close the canonical-CRS
+    parity gap, not to round-trip the citation field.
 
     Angular units are not threaded through. PROJ's ``longlat`` always
     emits degrees, and the corpus has no radian-unit user-defined
