@@ -3834,6 +3834,25 @@ class TestReproject3DBackends:
         computed = result.compute()
         assert computed.shape[2] == 3
 
+    @pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+    def test_reproject_3d_cupy_uint8_sentinel_nodata(self):
+        """3-D cupy with integer sentinel nodata round-trips to source dtype.
+
+        Exercises the non-NaN nodata path that the float tests skip.
+        """
+        from xrspatial.reproject import reproject
+        rng = np.random.default_rng(2)
+        host = rng.integers(0, 255, (32, 32, 3), dtype=np.uint8)
+        raster = xr.DataArray(
+            cp.asarray(host),
+            dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(55, 45, 32), 'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': 0},
+        )
+        result = reproject(raster, 'EPSG:32633')
+        assert result.dtype == np.uint8
+        assert result.shape[2] == 3
+
 
 @pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
 class TestMerge3DRejection:

@@ -254,8 +254,7 @@ def _reproject_chunk_numpy(
     # 3-D source: empty-chunk returns must carry the band axis or the
     # dask map_blocks template (which is 3-D for 3-D sources) sees a
     # shape mismatch (#2027).
-    _src_ndim = getattr(source_data, 'ndim', 2)
-    if _src_ndim == 3:
+    if source_data.ndim == 3:
         _empty_shape = (*chunk_shape, source_data.shape[2])
     else:
         _empty_shape = chunk_shape
@@ -348,8 +347,7 @@ def _reproject_chunk_cupy(
 
     # 3-D source: empty-chunk returns must carry the band axis to match
     # the dask+cupy map_blocks template (#2027).
-    _src_ndim = getattr(source_data, 'ndim', 2)
-    if _src_ndim == 3:
+    if source_data.ndim == 3:
         _empty_shape = (*chunk_shape, source_data.shape[2])
     else:
         _empty_shape = chunk_shape
@@ -468,14 +466,20 @@ def _reproject_chunk_cupy(
         bands = []
         for b in range(n_bands):
             band_data = window[:, :, b].astype(cp.float64)
-            if not np.isnan(nodata):
-                band_data = cp.where(band_data == nodata, cp.nan, band_data)
             if _use_native_cuda:
+                # Native CUDA kernels do the nodata->NaN conversion
+                # internally; matching the 2-D path above.
                 band_result = _resample_cupy_native(
                     band_data, local_row, local_col,
                     resampling=resampling, nodata=nodata,
                 )
             else:
+                # CPU coords path needs explicit conversion before
+                # cupyx.scipy.ndimage.map_coordinates.
+                if not np.isnan(nodata):
+                    band_data = cp.where(
+                        band_data == nodata, cp.nan, band_data,
+                    )
                 band_result = _resample_cupy(
                     band_data, local_row, local_col,
                     resampling=resampling, nodata=nodata,
@@ -1618,6 +1622,12 @@ def _reproject_dask(
         out_dtype = np.dtype(np.float64)
 
     if is_3d:
+        # Band axis is one chunk in the template regardless of how the
+        # source dask array is chunked along its band axis. The per-block
+        # worker reads all bands together (via a 2-D y/x slice that
+        # rejoins band chunks on compute) and emits the full band stack
+        # for its (rh, rw) tile, so multi-chunk output along bands would
+        # never get filled.
         template = da.empty(
             (*out_shape, n_bands),
             dtype=out_dtype,
