@@ -21,11 +21,14 @@ Corpus-backed cases (using the #1930 golden corpus fixtures):
 * planar multiband -- in: ``PLANARCONFIG=2`` (separate). Out: chunky.
   The writer emits chunky only, so the on-disk layout drifts but pixel
   bytes survive (verified against the planar-separate RGB fixture).
-* overviews (internal IFD) -- base IFD pixels round-trip byte-equal;
-  the overview pyramid is rewritten by the reducer rather than copied,
-  so overview pixels are semantically equivalent only.
-* COG layout -- base IFD pixels round-trip byte-equal; the
-  ``LAYOUT=COG`` marker re-appears because the writer is in COG mode.
+* overviews (internal IFD) -- base IFD pixels round-trip byte-equal
+  and the overview factor list is preserved when the writer is asked
+  to re-emit the same pyramid. Per-pixel overview parity is verified
+  by the oracle suite (#1930), not here.
+* COG layout -- base IFD pixels round-trip byte-equal and overview
+  factors are preserved; the GDAL ``LAYOUT=COG`` ghost-IFD marker
+  does NOT re-emit (xrspatial's writer does not synthesise the
+  ghost-IFD layout block).
 * sparse tiled -- elided zero tiles materialise as zeros on read; the
   rewrite is a normal tiled GeoTIFF whose pixels match those zeros.
 * VRT mosaic -- read of a ``.vrt`` is semantically equivalent to a
@@ -51,7 +54,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff, write_vrt
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._writer import write
 
@@ -541,13 +544,11 @@ class TestCOGFromCorpus:
         rasterio = pytest.importorskip("rasterio")
         src = _corpus_fixture(self.FIXTURE_NAME)
         da1 = open_geotiff(str(src))
+        # The corpus fixture's ``LAYOUT=COG`` marker is already pinned by
+        # ``test_golden_corpus_overview_cog_1930.test_cog_fixture_carries_cog_layout_marker``.
+        # Here we only need the factor list to drive the rewrite.
         with rasterio.open(str(src)) as h:
             src_factors = h.overviews(1)
-            src_layout = h.tags(ns="IMAGE_STRUCTURE").get("LAYOUT")
-        assert src_layout == "COG", (
-            f"corpus COG fixture must carry LAYOUT=COG marker, got "
-            f"{src_layout!r}"
-        )
 
         out = tmp_path / "cog_rt_1986.tif"
         to_geotiff(da1, str(out), compression='none',
@@ -639,7 +640,6 @@ class TestVRTRoundTripFromCorpus:
     @pytest.mark.parametrize("source_name", SOURCE_FIXTURES)
     def test_vrt_mosaic_round_trips_as_geotiff(self, tmp_path, source_name):
         rasterio = pytest.importorskip("rasterio")
-        from xrspatial.geotiff import write_vrt
 
         src_path = _corpus_fixture(source_name)
         with rasterio.open(str(src_path)) as h:
@@ -674,4 +674,9 @@ class TestVRTRoundTripFromCorpus:
         np.testing.assert_array_equal(
             np.asarray(da2.values), np.asarray(da1.values))
         assert da2.dtype == da1.dtype
+        # Unlike the other corpus-backed cases, ``da1`` here is the
+        # VRT-resolved view of two rasterio-written GeoTIFFs (not the
+        # corpus fixtures themselves), so it does not carry the
+        # deprecated #1984 geographic attrs. The first cycle already
+        # holds the fixed point.
         _assert_fixed_point(da1, da2)
