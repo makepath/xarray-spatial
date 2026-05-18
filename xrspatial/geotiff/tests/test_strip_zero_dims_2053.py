@@ -22,7 +22,6 @@ tiled path can't silently regress the stripped path.
 """
 from __future__ import annotations
 
-import io
 import struct
 
 import numpy as np
