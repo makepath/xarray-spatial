@@ -240,6 +240,32 @@ def _validate_tile_size_arg(tile_size):
     _validate_tile_size(tile_size)
 
 
+def _validate_overview_level_arg(overview_level) -> None:
+    """Validate the ``overview_level`` kwarg type (issue #2074).
+
+    Accepts ``None`` (default, treated as full resolution) and any
+    ``int`` / ``numpy.integer`` instance. ``bool`` is rejected
+    explicitly because Python treats it as a subclass of ``int``;
+    without the check, ``overview_level=True`` is coerced to ``1`` and
+    silently returns the first overview level. Non-int types like
+    ``str`` and ``float`` would otherwise leak raw ``TypeError``
+    messages from the internal numeric comparison or list indexing.
+
+    Called by ``open_geotiff`` (public entry point) and by
+    ``select_overview_ifd`` (defense in depth for the dask, GPU, and
+    accessor readers that reach the selector without going through
+    ``open_geotiff``).
+    """
+    if overview_level is None:
+        return
+    if (not isinstance(overview_level, (int, np.integer))
+            or isinstance(overview_level, bool)):
+        raise TypeError(
+            f"overview_level must be an int or None, got "
+            f"{type(overview_level).__name__}: {overview_level!r}"
+        )
+
+
 def _validate_predictor_sample_format(predictor, sample_format) -> None:
     """Reject ``Predictor=3`` paired with a non-float ``SampleFormat`` (issue #1933).
 

@@ -373,20 +373,13 @@ def open_geotiff(source: str | BinaryIO, *,
 
     source = _coerce_path(source)
 
-    # ``overview_level`` must be an int or ``None``. ``bool`` is rejected
-    # explicitly because Python treats it as a subclass of ``int``: without
-    # this guard, ``overview_level=True`` is coerced to ``1`` and silently
-    # returns the first overview level instead of failing, and other non-int
-    # types leak raw ``TypeError`` messages from the internal numeric
-    # comparison or list indexing. See issue #2074.
-    if overview_level is not None and (
-        not isinstance(overview_level, int)
-        or isinstance(overview_level, bool)
-    ):
-        raise TypeError(
-            f"overview_level must be an int or None, got "
-            f"{type(overview_level).__name__}: {overview_level!r}"
-        )
+    # Reject bool and non-int ``overview_level`` up front (issue #2074).
+    # Without this guard, ``overview_level=True`` is coerced to ``1`` and
+    # silently returns the first overview level, and non-int types leak
+    # raw ``TypeError`` messages from the internal numeric comparison or
+    # list indexing.
+    from ._validation import _validate_overview_level_arg
+    _validate_overview_level_arg(overview_level)
 
     # ``on_gpu_failure`` is GPU-only. Reject it up front for CPU/dask paths
     # rather than silently dropping it once dispatch is decided -- callers

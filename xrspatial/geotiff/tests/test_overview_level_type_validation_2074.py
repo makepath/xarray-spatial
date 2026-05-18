@@ -93,6 +93,26 @@ def test_overview_level_none_succeeds(cog_with_overview):
     assert result.shape == arr.shape
 
 
+@pytest.mark.parametrize("value", [np.int64(0), np.int32(0)])
+def test_overview_level_numpy_int_zero_succeeds(cog_with_overview, value):
+    """``np.int64`` / ``np.int32`` should be accepted like Python ints."""
+    from xrspatial.geotiff import open_geotiff
+
+    path, arr = cog_with_overview
+    result = open_geotiff(path, overview_level=value)
+    assert result.shape == arr.shape
+
+
+@pytest.mark.parametrize("value", [np.int64(1), np.int32(1)])
+def test_overview_level_numpy_int_one_succeeds(cog_with_overview, value):
+    """``np.int64`` / ``np.int32`` reach the overview level just like int."""
+    from xrspatial.geotiff import open_geotiff
+
+    path, arr = cog_with_overview
+    result = open_geotiff(path, overview_level=value)
+    assert result.shape == (arr.shape[0] // 2, arr.shape[1] // 2)
+
+
 def test_overview_level_typeerror_names_value(cog_with_overview):
     """Error message should name the offending value, not just the type."""
     from xrspatial.geotiff import open_geotiff

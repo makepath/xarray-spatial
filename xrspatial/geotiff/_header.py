@@ -785,20 +785,12 @@ def select_overview_ifd(ifds: list[IFD], overview_level: int | None) -> IFD:
     if not ifds:
         raise ValueError("No IFDs found in TIFF file")
 
-    # Defense in depth: callers via ``open_geotiff`` are already type-checked,
-    # but ``select_overview_ifd`` is also reachable from other readers
-    # (dask, GPU, accessor) that forward ``overview_level`` directly. Reject
-    # bool and non-int values up front so the failure mode is uniform across
-    # entry points instead of leaking raw numeric-comparison or indexing
-    # TypeErrors. See issue #2074.
-    if overview_level is not None and (
-        not isinstance(overview_level, int)
-        or isinstance(overview_level, bool)
-    ):
-        raise TypeError(
-            f"overview_level must be an int or None, got "
-            f"{type(overview_level).__name__}: {overview_level!r}"
-        )
+    # Defense in depth (issue #2074). ``open_geotiff`` already type-checks
+    # ``overview_level``, but this selector is also reachable from the dask,
+    # GPU, and accessor readers that forward the kwarg without going through
+    # the public entry point.
+    from ._validation import _validate_overview_level_arg
+    _validate_overview_level_arg(overview_level)
 
     filtered = [ifd for ifd in ifds if _is_overview_or_full_res(ifd)]
     if not filtered:
