@@ -233,6 +233,81 @@ def test_read_all_passes_when_body_fits_budget():
 
 
 # ---------------------------------------------------------------------------
+# Stdlib fallback (urllib3 unavailable)
+# ---------------------------------------------------------------------------
+
+def test_read_all_stdlib_fallback_rejects_oversized_content_length():
+    """When urllib3 is not in play, ``read_all`` drops to stdlib
+    ``urllib.request``. The Content-Length pre-flight check must still
+    fire on that path."""
+
+    class _Handler(_BaseHandler):
+        payload = b'E' * 2048
+
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(self.payload)))
+            self.end_headers()
+            self.wfile.write(self.payload)
+
+    url, httpd, _ = _serve(_Handler)
+    try:
+        src = _HTTPSource(url)
+        # Force the stdlib branch by dropping the pool reference.
+        src._pool = None
+        with pytest.raises(OSError, match="Content-Length"):
+            src.read_all(max_bytes=1024)
+    finally:
+        _stop(httpd)
+
+
+def test_read_all_stdlib_fallback_catches_missing_content_length():
+    """Stdlib path with chunked-encoded body must also cap on the
+    streamed bytes."""
+
+    class _Handler(_BaseHandler):
+        def do_GET(self):  # noqa: N802
+            body = b'F' * (100 * 1024)
+            self.send_response(200)
+            self.send_header('Transfer-Encoding', 'chunked')
+            self.end_headers()
+            self.wfile.write(f'{len(body):x}\r\n'.encode('ascii'))
+            self.wfile.write(body)
+            self.wfile.write(b'\r\n0\r\n\r\n')
+
+    url, httpd, _ = _serve(_Handler)
+    try:
+        src = _HTTPSource(url)
+        src._pool = None
+        with pytest.raises(OSError, match="exceeded the byte budget"):
+            src.read_all(max_bytes=1024)
+    finally:
+        _stop(httpd)
+
+
+def test_read_all_stdlib_fallback_passes_when_body_fits():
+    """Stdlib path returns the body cleanly when it fits the budget."""
+
+    class _Handler(_BaseHandler):
+        payload = b'G' * 1024
+
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(self.payload)))
+            self.end_headers()
+            self.wfile.write(self.payload)
+
+    url, httpd, _ = _serve(_Handler)
+    try:
+        src = _HTTPSource(url)
+        src._pool = None
+        data = src.read_all(max_bytes=2048)
+        assert data == b'G' * 1024
+    finally:
+        _stop(httpd)
+
+
+# ---------------------------------------------------------------------------
 # End-to-end COG read
 # ---------------------------------------------------------------------------
 
@@ -292,9 +367,10 @@ def test_full_image_http_read_still_works_for_legitimate_cog(tmp_path):
 
 
 def test_full_image_http_read_rejects_padded_body(tmp_path):
-    """Attack scenario: a legitimate TIFF header is followed by gigabytes
-    of garbage. The strip-table-derived budget rejects the body before
-    it can be allocated."""
+    """Attack scenario: a legitimate TIFF header is followed by extra
+    garbage past what the strip table accounts for. The
+    strip-table-derived budget rejects the body before it is fully
+    buffered into memory."""
     arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
     path = str(tmp_path / 'padded_2051.tif')
     write(arr, path, compression='deflate', tiled=False)

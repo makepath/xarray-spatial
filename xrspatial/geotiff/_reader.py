@@ -981,8 +981,15 @@ class _HTTPSource:
                 # (``preload_content=False``, used by ``read_all`` with a
                 # byte budget) leaves the connection borrowed -- if we
                 # do not release it here, subsequent hops will allocate
-                # fresh connections every time.
+                # fresh connections every time. Drain first so urllib3
+                # can return the connection to the pool instead of
+                # closing it; a 3xx body is bounded by Content-Length so
+                # the drain is cheap.
                 if not preload_content:
+                    try:
+                        resp.drain_conn()
+                    except Exception:  # noqa: BLE001
+                        pass
                     try:
                         resp.release_conn()
                     except Exception:  # noqa: BLE001
@@ -1246,6 +1253,12 @@ class _HTTPSource:
 
         This is the cheap pre-flight check; we still cap the actual read
         below in case the server omits the header or lies about it.
+
+        Missing or unparseable ``Content-Length`` returns silently --
+        the streaming cap in :meth:`_read_capped_urllib3` /
+        :meth:`_read_capped_stdlib` is the real defence and will catch
+        an over-sized body whether the header was honest, dishonest, or
+        absent.
         """
         raw = None
         try:
