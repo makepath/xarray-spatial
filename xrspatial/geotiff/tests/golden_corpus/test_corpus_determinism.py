@@ -15,12 +15,12 @@ What this catches:
   committed ``.tif`` was edited (or stale) so it no longer matches
   what the manifest would produce.
 
-The test is fast (regenerating 30 small TIFFs is a few seconds) and
-carries the ``fast`` tag in spirit: it is parameterised over every
-manifest entry but each parameter is a single md5 compare, so the
-whole module runs comfortably inside the PR fast lane. We do not
-attach the ``slow`` pytest marker so ``pytest -m "not slow"`` keeps
-it in scope.
+The test is fast (regenerating the 30-fixture corpus measured ~0.3s
+locally) and carries the ``fast`` tag in spirit: it is parameterised
+over every manifest entry but each parameter is a single md5
+compare, so the whole module runs comfortably inside the PR fast
+lane. We do not attach the ``slow`` pytest marker so
+``pytest -m "not slow"`` keeps it in scope.
 
 Fixtures the manifest declares but that are not committed on disk
 (today: ``example_tiled_uint16_deflate_pred2``, kept as a
@@ -49,19 +49,27 @@ FIXTURES_DIR = (
 
 
 def _md5(path: pathlib.Path) -> str:
-    h = hashlib.md5()
+    # ``usedforsecurity=False`` (Python 3.9+) keeps this working on
+    # FIPS-strict runners where ``hashlib.md5()`` otherwise raises a
+    # ValueError. Byte-identity comparison only, no security claim.
+    h = hashlib.md5(usedforsecurity=False)
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
 
 
-def _manifest_ids() -> list[str]:
-    """Return manifest fixture ids in sorted order (the generator's
-    on-disk order)."""
-    manifest = generate.load_manifest()
-    entries = generate.validate(manifest)
-    return sorted(e["id"] for e in entries)
+def _load_entries() -> list[dict]:
+    """Return validated manifest entries (defaults merged), sorted by id."""
+    return sorted(generate.validate(generate.load_manifest()), key=lambda e: e["id"])
+
+
+# Cached at import so parametrize collection and the orphan-file test
+# share one manifest load. Each call to ``validate()`` re-walks every
+# entry, so collapsing the two callers cuts validation work in half.
+_ENTRIES = _load_entries()
+_MANIFEST_IDS = [e["id"] for e in _ENTRIES]
+_EXTERNAL_OVR_IDS = [e["id"] for e in _ENTRIES if e.get("external_overview")]
 
 
 @pytest.fixture(scope="module")
@@ -76,7 +84,7 @@ def regenerated_dir(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     return out
 
 
-@pytest.mark.parametrize("fixture_id", _manifest_ids())
+@pytest.mark.parametrize("fixture_id", _MANIFEST_IDS)
 def test_fixture_bytes_are_deterministic(
     fixture_id: str, regenerated_dir: pathlib.Path
 ) -> None:
@@ -110,14 +118,23 @@ def test_fixture_bytes_are_deterministic(
     )
 
 
+@pytest.mark.parametrize("fixture_id", _EXTERNAL_OVR_IDS or ["__none__"])
 def test_external_overview_sidecar_is_deterministic(
-    regenerated_dir: pathlib.Path,
+    fixture_id: str, regenerated_dir: pathlib.Path
 ) -> None:
     """Fixtures with ``external_overview: true`` ship a sidecar
     ``<id>.tif.ovr`` next to the main ``.tif``. The sidecar bytes are
     part of the determinism contract too.
+
+    Iterates over every manifest entry with ``external_overview=True``
+    so a future fixture lands in this test automatically without a
+    code change. When no such entry exists today the placeholder id
+    short-circuits to a skip so pytest still reports a single
+    informative case.
     """
-    sidecar_name = "overview_external_ovr_uint16.tif.ovr"
+    if fixture_id == "__none__":
+        pytest.skip("manifest has no external_overview fixtures today")
+    sidecar_name = f"{fixture_id}.tif.ovr"
     committed = FIXTURES_DIR / sidecar_name
     if not committed.exists():
         pytest.skip(
@@ -139,7 +156,7 @@ def test_no_orphan_fixtures_on_disk() -> None:
     to a manifest entry. Catches stale fixtures left behind after a
     manifest delete.
     """
-    manifest_ids = set(_manifest_ids())
+    manifest_ids = set(_MANIFEST_IDS)
     orphans: list[str] = []
     for path in sorted(FIXTURES_DIR.glob("*.tif")):
         if path.stem not in manifest_ids:
