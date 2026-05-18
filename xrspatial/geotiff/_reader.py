@@ -935,7 +935,8 @@ class _HTTPSource:
             self._pinned_pools[key] = pool
         return pool
 
-    def _request(self, headers: dict | None = None):
+    def _request(self, headers: dict | None = None,
+                 preload_content: bool = True):
         """Issue a GET with manual, validated redirect following.
 
         urllib3's built-in redirect follower has no validation hook, so
@@ -949,6 +950,13 @@ class _HTTPSource:
         that exists between ``getaddrinfo`` in the validator and the
         second ``getaddrinfo`` urllib3 would otherwise do at connect
         time. Issue #1846.
+
+        ``preload_content=False`` returns a streaming response: the body
+        is not buffered into ``resp.data`` and the caller must drain it
+        via ``resp.stream(...)``. Used by :meth:`read_all` when a
+        ``max_bytes`` budget is in play, so the body is bounded
+        on-the-wire instead of being fully allocated before the cap is
+        checked. Issue #2051.
         """
         from urllib.parse import urljoin
         timeout = self._urllib3_timeout()
@@ -961,11 +969,24 @@ class _HTTPSource:
                 headers=headers,
                 timeout=timeout,
                 redirect=False,
+                preload_content=preload_content,
             )
             if 300 <= resp.status < 400 and resp.status != 304:
                 location = resp.headers.get('Location')
                 if not location:
                     return resp
+                # Release the redirect response's connection back to
+                # the pool. ``preload_content=True`` (the default) drains
+                # the body for us, but the streaming path
+                # (``preload_content=False``, used by ``read_all`` with a
+                # byte budget) leaves the connection borrowed -- if we
+                # do not release it here, subsequent hops will allocate
+                # fresh connections every time.
+                if not preload_content:
+                    try:
+                        resp.release_conn()
+                    except Exception:  # noqa: BLE001
+                        pass
                 # Resolve relative ``Location`` against the URL we just
                 # requested, not against ``self._url``: chained
                 # redirects can land us on a different origin.
@@ -1184,8 +1205,93 @@ class _HTTPSource:
         merged_bytes = self.read_ranges(merged, max_workers=max_workers)
         return split_coalesced_bytes(merged_bytes, mapping)
 
-    def read_all(self) -> bytes:
-        return self._request().data
+    def read_all(self, max_bytes: int | None = None) -> bytes:
+        """Fetch the full body, optionally bounded by ``max_bytes``.
+
+        ``max_bytes`` caps both the advertised ``Content-Length`` (rejected
+        up front before any bytes are read into memory) and the actual
+        body size (streamed and aborted once ``max_bytes + 1`` bytes have
+        arrived). The ``+ 1`` is the over-shoot detector: a body that
+        exactly matches the cap passes, but a server that ignores or
+        lies about ``Content-Length`` and streams more bytes is caught
+        as soon as the first extra byte lands.
+
+        Without a cap, a tiny TIFF header (e.g. 100x100) that survives
+        :func:`_check_dimensions` can still be served as a multi-gigabyte
+        HTTP body and the whole body is allocated before TIFF parsing
+        gets a chance to reject it. Issue #2051.
+
+        ``max_bytes=None`` preserves the legacy unbounded behaviour for
+        callers that already gate the read upstream (e.g. cloud reads
+        gated by :data:`max_cloud_bytes`).
+        """
+        if max_bytes is None:
+            return self._request().data
+        # Stream the body so the cap is enforced before the bytes land
+        # in memory. ``preload_content=False`` makes urllib3 hand us
+        # the response without buffering ``resp.data``.
+        resp = self._request(preload_content=False)
+        try:
+            self._check_content_length(resp.headers, max_bytes)
+            return self._read_capped(resp, max_bytes)
+        finally:
+            try:
+                resp.release_conn()
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _check_content_length(headers, max_bytes: int) -> None:
+        """Reject a response whose advertised ``Content-Length`` exceeds the cap.
+
+        This is the cheap pre-flight check; we still cap the actual read
+        below in case the server omits the header or lies about it.
+        """
+        raw = None
+        try:
+            raw = headers.get('Content-Length')
+        except AttributeError:
+            return
+        if raw is None:
+            return
+        try:
+            declared = int(raw)
+        except (TypeError, ValueError):
+            return
+        if declared > max_bytes:
+            raise OSError(
+                f"HTTP response declares Content-Length={declared:,} "
+                f"bytes, which exceeds the byte budget of "
+                f"{max_bytes:,} bytes computed from the TIFF strip "
+                f"table. The file is malformed or attempting "
+                f"denial-of-service. Issue #2051."
+            )
+
+    @staticmethod
+    def _read_capped(resp, max_bytes: int) -> bytes:
+        """Stream-read a urllib3 response, aborting past ``max_bytes``.
+
+        Read at most ``max_bytes + 1`` bytes. The extra byte is the
+        over-shoot probe: if it arrives the server lied or omitted
+        ``Content-Length`` and tried to send a larger body. Raise
+        :class:`OSError` so callers that already handle network failures
+        also handle this.
+        """
+        chunks: list[bytes] = []
+        received = 0
+        for chunk in resp.stream(amt=65536, decode_content=True):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            received += len(chunk)
+            if received > max_bytes:
+                raise OSError(
+                    f"HTTP response body exceeded the byte budget of "
+                    f"{max_bytes:,} bytes (received {received:,} bytes "
+                    f"before abort). The server likely ignored or lied "
+                    f"about Content-Length. Issue #2051."
+                )
+        return b''.join(chunks)
 
     @property
     def size(self) -> int | None:
@@ -1638,6 +1744,49 @@ def _has_sparse(byte_counts) -> bool:
         if bc == 0:
             return True
     return False
+
+
+#: Slack added to the strip-table byte budget for the TIFF header,
+#: trailing IFD chain, ExifIFD, GeoKey directory, GDAL_METADATA, and any
+#: ICC profile or XMP packet. 4 MiB is comfortable for real-world COGs
+#: (the prefetch path already tolerates up to ``MAX_HTTP_HEADER_BYTES``
+#: of header bytes) while still bounding the body away from gigabyte
+#: scale. Issue #2051.
+_FULL_IMAGE_BUDGET_HEADER_SLACK = 4 * 1024 * 1024
+
+
+def _compute_full_image_byte_budget(offsets, byte_counts) -> int:
+    """Compute an upper bound on the legitimate HTTP body size for a stripped TIFF.
+
+    A stripped TIFF body is laid out as: [TIFF header + IFDs + tag value
+    arrays] followed by strip payloads at the offsets listed in
+    ``StripOffsets``. The largest byte index any strip references is
+    ``max(offset + byte_count)`` across the strip table; the body cannot
+    legitimately extend past that point plus a small tail for trailing
+    metadata. We add :data:`_FULL_IMAGE_BUDGET_HEADER_SLACK` to cover the
+    header prologue (which lives at offset 0) and any tags that follow
+    the last strip. The cap is loose by design -- it exists to reject
+    bodies that are orders of magnitude larger than the file claims to
+    be, not to second-guess legitimate layouts.
+
+    If the strip table is missing or empty (sparse-only, malformed),
+    fall back to the per-strip safety cap so the read is still bounded.
+    Issue #2051.
+    """
+    fallback = _max_tile_bytes_from_env() + _FULL_IMAGE_BUDGET_HEADER_SLACK
+    if not offsets or not byte_counts:
+        return fallback
+    max_end = 0
+    for off, bc in zip(offsets, byte_counts):
+        try:
+            end = int(off) + int(bc)
+        except (TypeError, ValueError):
+            continue
+        if end > max_end:
+            max_end = end
+    if max_end <= 0:
+        return fallback
+    return max_end + _FULL_IMAGE_BUDGET_HEADER_SLACK
 
 
 # ---------------------------------------------------------------------------
@@ -2391,7 +2540,15 @@ def _fetch_decode_cog_http_strips(
     # so the dim check uses their cap instead of the default 1B.
     if window is None:
         _check_dimensions(width, height, samples, max_pixels)
-        all_data = source.read_all()
+        # Bound the HTTP body to the byte size implied by the TIFF strip
+        # table. Without this cap, a tiny declared raster (which sails
+        # past ``_check_dimensions``) can still pull a multi-gigabyte
+        # body off the wire and into memory before ``_read_strips``
+        # gets a chance to reject anything. The strip table tells us
+        # the maximum legitimate byte offset; anything beyond that is
+        # either a malformed file or a hostile server. Issue #2051.
+        max_bytes = _compute_full_image_byte_budget(offsets, byte_counts)
+        all_data = source.read_all(max_bytes=max_bytes)
         return _read_strips(all_data, ifd, header, dtype,
                             max_pixels=max_pixels)
 
