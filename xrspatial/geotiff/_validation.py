@@ -122,6 +122,57 @@ def _validate_3d_writer_dims(dims) -> None:
     )
 
 
+def _validate_writer_spatial_shape(shape, dims=None,
+                                   entry_point: str = "to_geotiff") -> None:
+    """Reject empty spatial shapes at the writer entry point (issue #2075).
+
+    Clip and window pipelines can produce empty rasters. The eager and
+    streaming writers used to accept those inputs, write a TIFF whose
+    IFD claimed shape ``(0, N)`` / ``(N, 0)``, and then the reader
+    rejected the file with a generic "Invalid image dimensions" message
+    that never named the writer as the source.
+
+    Validate up front. ``shape`` is the array shape (2D ``(h, w)``,
+    band-first 3D ``(bands, h, w)``, or band-last 3D ``(h, w, bands)``).
+    ``dims`` is the DataArray ``dims`` tuple when available; it lets the
+    helper pick the right spatial pair when a 3D band-first input
+    arrives. Without ``dims`` the helper assumes band-last for 3D
+    (consistent with the writer's pre-moveaxis layout invariant), so
+    pass ``dims`` for DataArray inputs to avoid mis-naming the axis.
+    ``entry_point`` is the function name used in the error message so
+    direct callers of ``write`` / ``write_streaming`` / ``write_geotiff_gpu``
+    see the function they actually invoked.
+    """
+    if shape is None:
+        return
+    ndim = len(shape)
+    if ndim == 2:
+        h, w = int(shape[0]), int(shape[1])
+    elif ndim == 3:
+        # Decide band-first vs band-last from ``dims`` when available.
+        # Both layouts are valid writer inputs; the spatial axes are
+        # whichever two are not the band axis.
+        band_first = False
+        if dims is not None and len(dims) == 3:
+            band_first = dims[0] in _BAND_DIM_NAMES
+        if band_first:
+            h, w = int(shape[1]), int(shape[2])
+        else:
+            h, w = int(shape[0]), int(shape[1])
+    else:
+        # Other rank errors are handled by the existing ndim check; do
+        # not shadow that message.
+        return
+    if h <= 0 or w <= 0:
+        raise ValueError(
+            f"{entry_point} cannot write an empty raster: got shape "
+            f"{tuple(int(s) for s in shape)} with height={h}, width={w}. "
+            f"Both spatial dims must be positive. A common cause is a "
+            f"clip or window that produced an empty selection; check "
+            f"the upstream operation before writing."
+        )
+
+
 def _validate_dtype_cast(source_dtype, target_dtype):
     """Validate that casting source_dtype to target_dtype is allowed.
 
