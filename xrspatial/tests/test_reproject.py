@@ -3694,3 +3694,197 @@ class TestReprojectLatLonDimPropagation:
         raster.data = da.from_array(raster.values, chunks=(4, 4))
         result = reproject(raster, 'EPSG:3857', chunk_size=4)
         assert result.dims == ('lat', 'lon')
+
+
+# =====================================================================
+# Issue #2027: 3-D (y, x, band) inputs across all backends
+# =====================================================================
+
+class TestReproject3DBackends:
+    """reproject() must honour the band axis on every backend.
+
+    The 2-D path worked for years; the dask, cupy, and dask+cupy paths
+    either silently dropped the band dim from the lazy DataArray or
+    crashed with a CUDA signature mismatch on 3-D inputs (#2027).
+    """
+
+    @staticmethod
+    def _make_3d_raster(rng_seed=0, h=32, w=32, n_bands=3, dtype=np.float32):
+        rng = np.random.default_rng(rng_seed)
+        data = rng.random((h, w, n_bands), dtype=np.float32).astype(dtype)
+        return xr.DataArray(
+            data,
+            dims=['y', 'x', 'band'],
+            coords={
+                'y': np.linspace(55, 45, h),
+                'x': np.linspace(-5, 5, w),
+                'band': list(range(n_bands)),
+            },
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+    def test_reproject_3d_numpy(self):
+        """Baseline: 3-D numpy reproject keeps band dim."""
+        from xrspatial.reproject import reproject
+        raster = self._make_3d_raster()
+        result = reproject(raster, 'EPSG:32633')
+        assert result.ndim == 3
+        assert result.dims == ('y', 'x', 'band')
+        assert result.shape[2] == 3
+        # Computed values should be finite for at least part of the output
+        assert np.any(np.isfinite(result.values))
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_3d_dask_lazy_shape(self):
+        """Lazy dask DataArray must advertise 3-D shape (not 2-D)."""
+        from xrspatial.reproject import reproject
+        raster = self._make_3d_raster()
+        raster = raster.copy(
+            data=da.from_array(raster.values, chunks=(16, 16, 3))
+        )
+        result = reproject(raster, 'EPSG:32633')
+        assert result.ndim == 3
+        assert result.dims == ('y', 'x', 'band')
+        assert result.shape[2] == 3
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_3d_dask_compute(self):
+        """Computed dask result keeps band axis without ValueError."""
+        from xrspatial.reproject import reproject
+        raster = self._make_3d_raster()
+        raster = raster.copy(
+            data=da.from_array(raster.values, chunks=(16, 16, 3))
+        )
+        result = reproject(raster, 'EPSG:32633').compute()
+        assert result.ndim == 3
+        assert result.shape[2] == 3
+        assert np.any(np.isfinite(result.values))
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_3d_dask_matches_numpy(self):
+        """Dask 3-D output should match eager numpy output pixel-for-pixel."""
+        from xrspatial.reproject import reproject
+        raster = self._make_3d_raster()
+        eager = reproject(raster, 'EPSG:32633')
+        lazy_src = raster.copy(
+            data=da.from_array(raster.values, chunks=(16, 16, 3))
+        )
+        lazy = reproject(lazy_src, 'EPSG:32633').compute()
+        np.testing.assert_allclose(
+            np.asarray(eager.values), np.asarray(lazy.values),
+            rtol=1e-6, atol=1e-6, equal_nan=True,
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_3d_dask_uint8_dtype_roundtrip(self):
+        """Integer 3-D dask inputs round-trip to source dtype."""
+        from xrspatial.reproject import reproject
+        rng = np.random.default_rng(1)
+        data = rng.integers(0, 255, (32, 32, 3), dtype=np.uint8)
+        raster = xr.DataArray(
+            da.from_array(data, chunks=(16, 16, 3)),
+            dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(55, 45, 32), 'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': 0},
+        )
+        result = reproject(raster, 'EPSG:32633').compute()
+        assert result.dtype == np.uint8
+        assert result.shape[2] == 3
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+    def test_reproject_3d_cupy(self):
+        """CuPy 3-D reproject keeps band dim without CUDA signature crash."""
+        from xrspatial.reproject import reproject
+        host = self._make_3d_raster()
+        gpu_data = cp.asarray(host.values)
+        raster = host.copy(data=gpu_data)
+        result = reproject(raster, 'EPSG:32633')
+        assert result.ndim == 3
+        assert result.shape[2] == 3
+        # Pull back to host to verify finite values
+        out = cp.asnumpy(result.data) if isinstance(result.data, cp.ndarray) \
+            else np.asarray(result.values)
+        assert np.any(np.isfinite(out))
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+    def test_reproject_3d_cupy_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        host = self._make_3d_raster()
+        eager = reproject(host, 'EPSG:32633').values
+        gpu = host.copy(data=cp.asarray(host.values))
+        gpu_out = reproject(gpu, 'EPSG:32633')
+        gpu_arr = cp.asnumpy(gpu_out.data) if isinstance(gpu_out.data, cp.ndarray) \
+            else np.asarray(gpu_out.values)
+        np.testing.assert_allclose(
+            eager, gpu_arr, rtol=1e-4, atol=1e-4, equal_nan=True,
+        )
+
+    @pytest.mark.skipif(
+        not (HAS_CUPY and HAS_DASK), reason="CuPy + dask required",
+    )
+    def test_reproject_3d_dask_cupy(self):
+        """dask+cupy 3-D reproject keeps band dim."""
+        from xrspatial.reproject import reproject
+        host = self._make_3d_raster()
+        gpu_data = da.from_array(cp.asarray(host.values), chunks=(16, 16, 3))
+        raster = host.copy(data=gpu_data)
+        result = reproject(raster, 'EPSG:32633')
+        assert result.ndim == 3
+        assert result.dims == ('y', 'x', 'band')
+        computed = result.compute()
+        assert computed.shape[2] == 3
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+    def test_reproject_3d_cupy_uint8_sentinel_nodata(self):
+        """3-D cupy with integer sentinel nodata round-trips to source dtype.
+
+        Exercises the non-NaN nodata path that the float tests skip.
+        """
+        from xrspatial.reproject import reproject
+        rng = np.random.default_rng(2)
+        host = rng.integers(0, 255, (32, 32, 3), dtype=np.uint8)
+        raster = xr.DataArray(
+            cp.asarray(host),
+            dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(55, 45, 32), 'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': 0},
+        )
+        result = reproject(raster, 'EPSG:32633')
+        assert result.dtype == np.uint8
+        assert result.shape[2] == 3
+
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
+class TestMerge3DRejection:
+    """merge() must reject 3-D inputs with a clear error (#2027).
+
+    Before the fix, merge() advertised 3-D support via its validator but
+    crashed at output DataArray construction because the merge strategies,
+    same-CRS placement, and final `dims=[ydim, xdim]` all assume 2-D. We
+    tighten the validator so callers see a clean message instead.
+    """
+
+    def test_merge_rejects_3d_dataarray(self):
+        from xrspatial.reproject import merge
+        a = xr.DataArray(
+            np.random.rand(8, 8, 3),
+            dims=['y', 'x', 'band'],
+            coords={
+                'y': np.linspace(5, -5, 8),
+                'x': np.linspace(-5, 0, 8),
+                'band': [1, 2, 3],
+            },
+            attrs={'crs': 'EPSG:4326'},
+        )
+        b = xr.DataArray(
+            np.random.rand(8, 8, 3),
+            dims=['y', 'x', 'band'],
+            coords={
+                'y': np.linspace(5, -5, 8),
+                'x': np.linspace(0, 5, 8),
+                'band': [1, 2, 3],
+            },
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"must be 2D"):
+            merge([a, b], resolution=1.0)
