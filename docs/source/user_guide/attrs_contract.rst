@@ -63,6 +63,13 @@ write.
        primary nodata source. The read-side precedence chain is
        ``nodata``, then ``nodatavals``, then ``_FillValue``; see
        ``_resolve_nodata_attr``.
+   * - ``masked_nodata``
+     - bool
+     - Paired with ``nodata``. ``True`` when the in-memory array is
+       float dtype and the reader's sentinel-to-NaN step ran;
+       ``False`` when the array still carries the literal integer
+       sentinel. Only set when ``nodata`` is set; absence means no
+       declared sentinel.
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;

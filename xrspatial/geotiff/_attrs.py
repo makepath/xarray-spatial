@@ -37,9 +37,15 @@ Canonical (xrspatial owns these; round-trip stable):
   ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``. Omitted
   for files with no GeoTIFF transform tags (ModelTransformation,
   ModelPixelScale, or ModelTiepoint).
-- ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag. The
-  declared-vs-masked split is tracked in issue #1988; the canonical
-  semantics here describe the intended behaviour once #1988 lands.
+- ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag.
+  Set whenever the source declares one, as a scalar of the source
+  dtype, regardless of whether the in-memory array is float-with-NaN
+  or int-with-sentinels.
+- ``masked_nodata``: boolean flag paired with ``nodata``. ``True`` iff
+  the in-memory array is float dtype and the reader's sentinel-to-NaN
+  step ran; ``False`` iff the array still carries the literal integer
+  sentinel. Only emitted when ``nodata`` is set; absence is the
+  "no declared sentinel" signal. See ``_set_nodata_attrs``.
 - ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
   (explicit / RasterPixelIsPoint).
 - ``extra_tags``: list of ``(tag_id, type_id, count, value)`` tuples for
