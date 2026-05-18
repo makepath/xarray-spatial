@@ -647,3 +647,69 @@ def test_masked_nodata_with_non_integer_sentinel_passes_through(
     # NaN sentinels rather than trying to do something silly.
     cand.attrs['masked_nodata'] = True
     compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_fractional_sentinel_does_not_mask(
+    tmp_path: Path,
+) -> None:
+    """A non-integer sentinel cannot match an integer pixel; the
+    normaliser declines to mask.
+
+    Without this guard the oracle would cast ``3.5`` to ``3`` and
+    silently mask every 3-valued pixel. The upstream xrspatial reader
+    never sets ``attrs['masked_nodata']`` for a fractional sentinel,
+    so the oracle's stricter check mirrors that contract. Outcome:
+    the oracle stays on the raw-pixel path and the dtype mismatch
+    surfaces normally.
+    """
+    raw = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint16)
+    transform = from_origin(0.0, 2.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'frac_sentinel.tif', raw, transform=transform,
+        nodata=3.5,
+    )
+    masked = raw.astype(np.float64)
+    cand = _build_candidate(
+        masked, transform=transform, nodata=3.5,
+    )
+    cand.attrs['masked_nodata'] = True
+    with pytest.raises(AssertionError, match='dtype mismatch'):
+        compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_out_of_range_sentinel_does_not_mask() -> None:
+    """A sentinel outside the source integer range cannot match any pixel.
+
+    Without the range guard, ``np.uint16(-1.0)`` wraps to ``65535`` and
+    masks the dtype-max pixel. The reader rejects such sentinels via
+    ``info.min <= nodata_int <= info.max``; the oracle mirrors that
+    check.
+
+    Rasterio refuses to write an out-of-range nodata at the writer
+    level, so we cannot reach this code path through a real fixture.
+    The test calls the helper directly with synthesised inputs to
+    confirm the guard fires.
+    """
+    from xrspatial.geotiff.tests.golden_corpus._oracle import (
+        _normalise_for_masked_nodata,
+    )
+
+    ref_pixels = np.array(
+        [[1, 2, 65535], [4, 5, 6]], dtype=np.uint16,
+    )
+    ref_dtype = ref_pixels.dtype
+    cand = _build_candidate(
+        ref_pixels.astype(np.float64),
+        transform=from_origin(0.0, 2.0, 1.0, 1.0),
+        nodata=-1,
+    )
+    cand.attrs['masked_nodata'] = True
+
+    out_pixels, out_dtype = _normalise_for_masked_nodata(
+        ref_pixels, ref_dtype, -1, cand,
+    )
+    # Out-of-range sentinel must abort the rewrite. The helper returns
+    # the inputs unchanged; the unsigned wraparound that would otherwise
+    # mask the dtype-max pixel does not happen.
+    assert out_dtype == ref_dtype
+    assert out_pixels is ref_pixels

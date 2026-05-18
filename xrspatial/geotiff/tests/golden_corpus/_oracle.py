@@ -291,15 +291,25 @@ def _normalise_for_masked_nodata(
         # else, fall through to the normal strict comparison and let
         # it fail with a clear message.
         return ref_pixels, ref_dtype
-    # The sentinel must be a finite real number that fits in the
-    # source integer dtype. A NaN / Inf sentinel cannot match any
-    # integer pixel and would be the wrong contract.
+    # The sentinel must be a finite, integer-valued real number that
+    # fits in the source integer dtype. The upstream xrspatial reader
+    # at xrspatial/geotiff/__init__.py only sets attrs['masked_nodata']
+    # under the same three guards; the oracle mirrors them so a
+    # candidate that drifts (sets the flag with an out-of-range or
+    # fractional sentinel) cannot trick the oracle into masking the
+    # wrong pixels via integer truncation or unsigned wraparound.
     try:
         nd_float = float(ref_nodata)
     except (TypeError, ValueError):
         return ref_pixels, ref_dtype
     if not np.isfinite(nd_float):
         return ref_pixels, ref_dtype
+    if not float(nd_float).is_integer():
+        return ref_pixels, ref_dtype
+    if ref_pixels.dtype.kind in ('i', 'u'):
+        info = np.iinfo(ref_pixels.dtype)
+        if not (info.min <= int(nd_float) <= info.max):
+            return ref_pixels, ref_dtype
     new_ref = ref_pixels.astype(cand_dtype, copy=True)
     new_ref[ref_pixels == ref_pixels.dtype.type(nd_float)] = np.nan
     return new_ref, cand_dtype
