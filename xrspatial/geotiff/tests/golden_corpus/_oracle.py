@@ -246,6 +246,76 @@ def _pixels_equal(ref: np.ndarray, cand: np.ndarray) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Masked-nodata normalisation (issue #1988)
+# ---------------------------------------------------------------------------
+
+def _has_masked_nodata(candidate_da: xr.DataArray) -> bool:
+    """True when the candidate reports xrspatial's masked-nodata contract.
+
+    The contract (issue #1988): xrspatial reads an integer GeoTIFF whose
+    nodata tag carries an integer sentinel, masks the sentinel-equal
+    pixels to NaN, and upcasts the array to float so NaN can live in
+    it. The reader stamps ``attrs['masked_nodata'] = True`` to record
+    that the masking happened; ``attrs['nodata']`` still carries the
+    original integer sentinel so a write round-trip can put the tag
+    back.
+    """
+    return bool(candidate_da.attrs.get('masked_nodata', False))
+
+
+def _normalise_for_masked_nodata(
+    ref_pixels: np.ndarray,
+    ref_dtype: np.dtype,
+    ref_nodata,
+    candidate_da: xr.DataArray,
+) -> tuple[np.ndarray, np.dtype]:
+    """Apply xrspatial's masked-nodata contract to the rasterio reference.
+
+    When the candidate reports ``attrs['masked_nodata']=True``, the
+    reference is rewritten so it matches what the candidate produced:
+    cast to the candidate's float dtype, then any pixel equal to the
+    integer sentinel ``ref_nodata`` becomes ``NaN``. The ``ref_dtype``
+    returned alongside is the candidate's dtype, so the downstream
+    ``_assert_dtype`` check passes by design.
+
+    If the candidate does not report masked nodata, or if ``ref_nodata``
+    is not a finite integer sentinel, the inputs pass through
+    unchanged. That keeps every existing fixture's behaviour intact.
+    """
+    if not _has_masked_nodata(candidate_da):
+        return ref_pixels, ref_dtype
+    cand_dtype = np.dtype(candidate_da.dtype)
+    if cand_dtype.kind != 'f':
+        # The masked_nodata contract requires a float dtype on the
+        # candidate so NaN can live in the array. If it is anything
+        # else, fall through to the normal strict comparison and let
+        # it fail with a clear message.
+        return ref_pixels, ref_dtype
+    # The sentinel must be a finite, integer-valued real number that
+    # fits in the source integer dtype. The upstream xrspatial reader
+    # at xrspatial/geotiff/__init__.py only sets attrs['masked_nodata']
+    # under the same three guards; the oracle mirrors them so a
+    # candidate that drifts (sets the flag with an out-of-range or
+    # fractional sentinel) cannot trick the oracle into masking the
+    # wrong pixels via integer truncation or unsigned wraparound.
+    try:
+        nd_float = float(ref_nodata)
+    except (TypeError, ValueError):
+        return ref_pixels, ref_dtype
+    if not np.isfinite(nd_float):
+        return ref_pixels, ref_dtype
+    if not float(nd_float).is_integer():
+        return ref_pixels, ref_dtype
+    if ref_pixels.dtype.kind in ('i', 'u'):
+        info = np.iinfo(ref_pixels.dtype)
+        if not (info.min <= int(nd_float) <= info.max):
+            return ref_pixels, ref_dtype
+    new_ref = ref_pixels.astype(cand_dtype, copy=True)
+    new_ref[ref_pixels == ref_pixels.dtype.type(nd_float)] = np.nan
+    return new_ref, cand_dtype
+
+
+# ---------------------------------------------------------------------------
 # Canonical-attrs hook (issue #1984)
 # ---------------------------------------------------------------------------
 
@@ -458,6 +528,14 @@ def compare_to_oracle(
             'nodata': ref_nodata,
             'dtype': ref_dtype,
         }
+
+    # When the candidate reports the masked-nodata contract (#1988),
+    # rewrite the rasterio reference to match: cast to the candidate's
+    # float dtype and replace sentinel-equal pixels with NaN. Then the
+    # dtype + pixel assertions run on directly comparable arrays.
+    ref_pixels, ref_dtype = _normalise_for_masked_nodata(
+        ref_pixels, ref_dtype, ref_nodata, candidate_da
+    )
 
     _assert_dtype(ref_dtype, candidate_da)
     _assert_transform(ref_transform, candidate_da, ref_has_georef=ref_has_georef)

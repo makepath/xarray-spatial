@@ -502,3 +502,214 @@ def test_crs_equal_rejects_empty_proj_dict() -> None:
     assert b.to_epsg() is None
     assert a.to_dict() == {} == b.to_dict()
     assert _crs_equal(a, b) is False
+
+
+# ---------------------------------------------------------------------------
+# Masked-nodata contract (issue #1988)
+# ---------------------------------------------------------------------------
+
+def _masked_nodata_pair(
+    tmp_path: Path, sentinel: int = 0
+) -> tuple[Path, xr.DataArray, np.ndarray]:
+    """Build a uint16 fixture with an integer nodata sentinel and a
+    float candidate that has masked the sentinel pixels to NaN.
+
+    Returns ``(fixture_path, candidate, candidate_float_array)``.
+    """
+    raw = np.array(
+        [
+            [1, 2, sentinel, 4],
+            [5, sentinel, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ],
+        dtype=np.uint16,
+    )
+    transform = from_origin(0.0, 4.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'masked_nodata.tif',
+        raw,
+        transform=transform,
+        nodata=sentinel,
+    )
+    masked = raw.astype(np.float64)
+    masked[raw == sentinel] = np.nan
+    cand = _build_candidate(
+        masked, transform=transform, nodata=sentinel,
+    )
+    cand.attrs['masked_nodata'] = True
+    return fixture, cand, masked
+
+
+def test_masked_nodata_success(tmp_path: Path) -> None:
+    """Candidate that masks the integer sentinel to NaN passes the oracle.
+
+    The oracle rewrites the rasterio reference to match the candidate's
+    float-plus-NaN view before comparing, so dtype shift + pixel mask
+    no longer registers as a mismatch.
+    """
+    fixture, cand, _ = _masked_nodata_pair(tmp_path)
+    compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_off_keeps_strict_dtype_check(tmp_path: Path) -> None:
+    """Without ``masked_nodata=True``, the oracle keeps strict dtype parity.
+
+    Drop the flag and the candidate's float dtype no longer matches the
+    rasterio uint16 reference; the dtype assertion fires.
+    """
+    fixture, cand, _ = _masked_nodata_pair(tmp_path)
+    del cand.attrs['masked_nodata']
+    with pytest.raises(AssertionError, match='dtype mismatch'):
+        compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_candidate_left_sentinel_pixel_fails(
+    tmp_path: Path,
+) -> None:
+    """If the candidate forgot to mask a sentinel pixel, the pixel
+    comparison fires.
+
+    The reference is rewritten to have NaN at the sentinel positions;
+    a candidate that still carries the raw integer value (here 0,
+    cast to float) at one of those positions cannot pass NaN-aware
+    equality.
+    """
+    fixture, cand, masked = _masked_nodata_pair(tmp_path)
+    # Restore the first sentinel pixel to the raw value, simulating
+    # a reader that mis-masked.
+    bad = masked.copy()
+    bad[0, 2] = 0.0
+    cand2 = _build_candidate(
+        bad, transform=from_origin(0.0, 4.0, 1.0, 1.0), nodata=0,
+    )
+    cand2.attrs['masked_nodata'] = True
+    with pytest.raises(AssertionError, match='pixel arrays differ'):
+        compare_to_oracle(fixture, cand2)
+
+
+def test_masked_nodata_wrong_nodata_attr_fails(tmp_path: Path) -> None:
+    """``attrs['nodata']`` must still match the fixture even with masking.
+
+    The oracle masks the reference using the *reference's* nodata, so
+    a wrong sentinel in the candidate's attrs is caught by the
+    independent ``_assert_nodata`` check before pixels are compared.
+    """
+    fixture, cand, _ = _masked_nodata_pair(tmp_path)
+    cand.attrs['nodata'] = 999  # not the real sentinel
+    with pytest.raises(AssertionError, match='nodata mismatch'):
+        compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_does_not_engage_for_float_nan_fixture(
+    tmp_path: Path,
+) -> None:
+    """Float-NaN-nodata fixtures take the plain pixel path unchanged.
+
+    The masked-nodata normaliser only fires when the candidate reports
+    ``masked_nodata=True``. A float fixture whose nodata is NaN never
+    needs the dtype shift, and the new path must not muck with it.
+    """
+    data = np.array([[1.0, np.nan], [np.nan, 4.0]], dtype=np.float32)
+    transform = from_origin(0.0, 2.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'float_nan.tif', data, transform=transform,
+        nodata=float('nan'),
+    )
+    cand = _build_candidate(
+        data.copy(), transform=transform, nodata=float('nan'),
+    )
+    # No masked_nodata flag -- the candidate is float to begin with.
+    compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_with_non_integer_sentinel_passes_through(
+    tmp_path: Path,
+) -> None:
+    """A NaN sentinel in the rasterio reference does not trip the integer
+    masking path even when ``masked_nodata`` is set.
+
+    The normaliser is gated on a finite sentinel via ``np.isfinite``.
+    A NaN-nodata fixture should compare like any other float-NaN
+    fixture: candidate keeps its own NaN pixels, reference keeps
+    its own NaN pixels, and NaN-aware equality does the rest.
+    """
+    data = np.array([[1.0, np.nan], [np.nan, 4.0]], dtype=np.float32)
+    transform = from_origin(0.0, 2.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'masked_nan.tif', data, transform=transform,
+        nodata=float('nan'),
+    )
+    cand = _build_candidate(
+        data.copy(), transform=transform, nodata=float('nan'),
+    )
+    # Set the flag to confirm the normaliser early-exits cleanly on
+    # NaN sentinels rather than trying to do something silly.
+    cand.attrs['masked_nodata'] = True
+    compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_fractional_sentinel_does_not_mask(
+    tmp_path: Path,
+) -> None:
+    """A non-integer sentinel cannot match an integer pixel; the
+    normaliser declines to mask.
+
+    Without this guard the oracle would cast ``3.5`` to ``3`` and
+    silently mask every 3-valued pixel. The upstream xrspatial reader
+    never sets ``attrs['masked_nodata']`` for a fractional sentinel,
+    so the oracle's stricter check mirrors that contract. Outcome:
+    the oracle stays on the raw-pixel path and the dtype mismatch
+    surfaces normally.
+    """
+    raw = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint16)
+    transform = from_origin(0.0, 2.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'frac_sentinel.tif', raw, transform=transform,
+        nodata=3.5,
+    )
+    masked = raw.astype(np.float64)
+    cand = _build_candidate(
+        masked, transform=transform, nodata=3.5,
+    )
+    cand.attrs['masked_nodata'] = True
+    with pytest.raises(AssertionError, match='dtype mismatch'):
+        compare_to_oracle(fixture, cand)
+
+
+def test_masked_nodata_out_of_range_sentinel_does_not_mask() -> None:
+    """A sentinel outside the source integer range cannot match any pixel.
+
+    Without the range guard, ``np.uint16(-1.0)`` wraps to ``65535`` and
+    masks the dtype-max pixel. The reader rejects such sentinels via
+    ``info.min <= nodata_int <= info.max``; the oracle mirrors that
+    check.
+
+    Rasterio refuses to write an out-of-range nodata at the writer
+    level, so we cannot reach this code path through a real fixture.
+    The test calls the helper directly with synthesised inputs to
+    confirm the guard fires.
+    """
+    from xrspatial.geotiff.tests.golden_corpus._oracle import (
+        _normalise_for_masked_nodata,
+    )
+
+    ref_pixels = np.array(
+        [[1, 2, 65535], [4, 5, 6]], dtype=np.uint16,
+    )
+    ref_dtype = ref_pixels.dtype
+    cand = _build_candidate(
+        ref_pixels.astype(np.float64),
+        transform=from_origin(0.0, 2.0, 1.0, 1.0),
+        nodata=-1,
+    )
+    cand.attrs['masked_nodata'] = True
+
+    out_pixels, out_dtype = _normalise_for_masked_nodata(
+        ref_pixels, ref_dtype, -1, cand,
+    )
+    # Out-of-range sentinel must abort the rewrite. The helper returns
+    # the inputs unchanged; the unsigned wraparound that would otherwise
+    # mask the dtype-max pixel does not happen.
+    assert out_dtype == ref_dtype
+    assert out_pixels is ref_pixels
