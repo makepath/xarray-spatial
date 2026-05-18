@@ -42,20 +42,26 @@ write.
      - EPSG code of the horizontal CRS, when one can be resolved.
    * - ``crs_wkt``
      - str
-     - WKT2 string of the horizontal CRS. Always present on read when
-       any CRS information is available, and treated as the canonical
-       CRS representation when both ``crs`` and ``crs_wkt`` are set.
+     - WKT string of the horizontal CRS. Present on read when any CRS
+       information is available, and treated as the canonical CRS
+       representation when both ``crs`` and ``crs_wkt`` are set. The
+       dialect depends on the source: paths that synthesise a WKT from
+       an EPSG code via pyproj emit WKT2; paths that read a WKT
+       verbatim from the file (e.g. a VRT ``SRS`` tag) carry whatever
+       dialect was stored.
    * - ``transform``
      - tuple
-     - ``(origin_x, pixel_width, 0, origin_y, 0, pixel_height)``
-       affine transform tuple matching the GDAL ordering. Omitted for
-       files with no ``ModelTransformation`` / ``ModelPixelScale`` /
-       ``ModelTiepoint`` tags.
+     - ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``
+       affine transform tuple matching the rasterio ``Affine`` ordering.
+       Omitted for files with no ``ModelTransformation`` /
+       ``ModelPixelScale`` / ``ModelTiepoint`` tags.
    * - ``nodata``
      - scalar
      - Numeric NoData sentinel. Emitted by readers when the file
        carries a ``GDAL_NODATA`` tag, and consumed by writers as the
-       primary nodata source.
+       primary nodata source. The read-side precedence chain is
+       ``nodata``, then ``nodatavals``, then ``_FillValue``; see
+       ``_resolve_nodata_attr``.
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;
