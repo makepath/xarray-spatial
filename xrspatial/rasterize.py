@@ -1517,6 +1517,12 @@ def _normalize_chunks(chunks, height, width):
     else:
         rchunk, cchunk = chunks
 
+    # Both axes must have positive chunk sizes. A zero would loop forever
+    # below; a negative would diverge.
+    if rchunk <= 0 or cchunk <= 0:
+        raise ValueError(
+            f"chunks must be positive, got ({rchunk}, {cchunk})")
+
     row_chunks = []
     remaining = height
     while remaining > 0:
@@ -2104,9 +2110,9 @@ def rasterize(
     name : str, default 'rasterize'
         Name for the output DataArray.
     resolution : float or (x_res, y_res), optional
-        Pixel size.  When given with ``bounds``, computes ``width`` and
-        ``height`` automatically.  A single float uses the same
-        resolution for both axes.
+        Pixel size.  Must be finite and ``> 0``.  When given with
+        ``bounds``, computes ``width`` and ``height`` automatically.
+        A single float uses the same resolution for both axes.
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
         from this array (any can still be overridden explicitly).
@@ -2135,9 +2141,9 @@ def rasterize(
 
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
-        tiles of this size ``(row_chunk, col_chunk)``.  A single int
-        uses the same chunk size for both axes.  Combined with
-        ``use_cuda`` to select dask+numpy vs dask+cupy.
+        tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
+        ``> 0``.  A single int uses the same chunk size for both axes.
+        Combined with ``use_cuda`` to select dask+numpy vs dask+cupy.
     max_pixels : int, default 1_000_000_000
         Safety cap on the resolved output size (``width * height``).  The
         function raises ``ValueError`` before any host or device
@@ -2237,6 +2243,13 @@ def rasterize(
             x_res = y_res = float(resolution)
         else:
             x_res, y_res = float(resolution[0]), float(resolution[1])
+        # Reject non-finite or non-positive resolution before dimension math.
+        # Without this, inf/-1 quietly produce a 1x1 raster, 0 raises an
+        # opaque ZeroDivisionError, and nan raises an int-conversion error.
+        for r in (x_res, y_res):
+            if not np.isfinite(r) or r <= 0:
+                raise ValueError(
+                    f"resolution must be finite and > 0, got {resolution!r}")
         final_width = max(int(np.ceil((xmax - xmin) / x_res)), 1)
         final_height = max(int(np.ceil((ymax - ymin) / y_res)), 1)
     elif like_width is not None:
