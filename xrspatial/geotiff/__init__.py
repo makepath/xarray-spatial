@@ -254,6 +254,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
                  allow_unparseable_crs: bool = False,
+                 mask_nodata: bool = True,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
@@ -322,6 +323,17 @@ def open_geotiff(source: str | BinaryIO, *,
         return a partial mosaic. Passing this kwarg with a non-VRT
         source raises ``ValueError`` because the policy only applies to
         the VRT pipeline. See ``read_vrt`` for the full description.
+    mask_nodata : bool, default True
+        If True (the default), replace the nodata sentinel with ``NaN``;
+        integer rasters get promoted to ``float64`` first so NaN can be
+        represented. If False, skip the sentinel-to-NaN step and keep
+        the source dtype. ``attrs['nodata']`` still carries the raw
+        sentinel either way, so downstream code can mask explicitly.
+        Pass ``mask_nodata=False`` when you want to preserve an integer
+        source dtype via ``dtype=``: the default ``mask_nodata=True``
+        promotes to ``float64`` whenever the sentinel matches an actual
+        pixel, and ``dtype=<integer>`` then raises ``ValueError`` on the
+        float-to-int cast.
 
     Returns
     -------
@@ -346,10 +358,14 @@ def open_geotiff(source: str | BinaryIO, *,
 
     Integer rasters with a nodata sentinel are silently promoted to
     ``float64`` with NaN replacing the sentinel so downstream NaN-aware
-    code works uniformly. Pass ``dtype=...`` to keep the source dtype
-    (the cast will fail with ``ValueError`` for float-to-int because that
-    is lossy in a way users rarely intend; cast explicitly after read if
-    you need it).
+    code works uniformly. To keep the source dtype on a file whose
+    sentinel matches actual pixels, pass ``mask_nodata=False``; the raw
+    sentinel stays in the data and ``attrs['nodata']`` still carries it.
+    Passing ``dtype=<integer>`` on its own is not enough: the
+    sentinel-to-NaN promotion runs first and the subsequent integer cast
+    then raises ``ValueError`` (float-to-int is lossy in a way users
+    rarely intend). When the file has no in-range sentinel match, the
+    promotion is skipped and ``dtype=<integer>`` works either way.
     """
     from ._reader import _coerce_path
 
@@ -447,6 +463,7 @@ def open_geotiff(source: str | BinaryIO, *,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
                         allow_unparseable_crs=allow_unparseable_crs,
+                        mask_nodata=mask_nodata,
                         **vrt_kwargs)
 
     # File-like buffers don't support the GPU or dask code paths because
@@ -474,6 +491,7 @@ def open_geotiff(source: str | BinaryIO, *,
                                 max_pixels=max_pixels,
                                 allow_rotated=allow_rotated,
                                 allow_unparseable_crs=allow_unparseable_crs,
+                                mask_nodata=mask_nodata,
                                 **gpu_kwargs)
 
     # Dask path (CPU)
@@ -483,7 +501,8 @@ def open_geotiff(source: str | BinaryIO, *,
                                  window=window, band=band,
                                  max_pixels=max_pixels, name=name,
                                  allow_rotated=allow_rotated,
-                                 allow_unparseable_crs=allow_unparseable_crs)
+                                 allow_unparseable_crs=allow_unparseable_crs,
+                                 mask_nodata=mask_nodata)
 
     kwargs = {}
     if max_pixels is not None:
@@ -543,16 +562,18 @@ def open_geotiff(source: str | BinaryIO, *,
     # write is safe; an extra ``arr.copy()`` would just double peak
     # memory for a multi-MB raster.
     nodata = geo_info.nodata
-    if nodata is not None:
+    if nodata is not None and mask_nodata:
         # When the reader applied MinIsWhite, the sentinel-equality mask
         # must compare against the inverted sentinel value (issue #1809).
         # ``read_to_array`` / ``_read_cog_http`` stash that value on
         # ``geo_info._mask_nodata``; fall back to the original sentinel
-        # on non-MinIsWhite files.
-        mask_nodata = getattr(geo_info, '_mask_nodata', nodata)
+        # on non-MinIsWhite files. Renamed from ``mask_nodata`` to
+        # ``nodata_sentinel`` so the local does not shadow the
+        # ``mask_nodata`` opt-out kwarg (#2052).
+        nodata_sentinel = getattr(geo_info, '_mask_nodata', nodata)
         if arr.dtype.kind == 'f':
-            if mask_nodata is not None and not np.isnan(mask_nodata):
-                arr[arr == arr.dtype.type(mask_nodata)] = np.nan
+            if nodata_sentinel is not None and not np.isnan(nodata_sentinel):
+                arr[arr == arr.dtype.type(nodata_sentinel)] = np.nan
         elif arr.dtype.kind in ('u', 'i'):
             # Integer arrays: convert to float to represent NaN.
             # An out-of-range sentinel (e.g. uint16 file with
@@ -571,10 +592,10 @@ def open_geotiff(source: str | BinaryIO, *,
             # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
             # attrs['nodata'] still carries the raw sentinel so a write
             # round-trip preserves the tag.
-            if (mask_nodata is not None
-                    and np.isfinite(mask_nodata)
-                    and float(mask_nodata).is_integer()):
-                nodata_int = int(mask_nodata)
+            if (nodata_sentinel is not None
+                    and np.isfinite(nodata_sentinel)
+                    and float(nodata_sentinel).is_integer()):
+                nodata_int = int(nodata_sentinel)
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
                     mask = arr == arr.dtype.type(nodata_int)

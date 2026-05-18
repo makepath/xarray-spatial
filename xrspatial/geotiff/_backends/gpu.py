@@ -86,6 +86,7 @@ def read_geotiff_gpu(source: str, *,
                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                      allow_rotated: bool = False,
                      allow_unparseable_crs: bool = False,
+                     mask_nodata: bool = True,
                      gpu: str = _GPU_DEPRECATED_SENTINEL,
                      ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
@@ -171,6 +172,13 @@ def read_geotiff_gpu(source: str, *,
         ``TypeError``. The old name shipped with values ``'auto'`` /
         ``'strict'`` and was easy to confuse with the boolean ``gpu=``
         kwarg on ``open_geotiff`` / ``to_geotiff`` / ``read_vrt``.
+    mask_nodata : bool, default True
+        If True, replace the nodata sentinel with NaN (integer rasters
+        get promoted to ``float64`` first). If False, keep the source
+        dtype and leave the raw sentinel in the data. ``attrs['nodata']``
+        carries the sentinel either way. Pass ``mask_nodata=False``
+        together with ``dtype=<integer>`` to preserve an integer source
+        dtype on a file with a matching sentinel. See issue #2052.
 
     Returns
     -------
@@ -241,6 +249,7 @@ def read_geotiff_gpu(source: str, *,
             name=name, max_pixels=max_pixels,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
+            mask_nodata=mask_nodata,
         )
 
     from .._reader import (
@@ -405,7 +414,7 @@ def read_geotiff_gpu(source: str, *,
             # ``_mask_nodata`` when applicable; fall back to the original
             # sentinel otherwise (#1809).
             nodata = geo_info.nodata
-            if nodata is not None:
+            if nodata is not None and mask_nodata:
                 mask_value = getattr(_stripped_geo, '_mask_nodata', nodata)
                 arr_gpu = _apply_nodata_mask_gpu(arr_gpu, mask_value)
             if dtype is not None:
@@ -697,7 +706,7 @@ def read_geotiff_gpu(source: str, *,
     # dtype cast so the float promotion for masked integer rasters doesn't
     # surprise a user-supplied dtype.
     nodata = geo_info.nodata
-    if nodata is not None:
+    if nodata is not None and mask_nodata:
         # When MinIsWhite was applied, the mask must use the inverted
         # sentinel; otherwise the original sentinel. The pure GPU path
         # records the inverted sentinel in ``_mw_mask_nodata`` above; the
@@ -902,7 +911,8 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
 def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                               window, band, name, max_pixels,
                               allow_rotated: bool = False,
-                              allow_unparseable_crs: bool = False):
+                              allow_unparseable_crs: bool = False,
+                              mask_nodata: bool = True):
     """Lazy Dask+CuPy backend for ``read_geotiff_gpu(chunks=...)``.
 
     Two paths produce the same shape of dask graph:
@@ -964,6 +974,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                     name=name, max_pixels=max_pixels,
                     allow_rotated=allow_rotated,
                     allow_unparseable_crs=allow_unparseable_crs,
+                    mask_nodata=mask_nodata,
                 )
     except Exception:
         # GDS qualification failed; fall back to the CPU path. The
@@ -977,6 +988,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
         max_pixels=max_pixels, name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        mask_nodata=mask_nodata,
     )
 
     cpu_dask_arr = cpu_da.data
@@ -1000,7 +1012,8 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
                                   dtype, chunks, window, band, name,
                                   max_pixels,
                                   allow_rotated: bool = False,
-                                  allow_unparseable_crs: bool = False):
+                                  allow_unparseable_crs: bool = False,
+                                  mask_nodata: bool = True):
     """Build a Dask+CuPy graph that decodes each chunk disk->GPU.
 
     Caller must have verified that the source qualifies via
@@ -1108,8 +1121,10 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
 
     # Determine declared dtype for the dask graph. Nodata masking
     # promotes integer rasters to float64; mirror the CPU dask path.
+    # When ``mask_nodata=False`` the masking is skipped, so no promotion.
     declared_dtype = file_dtype
-    if nodata is not None and file_dtype.kind in ('u', 'i'):
+    if (mask_nodata and nodata is not None
+            and file_dtype.kind in ('u', 'i')):
         if np.isfinite(nodata) and float(nodata).is_integer():
             info = np.iinfo(file_dtype)
             if info.min <= int(nodata) <= info.max:
@@ -1127,7 +1142,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
             r0, c0, r1, c1,
             masked_fill=masked_fill,
         )
-        if nodata is not None:
+        if nodata is not None and mask_nodata:
             arr = _apply_nodata_mask_gpu(arr, nodata)
         if dtype is not None:
             target = np.dtype(dtype)
