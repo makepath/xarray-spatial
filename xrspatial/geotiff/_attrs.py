@@ -61,12 +61,6 @@ when the canonical key is present):
 Best-effort pass-through (preserved when the writer can reconstruct
 from canonical state, otherwise dropped on round-trip):
 
-- ``crs_name``: human-readable CRS name from the GeoKey directory.
-- ``geog_citation``: GeographicTypeGeoKey citation string.
-- ``datum_code``: GeogGeodeticDatumGeoKey value.
-- ``angular_units``: GeogAngularUnitsGeoKey value.
-- ``semi_major_axis``: GeogSemiMajorAxisGeoKey value.
-- ``inv_flattening``: GeogInvFlatteningGeoKey value.
 - ``image_description``: TIFF ImageDescription tag.
 - ``extra_samples``: TIFF ExtraSamples tag.
 - ``colormap``, ``colormap_rgba``, ``cmap``: palette data attached to
@@ -74,22 +68,68 @@ from canonical state, otherwise dropped on round-trip):
 
 Deprecated (will be removed in a future release; see issue #1984):
 
+These attrs are still emitted on read for one release cycle, but each
+emission triggers a ``DeprecationWarning``. The writer's
+``build_geo_tags`` only emits the primary CRS GeoKey and citation for
+each CRS axis (horizontal / projected / vertical), so the secondary
+GeoKeys these attrs derive from are never written and the values do
+not survive a write -> read round-trip. Callers should stop relying
+on them and use ``crs`` / ``crs_wkt`` instead.
+
+Geographic-CRS GeoKey attrs:
+
+- ``crs_name``: human-readable CRS name from the GeoKey directory.
+- ``geog_citation``: GeographicTypeGeoKey citation string.
+- ``datum_code``: GeogGeodeticDatumGeoKey value.
+- ``angular_units``: GeogAngularUnitsGeoKey value.
+- ``semi_major_axis``: GeogSemiMajorAxisGeoKey value.
+- ``inv_flattening``: GeogInvFlatteningGeoKey value.
+
+Projected-CRS GeoKey attrs:
+
 - ``linear_units``: ProjLinearUnitsGeoKey value. The writer's
   ``build_geo_tags`` only emits the primary ``GEOKEY_PROJECTED_CS_TYPE``
   and never the secondary projected GeoKeys, so this attr cannot be
-  reconstructed on round-trip. Read-side emission triggers a
-  ``DeprecationWarning`` for one release cycle before removal.
+  reconstructed on round-trip.
 - ``projection_code``: ProjectionGeoKey value. Same root cause as
   ``linear_units``: the writer never emits the underlying GeoKey, so
-  the value cannot survive a round-trip. Read-side emission triggers a
-  ``DeprecationWarning`` for one release cycle before removal.
+  the value cannot survive a round-trip.
+
+Vertical-CRS GeoKey attrs:
+
 - ``vertical_crs``: VerticalCSTypeGeoKey value. The writer never emits
-  the vertical GeoKey block, so this attr cannot round-trip. It still
-  appears on read but triggers a ``DeprecationWarning``.
+  the vertical GeoKey block, so this attr cannot round-trip.
 - ``vertical_citation``: VerticalCitationGeoKey value. Same deprecation
   reason as ``vertical_crs``.
 - ``vertical_units``: VerticalUnitsGeoKey value. Same deprecation reason
   as ``vertical_crs``.
+
+Migration recipe (the canonical replacement is ``crs`` / ``crs_wkt``
+plus a one-liner with :mod:`pyproj` when a derived value is needed)::
+
+    from pyproj import CRS
+    crs = CRS.from_wkt(attrs['crs_wkt'])  # or CRS.from_epsg(attrs['crs'])
+
+    # Geographic
+    crs.name                                 # crs_name
+    crs.datum.to_epsg()                      # datum_code
+    crs.ellipsoid.semi_major_metre           # semi_major_axis
+    crs.ellipsoid.inverse_flattening         # inv_flattening
+    # geog_citation / angular_units: best-effort derive from
+    # ``crs`` / ``crs.axis_info``; the original GeoKey citation text
+    # is not generally recoverable.
+
+    # Projected
+    crs.coordinate_system.axis_list[0].unit_name   # linear_units
+    crs.to_epsg()                                  # projection_code
+
+    # Vertical
+    crs.sub_crs_list[-1].to_epsg()                 # vertical_crs
+    crs.sub_crs_list[-1].name                      # vertical_citation
+    crs.sub_crs_list[-1].axis_info[0].unit_name    # vertical_units
+
+See ``docs/source/user_guide/attrs_contract.rst`` for the full
+migration notes.
 """
 from __future__ import annotations
 
@@ -137,6 +177,52 @@ _ATTRS_CONTRACT_VERSION = 1
 
 # String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
 _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
+
+
+# Geographic-CRS GeoKey-derived attrs scheduled for removal (issue #1984
+# PR 7). The writer's ``build_geo_tags`` only emits the primary
+# GEOKEY_GEOGRAPHIC_TYPE, never the secondary geographic GeoKeys these
+# attrs are derived from. The values therefore never round-trip. Keep
+# emitting them for one release cycle so external callers can migrate,
+# then drop the emission entirely.
+_DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS = (
+    'crs_name',
+    'geog_citation',
+    'datum_code',
+    'angular_units',
+    'semi_major_axis',
+    'inv_flattening',
+)
+
+
+def _deprecated_geographic_geokey_warning(name: str) -> str:
+    """Warning text shared by every deprecated geographic-GeoKey attr.
+
+    Centralised so the test suite can match the wording verbatim and so
+    every emission site uses identical phrasing. See issue #1984 PR 7.
+    """
+    return (
+        f"xrspatial.geotiff: attrs[{name!r}] is deprecated; the writer "
+        f"cannot reconstruct it from the canonical CRS so it will not "
+        f"round-trip. It will be removed in a future release. See "
+        f"issue #1984."
+    )
+
+
+def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
+    """Emit a deprecated geographic-GeoKey attr with a DeprecationWarning.
+
+    Sets ``attrs[name] = value`` (keeping the read-side emission alive
+    for one release cycle) after firing a ``DeprecationWarning`` so
+    callers learn the attr is going away. Used for the six attrs listed
+    in ``_DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS``.
+    """
+    warnings.warn(
+        _deprecated_geographic_geokey_warning(name),
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    attrs[name] = value
 
 
 def _extent_to_window(transform, file_height, file_width,
@@ -254,13 +340,16 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
         )
 
     if geo_info.crs_name is not None:
-        attrs['crs_name'] = geo_info.crs_name
+        _emit_deprecated_geographic_geokey(attrs, 'crs_name', geo_info.crs_name)
     if geo_info.geog_citation is not None:
-        attrs['geog_citation'] = geo_info.geog_citation
+        _emit_deprecated_geographic_geokey(
+            attrs, 'geog_citation', geo_info.geog_citation)
     if geo_info.datum_code is not None:
-        attrs['datum_code'] = geo_info.datum_code
+        _emit_deprecated_geographic_geokey(
+            attrs, 'datum_code', geo_info.datum_code)
     if geo_info.angular_units is not None:
-        attrs['angular_units'] = geo_info.angular_units
+        _emit_deprecated_geographic_geokey(
+            attrs, 'angular_units', geo_info.angular_units)
     if geo_info.linear_units is not None:
         warnings.warn(
             "xrspatial.geotiff: attrs['linear_units'] is deprecated; "
@@ -272,9 +361,11 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
         )
         attrs['linear_units'] = geo_info.linear_units
     if geo_info.semi_major_axis is not None:
-        attrs['semi_major_axis'] = geo_info.semi_major_axis
+        _emit_deprecated_geographic_geokey(
+            attrs, 'semi_major_axis', geo_info.semi_major_axis)
     if geo_info.inv_flattening is not None:
-        attrs['inv_flattening'] = geo_info.inv_flattening
+        _emit_deprecated_geographic_geokey(
+            attrs, 'inv_flattening', geo_info.inv_flattening)
     if geo_info.projection_code is not None:
         warnings.warn(
             "xrspatial.geotiff: attrs['projection_code'] is deprecated; "
