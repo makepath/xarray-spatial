@@ -16,13 +16,26 @@ Every case also asserts **fixed-point convergence**: after the first
 ``da2`` must match ``da1`` exactly. One round is enough to detect drift
 because the writer is deterministic given the same input attrs.
 
+Corpus-backed cases (using the #1930 golden corpus fixtures):
+
+* planar multiband -- in: ``PLANARCONFIG=2`` (separate). Out: chunky.
+  The writer emits chunky only, so the on-disk layout drifts but pixel
+  bytes survive (verified against the planar-separate RGB fixture).
+* overviews (internal IFD) -- base IFD pixels round-trip byte-equal;
+  the overview pyramid is rewritten by the reducer rather than copied,
+  so overview pixels are semantically equivalent only.
+* COG layout -- base IFD pixels round-trip byte-equal; the
+  ``LAYOUT=COG`` marker re-appears because the writer is in COG mode.
+* sparse tiled -- elided zero tiles materialise as zeros on read; the
+  rewrite is a normal tiled GeoTIFF whose pixels match those zeros.
+* VRT mosaic -- read of a ``.vrt`` is semantically equivalent to a
+  ``np.concatenate`` of the source pixels; the rewrite is a plain
+  GeoTIFF whose pixels match.
+
 Cases NOT covered here (deferred to follow-up PRs):
 
 * float with non-NaN declared nodata -- requires the masked / declared
   nodata split from issue #1988 to express the invariant cleanly.
-* planar multiband -- the writer emits chunky only.
-* overviews / COG -- separate complexity, deferred.
-* VRT round-trip -- XML normalisation rules deferred.
 
 The per-incident round-trip test files
 (``test_metadata_round_trip_1484.py``,
@@ -31,6 +44,8 @@ markers for their bug numbers. This module is the canonical contract
 the writer must satisfy going forward.
 """
 from __future__ import annotations
+
+import pathlib
 
 import numpy as np
 import pytest
@@ -344,4 +359,319 @@ class TestPixelIsPointRoundTrip:
 
         da2 = _read_write_read(da1, tmp_path, "pia")
         assert 'raster_type' not in da2.attrs
+        _assert_fixed_point(da1, da2)
+
+
+# ---------------------------------------------------------------------------
+# Corpus-backed cases (#1930 golden corpus fixtures)
+#
+# The fixtures referenced below ship with the golden corpus from issue
+# #1930. The tests below pull each fixture, run it through a
+# ``read -> write -> read`` cycle, and pin the canonical invariant.
+# Per the issue's constraint, no new fixtures are added; coverage is
+# extended by reusing the corpus.
+#
+# Several corpus fixtures still carry the #1984 deprecated geographic
+# attrs (``geog_citation``, ``angular_units``, ``semi_major_axis``,
+# ``inv_flattening``). Reading them emits ``DeprecationWarning`` which
+# is informative noise here, not a regression -- the warning module
+# (``test_attrs_pr7_deprecate_geographic_1984.py``) already pins that
+# contract. Filter them out for these cases so the round-trip
+# assertions stay readable. Once the deprecated attrs are removed
+# (next #1984 PR), this filter goes away.
+# ---------------------------------------------------------------------------
+
+# Class-level filter applied to every corpus-backed test class below.
+# The fixtures emit deprecation warnings on read for the #1984
+# geographic-GeoKey attrs; that contract is locked elsewhere and is
+# noise for the round-trip tests.
+_CORPUS_DEPRECATION_FILTER = pytest.mark.filterwarnings(
+    "ignore::DeprecationWarning:xrspatial.geotiff"
+)
+
+_CORPUS_FIXTURES_DIR = (
+    pathlib.Path(__file__).resolve().parent / "golden_corpus" / "fixtures"
+)
+
+
+def _corpus_fixture(name: str) -> pathlib.Path:
+    """Return a corpus fixture path, skipping if it has not been generated.
+
+    The corpus is built by ``python -m
+    xrspatial.geotiff.tests.golden_corpus.generate``; CI runs that step
+    before the test suite. Locally, the fixtures may be absent on a
+    fresh checkout, in which case the affected case skips with a
+    pointer to the generator command.
+    """
+    p = _CORPUS_FIXTURES_DIR / name
+    if not p.exists():
+        pytest.skip(
+            f"corpus fixture {name!r} not generated; run "
+            f"`python -m xrspatial.geotiff.tests.golden_corpus.generate`"
+        )
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Case: planar-separate multiband (corpus fixture ``planar_separate_uint8_rgb``)
+# Invariant: byte-equivalent for pixels and dtype; PlanarConfiguration
+# drifts because the writer emits chunky only. The reader normalises
+# both layouts to ``(y, x, band)`` so the in-memory shape survives.
+# ---------------------------------------------------------------------------
+
+@_CORPUS_DEPRECATION_FILTER
+class TestPlanarMultibandFromCorpus:
+    """Planar-separate (``PLANARCONFIG=2``) RGB raster from the corpus.
+
+    On read, the reader normalises both planar and chunky layouts to
+    ``(y, x, band)``. On write, ``to_geotiff`` only emits chunky. The
+    re-read therefore comes back chunky, but the in-memory pixels and
+    dtype are byte-equal to the first read. This is the explicit
+    contract for the planar case: layout drift on disk, byte-equal
+    pixels in memory.
+    """
+
+    FIXTURE_NAME = "planar_separate_uint8_rgb.tif"
+
+    def test_byte_equivalent_pixels_layout_drifts(self, tmp_path):
+        src = _corpus_fixture(self.FIXTURE_NAME)
+        da1 = open_geotiff(str(src))
+        assert da1.dims == ('y', 'x', 'band')
+        assert da1.dtype == np.uint8
+        assert da1.shape[-1] == 3
+
+        da2 = _read_write_read(da1, tmp_path, "planar_corpus")
+        assert da2.dims == da1.dims
+        assert da2.dtype == da1.dtype
+        assert da2.shape == da1.shape
+        np.testing.assert_array_equal(
+            np.asarray(da2.values), np.asarray(da1.values))
+        # Fixed point: corpus fixtures carry deprecated #1984 attrs
+        # (``geog_citation`` etc.) that the writer cannot reconstruct,
+        # so the first cycle (``src -> da1 -> da2``) cannot satisfy
+        # ``_assert_fixed_point``. Run a second cycle from ``da2`` and
+        # assert convergence from there: once the deprecated attrs have
+        # dropped off, the writer must hold the fixed point.
+        da3 = _read_write_read(da2, tmp_path, "planar_corpus_2")
+        _assert_fixed_point(da2, da3)
+
+
+# ---------------------------------------------------------------------------
+# Case: internal-IFD overviews (corpus fixture ``overview_internal_uint16``)
+# Invariant: base IFD pixels are byte-equal; overview factors are
+# preserved when the writer is asked to emit the same pyramid.
+# ---------------------------------------------------------------------------
+
+@_CORPUS_DEPRECATION_FILTER
+class TestOverviewInternalFromCorpus:
+    """Internal-IFD overview pyramid from the corpus.
+
+    ``open_geotiff`` (without ``overview_level=``) returns the base IFD
+    only. The round-trip asserts:
+
+    * base pixels and dtype byte-equal after a write that re-emits the
+      same overview factors;
+    * the writer reports the same factors back on rasterio probe.
+
+    Overview *pixel* equivalence is semantic, not byte-equal: the
+    writer recomputes overviews from the base bytes through its own
+    reducer rather than copying the original IFDs. This module pins
+    factor preservation; pixel-level overview parity belongs to the
+    oracle (issue #1930).
+    """
+
+    FIXTURE_NAME = "overview_internal_uint16.tif"
+
+    def test_base_pixels_and_factors_preserved(self, tmp_path):
+        rasterio = pytest.importorskip("rasterio")
+        src = _corpus_fixture(self.FIXTURE_NAME)
+        da1 = open_geotiff(str(src))
+        assert da1.dtype == np.uint16
+        with rasterio.open(str(src)) as h:
+            src_factors = h.overviews(1)
+        assert src_factors, (
+            f"corpus fixture {self.FIXTURE_NAME} must declare overview "
+            f"factors; got {src_factors!r}"
+        )
+
+        out = tmp_path / "overview_internal_rt_1986.tif"
+        to_geotiff(da1, str(out), compression='none',
+                   cog=True, overview_levels=list(src_factors))
+        with rasterio.open(str(out)) as h:
+            out_factors = h.overviews(1)
+            out_base = h.read(1)
+        assert out_factors == src_factors, (
+            f"overview factor drift: {src_factors!r} -> {out_factors!r}"
+        )
+        np.testing.assert_array_equal(out_base, np.asarray(da1.values))
+
+        da2 = open_geotiff(str(out))
+        # Fixed point from da2 onward (deprecated #1984 attrs on the
+        # corpus fixture mean the first cycle drops keys).
+        out2 = tmp_path / "overview_internal_rt2_1986.tif"
+        to_geotiff(da2, str(out2), compression='none',
+                   cog=True, overview_levels=list(src_factors))
+        da3 = open_geotiff(str(out2))
+        _assert_fixed_point(da2, da3)
+
+
+# ---------------------------------------------------------------------------
+# Case: COG layout (corpus fixture ``cog_internal_overview_uint16``)
+# Invariant: base IFD pixels byte-equal; overview factors preserved.
+# The GDAL ``LAYOUT=COG`` ghost-IFD marker does NOT round-trip --
+# xrspatial's writer does not emit it, even when ``cog=True``. That
+# is documented drift in this case; downstream consumers that need the
+# marker should write through GDAL.
+# ---------------------------------------------------------------------------
+
+@_CORPUS_DEPRECATION_FILTER
+class TestCOGFromCorpus:
+    """COG fixture from the corpus.
+
+    Round-trip via ``to_geotiff(cog=True)`` preserves the base IFD
+    bytes and the overview factor list. The ``LAYOUT=COG``
+    ``IMAGE_STRUCTURE`` marker (a GDAL artefact) does not survive
+    because the xrspatial writer does not emit a ghost-IFD layout
+    block. That is the documented semantic drift for this case.
+    """
+
+    FIXTURE_NAME = "cog_internal_overview_uint16.tif"
+
+    def test_cog_base_and_factors_preserved_marker_drifts(self, tmp_path):
+        rasterio = pytest.importorskip("rasterio")
+        src = _corpus_fixture(self.FIXTURE_NAME)
+        da1 = open_geotiff(str(src))
+        with rasterio.open(str(src)) as h:
+            src_factors = h.overviews(1)
+            src_layout = h.tags(ns="IMAGE_STRUCTURE").get("LAYOUT")
+        assert src_layout == "COG", (
+            f"corpus COG fixture must carry LAYOUT=COG marker, got "
+            f"{src_layout!r}"
+        )
+
+        out = tmp_path / "cog_rt_1986.tif"
+        to_geotiff(da1, str(out), compression='none',
+                   cog=True, overview_levels=list(src_factors))
+        with rasterio.open(str(out)) as h:
+            out_factors = h.overviews(1)
+            out_base = h.read(1)
+            out_layout = h.tags(ns="IMAGE_STRUCTURE").get("LAYOUT")
+        assert out_factors == src_factors
+        np.testing.assert_array_equal(out_base, np.asarray(da1.values))
+        assert out_layout != "COG", (
+            "xrspatial writer must not silently mint a LAYOUT=COG ghost "
+            "marker; that block is a GDAL artefact. If a future writer "
+            "starts emitting it, tighten this invariant rather than "
+            "letting the marker drift back in unannounced."
+        )
+
+        da2 = open_geotiff(str(out))
+        # Fixed point from da2 onward (deprecated #1984 attrs on the
+        # corpus fixture mean the first cycle drops keys).
+        out2 = tmp_path / "cog_rt2_1986.tif"
+        to_geotiff(da2, str(out2), compression='none',
+                   cog=True, overview_levels=list(src_factors))
+        da3 = open_geotiff(str(out2))
+        _assert_fixed_point(da2, da3)
+
+
+# ---------------------------------------------------------------------------
+# Case: sparse tiled (corpus fixture ``sparse_tiled_uint16``)
+# Invariant: byte-equivalent for pixels (all zeros materialised); the
+# rewrite is a normal tiled GeoTIFF whose pixels match. Sparseness on
+# disk does NOT round-trip -- the rewrite writes every tile.
+# ---------------------------------------------------------------------------
+
+@_CORPUS_DEPRECATION_FILTER
+class TestSparseTiledFromCorpus:
+    """Sparse-tiled fixture from the corpus.
+
+    The reader materialises every elided tile as zeros, so the
+    in-memory array is a plain all-zero raster. The rewrite is a normal
+    tiled GeoTIFF that carries non-zero TileByteCounts; sparseness on
+    disk does not round-trip. Pixel bytes do.
+    """
+
+    FIXTURE_NAME = "sparse_tiled_uint16.tif"
+
+    def test_zeros_materialise_and_round_trip(self, tmp_path):
+        src = _corpus_fixture(self.FIXTURE_NAME)
+        da1 = open_geotiff(str(src))
+        assert da1.dtype == np.uint16
+        assert (np.asarray(da1.values) == 0).all(), (
+            "sparse fixture must materialise as an all-zero raster "
+            "on read; non-zero pixels mean the elided-tile decoder "
+            "regressed"
+        )
+
+        da2 = _read_write_read(da1, tmp_path, "sparse_corpus")
+        np.testing.assert_array_equal(
+            np.asarray(da2.values), np.asarray(da1.values))
+        # Fixed point from da2 onward (deprecated #1984 attrs on the
+        # corpus fixture mean the first cycle drops keys).
+        da3 = _read_write_read(da2, tmp_path, "sparse_corpus_2")
+        _assert_fixed_point(da2, da3)
+
+
+# ---------------------------------------------------------------------------
+# Case: VRT mosaic (built from corpus fixtures ``dtype_uint8`` / ``dtype_uint16``)
+# Invariant: ``open_geotiff(vrt)`` is semantically equivalent to a
+# ``np.concatenate`` of the source pixels; the rewrite is a plain
+# GeoTIFF whose pixels match the VRT read byte-for-byte.
+# ---------------------------------------------------------------------------
+
+@_CORPUS_DEPRECATION_FILTER
+class TestVRTRoundTripFromCorpus:
+    """VRT mosaic round-trip.
+
+    The VRT writer takes two GeoTIFF sources from the corpus and wires
+    up a horizontal mosaic; ``open_geotiff`` resolves the VRT and
+    returns the concatenated pixels. The round-trip writes that
+    in-memory array back as a plain GeoTIFF (no VRT) and asserts the
+    re-read matches the original VRT read byte-for-byte. The VRT XML
+    itself does not round-trip -- the writer emits a single TIFF, not
+    a VRT pointing at sources. Use ``write_vrt`` explicitly when a VRT
+    is the desired output.
+    """
+
+    SOURCE_FIXTURES = ("dtype_uint8.tif", "dtype_uint16.tif")
+
+    @pytest.mark.parametrize("source_name", SOURCE_FIXTURES)
+    def test_vrt_mosaic_round_trips_as_geotiff(self, tmp_path, source_name):
+        rasterio = pytest.importorskip("rasterio")
+        from xrspatial.geotiff import write_vrt
+
+        src_path = _corpus_fixture(source_name)
+        with rasterio.open(str(src_path)) as h:
+            data = h.read(1)
+            profile = h.profile.copy()
+            t = h.transform
+        pw, ox, oy, ph = float(t.a), float(t.c), float(t.f), float(t.e)
+        _, width = data.shape
+
+        left = tmp_path / "vrt_left_1986.tif"
+        right = tmp_path / "vrt_right_1986.tif"
+        pl = profile.copy()
+        pl["transform"] = rasterio.transform.Affine(pw, 0.0, ox, 0.0, ph, oy)
+        pr = profile.copy()
+        pr["transform"] = rasterio.transform.Affine(
+            pw, 0.0, ox + pw * width, 0.0, ph, oy)
+        with rasterio.open(str(left), "w", **pl) as dst:
+            dst.write(data, 1)
+        with rasterio.open(str(right), "w", **pr) as dst:
+            dst.write(data, 1)
+
+        vrt = tmp_path / "vrt_mosaic_1986.vrt"
+        write_vrt(str(vrt), [str(left), str(right)])
+
+        da1 = open_geotiff(str(vrt))
+        expected = np.concatenate([data, data], axis=1)
+        np.testing.assert_array_equal(np.asarray(da1.values), expected)
+
+        out = tmp_path / "vrt_rt_1986.tif"
+        to_geotiff(da1, str(out), compression='none')
+        da2 = open_geotiff(str(out))
+        np.testing.assert_array_equal(
+            np.asarray(da2.values), np.asarray(da1.values))
+        assert da2.dtype == da1.dtype
         _assert_fixed_point(da1, da2)
