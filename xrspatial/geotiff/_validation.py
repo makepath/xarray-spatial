@@ -950,11 +950,13 @@ def _same_nodata(a: float, b: float) -> bool:
     return a == b
 
 
-# NOT registered by default. The mixed-band check has a much larger
-# migration cost than its sibling read-side checks (around 35 existing
-# test sites would need to opt in via ``band_nodata='first'`` to keep
-# their legacy assertions), so it lands as a follow-up PR that bundles
-# the check activation with the test migration. The check itself and
-# the ``band_nodata=`` VRT kwarg ship now so the follow-up is a
-# one-line registration call plus the test sweep.
-# register_read_metadata_check(_check_read_mixed_band_metadata)
+# Registered as of issue #1987 PR 5. The check was staged in the
+# preceding bundle (#2031) along with the ``band_nodata=`` VRT kwarg
+# but not registered, because activation needed a coordinated migration
+# of the VRT test sites that read fixtures with disagreeing per-band
+# sentinels. The migration sweep ships alongside this registration.
+# Callers that still want the legacy flatten-to-first-band behaviour
+# pass ``band_nodata='first'`` to ``read_vrt`` / ``open_geotiff`` /
+# ``read_geotiff_dask``; the explicit opt-in surfaces the per-band
+# ambiguity at the call site instead of papering over it silently.
+register_read_metadata_check(_check_read_mixed_band_metadata)

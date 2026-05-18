@@ -254,6 +254,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
                  allow_unparseable_crs: bool = False,
+                 band_nodata: str | None = None,
                  mask_nodata: bool = True,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
@@ -325,6 +326,17 @@ def open_geotiff(source: str | BinaryIO, *,
         return a partial mosaic. Passing this kwarg with a non-VRT
         source raises ``ValueError`` because the policy only applies to
         the VRT pipeline. See ``read_vrt`` for the full description.
+    band_nodata : {'first', None}, optional
+        VRT-only. Opt-out for the fail-closed check that rejects VRT
+        sources whose bands declare disagreeing per-band nodata
+        sentinels (issue #1987 PR 5). When ``None`` (the default), a VRT
+        that mosaics bands with different sentinels raises
+        ``MixedBandMetadataError``; flattening to one value would let
+        one band's valid pixels collide with another band's sentinel.
+        Pass ``band_nodata='first'`` to keep the legacy behaviour of
+        using band 0's sentinel for the whole mosaic. Passing this
+        kwarg with a non-VRT source raises ``ValueError`` because the
+        policy only applies to the VRT pipeline.
     mask_nodata : bool, default True
         If True (the default), replace the nodata sentinel with ``NaN``;
         integer rasters get promoted to ``float64`` first so NaN can be
@@ -409,6 +421,19 @@ def open_geotiff(source: str | BinaryIO, *,
             "Pass a .vrt path to enable the VRT pipeline, or drop "
             "missing_sources to keep the default GeoTIFF path.")
 
+    # ``band_nodata`` is the #1987 PR 5 opt-out for the mixed-band
+    # metadata fail-closed check. It only has meaning on the VRT pipeline
+    # (a plain GeoTIFF has one nodata sentinel per file, not per band),
+    # so reject the kwarg up front on non-VRT sources rather than letting
+    # it leak into ``read_vrt`` and confuse the caller about what the
+    # opt-out actually controls.
+    if band_nodata is not None and not _is_vrt_source:
+        raise ValueError(
+            "band_nodata only applies to VRT sources. "
+            "Pass a .vrt path to enable the VRT pipeline, or drop "
+            "band_nodata to keep the default GeoTIFF path. "
+            "See issue #1987.")
+
     # ``max_cloud_bytes`` is the eager fsspec-read budget. Only
     # ``_read_to_array`` on the eager non-VRT, non-GPU, non-dask branch
     # consumes it; the GPU (``read_geotiff_gpu``), dask
@@ -473,6 +498,7 @@ def open_geotiff(source: str | BinaryIO, *,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
                         allow_unparseable_crs=allow_unparseable_crs,
+                        band_nodata=band_nodata,
                         mask_nodata=mask_nodata,
                         **vrt_kwargs)
 
