@@ -664,6 +664,56 @@ class TestMergeOrderAcrossTypes:
             arr = result.values
         assert arr[1, 1] == 1.0
 
+    def test_geometry_collection_sub_geoms_share_input_index(self):
+        # GC sub-geoms inherit the parent's global input index, so the
+        # winner between them is determined by which type burns first
+        # (polygons burn before points).  This locks that behavior in.
+        from shapely.geometry import GeometryCollection
+        poly = box(0, 0, 3, 3)
+        pt = Point(1.5, 1.5)
+        gc = GeometryCollection([poly, pt])
+        # GC at input idx 0; a second polygon at idx 1 sets the background.
+        bg = box(0, 0, 3, 3)
+        result = rasterize(
+            [(gc, 9.0), (bg, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='last')
+        # bg is last in input order, wins everywhere.
+        assert (result.values == 1.0).all()
+
+        result_first = rasterize(
+            [(gc, 9.0), (bg, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='first')
+        # gc is first; both its sub-geoms share idx=0.  Polygon component
+        # burns before point component, so polygon (value 9) covers (1,1)
+        # first and the point can't beat it (point's new_idx == cur_idx).
+        assert result_first.values[1, 1] == 9.0
+        assert result_first.values[0, 0] == 9.0
+
+    def test_custom_callable_preserves_last_burned_wins(self):
+        # User-supplied callables keep the public (pixel, props, is_first)
+        # signature and pair with the always-write predicate, so they
+        # retain the pre-2064 "last-burned-wins" semantics regardless of
+        # input order.  Locks that contract.
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def my_overwrite(pixel, props, is_first):
+            return props[0]
+
+        # Point at input idx 0, polygon at input idx 1.  Built-in 'last'
+        # would honour input order and return 1 (polygon).  A custom
+        # callable instead reflects burn order: polygons burn first, then
+        # points, so the point overwrites and the result is 9.
+        pt = Point(1.5, 1.5)
+        poly = box(0, 0, 3, 3)
+        result = rasterize(
+            [(pt, 9.0), (poly, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge=my_overwrite)
+        assert result.values[1, 1] == 9.0
+
 
 # ---------------------------------------------------------------------------
 # GeoDataFrame with mixed geometry types
