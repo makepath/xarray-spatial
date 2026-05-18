@@ -2105,9 +2105,9 @@ def rasterize(
     name : str, default 'rasterize'
         Name for the output DataArray.
     resolution : float or (x_res, y_res), optional
-        Pixel size.  When given with ``bounds``, computes ``width`` and
-        ``height`` automatically.  A single float uses the same
-        resolution for both axes.
+        Pixel size.  Must be finite and ``> 0``.  When given with
+        ``bounds``, computes ``width`` and ``height`` automatically.
+        A single float uses the same resolution for both axes.
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
         from this array (any can still be overridden explicitly).
@@ -2136,9 +2136,9 @@ def rasterize(
 
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
-        tiles of this size ``(row_chunk, col_chunk)``.  A single int
-        uses the same chunk size for both axes.  Combined with
-        ``use_cuda`` to select dask+numpy vs dask+cupy.
+        tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
+        ``> 0``.  A single int uses the same chunk size for both axes.
+        Combined with ``use_cuda`` to select dask+numpy vs dask+cupy.
     max_pixels : int, default 1_000_000_000
         Safety cap on the resolved output size (``width * height``).  The
         function raises ``ValueError`` before any host or device
