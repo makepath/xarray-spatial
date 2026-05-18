@@ -74,10 +74,10 @@ _GPU_SKIPS: dict[str, str] = {
         "JPEG-YCbCr decode is not implemented on the GPU read path. "
         "With on_gpu_failure='strict' the read raises rather than "
         "CPU-falling-back, so the test fails before reaching the "
-        "oracle. On the eager and dask backends this fixture exposes "
-        "the RGB band axis order divergence (rasterio is (bands, y, "
-        "x), xrspatial is (y, x, band)); on the GPU backend that "
-        "comparison never runs."
+        "oracle. The shared multi-band axis-order gap that previously "
+        "surfaced on the eager / dask paths is closed by "
+        "_normalise_axis_order in _oracle.py; on the GPU backend the "
+        "decode error wins first so the oracle never runs."
     ),
 }
 

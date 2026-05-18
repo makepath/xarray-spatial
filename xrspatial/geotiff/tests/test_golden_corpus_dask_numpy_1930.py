@@ -50,13 +50,10 @@ CHUNK_SIZE = 32
 # dask plumbing, so the dask backend inherits them verbatim from the
 # eager backend. Integer nodata masking used to live here too; the
 # oracle's _normalise_for_masked_nodata helper closes that gap so it
-# is no longer xfailed on any backend.
+# is no longer xfailed on any backend. The multi-band axis-order gap
+# for the JPEG-YCbCr fixture is also closed (see
+# ``_normalise_axis_order`` in ``_oracle.py``).
 _PARITY_GAPS: dict[str, str] = {
-    "compression_jpeg_uint8_ycbcr": (
-        "RGB band axis order divergence: rasterio reads (bands, y, x) while "
-        "xrspatial reads (y, x, band). The oracle does not yet normalise "
-        "multi-band axis order."
-    ),
     "crs_citation_only": (
         "citation-only CRS: xrspatial decodes the citation into deprecated "
         "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "

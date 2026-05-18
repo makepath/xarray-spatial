@@ -24,10 +24,6 @@ would never fire.
 
 Real parity gaps (``xfail``):
 
-* ``compression_jpeg_uint8_ycbcr`` -- RGB band axis order divergence
-  between rasterio ``(bands, y, x)`` and xrspatial ``(y, x, band)``. The
-  oracle's ``_assert_shape_only`` does not yet normalise multi-band axis
-  order.
 * ``crs_citation_only`` -- xrspatial decodes the citation into the
   deprecated ``attrs['geog_citation']`` but does not emit a canonical
   ``attrs['crs']`` or ``attrs['crs_wkt']``. Real parity gap; needs a fix
@@ -42,6 +38,11 @@ Resolved gaps (no longer xfail):
   fixtures ``nodata_int_sentinel_uint16``, ``stripped_le_uint16``,
   ``stripped_be_uint16``, ``tiled_le_uint16``, ``tiled_be_uint16``
   pass directly.
+* ``compression_jpeg_uint8_ycbcr`` -- RGB band axis order divergence
+  between rasterio ``(bands, y, x)`` and xrspatial ``(y, x, band)``.
+  The oracle's ``_normalise_axis_order`` helper now transposes the
+  trailing-band candidate to leading-band before the shape and pixel
+  checks run, so this fixture passes directly.
 
 Intentional skip (``skip``):
 
@@ -78,11 +79,6 @@ FIXTURES_DIR = (
 
 
 _PARITY_GAPS: dict[str, str] = {
-    "compression_jpeg_uint8_ycbcr": (
-        "RGB band axis order divergence: rasterio reads (bands, y, x) while "
-        "xrspatial reads (y, x, band). The oracle does not yet normalise "
-        "multi-band axis order."
-    ),
     "crs_citation_only": (
         "citation-only CRS: xrspatial decodes the citation into deprecated "
         "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
