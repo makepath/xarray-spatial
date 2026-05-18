@@ -1915,6 +1915,32 @@ def write_streaming(dask_data, path: str, *,
             "match the reader's unconditional MinIsWhite inversion "
             "(issue #1836). Call ``.compute()`` first to use the eager "
             "writer, or write with photometric='minisblack' / 'auto'.")
+    # The kwarg guard above only catches photometric='miniswhite'. An
+    # ``extra_tags`` entry of ``(TAG_PHOTOMETRIC, ...)`` silently
+    # overrides the IFD tag further down (see the user_photometric_
+    # override branch). Without this check, a caller passing
+    # photometric='auto' but extra_tags=[(262, SHORT, 1, 0)] writes
+    # uninverted MinIsBlack pixels with a MinIsWhite tag on disk, and
+    # the reader's unconditional MinIsWhite inversion produces inverted
+    # values on read. Mirror the eager guard at ``write`` (issue #2073).
+    _extra_tags_photo_ds = None
+    if extra_tags is not None:
+        for _et in extra_tags:
+            if _et[0] == TAG_PHOTOMETRIC:
+                _extra_tags_photo_ds = int(_et[3])
+                break
+    if (_extra_tags_photo_ds is not None
+            and _extra_tags_photo_ds != _resolved_photo_ds
+            and (_extra_tags_photo_ds == 0 or _resolved_photo_ds == 0)
+            and samples == 1):
+        raise ValueError(
+            f"extra_tags TAG_PHOTOMETRIC override ({_extra_tags_photo_ds}) "
+            f"disagrees with photometric={photometric!r} for a "
+            f"single-band raster where MinIsWhite (photometric=0) "
+            f"requires writer-side pixel inversion. The override would "
+            f"either pre-invert pixels for a non-MinIsWhite tag or skip "
+            f"inversion for a MinIsWhite tag. Pass photometric= directly "
+            f"instead, or drop the override.")
 
     # Match the eager path's dtype promotion
     out_dtype = dtype
