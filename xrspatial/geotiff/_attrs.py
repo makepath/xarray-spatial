@@ -65,10 +65,8 @@ from canonical state, otherwise dropped on round-trip):
 - ``geog_citation``: GeographicTypeGeoKey citation string.
 - ``datum_code``: GeogGeodeticDatumGeoKey value.
 - ``angular_units``: GeogAngularUnitsGeoKey value.
-- ``linear_units``: ProjLinearUnitsGeoKey value.
 - ``semi_major_axis``: GeogSemiMajorAxisGeoKey value.
 - ``inv_flattening``: GeogInvFlatteningGeoKey value.
-- ``projection_code``: ProjectedCSTypeGeoKey value.
 - ``vertical_crs``: VerticalCSTypeGeoKey value.
 - ``vertical_citation``: VerticalCitationGeoKey value.
 - ``vertical_units``: VerticalUnitsGeoKey value.
@@ -76,6 +74,18 @@ from canonical state, otherwise dropped on round-trip):
 - ``extra_samples``: TIFF ExtraSamples tag.
 - ``colormap``, ``colormap_rgba``, ``cmap``: palette data attached to
   single-band paletted images.
+
+Deprecated (will be removed in a future release; see issue #1984):
+
+- ``linear_units``: ProjLinearUnitsGeoKey value. The writer's
+  ``build_geo_tags`` only emits the primary ``GEOKEY_PROJECTED_CS_TYPE``
+  and never the secondary projected GeoKeys, so this attr cannot be
+  reconstructed on round-trip. Read-side emission triggers a
+  ``DeprecationWarning`` for one release cycle before removal.
+- ``projection_code``: ProjectionGeoKey value. Same root cause as
+  ``linear_units``: the writer never emits the underlying GeoKey, so
+  the value cannot survive a round-trip. Read-side emission triggers a
+  ``DeprecationWarning`` for one release cycle before removal.
 """
 from __future__ import annotations
 
@@ -248,12 +258,28 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     if geo_info.angular_units is not None:
         attrs['angular_units'] = geo_info.angular_units
     if geo_info.linear_units is not None:
+        warnings.warn(
+            "xrspatial.geotiff: attrs['linear_units'] is deprecated; "
+            "the writer cannot reconstruct it from the canonical CRS "
+            "so it will not round-trip. It will be removed in a future "
+            "release. See issue #1984.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         attrs['linear_units'] = geo_info.linear_units
     if geo_info.semi_major_axis is not None:
         attrs['semi_major_axis'] = geo_info.semi_major_axis
     if geo_info.inv_flattening is not None:
         attrs['inv_flattening'] = geo_info.inv_flattening
     if geo_info.projection_code is not None:
+        warnings.warn(
+            "xrspatial.geotiff: attrs['projection_code'] is deprecated; "
+            "the writer cannot reconstruct it from the canonical CRS "
+            "so it will not round-trip. It will be removed in a future "
+            "release. See issue #1984.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         attrs['projection_code'] = geo_info.projection_code
     if geo_info.vertical_epsg is not None:
         attrs['vertical_crs'] = geo_info.vertical_epsg
