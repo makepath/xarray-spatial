@@ -20,8 +20,71 @@ NumPy, Dask, CuPy, and Numba. The prompt is: $ARGUMENTS
    ```bash
    gh pr diff <number>
    ```
-5. Read every changed file in full (not just the diff) to understand surrounding
-   context.
+
+## Step 1.5 -- Materialize the PR in a worktree
+
+The user's main checkout MUST stay on `main`. Read the PR's files
+from a worktree on the PR's head branch so the review sees the
+actual PR state, not whatever happens to be checked out in the
+main directory.
+
+First, detect whether we are already inside a worktree on the PR's
+head branch (this is the common case when `/review-pr` is invoked
+from `/rockout` Step 9):
+
+```bash
+REVIEW_PR_NUM=<number>
+REVIEW_HEAD_BRANCH="$(gh pr view "$REVIEW_PR_NUM" --json headRefName -q .headRefName)"
+REVIEW_CUR_BRANCH="$(git branch --show-current)"
+REVIEW_CUR_TOP="$(git rev-parse --show-toplevel)"
+```
+
+- If `$REVIEW_CUR_BRANCH` equals `$REVIEW_HEAD_BRANCH` AND
+  `$REVIEW_CUR_TOP` contains the segment `.claude/worktrees/`,
+  we are already in the right worktree. Set
+  `REVIEW_WT="$REVIEW_CUR_TOP"` and skip to step 4 below. Do NOT
+  create another worktree -- a second `git worktree add` on the
+  same branch will fail.
+
+- Otherwise, create a dedicated review worktree:
+
+  1. From any path, resolve the main checkout (use `--git-common-dir`
+     to find the shared repo even if we are inside another worktree):
+     ```bash
+     REVIEW_MAIN="$(git rev-parse --path-format=absolute --git-common-dir)"
+     REVIEW_MAIN="${REVIEW_MAIN%/.git}"
+     git -C "$REVIEW_MAIN" fetch origin "pull/$REVIEW_PR_NUM/head:pr-$REVIEW_PR_NUM-review"
+     git -C "$REVIEW_MAIN" worktree add \
+       ".claude/worktrees/pr-$REVIEW_PR_NUM-review" "pr-$REVIEW_PR_NUM-review"
+     REVIEW_WT="$REVIEW_MAIN/.claude/worktrees/pr-$REVIEW_PR_NUM-review"
+     REVIEW_WT_CREATED=1
+     ```
+
+  2. Verify isolation -- assert ALL of the following. If any fails,
+     STOP and report it:
+     - `$REVIEW_WT` exists and is NOT equal to `$REVIEW_MAIN`.
+     - `git -C "$REVIEW_WT" branch --show-current` is
+       `pr-$REVIEW_PR_NUM-review`.
+     - `git -C "$REVIEW_MAIN" branch --show-current` is still
+       `main` (or `master`).
+
+3. `cd "$REVIEW_WT"` so subsequent reads happen inside the worktree.
+
+4. Read every changed file in full (not just the diff) from
+   `$REVIEW_WT`. Use paths anchored at `$REVIEW_WT` for all Read
+   tool calls -- never read the same file from the main checkout;
+   that path reflects `main` and will mislead the review.
+
+5. The review is read-only -- do NOT make commits in this worktree.
+   When the review is done (after Step 8), clean up only if Step
+   1.5 created the worktree:
+   ```bash
+   if [ "${REVIEW_WT_CREATED:-0}" = "1" ]; then
+     cd "$REVIEW_MAIN"
+     git worktree remove ".claude/worktrees/pr-$REVIEW_PR_NUM-review"
+     git branch -D "pr-$REVIEW_PR_NUM-review"
+   fi
+   ```
 
 ## Step 2 -- Correctness review
 
