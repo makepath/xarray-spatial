@@ -52,13 +52,10 @@ CHUNK_SIZE = 32
 
 # Integer-nodata masking used to live here too; the oracle's
 # _normalise_for_masked_nodata helper (#2046) closes that gap so it is
-# no longer xfailed on any backend.
+# no longer xfailed on any backend. The multi-band axis-order gap for
+# the JPEG-YCbCr fixture is also closed (see ``_normalise_axis_order``
+# in ``_oracle.py``).
 _PARITY_GAPS: dict[str, str] = {
-    "compression_jpeg_uint8_ycbcr": (
-        "RGB band axis order divergence: rasterio reads (bands, y, x) while "
-        "xrspatial reads (y, x, band). The oracle does not yet normalise "
-        "multi-band axis order."
-    ),
     "crs_citation_only": (
         "citation-only CRS: xrspatial decodes the citation into deprecated "
         "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
@@ -66,6 +63,9 @@ _PARITY_GAPS: dict[str, str] = {
     ),
 }
 
+# Empty: failures unique to the dask+GPU combo (eager / dask / pure-
+# GPU all pass) would land here. Kept around as the documented home
+# for such gaps.
 _DASK_GPU_SKIPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
@@ -73,6 +73,17 @@ _INTENTIONAL_SKIPS: dict[str, str] = {
         "MinIsWhite photometric inversion: xrspatial inverts pixels per "
         "#1797; rasterio leaves them raw. Covered by "
         "test_miniswhite_backend_parity_1797.py."
+    ),
+    "compression_jpeg_uint8_ycbcr": (
+        "JPEG-YCbCr decode is not implemented on the GPU read path and "
+        "the dask+GPU pipeline cannot fall back to CPU per chunk: the "
+        "decode error surfaces at .compute() time regardless of "
+        "on_gpu_failure mode. The pure-GPU backend handles the same "
+        "fixture by routing through on_gpu_failure='auto' (CPU "
+        "fallback yields a single numpy array, not a dask graph), but "
+        "that escape hatch does not exist for the chunked path. Plain "
+        "skip rather than xfail because no foreseeable fix exists: "
+        "implementing nvCOMP JPEG-YCbCr decode is its own project."
     ),
 }
 

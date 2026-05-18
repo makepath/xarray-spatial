@@ -444,15 +444,87 @@ def _assert_nodata(ref_nodata, candidate_da: xr.DataArray) -> None:
         f'xrspatial={cand_nodata!r}')
 
 
+def _normalise_axis_order(
+    ref_pixels: np.ndarray, cand_pixels: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bring single-band and multi-band reads into a comparable layout.
+
+    rasterio returns ``(bands, H, W)`` for every read; xrspatial returns
+    either ``(H, W)`` (single-band, band axis dropped) or ``(H, W, B)``
+    (multi-band, band axis trailing). Both divergences are conventional
+    rather than a bug, so the oracle normalises them here.
+
+    Two cases are handled:
+
+    1. Single-band: ``(1, H, W)`` on one side, ``(H, W)`` on the other.
+       Squeeze the leading length-1 axis to a 2-D array. This is the
+       original behaviour; the multi-band case is the new addition.
+    2. Multi-band: ``(B, H, W)`` on one side, ``(H, W, B)`` on the other,
+       with ``B > 1``. Transpose the trailing-band side to leading-band
+       so the rasterio-style ``(B, H, W)`` shape is canonical. The
+       transpose is gated on a shape match (the H and W axes must agree
+       after the move) so a genuine mismatch between two unrelated 3-D
+       arrays still falls through to the comparison and raises.
+
+    The single-band and multi-band branches are mutually exclusive:
+    ``B == 1`` lands in the squeeze branch, ``B > 1`` lands in the
+    transpose branch. The fall-through case (no normalisation
+    applicable) leaves both arrays untouched.
+
+    Both arms of the multi-band branch are symmetric: one assumes
+    ref is leading-band + cand is trailing-band (the corpus case;
+    rasterio always reads leading), the other handles the mirror.
+    The mirror is defensive since rasterio is always leading, but
+    keeps the contract independent of which side is the reference.
+
+    Limit: when ``H == W == B`` (e.g. a 3-band 3x3 raster) the
+    shape predicates cannot tell the two layouts apart. The corpus
+    has no such fixture today; the helper short-circuits on
+    ``ref_pixels.shape == cand_pixels.shape`` first to keep the
+    no-op case unambiguous when the arrays already line up.
+    """
+    # Single-band: (1, H, W) vs (H, W) -- squeeze the leading axis.
+    if ref_pixels.ndim == 3 and ref_pixels.shape[0] == 1 and cand_pixels.ndim == 2:
+        return ref_pixels[0], cand_pixels
+    if cand_pixels.ndim == 3 and cand_pixels.shape[0] == 1 and ref_pixels.ndim == 2:
+        return ref_pixels, cand_pixels[0]
+    # If the shapes already match (including the 2-D / 2-D case and
+    # the already-(B,H,W) / (B,H,W) case), no normalisation is needed
+    # and the comparison can proceed unchanged. This also resolves
+    # the H==W==B ambiguity: two (3, 3, 3) arrays compare directly
+    # rather than being run through a needless transpose.
+    if ref_pixels.shape == cand_pixels.shape:
+        return ref_pixels, cand_pixels
+    # Multi-band: (B, H, W) vs (H, W, B) with B > 1. The candidate's
+    # last axis is the band axis; transpose it to leading so the shape
+    # matches rasterio's (B, H, W). Only transpose when the H/W axes
+    # would line up afterwards -- otherwise leave the arrays as-is and
+    # let _pixels_equal / the shape check raise on the real mismatch.
+    if (
+        ref_pixels.ndim == 3
+        and cand_pixels.ndim == 3
+        and ref_pixels.shape[0] > 1
+        and cand_pixels.shape[-1] == ref_pixels.shape[0]
+        and cand_pixels.shape[:2] == ref_pixels.shape[1:]
+    ):
+        return ref_pixels, np.moveaxis(cand_pixels, -1, 0)
+    if (
+        ref_pixels.ndim == 3
+        and cand_pixels.ndim == 3
+        and cand_pixels.shape[0] > 1
+        and ref_pixels.shape[-1] == cand_pixels.shape[0]
+        and ref_pixels.shape[:2] == cand_pixels.shape[1:]
+    ):
+        return np.moveaxis(ref_pixels, -1, 0), cand_pixels
+    return ref_pixels, cand_pixels
+
+
 def _assert_pixels(ref_pixels: np.ndarray, candidate_da: xr.DataArray) -> None:
     cand_pixels = _candidate_pixels(candidate_da)
-    # Single-band rasterio reads come back as (1, H, W); xrspatial may drop
-    # the band axis. Squeeze a leading length-1 axis on either side so the
-    # comparison is band-agnostic for the single-band case.
-    if ref_pixels.ndim == 3 and ref_pixels.shape[0] == 1 and cand_pixels.ndim == 2:
-        ref_pixels = ref_pixels[0]
-    elif cand_pixels.ndim == 3 and cand_pixels.shape[0] == 1 and ref_pixels.ndim == 2:
-        cand_pixels = cand_pixels[0]
+    # Normalise single-band squeeze and multi-band axis order so the
+    # bit-exact / NaN-aware comparison runs on directly comparable
+    # arrays. See ``_normalise_axis_order`` for the two cases handled.
+    ref_pixels, cand_pixels = _normalise_axis_order(ref_pixels, cand_pixels)
     assert _pixels_equal(ref_pixels, cand_pixels), (
         'pixel arrays differ (bit-exact / NaN-aware comparison failed). '
         f'ref shape={ref_pixels.shape} dtype={ref_pixels.dtype}, '
@@ -461,15 +533,13 @@ def _assert_pixels(ref_pixels: np.ndarray, candidate_da: xr.DataArray) -> None:
 
 def _assert_shape_only(ref_pixels: np.ndarray, candidate_da: xr.DataArray) -> None:
     cand_pixels = _candidate_pixels(candidate_da)
-    if ref_pixels.ndim == 3 and ref_pixels.shape[0] == 1 and cand_pixels.ndim == 2:
-        ref_shape = ref_pixels.shape[1:]
-    elif cand_pixels.ndim == 3 and cand_pixels.shape[0] == 1 and ref_pixels.ndim == 2:
-        ref_shape = ref_pixels.shape
-        cand_pixels = cand_pixels[0]
-    else:
-        ref_shape = ref_pixels.shape
-    assert ref_shape == cand_pixels.shape, (
-        f'shape mismatch: rasterio={ref_shape}, xrspatial={cand_pixels.shape}')
+    # Same axis-order normalisation as ``_assert_pixels`` so the shape
+    # comparison agrees on multi-band JPEG / YCbCr cells where rasterio
+    # reads (bands, H, W) but xrspatial reads (H, W, B).
+    ref_pixels, cand_pixels = _normalise_axis_order(ref_pixels, cand_pixels)
+    assert ref_pixels.shape == cand_pixels.shape, (
+        f'shape mismatch: rasterio={ref_pixels.shape}, '
+        f'xrspatial={cand_pixels.shape}')
 
 
 # ---------------------------------------------------------------------------

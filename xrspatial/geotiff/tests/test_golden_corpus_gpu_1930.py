@@ -67,17 +67,26 @@ _PARITY_GAPS: dict[str, str] = {
     ),
 }
 
-# GPU-only gaps. Failures here are GPU-specific (the eager and dask
-# backends decode the same fixture cleanly).
-_GPU_SKIPS: dict[str, str] = {
+# GPU-only gaps. Empty in the current corpus: failures here would be
+# fixtures the eager and dask backends decode cleanly but the GPU
+# backend does not. Keep the table around as the documented home for
+# such gaps if they appear.
+_GPU_SKIPS: dict[str, str] = {}
+
+# Fixtures whose codec is not implemented on the GPU read path and
+# legitimately need to fall back to CPU. The test routes these through
+# ``on_gpu_failure='auto'`` instead of ``'strict'``, which exercises
+# the documented fallback contract: the GPU reader detects the
+# unsupported codec, swaps to the CPU path, and returns a numpy-
+# backed DataArray. The oracle then compares the CPU read against
+# rasterio the same way the eager backend does.
+_GPU_CPU_FALLBACK: dict[str, str] = {
     "compression_jpeg_uint8_ycbcr": (
-        "JPEG-YCbCr decode is not implemented on the GPU read path. "
-        "With on_gpu_failure='strict' the read raises rather than "
-        "CPU-falling-back, so the test fails before reaching the "
-        "oracle. On the eager and dask backends this fixture exposes "
-        "the RGB band axis order divergence (rasterio is (bands, y, "
-        "x), xrspatial is (y, x, band)); on the GPU backend that "
-        "comparison never runs."
+        "JPEG-YCbCr decode is not implemented on the GPU read path; "
+        "on_gpu_failure='auto' falls back to CPU. The oracle's "
+        "_normalise_axis_order helper handles the (bands, y, x) vs "
+        "(y, x, band) divergence so the CPU-fallback read compares "
+        "cleanly against the rasterio reference."
     ),
 }
 
@@ -137,9 +146,13 @@ _PARAMS = [_build_param(e) for e in _FIXTURES]
 def test_gpu_parity(manifest_entry: dict) -> None:
     """``open_geotiff(path, gpu=True)`` agrees with the rasterio oracle.
 
-    The GPU path uses nvCOMP for supported codecs and falls back to CPU
-    otherwise. ``on_gpu_failure='strict'`` is set so a silent CPU
-    fallback surfaces as an exception rather than masking GPU coverage.
+    The GPU path uses nvCOMP for supported codecs. ``strict`` mode is
+    the default so a silent CPU fallback surfaces as an exception
+    rather than masking GPU coverage. Fixtures listed in
+    ``_GPU_CPU_FALLBACK`` route through ``'auto'`` mode instead because
+    their codec is genuinely not implemented on the GPU; the test
+    asserts the documented CPU fallback produces oracle-equivalent
+    output rather than xfailing the cell.
     """
     fixture_id = manifest_entry["id"]
     path = _fixture_path(manifest_entry)
@@ -149,18 +162,26 @@ def test_gpu_parity(manifest_entry: dict) -> None:
             f"`python -m xrspatial.geotiff.tests.golden_corpus.generate` "
             f"to materialise the full corpus"
         )
+    on_gpu_failure = (
+        "auto" if fixture_id in _GPU_CPU_FALLBACK else "strict"
+    )
     candidate = open_geotiff(
-        str(path), gpu=True, on_gpu_failure="strict"
+        str(path), gpu=True, on_gpu_failure=on_gpu_failure
     )
     compare_to_oracle(path, candidate, lossy=_is_lossy(manifest_entry))
 
 
 def test_taxonomy_ids_are_in_manifest() -> None:
-    """Every id in the parity-gap, GPU-skip, or intentional-skip tables
-    must exist in the manifest.
+    """Every id in the parity-gap, GPU-skip, CPU-fallback, or
+    intentional-skip tables must exist in the manifest.
     """
     manifest_ids = {e["id"] for e in _FIXTURES}
-    tagged = set(_PARITY_GAPS) | set(_GPU_SKIPS) | set(_INTENTIONAL_SKIPS)
+    tagged = (
+        set(_PARITY_GAPS)
+        | set(_GPU_SKIPS)
+        | set(_GPU_CPU_FALLBACK)
+        | set(_INTENTIONAL_SKIPS)
+    )
     stale = tagged - manifest_ids
     assert not stale, (
         f"taxonomy references unknown fixture ids: {sorted(stale)}"

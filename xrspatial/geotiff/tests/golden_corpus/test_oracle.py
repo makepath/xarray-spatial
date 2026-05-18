@@ -58,6 +58,33 @@ def _write_tiff(
     return path
 
 
+def _write_multiband_tiff(
+    path: Path,
+    data: np.ndarray,
+    *,
+    transform: Affine | None = None,
+    crs: str | int | None = 'EPSG:4326',
+) -> Path:
+    """Write a multi-band TIFF from a ``(B, H, W)`` array."""
+    assert data.ndim == 3, 'multi-band writer expects (B, H, W) input'
+    bands, height, width = data.shape
+    if transform is None:
+        transform = from_origin(0.0, float(height), 1.0, 1.0)
+    profile = {
+        'driver': 'GTiff',
+        'height': height,
+        'width': width,
+        'count': bands,
+        'dtype': data.dtype,
+        'transform': transform,
+    }
+    if crs is not None:
+        profile['crs'] = rasterio.crs.CRS.from_user_input(crs)
+    with rasterio.open(path, 'w', **profile) as dst:
+        dst.write(data)
+    return path
+
+
 def _build_candidate(
     data: np.ndarray,
     *,
@@ -66,12 +93,43 @@ def _build_candidate(
     crs_wkt: str | None = None,
     nodata: float | int | None = None,
     drop_band_axis: bool = True,
+    band_axis: str = 'leading',
 ) -> xr.DataArray:
-    """Build an xrspatial-shaped DataArray from in-memory data."""
-    if drop_band_axis and data.ndim == 3 and data.shape[0] == 1:
+    """Build an xrspatial-shaped DataArray from in-memory data.
+
+    Parameters
+    ----------
+    data
+        2-D ``(H, W)`` or 3-D array. For 3-D inputs ``band_axis`` chooses
+        which dimension carries the band axis: ``'leading'`` matches
+        rasterio's ``(B, H, W)`` shape (the default), ``'trailing'``
+        matches xrspatial's multi-band ``(H, W, B)`` layout. The latter
+        is what the JPEG-YCbCr fixture exercises in the corpus.
+    drop_band_axis
+        When ``True`` and ``data`` is shape ``(1, H, W)``, squeeze the
+        leading length-1 axis to a 2-D array before building the
+        DataArray. Has no effect on ``(H, W, B)`` inputs (the band axis
+        is trailing there).
+    """
+    if drop_band_axis and data.ndim == 3 and data.shape[0] == 1 and band_axis == 'leading':
         data = data[0]
-    height = data.shape[-2]
-    width = data.shape[-1]
+    if data.ndim == 3:
+        if band_axis == 'leading':
+            height = data.shape[1]
+            width = data.shape[2]
+            dims: tuple[str, ...] = ('band', 'y', 'x')
+        elif band_axis == 'trailing':
+            height = data.shape[0]
+            width = data.shape[1]
+            dims = ('y', 'x', 'band')
+        else:
+            raise ValueError(
+                f'band_axis must be "leading" or "trailing", got {band_axis!r}'
+            )
+    else:
+        height = data.shape[-2]
+        width = data.shape[-1]
+        dims = ('y', 'x')
     # pixel-centre coords matching xrspatial's coords_from_pixel_geometry
     pw = float(transform.a)
     ph = float(transform.e)
@@ -90,7 +148,7 @@ def _build_candidate(
         attrs['nodata'] = nodata
     return xr.DataArray(
         data,
-        dims=('y', 'x') if data.ndim == 2 else ('band', 'y', 'x'),
+        dims=dims,
         coords={'y': y, 'x': x},
         attrs=attrs,
     )
@@ -713,3 +771,208 @@ def test_masked_nodata_out_of_range_sentinel_does_not_mask() -> None:
     # mask the dtype-max pixel does not happen.
     assert out_dtype == ref_dtype
     assert out_pixels is ref_pixels
+
+
+# ---------------------------------------------------------------------------
+# Multi-band axis-order normalisation (issue #1930)
+#
+# rasterio reads every TIFF as ``(bands, H, W)``; xrspatial reads multi-band
+# rasters as ``(H, W, B)``. The convention difference is documented, not a
+# bug, so the oracle normalises before comparing. The corpus exposes this
+# via the JPEG-YCbCr fixture, which is 3 bands of uint8.
+# ---------------------------------------------------------------------------
+
+def _multiband_pixels() -> np.ndarray:
+    """Distinct per-band uint8 pixel data of shape ``(3, 4, 5)``.
+
+    Each band carries a different ramp so a misalignment between bands
+    would surface as a pixel mismatch rather than a silent pass.
+    """
+    h, w = 4, 5
+    bands = np.stack(
+        [
+            np.arange(h * w, dtype=np.uint8).reshape(h, w),
+            np.arange(h * w, dtype=np.uint8).reshape(h, w) + 50,
+            np.arange(h * w, dtype=np.uint8).reshape(h, w) + 100,
+        ],
+        axis=0,
+    )
+    assert bands.shape == (3, h, w)
+    return bands
+
+
+def test_multiband_axis_order_success_strict(tmp_path: Path) -> None:
+    """Multi-band ``(B, H, W)`` ref vs ``(H, W, B)`` candidate passes.
+
+    rasterio writes and reads the fixture in band-first layout; xrspatial
+    presents the same logical image with the band axis trailing. The
+    oracle normalises before the bit-exact comparison so identical
+    pixels in either layout compare equal.
+    """
+    ref = _multiband_pixels()
+    transform = from_origin(0.0, float(ref.shape[1]), 1.0, 1.0)
+    fixture = _write_multiband_tiff(
+        tmp_path / 'multiband_ok.tif', ref, transform=transform,
+    )
+    # xrspatial-shaped candidate: (H, W, B)
+    cand_data = np.moveaxis(ref, 0, -1)
+    assert cand_data.shape == (ref.shape[1], ref.shape[2], ref.shape[0])
+    cand = _build_candidate(
+        cand_data, transform=transform, band_axis='trailing',
+    )
+    compare_to_oracle(fixture, cand)
+
+
+def test_multiband_axis_order_pixel_mismatch_fails(tmp_path: Path) -> None:
+    """A real pixel mismatch across the two layouts still trips ``_assert_pixels``.
+
+    The axis-order normalisation must not paper over a genuine divergence.
+    Flip one pixel in one band; after the oracle transposes the candidate
+    to ``(B, H, W)`` the comparison must still raise.
+    """
+    ref = _multiband_pixels()
+    transform = from_origin(0.0, float(ref.shape[1]), 1.0, 1.0)
+    fixture = _write_multiband_tiff(
+        tmp_path / 'multiband_pixmm.tif', ref, transform=transform,
+    )
+    cand_data = np.moveaxis(ref, 0, -1).copy()
+    cand_data[2, 3, 1] = 99  # perturb band 1 at (y=2, x=3)
+    cand = _build_candidate(
+        cand_data, transform=transform, band_axis='trailing',
+    )
+    with pytest.raises(AssertionError, match='pixel arrays differ'):
+        compare_to_oracle(fixture, cand)
+
+
+def test_multiband_axis_order_lossy_shape_only(tmp_path: Path) -> None:
+    """``lossy=True`` shape-only comparison handles the axis order.
+
+    Mirrors the JPEG-YCbCr corpus cell: rasterio sees ``(3, H, W)``,
+    xrspatial sees ``(H, W, 3)``, and the lossy path checks only shape,
+    dtype, transform, and CRS. The normalisation must align the two
+    before the shape check, so identical logical shapes pass.
+    """
+    ref = _multiband_pixels()
+    transform = from_origin(0.0, float(ref.shape[1]), 1.0, 1.0)
+    fixture = _write_multiband_tiff(
+        tmp_path / 'multiband_lossy.tif', ref, transform=transform,
+    )
+    # Lossy: perturb the pixels but keep the same shape.
+    perturbed = np.moveaxis(ref, 0, -1).copy() + 5
+    cand = _build_candidate(
+        perturbed.astype(np.uint8),
+        transform=transform,
+        band_axis='trailing',
+    )
+    # Strict comparison rejects (pixel values differ):
+    with pytest.raises(AssertionError, match='pixel arrays differ'):
+        compare_to_oracle(fixture, cand)
+    # Lossy accepts because the shape lines up after axis normalisation:
+    compare_to_oracle(fixture, cand, lossy=True)
+
+
+def test_multiband_axis_order_lossy_shape_mismatch_fails(
+    tmp_path: Path,
+) -> None:
+    """Genuine multi-band shape mismatches still trip the lossy path.
+
+    If the spatial extent disagrees, the normalisation should not
+    transpose (the H/W axes would not line up), so the assertion fires
+    with the raw shapes.
+    """
+    ref = _multiband_pixels()  # (3, 4, 5)
+    transform = from_origin(0.0, float(ref.shape[1]), 1.0, 1.0)
+    fixture = _write_multiband_tiff(
+        tmp_path / 'multiband_lossy_shape.tif', ref, transform=transform,
+    )
+    # Candidate has the wrong height (5 instead of 4); (H, W, B)
+    # cannot transpose cleanly to (B, H, W) with H/W matching.
+    wrong = np.zeros((5, 5, 3), dtype=np.uint8)
+    cand = _build_candidate(
+        wrong, transform=transform, band_axis='trailing',
+    )
+    with pytest.raises(AssertionError, match='shape mismatch'):
+        compare_to_oracle(fixture, cand, lossy=True)
+
+
+def test_singleband_axis_order_still_squeezed(tmp_path: Path) -> None:
+    """Regression: the existing ``(1, H, W)`` vs ``(H, W)`` squeeze path
+    still works after the multi-band branch was added.
+
+    The single-band case must continue to compare equal: rasterio reads
+    every fixture as 3-D with a leading band axis, xrspatial drops it
+    for the single-band layout, and the oracle squeezes so the two
+    compare as 2-D. The multi-band code path is gated on ``B > 1`` so
+    this case still lands in the squeeze branch.
+    """
+    data = np.arange(20, dtype=np.int16).reshape(4, 5)
+    transform = from_origin(0.0, 4.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'singleband_squeeze.tif', data, transform=transform,
+    )
+    cand = _build_candidate(data, transform=transform)
+    compare_to_oracle(fixture, cand)
+
+
+def test_normalise_axis_order_helper_directly() -> None:
+    """Unit-level coverage of ``_normalise_axis_order``.
+
+    Pins the four supported cases so a future refactor of the helper has
+    to spell out the contract:
+
+    1. (1, H, W) vs (H, W) -- squeezes ref.
+    2. (H, W) vs (1, H, W) -- squeezes cand.
+    3. (B, H, W) vs (H, W, B) with B > 1 -- transposes cand to leading.
+    4. (H, W, B) vs (B, H, W) with B > 1 -- transposes ref to leading.
+
+    A genuine 3-D mismatch (e.g. different band counts on either side)
+    falls through unchanged.
+    """
+    from xrspatial.geotiff.tests.golden_corpus._oracle import (
+        _normalise_axis_order,
+    )
+
+    a2 = np.arange(12).reshape(3, 4)
+    a3_lead_single = a2[np.newaxis]  # (1, 3, 4)
+    out_ref, out_cand = _normalise_axis_order(a3_lead_single, a2)
+    assert out_ref.shape == (3, 4)
+    assert out_cand.shape == (3, 4)
+    out_ref, out_cand = _normalise_axis_order(a2, a3_lead_single)
+    assert out_ref.shape == (3, 4)
+    assert out_cand.shape == (3, 4)
+
+    bands_lead = np.arange(2 * 3 * 4).reshape(2, 3, 4)  # (B=2, H=3, W=4)
+    bands_trail = np.moveaxis(bands_lead, 0, -1)        # (H=3, W=4, B=2)
+    out_ref, out_cand = _normalise_axis_order(bands_lead, bands_trail)
+    assert out_ref.shape == (2, 3, 4)
+    assert out_cand.shape == (2, 3, 4)
+    assert np.array_equal(out_ref, out_cand)
+    out_ref, out_cand = _normalise_axis_order(bands_trail, bands_lead)
+    assert out_ref.shape == (2, 3, 4)
+    assert out_cand.shape == (2, 3, 4)
+    assert np.array_equal(out_ref, out_cand)
+
+    # Genuine mismatch: 3 bands vs 2 bands. No transpose applies; the
+    # helper returns inputs unchanged so the caller's shape assertion
+    # raises with the real shapes.
+    mismatch_ref = np.zeros((3, 3, 4))  # (B=3, H=3, W=4)
+    mismatch_cand = np.zeros((3, 4, 2))  # (H=3, W=4, B=2)
+    out_ref, out_cand = _normalise_axis_order(mismatch_ref, mismatch_cand)
+    assert out_ref.shape == (3, 3, 4)
+    assert out_cand.shape == (3, 4, 2)
+
+    # 2-D / 2-D pass-through: identical shapes need no normalisation.
+    plain = np.arange(12).reshape(3, 4)
+    out_ref, out_cand = _normalise_axis_order(plain, plain.copy())
+    assert out_ref.shape == (3, 4)
+    assert out_cand.shape == (3, 4)
+    assert np.array_equal(out_ref, out_cand)
+
+    # H == W == B ambiguity: the shape-equality short-circuit returns
+    # the arrays untouched so two same-shape (3, 3, 3) cubes compare
+    # directly rather than getting silently transposed.
+    cube_a = np.arange(27).reshape(3, 3, 3)
+    cube_b = cube_a.copy()
+    out_ref, out_cand = _normalise_axis_order(cube_a, cube_b)
+    assert out_ref is cube_a
+    assert out_cand is cube_b
