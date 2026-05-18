@@ -200,6 +200,47 @@ def _extent_to_window(transform, file_height, file_width,
     return (row_start, col_start, row_stop, col_stop)
 
 
+def _should_restore_nan_sentinel(attrs) -> bool:
+    """Return True iff the writer should NaN-to-sentinel rewrite the array.
+
+    Pairs with :func:`_set_nodata_attrs`. The reader stores a boolean in
+    ``attrs['masked_nodata']`` describing whether the in-memory array
+    went through the sentinel-to-NaN promotion. The writer reads it back
+    here to decide whether the inverse rewrite is appropriate:
+
+    * ``masked_nodata`` missing -> default True. Pre-#1988 behaviour:
+      any float array with NaN and a declared sentinel gets the NaN
+      pixels rewritten to the sentinel value. This is what every
+      xrspatial caller has relied on for years and what every external
+      DataArray that does not carry the new attr should still see.
+    * ``masked_nodata=True`` -> True. The reader masked the sentinel
+      into NaN; the writer reverses the step.
+    * ``masked_nodata=False`` -> False. The reader did NOT mask (the
+      array still carries the literal sentinel, or is float for an
+      unrelated reason). Any NaN present in the array did not come
+      from sentinel-masking, and rewriting it to the integer sentinel
+      would corrupt data the user wrote there for other reasons.
+
+    The ``attrs`` argument may be a plain dict, an
+    ``xarray.core.utils.Frozen``, or ``None`` (the GPU writer's
+    positional-cupy branch has no DataArray to read from). ``None`` and
+    non-mapping inputs fall back to the True default.
+    """
+    if attrs is None:
+        return True
+    try:
+        value = attrs.get('masked_nodata')
+    except AttributeError:
+        return True
+    # Treat anything other than literal ``False`` as the True default.
+    # The flag is the boolean ``True``/``False`` per the contract, but
+    # we narrow on identity rather than truthiness so a stray ``0`` /
+    # ``''`` (which a future maintainer might assume is "off" under a
+    # truthiness rule) does not silently disable the sentinel rewrite.
+    # The identity check is deliberate: do not refactor to ``not value``.
+    return value is not False
+
+
 def _set_nodata_attrs(attrs: dict, nodata, *, array_dtype) -> None:
     """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
 
