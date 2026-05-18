@@ -1578,6 +1578,33 @@ def _points_for_tile(rows, cols, geom_idx, r_start, r_end, c_start, c_end):
     return (rows[mask] - r_start, cols[mask] - c_start, geom_idx[mask])
 
 
+def _slice_props_for_tile(geom_idx, props):
+    """Slice a per-type props table to only entries referenced by *geom_idx*.
+
+    Returns ``(local_idx, sliced_props)`` where ``local_idx`` is a remapped
+    int32 array of the same length as ``geom_idx`` but with values in
+    ``range(len(sliced_props))``, and ``sliced_props`` is the
+    contiguous subset of ``props`` that those local indices index into.
+
+    This is the line / point counterpart to the polygon path's
+    ``poly_wkb_arr[pmask]`` / ``poly_props[pmask]`` slicing.  Without it,
+    every dask tile task would embed the full ``line_props`` /
+    ``point_props`` table in its closure, even when the tile sees only
+    a handful of segments.  At a few thousand geometries this is a
+    multi-MB scheduler overhead per task; at 1 M geometries x 100 tiles
+    the difference is ~800 MB of redundant graph state.
+
+    If ``geom_idx`` is empty, returns an empty ``(0,)`` int32 array and
+    a zero-row slice of ``props`` (preserving column count).
+    """
+    if len(geom_idx) == 0:
+        return geom_idx.astype(np.int32, copy=False), props[:0]
+    # np.unique returns sorted unique values and an inverse map that
+    # points each entry in geom_idx to its position in unique_idx.
+    unique_idx, local_idx = np.unique(geom_idx, return_inverse=True)
+    return local_idx.astype(np.int32), props[unique_idx]
+
+
 def _polys_to_wkb(geoms):
     """Pre-serialize polygon geometries to WKB for cheap pickling."""
     return [g.wkb for g in geoms]
@@ -1698,10 +1725,22 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
             tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
 
+            # Slice line_props / point_props to only the geometries this
+            # tile actually references, remapping the geom_idx arrays to
+            # local indices.  Mirrors the polygon path's poly_props[pmask]
+            # slicing.  Skipped for empty filters (the helper returns the
+            # already-empty inputs unchanged).
+            ts_local_idx, tile_line_props = _slice_props_for_tile(
+                ts[4], line_props)
+            ts = (*ts[:4], ts_local_idx)
+            tp_local_idx, tile_point_props = _slice_props_for_tile(
+                tp[2], point_props)
+            tp = (*tp[:2], tp_local_idx)
+
             delayed_tile = dask.delayed(_rasterize_tile_numpy)(
                 tile_wkb, tile_poly_props, tile_bounds,
                 tile_h, tile_w, fill, dtype, all_touched, merge_fn,
-                *ts, line_props, *tp, point_props)
+                *ts, tile_line_props, *tp, tile_point_props)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype)
             ri += 1
@@ -1818,10 +1857,15 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
     # Pre-compute segment bboxes once (avoids redundant min/max per tile)
     seg_bboxes = _segment_bboxes(seg_r0, seg_c0, seg_r1, seg_c1)
 
-    # Transfer shared props tables to GPU once (avoids repeated PCIe
-    # transfers in each tile worker).
-    d_line_props = cupy.asarray(line_props)
-    d_point_props = cupy.asarray(point_props)
+    # Per-tile props slicing keeps PCIe traffic and graph payload small:
+    # each tile only references a subset of geometries, so we slice
+    # line_props / point_props per tile (as np arrays in the graph) and
+    # transfer only that subset to the GPU inside the worker.  Mirrors
+    # the polygon path's poly_props[pmask] pattern.  Tradeoff: for
+    # sprawling-line workloads where every tile references most rows,
+    # the GPU now sees N_tiles small uploads instead of one shared
+    # driver-side upload, shifting cost from graph payload to PCIe
+    # traffic.  Localized geometries (the realistic case) still win.
 
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
     n_row_chunks = len(row_chunks)
@@ -1850,10 +1894,17 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
             tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
 
+            ts_local_idx, tile_line_props = _slice_props_for_tile(
+                ts[4], line_props)
+            ts = (*ts[:4], ts_local_idx)
+            tp_local_idx, tile_point_props = _slice_props_for_tile(
+                tp[2], point_props)
+            tp = (*tp[:2], tp_local_idx)
+
             delayed_tile = dask.delayed(_rasterize_tile_cupy)(
                 tile_wkb, tile_poly_props, tile_bounds,
                 tile_h, tile_w, fill, dtype, all_touched, merge_fn,
-                *ts, d_line_props, *tp, d_point_props)
+                *ts, tile_line_props, *tp, tile_point_props)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype,
                 meta=cupy.empty(()))
