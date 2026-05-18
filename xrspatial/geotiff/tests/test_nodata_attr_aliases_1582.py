@@ -93,8 +93,13 @@ def test_fill_value_resolves_to_nodata_tag(tmp_path, _arr_with_sentinel):
 
 
 def test_explicit_nodata_attr_wins_over_aliases(tmp_path, _arr_with_sentinel):
-    """``attrs['nodata']`` is xrspatial's canonical key; it must win over
-    rioxarray and CF aliases when both are present."""
+    """``attrs['nodata']`` is xrspatial's canonical key. Issue #1987 PR 7
+    replaced the legacy "canonical silently wins, alias dropped" path
+    with a fail-closed raise: a DataArray with disagreeing ``nodata`` and
+    ``nodatavals`` refuses to write. The explicit ``nodata=`` writer
+    kwarg overrides both attrs and bypasses the check."""
+    from xrspatial.geotiff import ConflictingNodataError
+
     da = _da_float(
         _arr_with_sentinel, crs=4326,
         nodata=-8888.0,
@@ -102,8 +107,12 @@ def test_explicit_nodata_attr_wins_over_aliases(tmp_path, _arr_with_sentinel):
         **{"_FillValue": -7777.0},
     )
     out = str(tmp_path / "explicit_wins.tif")
-    to_geotiff(da, out)
 
+    with pytest.raises(ConflictingNodataError):
+        to_geotiff(da, out)
+
+    # Explicit kwarg overrides both attrs.
+    to_geotiff(da, out, nodata=-8888.0)
     rd = open_geotiff(out)
     assert rd.attrs.get("nodata") == -8888.0
 

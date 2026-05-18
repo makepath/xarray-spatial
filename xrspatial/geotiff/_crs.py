@@ -15,6 +15,7 @@ from __future__ import annotations
 import numbers
 import warnings
 
+from ._errors import UnparseableCRSError
 from ._runtime import GeoTIFFFallbackWarning, _geotiff_strict_mode
 
 
@@ -165,7 +166,7 @@ def _validate_crs_fallback(
         return
     if allow_unparseable_crs:
         return
-    raise ValueError(
+    raise UnparseableCRSError(
         "crs is not an EPSG code, is not a WKT string "
         "(no PROJCS / GEOGCS / PROJCRS / GEOGCRS root), and could not "
         f"be parsed: got {wkt_fallback!r}. Writing it verbatim to "
@@ -173,7 +174,7 @@ def _validate_crs_fallback(
         "cannot interpret. Pass an EPSG int (recommended), a real "
         "WKT string, install pyproj so EPSG / PROJ tokens can be "
         "resolved, or pass allow_unparseable_crs=True to keep the "
-        "pre-#1929 citation-only behaviour."
+        "pre-#1929 citation-only behaviour. See issue #1987."
     )
 
 

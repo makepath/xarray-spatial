@@ -42,6 +42,8 @@ _CANONICAL_ORDER = (
     "max_cloud_bytes",
     "on_gpu_failure",
     "missing_sources",
+    "allow_rotated",
+    "allow_unparseable_crs",
 )
 
 
@@ -117,8 +119,14 @@ def test_read_geotiff_dask_matches_canonical_order():
 
 
 def test_read_vrt_matches_canonical_order():
-    """``read_vrt`` must list shared params in the canonical order."""
-    _assert_canonical(read_vrt)
+    """``read_vrt`` must list shared params in the canonical order.
+
+    ``band_nodata`` is the #1987 PR 5 opt-out for the mixed-band metadata
+    check; it is VRT-specific (no analogue on the other readers) and so
+    lives in the per-function tail rather than in the shared canonical
+    order.
+    """
+    _assert_canonical(read_vrt, allowed_tail=('band_nodata',))
 
 
 def test_no_pairwise_order_inversions():

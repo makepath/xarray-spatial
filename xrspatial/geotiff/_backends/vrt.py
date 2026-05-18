@@ -37,7 +37,10 @@ def read_vrt(source: str, *,
              chunks: int | tuple | None = None,
              gpu: bool = False,
              max_pixels: int | None = None,
-             missing_sources: str = 'raise') -> xr.DataArray:
+             missing_sources: str = 'raise',
+             allow_rotated: bool = False,
+             allow_unparseable_crs: bool = False,
+             band_nodata: str | None = None) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
@@ -158,11 +161,43 @@ def read_vrt(source: str, *,
             dtype=dtype,
             max_pixels=max_pixels,
             missing_sources=missing_sources,
+            allow_rotated=allow_rotated,
+            allow_unparseable_crs=allow_unparseable_crs,
+            band_nodata=band_nodata,
         )
+
+    # Issue #1987 ambiguous-metadata checks for the eager VRT path. Parse
+    # the VRT XML up front and validate before ``_read_vrt_internal``
+    # touches any pixel data, so a rejected file does not first
+    # materialise the full mosaic into host memory. The parsed
+    # ``VRTDataset`` is threaded into the internal reader via ``parsed=``
+    # so we don't double-parse the XML.
+    import os as _os
+    from .._validation import (
+        validate_read_metadata,
+        _gdal_geotransform_to_affine_tuple,
+    )
+    from .._vrt import parse_vrt as _parse_vrt, _read_vrt_xml
+    _xml_str = _read_vrt_xml(source)
+    _vrt_dir = _os.path.dirname(_os.path.abspath(source))
+    _parsed_vrt = _parse_vrt(_xml_str, _vrt_dir)
+    validate_read_metadata({
+        'allow_rotated': allow_rotated,
+        'allow_unparseable_crs': allow_unparseable_crs,
+        'transform': _gdal_geotransform_to_affine_tuple(
+            _parsed_vrt.geo_transform
+        ),
+        'crs_wkt': _parsed_vrt.crs_wkt,
+        'band_nodata': band_nodata,
+        'band_nodata_values': (
+            [b.nodata for b in _parsed_vrt.bands]
+            if _parsed_vrt.bands else None
+        ),
+    })
 
     arr, vrt = _read_vrt_internal(
         source, window=window, band=band, max_pixels=max_pixels,
-        missing_sources=missing_sources,
+        missing_sources=missing_sources, parsed=_parsed_vrt,
     )
 
     if name is None:
@@ -339,7 +374,10 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
 
 
 def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
-                      max_pixels, missing_sources):
+                      max_pixels, missing_sources,
+                      allow_rotated: bool = False,
+                      allow_unparseable_crs: bool = False,
+                      band_nodata: str | None = None):
     """Lazy ``read_vrt`` dispatch when ``chunks=`` is set (issue #1814).
 
     Parses the VRT XML once to recover the extent, CRS, GeoTransform,
@@ -382,6 +420,24 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     xml_str = _read_vrt_xml(source)
     vrt_dir = _os.path.dirname(_os.path.abspath(source))
     vrt = parse_vrt(xml_str, vrt_dir)
+
+    # Issue #1987 ambiguous-metadata checks on the chunked VRT path. Run
+    # before the band-count validator below so a rejected file does not
+    # produce side effects.
+    from .._validation import (
+        validate_read_metadata,
+        _gdal_geotransform_to_affine_tuple,
+    )
+    validate_read_metadata({
+        'allow_rotated': allow_rotated,
+        'allow_unparseable_crs': allow_unparseable_crs,
+        'transform': _gdal_geotransform_to_affine_tuple(vrt.geo_transform),
+        'crs_wkt': vrt.crs_wkt,
+        'band_nodata': band_nodata,
+        'band_nodata_values': (
+            [b.nodata for b in vrt.bands] if vrt.bands else None
+        ),
+    })
 
     # Validate ``band`` against the parsed band count, matching the
     # internal reader's contract so the failure mode is the same whether

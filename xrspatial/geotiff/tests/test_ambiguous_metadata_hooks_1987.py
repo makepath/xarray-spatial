@@ -152,6 +152,9 @@ def test_write_hook_is_noop_when_no_checks_registered():
 
 
 def test_register_and_dispatch_read_check():
+    # Use an opaque payload key that no registered #1987 check inspects,
+    # so this test stays scoped to the dispatch mechanism rather than
+    # the semantics of any one check.
     seen: list[dict] = []
 
     def check(ctx):
@@ -159,13 +162,14 @@ def test_register_and_dispatch_read_check():
 
     register_read_metadata_check(check)
     try:
-        validate_read_metadata({"crs_wkt": "EPSG:4326"})
-        assert seen == [{"crs_wkt": "EPSG:4326"}]
+        validate_read_metadata({"_dispatch_probe": "value"})
+        assert seen == [{"_dispatch_probe": "value"}]
     finally:
         unregister_read_metadata_check(check)
 
 
 def test_register_and_dispatch_write_check():
+    # Same isolation as the read-side test above.
     seen: list[dict] = []
 
     def check(ctx):
@@ -173,8 +177,8 @@ def test_register_and_dispatch_write_check():
 
     register_write_metadata_check(check)
     try:
-        validate_write_metadata({"transform": (1.0, 0, 0, 0, -1.0, 0)})
-        assert seen == [{"transform": (1.0, 0, 0, 0, -1.0, 0)}]
+        validate_write_metadata({"_dispatch_probe": "value"})
+        assert seen == [{"_dispatch_probe": "value"}]
     finally:
         unregister_write_metadata_check(check)
 
@@ -308,7 +312,10 @@ def test_check_can_raise_typed_error():
     register_read_metadata_check(deny)
     try:
         with pytest.raises(UnparseableCRSError, match="bad WKT"):
-            validate_read_metadata({"crs_wkt": "MALFORMED"})
+            # Opaque key so the test does not collide with the registered
+            # ``_check_read_unparseable_crs`` check's behaviour on real
+            # ``crs_wkt`` payloads.
+            validate_read_metadata({"_dispatch_probe": "value"})
     finally:
         unregister_read_metadata_check(deny)
 
