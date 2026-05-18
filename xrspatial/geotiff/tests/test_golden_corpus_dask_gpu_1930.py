@@ -158,22 +158,30 @@ def test_taxonomy_ids_are_in_manifest() -> None:
 
 
 def test_dask_gpu_candidate_is_chunked_and_on_device() -> None:
-    """Sanity check: result is a dask array whose chunks are CuPy arrays.
+    """Sanity check: result is a dask array with a real chunk grid
+    whose chunks materialise to CuPy arrays.
 
-    Catches two failure modes at once: ``chunks=`` silently dropped
-    (would yield a plain CuPy array) or ``gpu=True`` silently CPU-fallen-
-    back (would yield a dask-of-numpy array).
+    Catches three failure modes at once: ``chunks=`` silently dropped
+    (would yield a plain CuPy array), ``chunks=`` accepted but stitched
+    into a single chunk that covers the whole file (windowing logic
+    never runs), and ``gpu=True`` silently CPU-fallen-back (would yield
+    a dask-of-numpy array). Picks the first fixture in sorted order
+    whose pixel extent is at least ``2 * CHUNK_SIZE`` along both axes.
     """
-    plain = [
+    eligible = [
         e for e in _FIXTURES
         if e["id"] not in _PARITY_GAPS
         and e["id"] not in _DASK_GPU_SKIPS
         and e["id"] not in _INTENTIONAL_SKIPS
         and _fixture_path(e).exists()
+        and e["width"] >= 2 * CHUNK_SIZE
+        and e["height"] >= 2 * CHUNK_SIZE
     ]
-    if not plain:
-        pytest.skip("no eligible fixtures on disk")
-    entry = plain[0]
+    if not eligible:
+        pytest.skip(
+            f"no eligible fixture is at least {2 * CHUNK_SIZE}x{2 * CHUNK_SIZE}"
+        )
+    entry = eligible[0]
     da = open_geotiff(
         str(_fixture_path(entry)),
         gpu=True,
@@ -183,6 +191,11 @@ def test_dask_gpu_candidate_is_chunked_and_on_device() -> None:
     assert hasattr(da.data, "dask"), (
         f"expected a dask-backed DataArray for {entry['id']!r}, "
         f"got data of type {type(da.data).__name__}"
+    )
+    nb = da.data.numblocks
+    assert len(nb) >= 2 and all(b >= 2 for b in nb[-2:]), (
+        f"expected a chunk grid >= 2x2 along the spatial axes for "
+        f"{entry['id']!r}, got numblocks={nb}"
     )
     computed = da.data.compute()
     assert isinstance(computed, cupy.ndarray), (
