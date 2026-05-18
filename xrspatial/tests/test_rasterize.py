@@ -1811,3 +1811,44 @@ class TestMetadataPropagation:
                   or read_back.attrs.get('_FillValue'))
         assert nodata is not None
         assert float(nodata) == -9999.0
+
+
+class TestPolysToWkb:
+    """Tests for the _polys_to_wkb helper (issue #2059)."""
+
+    def test_empty_input_returns_empty_list(self):
+        from xrspatial.rasterize import _polys_to_wkb
+        result = _polys_to_wkb([])
+        assert result == []
+        assert isinstance(result, list)
+
+    def test_output_matches_per_geometry_wkb(self):
+        """Vectorized output is byte-identical to the per-geometry path."""
+        from xrspatial.rasterize import _polys_to_wkb
+        rng = np.random.default_rng(2059)
+        geoms = []
+        for _ in range(100):
+            cx, cy = rng.uniform(-100, 100, 2)
+            r = rng.uniform(0.1, 5.0)
+            geoms.append(box(cx - r, cy - r, cx + r, cy + r))
+
+        result = _polys_to_wkb(geoms)
+        expected = [g.wkb for g in geoms]
+
+        assert isinstance(result, list)
+        assert len(result) == len(expected)
+        assert all(isinstance(b, (bytes, bytearray)) for b in result)
+        assert result == expected
+
+    def test_roundtrip_through_from_wkb(self):
+        """Output round-trips through _polys_from_wkb to equal geometries."""
+        from xrspatial.rasterize import _polys_to_wkb, _polys_from_wkb
+        geoms = [
+            Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
+            Polygon([(5, 5), (6, 5), (6, 6), (5, 6)]),
+            Polygon([(-2, -2), (2, -2), (2, 2), (-2, 2)]),
+        ]
+        restored = _polys_from_wkb(_polys_to_wkb(geoms))
+        assert len(restored) == len(geoms)
+        for original, copy in zip(geoms, restored):
+            assert original.equals(copy)
