@@ -13,12 +13,28 @@ operation is the common cause).
 """
 from __future__ import annotations
 
+import importlib.util
+
 import dask.array as dsk
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
+
+
+def _cupy_available() -> bool:
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _cupy_available()
 
 
 _EMPTY_SHAPES = [
@@ -39,15 +55,34 @@ def test_to_geotiff_rejects_empty_numpy(tmp_path, shape):
     with pytest.raises(ValueError) as excinfo:
         to_geotiff(da, str(out))
     msg = str(excinfo.value)
-    # The message must name the writer (so callers see the source) and
-    # mention which axis is zero. Accept either height/width by name or
-    # the literal shape so we don't pin the exact wording.
-    assert "to_geotiff" in msg or "empty" in msg.lower() or "0" in msg
+    # The message must name the writer that the user called so the
+    # traceback names the right entry point.
+    assert "to_geotiff" in msg
+    assert "empty" in msg.lower()
     if h == 0:
-        assert "height" in msg.lower() or f"({h}, {w})" in msg
+        assert "height=0" in msg
     if w == 0:
-        assert "width" in msg.lower() or f"({h}, {w})" in msg
+        assert "width=0" in msg
     # Nothing should have been written.
+    assert not out.exists()
+
+
+@pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+def test_write_geotiff_gpu_rejects_empty(tmp_path):
+    """``write_geotiff_gpu`` is a public entry point and does not go
+    through ``to_geotiff``; make sure the empty-shape guard fires there
+    too (the suggestion from PR #2078 review)."""
+    import cupy as cp
+
+    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+
+    arr = cp.zeros((0, 5), dtype=cp.float32)
+    out = tmp_path / "tmp_2075_empty_gpu_0x5.tif"
+    with pytest.raises(ValueError) as excinfo:
+        write_geotiff_gpu(arr, str(out))
+    msg = str(excinfo.value)
+    assert "write_geotiff_gpu" in msg
+    assert "height=0" in msg
     assert not out.exists()
 
 

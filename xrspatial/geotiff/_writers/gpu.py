@@ -29,6 +29,7 @@ from .._validation import (
     _validate_3d_writer_dims,
     _validate_nodata_arg,
     _validate_tile_size_arg,
+    _validate_writer_spatial_shape,
     validate_write_metadata,
 )
 
@@ -262,6 +263,16 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # keep parity with the public to_geotiff entry point.
     _validate_tile_size_arg(tile_size)
     _validate_nodata_arg(nodata)
+
+    # Issue #2075: reject empty spatial shapes. ``write_geotiff_gpu`` is
+    # a public entry point and direct callers (with cupy.ndarray or raw
+    # numpy) do not flow through ``to_geotiff``'s guard, so check here
+    # before any GPU work starts.
+    _validate_writer_spatial_shape(
+        getattr(data, 'shape', None),
+        getattr(data, 'dims', None),
+        entry_point="write_geotiff_gpu",
+    )
 
     # Issue #1987 ambiguous-metadata checks; mirrors ``to_geotiff`` so the
     # GPU writer enforces the same crs/crs_wkt consistency rule.

@@ -1575,7 +1575,8 @@ def write(data: np.ndarray, path: str, *,
     # picked by ``_validate_writer_spatial_shape`` without ``dims`` is
     # correct.
     from ._validation import _validate_writer_spatial_shape
-    _validate_writer_spatial_shape(getattr(data, 'shape', None))
+    _validate_writer_spatial_shape(
+        getattr(data, 'shape', None), entry_point="write")
 
     comp_tag = _compression_tag(compression)
     pred_int = normalize_predictor(predictor, data.dtype, comp_tag)
@@ -1911,7 +1912,8 @@ def write_streaming(dask_data, path: str, *,
     # this upstream, but direct callers of ``write_streaming`` go
     # through here too.
     from ._validation import _validate_writer_spatial_shape
-    _validate_writer_spatial_shape(getattr(dask_data, 'shape', None))
+    _validate_writer_spatial_shape(
+        getattr(dask_data, 'shape', None), entry_point="write_streaming")
 
     height, width = dask_data.shape[:2]
     samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
