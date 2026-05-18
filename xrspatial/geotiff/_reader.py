@@ -693,8 +693,9 @@ def split_coalesced_bytes(
 def _build_pinned_connection_classes():
     """Build pinned ``HTTPConnection`` / ``HTTPSConnection`` subclasses.
 
-    Done lazily so urllib3 stays an optional import. The subclasses
-    override ``_new_conn`` to dial the validated IP directly.
+    Built lazily on first use so the urllib3 connection submodules are
+    only imported when ``_HTTPSource`` is actually exercised. The
+    subclasses override ``_new_conn`` to dial the validated IP directly.
     """
     import socket as _socket
     from urllib3.connection import HTTPConnection, HTTPSConnection

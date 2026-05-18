@@ -123,7 +123,6 @@ class TestValidatorReturnsPinnedIP:
 
 class TestPinnedConnectionTarget:
     def test_init_records_pinned_ip(self, monkeypatch):
-        pytest.importorskip("urllib3")
         monkeypatch.setattr(
             socket, 'getaddrinfo', _ip_resolver('93.184.216.34'))
         src = _reader_mod._HTTPSource('https://example.com/cog.tif')
@@ -142,8 +141,6 @@ class TestPinnedConnectionTarget:
         will fail when the mock returns no data; we only care that the
         connection was attempted against the pinned IP.
         """
-        pytest.importorskip("urllib3")
-
         # First getaddrinfo call (validation) returns public IP. Every
         # subsequent call returns the rebound private IP.
         monkeypatch.setattr(
@@ -193,7 +190,6 @@ class TestPinnedConnectionTarget:
         hostname, not the IP literal. Required for HTTP virtual hosting
         and TLS certificate verification.
         """
-        pytest.importorskip("urllib3")
         monkeypatch.setattr(
             socket, 'getaddrinfo', _ip_resolver('93.184.216.34'))
         src = _reader_mod._HTTPSource('https://example.com/cog.tif')
@@ -256,7 +252,6 @@ class TestRedirectRevalidates:
         """A redirect from safe-host -> also-safe re-runs validation on
         the new hostname and pins the new IP.
         """
-        pytest.importorskip("urllib3")
         monkeypatch.setattr(
             socket, 'getaddrinfo', _ip_resolver('93.184.216.34'))
         src = _reader_mod._HTTPSource('https://safe-host.example.com/a.tif')
@@ -313,7 +308,6 @@ class TestRedirectRevalidates:
 
     def test_redirect_to_private_still_rejected(self, monkeypatch):
         """Pinning doesn't weaken the existing redirect-to-private guard."""
-        pytest.importorskip("urllib3")
         monkeypatch.setattr(
             socket, 'getaddrinfo', _ip_resolver('93.184.216.34'))
         src = _reader_mod._HTTPSource('https://example.com/cog.tif')
