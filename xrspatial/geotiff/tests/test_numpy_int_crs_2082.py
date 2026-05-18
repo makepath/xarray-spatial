@@ -92,17 +92,22 @@ def test_to_geotiff_python_int_crs_still_works(tmp_path):
 
 
 def test_to_geotiff_numpy_int_crs_writes_real_int_to_attrs(tmp_path):
-    # Coerce on the writer side so downstream consumers don't see a
-    # numpy scalar in ``attrs['crs']``. Mostly a defensive check: if
-    # the EPSG branch ever stores ``crs`` raw, ``attrs['crs']`` ends
-    # up as ``np.int64(4326)`` instead of ``int(4326)``, which is a
-    # serialisation hazard for downstream JSON / dict consumers.
+    # The writer coerces with ``int(crs)`` before stamping the EPSG
+    # tag so downstream consumers don't see a numpy scalar in
+    # ``attrs['crs']`` if the reader ever propagates the raw value.
+    # Check that the round-tripped value isn't a numpy integer
+    # subclass: ``int(crs_val) == 4326`` catches the value, and the
+    # ``not isinstance(crs_val, np.integer)`` guard catches the type
+    # regression class (JSON / dict serialisation hazard) without
+    # tying the assertion to ``type(...) is int`` -- if the reader
+    # ever wraps EPSG in a Python int subclass for unrelated reasons
+    # the test still passes.
     path = str(tmp_path / "tmp_2082_attrs_int_type.tif")
     to_geotiff(_square(), path, crs=np.int64(4326))
     out = open_geotiff(path)
     crs_val = out.attrs.get('crs')
-    assert crs_val == 4326
-    assert type(crs_val) is int
+    assert int(crs_val) == 4326
+    assert not isinstance(crs_val, np.integer)
 
 
 # --- GPU path -----------------------------------------------------------

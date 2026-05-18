@@ -83,12 +83,13 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         the auto-dispatch path through ``to_geotiff(gpu=True, cog=True)``
         rejects file-like destinations, and the explicit GPU writer
         mirrors that rule (issue #1652).
-    crs : int, str, or None
-        EPSG code or WKT string. EPSG codes are strongly preferred for
-        interop; the WKT-only path emits a user-defined CRS (32767) with
-        the WKT stored in ``GTCitationGeoKey``, which many non-libgeotiff
-        readers ignore. A ``UserWarning`` is emitted when the WKT-only
-        path is taken. See issue #1768.
+    crs : int, numpy.integer, str, or None
+        EPSG code (int or numpy integer scalar) or WKT string. EPSG
+        codes are strongly preferred for interop; the WKT-only path
+        emits a user-defined CRS (32767) with the WKT stored in
+        ``GTCitationGeoKey``, which many non-libgeotiff readers
+        ignore. A ``UserWarning`` is emitted when the WKT-only path
+        is taken. See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str

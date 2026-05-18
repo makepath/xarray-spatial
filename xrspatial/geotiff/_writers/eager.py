@@ -96,10 +96,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (e.g. ``io.BytesIO``). When a file-like is passed, the encoded
         TIFF bytes are written to that object once assembly completes.
         ``cog=True`` and ``.vrt`` outputs require a string path.
-    crs : int, str, or None
-        EPSG code (int), WKT string, or PROJ string. If None and data
-        is a DataArray, tries to read from attrs ('crs' for EPSG,
-        'crs_wkt' for WKT).
+    crs : int, numpy.integer, str, or None
+        EPSG code (int or numpy integer scalar), WKT string, or PROJ
+        string. If None and data is a DataArray, tries to read from
+        attrs ('crs' for EPSG, 'crs_wkt' for WKT).
 
         EPSG codes are strongly preferred for interop. The WKT-only
         path writes ``ProjectedCSType`` / ``GeographicType`` = 32767
