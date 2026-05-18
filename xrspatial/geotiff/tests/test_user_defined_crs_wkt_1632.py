@@ -269,8 +269,6 @@ def test_synthesize_user_defined_wkt_sphere():
         semi_major=6378137.0,
         semi_minor=6378137.0,
         inv_flattening=0.0,
-        angular_units_code=9102,
-        geog_citation="User-provided projection",
     )
     assert isinstance(wkt, str) and wkt
     crs = pyproj.CRS.from_wkt(wkt)
@@ -293,8 +291,6 @@ def test_synthesize_user_defined_wkt_oblate_ellipsoid():
         semi_major=6378137.0,
         semi_minor=None,
         inv_flattening=298.257223563,
-        angular_units_code=9102,
-        geog_citation=None,
     )
     assert isinstance(wkt, str) and wkt
     crs = pyproj.CRS.from_wkt(wkt)
@@ -317,8 +313,31 @@ def test_synthesize_user_defined_wkt_projected_returns_none():
         semi_major=6378137.0,
         semi_minor=6378137.0,
         inv_flattening=0.0,
-        angular_units_code=9102,
-        geog_citation="foo",
+    ) is None
+
+
+def test_synthesize_user_defined_wkt_geocentric_returns_none():
+    """Geocentric and unknown model_type values also fall through to
+    ``None``. Pinned so a future change that promotes geocentric to a
+    real proj_dict still has to update this test deliberately."""
+    from xrspatial.geotiff._geotags import (
+        MODEL_TYPE_GEOCENTRIC,
+        _synthesize_user_defined_wkt,
+    )
+
+    assert _synthesize_user_defined_wkt(
+        model_type=MODEL_TYPE_GEOCENTRIC,
+        semi_major=6378137.0,
+        semi_minor=6378137.0,
+        inv_flattening=0.0,
+    ) is None
+    # Unknown model_type (the parser stamps 0 when GEOKEY_MODEL_TYPE is
+    # absent). Same conservative fall-through.
+    assert _synthesize_user_defined_wkt(
+        model_type=0,
+        semi_major=6378137.0,
+        semi_minor=6378137.0,
+        inv_flattening=0.0,
     ) is None
 
 
@@ -337,8 +356,6 @@ def test_synthesize_user_defined_wkt_missing_ellipsoid_returns_none():
         semi_major=None,
         semi_minor=None,
         inv_flattening=None,
-        angular_units_code=9102,
-        geog_citation="foo",
     ) is None
     # Semi-major but neither semi_minor nor inv_flattening: still
     # ambiguous (sphere vs oblate), refuse rather than guess.
@@ -347,6 +364,4 @@ def test_synthesize_user_defined_wkt_missing_ellipsoid_returns_none():
         semi_major=6378137.0,
         semi_minor=None,
         inv_flattening=None,
-        angular_units_code=9102,
-        geog_citation="foo",
     ) is None

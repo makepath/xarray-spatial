@@ -67,6 +67,7 @@ GEOKEY_GEODETIC_DATUM = 2050
 GEOKEY_GEOG_LINEAR_UNITS = 2052
 GEOKEY_GEOG_ANGULAR_UNITS = 2054
 GEOKEY_GEOG_SEMI_MAJOR_AXIS = 2057
+GEOKEY_GEOG_SEMI_MINOR_AXIS = 2058
 GEOKEY_GEOG_INV_FLATTENING = 2059
 GEOKEY_PROJECTED_CS_TYPE = 3072
 GEOKEY_PROJ_CITATION = 3073
@@ -313,8 +314,6 @@ def _synthesize_user_defined_wkt(
     semi_major: float | None,
     semi_minor: float | None,
     inv_flattening: float | None,
-    angular_units_code: int | None,
-    geog_citation: str | None,
 ) -> str | None:
     """Build a canonical WKT for a user-defined geographic CRS.
 
@@ -322,13 +321,13 @@ def _synthesize_user_defined_wkt(
     user-defined geographic CRS (``GeographicTypeGeoKey == 32767`` and
     no projected EPSG) and the citation does not already carry a WKT
     string. The classic example is a GeoTIFF whose CRS lives only in
-    ``GeogCitationGeoKey`` as a free-form name, with the ellipsoid and
-    angular units exposed via separate GeoKeys
-    (``GeogSemiMajorAxisGeoKey``, ``GeogInvFlatteningGeoKey``,
-    ``GeogAngularUnitsGeoKey``). Rasterio reads such files and reports a
-    GEOGCS CRS; pre-#1930 xrspatial dropped the projection silently
-    because nothing stamped a canonical ``attrs['crs_wkt']``. See issue
-    #1930 (Phase 3 ``crs_citation_only`` parity gap).
+    ``GeogCitationGeoKey`` as a free-form name, with the ellipsoid
+    exposed via separate GeoKeys (``GeogSemiMajorAxisGeoKey``,
+    ``GeogSemiMinorAxisGeoKey``, ``GeogInvFlatteningGeoKey``).
+    Rasterio reads such files and reports a GEOGCS CRS; pre-#1930
+    xrspatial dropped the projection silently because nothing stamped
+    a canonical ``attrs['crs_wkt']``. See issue #1930 (Phase 3
+    ``crs_citation_only`` parity gap).
 
     Returns a WKT string when pyproj is installed and the GeoKeys
     expose enough of the ellipsoid to feed ``pyproj.CRS.from_dict``,
@@ -338,11 +337,22 @@ def _synthesize_user_defined_wkt(
     ``attrs['geog_citation']`` -- this helper exists to close the
     canonical-CRS parity gap, not to round-trip the citation field.
 
-    Projected user-defined CRSes (``ModelTypeProjected`` with
-    ``ProjectedCSType == 32767``) are not yet reconstructible from
-    GeoKeys alone -- they need the GeogPrime / Projection parameters,
-    which the corpus does not exercise. Return ``None`` for that case
-    so the caller falls through to the existing deprecated-attrs path.
+    Angular units are not threaded through. PROJ's ``longlat`` always
+    emits degrees, and the corpus has no radian-unit user-defined
+    fixture; if one shows up, this helper needs an angular_units_code
+    parameter and the proj_dict needs a ``to_meter`` / units shim.
+
+    Non-geographic model types fall through to ``None``:
+
+    * ``MODEL_TYPE_PROJECTED`` (1) user-defined CRSes (``ProjectedCSType
+      == 32767``) need the GeogPrime / Projection parameters that this
+      helper does not yet read.
+    * ``MODEL_TYPE_GEOCENTRIC`` (3) and unknown / zero model types are
+      not exercised by the corpus and would need their own per-type
+      proj_dict construction.
+
+    In all three cases the caller falls through to the existing
+    deprecated-attrs path.
     """
     if model_type != MODEL_TYPE_GEOGRAPHIC:
         return None
@@ -686,10 +696,10 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     semi_major = geokeys.get(GEOKEY_GEOG_SEMI_MAJOR_AXIS)
     if not isinstance(semi_major, (int, float)):
         semi_major = None
-    # GeogSemiMinorAxisGeoKey (2058). Kept local for WKT synthesis
-    # below; not surfaced as a separate attr because the canonical
-    # ellipsoid lives in attrs['crs_wkt'].
-    semi_minor = geokeys.get(2058)
+    # GeogSemiMinorAxisGeoKey. Kept local for WKT synthesis below; not
+    # surfaced as a separate attr because the canonical ellipsoid lives
+    # in attrs['crs_wkt'].
+    semi_minor = geokeys.get(GEOKEY_GEOG_SEMI_MINOR_AXIS)
     if not isinstance(semi_minor, (int, float)):
         semi_minor = None
     inv_flat = geokeys.get(GEOKEY_GEOG_INV_FLATTENING)
@@ -825,8 +835,6 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
             semi_major=semi_major,
             semi_minor=semi_minor,
             inv_flattening=inv_flat,
-            angular_units_code=ang_code,
-            geog_citation=geog_citation,
         )
         if synth is not None:
             crs_wkt = synth
