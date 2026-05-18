@@ -76,6 +76,16 @@ _PARITY_GAPS: dict[str, str] = {}
 # such gaps if they appear.
 _GPU_SKIPS: dict[str, str] = {}
 
+# Fixtures whose overview-IFD code path is not yet wired into the
+# xrspatial reader. The base-IFD parity check still runs; the
+# overview-level loop driven by ``candidate_factory`` is skipped for
+# these ids. See the eager module for the rationale.
+_OVERVIEW_READER_GAPS: dict[str, str] = {
+    "overview_external_ovr_uint16": (
+        "External .ovr sidecar reader is not implemented in xrspatial."
+    ),
+}
+
 # Fixtures whose codec is not implemented on the GPU read path and
 # legitimately need to fall back to CPU. The test routes these through
 # ``on_gpu_failure='auto'`` instead of ``'strict'``, which exercises
@@ -171,7 +181,24 @@ def test_gpu_parity(manifest_entry: dict) -> None:
     candidate = open_geotiff(
         str(path), gpu=True, on_gpu_failure=on_gpu_failure
     )
-    compare_to_oracle(path, candidate, lossy=_is_lossy(manifest_entry))
+    # Wire the oracle's overview-IFD check when the fixture carries
+    # overviews. The factory inherits the GPU read options the base
+    # candidate used so each overview level exercises the same nvCOMP /
+    # CPU-fallback configuration.
+    overviews = manifest_entry.get("overviews") or []
+    factory = (
+        (lambda lvl, p=path, on_fail=on_gpu_failure: open_geotiff(
+            str(p), gpu=True, on_gpu_failure=on_fail, overview_level=lvl,
+        ))
+        if overviews and fixture_id not in _OVERVIEW_READER_GAPS
+        else None
+    )
+    compare_to_oracle(
+        path,
+        candidate,
+        lossy=_is_lossy(manifest_entry),
+        candidate_factory=factory,
+    )
 
 
 def test_taxonomy_ids_are_in_manifest() -> None:
@@ -183,6 +210,7 @@ def test_taxonomy_ids_are_in_manifest() -> None:
         set(_PARITY_GAPS)
         | set(_GPU_SKIPS)
         | set(_GPU_CPU_FALLBACK)
+        | set(_OVERVIEW_READER_GAPS)
         | set(_INTENTIONAL_SKIPS)
     )
     stale = tagged - manifest_ids

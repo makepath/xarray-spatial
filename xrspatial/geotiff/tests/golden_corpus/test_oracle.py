@@ -1034,3 +1034,240 @@ def test_normalise_axis_order_helper_directly() -> None:
     out_ref, out_cand = _normalise_axis_order(cube_a, cube_b)
     assert out_ref is cube_a
     assert out_cand is cube_b
+
+
+# ---------------------------------------------------------------------------
+# Overview-level parity (issue #1930)
+#
+# ``compare_to_oracle`` accepts an optional ``candidate_factory`` so a
+# caller can plumb the same backend through every overview level the
+# fixture exposes. The base-IFD path stays exactly as before when no
+# factory is given, which keeps the public single-level signature
+# backward compatible.
+# ---------------------------------------------------------------------------
+
+
+def _write_tiff_with_overviews(
+    path: Path,
+    data: np.ndarray,
+    *,
+    factors: list[int],
+    transform: Affine | None = None,
+    crs: str | int | None = 'EPSG:4326',
+    nodata: float | int | None = None,
+) -> Path:
+    """Write a single-band TIFF and build internal overviews.
+
+    The base raster is written via ``_write_tiff``; the overview
+    pyramid is then built in-place with nearest-neighbour resampling
+    (the default for the corpus's overview fixtures, see manifest
+    entries ``overview_internal_uint16`` and friends). Returns the
+    same path.
+    """
+    from rasterio.enums import Resampling
+
+    _write_tiff(path, data, transform=transform, crs=crs, nodata=nodata)
+    with rasterio.open(path, 'r+') as dst:
+        dst.build_overviews(factors, Resampling.nearest)
+    return path
+
+
+def _candidate_for_level(
+    base_data: np.ndarray,
+    base_transform: Affine,
+    level: int,
+    factors: list[int],
+) -> xr.DataArray:
+    """Build a hand-shaped candidate that matches the nearest-neighbour
+    overview rasterio would write at ``level`` from ``base_data``.
+
+    ``level=0`` returns the base raster. ``level>=1`` decimates by
+    ``factors[level - 1]`` using nearest-neighbour subsampling
+    (``data[::f, ::f]``), which agrees bit-for-bit with how rasterio
+    builds the nearest-resampling pyramid for these small fixtures.
+    The transform's pixel size scales by the same factor; the origin
+    stays put.
+    """
+    if level == 0:
+        return _build_candidate(base_data, transform=base_transform)
+    factor = factors[level - 1]
+    decimated = base_data[::factor, ::factor].copy()
+    pw = float(base_transform.a) * factor
+    ph = float(base_transform.e) * factor
+    ox = float(base_transform.c)
+    oy = float(base_transform.f)
+    scaled = Affine(pw, 0.0, ox, 0.0, ph, oy)
+    return _build_candidate(decimated, transform=scaled)
+
+
+def test_compare_to_oracle_overview_success(tmp_path: Path) -> None:
+    """A 2-level pyramid compares cleanly when the factory matches.
+
+    Synthesises a uint16 raster with overviews at decimations [2, 4],
+    hands the oracle a factory that returns the matching subsampled
+    candidate at every level, and confirms the comparison accepts both
+    overview levels in addition to the base.
+    """
+    factors = [2, 4]
+    base = np.arange(64 * 64, dtype=np.uint16).reshape(64, 64)
+    transform = from_origin(0.0, 64.0, 1.0, 1.0)
+    fixture = _write_tiff_with_overviews(
+        tmp_path / 'ovr_ok_1930.tif',
+        base,
+        factors=factors,
+        transform=transform,
+    )
+    base_candidate = _candidate_for_level(base, transform, 0, factors)
+
+    def factory(level: int) -> xr.DataArray:
+        return _candidate_for_level(base, transform, level, factors)
+
+    compare_to_oracle(fixture, base_candidate, candidate_factory=factory)
+
+
+def test_compare_to_oracle_overview_level1_mismatch_names_level(
+    tmp_path: Path,
+) -> None:
+    """A pixel mismatch at level 1 only fails with a message that names
+    the level.
+
+    Level 0 and level 2 match the rasterio-built pyramid; level 1
+    perturbs one pixel. The oracle must keep going past the matching
+    base level, fail at level 1, and surface ``overview level 1`` in
+    the assertion message so the failing level is greppable in CI logs.
+    """
+    factors = [2, 4]
+    base = np.arange(64 * 64, dtype=np.uint16).reshape(64, 64)
+    transform = from_origin(0.0, 64.0, 1.0, 1.0)
+    fixture = _write_tiff_with_overviews(
+        tmp_path / 'ovr_lvl1_bad_1930.tif',
+        base,
+        factors=factors,
+        transform=transform,
+    )
+    base_candidate = _candidate_for_level(base, transform, 0, factors)
+
+    def factory(level: int) -> xr.DataArray:
+        cand = _candidate_for_level(base, transform, level, factors)
+        if level == 1:
+            cand = cand.copy()
+            cand.data[0, 0] = 65535  # corrupt one pixel at level 1 only
+        return cand
+
+    with pytest.raises(AssertionError, match=r'overview level 1'):
+        compare_to_oracle(fixture, base_candidate, candidate_factory=factory)
+
+
+def test_compare_to_oracle_no_overviews_skips_factory(tmp_path: Path) -> None:
+    """A fixture without overviews ignores ``candidate_factory`` entirely.
+
+    The base-IFD comparison runs as before; the factory must not be
+    invoked even when supplied (the count check short-circuits the
+    loop). A factory that explodes if called is a clean way to pin
+    this -- if the loop ever runs against a fixture with zero
+    overviews, the test fails with the explosion.
+    """
+    data = np.arange(16, dtype=np.int16).reshape(4, 4)
+    transform = from_origin(0.0, 4.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'no_ovr_1930.tif', data, transform=transform,
+    )
+    cand = _build_candidate(data, transform=transform)
+
+    def boom(_level: int) -> xr.DataArray:
+        raise AssertionError('factory must not be called when fixture '
+                             'has no overviews')
+
+    compare_to_oracle(fixture, cand, candidate_factory=boom)
+
+
+def test_compare_to_oracle_external_ovr_sidecar(tmp_path: Path) -> None:
+    """The sidecar ``.tif.ovr`` route is exercised end-to-end.
+
+    rasterio routes ``OVERVIEW_LEVEL=N`` to whichever IFD chain holds
+    the overviews -- the in-file chain for internal pyramids, the
+    sibling ``.tif.ovr`` for external sidecars. The oracle does not
+    care which storage the fixture uses; it just opens the source at
+    ``OVERVIEW_LEVEL`` and reads. This test pins that contract: a
+    hand-built fixture that writes overviews into a ``.ovr`` sidecar
+    compares cleanly when the factory returns the matching candidate.
+
+    Internal-IFD overview coverage is already pinned by
+    ``test_compare_to_oracle_overview_success``; this test guards the
+    external-sidecar route against a future regression in either
+    rasterio or the oracle's source introspection.
+    """
+    from rasterio.enums import Resampling
+
+    factors = [2, 4]
+    base = np.arange(64 * 64, dtype=np.uint16).reshape(64, 64)
+    transform = from_origin(0.0, 64.0, 1.0, 1.0)
+    fixture = _write_tiff(
+        tmp_path / 'ovr_sidecar_1930.tif',
+        base,
+        transform=transform,
+    )
+    # Build overviews into a sidecar .tif.ovr by opening with
+    # TIFF_USE_OVR=YES so rasterio writes them externally rather than
+    # appending to the in-file IFD chain.
+    with rasterio.Env(TIFF_USE_OVR='YES'):
+        with rasterio.open(fixture, 'r+') as dst:
+            dst.build_overviews(factors, Resampling.nearest)
+    # Confirm the sidecar landed on disk before driving the oracle so
+    # this test stays self-pinning if the env var changes meaning.
+    assert (tmp_path / 'ovr_sidecar_1930.tif.ovr').exists(), (
+        'rasterio did not write the sidecar .ovr; the env var may '
+        'have stopped opting into external overviews'
+    )
+
+    base_candidate = _candidate_for_level(base, transform, 0, factors)
+
+    def factory(level: int) -> xr.DataArray:
+        return _candidate_for_level(base, transform, level, factors)
+
+    compare_to_oracle(fixture, base_candidate, candidate_factory=factory)
+
+
+def test_compare_to_oracle_overview_corpus_external_ovr_fixture() -> None:
+    """The shipped ``overview_external_ovr_uint16`` fixture parity-checks.
+
+    Drives the on-disk corpus fixture through a hand-built factory
+    that mirrors what rasterio reads at each level (no xrspatial
+    reader involvement). Pins that the oracle can walk an external
+    ``.ovr`` chain end-to-end on a real corpus fixture, independent
+    of whether the xrspatial reader has caught up to sidecar
+    overviews yet. The per-backend test modules skip the factory for
+    this fixture because the reader cannot resolve
+    ``overview_level >= 1`` against the sidecar; this oracle-level
+    test still proves the oracle side of the contract works.
+    """
+    path = (
+        Path(__file__).resolve().parent
+        / 'fixtures' / 'overview_external_ovr_uint16.tif'
+    )
+    if not path.exists():
+        pytest.skip(
+            "overview_external_ovr_uint16 fixture not generated"
+        )
+    with rasterio.open(path) as src:
+        base = src.read(1)
+        base_transform = src.transform
+        factors = src.overviews(1)
+    assert factors, (
+        'external .ovr fixture must report overview factors; got '
+        f'{factors!r}'
+    )
+
+    def factory(level: int) -> xr.DataArray:
+        # Read each overview level directly from rasterio so this
+        # test exercises only the oracle's overview-iteration logic.
+        # It deliberately bypasses ``open_geotiff`` (which does not
+        # yet handle sidecar .ovr files, see _OVERVIEW_READER_GAPS in
+        # the per-backend modules).
+        with rasterio.open(path, OVERVIEW_LEVEL=level - 1) as src:
+            arr = src.read(1)
+            t = src.transform
+        return _build_candidate(arr, transform=t)
+
+    base_candidate = _build_candidate(base, transform=base_transform)
+    compare_to_oracle(path, base_candidate, candidate_factory=factory)

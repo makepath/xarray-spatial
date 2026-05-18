@@ -85,6 +85,23 @@ FIXTURES_DIR = (
 
 _PARITY_GAPS: dict[str, str] = {}
 
+# Fixtures whose overview-IFD code path is not yet wired into the
+# xrspatial reader. The base-IFD comparison still runs and passes; the
+# overview-level loop driven by ``candidate_factory`` is skipped for
+# these ids. Today this lists external sidecar overviews
+# (``.tif.ovr``): the reader walks only the in-file IFD chain and would
+# raise "overview_level out of range" for ``overview_level >= 1``. The
+# internal-IFD and COG fixtures exercise the overview code path on
+# every backend.
+_OVERVIEW_READER_GAPS: dict[str, str] = {
+    "overview_external_ovr_uint16": (
+        "External .ovr sidecar reader is not implemented in xrspatial. "
+        "The base IFD still parity-checks; the overview levels live in "
+        "a sibling .tif.ovr that the reader does not open. Track in a "
+        "follow-up issue if the corpus needs sidecar coverage."
+    ),
+}
+
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
         "MinIsWhite photometric inversion: xrspatial inverts pixels per "
@@ -156,7 +173,27 @@ def test_eager_numpy_parity(manifest_entry: dict) -> None:
             f"to materialise the full corpus"
         )
     candidate = open_geotiff(str(path))
-    compare_to_oracle(path, candidate, lossy=_is_lossy(manifest_entry))
+    # When the fixture carries pyramid overviews, hand the oracle a
+    # factory it can use to fetch each overview level via the same
+    # backend (eager numpy). The oracle introspects the rasterio source
+    # for overview IFDs and compares each one against the factory's
+    # output; fixtures without overviews exercise the historical
+    # base-IFD-only path. Fixtures the xrspatial reader cannot resolve
+    # at level >= 1 (e.g. sidecar .ovr overviews) live in
+    # ``_OVERVIEW_READER_GAPS`` and skip the overview iteration; the
+    # base-IFD comparison still runs.
+    overviews = manifest_entry.get("overviews") or []
+    factory = (
+        (lambda lvl, p=path: open_geotiff(str(p), overview_level=lvl))
+        if overviews and fixture_id not in _OVERVIEW_READER_GAPS
+        else None
+    )
+    compare_to_oracle(
+        path,
+        candidate,
+        lossy=_is_lossy(manifest_entry),
+        candidate_factory=factory,
+    )
 
 
 def test_taxonomy_ids_are_in_manifest() -> None:
@@ -166,7 +203,11 @@ def test_taxonomy_ids_are_in_manifest() -> None:
     fixture marked as expected-to-fail even after it was renamed or removed.
     """
     manifest_ids = {e["id"] for e in _FIXTURES}
-    tagged = set(_PARITY_GAPS) | set(_INTENTIONAL_SKIPS)
+    tagged = (
+        set(_PARITY_GAPS)
+        | set(_OVERVIEW_READER_GAPS)
+        | set(_INTENTIONAL_SKIPS)
+    )
     stale = tagged - manifest_ids
     assert not stale, (
         f"taxonomy references unknown fixture ids: {sorted(stale)}"

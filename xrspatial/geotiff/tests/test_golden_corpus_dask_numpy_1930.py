@@ -70,6 +70,16 @@ _PARITY_GAPS: dict[str, str] = {}
 # a fixture is dask-specific (i.e. eager passes, dask does not).
 _DASK_SKIPS: dict[str, str] = {}
 
+# Fixtures whose overview-IFD code path is not yet wired into the
+# xrspatial reader. The base-IFD parity check still runs; the
+# overview-level loop driven by ``candidate_factory`` is skipped for
+# these ids. See the eager module for the rationale.
+_OVERVIEW_READER_GAPS: dict[str, str] = {
+    "overview_external_ovr_uint16": (
+        "External .ovr sidecar reader is not implemented in xrspatial."
+    ),
+}
+
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
         "MinIsWhite photometric inversion: xrspatial inverts pixels per "
@@ -142,7 +152,24 @@ def test_dask_numpy_parity(manifest_entry: dict) -> None:
             f"to materialise the full corpus"
         )
     candidate = open_geotiff(str(path), chunks=CHUNK_SIZE)
-    compare_to_oracle(path, candidate, lossy=_is_lossy(manifest_entry))
+    # Wire the oracle's overview-IFD check when the fixture carries
+    # overviews. The factory threads the dask backend's options through
+    # so each overview level reads via the same windowed-decode path
+    # the full-resolution candidate did.
+    overviews = manifest_entry.get("overviews") or []
+    factory = (
+        (lambda lvl, p=path: open_geotiff(
+            str(p), chunks=CHUNK_SIZE, overview_level=lvl
+        ))
+        if overviews and fixture_id not in _OVERVIEW_READER_GAPS
+        else None
+    )
+    compare_to_oracle(
+        path,
+        candidate,
+        lossy=_is_lossy(manifest_entry),
+        candidate_factory=factory,
+    )
 
 
 def test_taxonomy_ids_are_in_manifest() -> None:
@@ -150,7 +177,12 @@ def test_taxonomy_ids_are_in_manifest() -> None:
     must exist in the manifest.
     """
     manifest_ids = {e["id"] for e in _FIXTURES}
-    tagged = set(_PARITY_GAPS) | set(_DASK_SKIPS) | set(_INTENTIONAL_SKIPS)
+    tagged = (
+        set(_PARITY_GAPS)
+        | set(_DASK_SKIPS)
+        | set(_OVERVIEW_READER_GAPS)
+        | set(_INTENTIONAL_SKIPS)
+    )
     stale = tagged - manifest_ids
     assert not stale, (
         f"taxonomy references unknown fixture ids: {sorted(stale)}"

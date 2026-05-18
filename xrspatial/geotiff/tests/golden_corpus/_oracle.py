@@ -24,7 +24,7 @@ Scope notes:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import xarray as xr
@@ -546,11 +546,84 @@ def _assert_shape_only(ref_pixels: np.ndarray, candidate_da: xr.DataArray) -> No
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _compare_against_open_source(
+    src,
+    candidate_da: xr.DataArray,
+    *,
+    lossy: bool,
+    level_label: str = '',
+) -> None:
+    """Run the full set of oracle assertions against an open rasterio source.
+
+    Pulled out of ``compare_to_oracle`` so the same battery (dtype /
+    transform / CRS / nodata / pixels / canonical attrs) can run against
+    either the base IFD or an overview-level IFD. The caller controls
+    which IFD is open via ``rasterio.open(path, OVERVIEW_LEVEL=...)``.
+
+    ``level_label`` is prefixed to any ``AssertionError`` raised here so
+    failures from an overview comparison cite the level rather than
+    surfacing as a generic mismatch. The base-level caller passes an
+    empty string for backward-compatible message text.
+    """
+    ref_pixels = src.read()  # shape (bands, H, W)
+    ref_dtype = np.dtype(src.dtypes[0]) if src.dtypes else ref_pixels.dtype
+    ref_transform = src.transform
+    ref_crs = src.crs
+    ref_nodata = src.nodata
+    ref_has_georef = _ref_has_georef(src)
+    ref_attrs = {
+        'crs': ref_crs,
+        'transform': ref_transform,
+        'nodata': ref_nodata,
+        'dtype': ref_dtype,
+    }
+
+    # When the candidate reports the masked-nodata contract (#1988),
+    # rewrite the rasterio reference to match: cast to the candidate's
+    # float dtype and replace sentinel-equal pixels with NaN. Then the
+    # dtype + pixel assertions run on directly comparable arrays.
+    ref_pixels, ref_dtype = _normalise_for_masked_nodata(
+        ref_pixels, ref_dtype, ref_nodata, candidate_da
+    )
+
+    try:
+        _assert_dtype(ref_dtype, candidate_da)
+        _assert_transform(
+            ref_transform, candidate_da, ref_has_georef=ref_has_georef,
+        )
+        _assert_crs(ref_crs, candidate_da)
+        _assert_nodata(ref_nodata, candidate_da)
+        if lossy:
+            _assert_shape_only(ref_pixels, candidate_da)
+        else:
+            _assert_pixels(ref_pixels, candidate_da)
+        _assert_canonical_attrs(ref_attrs, candidate_da)
+    except AssertionError as exc:
+        if level_label:
+            raise AssertionError(f'{level_label}: {exc}') from exc
+        raise
+
+
+def _source_overview_count(src) -> int:
+    """Return the number of overview IFDs the rasterio source exposes.
+
+    Sources without overviews -- or sources whose first band has no
+    overview list -- report 0. Multi-band fixtures where bands disagree
+    on overview depth are not in the corpus today; if one shows up,
+    extend this helper to take the minimum across bands.
+    """
+    try:
+        return len(src.overviews(1))
+    except Exception:
+        return 0
+
+
 def compare_to_oracle(
     fixture_path: str | Path,
     candidate_da: xr.DataArray,
     *,
     lossy: bool = False,
+    candidate_factory: Callable[[int], xr.DataArray] | None = None,
 ) -> None:
     """Assert that ``candidate_da`` matches the rasterio read of ``fixture_path``.
 
@@ -560,17 +633,36 @@ def compare_to_oracle(
         Path to a TIFF on disk. The oracle does not consult the corpus
         manifest; callers (Phase 3 test cells) pass a raw path.
     candidate_da
-        The xarray DataArray produced by an xrspatial read backend.
+        The xarray DataArray produced by an xrspatial read backend at
+        full resolution (overview level 0). Compared against the base
+        IFD of the rasterio reference.
     lossy
         When ``True``, skip bit-exact pixel comparison and assert only
         shape, dtype, transform, and CRS. Use this for JPEG cells where
-        the codec is intrinsically lossy (Phase 2 PR 5).
+        the codec is intrinsically lossy (Phase 2 PR 5). The same
+        ``lossy`` flag applies to every overview level when
+        ``candidate_factory`` is given.
+    candidate_factory
+        Optional callable ``factory(level) -> xr.DataArray`` that returns
+        the candidate for a given overview level (1 = first overview,
+        2 = second overview, ...). When provided AND the rasterio source
+        exposes one or more overview IFDs, the oracle compares each
+        overview level against ``factory(level)`` after the base-level
+        check passes. Callers wire this with the backend-specific read
+        signature, e.g.
+        ``lambda lvl: open_geotiff(path, overview_level=lvl)`` for the
+        eager numpy path, or
+        ``lambda lvl: open_geotiff(path, chunks=32, overview_level=lvl)``
+        for the dask path. When omitted (or when the fixture has no
+        overviews), the oracle behaves exactly as before -- a single
+        base-IFD comparison.
 
     Raises
     ------
     AssertionError
         On the first property that disagrees. The message identifies the
-        property and prints both sides.
+        property and prints both sides. For overview-level mismatches
+        the message is prefixed with ``overview level N``.
 
     Notes
     -----
@@ -585,37 +677,27 @@ def compare_to_oracle(
     if not fixture_path.exists():
         raise FileNotFoundError(f'oracle fixture not found: {fixture_path}')
 
+    # Base-level comparison: same as the historical contract.
     with rasterio.open(fixture_path) as src:
-        ref_pixels = src.read()  # shape (bands, H, W)
-        ref_dtype = np.dtype(src.dtypes[0]) if src.dtypes else ref_pixels.dtype
-        ref_transform = src.transform
-        ref_crs = src.crs
-        ref_nodata = src.nodata
-        ref_has_georef = _ref_has_georef(src)
-        ref_attrs = {
-            'crs': ref_crs,
-            'transform': ref_transform,
-            'nodata': ref_nodata,
-            'dtype': ref_dtype,
-        }
+        n_overviews = _source_overview_count(src)
+        _compare_against_open_source(src, candidate_da, lossy=lossy)
 
-    # When the candidate reports the masked-nodata contract (#1988),
-    # rewrite the rasterio reference to match: cast to the candidate's
-    # float dtype and replace sentinel-equal pixels with NaN. Then the
-    # dtype + pixel assertions run on directly comparable arrays.
-    ref_pixels, ref_dtype = _normalise_for_masked_nodata(
-        ref_pixels, ref_dtype, ref_nodata, candidate_da
-    )
+    if candidate_factory is None or n_overviews == 0:
+        return
 
-    _assert_dtype(ref_dtype, candidate_da)
-    _assert_transform(ref_transform, candidate_da, ref_has_georef=ref_has_georef)
-    _assert_crs(ref_crs, candidate_da)
-    _assert_nodata(ref_nodata, candidate_da)
-    if lossy:
-        _assert_shape_only(ref_pixels, candidate_da)
-    else:
-        _assert_pixels(ref_pixels, candidate_da)
-    _assert_canonical_attrs(ref_attrs, candidate_da)
+    # Overview-level comparisons. rasterio's ``OVERVIEW_LEVEL`` kwarg is
+    # 0-indexed against the overview chain (0 = first overview), while
+    # xrspatial's ``overview_level=`` is 1-indexed against the full
+    # pyramid (0 = full resolution, 1 = first overview). The factory
+    # receives the xrspatial-style level so callers do not have to
+    # remember the off-by-one.
+    for level in range(1, n_overviews + 1):
+        candidate = candidate_factory(level)
+        with rasterio.open(fixture_path, OVERVIEW_LEVEL=level - 1) as src:
+            _compare_against_open_source(
+                src, candidate, lossy=lossy,
+                level_label=f'overview level {level}',
+            )
 
 
 __all__ = ['compare_to_oracle']
