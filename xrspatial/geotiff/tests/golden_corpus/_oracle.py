@@ -470,12 +470,31 @@ def _normalise_axis_order(
     ``B == 1`` lands in the squeeze branch, ``B > 1`` lands in the
     transpose branch. The fall-through case (no normalisation
     applicable) leaves both arrays untouched.
+
+    Both arms of the multi-band branch are symmetric: one assumes
+    ref is leading-band + cand is trailing-band (the corpus case;
+    rasterio always reads leading), the other handles the mirror.
+    The mirror is defensive since rasterio is always leading, but
+    keeps the contract independent of which side is the reference.
+
+    Limit: when ``H == W == B`` (e.g. a 3-band 3x3 raster) the
+    shape predicates cannot tell the two layouts apart. The corpus
+    has no such fixture today; the helper short-circuits on
+    ``ref_pixels.shape == cand_pixels.shape`` first to keep the
+    no-op case unambiguous when the arrays already line up.
     """
     # Single-band: (1, H, W) vs (H, W) -- squeeze the leading axis.
     if ref_pixels.ndim == 3 and ref_pixels.shape[0] == 1 and cand_pixels.ndim == 2:
         return ref_pixels[0], cand_pixels
     if cand_pixels.ndim == 3 and cand_pixels.shape[0] == 1 and ref_pixels.ndim == 2:
         return ref_pixels, cand_pixels[0]
+    # If the shapes already match (including the 2-D / 2-D case and
+    # the already-(B,H,W) / (B,H,W) case), no normalisation is needed
+    # and the comparison can proceed unchanged. This also resolves
+    # the H==W==B ambiguity: two (3, 3, 3) arrays compare directly
+    # rather than being run through a needless transpose.
+    if ref_pixels.shape == cand_pixels.shape:
+        return ref_pixels, cand_pixels
     # Multi-band: (B, H, W) vs (H, W, B) with B > 1. The candidate's
     # last axis is the band axis; transpose it to leading so the shape
     # matches rasterio's (B, H, W). Only transpose when the H/W axes

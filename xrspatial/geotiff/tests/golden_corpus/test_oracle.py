@@ -960,3 +960,19 @@ def test_normalise_axis_order_helper_directly() -> None:
     out_ref, out_cand = _normalise_axis_order(mismatch_ref, mismatch_cand)
     assert out_ref.shape == (3, 3, 4)
     assert out_cand.shape == (3, 4, 2)
+
+    # 2-D / 2-D pass-through: identical shapes need no normalisation.
+    plain = np.arange(12).reshape(3, 4)
+    out_ref, out_cand = _normalise_axis_order(plain, plain.copy())
+    assert out_ref.shape == (3, 4)
+    assert out_cand.shape == (3, 4)
+    assert np.array_equal(out_ref, out_cand)
+
+    # H == W == B ambiguity: the shape-equality short-circuit returns
+    # the arrays untouched so two same-shape (3, 3, 3) cubes compare
+    # directly rather than getting silently transposed.
+    cube_a = np.arange(27).reshape(3, 3, 3)
+    cube_b = cube_a.copy()
+    out_ref, out_cand = _normalise_axis_order(cube_a, cube_b)
+    assert out_ref is cube_a
+    assert out_cand is cube_b
