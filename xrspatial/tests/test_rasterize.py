@@ -596,6 +596,148 @@ class TestMixedGeometries:
 
 
 # ---------------------------------------------------------------------------
+# Issue #2064: merge='first'/'last' must honour user input order across
+# geometry types, not the polygon -> line -> point burn order.
+# ---------------------------------------------------------------------------
+
+class TestMergeOrderAcrossTypes:
+    """A polygon supplied after a point in the user input must win the
+    pixel under merge='last', and vice versa for merge='first'.  Before
+    the fix, the burn pipeline rastered polygons first then points last,
+    so points always overwrote polygons regardless of input order.
+    """
+
+    def _mixed_input(self):
+        # Point covers pixel (1, 1); polygon also covers (1, 1).
+        # Point comes FIRST in user input, polygon SECOND.
+        pt = Point(1.5, 1.5)
+        poly = box(0, 0, 3, 3)
+        return [(pt, 9.0), (poly, 1.0)]
+
+    def test_last_respects_input_order_polygon_after_point(self):
+        result = rasterize(self._mixed_input(),
+                           width=3, height=3, bounds=(0, 0, 3, 3),
+                           fill=0, merge='last')
+        # Polygon is the LAST input, so it wins at the shared pixel.
+        assert result.values[1, 1] == 1.0
+
+    def test_first_respects_input_order_polygon_after_point(self):
+        result = rasterize(self._mixed_input(),
+                           width=3, height=3, bounds=(0, 0, 3, 3),
+                           fill=0, merge='first')
+        # Point is the FIRST input, so it wins at the shared pixel.
+        assert result.values[1, 1] == 9.0
+
+    def test_last_three_types_reverse_order(self):
+        # Input order: point -> line -> polygon (reverse of burn order).
+        pt = Point(1.5, 1.5)
+        line = LineString([(0.0, 1.5), (3.0, 1.5)])
+        poly = box(0, 0, 3, 3)
+        result = rasterize(
+            [(pt, 9.0), (line, 5.0), (poly, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='last')
+        # Polygon is last in input -> polygon wins everywhere it covers.
+        assert (result.values == 1.0).all()
+
+    def test_first_three_types_reverse_order(self):
+        pt = Point(1.5, 1.5)
+        line = LineString([(0.0, 1.5), (3.0, 1.5)])
+        poly = box(0, 0, 3, 3)
+        result = rasterize(
+            [(pt, 9.0), (line, 5.0), (poly, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='first')
+        # Point is first -> point wins at (1,1).
+        # Line is second -> line wins on row 1 except (1,1).
+        # Polygon is third -> polygon fills everything else.
+        assert result.values[1, 1] == 9.0
+        assert result.values[1, 0] == 5.0
+        assert result.values[1, 2] == 5.0
+        assert result.values[0, 0] == 1.0
+        assert result.values[2, 2] == 1.0
+
+    def test_commutative_merges_unaffected(self):
+        # max/min/sum should not change behaviour with the new order logic.
+        pt = Point(1.5, 1.5)
+        poly = box(0, 0, 3, 3)
+        r_max = rasterize([(pt, 9.0), (poly, 1.0)],
+                          width=3, height=3, bounds=(0, 0, 3, 3),
+                          fill=0, merge='max')
+        # Pixel (1,1) sees both; max is 9.0.
+        assert r_max.values[1, 1] == 9.0
+        # Other polygon-only pixels are 1.0.
+        assert r_max.values[0, 0] == 1.0
+
+        r_sum = rasterize([(pt, 9.0), (poly, 1.0)],
+                          width=3, height=3, bounds=(0, 0, 3, 3),
+                          fill=0, merge='sum')
+        assert r_sum.values[1, 1] == 10.0
+        assert r_sum.values[0, 0] == 1.0
+
+    def test_dask_numpy_respects_input_order(self):
+        result = rasterize(self._mixed_input(),
+                           width=3, height=3, bounds=(0, 0, 3, 3),
+                           fill=0, merge='last', chunks=2)
+        # Materialize the dask result.
+        if hasattr(result.data, 'compute'):
+            arr = result.data.compute()
+        else:
+            arr = result.values
+        assert arr[1, 1] == 1.0
+
+    def test_geometry_collection_sub_geoms_share_input_index(self):
+        # GC sub-geoms inherit the parent's global input index, so the
+        # winner between them is determined by which type burns first
+        # (polygons burn before points).  This locks that behavior in.
+        from shapely.geometry import GeometryCollection
+        poly = box(0, 0, 3, 3)
+        pt = Point(1.5, 1.5)
+        gc = GeometryCollection([poly, pt])
+        # GC at input idx 0; a second polygon at idx 1 sets the background.
+        bg = box(0, 0, 3, 3)
+        result = rasterize(
+            [(gc, 9.0), (bg, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='last')
+        # bg is last in input order, wins everywhere.
+        assert (result.values == 1.0).all()
+
+        result_first = rasterize(
+            [(gc, 9.0), (bg, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='first')
+        # gc is first; both its sub-geoms share idx=0.  Polygon component
+        # burns before point component, so polygon (value 9) covers (1,1)
+        # first and the point can't beat it (point's new_idx == cur_idx).
+        assert result_first.values[1, 1] == 9.0
+        assert result_first.values[0, 0] == 9.0
+
+    def test_custom_callable_preserves_last_burned_wins(self):
+        # User-supplied callables keep the public (pixel, props, is_first)
+        # signature and pair with the always-write predicate, so they
+        # retain the pre-2064 "last-burned-wins" semantics regardless of
+        # input order.  Locks that contract.
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def my_overwrite(pixel, props, is_first):
+            return props[0]
+
+        # Point at input idx 0, polygon at input idx 1.  Built-in 'last'
+        # would honour input order and return 1 (polygon).  A custom
+        # callable instead reflects burn order: polygons burn first, then
+        # points, so the point overwrites and the result is 9.
+        pt = Point(1.5, 1.5)
+        poly = box(0, 0, 3, 3)
+        result = rasterize(
+            [(pt, 9.0), (poly, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge=my_overwrite)
+        assert result.values[1, 1] == 9.0
+
+
+# ---------------------------------------------------------------------------
 # GeoDataFrame with mixed geometry types
 # ---------------------------------------------------------------------------
 
