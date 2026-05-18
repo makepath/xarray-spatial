@@ -6,15 +6,16 @@ GeoTIFF attrs contract
 
 When :func:`xrspatial.geotiff.open_geotiff` returns a ``DataArray``, the
 ``attrs`` mapping carries metadata recovered from the file's GeoTIFF
-tags and GeoKeys. xrspatial classifies those keys into three tiers.
-Each tier offers a different round-trip guarantee when the array is
-written back out with :func:`xrspatial.geotiff.to_geotiff`. Canonical
-keys are owned by xrspatial and survive a round-trip byte-for-byte.
+tags and GeoKeys. xrspatial classifies those keys into four tiers,
+each with a different round-trip guarantee when the array is written
+back out with :func:`xrspatial.geotiff.to_geotiff`. Canonical keys are
+owned by xrspatial and survive a round-trip byte-for-byte.
 Compatibility aliases are recognised on read for interoperability with
 rioxarray and CF-style pipelines but are never re-emitted on write.
-Pass-through keys are surfaced verbatim from the file's GeoKey
-directory; whether they survive a round-trip depends on what the
-writer can reconstruct from the canonical CRS.
+Pass-through keys are folded into ``extra_tags`` by the writer and
+rebuilt from the TIFF tag on the next read. Deprecated keys are
+emitted on read for one release cycle with a ``DeprecationWarning``;
+they do not round-trip and will be removed.
 
 .. contents:: On this page
    :local:
@@ -135,61 +136,90 @@ must not assume a specific pass-through key survives a round-trip.
    * - Key
      - Type
      - Definition
-   * - ``crs_name``
-     - str
-     - Human-readable CRS citation from ``GTCitationGeoKey``.
-   * - ``geog_citation``
-     - str
-     - Geographic CRS citation from ``GeogCitationGeoKey``.
-   * - ``datum_code``
-     - int
-     - Geodetic datum EPSG code from ``GeogGeodeticDatumGeoKey``.
-   * - ``angular_units``
-     - int
-     - Angular units code from ``GeogAngularUnitsGeoKey``.
-   * - ``linear_units``
-     - int
-     - Linear units code from ``ProjLinearUnitsGeoKey``.
-   * - ``semi_major_axis``
-     - float
-     - Ellipsoid semi-major axis in metres from
-       ``GeogSemiMajorAxisGeoKey``.
-   * - ``inv_flattening``
-     - float
-     - Ellipsoid inverse flattening from
-       ``GeogInvFlatteningGeoKey``.
-   * - ``projection_code``
-     - int
-     - Projected CRS code from ``ProjectedCSTypeGeoKey``.
-   * - ``vertical_crs``
-     - int
-     - Vertical CRS EPSG code from ``VerticalCSTypeGeoKey``.
-   * - ``vertical_citation``
-     - str
-     - Vertical CRS citation from ``VerticalCitationGeoKey``.
-   * - ``vertical_units``
-     - int
-     - Vertical units code from ``VerticalUnitsGeoKey``.
    * - ``image_description``
      - str
-     - ``ImageDescription`` TIFF tag (tag id 270).
+     - ``ImageDescription`` TIFF tag (tag id 270). The writer folds it
+       into ``extra_tags``, so the reader rebuilds the attr from tag
+       270 on the next read.
    * - ``extra_samples``
      - tuple
      - ``ExtraSamples`` TIFF tag (tag id 338) describing alpha or
-       other auxiliary channels.
+       other auxiliary channels. Same round-trip path as
+       ``image_description``.
    * - ``colormap``
      - tuple
-     - Raw ``ColorMap`` TIFF tag (tag id 320) values.
+     - Raw ``ColorMap`` TIFF tag (tag id 320) values. Round-trips via
+       ``_merge_friendly_extra_tags``.
+
+The GeoKey-derived attrs that used to live in this tier
+(``crs_name``, ``geog_citation``, ``datum_code``, ``angular_units``,
+``linear_units``, ``semi_major_axis``, ``inv_flattening``,
+``projection_code``, ``vertical_crs``, ``vertical_citation``,
+``vertical_units``) and the matplotlib colormap variants (``cmap``,
+``colormap_rgba``) all moved to the `Deprecated keys`_ section below.
+They are still emitted on read for one release cycle but fire a
+``DeprecationWarning`` and will be removed.
 
 
 Deprecated keys
 ===============
 
 These keys are still emitted on read for one release cycle, but each
-emission triggers a ``DeprecationWarning``. The writer cannot
-reconstruct them from canonical attrs, so they do not round-trip.
-Callers should migrate to the canonical alternative listed below
-before the warning-only window closes. See issue #1984.
+emission triggers a ``DeprecationWarning``. They do not round-trip
+through ``open_geotiff`` -> ``to_geotiff`` -> ``open_geotiff`` and
+will be removed at the end of the deprecation window. Callers should
+migrate to the canonical alternative listed below. See issue #1984.
+
+GeoKey-derived attrs
+--------------------
+
+Secondary GeoKey directory entries that the reader extracts on the
+way in but the writer never emits on the way out:
+``xrspatial.geotiff._geotags.build_geo_tags`` writes only the primary
+``GEOKEY_GEOGRAPHIC_TYPE`` / ``GEOKEY_PROJECTED_CS_TYPE`` /
+``GEOKEY_VERTICAL_CS_TYPE`` plus the citation for each axis, never the
+secondary keys these attrs derive from. So a write -> read cycle
+drops them silently.
+
+* Geographic-CRS GeoKey attrs: ``crs_name``, ``geog_citation``,
+  ``datum_code``, ``angular_units``, ``semi_major_axis``,
+  ``inv_flattening``.
+* Projected-CRS GeoKey attrs: ``linear_units``, ``projection_code``.
+* Vertical-CRS GeoKey attrs: ``vertical_crs``, ``vertical_citation``,
+  ``vertical_units``.
+
+Canonical replacement: ``crs`` / ``crs_wkt`` plus a one-liner with
+:mod:`pyproj` when a derived value is needed::
+
+    from pyproj import CRS
+    crs = CRS.from_wkt(attrs['crs_wkt'])  # or CRS.from_epsg(attrs['crs'])
+
+    # Geographic
+    crs.name                                 # crs_name
+    crs.datum.to_epsg()                      # datum_code
+    crs.ellipsoid.semi_major_metre           # semi_major_axis
+    crs.ellipsoid.inverse_flattening         # inv_flattening
+    # geog_citation / angular_units: best-effort derive from
+    # ``crs`` / ``crs.axis_info``; the original GeoKey citation text
+    # is not generally recoverable.
+
+    # Projected
+    crs.coordinate_system.axis_list[0].unit_name   # linear_units
+    crs.to_epsg()                                  # projection_code
+
+    # Vertical
+    crs.sub_crs_list[-1].to_epsg()                 # vertical_crs
+    crs.sub_crs_list[-1].name                      # vertical_citation
+    crs.sub_crs_list[-1].axis_info[0].unit_name    # vertical_units
+
+Matplotlib colormap variants
+----------------------------
+
+Different root cause: the writer cannot set ``Photometric == 3``, so
+the matplotlib-derived attrs do not survive a write -> read cycle.
+The plain ``attrs['colormap']`` (raw uint16 RGB triples from TIFF
+tag 320) stays in the `Pass-through keys`_ tier and is the canonical
+replacement.
 
 .. list-table::
    :header-rows: 1
@@ -238,56 +268,22 @@ the reopened array.
 Pass-through tier
 -----------------
 
-The writer reconstructs as many pass-through keys as it can from
-``crs`` or ``crs_wkt``. Keys it cannot reconstruct are dropped
-silently rather than failing the write. Callers must not assume any
-specific pass-through key survives a round-trip; a key that was
-present on the original file may be absent after write→read if the
-canonical CRS does not carry enough information to rebuild it.
+The pass-through tier now contains only ``image_description``,
+``extra_samples``, and ``colormap``. The writer folds each into
+``extra_tags`` via ``_merge_friendly_extra_tags`` and the reader
+rebuilds the attr from the TIFF tag on the next read, so all three
+round-trip. The GeoKey-derived attrs that used to live here moved
+to the `Deprecated keys`_ tier (see below).
 
+Deprecated tier
+---------------
 
-Deprecated GeoKey attrs (issue #1984)
-=====================================
-
-The following attrs are still populated on read for one release
-cycle but each emission fires a ``DeprecationWarning``. The writer's
-``build_geo_tags`` only emits the primary CRS GeoKey and citation for
-each axis (geographic, projected, vertical), so the secondary GeoKeys
-these attrs derive from are never written and the values do not
-survive a write→read round-trip. Migrate to ``crs`` / ``crs_wkt`` and
-derive any needed value with :mod:`pyproj`.
-
-Geographic-CRS GeoKey attrs: ``crs_name``, ``geog_citation``,
-``datum_code``, ``angular_units``, ``semi_major_axis``,
-``inv_flattening``.
-
-Projected-CRS GeoKey attrs: ``linear_units``, ``projection_code``.
-
-Vertical-CRS GeoKey attrs: ``vertical_crs``, ``vertical_citation``,
-``vertical_units``.
-
-Migration recipe::
-
-    from pyproj import CRS
-    crs = CRS.from_wkt(attrs['crs_wkt'])  # or CRS.from_epsg(attrs['crs'])
-
-    # Geographic
-    crs.name                                 # crs_name
-    crs.datum.to_epsg()                      # datum_code
-    crs.ellipsoid.semi_major_metre           # semi_major_axis
-    crs.ellipsoid.inverse_flattening         # inv_flattening
-    # geog_citation / angular_units: best-effort derive from
-    # ``crs`` / ``crs.axis_info``; the original GeoKey citation text
-    # is not generally recoverable.
-
-    # Projected
-    crs.coordinate_system.axis_list[0].unit_name   # linear_units
-    crs.to_epsg()                                  # projection_code
-
-    # Vertical
-    crs.sub_crs_list[-1].to_epsg()                 # vertical_crs
-    crs.sub_crs_list[-1].name                      # vertical_citation
-    crs.sub_crs_list[-1].axis_info[0].unit_name    # vertical_units
+Deprecated keys are still populated on read for one release cycle so
+existing consumers keep working, but each emission fires a
+``DeprecationWarning``. The write path treats them as advisory only:
+none survive a write -> read cycle. They will be removed at the end
+of the deprecation window; at that point the contract version stamp
+bumps to ``2``.
 
 
 Versioning
