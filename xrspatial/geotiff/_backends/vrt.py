@@ -13,7 +13,7 @@ import math
 import numpy as np
 import xarray as xr
 
-from .._attrs import _ATTRS_CONTRACT_VERSION
+from .._attrs import _ATTRS_CONTRACT_VERSION, _set_nodata_attrs
 from .._coords import (
     coords_from_pixel_geometry as _coords_from_pixel_geometry,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
@@ -227,17 +227,14 @@ def read_vrt(source: str, *,
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata = vrt.bands[band_idx_for_nodata].nodata
-        if nodata is not None:
-            attrs['nodata'] = nodata
 
     # Mirror the integer-with-nodata promotion that open_geotiff /
     # read_geotiff_dask / read_geotiff_gpu apply post-decode. The VRT
     # internal reader NaN-masks float source arrays inline (see
-    # ``_vrt._read_data``) but leaves integer sentinels untouched. Without
-    # this branch, ``attrs['nodata']`` would be set while the array still
-    # carried the literal sentinel value, breaking the convention that
-    # downstream code follows (``attrs['nodata']`` is present iff the
-    # array has already been NaN-masked).
+    # ``_vrt._read_data``) but leaves integer sentinels untouched.
+    # ``attrs['nodata']`` (the declared sentinel) is set unconditionally
+    # below; ``attrs['masked_nodata']`` is computed from the final array
+    # dtype so it reflects whether NaN masking actually ran (issue #1988).
     #
     # The helper handles both per-band masking (multi-band reads where
     # each band has its own ``<NoDataValue>``) and single-band masking,
@@ -268,6 +265,12 @@ def read_vrt(source: str, *,
         target = np.dtype(dtype)
         _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
         arr = arr.astype(target)
+
+    # Record ``nodata`` + ``masked_nodata`` from the final array dtype
+    # (issue #1988). On GPU the dtype is read off the CuPy array via
+    # ``str(arr.dtype)`` so ``np.dtype`` accepts it without a CuPy
+    # dependency in ``_set_nodata_attrs``.
+    _set_nodata_attrs(attrs, nodata, array_dtype=np.dtype(str(arr.dtype)))
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
@@ -591,13 +594,18 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if vrt.raster_type == 'point':
         attrs['raster_type'] = 'point'
 
-    # Surface the nodata sentinel for the selected band.
+    # Surface the nodata sentinel for the selected band. The chunked
+    # path declares ``float64`` up front whenever any selected band has
+    # a representable integer sentinel (see the ``declared_dtype`` block
+    # earlier in this function), so the dask graph dtype drives
+    # ``masked_nodata`` (issue #1988). ``final_dtype`` is the post-cast
+    # dtype the dask array was reshaped to above, which is what the
+    # caller will see on the returned DataArray.
     nodata_meta = None
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata_meta = vrt.bands[band_idx_for_nodata].nodata
-        if nodata_meta is not None:
-            attrs['nodata'] = nodata_meta
+    _set_nodata_attrs(attrs, nodata_meta, array_dtype=final_dtype)
 
     # Static hole detection: mirror the eager-path ``attrs['vrt_holes']``
     # contract (#1734) by scanning every source referenced in the parsed

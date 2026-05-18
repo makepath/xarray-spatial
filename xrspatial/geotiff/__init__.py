@@ -80,6 +80,7 @@ from ._attrs import (
     _extract_rich_tags,
     _populate_attrs_from_geo_info,
     _resolve_nodata_attr,
+    _set_nodata_attrs,
 )
 from ._backends._gpu_helpers import _is_gpu_data
 # Re-export only; called by xrspatial/geotiff/tests/test_nodata_*.py.
@@ -525,7 +526,6 @@ def open_geotiff(source: str | BinaryIO, *,
     # memory for a multi-MB raster.
     nodata = geo_info.nodata
     if nodata is not None:
-        attrs['nodata'] = nodata
         # When the reader applied MinIsWhite, the sentinel-equality mask
         # must compare against the inverted sentinel value (issue #1809).
         # ``read_to_array`` / ``_read_cog_http`` stash that value on
@@ -568,6 +568,11 @@ def open_geotiff(source: str | BinaryIO, *,
         target = np.dtype(dtype)
         _validate_dtype_cast(arr.dtype, target)
         arr = arr.astype(target)
+
+    # Set ``attrs['nodata']`` + ``attrs['masked_nodata']`` after the
+    # mask + optional dtype cast so ``masked_nodata`` reflects the
+    # final array dtype (issue #1988).
+    _set_nodata_attrs(attrs, nodata, array_dtype=arr.dtype)
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
