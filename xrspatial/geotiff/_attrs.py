@@ -467,6 +467,57 @@ def _set_nodata_attrs(attrs: dict, nodata, *, array_dtype) -> None:
     attrs['masked_nodata'] = bool(np.dtype(array_dtype).kind == 'f')
 
 
+def _validate_read_geo_info(
+    geo_info,
+    *,
+    window=None,
+    allow_rotated: bool = False,
+    allow_unparseable_crs: bool = False,
+) -> None:
+    """Run issue #1987 read-side ambiguous-metadata checks against ``geo_info``.
+
+    Centralised helper so the eager numpy, dask, GPU, and VRT read
+    paths run the same checks before constructing the returned
+    DataArray. Forwards ``allow_rotated`` / ``allow_unparseable_crs``
+    to the registered checks (``_check_read_rotated_transform`` and
+    ``_check_read_unparseable_crs`` today; sibling checks attach via
+    the registry).
+
+    Raises whichever ``GeoTIFFAmbiguousMetadataError`` subclass a
+    registered check picks. The hook is a no-op when no check is
+    registered, so callers can use this helper unconditionally without
+    coupling each backend to the current check list.
+
+    Note: the transform tuple built here is always axis-aligned
+    (``b == 0`` / ``d == 0``) because ``_transform_tuple_from_pixel_geometry``
+    only carries origin + pixel size, and the upstream TIFF reader
+    rejects rotated ``ModelTransformationTag`` entries with
+    ``NotImplementedError`` in ``_geotags._extract_transform_and_georef``
+    before we reach this helper. The rotated-transform check therefore
+    fires only on the VRT path, which builds its context from the GDAL
+    ``geo_transform`` via ``_gdal_geotransform_to_affine_tuple``.
+    """
+    from ._validation import validate_read_metadata
+    transform_for_check = (
+        _transform_tuple_from_pixel_geometry(
+            geo_info.transform.origin_x,
+            geo_info.transform.origin_y,
+            geo_info.transform.pixel_width,
+            geo_info.transform.pixel_height,
+            window=window,
+        )
+        if (geo_info.transform is not None
+            and getattr(geo_info, 'has_georef', True))
+        else None
+    )
+    validate_read_metadata({
+        'allow_rotated': allow_rotated,
+        'allow_unparseable_crs': allow_unparseable_crs,
+        'transform': transform_for_check,
+        'crs_wkt': geo_info.crs_wkt,
+    })
+
+
 def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None:
     """Populate ``attrs`` with all GeoTIFF metadata from ``geo_info``.
 

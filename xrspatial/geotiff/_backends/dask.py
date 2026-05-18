@@ -17,7 +17,11 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from .._attrs import _populate_attrs_from_geo_info, _set_nodata_attrs
+from .._attrs import (
+    _populate_attrs_from_geo_info,
+    _set_nodata_attrs,
+    _validate_read_geo_info,
+)
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
@@ -34,7 +38,9 @@ def read_geotiff_dask(source: str, *,
                       band: int | None = None,
                       name: str | None = None,
                       chunks: int | tuple = 512,
-                      max_pixels: int | None = None) -> xr.DataArray:
+                      max_pixels: int | None = None,
+                      allow_rotated: bool = False,
+                      allow_unparseable_crs: bool = False) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
     Each chunk is loaded lazily via windowed reads.
@@ -293,6 +299,13 @@ def read_geotiff_dask(source: str, *,
     if name is None:
         import os
         name = os.path.splitext(os.path.basename(source))[0]
+
+    # Issue #1987 ambiguous-metadata checks.
+    _validate_read_geo_info(
+        geo_info, window=window,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+    )
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)

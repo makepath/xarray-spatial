@@ -79,6 +79,7 @@ from ._attrs import (
     _extent_to_window,
     _extract_rich_tags,
     _populate_attrs_from_geo_info,
+    _validate_read_geo_info,
     _resolve_nodata_attr,
     _set_nodata_attrs,
 )
@@ -251,6 +252,8 @@ def open_geotiff(source: str | BinaryIO, *,
                  max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
                  on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
+                 allow_rotated: bool = False,
+                 allow_unparseable_crs: bool = False,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
@@ -441,7 +444,10 @@ def open_geotiff(source: str | BinaryIO, *,
             vrt_kwargs['missing_sources'] = missing_sources
         return read_vrt(source, dtype=dtype, window=window, band=band,
                         name=name, chunks=chunks, gpu=gpu,
-                        max_pixels=max_pixels, **vrt_kwargs)
+                        max_pixels=max_pixels,
+                        allow_rotated=allow_rotated,
+                        allow_unparseable_crs=allow_unparseable_crs,
+                        **vrt_kwargs)
 
     # File-like buffers don't support the GPU or dask code paths because
     # those re-open the source by path from worker tasks or device-side
@@ -466,6 +472,8 @@ def open_geotiff(source: str | BinaryIO, *,
                                 window=window, band=band,
                                 name=name, chunks=chunks,
                                 max_pixels=max_pixels,
+                                allow_rotated=allow_rotated,
+                                allow_unparseable_crs=allow_unparseable_crs,
                                 **gpu_kwargs)
 
     # Dask path (CPU)
@@ -473,7 +481,9 @@ def open_geotiff(source: str | BinaryIO, *,
         return read_geotiff_dask(source, dtype=dtype, chunks=chunks,
                                  overview_level=overview_level,
                                  window=window, band=band,
-                                 max_pixels=max_pixels, name=name)
+                                 max_pixels=max_pixels, name=name,
+                                 allow_rotated=allow_rotated,
+                                 allow_unparseable_crs=allow_unparseable_crs)
 
     kwargs = {}
     if max_pixels is not None:
@@ -513,6 +523,14 @@ def open_geotiff(source: str | BinaryIO, *,
         if isinstance(source, str):
             import os
             name = os.path.splitext(os.path.basename(source))[0]
+
+    # Issue #1987 ambiguous-metadata checks. Run before attrs population
+    # so a rejected file does not leak a partly-populated attrs dict.
+    _validate_read_geo_info(
+        geo_info, window=window,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+    )
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)

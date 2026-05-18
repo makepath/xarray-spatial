@@ -87,9 +87,12 @@ def test_read_uses_fill_value_when_nodata_absent(tmp_path, _arr_with_sentinel):
 # ---------------------------------------------------------------------------
 
 
-def test_canonical_nodata_wins_over_aliases(tmp_path, _arr_with_sentinel):
-    """Pin: when all three keys are present and disagree, ``attrs['nodata']``
-    is the canonical one and wins. Guards against alias precedence drift."""
+def test_canonical_nodata_wins_over_aliases_at_resolver(_arr_with_sentinel):
+    """``_resolve_nodata_attr`` (the read-side chokepoint) still prefers
+    canonical ``nodata`` over both aliases. This is the resolver-layer
+    contract that downstream code consumes; the write-side fail-closed
+    check is exercised in ``test_canonical_nodata_wins_over_aliases_at_write``
+    below."""
     canonical = -8888.0
     da = _da_float(
         _arr_with_sentinel, crs=4326,
@@ -97,15 +100,33 @@ def test_canonical_nodata_wins_over_aliases(tmp_path, _arr_with_sentinel):
         nodatavals=(_SENTINEL,),
         **{"_FillValue": -7777.0},
     )
-    # _resolve_nodata_attr is the single chokepoint; assert at that layer
-    # too so a precedence regression surfaces with a clear message.
     assert _resolve_nodata_attr(dict(da.attrs)) == canonical
 
-    out = str(tmp_path / "canonical_wins.tif")
-    to_geotiff(da, out)
 
+def test_canonical_nodata_wins_over_aliases_at_write(
+        tmp_path, _arr_with_sentinel):
+    """Pin: the legacy "canonical nodata silently wins on write" was
+    replaced by a fail-closed raise (issue #1987 PR 7). A DataArray with
+    disagreeing ``nodata`` and ``nodatavals`` attrs now refuses to write
+    instead of dropping the alias. The opt-out is the explicit
+    ``nodata=`` kwarg, which overrides both attrs."""
+    from xrspatial.geotiff import ConflictingNodataError
+
+    da = _da_float(
+        _arr_with_sentinel, crs=4326,
+        nodata=-8888.0,
+        nodatavals=(_SENTINEL,),
+        **{"_FillValue": -7777.0},
+    )
+
+    out = str(tmp_path / "canonical_wins.tif")
+    with pytest.raises(ConflictingNodataError):
+        to_geotiff(da, out)
+
+    # Explicit ``nodata=`` bypasses the check.
+    to_geotiff(da, out, nodata=-8888.0)
     rd = open_geotiff(out)
-    assert rd.attrs.get("nodata") == canonical
+    assert rd.attrs.get("nodata") == -8888.0
 
 
 # ---------------------------------------------------------------------------
