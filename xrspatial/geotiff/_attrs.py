@@ -209,6 +209,55 @@ def _deprecated_geographic_geokey_warning(name: str) -> str:
     )
 
 
+def _stacklevel_to_external_caller() -> int:
+    """Return a ``stacklevel`` that points the warning at the first frame
+    outside :mod:`xrspatial.geotiff`.
+
+    A fixed ``stacklevel`` is brittle here because the call chain to
+    ``warnings.warn`` differs by backend:
+
+    * numpy path: ``open_geotiff`` -> emit helper -> ``warn`` (3 frames).
+    * dask path: ``open_geotiff`` -> ``read_geotiff_dask`` ->
+      ``_populate_attrs_from_geo_info`` -> emit helper -> ``warn`` (5
+      frames).
+    * direct callers of ``read_geotiff_dask`` / ``read_to_array`` (used
+      internally and in tests) shorten the chain by one.
+
+    Walk the stack from the warn-site outward and stop at the first
+    frame whose module is not ``xrspatial.geotiff*``. Returning a value
+    one greater than the index of that frame matches
+    :func:`warnings.warn` semantics (level 1 = the warn line itself).
+
+    Today the warnings are :class:`DeprecationWarning`, which Python
+    silences by default for library code; the stacklevel mostly affects
+    the test suite. Get it right now so a future change to a louder
+    category (e.g. :class:`FutureWarning`) does not surface the warning
+    as if it came from ``_attrs.py``.
+    """
+    import sys
+
+    # Frame 0 is this function; frame 1 is the warn-site (the caller of
+    # this helper). Start the search at frame 1 so the returned level
+    # maps directly to the ``stacklevel`` argument passed to
+    # ``warnings.warn`` inside the warn-site.
+    frame = sys._getframe(1)
+    level = 1
+    while frame is not None:
+        mod = frame.f_globals.get('__name__', '')
+        is_internal = (
+            mod == 'xrspatial.geotiff'
+            or (mod.startswith('xrspatial.geotiff.')
+                and not mod.startswith('xrspatial.geotiff.tests'))
+        )
+        if not is_internal:
+            return level
+        frame = frame.f_back
+        level += 1
+    # Fell off the top of the stack without finding an external caller;
+    # fall back to a value that at least skips the warn-site itself.
+    return 2
+
+
 def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
     """Emit a deprecated geographic-GeoKey attr with a DeprecationWarning.
 
@@ -216,11 +265,17 @@ def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
     for one release cycle) after firing a ``DeprecationWarning`` so
     callers learn the attr is going away. Used for the six attrs listed
     in ``_DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS``.
+
+    The ``stacklevel`` is computed by walking past every
+    ``xrspatial.geotiff*`` frame so the warning is attributed to the
+    user's call site (e.g. ``open_geotiff(...)``) rather than to one of
+    the internal read paths. A fixed level (e.g. ``stacklevel=2``)
+    would only be correct for one of the backend dispatch paths.
     """
     warnings.warn(
         _deprecated_geographic_geokey_warning(name),
         DeprecationWarning,
-        stacklevel=2,
+        stacklevel=_stacklevel_to_external_caller(),
     )
     attrs[name] = value
 

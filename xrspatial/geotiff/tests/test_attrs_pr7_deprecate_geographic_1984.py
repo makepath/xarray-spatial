@@ -177,3 +177,41 @@ def test_warning_message_format():
     assert "deprecated" in msg
     assert "round-trip" in msg
     assert "#1984" in msg
+
+
+def test_warning_stacklevel_points_at_caller_file():
+    """The ``DeprecationWarning`` filename should land on the caller's
+    file, not on ``_attrs.py``.
+
+    The emission helper computes ``stacklevel`` by walking past every
+    ``xrspatial.geotiff*`` frame, so the warning reports the first
+    external frame as its origin. The test file is outside that
+    package, so ``w.filename`` should match ``__file__``. If a future
+    refactor reintroduces a fixed ``stacklevel`` that is too small,
+    the warning will be reattributed to one of the internal modules
+    and this assertion will fail.
+
+    Today the warning category is :class:`DeprecationWarning`, which
+    Python silences by default for library code, so the stacklevel
+    mostly affects test output. The pin lives here so a later switch
+    to :class:`FutureWarning` does not regress the attribution
+    silently.
+    """
+    info = _geo_info_with(crs_name='WGS 84')
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        attrs: dict = {}
+        _populate_attrs_from_geo_info(attrs, info)
+
+    matches = [w for w in caught
+               if issubclass(w.category, DeprecationWarning)]
+    assert len(matches) == 1, [
+        (w.category.__name__, str(w.message)) for w in caught
+    ]
+    assert matches[0].filename == __file__, (
+        f"warning filename {matches[0].filename!r} (line "
+        f"{matches[0].lineno}) does not match the test file "
+        f"{__file__!r}; the stacklevel walk did not exit the "
+        f"xrspatial.geotiff package."
+    )
