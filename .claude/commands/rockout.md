@@ -149,6 +149,12 @@ plotting conventions, GIS alert boxes, preview images, and humanizer passes.
    ```
 5. Capture the PR number for the next step.
 
+**Do NOT wait for CI to finish before moving on to Step 9.** Push the PR
+and proceed to the review immediately. CI runs asynchronously and the
+review-pr / follow-up loop runs in parallel. If CI surfaces a failure
+later, address it as a separate follow-up commit on the same branch --
+do not block the review pass on green CI.
+
 ## Step 9 -- Run the Domain-Aware PR Review
 
 1. Invoke the `/review-pr` command against the PR number from Step 8:
@@ -161,6 +167,8 @@ plotting conventions, GIS alert boxes, preview images, and humanizer passes.
    - **Blockers** -- must fix before merge
    - **Suggestions** -- should fix, not blocking
    - **Nits** -- optional improvements
+4. Run this step regardless of CI status. Do not poll `gh pr checks` or
+   wait for workflows to finish before invoking `/review-pr`.
 
 ## Step 10 -- Follow Up on Review Findings
 
