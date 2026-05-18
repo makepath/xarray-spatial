@@ -12,6 +12,7 @@
 - Decode TIFF predictor=3 un-transpose by file byte order so big-endian floating-point TIFFs read back exactly
 - Default internal `_vrt.read_vrt` `missing_sources` to `'raise'` so an unreadable VRT source no longer produces a silent zero-fill hole on integer rasters; pass `missing_sources='warn'` to opt back into the previous lenient behaviour (#1843)
 - Deprecate read-side emission of matplotlib colormap-derived attrs (cmap, colormap_rgba) on palette TIFFs; the writer cannot set Photometric=3 so they do not round-trip. Construct ListedColormap from attrs['colormap'] in caller code. These attrs still emit for now but trigger a DeprecationWarning. Removal planned for a future release. (#1984)
+- Reject writes whose `attrs['crs']` and `attrs['crs_wkt']` resolve to different CRSes (after pyproj canonicalisation) instead of silently emitting the EPSG and dropping the WKT. The new `ConflictingCRSError` (subclass of `ValueError` and `GeoTIFFAmbiguousMetadataError`) names the offending attrs; pass `crs=` explicitly to override both attrs and bypass the check. Read-back DataArrays carrying both attrs continue to round-trip because the reader's two attrs derive from the same on-disk CRS. (#1987)
 
 
 ### Version 0.9.9 - 2026-05-05

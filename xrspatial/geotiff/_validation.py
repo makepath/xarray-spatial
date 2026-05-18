@@ -26,6 +26,7 @@ from typing import Any, Callable, Iterable, Mapping
 import numpy as np
 
 from ._coords import _BAND_DIM_NAMES
+from ._errors import ConflictingCRSError
 from ._runtime import _TIME_DIM_NAMES, _X_DIM_NAMES, _Y_DIM_NAMES
 
 
@@ -433,3 +434,83 @@ def validate_write_metadata(context: Mapping[str, Any] | None = None) -> None:
     # Snapshot for the same reason as the read hook above.
     for check in tuple(_WRITE_METADATA_CHECKS):
         check(ctx)
+
+
+# ---------------------------------------------------------------------------
+# Conflicting crs / crs_wkt write check (issue #1987 PR 1)
+# ---------------------------------------------------------------------------
+
+
+def _check_write_conflicting_crs(context: Mapping[str, Any]) -> None:
+    """Refuse writes whose ``attrs['crs']`` and ``attrs['crs_wkt']`` disagree.
+
+    The legacy writer consults both attrs (``crs`` takes priority; the
+    WKT is a fallback). When the two encode different CRSes, the writer
+    silently emits the EPSG and drops the WKT, producing a TIFF whose
+    on-disk CRS does not match what the caller's DataArray advertised.
+
+    This check runs whenever both attrs are populated. It canonicalises
+    each via :mod:`pyproj` and raises :class:`ConflictingCRSError` if
+    they do not match. A read-back DataArray that legitimately carries
+    both attrs (the reader emits both when the file has a CRS) passes
+    because the two derive from the same on-disk CRS.
+
+    Soft preconditions kept lenient:
+
+    * ``pyproj`` not installed -> no-op (downstream paths handle the
+      missing dependency).
+    * Either attr unparseable -> no-op (a sibling check in this issue's
+      series, :class:`UnparseableCRSError`, will refuse those on its
+      own PR).
+
+    Context keys consumed:
+
+    * ``crs_kwarg`` -- the value of the explicit ``crs=`` writer kwarg.
+      When this is not ``None`` the kwarg overrides both attrs, so the
+      attrs disagreement does not affect this write and the check
+      short-circuits.
+    * ``attrs_crs`` -- the value of ``data.attrs.get('crs')``.
+    * ``attrs_crs_wkt`` -- the value of ``data.attrs.get('crs_wkt')``.
+
+    All keys are optional; absence is treated as "nothing to compare".
+    """
+    if context.get('crs_kwarg') is not None:
+        return
+    crs_attr = context.get('attrs_crs')
+    crs_wkt_attr = context.get('attrs_crs_wkt')
+    if crs_attr is None or not crs_wkt_attr:
+        return
+    try:
+        from pyproj import CRS as _PyProjCRS
+    except ImportError:
+        return
+    try:
+        crs_from_attr = _PyProjCRS.from_user_input(crs_attr)
+        crs_from_wkt = _PyProjCRS.from_wkt(crs_wkt_attr)
+    except Exception:
+        return
+    if crs_from_attr.equals(crs_from_wkt):
+        return
+    # Truncate the WKT in the message; full WKTs are 1-3 kB and would
+    # make the error unreadable. The user's attrs still carry the full
+    # string so they can introspect it directly.
+    wkt_excerpt = crs_wkt_attr if len(crs_wkt_attr) <= 60 else (
+        crs_wkt_attr[:57] + '...'
+    )
+    raise ConflictingCRSError(
+        f"attrs['crs']={crs_attr!r} and attrs['crs_wkt']={wkt_excerpt!r} "
+        f"resolve to different CRSes after pyproj canonicalisation. The "
+        f"writer would silently pick attrs['crs'] and drop the WKT, so "
+        f"the on-disk CRS would not match what the DataArray advertises. "
+        f"Reconcile the two attrs (drop the stale one, or pass the "
+        f"intended CRS explicitly via the ``crs=`` kwarg, which overrides "
+        f"both attrs) and retry. See issue #1987."
+    )
+
+
+# Active by default: the conflicting-CRS write check is registered at
+# import time so every entry point that calls ``validate_write_metadata``
+# enforces the rule. Tests that need to scope around the check should
+# use ``unregister_write_metadata_check(_check_write_conflicting_crs)``
+# in a fixture rather than mutating the registry directly.
+register_write_metadata_check(_check_write_conflicting_crs)

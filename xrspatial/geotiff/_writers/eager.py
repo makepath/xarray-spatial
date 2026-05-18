@@ -44,6 +44,7 @@ from .._validation import (
     _validate_3d_writer_dims,
     _validate_nodata_arg,
     _validate_tile_size_arg,
+    validate_write_metadata,
 )
 from .._writer import write
 from .gpu import write_geotiff_gpu
@@ -269,6 +270,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         _validate_tile_size_arg(tile_size)
 
     _validate_nodata_arg(nodata)
+
+    # Issue #1987 ambiguous-metadata checks. Today only the
+    # conflicting-crs/crs_wkt write check is registered; other cases
+    # land in follow-up PRs. The hook is a no-op when no check is
+    # registered, so this call is safe even if every check is later
+    # unregistered for a specific entry point.
+    _attrs = getattr(data, 'attrs', None) or {}
+    validate_write_metadata({
+        'crs_kwarg': crs,
+        'attrs_crs': _attrs.get('crs'),
+        'attrs_crs_wkt': _attrs.get('crs_wkt'),
+    })
 
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
@@ -785,6 +798,17 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     full array in RAM.
     """
     _validate_nodata_arg(nodata)
+
+    # Issue #1987 ambiguous-metadata checks; mirrors the call in
+    # ``to_geotiff`` so the dask-VRT write path enforces the same
+    # crs/crs_wkt consistency rule.
+    _attrs = getattr(data, 'attrs', None) or {}
+    validate_write_metadata({
+        'crs_kwarg': crs,
+        'attrs_crs': _attrs.get('crs'),
+        'attrs_crs_wkt': _attrs.get('crs_wkt'),
+    })
+
     # Validate compression_level against codec-specific range
     if compression_level is not None:
         level_range = _LEVEL_RANGES.get(compression.lower())

@@ -29,6 +29,7 @@ from .._validation import (
     _validate_3d_writer_dims,
     _validate_nodata_arg,
     _validate_tile_size_arg,
+    validate_write_metadata,
 )
 
 
@@ -261,6 +262,15 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # keep parity with the public to_geotiff entry point.
     _validate_tile_size_arg(tile_size)
     _validate_nodata_arg(nodata)
+
+    # Issue #1987 ambiguous-metadata checks; mirrors ``to_geotiff`` so the
+    # GPU writer enforces the same crs/crs_wkt consistency rule.
+    _attrs = getattr(data, 'attrs', None) or {}
+    validate_write_metadata({
+        'crs_kwarg': crs,
+        'attrs_crs': _attrs.get('crs'),
+        'attrs_crs_wkt': _attrs.get('crs_wkt'),
+    })
     if max_z_error < 0:
         raise ValueError(
             f"max_z_error must be >= 0, got {max_z_error}")
