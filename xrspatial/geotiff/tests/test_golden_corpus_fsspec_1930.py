@@ -43,7 +43,7 @@ Intentional skip (``skip``):
 Memory filesystem hygiene
 -------------------------
 fsspec's memory filesystem is a process-global singleton. The
-``_memory_fs_clean`` fixture wipes it before and after each test so
+``memory_fs_clean`` fixture wipes it before and after each test so
 fixtures from earlier tests cannot leak into the read path and a
 flaky test cannot poison its successors.
 """
@@ -165,7 +165,7 @@ def _serve_via_memory(payload: bytes, fixture_id: str) -> str:
 
 
 @pytest.fixture
-def _memory_fs_clean():
+def memory_fs_clean():
     """Wipe the fsspec memory filesystem around each test.
 
     The memory filesystem is a process-global singleton, so leftover
@@ -182,7 +182,7 @@ def _memory_fs_clean():
 
 
 @pytest.mark.parametrize("manifest_entry", _PARAMS)
-def test_fsspec_parity(manifest_entry: dict, _memory_fs_clean) -> None:
+def test_fsspec_parity(manifest_entry: dict, memory_fs_clean) -> None:
     """``open_geotiff('memory://...')`` agrees with the rasterio oracle.
 
     The fixture's bytes are written into the fsspec memory filesystem
@@ -212,7 +212,7 @@ def test_fsspec_parity(manifest_entry: dict, _memory_fs_clean) -> None:
     # ``_CloudSource``, so any divergence there shows up here.
     overviews = manifest_entry.get("overviews") or []
     factory = (
-        (lambda lvl, u=url: open_geotiff(u, overview_level=lvl))
+        (lambda level, u=url: open_geotiff(u, overview_level=level))
         if overviews and fixture_id not in _OVERVIEW_READER_GAPS
         else None
     )
@@ -245,7 +245,7 @@ def test_taxonomy_ids_are_in_manifest() -> None:
     )
 
 
-def test_fsspec_candidate_is_actually_numpy(_memory_fs_clean) -> None:
+def test_fsspec_candidate_is_actually_numpy(memory_fs_clean) -> None:
     """Sanity check: the fsspec read path returns a numpy-backed array.
 
     ``open_geotiff(memory_url)`` without ``chunks=`` should go through
