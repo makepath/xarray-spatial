@@ -56,24 +56,15 @@ FIXTURES_DIR = (
 )
 
 
-_NODATA_MASKING_REASON = (
-    "integer nodata masking: xrspatial masks sentinel pixels to NaN and "
-    "upcasts to float64 per #1988 (attrs['masked_nodata']=True). The oracle "
-    "compares raw integer pixels; needs an oracle extension that consults "
-    "attrs['masked_nodata']."
-)
-
+# Integer-nodata masking used to live here too; the oracle's
+# _normalise_for_masked_nodata helper now closes that gap so it is no
+# longer xfailed on any backend.
 _PARITY_GAPS: dict[str, str] = {
     "crs_citation_only": (
         "citation-only CRS: xrspatial decodes the citation into deprecated "
         "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
         "or attrs['crs_wkt']. Real parity gap; needs a fix in _crs.py."
     ),
-    "nodata_int_sentinel_uint16": _NODATA_MASKING_REASON,
-    "stripped_le_uint16": _NODATA_MASKING_REASON,
-    "stripped_be_uint16": _NODATA_MASKING_REASON,
-    "tiled_le_uint16": _NODATA_MASKING_REASON,
-    "tiled_be_uint16": _NODATA_MASKING_REASON,
 }
 
 # GPU-only gaps. Failures here are GPU-specific (the eager and dask

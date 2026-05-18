@@ -32,13 +32,16 @@ Real parity gaps (``xfail``):
   deprecated ``attrs['geog_citation']`` but does not emit a canonical
   ``attrs['crs']`` or ``attrs['crs_wkt']``. Real parity gap; needs a fix
   in ``_crs.py`` to round-trip citation WKT.
-* ``nodata_int_sentinel_uint16``, ``stripped_le_uint16``,
-  ``stripped_be_uint16``, ``tiled_le_uint16``, ``tiled_be_uint16`` --
-  integer nodata masking. xrspatial masks sentinel pixels to NaN and
-  upcasts to float64 per #1988 (``attrs['masked_nodata']=True``); the
-  oracle compares the raw integer pixel array. Needs a small oracle
-  extension that consults ``attrs['masked_nodata']`` and applies the
-  equivalent mask to the rasterio reference before comparing.
+
+Resolved gaps (no longer xfail):
+
+* Integer nodata masking. The oracle now consults
+  ``attrs['masked_nodata']`` and rewrites the rasterio reference to
+  match the candidate's float-plus-NaN view (see
+  ``_normalise_for_masked_nodata`` in ``_oracle.py``), so the five
+  fixtures ``nodata_int_sentinel_uint16``, ``stripped_le_uint16``,
+  ``stripped_be_uint16``, ``tiled_le_uint16``, ``tiled_be_uint16``
+  pass directly.
 
 Intentional skip (``skip``):
 
@@ -71,13 +74,6 @@ FIXTURES_DIR = (
 )
 
 
-_NODATA_MASKING_REASON = (
-    "integer nodata masking: xrspatial masks sentinel pixels to NaN and "
-    "upcasts to float64 per #1988 (attrs['masked_nodata']=True). The oracle "
-    "compares raw integer pixels; needs an oracle extension that consults "
-    "attrs['masked_nodata']."
-)
-
 _PARITY_GAPS: dict[str, str] = {
     "compression_jpeg_uint8_ycbcr": (
         "RGB band axis order divergence: rasterio reads (bands, y, x) while "
@@ -89,11 +85,6 @@ _PARITY_GAPS: dict[str, str] = {
         "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
         "or attrs['crs_wkt']. Real parity gap; needs a fix in _crs.py."
     ),
-    "nodata_int_sentinel_uint16": _NODATA_MASKING_REASON,
-    "stripped_le_uint16": _NODATA_MASKING_REASON,
-    "stripped_be_uint16": _NODATA_MASKING_REASON,
-    "tiled_le_uint16": _NODATA_MASKING_REASON,
-    "tiled_be_uint16": _NODATA_MASKING_REASON,
 }
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
