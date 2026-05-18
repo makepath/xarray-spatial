@@ -64,6 +64,9 @@ pytest.importorskip("rasterio")
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
+from xrspatial.geotiff.tests.golden_corpus._marks import (  # noqa: E402
+    fast_slow_marks_for,
+)
 from xrspatial.geotiff.tests.golden_corpus._oracle import (  # noqa: E402
     compare_to_oracle,
 )
@@ -117,26 +120,22 @@ def _is_lossy(entry: dict) -> bool:
 
 
 def _build_param(entry: dict) -> pytest.param:
-    """Wrap a fixture entry in a ``pytest.param`` with the right mark.
+    """Wrap a fixture entry in a ``pytest.param`` with the right marks.
 
     Real parity gaps get ``xfail(strict=True)`` so the test surfaces a hard
     failure the day the gap closes. The MinIsWhite cell gets a plain skip
-    because the divergence is intentional.
+    because the divergence is intentional. Non-fast fixtures additionally
+    pick up ``pytest.mark.slow`` from the corpus helper.
     """
     fid = entry["id"]
+    marks = list(fast_slow_marks_for(entry))
     if fid in _PARITY_GAPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True),
+        marks.append(
+            pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True)
         )
-    if fid in _INTENTIONAL_SKIPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.skip(reason=_INTENTIONAL_SKIPS[fid]),
-        )
-    return pytest.param(entry, id=fid)
+    elif fid in _INTENTIONAL_SKIPS:
+        marks.append(pytest.mark.skip(reason=_INTENTIONAL_SKIPS[fid]))
+    return pytest.param(entry, id=fid, marks=marks)
 
 
 _FIXTURES = _resolved_fixtures()

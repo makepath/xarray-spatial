@@ -46,6 +46,27 @@ iteration, and mtimes normalised to a fixed epoch.
 The schema is documented in the comments at the top of `manifest.yaml`
 and enforced by `generate.validate()`.
 
+## Fast / slow split
+
+Each fixture's `tags:` list controls whether it runs in the PR CI fast
+lane. A fixture is **fast** if `"fast"` appears in its `tags`. Everything
+else picks up `pytest.mark.slow` automatically via the helper in
+`_marks.py`, which the per-backend test modules consume from their
+`_build_param`.
+
+* `pytest`: runs every cell, fast and slow.
+* `pytest -m "not slow"`: PR fast lane; skips heavy cells.
+* `pytest -m slow`: only the slow cells, e.g. for a nightly job that
+  exercises the long tail.
+
+Today most shipped fixtures carry `fast`. The six `compression_*`
+fixtures in the manifest do not, so `pytest -m "not slow"` deselects
+them. A one-line manifest edit per fixture would move them into the
+fast lane if the team decides that is the right calibration. Future
+heavier fixtures (large COGs, jpeg2000, multi-source VRTs) drop in
+behind the same boundary without re-plumbing each backend test
+module.
+
 ## What is deliberately not in this PR
 
 * Real fixture files. Phase 2 PRs add them in batches (tiled/stripped,
