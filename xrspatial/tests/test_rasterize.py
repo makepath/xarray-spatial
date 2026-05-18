@@ -383,6 +383,13 @@ class TestValidation:
         # exactly at the cap is permitted
         _check_gpu_edge_cap(row_ptr)
 
+    def test_gpu_edge_cap_check_passes_below_limit(self):
+        from xrspatial.rasterize import _check_gpu_edge_cap, _GPU_MAX_ISECT
+        row_ptr = np.array([0, _GPU_MAX_ISECT - 1, _GPU_MAX_ISECT - 1],
+                           dtype=np.int64)
+        # just under the cap, the common case
+        _check_gpu_edge_cap(row_ptr)
+
 
 # ---------------------------------------------------------------------------
 # all_touched mode
