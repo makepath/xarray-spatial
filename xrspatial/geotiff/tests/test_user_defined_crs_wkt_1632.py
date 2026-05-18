@@ -239,3 +239,129 @@ def test_human_readable_crs_name_not_promoted_to_crs_wkt(tmp_path):
     assert not _looks_like_wkt("WGS 84")
     assert not _looks_like_wkt("")
     assert not _looks_like_wkt(None)
+
+
+# ---------------------------------------------------------------------------
+# _synthesize_user_defined_wkt (issue #1930)
+# ---------------------------------------------------------------------------
+#
+# When a GeoTIFF declares a user-defined GEOGRAPHIC CRS (no EPSG, no WKT
+# in the citation) and exposes the ellipsoid + units via separate
+# GeoKeys, the reader synthesizes a canonical WKT from those parameters
+# and stamps it on ``attrs['crs_wkt']``. Without this branch the canonical
+# CRS attrs stay None and the golden-corpus parity check fails on the
+# ``crs_citation_only`` fixture. These tests pin the synthesizer in
+# isolation; the end-to-end fixture check lives in
+# ``test_oracle.test_crs_citation_only_open_geotiff_stamps_canonical_wkt``.
+
+
+def test_synthesize_user_defined_wkt_sphere():
+    """Sphere ellipsoid (``inv_flattening == 0``) round-trips to a longlat
+    CRS with ``b == a``. This is the ``crs_citation_only`` fixture shape."""
+    pyproj = pytest.importorskip("pyproj")
+    from xrspatial.geotiff._geotags import (
+        MODEL_TYPE_GEOGRAPHIC,
+        _synthesize_user_defined_wkt,
+    )
+
+    wkt = _synthesize_user_defined_wkt(
+        model_type=MODEL_TYPE_GEOGRAPHIC,
+        semi_major=6378137.0,
+        semi_minor=6378137.0,
+        inv_flattening=0.0,
+    )
+    assert isinstance(wkt, str) and wkt
+    crs = pyproj.CRS.from_wkt(wkt)
+    proj_dict = crs.to_dict()
+    # PROJ collapses a == b to R; matches the rasterio-read fixture.
+    assert proj_dict.get("proj") == "longlat"
+    assert proj_dict.get("R") == 6378137.0
+
+
+def test_synthesize_user_defined_wkt_oblate_ellipsoid():
+    """An oblate ellipsoid (inv_flattening != 0) maps to PROJ ``rf=...``."""
+    pyproj = pytest.importorskip("pyproj")
+    from xrspatial.geotiff._geotags import (
+        MODEL_TYPE_GEOGRAPHIC,
+        _synthesize_user_defined_wkt,
+    )
+
+    wkt = _synthesize_user_defined_wkt(
+        model_type=MODEL_TYPE_GEOGRAPHIC,
+        semi_major=6378137.0,
+        semi_minor=None,
+        inv_flattening=298.257223563,
+    )
+    assert isinstance(wkt, str) and wkt
+    crs = pyproj.CRS.from_wkt(wkt)
+    assert crs.ellipsoid.semi_major_metre == pytest.approx(6378137.0)
+    assert crs.ellipsoid.inverse_flattening == pytest.approx(298.257223563)
+
+
+def test_synthesize_user_defined_wkt_projected_returns_none():
+    """Projected user-defined CRSes are not yet reconstructible from
+    GeoKeys alone (they need the GeogPrime / Projection parameters), so
+    the helper returns ``None`` and the caller falls back to the
+    deprecated-attrs path."""
+    from xrspatial.geotiff._geotags import (
+        MODEL_TYPE_PROJECTED,
+        _synthesize_user_defined_wkt,
+    )
+
+    assert _synthesize_user_defined_wkt(
+        model_type=MODEL_TYPE_PROJECTED,
+        semi_major=6378137.0,
+        semi_minor=6378137.0,
+        inv_flattening=0.0,
+    ) is None
+
+
+def test_synthesize_user_defined_wkt_geocentric_returns_none():
+    """Geocentric and unknown model_type values also fall through to
+    ``None``. Pinned so a future change that promotes geocentric to a
+    real proj_dict still has to update this test deliberately."""
+    from xrspatial.geotiff._geotags import (
+        MODEL_TYPE_GEOCENTRIC,
+        _synthesize_user_defined_wkt,
+    )
+
+    assert _synthesize_user_defined_wkt(
+        model_type=MODEL_TYPE_GEOCENTRIC,
+        semi_major=6378137.0,
+        semi_minor=6378137.0,
+        inv_flattening=0.0,
+    ) is None
+    # Unknown model_type (the parser stamps 0 when GEOKEY_MODEL_TYPE is
+    # absent). Same conservative fall-through.
+    assert _synthesize_user_defined_wkt(
+        model_type=0,
+        semi_major=6378137.0,
+        semi_minor=6378137.0,
+        inv_flattening=0.0,
+    ) is None
+
+
+def test_synthesize_user_defined_wkt_missing_ellipsoid_returns_none():
+    """Without any ellipsoid info, refuse to fabricate a CRS rather than
+    silently emit a WGS84 fallback that would compare-equal to unrelated
+    files."""
+    from xrspatial.geotiff._geotags import (
+        MODEL_TYPE_GEOGRAPHIC,
+        _synthesize_user_defined_wkt,
+    )
+
+    # No semi_major: cannot build an ellipsoid.
+    assert _synthesize_user_defined_wkt(
+        model_type=MODEL_TYPE_GEOGRAPHIC,
+        semi_major=None,
+        semi_minor=None,
+        inv_flattening=None,
+    ) is None
+    # Semi-major but neither semi_minor nor inv_flattening: still
+    # ambiguous (sphere vs oblate), refuse rather than guess.
+    assert _synthesize_user_defined_wkt(
+        model_type=MODEL_TYPE_GEOGRAPHIC,
+        semi_major=6378137.0,
+        semi_minor=None,
+        inv_flattening=None,
+    ) is None

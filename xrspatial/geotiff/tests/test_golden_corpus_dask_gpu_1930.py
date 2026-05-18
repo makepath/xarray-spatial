@@ -13,6 +13,14 @@ The shared codec / attrs parity gaps in ``_PARITY_GAPS`` carry over from
 the eager / dask / GPU modules. ``_DASK_GPU_SKIPS`` is reserved for
 gaps that surface only when chunked GPU reads stitch through nvCOMP
 plus dask; it starts empty.
+
+Resolved gaps (no longer xfail):
+
+* Integer nodata masking -- closed by the oracle's
+  ``_normalise_for_masked_nodata`` helper.
+* ``crs_citation_only`` -- closed by ``_synthesize_user_defined_wkt``
+  in ``_geotags.py``, which stamps a canonical
+  ``attrs['crs_wkt']`` on user-defined geographic CRSes.
 """
 from __future__ import annotations
 
@@ -53,15 +61,13 @@ CHUNK_SIZE = 32
 # Integer-nodata masking used to live here too; the oracle's
 # _normalise_for_masked_nodata helper (#2046) closes that gap so it is
 # no longer xfailed on any backend. The multi-band axis-order gap for
-# the JPEG-YCbCr fixture is also closed (see ``_normalise_axis_order``
-# in ``_oracle.py``).
-_PARITY_GAPS: dict[str, str] = {
-    "crs_citation_only": (
-        "citation-only CRS: xrspatial decodes the citation into deprecated "
-        "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
-        "or attrs['crs_wkt']. Real parity gap; needs a fix in _crs.py."
-    ),
-}
+# the JPEG-YCbCr fixture is also closed on the eager / dask paths
+# (see ``_normalise_axis_order`` in ``_oracle.py``); on the dask+GPU
+# pipeline the decode error wins first so the JPEG fixture lives in
+# ``_INTENTIONAL_SKIPS`` below. crs_citation_only moved off this list
+# once ``_synthesize_user_defined_wkt`` started stamping a canonical
+# WKT for user-defined geographic CRSes.
+_PARITY_GAPS: dict[str, str] = {}
 
 # Empty: failures unique to the dask+GPU combo (eager / dask / pure-
 # GPU all pass) would land here. Kept around as the documented home

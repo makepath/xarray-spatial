@@ -11,13 +11,22 @@ device is reachable. CI matrices without CUDA collect zero tests from
 this module; runs with a GPU exercise every fixture the eager and dask
 backends already do.
 
-``_PARITY_GAPS`` carries over the codec / attrs gaps that all three
-backends share (citation CRS, integer nodata masking). ``_GPU_SKIPS``
-holds GPU-only failures, currently the JPEG-YCbCr fixture: the GPU
-decoder does not handle it and ``on_gpu_failure='strict'`` raises
-rather than falling back, so the read fails before the oracle can
-compare. On eager / dask the same fixture exposes the RGB axis-order
-divergence; on GPU strict mode it never gets that far.
+``_PARITY_GAPS`` is empty for the GPU backend now that integer nodata
+masking and the citation-only CRS gap are closed at the codec / attrs
+layer. ``_GPU_SKIPS`` holds GPU-only failures, currently the
+JPEG-YCbCr fixture: the GPU decoder does not handle it and
+``on_gpu_failure='strict'`` raises rather than falling back, so the
+read fails before the oracle can compare. On eager / dask the same
+fixture exposes the RGB axis-order divergence; on GPU strict mode it
+never gets that far.
+
+Resolved gaps (no longer xfail):
+
+* Integer nodata masking -- closed by the oracle's
+  ``_normalise_for_masked_nodata`` helper.
+* ``crs_citation_only`` -- closed by ``_synthesize_user_defined_wkt``
+  in ``_geotags.py``, which stamps a canonical
+  ``attrs['crs_wkt']`` on user-defined geographic CRSes.
 
 The GPU read is configured with ``on_gpu_failure='strict'`` so a codec
 that would silently CPU-fall-back instead surfaces as an xfail / fail
@@ -56,16 +65,10 @@ FIXTURES_DIR = (
 )
 
 
-# Integer-nodata masking used to live here too; the oracle's
-# _normalise_for_masked_nodata helper now closes that gap so it is no
-# longer xfailed on any backend.
-_PARITY_GAPS: dict[str, str] = {
-    "crs_citation_only": (
-        "citation-only CRS: xrspatial decodes the citation into deprecated "
-        "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
-        "or attrs['crs_wkt']. Real parity gap; needs a fix in _crs.py."
-    ),
-}
+# Integer-nodata masking used to live here (closed by the oracle's
+# _normalise_for_masked_nodata helper), and crs_citation_only used to
+# live here too (closed by _synthesize_user_defined_wkt in _geotags.py).
+_PARITY_GAPS: dict[str, str] = {}
 
 # GPU-only gaps. Empty in the current corpus: failures here would be
 # fixtures the eager and dask backends decode cleanly but the GPU

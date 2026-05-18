@@ -10,12 +10,20 @@ the same. What this PR exercises is the windowed-decode plumbing inside
 shows up here.
 
 The skip / xfail taxonomy is intentionally identical to the eager
-module's. The parity gaps that motivated them (integer-nodata masking,
-citation CRS encoding, RGB band axis order, MinIsWhite inversion) live
-in the codec / attrs layer, which both backends share. If a future
-parity gap turns out to be dask-specific, add it to ``_DASK_SKIPS``
-rather than ``_PARITY_GAPS`` so the difference between "shared
-codec/attrs gap" and "dask plumbing gap" stays legible.
+module's. The parity gaps that motivated them (RGB band axis order,
+MinIsWhite inversion) live in the codec / attrs layer, which both
+backends share. If a future parity gap turns out to be dask-specific,
+add it to ``_DASK_SKIPS`` rather than ``_PARITY_GAPS`` so the
+difference between "shared codec/attrs gap" and "dask plumbing gap"
+stays legible.
+
+Resolved gaps (no longer xfail):
+
+* Integer nodata masking -- closed by the oracle's
+  ``_normalise_for_masked_nodata`` helper.
+* ``crs_citation_only`` -- closed by ``_synthesize_user_defined_wkt``
+  in ``_geotags.py``, which stamps a canonical
+  ``attrs['crs_wkt']`` on user-defined geographic CRSes.
 
 The chunk size is fixed at 32. Most corpus fixtures are 64x64 or
 smaller, so 32 produces either a 2x2 chunk grid or a single chunk;
@@ -52,14 +60,11 @@ CHUNK_SIZE = 32
 # oracle's _normalise_for_masked_nodata helper closes that gap so it
 # is no longer xfailed on any backend. The multi-band axis-order gap
 # for the JPEG-YCbCr fixture is also closed (see
-# ``_normalise_axis_order`` in ``_oracle.py``).
-_PARITY_GAPS: dict[str, str] = {
-    "crs_citation_only": (
-        "citation-only CRS: xrspatial decodes the citation into deprecated "
-        "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
-        "or attrs['crs_wkt']. Real parity gap; needs a fix in _crs.py."
-    ),
-}
+# ``_normalise_axis_order`` in ``_oracle.py``). The citation-only CRS
+# gap is closed by ``_synthesize_user_defined_wkt`` in ``_geotags.py``,
+# which stamps a canonical WKT for user-defined geographic CRSes onto
+# ``attrs['crs_wkt']``.
+_PARITY_GAPS: dict[str, str] = {}
 
 # Dask-only gaps go here. Empty in the first pass; add an entry only when
 # a fixture is dask-specific (i.e. eager passes, dask does not).
