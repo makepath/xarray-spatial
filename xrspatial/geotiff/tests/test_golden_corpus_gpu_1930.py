@@ -11,12 +11,13 @@ device is reachable. CI matrices without CUDA collect zero tests from
 this module; runs with a GPU exercise every fixture the eager and dask
 backends already do.
 
-The shared codec / attrs parity gaps (``_PARITY_GAPS``) carry over from
-the eager and dask modules verbatim: they live in the decode / attrs
-layer that all three backends share. ``_GPU_SKIPS`` is reserved for
-GPU-only gaps (e.g. a codec the GPU pipeline can't decode and that the
-strict-mode would normally fall back to CPU for). It starts empty; add
-entries only when a fixture is GPU-specific.
+``_PARITY_GAPS`` carries over the codec / attrs gaps that all three
+backends share (citation CRS, integer nodata masking). ``_GPU_SKIPS``
+holds GPU-only failures, currently the JPEG-YCbCr fixture: the GPU
+decoder does not handle it and ``on_gpu_failure='strict'`` raises
+rather than falling back, so the read fails before the oracle can
+compare. On eager / dask the same fixture exposes the RGB axis-order
+divergence; on GPU strict mode it never gets that far.
 
 The GPU read is configured with ``on_gpu_failure='strict'`` so a codec
 that would silently CPU-fall-back instead surfaces as an xfail / fail
@@ -63,11 +64,6 @@ _NODATA_MASKING_REASON = (
 )
 
 _PARITY_GAPS: dict[str, str] = {
-    "compression_jpeg_uint8_ycbcr": (
-        "RGB band axis order divergence: rasterio reads (bands, y, x) while "
-        "xrspatial reads (y, x, band). The oracle does not yet normalise "
-        "multi-band axis order."
-    ),
     "crs_citation_only": (
         "citation-only CRS: xrspatial decodes the citation into deprecated "
         "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
@@ -80,9 +76,19 @@ _PARITY_GAPS: dict[str, str] = {
     "tiled_be_uint16": _NODATA_MASKING_REASON,
 }
 
-# GPU-only gaps go here. Empty in the first pass; add entries when a
-# fixture is GPU-specific (i.e. eager and dask pass, GPU does not).
-_GPU_SKIPS: dict[str, str] = {}
+# GPU-only gaps. Failures here are GPU-specific (the eager and dask
+# backends decode the same fixture cleanly).
+_GPU_SKIPS: dict[str, str] = {
+    "compression_jpeg_uint8_ycbcr": (
+        "JPEG-YCbCr decode is not implemented on the GPU read path. "
+        "With on_gpu_failure='strict' the read raises rather than "
+        "CPU-falling-back, so the test fails before reaching the "
+        "oracle. On the eager and dask backends this fixture exposes "
+        "the RGB band axis order divergence (rasterio is (bands, y, "
+        "x), xrspatial is (y, x, band)); on the GPU backend that "
+        "comparison never runs."
+    ),
+}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
