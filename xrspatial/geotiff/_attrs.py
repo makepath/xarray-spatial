@@ -225,6 +225,17 @@ _GEOKEY_DEPRECATION_REASON_VERTICAL_CRS = (
 )
 
 
+# Suffix baked into the GeoKey-tier deprecation warnings. Joined to the
+# per-tier ``reason`` clause with a single space (no period in between)
+# so the rendered text reads as one sentence:
+#
+#     "... is deprecated; {reason} so it will not round-trip. ..."
+#
+# Kept as a module-level constant so the GeoKey shim and the unified
+# :func:`_emit_deprecated_attr` helper share the same canonical string.
+_GEOKEY_DEPRECATION_SUFFIX = "so it will not round-trip."
+
+
 # Shared wording for the colormap-variants slice of the PR 7 deprecation
 # series. The root cause is a different one (the writer cannot set
 # ``Photometric=3``) so the GeoKey-tier reason templates above don't
@@ -244,20 +255,76 @@ _DEPRECATED_COLORMAP_RGBA_MIGRATION = (
 )
 
 
+def _build_deprecated_attr_warning(
+    name: str,
+    *,
+    reason: str,
+    migration: str | None = None,
+    suffix: str | None = None,
+) -> str:
+    """Build the canonical deprecation-warning text for a deprecated attr.
+
+    Single text builder shared by every deprecation tier (issue #1984 PR 7).
+    The rendered shape depends on which optional clauses are passed:
+
+    * ``suffix`` set (GeoKey tiers): joins ``reason`` and ``suffix`` with
+      a single space, treating them as one sentence. The default GeoKey
+      suffix is :data:`_GEOKEY_DEPRECATION_SUFFIX` ("so it will not
+      round-trip.")::
+
+          "xrspatial.geotiff: attrs['<name>'] is deprecated;
+           <reason> <suffix> It will be removed in a future release.
+           See issue #1984."
+
+    * ``suffix`` unset, ``migration`` set (colormap-variants tier):
+      terminates ``reason`` with a period and appends ``migration`` as a
+      second sentence::
+
+          "xrspatial.geotiff: attrs['<name>'] is deprecated;
+           <reason>. <migration>. It will be removed in a future
+           release. See issue #1984."
+
+    * Neither set: a bare reason terminated with a period.
+
+    ``reason`` and ``migration`` may be passed with or without a trailing
+    period; the builder normalises them so the rendered text contains a
+    single terminator. ``suffix`` is spliced verbatim so callers can
+    pin its exact punctuation (the GeoKey suffix carries its own period
+    so the next sentence can start cleanly).
+
+    The wording is pinned by ``test_warning_message_format`` (geographic
+    tier), by sibling substring checks in the projected / vertical
+    tests, and by the byte-identical assertions in
+    ``test_attrs_pr7_deprecate_colormap_variants_1984.py``. Any tweak
+    here must land with matching test updates.
+    """
+    parts = [f"xrspatial.geotiff: attrs[{name!r}] is deprecated;"]
+    if suffix is not None:
+        # GeoKey-style: reason and suffix render as one sentence joined
+        # by a single space. The reason therefore is appended without a
+        # trailing period; the suffix carries it.
+        parts.append(f"{reason.rstrip('.')} {suffix}")
+    else:
+        # Colormap-style: reason is its own sentence; optional migration
+        # follows as a second sentence.
+        parts.append(reason.rstrip('.') + '.')
+        if migration:
+            parts.append(migration.rstrip('.') + '.')
+    parts.append("It will be removed in a future release. See issue #1984.")
+    return ' '.join(parts)
+
+
 def _deprecated_geokey_warning(name: str, *, reason: str) -> str:
     """Warning text for a deprecated GeoKey-derived attr.
 
-    ``reason`` is the per-category clause that explains why the value
-    will not round-trip; the rest of the message is fixed so callers
-    only have to keep track of the short reason string. The wording is
-    pinned by ``test_warning_message_format`` (geographic tier) and by
-    sibling tests for the projected / vertical tiers, so any tweak
-    here needs to land alongside an update to those tests.
+    Thin wrapper over :func:`_build_deprecated_attr_warning` that bakes
+    in the GeoKey-tier suffix (:data:`_GEOKEY_DEPRECATION_SUFFIX`). Kept
+    so the geographic-tier test suite can import a single-arg helper to
+    pin the canonical wording without restating the suffix at every call
+    site.
     """
-    return (
-        f"xrspatial.geotiff: attrs[{name!r}] is deprecated; {reason} "
-        f"so it will not round-trip. It will be removed in a future "
-        f"release. See issue #1984."
+    return _build_deprecated_attr_warning(
+        name, reason=reason, suffix=_GEOKEY_DEPRECATION_SUFFIX,
     )
 
 
@@ -323,35 +390,71 @@ def _stacklevel_to_external_caller() -> int:
     return 2
 
 
-def _emit_deprecated_geokey_attr(attrs: dict, name: str, value,
-                                 *, reason: str) -> None:
-    """Emit a deprecated GeoKey-derived attr with a ``DeprecationWarning``.
+def _emit_deprecated_attr(
+    attrs: dict,
+    name: str,
+    value,
+    *,
+    reason: str,
+    migration: str | None = None,
+    suffix: str | None = None,
+) -> None:
+    """Emit a deprecated attr with a ``DeprecationWarning`` and stamp the
+    attr value (issue #1984 PR 7).
 
-    Generic helper shared by the geographic, projected, and vertical
-    deprecation tiers (issue #1984 PR 7). ``reason`` is the per-category
-    clause that explains why the value will not round-trip; it is
-    spliced into the warning text by :func:`_deprecated_geokey_warning`.
-    Use :data:`_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS` for the
-    geographic and projected tiers (both lose the value because the
-    writer cannot reconstruct it from the canonical CRS) and
-    :data:`_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS` for the vertical
-    tier (the writer skips the entire vertical GeoKey block).
+    Unified helper shared by every PR 7 deprecation tier. The rendered
+    text comes from :func:`_build_deprecated_attr_warning`; see that
+    docstring for the shape rules and which combinations of ``reason``
+    / ``migration`` / ``suffix`` each tier uses.
 
-    Sets ``attrs[name] = value`` after the warning so the read-side
-    emission stays alive for one release cycle and external callers
-    have time to migrate to ``crs`` / ``crs_wkt``.
+    * GeoKey tiers (geographic, projected, vertical) pass
+      ``suffix=_GEOKEY_DEPRECATION_SUFFIX`` and rely on
+      :func:`_emit_deprecated_geokey_attr` as a thin shim that fixes the
+      suffix. The per-tier ``reason`` constant is the only thing that
+      varies (horizontal-CRS vs. vertical-CRS wording).
+    * Colormap-variants tier passes ``migration=`` only and lets
+      ``suffix`` default to ``None`` so the period-joined sentence form
+      renders.
 
-    The ``stacklevel`` is computed by walking past every
+    The attr value is stamped after the warning fires so the read-side
+    emission stays alive for one release cycle while external callers
+    migrate to ``crs`` / ``crs_wkt`` or the canonical replacement.
+
+    The ``stacklevel`` is computed by
+    :func:`_stacklevel_to_external_caller`, which walks past every
     ``xrspatial.geotiff*`` frame so the warning is attributed to the
     user's call site (e.g. ``open_geotiff(...)``) rather than to one of
     the internal read paths.
     """
     warnings.warn(
-        _deprecated_geokey_warning(name, reason=reason),
+        _build_deprecated_attr_warning(
+            name, reason=reason, migration=migration, suffix=suffix,
+        ),
         DeprecationWarning,
         stacklevel=_stacklevel_to_external_caller(),
     )
     attrs[name] = value
+
+
+def _emit_deprecated_geokey_attr(attrs: dict, name: str, value,
+                                 *, reason: str) -> None:
+    """GeoKey-tier shim over :func:`_emit_deprecated_attr`.
+
+    Bakes the canonical GeoKey suffix
+    (:data:`_GEOKEY_DEPRECATION_SUFFIX`, "so it will not round-trip.")
+    into the unified emit helper so geographic / projected / vertical
+    callers only have to keep track of their per-tier ``reason``
+    clause. Use :data:`_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS` for
+    the geographic and projected tiers (both lose the value because the
+    writer cannot reconstruct it from the canonical CRS) and
+    :data:`_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS` for the vertical
+    tier (the writer skips the entire vertical GeoKey block).
+    """
+    _emit_deprecated_attr(
+        attrs, name, value,
+        reason=reason,
+        suffix=_GEOKEY_DEPRECATION_SUFFIX,
+    )
 
 
 def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
@@ -366,53 +469,6 @@ def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
         attrs, name, value,
         reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
     )
-
-
-def _emit_deprecated_attr(
-    attrs: dict,
-    name: str,
-    value,
-    *,
-    reason: str,
-    migration: str | None = None,
-) -> None:
-    """Emit a deprecated attr with a ``DeprecationWarning`` and a
-    per-attr migration recipe.
-
-    Sibling of :func:`_emit_deprecated_geokey_attr` that adds support
-    for an optional ``migration`` clause spliced into the warning. The
-    GeoKey-tier helper uses a fixed sentence ("... so it will not
-    round-trip ..."); the colormap-variants tier needs to point users
-    at how to derive an RGBA palette or matplotlib ``ListedColormap``
-    from canonical ``attrs['colormap']``, which doesn't fit that
-    template. A follow-up may unify the two helpers; for now they live
-    side-by-side because the warning-text contracts are pinned by
-    separate test suites and converging them is out of scope for the
-    colormap slice.
-
-    Warning text shape::
-
-        xrspatial.geotiff: attrs['<name>'] is deprecated; <reason>
-        <migration?> It will be removed in a future release. See
-        issue #1984.
-
-    The ``stacklevel`` is taken from
-    :func:`_stacklevel_to_external_caller` so the warning is attributed
-    to the user's call site, matching the GeoKey-tier slices.
-    """
-    parts = [
-        f"xrspatial.geotiff: attrs[{name!r}] is deprecated;",
-        reason.rstrip('.') + '.',
-    ]
-    if migration:
-        parts.append(migration.rstrip('.') + '.')
-    parts.append("It will be removed in a future release. See issue #1984.")
-    warnings.warn(
-        ' '.join(parts),
-        DeprecationWarning,
-        stacklevel=_stacklevel_to_external_caller(),
-    )
-    attrs[name] = value
 
 
 
