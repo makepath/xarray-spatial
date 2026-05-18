@@ -1592,3 +1592,123 @@ class TestBuildRowCsrInt64:
         )
         # The polygon covers a 6x6 inner block; just check it burned in.
         assert np.any(result.values == 3.0)
+
+
+# ---------------------------------------------------------------------------
+# Metadata propagation (attrs from `like`, coord reuse, _FillValue)
+# ---------------------------------------------------------------------------
+
+def _make_like(width=10, height=10, attrs=None, dtype=np.float64):
+    """Build a 2D template DataArray with georeferenced coords and attrs."""
+    x = np.linspace(0.5, width - 0.5, width)
+    y = np.linspace(height - 0.5, 0.5, height)
+    data = np.zeros((height, width), dtype=dtype)
+    return xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': y, 'x': x},
+        attrs=dict(attrs or {}),
+    )
+
+
+class TestMetadataPropagation:
+    """Verify `like.attrs` propagates, `like.coords` are reused, and the
+    fill value lands in `_FillValue` / `nodatavals`.
+    """
+
+    def test_like_propagates_attrs(self):
+        attrs = {
+            'crs': 'EPSG:32610',
+            'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+            'res': (1.0, 1.0),
+        }
+        like = _make_like(attrs=attrs)
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('transform') == \
+            (1.0, 0.0, 0.0, 0.0, -1.0, 10.0)
+        assert result.attrs.get('res') == (1.0, 1.0)
+
+    def test_like_preserves_coords_bit_identical(self):
+        like = _make_like()
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        # When the caller passed `like`, the output should reuse its
+        # coords exactly (not rebuild via linspace).  Otherwise
+        # xr.align between the rasterized output and `like` breaks
+        # silently for round-off-prone bounds.
+        np.testing.assert_array_equal(
+            result.coords['x'].values, like.coords['x'].values)
+        np.testing.assert_array_equal(
+            result.coords['y'].values, like.coords['y'].values)
+
+    def test_like_attrs_isolated_from_template(self):
+        """Mutating output attrs must not mutate the template's attrs."""
+        attrs = {'crs': 'EPSG:32610'}
+        like = _make_like(attrs=attrs)
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        result.attrs['crs'] = 'EPSG:4326'
+        assert like.attrs['crs'] == 'EPSG:32610'
+
+    def test_fill_value_recorded_when_not_nan(self):
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+            fill=-9999, dtype=np.int32,
+        )
+        assert result.attrs.get('_FillValue') == -9999
+        assert result.attrs.get('nodatavals') == (-9999,)
+
+    def test_fill_value_omitted_for_nan(self):
+        """Default fill=NaN should not pollute attrs with _FillValue."""
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+        )
+        assert '_FillValue' not in result.attrs
+        assert 'nodatavals' not in result.attrs
+
+    def test_no_like_no_attrs_pollution(self):
+        """Without `like` and with NaN fill, attrs must stay empty."""
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+        )
+        assert result.attrs == {}
+
+    @skip_no_dask
+    def test_like_attrs_propagated_dask(self):
+        like = _make_like(attrs={'crs': 'EPSG:32610'})
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0, chunks=5,
+        )
+        # The dask backend routes through the same final xr.DataArray
+        # constructor, so attrs / coords / _FillValue behave identically.
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('_FillValue') == 0
+        np.testing.assert_array_equal(
+            result.coords['x'].values, like.coords['x'].values)
+
+    @skip_no_cuda
+    def test_like_attrs_propagated_cupy(self):
+        like = _make_like(attrs={'crs': 'EPSG:32610'})
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0, use_cuda=True,
+        )
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('_FillValue') == 0
+
+    @skip_no_cuda
+    @skip_no_dask
+    def test_like_attrs_propagated_dask_cupy(self):
+        like = _make_like(attrs={'crs': 'EPSG:32610'})
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like, fill=0, use_cuda=True, chunks=5,
+        )
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('_FillValue') == 0
