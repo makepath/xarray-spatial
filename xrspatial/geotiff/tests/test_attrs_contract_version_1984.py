@@ -1,9 +1,11 @@
-"""Contract-version marker tests for issue #1984.
+"""Contract-version marker tests for issue #1984 / #2016.
 
-PR 3 of the 7-PR plan attached to issue #1984 stamps every DataArray
-returned by an xrspatial geotiff read path with
-``attrs['_xrspatial_geotiff_contract'] = 1``. Downstream code reads
-this marker to learn which attrs-contract revision produced the array.
+PR 3 of issue #1984 stamped every DataArray returned by an xrspatial
+geotiff read path with ``attrs['_xrspatial_geotiff_contract']``. Issue
+#2016 (removal phase of #1984) bumped the version to ``2`` and dropped
+the 13 deprecated GeoKey-derived and matplotlib-colormap attrs.
+Downstream code reads this marker to learn which attrs-contract
+revision produced the array.
 
 The stamp must appear on every backend:
 
@@ -76,9 +78,9 @@ def _write_minimal_vrt(vrt_path, source_name, *, height, width):
     )
 
 
-def test_attrs_contract_version_constant_is_one():
+def test_attrs_contract_version_constant_is_two():
     """Pin the integer value so a careless bump shows up here first."""
-    assert _ATTRS_CONTRACT_VERSION == 1
+    assert _ATTRS_CONTRACT_VERSION == 2
 
 
 def test_eager_numpy_stamps_contract_version(tmp_path):
@@ -87,7 +89,7 @@ def test_eager_numpy_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path)
 
-    assert da.attrs[_CONTRACT_KEY] == 1
+    assert da.attrs[_CONTRACT_KEY] == 2
 
 
 def test_dask_numpy_stamps_contract_version(tmp_path):
@@ -96,7 +98,7 @@ def test_dask_numpy_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path, chunks=32)
 
-    assert da.attrs[_CONTRACT_KEY] == 1
+    assert da.attrs[_CONTRACT_KEY] == 2
 
 
 @_gpu_only
@@ -106,7 +108,7 @@ def test_gpu_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path, gpu=True)
 
-    assert da.attrs[_CONTRACT_KEY] == 1
+    assert da.attrs[_CONTRACT_KEY] == 2
 
 
 @_gpu_only
@@ -116,7 +118,7 @@ def test_dask_gpu_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path, gpu=True, chunks=32)
 
-    assert da.attrs[_CONTRACT_KEY] == 1
+    assert da.attrs[_CONTRACT_KEY] == 2
 
 
 def test_vrt_eager_stamps_contract_version(tmp_path):
@@ -127,7 +129,7 @@ def test_vrt_eager_stamps_contract_version(tmp_path):
 
     da = read_vrt(str(vrt))
 
-    assert da.attrs[_CONTRACT_KEY] == 1
+    assert da.attrs[_CONTRACT_KEY] == 2
 
 
 def test_vrt_chunked_stamps_contract_version(tmp_path):
@@ -138,4 +140,4 @@ def test_vrt_chunked_stamps_contract_version(tmp_path):
 
     da = read_vrt(str(vrt), chunks=32)
 
-    assert da.attrs[_CONTRACT_KEY] == 1
+    assert da.attrs[_CONTRACT_KEY] == 2

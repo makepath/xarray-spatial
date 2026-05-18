@@ -135,8 +135,9 @@ def test_eager_emits_crs_wkt_for_user_defined_crs(tmp_path):
     assert rd.attrs.get("crs") is None  # no EPSG
     assert rd.attrs.get("crs_wkt") is not None
     assert rd.attrs["crs_wkt"].startswith("PROJCS[")
-    # crs_name is kept for back-compat
-    assert rd.attrs.get("crs_name") == rd.attrs["crs_wkt"]
+    # Contract v2 (issue #2016) removed ``crs_name`` from the reader;
+    # the WKT citation now lives in ``crs_wkt`` only.
+    assert "crs_name" not in rd.attrs
 
 
 def test_dask_emits_crs_wkt_for_user_defined_crs(tmp_path):
@@ -222,10 +223,10 @@ def test_epsg_crs_unchanged_by_fix(tmp_path):
     rd = open_geotiff(p)
     assert rd.attrs.get("crs") == 4326
     assert rd.attrs.get("crs_wkt") is not None
-    # The WKT here is pyproj's canonical 4326 WKT; the citation is the
-    # short EPSG-style name "WGS 84", not WKT, so crs_name should not
-    # be promoted to crs_wkt.
-    assert rd.attrs.get("crs_name") != rd.attrs.get("crs_wkt")
+    # Contract v2 (issue #2016) removed ``crs_name`` from the reader.
+    # The promotion gate (``_looks_like_wkt``) still applies internally
+    # for ``crs_wkt`` derivation, but the secondary attr is gone.
+    assert "crs_name" not in rd.attrs
 
 
 def test_human_readable_crs_name_not_promoted_to_crs_wkt(tmp_path):
