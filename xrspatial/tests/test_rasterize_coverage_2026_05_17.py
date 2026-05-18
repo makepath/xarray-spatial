@@ -6,27 +6,26 @@ test-coverage sweep on 2026-05-17:
 - Cat 3 HIGH  -- 1x1 single-pixel raster across numpy / cupy / dask+numpy /
   dask+cupy (test_rasterize.py covers 1xN strips and Nx1 strips but never
   the single-pixel degenerate case).
-- Cat 4 HIGH  -- ``like=`` template-raster parameter is documented at
-  rasterize.py:2038 and forwards through ``_extract_grid_from_like``
-  (rasterize.py:1930) into width/height/bounds/dtype resolution, but no
-  test in test_rasterize.py exercises it.  The dtype-inheritance branch
-  (line 2183) and the bounds-from-like branch (line 2132) ship without
-  coverage on any backend.
+- Cat 4 HIGH  -- ``like=`` template-raster parameter forwards through
+  ``_extract_grid_from_like`` into width/height/bounds/dtype resolution,
+  but no test in test_rasterize.py exercises it.  The dtype-inheritance
+  branch and the bounds-from-like branch ship without coverage on any
+  backend.
 - Cat 4 HIGH  -- ``resolution=`` parameter happy-path: only the
-  oversize-rejection error path is tested (test_oversize_resolution_rejected
-  at line 304); the scalar / tuple branches at rasterize.py:2158-2164 and
-  the ceil-and-clamp-to-1 logic have no positive coverage on any backend.
-- Cat 4 HIGH  -- Non-empty ``GeometryCollection`` unpacking is documented
-  at rasterize.py:1995 and implemented by ``_classify_geometries_loop``
-  (line 228) but only the empty-GC case is tested (line 269).  All four
-  backends route through this path.
+  oversize-rejection error path is tested; the scalar / tuple branches
+  and the ceil-and-clamp-to-1 logic have no positive coverage on any
+  backend.
+- Cat 4 HIGH  -- Non-empty ``GeometryCollection`` unpacking is
+  implemented by ``_classify_geometries_loop`` but only the empty-GC
+  case is tested.  All four backends route through this path.
 - Cat 1 MEDIUM -- eager cupy ``all_touched=True`` is covered only on the
-  dask+cupy path (test_all_touched_parity at line 1369); the eager cupy
-  branch invokes a different kernel and had no direct test.
-- Cat 2 MEDIUM -- integer dtype with the default ``fill=nan`` is unpinned
-  behaviour: ``np.full(..., np.nan).astype(int)`` silently casts to the
-  platform-specific int-min sentinel.  Pin the observed cast so a future
-  refactor that switches to an explicit raise surfaces in CI.
+  dask+cupy path; the eager cupy branch invokes a different kernel and
+  had no direct test.
+- Cat 2 MEDIUM -- integer dtype with the default ``fill=nan`` is
+  unpinned behaviour: ``np.full(..., np.nan).astype(int)`` silently
+  casts to the platform-specific int-min sentinel.  Pin the observed
+  cast (numpy backend) so a future refactor that switches to an explicit
+  raise surfaces in CI.
 
 The "fix" in this sweep is *adding tests*.  No source changes.  CUDA is
 available on this host so cupy / dask+cupy tests execute live.
@@ -59,7 +58,7 @@ except ImportError:
     has_cupy = False
 
 try:
-    import dask.array as da  # noqa: F401
+    import dask  # noqa: F401  (availability probe only)
     has_dask = True
 except ImportError:
     has_dask = False
@@ -132,7 +131,7 @@ class TestSinglePixelRaster:
         assert r.values[0, 0] == 3.0
 
     @skip_no_cuda
-    def test_polygon_eager_cupy(self):
+    def test_polygon_eager_cupy_matches_numpy(self):
         """1x1 raster on cupy matches numpy."""
         np_r = rasterize([(box(0, 0, 5, 5), 7.0)],
                          width=1, height=1, bounds=(0, 0, 5, 5))
@@ -140,10 +139,14 @@ class TestSinglePixelRaster:
                          width=1, height=1, bounds=(0, 0, 5, 5),
                          use_cuda=True)
         assert cp_r.shape == (1, 1)
+        # Pin the absolute value too: a co-regression in eager numpy and
+        # eager cupy (both writing fill instead of the burn value) would
+        # otherwise slip past a pure parity check.
+        assert _as_numpy(cp_r)[0, 0] == 7.0
         np.testing.assert_array_equal(np_r.values, _as_numpy(cp_r))
 
     @skip_no_dask
-    def test_polygon_dask_numpy(self):
+    def test_polygon_dask_numpy_matches_numpy(self):
         """1x1 raster on dask+numpy matches numpy."""
         np_r = rasterize([(box(0, 0, 5, 5), 7.0)],
                          width=1, height=1, bounds=(0, 0, 5, 5))
@@ -151,12 +154,13 @@ class TestSinglePixelRaster:
                          width=1, height=1, bounds=(0, 0, 5, 5),
                          chunks=(1, 1))
         assert dk_r.shape == (1, 1)
+        assert _as_numpy(dk_r)[0, 0] == 7.0
         # Dask single-chunk pipeline must produce the same value.
         np.testing.assert_array_equal(np_r.values, _as_numpy(dk_r))
 
     @skip_no_cuda
     @skip_no_dask
-    def test_polygon_dask_cupy(self):
+    def test_polygon_dask_cupy_matches_numpy(self):
         """1x1 raster on dask+cupy matches numpy."""
         np_r = rasterize([(box(0, 0, 5, 5), 7.0)],
                          width=1, height=1, bounds=(0, 0, 5, 5))
@@ -164,6 +168,7 @@ class TestSinglePixelRaster:
                            width=1, height=1, bounds=(0, 0, 5, 5),
                            chunks=(1, 1), use_cuda=True)
         assert dkcp_r.shape == (1, 1)
+        assert _as_numpy(dkcp_r)[0, 0] == 7.0
         np.testing.assert_array_equal(np_r.values, _as_numpy(dkcp_r))
 
 
@@ -229,9 +234,12 @@ class TestLikeParameter:
         # Shape stays from template, but the coords are recomputed off the
         # overridden bounds so the pixel size shrinks.
         assert r.shape == (4, 6)
-        # New x extent is 0..2; cell centres should be inside [0, 2].
-        assert r.coords['x'].values.min() >= 0.0
-        assert r.coords['x'].values.max() <= 2.0
+        # width=6 over x in [0, 2] -> px=1/3, centres at [1, 3, 5, 7, 9, 11]/6.
+        expected_x = np.array([1, 3, 5, 7, 9, 11]) / 6.
+        np.testing.assert_allclose(r.coords['x'].values, expected_x)
+        # height=4 over y in [0, 2] -> py=0.5, centres descend 1.75 -> 0.25.
+        expected_y = np.array([1.75, 1.25, 0.75, 0.25])
+        np.testing.assert_allclose(r.coords['y'].values, expected_y)
 
     def test_like_width_height_override(self):
         """Explicit ``width``/``height`` win over the template shape."""
@@ -275,19 +283,33 @@ class TestLikeParameter:
         assert r.dtype == np.float32
 
     def test_like_rejects_non_dataarray(self):
-        """Passing a numpy array as ``like`` raises ``TypeError``."""
+        """Passing a numpy array as ``like`` raises ``TypeError``.
+
+        Targets the ``isinstance(like, xr.DataArray)`` guard in
+        ``_extract_grid_from_like``.
+        """
         with pytest.raises(TypeError, match="must be an xr.DataArray"):
             rasterize([(box(0, 0, 5, 5), 1.0)],
                       like=np.zeros((3, 3)))
 
     def test_like_rejects_3d(self):
-        """A 3D DataArray is rejected by the 2D shape guard."""
+        """A 3D DataArray is rejected by the 2D shape guard.
+
+        Note: this and ``test_like_rejects_wrong_dim_names`` both target
+        the same compound ``ndim != 2 or 'y' not in dims or 'x' not in
+        dims`` branch.  The two tests are kept distinct to document both
+        sub-conditions; either would suffice for line coverage.
+        """
         bad = xr.DataArray(np.zeros((2, 3, 3)), dims=['b', 'y', 'x'])
         with pytest.raises(ValueError, match="must be 2D"):
             rasterize([(box(0, 0, 5, 5), 1.0)], like=bad)
 
     def test_like_rejects_wrong_dim_names(self):
-        """A 2D DataArray without 'y' and 'x' dims is rejected."""
+        """A 2D DataArray without 'y' and 'x' dims is rejected.
+
+        Companion to ``test_like_rejects_3d``; targets the dim-name
+        sub-condition of the same compound guard.
+        """
         bad = xr.DataArray(np.zeros((3, 3)), dims=['lat', 'lon'])
         with pytest.raises(ValueError, match="'y' and 'x'"):
             rasterize([(box(0, 0, 5, 5), 1.0)], like=bad)
@@ -338,37 +360,41 @@ class TestResolutionParameter:
         assert r.shape == (1, 1)
 
     @skip_no_cuda
-    def test_scalar_resolution_cupy(self):
+    def test_scalar_resolution_cupy_matches_numpy(self):
         """resolution= on the cupy backend gives the same shape and values."""
         np_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0)
         cp_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0,
                          use_cuda=True)
-        assert cp_r.shape == np_r.shape
+        assert cp_r.shape == (5, 5)
+        # Positive pin: polygon covers the full 5x5 grid.
+        assert int((_as_numpy(cp_r) == 1.0).sum()) == 25
         np.testing.assert_array_equal(np_r.values, _as_numpy(cp_r))
 
     @skip_no_dask
-    def test_scalar_resolution_dask(self):
+    def test_scalar_resolution_dask_matches_numpy(self):
         """resolution= on the dask+numpy backend gives matching output."""
         np_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0)
         dk_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0,
                          chunks=(2, 2))
-        assert dk_r.shape == np_r.shape
+        assert dk_r.shape == (5, 5)
+        assert int((_as_numpy(dk_r) == 1.0).sum()) == 25
         np.testing.assert_array_equal(np_r.values, _as_numpy(dk_r))
 
     @skip_no_cuda
     @skip_no_dask
-    def test_scalar_resolution_dask_cupy(self):
+    def test_scalar_resolution_dask_cupy_matches_numpy(self):
         """resolution= on the dask+cupy backend gives matching output."""
         np_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0)
         dkcp_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                            resolution=1.0, bounds=(0, 0, 5, 5), fill=0,
                            chunks=(2, 2), use_cuda=True)
-        assert dkcp_r.shape == np_r.shape
+        assert dkcp_r.shape == (5, 5)
+        assert int((_as_numpy(dkcp_r) == 1.0).sum()) == 25
         np.testing.assert_array_equal(np_r.values, _as_numpy(dkcp_r))
 
 
@@ -410,21 +436,30 @@ class TestGeometryCollection:
         assert vals[7, 2] == 1.0
 
     def test_polygon_line_point_in_collection(self):
-        """All three primitive types inside a single GC are rasterized."""
+        """All three primitive types inside a single GC are rasterized.
+
+        Uses a 45-degree diagonal line so the Bresenham branch actually
+        steps in both axes (a horizontal/vertical line is the trivial
+        degenerate case).
+        """
         gc = GeometryCollection([
             box(0, 0, 4, 4),
-            LineString([(5.5, 5.5), (9.5, 5.5)]),
+            # Diagonal from (col=5, row=4) to (col=9, row=0) inclusive:
+            # Bresenham steps (5,4) (6,3) (7,2) (8,1) (9,0).
+            LineString([(5.5, 5.5), (9.5, 9.5)]),
             Point(7.5, 8.5),
         ])
         r = rasterize([(gc, 1.0)], width=10, height=10,
                       bounds=(0, 0, 10, 10), fill=0)
         vals = r.values
-        # Polygon: 16 cells (4x4).  Line: 5 cells along y=5.5 from
-        # x=5.5 to x=9.5 inclusive (Bresenham).  Point: 1.
+        # Polygon: 16 cells (4x4).  Line: 5 cells along the diagonal.
+        # Point: 1.  No overlaps.
         assert int((vals == 1.0).sum()) == 16 + 5 + 1
         # Specific spot checks.
         assert vals[8, 2] == 1.0  # polygon interior
-        assert vals[4, 7] == 1.0  # line cell
+        # Mid-line cell: row=3, col=6 -- only the diagonal Bresenham
+        # branch can light this exact cell.
+        assert vals[3, 6] == 1.0
         assert vals[1, 7] == 1.0  # point cell
 
     @skip_no_cuda
@@ -435,6 +470,8 @@ class TestGeometryCollection:
                          bounds=(0, 0, 10, 10), fill=0)
         cp_r = rasterize([(gc, 1.0)], width=10, height=10,
                          bounds=(0, 0, 10, 10), fill=0, use_cuda=True)
+        # 25 polygon cells + 1 point cell = 26 (eager case pins this too).
+        assert int((_as_numpy(cp_r) == 1.0).sum()) == 26
         np.testing.assert_array_equal(np_r.values, _as_numpy(cp_r))
 
     @skip_no_dask
@@ -445,6 +482,7 @@ class TestGeometryCollection:
                          bounds=(0, 0, 10, 10), fill=0)
         dk_r = rasterize([(gc, 1.0)], width=10, height=10,
                          bounds=(0, 0, 10, 10), fill=0, chunks=(5, 5))
+        assert int((_as_numpy(dk_r) == 1.0).sum()) == 26
         np.testing.assert_array_equal(np_r.values, _as_numpy(dk_r))
 
     @skip_no_cuda
@@ -457,6 +495,7 @@ class TestGeometryCollection:
         dkcp_r = rasterize([(gc, 1.0)], width=10, height=10,
                            bounds=(0, 0, 10, 10), fill=0,
                            chunks=(5, 5), use_cuda=True)
+        assert int((_as_numpy(dkcp_r) == 1.0).sum()) == 26
         np.testing.assert_array_equal(np_r.values, _as_numpy(dkcp_r))
 
 
@@ -521,12 +560,17 @@ class TestIntegerDtypeNanFill:
     """Pin the observed behaviour when ``dtype`` is integer but ``fill``
     defaults to ``np.nan``.
 
-    ``np.full((H, W), np.nan).astype(np.int32)`` silently casts NaN to a
-    platform-dependent sentinel: x86 yields ``INT32_MIN`` while Apple
-    Silicon yields ``0``.  Both values are unspecified by C and by numpy,
-    so the test pins "rasterize emits the same cast numpy emits" rather
-    than a specific number.  This is undocumented but must remain stable:
-    a future refactor that switched to raising
+    Scope: numpy backend only.  ``np.full((H, W), np.nan).astype(np.int32)``
+    silently casts NaN to a platform-dependent sentinel: x86 yields
+    ``INT32_MIN`` while Apple Silicon yields ``0``.  Both values are
+    unspecified by C and by numpy, so the test pins "rasterize emits the
+    same cast numpy emits" rather than a specific number.  The cupy and
+    dask+cupy backends allocate their own backing arrays and the
+    CUDA-side NaN-to-int cast may differ from numpy's by CUDA version;
+    a cross-backend parametrization is deferred to a follow-up sweep
+    that can investigate per-backend cast semantics.  This is
+    undocumented but must remain stable on the numpy backend: a future
+    refactor that switched to raising
     ``ValueError("integer dtype requires explicit fill")`` would break
     every caller that currently passes ``dtype=np.int32`` without
     overriding ``fill``.  Pin the cast so the choice is visible as a
