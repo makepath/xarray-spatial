@@ -301,14 +301,17 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
             f"{fid}: sparse must be a bool, got {entry['sparse']!r}"
         )
     if entry.get("sparse"):
-        # Sparse encoding needs tiles or strips that can be elided. The
-        # implementation only wires the tiled path (the only realistic
-        # COG-shaped sparse case in the wild); reject other layouts up
-        # front so the manifest stays honest.
+        # GDAL itself honours SPARSE_OK on stripped writers too, but the
+        # corpus generator only wires the tiled path (where sparse
+        # encoding actually matters for cloud-optimised reads) and the
+        # corpus oracle does not yet pin the stripped sparse case.
+        # Reject the combination up front so the manifest cannot promise
+        # behaviour the generator does not exercise.
         if entry["layout"] != "tiled":
             raise ManifestError(
-                f"{fid}: sparse=true requires layout=tiled (the generator "
-                f"only implements the tiled sparse path)"
+                f"{fid}: sparse=true is only wired for layout=tiled in "
+                f"the corpus generator; GDAL itself accepts SPARSE_OK on "
+                f"stripped writers but no corpus fixture exercises that"
             )
         if entry.get("cog"):
             raise ManifestError(

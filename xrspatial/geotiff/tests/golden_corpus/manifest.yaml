@@ -695,8 +695,10 @@ fixtures:
       3-band uint8 RGB raster, planar_config=separate (BSQ). Bands are
       stored as three contiguous planes rather than pixel-interleaved.
       Deflate + predictor 2 keeps the file inside the 12 KB per-fixture
-      budget. The checker pattern has horizontal structure so the
-      horizontal predictor compresses it.
+      budget. The noise pattern gives each band distinct pixel content
+      so a hypothetical band-permutation or band-duplication bug in the
+      BSQ decode path surfaces as a pixel mismatch rather than passing
+      silently.
     width: 32
     height: 32
     bands: 3
@@ -707,7 +709,8 @@ fixtures:
     compression: deflate
     predictor: 2
     photometric: rgb
-    pixel_pattern: checker
+    pixel_pattern: noise
+    pixel_seed: 1930042
     tags: [fast, planar, separate, multiband]
     tolerance:
       atol: 0.0

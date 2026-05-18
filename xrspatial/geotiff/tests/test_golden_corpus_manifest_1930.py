@@ -131,7 +131,7 @@ def test_unknown_only_id_errors():
                 e.update(sparse=True, layout="stripped", blocksize=16),
                 e.pop("tile_size", None),
             ),
-            r"sparse=true requires layout=tiled",
+            r"sparse=true is only wired for layout=tiled",
         ),
         # sparse + cog: COG copy step drops sparse tiles
         (
