@@ -106,3 +106,4 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
    getting_started/index
    user_guide/index
    reference/index
+   contributing/index
