@@ -517,6 +517,64 @@ def test_crs_citation_only_fixture_rejects_unrelated_crs() -> None:
         compare_to_oracle(path, cand)
 
 
+def test_crs_citation_only_open_geotiff_stamps_canonical_wkt() -> None:
+    """``open_geotiff`` on the citation fixture stamps ``attrs['crs_wkt']``.
+
+    The user-defined geographic CRS in ``crs_citation_only.tif`` has no
+    EPSG code and no WKT in the citation; only the ellipsoid radius,
+    inverse flattening, and angular-units GeoKeys are populated. The
+    reader synthesizes a canonical WKT from those parameters via
+    :func:`xrspatial.geotiff._geotags._synthesize_user_defined_wkt`,
+    which closes the Phase 3 ``crs_citation_only`` parity gap.
+
+    Pinned here so any future refactor that drops the synthesis branch
+    re-opens the gap visibly. The companion oracle test
+    (``test_crs_citation_only_xrspatial_round_trips_through_oracle``)
+    drives the same fixture through ``compare_to_oracle`` to confirm the
+    stamp lands somewhere the parity check accepts.
+    """
+    from xrspatial.geotiff import open_geotiff
+
+    path = _CRS_FIXTURE_DIR / 'crs_citation_only.tif'
+    da = open_geotiff(str(path))
+
+    # The fixture has no EPSG, so the canonical EPSG attr stays absent.
+    assert da.attrs.get('crs') is None
+    wkt = da.attrs.get('crs_wkt')
+    assert isinstance(wkt, str) and wkt, (
+        f"open_geotiff must stamp a non-empty crs_wkt on the "
+        f"citation-only fixture; got {wkt!r}"
+    )
+    # PROJ structural sanity: the synthesized WKT must parse back
+    # through rasterio's CRS.from_wkt (which delegates to PROJ).
+    parsed = rasterio.crs.CRS.from_wkt(wkt)
+    assert parsed is not None
+    # And it must share PROJ-dict shape with the rasterio reference.
+    with rasterio.open(path) as src:
+        ref = src.crs
+    assert parsed.to_dict() == ref.to_dict(), (
+        f"synthesized WKT must round-trip to the same PROJ dict as "
+        f"the rasterio reference; got {parsed.to_dict()} vs "
+        f"{ref.to_dict()}"
+    )
+
+
+def test_crs_citation_only_xrspatial_round_trips_through_oracle() -> None:
+    """``compare_to_oracle`` accepts the xrspatial-stamped citation CRS.
+
+    Drives the citation fixture through ``open_geotiff`` (the exact
+    code path the Phase 3 backend parametrizations use) and runs the
+    result through ``compare_to_oracle``. This is the end-to-end
+    parity check that flips the corpus from xfail to pass once
+    ``_synthesize_user_defined_wkt`` is wired in.
+    """
+    from xrspatial.geotiff import open_geotiff
+
+    path = _CRS_FIXTURE_DIR / 'crs_citation_only.tif'
+    da = open_geotiff(str(path))
+    compare_to_oracle(path, da)
+
+
 def test_crs_wkt_utm10n_fixture_accepts_wkt_attr() -> None:
     """``crs_wkt_utm10n`` also accepts a candidate that carries crs_wkt.
 

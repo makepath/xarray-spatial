@@ -24,10 +24,9 @@ would never fire.
 
 Real parity gaps (``xfail``):
 
-* ``crs_citation_only`` -- xrspatial decodes the citation into the
-  deprecated ``attrs['geog_citation']`` but does not emit a canonical
-  ``attrs['crs']`` or ``attrs['crs_wkt']``. Real parity gap; needs a fix
-  in ``_crs.py`` to round-trip citation WKT.
+None today. Every parity gap the corpus has surfaced so far has either
+been fixed (see Resolved gaps below) or moved to a per-backend skip
+table because it is not a shared decode/attrs gap.
 
 Resolved gaps (no longer xfail):
 
@@ -43,6 +42,12 @@ Resolved gaps (no longer xfail):
   The oracle's ``_normalise_axis_order`` helper now transposes the
   trailing-band candidate to leading-band before the shape and pixel
   checks run, so this fixture passes directly.
+* ``crs_citation_only`` -- the GeoTIFF reader now synthesizes a
+  canonical WKT for user-defined geographic CRSes from the ellipsoid
+  / units GeoKeys and stamps it on ``attrs['crs_wkt']`` (see
+  ``_synthesize_user_defined_wkt`` in ``_geotags.py``). The oracle's
+  ``_candidate_crs`` picks it up via the WKT branch, and ``_crs_equal``
+  compares the PROJ dicts because neither side has an EPSG code.
 
 Intentional skip (``skip``):
 
@@ -78,13 +83,7 @@ FIXTURES_DIR = (
 )
 
 
-_PARITY_GAPS: dict[str, str] = {
-    "crs_citation_only": (
-        "citation-only CRS: xrspatial decodes the citation into deprecated "
-        "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
-        "or attrs['crs_wkt']. Real parity gap; needs a fix in _crs.py."
-    ),
-}
+_PARITY_GAPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
