@@ -7,10 +7,13 @@ gets ``pytest.mark.slow`` attached so PR CI can opt out via
 ``pytest -m "not slow"``. Nightly / release CI runs without the filter
 and exercises everything.
 
-Today every shipped fixture carries ``fast``; the helper is in place
-so future heavier fixtures (large COGs, multi-source VRTs, jpeg2000
-cells) drop in without each backend test module re-implementing the
-fast/slow boundary.
+Today most shipped fixtures carry ``fast``. The six ``compression_*``
+fixtures in the manifest do not, so they land in the slow lane and
+``pytest -m "not slow"`` deselects them. A one-line manifest edit per
+fixture would move them to the fast lane if the team decides that is
+the right calibration. Future heavier fixtures (large COGs,
+multi-source VRTs, jpeg2000 cells) will drop in behind the same
+boundary without each backend test module re-implementing it.
 
 Usage from a backend test module::
 
@@ -29,7 +32,6 @@ is just a ``list(...) + [extra_mark]`` away.
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -50,11 +52,11 @@ def is_fast(entry: dict[str, Any]) -> bool:
     return _FAST_TAG in tags
 
 
-def fast_slow_marks_for(entry: dict[str, Any]) -> Iterator[pytest.MarkDecorator]:
-    """Yield ``pytest.mark.slow`` when the entry is not in the fast lane.
+def fast_slow_marks_for(entry: dict[str, Any]) -> list[pytest.MarkDecorator]:
+    """Return the slow mark (in a list) when the entry is not fast.
 
-    Yields nothing for fast fixtures so the caller can just splat the
-    iterator into its ``marks=`` list without an empty-mark guard.
+    Returns ``[pytest.mark.slow]`` for slow fixtures and ``[]`` for fast
+    ones, so the caller can splat the result into its ``marks=`` list
+    without an empty-mark guard or a generator-to-list conversion.
     """
-    if not is_fast(entry):
-        yield pytest.mark.slow
+    return [pytest.mark.slow] if not is_fast(entry) else []

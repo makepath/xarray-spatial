@@ -59,10 +59,13 @@ else picks up `pytest.mark.slow` automatically via the helper in
 * `pytest -m slow`: only the slow cells, e.g. for a nightly job that
   exercises the long tail.
 
-Today every shipped fixture is `fast`, so the filter is a no-op. The
-infrastructure is in place so heavier fixtures (large COGs, jpeg2000,
-multi-source VRTs) drop in behind `-m "not slow"` without re-plumbing
-each backend test module.
+Today most shipped fixtures carry `fast`. The six `compression_*`
+fixtures in the manifest do not, so `pytest -m "not slow"` deselects
+them. A one-line manifest edit per fixture would move them into the
+fast lane if the team decides that is the right calibration. Future
+heavier fixtures (large COGs, jpeg2000, multi-source VRTs) drop in
+behind the same boundary without re-plumbing each backend test
+module.
 
 ## What is deliberately not in this PR
 
