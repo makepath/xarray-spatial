@@ -166,24 +166,40 @@ def test_taxonomy_ids_are_in_manifest() -> None:
 
 
 def test_dask_candidate_is_actually_chunked() -> None:
-    """Sanity check: the dask backend returns a chunked array.
+    """Sanity check: the dask backend returns a chunked array with a
+    real (>1) chunk count along each axis.
 
-    Catches the failure mode where ``chunks=`` is silently dropped
-    and ``open_geotiff`` falls back to the eager numpy path. Picks any
-    non-skipped, non-xfailed fixture from the manifest.
+    Catches two failure modes at once: ``chunks=`` silently dropped (the
+    eager path would return a numpy array, not dask) and ``chunks=``
+    accepted but stitched into a single chunk that covers the whole
+    file (the windowing logic would never run). Picks the first fixture
+    in sorted order whose pixel extent is at least ``2 * CHUNK_SIZE``
+    along both axes, so a clean 2x2 (or larger) chunk grid is expected.
     """
-    plain_fixtures = [
+    eligible = [
         e for e in _FIXTURES
         if e["id"] not in _PARITY_GAPS
         and e["id"] not in _DASK_SKIPS
         and e["id"] not in _INTENTIONAL_SKIPS
         and _fixture_path(e).exists()
+        and e["width"] >= 2 * CHUNK_SIZE
+        and e["height"] >= 2 * CHUNK_SIZE
     ]
-    if not plain_fixtures:
-        pytest.skip("no eligible fixtures on disk")
-    entry = plain_fixtures[0]
+    if not eligible:
+        pytest.skip(
+            f"no eligible fixture is at least {2 * CHUNK_SIZE}x{2 * CHUNK_SIZE}"
+        )
+    entry = eligible[0]
     da = open_geotiff(str(_fixture_path(entry)), chunks=CHUNK_SIZE)
     assert hasattr(da.data, "dask"), (
         f"expected a dask-backed DataArray for {entry['id']!r}, "
         f"got data of type {type(da.data).__name__}"
+    )
+    # ``numblocks`` is a tuple of int per axis. Both spatial axes must
+    # have at least two blocks; the windowing logic only fires when the
+    # array is actually split.
+    nb = da.data.numblocks
+    assert len(nb) >= 2 and all(b >= 2 for b in nb[-2:]), (
+        f"expected a chunk grid >= 2x2 along the spatial axes for "
+        f"{entry['id']!r}, got numblocks={nb}"
     )
