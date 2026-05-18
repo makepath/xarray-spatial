@@ -1228,6 +1228,48 @@ def test_compare_to_oracle_external_ovr_sidecar(tmp_path: Path) -> None:
     compare_to_oracle(fixture, base_candidate, candidate_factory=factory)
 
 
+def test_compare_to_oracle_overview_lossy_skips_pixel_check_per_level(
+    tmp_path: Path,
+) -> None:
+    """``lossy=True`` applies to every overview level when a factory is given.
+
+    Pins the docstring claim: a lossy comparison skips bit-exact pixel
+    checks at the base AND at every overview level. The factory
+    perturbs pixels at level 1 but keeps shape / dtype / transform /
+    CRS intact; strict mode would fail there, lossy mode must accept.
+    """
+    factors = [2, 4]
+    base = np.arange(64 * 64, dtype=np.uint16).reshape(64, 64)
+    transform = from_origin(0.0, 64.0, 1.0, 1.0)
+    fixture = _write_tiff_with_overviews(
+        tmp_path / 'ovr_lossy_1930.tif',
+        base,
+        factors=factors,
+        transform=transform,
+    )
+    base_candidate = _candidate_for_level(base, transform, 0, factors)
+
+    def factory(level: int) -> xr.DataArray:
+        cand = _candidate_for_level(base, transform, level, factors)
+        if level == 1:
+            # Perturb pixels but keep shape / dtype / transform / CRS
+            # intact so only the bit-exact comparison would fail.
+            cand = cand.copy()
+            cand.data[...] = cand.data + 1
+        return cand
+
+    # Strict mode rejects the level-1 pixel perturbation:
+    with pytest.raises(AssertionError, match=r'overview level 1'):
+        compare_to_oracle(
+            fixture, base_candidate, candidate_factory=factory,
+        )
+    # Lossy mode accepts the same input because the shape-only check
+    # passes at every level:
+    compare_to_oracle(
+        fixture, base_candidate, lossy=True, candidate_factory=factory,
+    )
+
+
 def test_compare_to_oracle_overview_corpus_external_ovr_fixture() -> None:
     """The shipped ``overview_external_ovr_uint16`` fixture parity-checks.
 

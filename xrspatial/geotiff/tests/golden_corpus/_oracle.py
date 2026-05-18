@@ -607,14 +607,20 @@ def _compare_against_open_source(
 def _source_overview_count(src) -> int:
     """Return the number of overview IFDs the rasterio source exposes.
 
-    Sources without overviews -- or sources whose first band has no
-    overview list -- report 0. Multi-band fixtures where bands disagree
-    on overview depth are not in the corpus today; if one shows up,
-    extend this helper to take the minimum across bands.
+    rasterio returns ``[]`` from ``src.overviews(1)`` when the source
+    has no overviews, so the common no-overview path runs without
+    raising. The narrow ``except IndexError`` covers the one
+    legitimate error: a source with no bands at all. Any other
+    exception is a real rasterio failure and bubbles up so the caller
+    notices instead of silently treating the source as overview-free.
+
+    Multi-band fixtures where bands disagree on overview depth are
+    not in the corpus today; if one shows up, extend this helper to
+    take the minimum across bands.
     """
     try:
         return len(src.overviews(1))
-    except Exception:
+    except IndexError:
         return 0
 
 
