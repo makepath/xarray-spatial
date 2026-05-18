@@ -1539,7 +1539,8 @@ def write(data: np.ndarray, path: str, *,
           extra_tags: list | None = None,
           bigtiff: bool | None = None,
           max_z_error: float = 0.0,
-          photometric='auto') -> None:
+          photometric='auto',
+          restore_sentinel: bool = True) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -1740,7 +1741,8 @@ def write(data: np.ndarray, path: str, *,
                 # reducer itself.
                 if (nodata is not None
                         and current.dtype.kind == 'f'
-                        and not np.isnan(nodata)):
+                        and not np.isnan(nodata)
+                        and restore_sentinel):
                     nan_mask = np.isnan(current)
                     if nan_mask.any():
                         current = current.copy()
@@ -1896,7 +1898,8 @@ def write_streaming(dask_data, path: str, *,
                     bigtiff: bool | None = None,
                     streaming_buffer_bytes: int = 256 * 1024 * 1024,
                     max_z_error: float = 0.0,
-                    photometric='auto') -> None:
+                    photometric='auto',
+                    restore_sentinel: bool = True) -> None:
     """Write a dask array as a GeoTIFF by streaming pixel data.
 
     For tiled output, each tile-row is computed in horizontal segments
@@ -2242,7 +2245,8 @@ def write_streaming(dask_data, path: str, *,
 
                         # NaN -> nodata sentinel
                         if (nodata is not None and seg_np.dtype.kind == 'f'
-                                and not np.isnan(nodata)):
+                                and not np.isnan(nodata)
+                                and restore_sentinel):
                             nan_mask = np.isnan(seg_np)
                             if nan_mask.any():
                                 seg_np = seg_np.copy()
@@ -2338,7 +2342,8 @@ def write_streaming(dask_data, path: str, *,
                         strip_np = strip_np.astype(out_dtype)
 
                     if (nodata is not None and strip_np.dtype.kind == 'f'
-                            and not np.isnan(nodata)):
+                            and not np.isnan(nodata)
+                            and restore_sentinel):
                         nan_mask = np.isnan(strip_np)
                         if nan_mask.any():
                             strip_np = strip_np.copy()
