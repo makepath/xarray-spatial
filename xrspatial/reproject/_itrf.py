@@ -308,10 +308,37 @@ def itrf_transform(lon, lat, h=0.0, *, src, tgt, epoch):
         drx, dry, drz = -drx, -dry, -drz
 
     scalar = np.ndim(lon) == 0 and np.ndim(lat) == 0
-    lon_arr = np.atleast_1d(np.asarray(lon, dtype=np.float64)).ravel()
-    lat_arr = np.atleast_1d(np.asarray(lat, dtype=np.float64)).ravel()
-    h_arr = np.broadcast_to(np.atleast_1d(np.asarray(h, dtype=np.float64)),
-                            lon_arr.shape).copy()
+    lon_in = np.asarray(lon, dtype=np.float64)
+    lat_in = np.asarray(lat, dtype=np.float64)
+    # Reject mismatched lon/lat shapes before raveling. The numba kernel
+    # below runs under @njit(parallel=True) and indexes lat / h by
+    # lon.shape[0], so a shorter lat array would read past its end and
+    # silently return wrong values. See GH issue #2026.
+    if lon_in.shape != lat_in.shape:
+        raise ValueError(
+            f"itrf_transform(): lon and lat must have the same shape, "
+            f"got lon.shape={lon_in.shape} and lat.shape={lat_in.shape}."
+        )
+    lon_arr = np.atleast_1d(lon_in).ravel()
+    lat_arr = np.atleast_1d(lat_in).ravel()
+    # h is broadcast against lon. A non-scalar h that does not broadcast
+    # to lon's shape would, after the broadcast attempt below, silently
+    # truncate or repeat values; numpy's broadcast_to raises for true
+    # incompat shapes, but we want the same wording as the lon/lat check
+    # when shapes don't even match in size.
+    h_in = np.asarray(h, dtype=np.float64)
+    if h_in.ndim != 0 and h_in.shape != lon_in.shape:
+        # Allow numpy's broadcasting to attempt anyway (it handles e.g.
+        # 1-element arrays), but pre-empt obviously bad shapes so the
+        # error message is specific to the public API.
+        try:
+            np.broadcast_shapes(h_in.shape, lon_in.shape)
+        except ValueError:
+            raise ValueError(
+                f"itrf_transform(): h shape {h_in.shape} cannot be "
+                f"broadcast to lon shape {lon_in.shape}."
+            )
+    h_arr = np.broadcast_to(np.atleast_1d(h_in), lon_arr.shape).copy()
 
     n = lon_arr.shape[0]
     out_lon = np.empty(n, dtype=np.float64)

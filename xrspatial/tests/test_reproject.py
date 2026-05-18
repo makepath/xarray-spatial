@@ -1904,6 +1904,123 @@ class TestGeoidFiniteness:
             geoid_height(lon, lat)
 
 
+# ---------------------------------------------------------------------------
+# Shape-mismatch validation in geoid_height and itrf_transform (#2026)
+# ---------------------------------------------------------------------------
+
+class TestGeoidShapeMismatch:
+    """geoid_height must reject lon/lat with mismatched shapes (#2026).
+
+    Without the check the numba @njit(parallel=True) kernel reads past the
+    end of the shorter array and silently returns wrong values.
+    """
+
+    def test_geoid_rejects_1d_mismatch(self):
+        from xrspatial.reproject import geoid_height
+        lon = np.array([0.0, 90.0, 45.0])
+        lat = np.array([0.0, 45.0])
+        with pytest.raises(ValueError, match="same shape"):
+            geoid_height(lon, lat)
+
+    def test_geoid_rejects_2d_mismatch(self):
+        from xrspatial.reproject import geoid_height
+        lon = np.zeros((3, 4))
+        lat = np.zeros((4, 3))
+        with pytest.raises(ValueError, match="same shape"):
+            geoid_height(lon, lat)
+
+    def test_geoid_rejects_scalar_lat_array_lon(self):
+        # 0-D and 1-D have different shapes; reject before raveling.
+        from xrspatial.reproject import geoid_height
+        with pytest.raises(ValueError, match="same shape"):
+            geoid_height(np.array([0.0, 10.0]), 0.0)
+
+    def test_geoid_accepts_matching_1d(self):
+        from xrspatial.reproject import geoid_height
+        lon = np.array([0.0, 90.0, 45.0])
+        lat = np.array([0.0, 45.0, 30.0])
+        result = geoid_height(lon, lat)
+        assert result.shape == (3,)
+        assert np.isfinite(result).all()
+
+    def test_geoid_accepts_matching_2d(self):
+        from xrspatial.reproject import geoid_height
+        lon = np.array([[0.0, 10.0], [20.0, 30.0]])
+        lat = np.array([[0.0, 5.0], [10.0, 15.0]])
+        result = geoid_height(lon, lat)
+        assert result.shape == (2, 2)
+
+    def test_geoid_accepts_scalar_pair(self):
+        from xrspatial.reproject import geoid_height
+        # Both scalar -- should still work and return a Python float.
+        result = geoid_height(0.0, 0.0)
+        assert isinstance(result, float)
+
+
+class TestItrfShapeMismatch:
+    """itrf_transform must reject lon/lat with mismatched shapes (#2026)."""
+
+    def test_itrf_rejects_1d_mismatch(self):
+        from xrspatial.reproject import itrf_transform
+        lon = np.array([-74.0, 0.0, 45.0])
+        lat = np.array([40.7, 0.0])
+        with pytest.raises(ValueError, match="same shape"):
+            itrf_transform(lon, lat,
+                           src='ITRF2014', tgt='ITRF2020', epoch=2024.0)
+
+    def test_itrf_rejects_2d_mismatch(self):
+        from xrspatial.reproject import itrf_transform
+        lon = np.zeros((3, 4))
+        lat = np.zeros((4, 3))
+        with pytest.raises(ValueError, match="same shape"):
+            itrf_transform(lon, lat,
+                           src='ITRF2014', tgt='ITRF2020', epoch=2024.0)
+
+    def test_itrf_accepts_matching_1d(self):
+        from xrspatial.reproject import itrf_transform
+        lon = np.array([-74.0, 0.0, 45.0])
+        lat = np.array([40.7, 0.0, 10.0])
+        # Default h=0 is scalar and broadcasts.
+        out_lon, out_lat, out_h = itrf_transform(
+            lon, lat, src='ITRF2014', tgt='ITRF2020', epoch=2024.0,
+        )
+        assert out_lon.shape == (3,)
+        assert out_lat.shape == (3,)
+        assert out_h.shape == (3,)
+
+    def test_itrf_accepts_scalar_h_with_array_lonlat(self):
+        # 0-D h must still broadcast to lon's 1-D shape.
+        from xrspatial.reproject import itrf_transform
+        lon = np.array([-74.0, 0.0])
+        lat = np.array([40.7, 0.0])
+        out_lon, out_lat, out_h = itrf_transform(
+            lon, lat, h=10.0,
+            src='ITRF2014', tgt='ITRF2020', epoch=2024.0,
+        )
+        assert out_lon.shape == (2,)
+
+    def test_itrf_accepts_matching_h(self):
+        from xrspatial.reproject import itrf_transform
+        lon = np.array([-74.0, 0.0])
+        lat = np.array([40.7, 0.0])
+        h = np.array([10.0, 20.0])
+        out_lon, out_lat, out_h = itrf_transform(
+            lon, lat, h=h,
+            src='ITRF2014', tgt='ITRF2020', epoch=2024.0,
+        )
+        assert out_lon.shape == (2,)
+        assert out_h.shape == (2,)
+
+    def test_itrf_rejects_non_broadcastable_h(self):
+        from xrspatial.reproject import itrf_transform
+        lon = np.array([-74.0, 0.0, 45.0])
+        lat = np.array([40.7, 0.0, 10.0])
+        h = np.array([1.0, 2.0])  # length 2 vs lon length 3
+        with pytest.raises(ValueError, match="broadcast"):
+            itrf_transform(lon, lat, h=h,
+                           src='ITRF2014', tgt='ITRF2020', epoch=2024.0)
+
+
 class TestNodataFiniteness:
     def test_detect_nodata_rejects_inf(self):
         from xrspatial.reproject._crs_utils import _detect_nodata

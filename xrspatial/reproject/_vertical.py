@@ -199,8 +199,19 @@ def geoid_height(lon, lat, model='EGM96'):
     data, left, top, res_x, res_y, h, w = _load_geoid(model)
 
     scalar = np.ndim(lon) == 0 and np.ndim(lat) == 0
-    lon_arr = np.atleast_1d(np.asarray(lon, dtype=np.float64)).ravel()
-    lat_arr = np.atleast_1d(np.asarray(lat, dtype=np.float64)).ravel()
+    lon_in = np.asarray(lon, dtype=np.float64)
+    lat_in = np.asarray(lat, dtype=np.float64)
+    # Reject mismatched shapes before raveling. The numba kernel below runs
+    # under @njit(parallel=True) and indexes lat by lon.shape[0], so a
+    # shorter lat array would read past its end and silently return wrong
+    # values rather than raising IndexError. See GH issue #2026.
+    if lon_in.shape != lat_in.shape:
+        raise ValueError(
+            f"geoid_height(): lon and lat must have the same shape, "
+            f"got lon.shape={lon_in.shape} and lat.shape={lat_in.shape}."
+        )
+    lon_arr = np.atleast_1d(lon_in).ravel()
+    lat_arr = np.atleast_1d(lat_in).ravel()
 
     if not np.isfinite(lon_arr).all():
         raise ValueError(
