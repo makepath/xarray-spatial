@@ -40,7 +40,8 @@ def read_geotiff_dask(source: str, *,
                       chunks: int | tuple = 512,
                       max_pixels: int | None = None,
                       allow_rotated: bool = False,
-                      allow_unparseable_crs: bool = False) -> xr.DataArray:
+                      allow_unparseable_crs: bool = False,
+                      mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
     Each chunk is loaded lazily via windowed reads.
@@ -73,6 +74,14 @@ def read_geotiff_dask(source: str, *,
         directly.
     name : str or None
         Name for the DataArray.
+    mask_nodata : bool, default True
+        If True, replace the nodata sentinel with NaN per chunk (integer
+        rasters get promoted to ``float64``). If False, skip the
+        sentinel-to-NaN step so the source dtype survives. The raw
+        sentinel is still carried on ``attrs['nodata']`` either way.
+        Pass ``mask_nodata=False`` together with ``dtype=<integer>`` to
+        keep an integer source dtype; the default promotes to
+        ``float64`` and the cast then raises. See issue #2052.
 
     Returns
     -------
@@ -105,6 +114,7 @@ def read_geotiff_dask(source: str, *,
         return read_vrt(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
+            mask_nodata=mask_nodata,
         )
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
@@ -208,7 +218,8 @@ def read_geotiff_dask(source: str, *,
     # pass an exotic ``nodata`` type (e.g. complex) on the no-op path
     # rather than surfacing an opaque error here.
     effective_dtype = file_dtype
-    if (nodata is not None
+    if (mask_nodata
+            and nodata is not None
             and file_dtype.kind in ('u', 'i')
             and np.isfinite(nodata)
             and float(nodata).is_integer()):
@@ -379,11 +390,18 @@ def read_geotiff_dask(source: str, *,
             # actual dtype (uint16), silently casting later float64
             # chunks back to int and converting their NaNs to 0. See
             # issue #1597.
+            # Per-chunk nodata mask is skipped when ``mask_nodata=False``;
+            # passing ``nodata=None`` short-circuits both the float-NaN and
+            # int-promotion branches in ``_delayed_read_window``. The
+            # original sentinel is still carried in ``attrs['nodata']`` via
+            # ``nodata_attr`` so write round-trips preserve the tag. See
+            # issue #2052.
+            chunk_nodata = nodata if mask_nodata else None
             block = da.from_delayed(
                 _delayed_read_window(source,
                                      r0 + win_r0, c0 + win_c0,
                                      r1 + win_r0, c1 + win_c0,
-                                     overview_level, nodata,
+                                     overview_level, chunk_nodata,
                                      band_arg,
                                      target_dtype=target_dtype,
                                      http_meta_key=http_meta_key,

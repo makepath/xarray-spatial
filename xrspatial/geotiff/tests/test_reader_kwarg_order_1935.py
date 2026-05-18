@@ -44,6 +44,7 @@ _CANONICAL_ORDER = (
     "missing_sources",
     "allow_rotated",
     "allow_unparseable_crs",
+    "mask_nodata",
 )
 
 

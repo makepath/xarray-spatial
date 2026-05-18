@@ -40,7 +40,8 @@ def read_vrt(source: str, *,
              missing_sources: str = 'raise',
              allow_rotated: bool = False,
              allow_unparseable_crs: bool = False,
-             band_nodata: str | None = None) -> xr.DataArray:
+             band_nodata: str | None = None,
+             mask_nodata: bool = True) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
@@ -84,6 +85,16 @@ def read_vrt(source: str, *,
         sentinel (or zero on integer bands without a sentinel).
         ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
         module regardless of this kwarg.
+    mask_nodata : bool, default True
+        If True, run the integer-sentinel-to-NaN promotion on the
+        assembled mosaic. If False, skip it and keep the source dtype
+        with the raw sentinel still in the data. ``attrs['nodata']``
+        carries the sentinel either way. Pass ``mask_nodata=False``
+        together with ``dtype=<integer>`` when you need to preserve an
+        integer source dtype on a VRT whose declared sentinel matches
+        actual pixels. See issue #2052. Float source bands are NaN-aware
+        by virtue of how the internal reader handles them, so this kwarg
+        is most useful for integer-dtype mosaics.
 
     Returns
     -------
@@ -164,6 +175,7 @@ def read_vrt(source: str, *,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
             band_nodata=band_nodata,
+            mask_nodata=mask_nodata,
         )
 
     # Issue #1987 ambiguous-metadata checks for the eager VRT path. Parse
@@ -276,7 +288,10 @@ def read_vrt(source: str, *,
     # promoting ``arr`` to float64 on the first sentinel hit and writing
     # NaNs in place on the promoted view. Shared with the chunked path
     # (issue #1825) so behaviour stays in lockstep. See issue #1611.
-    arr = _vrt_apply_integer_sentinel_mask(arr, vrt, band)
+    # ``mask_nodata=False`` skips this so callers can preserve an
+    # integer source dtype via ``dtype=...`` (issue #2052).
+    if mask_nodata:
+        arr = _vrt_apply_integer_sentinel_mask(arr, vrt, band)
 
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
@@ -323,7 +338,8 @@ def read_vrt(source: str, *,
 
 def _vrt_chunk_read(source, r0, c0, r1, c1, *,
                     band, max_pixels, missing_sources,
-                    declared_dtype, gpu, parsed_vrt):
+                    declared_dtype, gpu, parsed_vrt,
+                    mask_nodata: bool = True):
     """Decode a single chunk window from a VRT.
 
     Called by ``dask.delayed`` from :func:`_read_vrt_chunked`. The
@@ -360,8 +376,10 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
     # promotes to float64 when sentinels hit. The surrounding dask graph
     # already declared float64 when any band has a representable integer
     # sentinel, so any chunk that actually fires the mask returns a
-    # buffer whose dtype matches the declared one.
-    arr = _apply_integer_sentinel_mask(arr, vrt, band)
+    # buffer whose dtype matches the declared one. Skip the helper when
+    # ``mask_nodata=False`` so the source integer dtype survives (#2052).
+    if mask_nodata:
+        arr = _apply_integer_sentinel_mask(arr, vrt, band)
 
     if declared_dtype is not None and arr.dtype != declared_dtype:
         arr = arr.astype(declared_dtype)
@@ -377,7 +395,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                       max_pixels, missing_sources,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
-                      band_nodata: str | None = None):
+                      band_nodata: str | None = None,
+                      mask_nodata: bool = True):
     """Lazy ``read_vrt`` dispatch when ``chunks=`` is set (issue #1814).
 
     Parses the VRT XML once to recover the extent, CRS, GeoTransform,
@@ -539,7 +558,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # See also Copilot review on PR #1822.
     declared_dtype = _effective_dtype_for_bands(selected_bands)
 
-    if declared_dtype.kind in ('u', 'i'):
+    if mask_nodata and declared_dtype.kind in ('u', 'i'):
         promotes = False
         for vrt_band in selected_bands:
             if _sentinel_for_dtype(vrt_band.nodata,
@@ -602,6 +621,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                 declared_dtype=declared_dtype,
                 gpu=gpu,
                 parsed_vrt=parsed_vrt_key,
+                mask_nodata=mask_nodata,
             )
             block = da.from_delayed(d, shape=block_shape,
                                     dtype=declared_dtype, meta=meta)
