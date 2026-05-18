@@ -63,8 +63,8 @@ from canonical state, otherwise dropped on round-trip):
 
 - ``image_description``: TIFF ImageDescription tag.
 - ``extra_samples``: TIFF ExtraSamples tag.
-- ``colormap``, ``colormap_rgba``, ``cmap``: palette data attached to
-  single-band paletted images.
+- ``colormap``: raw uint16 RGB triples from the TIFF ColorMap tag (320),
+  attached to single-band paletted images.
 
 Deprecated (will be removed in a future release; see issue #1984):
 
@@ -103,6 +103,17 @@ Vertical-CRS GeoKey attrs:
   reason as ``vertical_crs``.
 - ``vertical_units``: VerticalUnitsGeoKey value. Same deprecation reason
   as ``vertical_crs``.
+Colormap variants (different root cause: photometric gate, not GeoKey):
+
+- ``colormap_rgba``: RGBA palette array, only emitted on read when the
+  source file is Photometric==3 (palette). The writer never selects
+  Photometric=3, so this attr does not round-trip. Reshape
+  ``attrs['colormap']`` to ``(n_colors, 3)`` and append an alpha
+  channel in caller code if needed.
+- ``cmap``: matplotlib ``ListedColormap`` built from the palette. Same
+  Photometric==3 gate, same round-trip gap. Construct a
+  ``ListedColormap`` from ``attrs['colormap']`` in caller code if
+  needed.
 
 Migration recipe (the canonical replacement is ``crs`` / ``crs_wkt``
 plus a one-liner with :mod:`pyproj` when a derived value is needed)::
@@ -205,6 +216,25 @@ _GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS = (
 )
 _GEOKEY_DEPRECATION_REASON_VERTICAL_CRS = (
     "the writer cannot reconstruct vertical-CRS GeoKeys"
+)
+
+
+# Shared wording for the colormap-variants slice of the PR 7 deprecation
+# series. The root cause is a different one (the writer cannot set
+# ``Photometric=3``) so the GeoKey-tier reason templates above don't
+# fit; these constants are spliced into ``_emit_deprecated_attr`` with
+# a per-attr migration recipe so users see how to derive an RGBA palette
+# or matplotlib ``ListedColormap`` from canonical ``attrs['colormap']``.
+_DEPRECATED_COLORMAP_REASON = (
+    "the writer cannot set Photometric=3 so it does not round-trip"
+)
+_DEPRECATED_CMAP_MIGRATION = (
+    "Construct a ListedColormap from attrs['colormap'] in caller code "
+    "if needed"
+)
+_DEPRECATED_COLORMAP_RGBA_MIGRATION = (
+    "Reshape attrs['colormap'] to (n_colors, 3) and append an alpha "
+    "channel in caller code if needed"
 )
 
 
@@ -330,6 +360,54 @@ def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
         attrs, name, value,
         reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
     )
+
+
+def _emit_deprecated_attr(
+    attrs: dict,
+    name: str,
+    value,
+    *,
+    reason: str,
+    migration: str | None = None,
+) -> None:
+    """Emit a deprecated attr with a ``DeprecationWarning`` and a
+    per-attr migration recipe.
+
+    Sibling of :func:`_emit_deprecated_geokey_attr` that adds support
+    for an optional ``migration`` clause spliced into the warning. The
+    GeoKey-tier helper uses a fixed sentence ("... so it will not
+    round-trip ..."); the colormap-variants tier needs to point users
+    at how to derive an RGBA palette or matplotlib ``ListedColormap``
+    from canonical ``attrs['colormap']``, which doesn't fit that
+    template. A follow-up may unify the two helpers; for now they live
+    side-by-side because the warning-text contracts are pinned by
+    separate test suites and converging them is out of scope for the
+    colormap slice.
+
+    Warning text shape::
+
+        xrspatial.geotiff: attrs['<name>'] is deprecated; <reason>
+        <migration?> It will be removed in a future release. See
+        issue #1984.
+
+    The ``stacklevel`` is taken from
+    :func:`_stacklevel_to_external_caller` so the warning is attributed
+    to the user's call site, matching the GeoKey-tier slices.
+    """
+    parts = [
+        f"xrspatial.geotiff: attrs[{name!r}] is deprecated;",
+        reason.rstrip('.') + '.',
+    ]
+    if migration:
+        parts.append(migration.rstrip('.') + '.')
+    parts.append("It will be removed in a future release. See issue #1984.")
+    warnings.warn(
+        ' '.join(parts),
+        DeprecationWarning,
+        stacklevel=_stacklevel_to_external_caller(),
+    )
+    attrs[name] = value
+
 
 
 def _extent_to_window(transform, file_height, file_width,
@@ -513,11 +591,23 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     if geo_info.colormap is not None:
         try:
             from matplotlib.colors import ListedColormap
-            attrs['cmap'] = ListedColormap(
-                geo_info.colormap, name='tiff_palette')
-            attrs['colormap_rgba'] = geo_info.colormap
+            _emit_deprecated_attr(
+                attrs, 'cmap',
+                ListedColormap(geo_info.colormap, name='tiff_palette'),
+                reason=_DEPRECATED_COLORMAP_REASON,
+                migration=_DEPRECATED_CMAP_MIGRATION,
+            )
+            _emit_deprecated_attr(
+                attrs, 'colormap_rgba', geo_info.colormap,
+                reason=_DEPRECATED_COLORMAP_REASON,
+                migration=_DEPRECATED_COLORMAP_RGBA_MIGRATION,
+            )
         except ImportError:
-            attrs['colormap_rgba'] = geo_info.colormap
+            _emit_deprecated_attr(
+                attrs, 'colormap_rgba', geo_info.colormap,
+                reason=_DEPRECATED_COLORMAP_REASON,
+                migration=_DEPRECATED_COLORMAP_RGBA_MIGRATION,
+            )
 
     if geo_info.extra_tags is not None:
         for _tag_id, _tt, _tc, _tv in geo_info.extra_tags:

@@ -2426,6 +2426,13 @@ def _make_palette_tiff(width, height, bps, pixel_values, palette_rgb):
     return bytes(out)
 
 
+@pytest.mark.filterwarnings(
+    # PR 7 of issue #1984 deprecates attrs['cmap'] and
+    # attrs['colormap_rgba'] on palette-photometric reads. These tests
+    # exist specifically to exercise that path; the deprecation is
+    # locked in test_attrs_pr7_deprecate_colormap_variants_1984.py.
+    "ignore:.*attrs..(cmap|colormap_rgba)...is deprecated.*:DeprecationWarning"
+)
 class TestPalette:
 
     def test_palette_8bit_read(self, tmp_path):
