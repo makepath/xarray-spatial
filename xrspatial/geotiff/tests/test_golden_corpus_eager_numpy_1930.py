@@ -7,34 +7,41 @@ agrees with rasterio. This module is the first real parity layer: it opens
 every shipped fixture with the eager numpy ``open_geotiff`` path and feeds
 the result to ``compare_to_oracle``.
 
-The fixture list is discovered from the manifest. Each entry that has a
-``.tif`` on disk runs through the oracle. Lossy fixtures (the JPEG cell)
-are routed through the oracle's ``lossy=True`` path so only shape, dtype,
-transform, and CRS are checked.
+The fixture list is discovered from the manifest at module-import time so
+``pytest.mark.parametrize`` can attach per-fixture marks (``xfail`` for real
+gaps, ``skip`` for intentional divergences). A broken manifest therefore
+fails collection rather than test execution; the manifest validator tests
+under ``test_golden_corpus_manifest_1930.py`` catch that case separately.
 
-Skip taxonomy
--------------
-Cells listed in ``_KNOWN_SKIPS`` are skipped with a documented reason. Each
-entry either points at a real parity gap that needs a fix in
-``xrspatial/geotiff/`` (open issue suggested below) or at an oracle gap
-that will close once a follow-up phase extends ``_oracle.py``. The skip
-list is itself the gap analysis the corpus is designed to surface.
+Skip / xfail taxonomy
+---------------------
+``_PARITY_GAPS`` flags real parity gaps the corpus surfaces. Each entry
+becomes a ``pytest.mark.xfail(strict=True)``: the test stays red-flagged
+while the gap exists, and the day the gap closes it flips to a hard failure
+that forces a developer to remove the mark. ``_INTENTIONAL_SKIPS`` covers
+divergences that are by-design (the MinIsWhite inversion), where ``xfail``
+would never fire.
+
+Real parity gaps (``xfail``):
 
 * ``compression_jpeg_uint8_ycbcr`` -- RGB band axis order divergence
-  between rasterio (bands, y, x) and xrspatial (y, x, band). The oracle's
-  ``_assert_shape_only`` does not yet normalise multi-band axis order;
-  candidate for a follow-up oracle extension.
+  between rasterio ``(bands, y, x)`` and xrspatial ``(y, x, band)``. The
+  oracle's ``_assert_shape_only`` does not yet normalise multi-band axis
+  order.
 * ``crs_citation_only`` -- xrspatial decodes the citation into the
   deprecated ``attrs['geog_citation']`` but does not emit a canonical
-  ``attrs['crs']`` or ``attrs['crs_wkt']``. Real parity gap the corpus
-  surfaced; needs a fix in ``_crs.py`` to round-trip citation WKT.
+  ``attrs['crs']`` or ``attrs['crs_wkt']``. Real parity gap; needs a fix
+  in ``_crs.py`` to round-trip citation WKT.
 * ``nodata_int_sentinel_uint16``, ``stripped_le_uint16``,
   ``stripped_be_uint16``, ``tiled_le_uint16``, ``tiled_be_uint16`` --
   integer nodata masking. xrspatial masks sentinel pixels to NaN and
-  upcasts to float64 per #1988 (``attrs['masked_nodata']=True``). The
+  upcasts to float64 per #1988 (``attrs['masked_nodata']=True``); the
   oracle compares the raw integer pixel array. Needs a small oracle
   extension that consults ``attrs['masked_nodata']`` and applies the
   equivalent mask to the rasterio reference before comparing.
+
+Intentional skip (``skip``):
+
 * ``nodata_miniswhite_uint8`` -- MinIsWhite photometric inversion.
   xrspatial inverts pixels per #1797; rasterio leaves them raw. The
   inversion is asserted by ``test_miniswhite_backend_parity_1797.py``.
@@ -64,16 +71,14 @@ FIXTURES_DIR = (
 )
 
 
-# Skip-with-reason taxonomy. Each entry documents a known parity gap the
-# corpus surfaces. See the module docstring for the rationale on each.
-_NODATA_MASKING_SKIP = (
+_NODATA_MASKING_REASON = (
     "integer nodata masking: xrspatial masks sentinel pixels to NaN and "
     "upcasts to float64 per #1988 (attrs['masked_nodata']=True). The oracle "
     "compares raw integer pixels; needs an oracle extension that consults "
     "attrs['masked_nodata']."
 )
 
-_KNOWN_SKIPS: dict[str, str] = {
+_PARITY_GAPS: dict[str, str] = {
     "compression_jpeg_uint8_ycbcr": (
         "RGB band axis order divergence: rasterio reads (bands, y, x) while "
         "xrspatial reads (y, x, band). The oracle does not yet normalise "
@@ -84,16 +89,19 @@ _KNOWN_SKIPS: dict[str, str] = {
         "attrs['geog_citation'] but does not emit a canonical attrs['crs'] "
         "or attrs['crs_wkt']. Real parity gap; needs a fix in _crs.py."
     ),
+    "nodata_int_sentinel_uint16": _NODATA_MASKING_REASON,
+    "stripped_le_uint16": _NODATA_MASKING_REASON,
+    "stripped_be_uint16": _NODATA_MASKING_REASON,
+    "tiled_le_uint16": _NODATA_MASKING_REASON,
+    "tiled_be_uint16": _NODATA_MASKING_REASON,
+}
+
+_INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
         "MinIsWhite photometric inversion: xrspatial inverts pixels per "
         "#1797; rasterio leaves them raw. Covered by "
         "test_miniswhite_backend_parity_1797.py."
     ),
-    "nodata_int_sentinel_uint16": _NODATA_MASKING_SKIP,
-    "stripped_le_uint16": _NODATA_MASKING_SKIP,
-    "stripped_be_uint16": _NODATA_MASKING_SKIP,
-    "tiled_le_uint16": _NODATA_MASKING_SKIP,
-    "tiled_be_uint16": _NODATA_MASKING_SKIP,
 }
 
 
@@ -110,30 +118,51 @@ def _fixture_path(entry: dict) -> pathlib.Path:
 
 
 def _is_lossy(entry: dict) -> bool:
-    return bool(entry.get("tolerance", {}).get("lossy", False))
+    # ``tolerance`` may be missing entirely or explicitly null in a future
+    # manifest; ``or {}`` collapses both cases to an empty dict so
+    # ``.get('lossy')`` does not blow up.
+    tol = entry.get("tolerance") or {}
+    return bool(tol.get("lossy", False))
+
+
+def _build_param(entry: dict) -> pytest.param:
+    """Wrap a fixture entry in a ``pytest.param`` with the right mark.
+
+    Real parity gaps get ``xfail(strict=True)`` so the test surfaces a hard
+    failure the day the gap closes. The MinIsWhite cell gets a plain skip
+    because the divergence is intentional.
+    """
+    fid = entry["id"]
+    if fid in _PARITY_GAPS:
+        return pytest.param(
+            entry,
+            id=fid,
+            marks=pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True),
+        )
+    if fid in _INTENTIONAL_SKIPS:
+        return pytest.param(
+            entry,
+            id=fid,
+            marks=pytest.mark.skip(reason=_INTENTIONAL_SKIPS[fid]),
+        )
+    return pytest.param(entry, id=fid)
 
 
 _FIXTURES = _resolved_fixtures()
-_FIXTURE_IDS = [e["id"] for e in _FIXTURES]
+_PARAMS = [_build_param(e) for e in _FIXTURES]
 
 
-@pytest.fixture(params=_FIXTURES, ids=_FIXTURE_IDS)
-def manifest_entry(request) -> dict:
-    return request.param
-
-
+@pytest.mark.parametrize("manifest_entry", _PARAMS)
 def test_eager_numpy_parity(manifest_entry: dict) -> None:
     """``open_geotiff(path)`` agrees with the rasterio oracle.
 
     Eager numpy is the default ``open_geotiff`` dispatch (no ``chunks``,
     no ``gpu=True``). The oracle compares pixels (bit-exact, or shape-only
     when ``lossy``), dtype, transform, CRS, and nodata. Known parity gaps
-    are skipped with a reason; see ``_KNOWN_SKIPS`` and the module
-    docstring.
+    are flagged via ``xfail`` (strict); intentional divergences via
+    ``skip``. See the module docstring for the rationale on each entry.
     """
     fixture_id = manifest_entry["id"]
-    if fixture_id in _KNOWN_SKIPS:
-        pytest.skip(_KNOWN_SKIPS[fixture_id])
     path = _fixture_path(manifest_entry)
     if not path.exists():
         pytest.skip(
@@ -145,12 +174,15 @@ def test_eager_numpy_parity(manifest_entry: dict) -> None:
     compare_to_oracle(path, candidate, lossy=_is_lossy(manifest_entry))
 
 
-def test_known_skip_ids_are_in_manifest() -> None:
-    """Every id in ``_KNOWN_SKIPS`` must be a real manifest entry.
+def test_taxonomy_ids_are_in_manifest() -> None:
+    """Every id in the parity-gap or intentional-skip tables must exist.
 
-    Guards against typos: a stale skip key would silently let a known-bad
-    fixture through if its id were misspelled.
+    Guards against typos: a stale entry would silently keep a known-bad
+    fixture marked as expected-to-fail even after it was renamed or removed.
     """
     manifest_ids = {e["id"] for e in _FIXTURES}
-    stale = set(_KNOWN_SKIPS) - manifest_ids
-    assert not stale, f"skip taxonomy references unknown fixture ids: {sorted(stale)}"
+    tagged = set(_PARITY_GAPS) | set(_INTENTIONAL_SKIPS)
+    stale = tagged - manifest_ids
+    assert not stale, (
+        f"taxonomy references unknown fixture ids: {sorted(stale)}"
+    )
