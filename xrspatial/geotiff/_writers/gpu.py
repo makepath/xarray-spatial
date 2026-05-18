@@ -7,6 +7,7 @@ under ``on_gpu_failure='auto'``.
 """
 from __future__ import annotations
 
+import numbers
 import warnings
 from typing import TYPE_CHECKING
 
@@ -349,9 +350,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     y_res = None
     res_unit = None
 
+    # ``numbers.Integral`` covers numpy integer scalars (``np.int32``,
+    # ``np.int64``) so they hit the EPSG branch instead of falling
+    # through to ``epsg=None``. Validator already rejects bool.
     _validate_crs_arg(crs)
-    if isinstance(crs, int):
-        epsg = crs
+    if isinstance(crs, numbers.Integral):
+        epsg = int(crs)
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)
         if epsg is None:
