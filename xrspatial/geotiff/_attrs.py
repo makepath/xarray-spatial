@@ -478,7 +478,9 @@ def _should_restore_nan_sentinel(attrs) -> bool:
     # Treat anything other than literal ``False`` as the True default.
     # The flag is the boolean ``True``/``False`` per the contract, but
     # we narrow on identity rather than truthiness so a stray ``0`` /
-    # ``''`` does not silently disable the sentinel rewrite.
+    # ``''`` (which a future maintainer might assume is "off" under a
+    # truthiness rule) does not silently disable the sentinel rewrite.
+    # The identity check is deliberate: do not refactor to ``not value``.
     return value is not False
 
 

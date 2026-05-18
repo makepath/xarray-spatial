@@ -858,6 +858,72 @@ class TestWriteStreamingRestoreSentinelKwarg:
         assert (on_disk == -9999.0).sum() == 0
 
 
+class TestWriteCOGOverviewGateInteraction:
+    """The ``write()`` function's only gated branch is the overview-
+    level NaN-to-sentinel rewrite (the user-data rewrite has already
+    been done by ``to_geotiff`` upstream). Close that coverage gap
+    with a direct ``write(..., cog=True, ...)`` exercise of the
+    gated branch at ``_writer.py:1742-1749``."""
+
+    def test_cog_overview_rewrite_runs_by_default(self, tmp_path):
+        """Default ``restore_sentinel=True`` rewrites NaN in overviews."""
+        from xrspatial.geotiff._writer import write
+
+        path = tmp_path / "test_1988_cog_default.tif"
+        # 64x64 with a sentinel-valued patch that the float pyramid
+        # will average down through several overview levels. The
+        # sentinel value (-9999.0) becomes the literal float pixel
+        # value the writer expects (NaN was already rewritten by an
+        # upstream ``to_geotiff`` in a normal flow; here we hand-roll
+        # an array that contains NaN to trigger the gated overview
+        # rewrite inside ``write``).
+        arr = np.ones((64, 64), dtype=np.float32)
+        arr[0:16, 0:16] = np.nan
+        write(
+            arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=True,
+            tile_size=32,
+            cog=True,
+            overview_levels=[2, 4],
+        )
+        with rasterio.open(str(path)) as ds:
+            assert ds.nodata == -9999.0
+            # Read overview level 1 (factor=2). Pure-NaN 2x2 blocks
+            # reduce to NaN under nanmean; the gated branch rewrites
+            # those back to the sentinel.
+            ov = ds.read(1, out_shape=(32, 32))
+        # Overview tiles covering the all-NaN corner should hold the
+        # sentinel, not NaN.
+        assert (ov[0:8, 0:8] == -9999.0).any() or np.isnan(ov[0:8, 0:8]).sum() == 0
+
+    def test_cog_overview_rewrite_skipped_when_gated_off(self, tmp_path):
+        """``restore_sentinel=False`` preserves NaN in overview pyramid."""
+        from xrspatial.geotiff._writer import write
+
+        path = tmp_path / "test_1988_cog_gated.tif"
+        arr = np.ones((64, 64), dtype=np.float32)
+        arr[0:16, 0:16] = np.nan
+        write(
+            arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=True,
+            tile_size=32,
+            cog=True,
+            overview_levels=[2, 4],
+            restore_sentinel=False,
+        )
+        with rasterio.open(str(path)) as ds:
+            assert ds.nodata == -9999.0
+            # Same overview read. With the gate off, the all-NaN 2x2
+            # blocks stay NaN through the pyramid.
+            ov = ds.read(1, out_shape=(32, 32))
+        # NaN survives in the overview corner.
+        assert np.isnan(ov[0:8, 0:8]).any()
+
+
 @_gpu_only
 class TestWriterGPU:
     """GPU writer also gates on ``attrs['masked_nodata']``."""
