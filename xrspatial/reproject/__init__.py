@@ -857,8 +857,8 @@ def _apply_vertical_shift(data, y_coords, x_coords,
     # own row slab of x/y coords, so we route through map_blocks and
     # delegate to the numpy path on every chunk.
     try:
-        import dask.array as _da
-        is_dask = isinstance(data, _da.Array)
+        import dask.array as da
+        is_dask = isinstance(data, da.Array)
     except ImportError:
         is_dask = False
 
@@ -918,12 +918,14 @@ def _apply_vertical_shift_numpy(data, y_arr, x_arr,
         except Exception:
             pass
 
+    assert data.ndim in (2, 3), f"expected 2-D or 3-D, got {data.ndim}-D"
     out_h, out_w = data.shape[:2]
     is_3d = data.ndim == 3
 
     geoids = [_load_geoid(gm) for gm in geoid_models]
 
-    # Process in row strips to bound memory (128 rows at a time)
+    # Process in row strips to bound memory in the numpy path; dask chunks
+    # are usually smaller than one strip so this loop runs once per block.
     result = data.copy()
     is_nan_nodata = np.isnan(nodata) if isinstance(nodata, float) else False
     strip = 128
@@ -987,12 +989,12 @@ def _apply_vertical_shift_dask(data, y_arr, x_arr,
     """
     import dask.array as da
 
-    def _block(block, block_info=None):
-        if block_info is None:
-            return _apply_vertical_shift_numpy(
-                block, y_arr, x_arr,
-                geoid_models, signs, nodata, tgt_crs_wkt,
-            )
+    # Note: blocks reaching this path are assumed to be numpy-backed.
+    # dask-of-cupy is intentionally unreached today because
+    # ``_reproject_dask(is_cupy=True)`` collapses to a numpy-backed dask
+    # array upstream. If that ever changes, _block would need to detect
+    # cupy chunks and host-bounce per chunk.
+    def _block(block, block_info):
         info = block_info[0]
         (r0, r1), (c0, c1) = info['array-location'][:2]
         y_slab = y_arr[r0:r1]
@@ -1002,6 +1004,9 @@ def _apply_vertical_shift_dask(data, y_arr, x_arr,
             geoid_models, signs, nodata, tgt_crs_wkt,
         )
 
+    # ``meta`` hardcodes a numpy template to match the assumption above
+    # that incoming chunks are numpy-backed. Revisit if dask-of-cupy is
+    # ever plumbed through.
     return da.map_blocks(_block, data, dtype=data.dtype, meta=np.array((), dtype=data.dtype))
 
 

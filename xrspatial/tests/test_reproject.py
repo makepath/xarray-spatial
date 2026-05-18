@@ -2236,6 +2236,14 @@ class TestVerticalShift:
         delta_cu = (cp.asnumpy(shifted_cu.data)
                     - cp.asnumpy(base_cu.data))
 
+        # Guard against a silent no-op regression: if the cupy shift
+        # ever fails to fire, delta_cu collapses to zero and the
+        # cross-backend allclose below would still pass wherever
+        # delta_np is also zero.
+        assert np.any(np.abs(delta_cu) > 0), (
+            "vertical shift did not fire on cupy backend"
+        )
+
         # The increment from the geoid shift must agree across backends.
         finite = np.isfinite(delta_np) & np.isfinite(delta_cu)
         np.testing.assert_allclose(
