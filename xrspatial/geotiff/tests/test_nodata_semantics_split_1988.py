@@ -25,10 +25,11 @@ import struct
 
 import numpy as np
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt
+
+rasterio = pytest.importorskip("rasterio")
+from rasterio.transform import from_origin  # noqa: E402
 
 
 _SENTINEL = -9999.0
