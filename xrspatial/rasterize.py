@@ -1598,9 +1598,9 @@ def _slice_props_for_tile(geom_idx, props):
     a zero-row slice of ``props`` (preserving column count).
     """
     if len(geom_idx) == 0:
-        return geom_idx, props[:0]
+        return geom_idx.astype(np.int32, copy=False), props[:0]
     # np.unique returns sorted unique values and an inverse map that
-    # remaps geom_idx in-place to local 0..len(unique)-1 indices.
+    # points each entry in geom_idx to its position in unique_idx.
     unique_idx, local_idx = np.unique(geom_idx, return_inverse=True)
     return local_idx.astype(np.int32), props[unique_idx]
 
@@ -1861,7 +1861,11 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
     # each tile only references a subset of geometries, so we slice
     # line_props / point_props per tile (as np arrays in the graph) and
     # transfer only that subset to the GPU inside the worker.  Mirrors
-    # the polygon path's poly_props[pmask] pattern.
+    # the polygon path's poly_props[pmask] pattern.  Tradeoff: for
+    # sprawling-line workloads where every tile references most rows,
+    # the GPU now sees N_tiles small uploads instead of one shared
+    # driver-side upload, shifting cost from graph payload to PCIe
+    # traffic.  Localized geometries (the realistic case) still win.
 
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
     n_row_chunks = len(row_chunks)

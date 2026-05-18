@@ -234,3 +234,36 @@ class TestDaskBackendOutputUnchanged:
             fill=0.0, chunks=(16, 16),
         )
         np.testing.assert_array_equal(np_res.values, dk_res.values)
+
+    def test_line_straddling_tile_boundary_renders_contiguously(self):
+        """A line whose pixel bbox overlaps two tiles must be present in
+        both tile closures.  If the props slice ever drops the geometry
+        from one of the two tiles, the dask output will diverge from
+        numpy along the seam (gap pixels) or carry the fill value where
+        the line should be."""
+        # Single horizontal line crossing the vertical seam at x=0 on a
+        # bounds=(-10,-10,10,10) raster with width=80, chunks=(40,40).
+        # Tile seam in pixel space sits at column 40; the line spans
+        # x=-5..5 (pixel columns ~20..60), straddling the seam.
+        gdf = gpd.GeoDataFrame(
+            {"value": [7.0]},
+            geometry=[LineString([(-5.0, 0.0), (5.0, 0.0)])],
+            crs="EPSG:4326",
+        )
+        np_res = rasterize(
+            gdf, column="value",
+            width=80, height=80, bounds=(-10, -10, 10, 10), fill=0.0,
+        )
+        dk_res = rasterize(
+            gdf, column="value",
+            width=80, height=80, bounds=(-10, -10, 10, 10),
+            fill=0.0, chunks=(40, 40),
+        )
+        # Whole-array equality: any dropped pixel along the seam fails.
+        np.testing.assert_array_equal(np_res.values, dk_res.values)
+        # Structural assertion: the value must appear on both sides of
+        # the column-40 seam so a future bug that only renders one half
+        # is caught even if the numpy reference also regressed.
+        burned = (dk_res.values == 7.0)
+        assert burned[:, :40].any(), "line missing from left tile"
+        assert burned[:, 40:].any(), "line missing from right tile"
