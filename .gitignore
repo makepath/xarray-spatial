@@ -100,3 +100,4 @@ xrspatial-examples/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 docs/superpowers/
+*.aux.xml
