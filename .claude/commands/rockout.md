@@ -1,7 +1,7 @@
 # Rockout: End-to-End Issue-to-Implementation Workflow
 
 Take the user's prompt describing an enhancement, bug, or suggestion and drive it
-through all seven steps below. The prompt is: $ARGUMENTS
+through all ten steps below. The prompt is: $ARGUMENTS
 
 ---
 
@@ -88,6 +88,64 @@ plotting conventions, GIS alert boxes, preview images, and humanizer passes.
    corresponding checkmarks.
 
 **Skip this step** if no new functions were added and no backend support changed.
+
+## Step 8 -- Open the Pull Request
+
+1. Push the branch to the remote with upstream tracking:
+   ```
+   git push -u origin issue-<NUMBER>
+   ```
+2. Draft a PR title and body. The body should:
+   - Reference the issue with `Closes #<NUMBER>`.
+   - Summarize the change in 1-3 bullets.
+   - Note backend coverage (numpy / cupy / dask+numpy / dask+cupy).
+   - Include a short test plan checklist.
+3. **Run the PR body through the `/humanizer` skill** before opening the PR.
+4. Open the PR:
+   ```
+   gh pr create --title "<title>" --body "$(cat <<'EOF'
+   <body>
+   EOF
+   )"
+   ```
+5. Capture the PR number for the next step.
+
+## Step 9 -- Run the Domain-Aware PR Review
+
+1. Invoke the `/review-pr` command against the PR number from Step 8:
+   ```
+   /review-pr <PR_NUMBER>
+   ```
+2. Do not pass "post" -- keep the review local so the rockout workflow can act
+   on the findings before any of it lands as a public comment.
+3. Capture the structured output. It will list findings grouped as:
+   - **Blockers** -- must fix before merge
+   - **Suggestions** -- should fix, not blocking
+   - **Nits** -- optional improvements
+
+## Step 10 -- Follow Up on Review Findings
+
+Address every Blocker, then work through Suggestions and Nits in that order.
+
+1. For each finding:
+   - Read the referenced file at the cited line.
+   - Decide one of: **fix**, **defer with reason**, or **dismiss with reason**.
+   - Blockers must be either fixed or explicitly deferred with a written
+     justification -- do not silently skip them.
+   - Suggestions and nits may be dismissed when the cost outweighs the value,
+     but record the reason.
+2. Group related fixes into focused commits referencing the issue number
+   (e.g. `Address review nits: fix NaN propagation in dask path (#<NUMBER>)`).
+3. After applying fixes:
+   - Re-run the tests touched by the changes.
+   - Push the new commits to the PR branch.
+4. Re-run `/review-pr <PR_NUMBER>` once after the follow-up commits to confirm
+   the prior findings are resolved and no new ones surfaced. Stop iterating
+   once only dismissed-with-reason items remain.
+5. Summarize the disposition of each original finding (fixed / deferred /
+   dismissed) in the final rockout summary so the trail is visible.
+
+**Skip this step** only if Step 9 returned no Blockers, Suggestions, or Nits.
 
 ---
 
