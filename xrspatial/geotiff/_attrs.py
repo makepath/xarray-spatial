@@ -212,11 +212,12 @@ _DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS = (
 )
 
 
-# Per-category reason clauses spliced into the deprecation warning by
-# :func:`_emit_deprecated_geokey_attr`. Kept here so the wording stays
-# in lockstep across the three GeoKey-axis tiers (geographic, projected,
-# vertical) and so the test suite can match the canonical strings
-# verbatim.
+# Per-category reason clauses spliced into the GeoKey-tier deprecation
+# warning by :func:`_emit_deprecated_geokey_attr` (which delegates to
+# the unified :func:`_emit_deprecated_attr`). Kept here so the wording
+# stays in lockstep across the three GeoKey-axis tiers (geographic,
+# projected, vertical) and so the test suite can match the canonical
+# strings verbatim.
 _GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS = (
     "the writer cannot reconstruct it from the canonical CRS"
 )
@@ -265,18 +266,18 @@ def _build_deprecated_attr_warning(
     """Build the canonical deprecation-warning text for a deprecated attr.
 
     Single text builder shared by every deprecation tier (issue #1984 PR 7).
-    The rendered shape depends on which optional clauses are passed:
+    The two production shapes are:
 
-    * ``suffix`` set (GeoKey tiers): joins ``reason`` and ``suffix`` with
-      a single space, treating them as one sentence. The default GeoKey
-      suffix is :data:`_GEOKEY_DEPRECATION_SUFFIX` ("so it will not
-      round-trip.")::
+    * GeoKey tiers (``suffix`` set): joins ``reason`` and ``suffix``
+      with a single space, treating them as one sentence. The canonical
+      GeoKey suffix is :data:`_GEOKEY_DEPRECATION_SUFFIX` ("so it will
+      not round-trip.")::
 
           "xrspatial.geotiff: attrs['<name>'] is deprecated;
            <reason> <suffix> It will be removed in a future release.
            See issue #1984."
 
-    * ``suffix`` unset, ``migration`` set (colormap-variants tier):
+    * Colormap-variants tier (``migration`` set, ``suffix`` unset):
       terminates ``reason`` with a period and appends ``migration`` as a
       second sentence::
 
@@ -284,7 +285,12 @@ def _build_deprecated_attr_warning(
            <reason>. <migration>. It will be removed in a future
            release. See issue #1984."
 
-    * Neither set: a bare reason terminated with a period.
+    ``suffix`` and ``migration`` are mutually exclusive: ``suffix`` is a
+    one-sentence continuation of ``reason``, while ``migration`` is a
+    second sentence that follows a period-terminated ``reason``. Passing
+    both raises :class:`ValueError` rather than silently dropping
+    ``migration`` -- the combination has no agreed-upon rendering and
+    no production caller needs it.
 
     ``reason`` and ``migration`` may be passed with or without a trailing
     period; the builder normalises them so the rendered text contains a
@@ -298,6 +304,14 @@ def _build_deprecated_attr_warning(
     ``test_attrs_pr7_deprecate_colormap_variants_1984.py``. Any tweak
     here must land with matching test updates.
     """
+    if suffix is not None and migration is not None:
+        raise ValueError(
+            "_build_deprecated_attr_warning: `suffix` and `migration` "
+            "are mutually exclusive; pass at most one. `suffix` is a "
+            "one-sentence continuation of `reason` (GeoKey tiers), "
+            "`migration` is a second sentence appended after `reason` "
+            "(colormap-variants tier)."
+        )
     parts = [f"xrspatial.geotiff: attrs[{name!r}] is deprecated;"]
     if suffix is not None:
         # GeoKey-style: reason and suffix render as one sentence joined

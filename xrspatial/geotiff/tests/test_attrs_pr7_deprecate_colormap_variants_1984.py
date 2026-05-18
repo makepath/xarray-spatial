@@ -339,3 +339,27 @@ def test_emit_deprecated_attr_without_migration_text():
         "It will be removed in a future release. See issue #1984."
     )
     assert attrs == {'foo': 'bar'}
+
+
+def test_build_deprecated_attr_warning_rejects_suffix_and_migration_combo():
+    """``suffix`` and ``migration`` are mutually exclusive on the unified
+    text builder.
+
+    The two clauses occupy the same sentence slot in different shapes:
+    ``suffix`` continues ``reason`` into one sentence (GeoKey tiers),
+    while ``migration`` is a separate sentence after a period-terminated
+    ``reason`` (colormap-variants tier). Passing both has no agreed-upon
+    rendering, so the builder fails loud instead of silently dropping
+    one of them.
+    """
+    import pytest
+
+    from xrspatial.geotiff._attrs import _build_deprecated_attr_warning
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _build_deprecated_attr_warning(
+            'name',
+            reason="some reason",
+            suffix="so it will not round-trip.",
+            migration="Use canonical thing instead",
+        )
