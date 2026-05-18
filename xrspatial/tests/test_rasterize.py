@@ -396,6 +396,17 @@ class TestValidation:
             rasterize([(box(0, 0, 1, 1), 1.0)], width=2, height=2,
                       bounds=(0, 0, float('nan'), 1))
 
+    def test_empty_multipolygon_filtered_from_inferred_bounds(self):
+        # Same shape as the empty-Polygon case but exercises the
+        # MultiPolygon branch in shapely's is_empty / bounds path.
+        empty_mp = MultiPolygon()
+        result = rasterize(
+            [(empty_mp, 99), (box(0, 0, 1, 1), 1)],
+            width=2, height=2)
+        assert np.all(np.isfinite(result.x.values))
+        assert np.all(np.isfinite(result.y.values))
+        assert np.all(result.values == 1)
+
 
 # ---------------------------------------------------------------------------
 # all_touched mode
