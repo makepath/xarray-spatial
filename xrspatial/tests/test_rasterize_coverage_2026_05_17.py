@@ -521,9 +521,12 @@ class TestIntegerDtypeNanFill:
     """Pin the observed behaviour when ``dtype`` is integer but ``fill``
     defaults to ``np.nan``.
 
-    ``np.full((H, W), np.nan).astype(np.int32)`` silently casts NaN to the
-    platform's int32 minimum (``-2147483648``).  This is undocumented but
-    must remain stable: a future refactor that switched to raising
+    ``np.full((H, W), np.nan).astype(np.int32)`` silently casts NaN to a
+    platform-dependent sentinel: x86 yields ``INT32_MIN`` while Apple
+    Silicon yields ``0``.  Both values are unspecified by C and by numpy,
+    so the test pins "rasterize emits the same cast numpy emits" rather
+    than a specific number.  This is undocumented but must remain stable:
+    a future refactor that switched to raising
     ``ValueError("integer dtype requires explicit fill")`` would break
     every caller that currently passes ``dtype=np.int32`` without
     overriding ``fill``.  Pin the cast so the choice is visible as a
@@ -531,16 +534,19 @@ class TestIntegerDtypeNanFill:
     """
 
     def test_int32_dtype_with_default_nan_fill_pins_sentinel(self):
-        """NaN fill on int32 dtype produces the int32-min sentinel."""
+        """NaN fill on int32 dtype takes numpy's platform NaN-cast."""
         r = rasterize([(box(0, 0, 3, 3), 7.0)],
                       width=5, height=5, bounds=(0, 0, 5, 5),
                       dtype=np.int32)
-        # Polygon cells are 7; non-covered cells are the int32-min cast.
         assert r.dtype == np.int32
-        sentinel = np.int32(np.iinfo(np.int32).min)
+        # Derive the sentinel from numpy itself: whatever the platform
+        # produces when casting NaN to int32 is what rasterize must
+        # produce too.  x86 -> INT32_MIN, Apple Silicon -> 0.
+        with np.errstate(invalid="ignore"):
+            sentinel = np.array([np.nan], dtype=np.float64).astype(np.int32)[0]
         # Lower-left quadrant covered by polygon.
         assert r.values[4, 0] == 7
-        # Outside the polygon (top-right corner) takes the sentinel.
+        # Outside the polygon (top-right corner) takes the platform NaN-cast.
         assert r.values[0, 4] == sentinel
 
     def test_int32_dtype_with_explicit_int_fill(self):
