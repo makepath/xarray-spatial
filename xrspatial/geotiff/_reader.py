@@ -111,6 +111,27 @@ def _check_dimensions(width, height, samples, max_pixels):
         )
 
 
+def _check_source_dimensions(width, height, samples):
+    """Validate the source IFD dimensions of a TIFF before any windowing.
+
+    Companion to :func:`_check_dimensions`, which only enforces the
+    upper bound. The stripped read paths read ``width``,  ``height``,
+    and ``samples_per_pixel`` straight off the IFD and then clamp the
+    output window to those values, so a malformed file with
+    ``ImageWidth = 0`` (or a negative value, which would parse as a
+    huge unsigned int but can also surface via signed-cast errors)
+    would produce an empty array silently. The tiled paths are already
+    protected by :func:`validate_tile_layout` in ``_header.py``; this
+    helper closes the same gap for the stripped path. Issue #2053.
+    """
+    if width <= 0 or height <= 0 or samples <= 0:
+        raise ValueError(
+            f"Invalid TIFF dimensions: ImageWidth={width}, "
+            f"ImageLength={height}, SamplesPerPixel={samples} "
+            f"(all must be > 0)"
+        )
+
+
 #: Default per-tile (or per-strip) compressed-byte cap. A crafted
 #: ``TileByteCounts`` / ``StripByteCounts`` entry can declare arbitrarily
 #: many bytes. On HTTP, the reader would issue a Range GET sized by the
@@ -1650,6 +1671,12 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     width = ifd.width
     height = ifd.height
     samples = ifd.samples_per_pixel
+    # Source-IFD dim check (issue #2053). The tiled path is already
+    # covered by ``validate_tile_layout``; this is its stripped-path
+    # parity. Run before any window clamping so a malformed
+    # ``ImageWidth=0`` IFD fails at the source rather than collapsing
+    # to an empty post-clamp window.
+    _check_source_dimensions(width, height, samples)
     compression = ifd.compression
     rps = ifd.rows_per_strip
     offsets = ifd.strip_offsets
@@ -2323,6 +2350,12 @@ def _fetch_decode_cog_http_strips(
     width = ifd.width
     height = ifd.height
     samples = ifd.samples_per_pixel
+    # Source-IFD dim check (issue #2053). Mirror of the local-path
+    # check in ``_read_strips`` so HTTP COG reads of a malformed
+    # stripped file fail at the source rather than collapsing to an
+    # empty post-clamp window. Tiled paths already get the equivalent
+    # check from ``validate_tile_layout``.
+    _check_source_dimensions(width, height, samples)
     compression = ifd.compression
     rps = ifd.rows_per_strip
     offsets = ifd.strip_offsets
