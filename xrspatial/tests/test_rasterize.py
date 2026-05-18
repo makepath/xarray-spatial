@@ -1592,3 +1592,222 @@ class TestBuildRowCsrInt64:
         )
         # The polygon covers a 6x6 inner block; just check it burned in.
         assert np.any(result.values == 3.0)
+
+
+# ---------------------------------------------------------------------------
+# Metadata propagation (attrs from `like`, coord reuse, _FillValue)
+# ---------------------------------------------------------------------------
+
+def _make_like(width=10, height=10, attrs=None, dtype=np.float64):
+    """Build a 2D template DataArray with georeferenced coords and attrs."""
+    x = np.linspace(0.5, width - 0.5, width)
+    y = np.linspace(height - 0.5, 0.5, height)
+    data = np.zeros((height, width), dtype=dtype)
+    return xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': y, 'x': x},
+        attrs=dict(attrs or {}),
+    )
+
+
+class TestMetadataPropagation:
+    """Verify `like.attrs` propagates, `like.coords` are reused, and the
+    fill value lands in `_FillValue` / `nodatavals`.
+    """
+
+    def test_like_propagates_attrs(self):
+        attrs = {
+            'crs': 'EPSG:32610',
+            'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+            'res': (1.0, 1.0),
+        }
+        like = _make_like(attrs=attrs)
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('transform') == \
+            (1.0, 0.0, 0.0, 0.0, -1.0, 10.0)
+        assert result.attrs.get('res') == (1.0, 1.0)
+
+    def test_like_preserves_coords_bit_identical(self):
+        like = _make_like()
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        # Output reuses like.coords exactly so xr.align keeps working.
+        np.testing.assert_array_equal(
+            result.coords['x'].values, like.coords['x'].values)
+        np.testing.assert_array_equal(
+            result.coords['y'].values, like.coords['y'].values)
+
+    def test_like_attrs_isolated_from_template(self):
+        """Mutating output attrs must not mutate the template's attrs."""
+        attrs = {'crs': 'EPSG:32610'}
+        like = _make_like(attrs=attrs)
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        result.attrs['crs'] = 'EPSG:4326'
+        assert like.attrs['crs'] == 'EPSG:32610'
+
+    def test_fill_value_recorded_when_not_nan(self):
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+            fill=-9999, dtype=np.int32,
+        )
+        # Emit the full triplet: xrspatial's primary (nodata), the CF
+        # alias (_FillValue), and rioxarray's per-band tuple (nodatavals).
+        # All three must agree with fill so downstream consumers all
+        # resolve to the same sentinel regardless of which key they read.
+        assert result.attrs.get('nodata') == -9999
+        assert result.attrs.get('_FillValue') == -9999
+        assert result.attrs.get('nodatavals') == (-9999,)
+        # Sentinel round-trips cleanly when the array is cast to its
+        # declared dtype -- pins #1973-style dtype mismatch regressions.
+        assert np.array(-9999, dtype=result.dtype) == \
+            np.array(result.attrs['_FillValue'], dtype=result.dtype)
+
+    def test_fill_value_omitted_for_nan(self):
+        """Default fill=NaN should not pollute attrs with nodata keys."""
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+        )
+        assert 'nodata' not in result.attrs
+        assert '_FillValue' not in result.attrs
+        assert 'nodatavals' not in result.attrs
+
+    def test_no_like_no_attrs_pollution(self):
+        """Without `like` and with NaN fill, attrs must stay empty."""
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+        )
+        assert result.attrs == {}
+
+    @skip_no_dask
+    def test_like_attrs_propagated_dask(self):
+        like = _make_like(attrs={'crs': 'EPSG:32610'})
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0, chunks=5,
+        )
+        # The dask backend routes through the same final xr.DataArray
+        # constructor, so attrs / coords / _FillValue behave identically.
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('_FillValue') == 0
+        np.testing.assert_array_equal(
+            result.coords['x'].values, like.coords['x'].values)
+
+    @skip_no_cuda
+    def test_like_attrs_propagated_cupy(self):
+        like = _make_like(attrs={'crs': 'EPSG:32610'})
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0, use_cuda=True,
+        )
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('_FillValue') == 0
+
+    @skip_no_cuda
+    @skip_no_dask
+    def test_like_attrs_propagated_dask_cupy(self):
+        like = _make_like(attrs={'crs': 'EPSG:32610'})
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like, fill=0, use_cuda=True, chunks=5,
+        )
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        assert result.attrs.get('_FillValue') == 0
+
+    def test_like_stale_nodata_keys_replaced_with_fill(self):
+        """Inherited nodata keys from like must not outlive the new fill.
+
+        The geotiff writer's _resolve_nodata_attr checks ``nodata`` →
+        ``nodatavals`` → ``_FillValue``.  If a previous round-trip left
+        any of them on the template, they have to be replaced (or
+        cleared) so the writer doesn't tag pixels with a stale sentinel
+        that disagrees with the actual fill in the new array.
+        """
+        like = _make_like(attrs={
+            'nodata': -9999,
+            '_FillValue': -9999,
+            'nodatavals': (-9999,),
+            'crs': 'EPSG:32610',
+        })
+        # Case 1: explicit fill replaces all three keys.
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        assert result.attrs.get('nodata') == 0
+        assert result.attrs.get('_FillValue') == 0
+        assert result.attrs.get('nodatavals') == (0,)
+        assert result.attrs.get('crs') == 'EPSG:32610'
+        # Case 2: NaN fill strips inherited nodata keys outright -- the
+        # actual unwritten pixels are NaN, not -9999, so advertising
+        # -9999 would lie to downstream tools.
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like,
+        )
+        assert 'nodata' not in result.attrs
+        assert '_FillValue' not in result.attrs
+        assert 'nodatavals' not in result.attrs
+        assert result.attrs.get('crs') == 'EPSG:32610'
+
+    def test_numpy_float_nan_fill_treated_as_nan(self):
+        """Numpy scalar NaN must be detected as NaN, not emitted as fill.
+
+        ``isinstance(np.float32(np.nan), float)`` is False, so a naive
+        ``isinstance(fill, float) and np.isnan(fill)`` check would let a
+        numpy-typed NaN slip through and land in ``_FillValue``.
+        """
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+            fill=np.float32(np.nan),
+        )
+        assert 'nodata' not in result.attrs
+        assert '_FillValue' not in result.attrs
+        assert 'nodatavals' not in result.attrs
+
+    def test_like_non_dim_coords_propagated(self):
+        """Non-dim coords on like (e.g. rioxarray's spatial_ref) carry over."""
+        like = _make_like()
+        # rioxarray attaches the CRS as a scalar non-dim coord
+        # called ``spatial_ref``.  rasterize must propagate it.
+        like = like.assign_coords(spatial_ref=0)
+        like['spatial_ref'].attrs['crs_wkt'] = (
+            'GEOGCS["WGS 84",DATUM["WGS_1984"]]'
+        )
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        assert 'spatial_ref' in result.coords
+        assert (result.coords['spatial_ref'].attrs.get('crs_wkt')
+                == 'GEOGCS["WGS 84",DATUM["WGS_1984"]]')
+
+    def test_geotiff_round_trip_preserves_fill(self, tmp_path):
+        """rasterize → to_geotiff → read → nodata matches.
+
+        The user-visible motivation for #2018: a rasterized output
+        written to GeoTIFF must round-trip the fill sentinel so masks
+        and downstream readers identify the right nodata pixels.
+        """
+        pytest.importorskip('tifffile')
+        from xrspatial.geotiff import to_geotiff, open_geotiff
+
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            width=10, height=10, bounds=(0, 0, 10, 10),
+            fill=-9999.0, dtype=np.float32,
+        )
+        path = str(tmp_path / 'rasterize_fill_round_trip.tif')
+        to_geotiff(result, path)
+        read_back = open_geotiff(path)
+        # GeoTIFF stores nodata as a scalar; either ``nodata`` or
+        # ``_FillValue`` should land on the read-back DataArray and
+        # match the fill we supplied.
+        nodata = (read_back.attrs.get('nodata')
+                  or read_back.attrs.get('_FillValue'))
+        assert nodata is not None
+        assert float(nodata) == -9999.0

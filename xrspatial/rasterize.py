@@ -1979,7 +1979,13 @@ def _parse_input(geometries, column=None, columns=None):
 
 
 def _extract_grid_from_like(like):
-    """Extract width, height, bounds, dtype from a template DataArray."""
+    """Extract width, height, bounds, dtype from a template DataArray.
+
+    Also returns the input coords and attrs so the caller can propagate
+    them onto the output raster.  Reusing ``like.coords`` directly (rather
+    than rebuilding with ``linspace``) keeps the output bit-identical to
+    the template and so preserves ``xr.align`` compatibility.
+    """
     if not isinstance(like, xr.DataArray):
         raise TypeError("'like' must be an xr.DataArray")
     if like.ndim != 2 or 'y' not in like.dims or 'x' not in like.dims:
@@ -2007,7 +2013,17 @@ def _extract_grid_from_like(like):
     ymin = float(np.min(y)) - py / 2
     ymax = float(np.max(y)) + py / 2
 
-    return width, height, (xmin, ymin, xmax, ymax), dt
+    # Carry through any non-dim coords (e.g. rioxarray's ``spatial_ref``
+    # CRS coord).  The y/x dim coords are returned separately because the
+    # caller decides whether to reuse them (bit-identical grid) or build
+    # fresh ones (resized grid).
+    extra_coords = {
+        k: v for k, v in like.coords.items() if k not in ('x', 'y')
+    }
+
+    return (width, height, (xmin, ymin, xmax, ymax), dt,
+            like.coords['x'], like.coords['y'],
+            extra_coords, dict(like.attrs))
 
 
 # ---------------------------------------------------------------------------
@@ -2170,8 +2186,13 @@ def rasterize(
 
     # Extract defaults from template raster
     like_width = like_height = like_bounds = like_dtype = None
+    like_x_coord = like_y_coord = None
+    like_extra_coords = {}
+    like_attrs = None
+    bounds_explicit = bounds is not None
     if like is not None:
-        like_width, like_height, like_bounds, like_dtype = \
+        (like_width, like_height, like_bounds, like_dtype,
+         like_x_coord, like_y_coord, like_extra_coords, like_attrs) = \
             _extract_grid_from_like(like)
 
     # Parse input geometries
@@ -2269,15 +2290,61 @@ def rasterize(
                          final_height, final_width, fill, final_dtype,
                          all_touched, merge_fn)
 
-    # Build coordinates
-    px = (xmax - xmin) / final_width
-    py = (ymax - ymin) / final_height
-    x_coords = np.linspace(xmin + px / 2, xmax - px / 2, final_width)
-    y_coords = np.linspace(ymax - py / 2, ymin + py / 2, final_height)
+    # Build coordinates.  When the caller didn't override the grid (no
+    # explicit width/height/bounds/resolution that resizes the output),
+    # reuse like.coords directly so the output is bit-identical to the
+    # template and xr.align keeps working.  Float-equal bound comparison
+    # would be fragile, so key the reuse on size + "bounds weren't
+    # overridden" instead.
+    reuse_like_coords = (
+        like_x_coord is not None
+        and like_x_coord.sizes['x'] == final_width
+        and like_y_coord.sizes['y'] == final_height
+        and not bounds_explicit
+        and resolution is None
+    )
+    if reuse_like_coords:
+        x_coords = like_x_coord
+        y_coords = like_y_coord
+    else:
+        px = (xmax - xmin) / final_width
+        py = (ymax - ymin) / final_height
+        x_coords = np.linspace(xmin + px / 2, xmax - px / 2, final_width)
+        y_coords = np.linspace(ymax - py / 2, ymin + py / 2, final_height)
+
+    # Build attrs.  Start from like.attrs if given so chained spatial
+    # pipelines (slope(rasterize(gdf, like=elevation))) see the same res,
+    # crs, transform, etc. as the template.  Strip any inherited nodata
+    # keys first -- the template's old fill value almost certainly
+    # disagrees with this call's fill, and the geotiff writer's
+    # _resolve_nodata_attr would otherwise tag pixels with a stale
+    # sentinel.  Then re-emit a consistent triplet keyed off the actual
+    # fill: nodata (xrspatial's primary key), _FillValue (CF), and
+    # nodatavals (rioxarray's per-band tuple).
+    out_attrs = like_attrs if like_attrs is not None else {}
+    for k in ('nodata', '_FillValue', 'nodatavals'):
+        out_attrs.pop(k, None)
+    try:
+        fill_as_float = float(fill)
+        fill_is_nan = np.isnan(fill_as_float)
+    except (TypeError, ValueError):
+        fill_is_nan = False
+    if not fill_is_nan:
+        out_attrs['nodata'] = fill
+        out_attrs['_FillValue'] = fill
+        out_attrs['nodatavals'] = (fill,)
+
+    # Combine y/x dim coords with any non-dim coords carried from the
+    # template (e.g. rioxarray's spatial_ref CRS coord).
+    out_coords = {'y': y_coords, 'x': x_coords}
+    for k, v in like_extra_coords.items():
+        if k not in out_coords:
+            out_coords[k] = v
 
     return xr.DataArray(
         out,
         name=name,
         dims=['y', 'x'],
-        coords={'y': y_coords, 'x': x_coords},
+        coords=out_coords,
+        attrs=out_attrs,
     )
