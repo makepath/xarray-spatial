@@ -26,7 +26,14 @@ from typing import Any, Callable, Iterable, Mapping
 import numpy as np
 
 from ._coords import _BAND_DIM_NAMES
-from ._errors import ConflictingCRSError
+from ._errors import (
+    ConflictingCRSError,
+    ConflictingNodataError,
+    MixedBandMetadataError,
+    NonUniformCoordsError,
+    RotatedTransformError,
+    UnparseableCRSError,
+)
 from ._runtime import _TIME_DIM_NAMES, _X_DIM_NAMES, _Y_DIM_NAMES
 
 
@@ -514,3 +521,348 @@ def _check_write_conflicting_crs(context: Mapping[str, Any]) -> None:
 # use ``unregister_write_metadata_check(_check_write_conflicting_crs)``
 # in a fixture rather than mutating the registry directly.
 register_write_metadata_check(_check_write_conflicting_crs)
+
+
+# ---------------------------------------------------------------------------
+# Conflicting nodata aliases write check (issue #1987 PR 7)
+# ---------------------------------------------------------------------------
+
+
+def _check_write_conflicting_nodata(context: Mapping[str, Any]) -> None:
+    """Refuse writes whose ``attrs['nodata']`` and ``attrs['nodatavals']``
+    disagree.
+
+    The legacy resolver ``_resolve_nodata_attr`` prefers
+    ``attrs['nodata']`` and falls back to ``attrs['nodatavals']`` only
+    when the canonical scalar is missing. When both are set to
+    different sentinels, the writer silently picks the canonical one
+    and drops the rioxarray-style tuple. This check refuses the
+    ambiguity at the boundary.
+
+    Tolerant of bands that legitimately disagree with the canonical
+    sentinel as long as at least one band in ``nodatavals`` matches.
+    The rioxarray convention is per-band; xrspatial's canonical
+    ``nodata`` flattens to a single value. A tuple where every band
+    disagrees with ``attrs['nodata']`` is the regression case.
+
+    ``_FillValue`` stays deprioritised per the existing resolver
+    convention; this check does not look at it.
+
+    Context keys consumed:
+
+    * ``nodata_kwarg`` -- the explicit ``nodata=`` writer kwarg.
+      When set, it overrides attrs and the check short-circuits.
+    * ``attrs_nodata`` -- ``data.attrs.get('nodata')``.
+    * ``attrs_nodatavals`` -- ``data.attrs.get('nodatavals')``.
+    """
+    if context.get('nodata_kwarg') is not None:
+        return
+    nodata_attr = context.get('attrs_nodata')
+    nodatavals_attr = context.get('attrs_nodatavals')
+    if nodata_attr is None or nodatavals_attr is None:
+        return
+    # Coerce to float once for comparison; non-numeric entries (None,
+    # strings) and NaN are already handled by _resolve_nodata_attr and
+    # are out of scope for this disagreement check.
+    try:
+        canonical = float(nodata_attr)
+    except (TypeError, ValueError):
+        return
+    try:
+        vals = list(nodatavals_attr)
+    except TypeError:
+        return
+    concrete: list[float] = []
+    for v in vals:
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(fv):
+            continue
+        concrete.append(fv)
+    if not concrete:
+        return
+    # NaN canonical handling: if attrs['nodata'] is NaN, any concrete
+    # entry in the tuple is by definition "different". But NaN means
+    # "the float NaN is the sentinel", which contradicts a concrete
+    # numeric in the tuple. Refuse rather than guess.
+    if np.isnan(canonical):
+        raise ConflictingNodataError(
+            f"attrs['nodata']=nan but attrs['nodatavals']={nodatavals_attr!r} "
+            f"contains concrete numeric sentinels {concrete!r}. The "
+            f"canonical scalar (NaN) and the per-band tuple disagree on "
+            f"what the missing-data sentinel is. Reconcile the two attrs "
+            f"(drop the stale one, or pass the intended sentinel via the "
+            f"``nodata=`` kwarg) and retry. See issue #1987."
+        )
+    if any(v == canonical for v in concrete):
+        return
+    raise ConflictingNodataError(
+        f"attrs['nodata']={nodata_attr!r} disagrees with every concrete "
+        f"entry in attrs['nodatavals']={nodatavals_attr!r}. The writer "
+        f"would silently use attrs['nodata'] and discard the rioxarray "
+        f"tuple, so the on-disk sentinel would not match what the "
+        f"per-band tuple advertised. Reconcile the two attrs (drop the "
+        f"stale one, or pass the intended sentinel via the ``nodata=`` "
+        f"kwarg, which overrides both attrs) and retry. See issue #1987."
+    )
+
+
+register_write_metadata_check(_check_write_conflicting_nodata)
+
+
+# ---------------------------------------------------------------------------
+# Non-uniform coords write check (issue #1987 PR 4)
+# ---------------------------------------------------------------------------
+
+
+def _check_write_non_uniform_coords(context: Mapping[str, Any]) -> None:
+    """Refuse writes whose ``coords`` imply a non-uniform pixel grid.
+
+    The writer treats the first two y / x coord values as the pixel
+    size and emits a uniform-grid ``GeoTransform``. When the rest of
+    the coords disagree with that step (variable cell size, gaps),
+    the on-disk file silently misrepresents the geometry.
+
+    Exemption: int-dtype coords keep the existing #1969 sentinel
+    contract. Those coords are the 0..N-1 fallback the no-georef
+    reader emits, not geographic positions, so non-uniformity is
+    meaningless for them.
+
+    Context keys consumed:
+
+    * ``coord_y`` -- ``data.coords['y'].values`` (or equivalent).
+    * ``coord_x`` -- ``data.coords['x'].values``.
+
+    Missing or non-numeric coords are out of scope (handled by other
+    writer validation upstream).
+    """
+    for axis_name in ('y', 'x'):
+        coord = context.get(f'coord_{axis_name}')
+        if coord is None:
+            continue
+        arr = np.asarray(coord)
+        if arr.size < 3:
+            # Need at least 3 samples to detect non-uniformity.
+            continue
+        if np.issubdtype(arr.dtype, np.integer):
+            # #1969 sentinel exemption.
+            continue
+        if not np.issubdtype(arr.dtype, np.floating):
+            continue
+        diffs = np.diff(arr.astype(np.float64))
+        # Use a relative tolerance pegged to the step magnitude so that
+        # float32 rounding noise (~1e-7 relative) does not trip the
+        # check. Same tolerance the existing #1720 coord-regularity
+        # check uses.
+        step = float(diffs[0])
+        if step == 0.0:
+            raise NonUniformCoordsError(
+                f"data.coords[{axis_name!r}] is constant; the writer cannot "
+                f"derive a pixel size from a zero-step axis. See issue #1987."
+            )
+        rel = np.abs(diffs - step) / np.abs(step)
+        if not np.all(rel < 1e-5):
+            worst = int(np.argmax(rel))
+            raise NonUniformCoordsError(
+                f"data.coords[{axis_name!r}] is non-uniform: step "
+                f"{step!r} expected, but found {float(diffs[worst])!r} at "
+                f"index {worst} (relative drift {float(rel[worst]):.2e}). "
+                f"The writer treats the first two coord values as the "
+                f"pixel size and would emit a uniform-grid GeoTransform "
+                f"that misrepresents the rest of the axis. Resample to a "
+                f"uniform grid before writing (e.g. ``data.interp(...)``) "
+                f"or write each contiguous block as a separate file. "
+                f"See issue #1987."
+            )
+
+
+register_write_metadata_check(_check_write_non_uniform_coords)
+
+
+# ---------------------------------------------------------------------------
+# Unparseable CRS read check (issue #1987 PR 2)
+#
+# The write-side equivalent (refusing to emit an unparseable string to
+# GTCitationGeoKey) is already in place in ``_crs._validate_crs_fallback``
+# and now raises ``UnparseableCRSError`` (subclass of ``ValueError`` so
+# existing ``except ValueError`` callers keep working).
+# ---------------------------------------------------------------------------
+
+
+def _check_read_unparseable_crs(context: Mapping[str, Any]) -> None:
+    """Refuse reads whose ``crs_wkt`` cannot be parsed by pyproj.
+
+    A WKT that the reader extracts from ``GeoAsciiParams`` or a VRT
+    ``SRS`` tag may be partial or corrupted. The legacy reader emitted
+    it verbatim in ``attrs['crs_wkt']``; downstream code reading the
+    attr through pyproj would then crash with a less obvious message.
+
+    Context keys consumed:
+
+    * ``allow_unparseable_crs`` -- caller opt-out kwarg. When True,
+      this check is silent (matches the existing write-side behaviour).
+    * ``crs_wkt`` -- the WKT string extracted from the file.
+
+    Soft preconditions:
+
+    * No pyproj installed -> no-op (cannot prove the WKT is bad).
+    * WKT empty or None -> no-op.
+    * WKT that pyproj parses cleanly -> no-op.
+    """
+    if context.get('allow_unparseable_crs'):
+        return
+    crs_wkt = context.get('crs_wkt')
+    if not crs_wkt:
+        return
+    try:
+        from pyproj import CRS as _PyProjCRS
+        from pyproj.exceptions import CRSError as _PyProjCRSError
+    except ImportError:
+        return
+    try:
+        # ``from_user_input`` accepts WKT, EPSG-style ``"EPSG:NNNN"`` and
+        # PROJ strings -- anything pyproj can resolve. The GDAL VRT
+        # ``<SRS>`` tag (and a few other source paths) routinely stash
+        # non-WKT but pyproj-parseable strings into ``crs_wkt``, so the
+        # check rejects only the strict "pyproj cannot parse" case.
+        _PyProjCRS.from_user_input(crs_wkt)
+    except _PyProjCRSError as e:
+        excerpt = crs_wkt if len(crs_wkt) <= 80 else (crs_wkt[:77] + '...')
+        raise UnparseableCRSError(
+            f"GeoTIFF source advertises a CRS string that pyproj cannot "
+            f"parse: {excerpt!r} ({type(e).__name__}: {e}). The legacy "
+            f"reader would emit the unparseable string verbatim in "
+            f"attrs['crs_wkt'] and let downstream code crash on first use. "
+            f"Pass ``allow_unparseable_crs=True`` to keep that behaviour, "
+            f"or re-encode the source with a valid CRS. See issue #1987."
+        ) from e
+
+
+register_read_metadata_check(_check_read_unparseable_crs)
+
+
+# ---------------------------------------------------------------------------
+# Rotated transform read check (issue #1987 PR 3)
+# ---------------------------------------------------------------------------
+
+
+def _check_read_rotated_transform(context: Mapping[str, Any]) -> None:
+    """Refuse reads whose ``transform`` has non-zero rotation/shear terms.
+
+    Downstream xrspatial functions assume axis-aligned rasters
+    (the GeoTransform's b and d terms are zero). A rotated grid would
+    silently produce wrong results in slope / aspect / hillshade /
+    proximity / zonal-statistics.
+
+    Context keys consumed:
+
+    * ``allow_rotated`` -- caller opt-out kwarg.
+    * ``transform`` -- the 6-tuple ``(pixel_width, b, origin_x, d,
+      pixel_height, origin_y)`` (rasterio Affine ordering).
+
+    A transform with ``b == 0`` and ``d == 0`` is axis-aligned and
+    passes. A missing transform is out of scope (the no-georef path
+    handles it).
+    """
+    if context.get('allow_rotated'):
+        return
+    transform = context.get('transform')
+    if not transform:
+        return
+    try:
+        # rasterio Affine ordering: (pixel_width, b, origin_x, d, pixel_height, origin_y)
+        b = float(transform[1])
+        d = float(transform[3])
+    except (IndexError, TypeError, ValueError):
+        return
+    if b == 0.0 and d == 0.0:
+        return
+    raise RotatedTransformError(
+        f"GeoTIFF source carries a rotated affine transform (b={b!r}, "
+        f"d={d!r}; both must be 0.0 for an axis-aligned grid). "
+        f"Downstream xrspatial ops (slope, aspect, hillshade, proximity, "
+        f"zonal) assume axis-aligned rasters and would silently produce "
+        f"wrong results on a rotated grid. Pass ``allow_rotated=True`` "
+        f"to read the pixel grid without the geospatial assumption "
+        f"(useful when you only want the array, not the geo-aware "
+        f"downstream ops). See issue #1987."
+    )
+
+
+register_read_metadata_check(_check_read_rotated_transform)
+
+
+# ---------------------------------------------------------------------------
+# Mixed band metadata read check (issue #1987 PR 5)
+# ---------------------------------------------------------------------------
+
+
+def _check_read_mixed_band_metadata(context: Mapping[str, Any]) -> None:
+    """Refuse VRT reads where bands declare disagreeing per-band nodata.
+
+    A VRT can mosaic sources with different per-band nodata sentinels.
+    The legacy reader flattens to one value silently, which means one
+    band's "valid" pixels can collide with another band's sentinel
+    after the flatten. The fail-closed default refuses the ambiguity;
+    pass ``band_nodata='first'`` to keep the legacy behaviour
+    explicitly.
+
+    Context keys consumed:
+
+    * ``band_nodata`` -- caller opt-out kwarg. ``None`` means
+      strict (raise on disagreement); ``'first'`` keeps the legacy
+      flatten-to-first behaviour.
+    * ``band_nodata_values`` -- iterable of per-band nodata sentinels
+      extracted from the VRT (one entry per band; ``None`` for bands
+      without a declared sentinel).
+    """
+    band_nodata = context.get('band_nodata')
+    if band_nodata == 'first':
+        return
+    vals = context.get('band_nodata_values')
+    if not vals:
+        return
+    seen: list = []
+    for v in vals:
+        if v is None:
+            continue
+        # Two NaNs are considered equal here (both mean "NaN sentinel"),
+        # matching how _resolve_nodata_attr treats them.
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if any(_same_nodata(fv, s) for s in seen):
+            continue
+        seen.append(fv)
+    if len(seen) <= 1:
+        return
+    raise MixedBandMetadataError(
+        f"VRT source declares disagreeing per-band nodata sentinels: "
+        f"{vals!r}. Flattening to a single value would silently collide "
+        f"with another band's valid pixels. Pass "
+        f"``band_nodata='first'`` to keep the legacy flatten-to-first "
+        f"behaviour, or rebuild the VRT with a single shared sentinel. "
+        f"See issue #1987."
+    )
+
+
+def _same_nodata(a: float, b: float) -> bool:
+    """Equality with NaN-equals-NaN semantics for nodata comparison."""
+    if np.isnan(a) and np.isnan(b):
+        return True
+    return a == b
+
+
+# NOT registered by default. The mixed-band check has a much larger
+# migration cost than its sibling read-side checks (around 35 existing
+# test sites would need to opt in via ``band_nodata='first'`` to keep
+# their legacy assertions), so it lands as a follow-up PR that bundles
+# the check activation with the test migration. The check itself and
+# the ``band_nodata=`` VRT kwarg ship now so the follow-up is a
+# one-line registration call plus the test sweep.
+# register_read_metadata_check(_check_read_mixed_band_metadata)

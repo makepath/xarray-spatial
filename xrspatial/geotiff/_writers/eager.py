@@ -271,16 +271,26 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     _validate_nodata_arg(nodata)
 
-    # Issue #1987 ambiguous-metadata checks. Today only the
-    # conflicting-crs/crs_wkt write check is registered; other cases
-    # land in follow-up PRs. The hook is a no-op when no check is
-    # registered, so this call is safe even if every check is later
-    # unregistered for a specific entry point.
+    # Issue #1987 ambiguous-metadata checks. The hook is a no-op
+    # when no check is registered, so this call is safe even if every
+    # check is later unregistered for a specific entry point.
     _attrs = getattr(data, 'attrs', None) or {}
+    _coords = getattr(data, 'coords', None)
+    _coord_y = _coords['y'].values if (
+        _coords is not None and 'y' in _coords
+    ) else None
+    _coord_x = _coords['x'].values if (
+        _coords is not None and 'x' in _coords
+    ) else None
     validate_write_metadata({
         'crs_kwarg': crs,
         'attrs_crs': _attrs.get('crs'),
         'attrs_crs_wkt': _attrs.get('crs_wkt'),
+        'nodata_kwarg': nodata,
+        'attrs_nodata': _attrs.get('nodata'),
+        'attrs_nodatavals': _attrs.get('nodatavals'),
+        'coord_y': _coord_y,
+        'coord_x': _coord_x,
     })
 
     # Up-front validation: catch bad compression names before they reach
@@ -801,12 +811,24 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
 
     # Issue #1987 ambiguous-metadata checks; mirrors the call in
     # ``to_geotiff`` so the dask-VRT write path enforces the same
-    # crs/crs_wkt consistency rule.
+    # crs/crs_wkt / nodata / coord rules.
     _attrs = getattr(data, 'attrs', None) or {}
+    _coords = getattr(data, 'coords', None)
+    _coord_y = _coords['y'].values if (
+        _coords is not None and 'y' in _coords
+    ) else None
+    _coord_x = _coords['x'].values if (
+        _coords is not None and 'x' in _coords
+    ) else None
     validate_write_metadata({
         'crs_kwarg': crs,
         'attrs_crs': _attrs.get('crs'),
         'attrs_crs_wkt': _attrs.get('crs_wkt'),
+        'nodata_kwarg': nodata,
+        'attrs_nodata': _attrs.get('nodata'),
+        'attrs_nodatavals': _attrs.get('nodatavals'),
+        'coord_y': _coord_y,
+        'coord_x': _coord_x,
     })
 
     # Validate compression_level against codec-specific range

@@ -20,7 +20,11 @@ import warnings
 import numpy as np
 import xarray as xr
 
-from .._attrs import _populate_attrs_from_geo_info, _set_nodata_attrs
+from .._attrs import (
+    _populate_attrs_from_geo_info,
+    _set_nodata_attrs,
+    _validate_read_geo_info,
+)
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
 )
@@ -80,6 +84,8 @@ def read_geotiff_gpu(source: str, *,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                     allow_rotated: bool = False,
+                     allow_unparseable_crs: bool = False,
                      gpu: str = _GPU_DEPRECATED_SENTINEL,
                      ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
@@ -233,6 +239,8 @@ def read_geotiff_gpu(source: str, *,
             source, dtype=dtype, chunks=chunks,
             overview_level=overview_level, window=window, band=band,
             name=name, max_pixels=max_pixels,
+            allow_rotated=allow_rotated,
+            allow_unparseable_crs=allow_unparseable_crs,
         )
 
     from .._reader import (
@@ -382,6 +390,11 @@ def read_geotiff_gpu(source: str, *,
             if name is None:
                 import os
                 name = os.path.splitext(os.path.basename(source))[0]
+            _validate_read_geo_info(
+                geo_info, window=window,
+                allow_rotated=allow_rotated,
+                allow_unparseable_crs=allow_unparseable_crs,
+            )
             attrs = {}
             _populate_attrs_from_geo_info(attrs, geo_info, window=window)
             # Apply nodata mask + record sentinel so the GPU read agrees
@@ -710,6 +723,12 @@ def read_geotiff_gpu(source: str, *,
         import os
         name = os.path.splitext(os.path.basename(source))[0]
 
+    _validate_read_geo_info(
+        geo_info, window=window,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+    )
+
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
     # ``attrs['nodata']`` + ``attrs['masked_nodata']`` reflect the
@@ -881,7 +900,9 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
 
 
 def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
-                              window, band, name, max_pixels):
+                              window, band, name, max_pixels,
+                              allow_rotated: bool = False,
+                              allow_unparseable_crs: bool = False):
     """Lazy Dask+CuPy backend for ``read_geotiff_gpu(chunks=...)``.
 
     Two paths produce the same shape of dask graph:
@@ -941,6 +962,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                     src_path, ifd, geo_info, header,
                     dtype=dtype, chunks=chunks, window=window, band=band,
                     name=name, max_pixels=max_pixels,
+                    allow_rotated=allow_rotated,
+                    allow_unparseable_crs=allow_unparseable_crs,
                 )
     except Exception:
         # GDS qualification failed; fall back to the CPU path. The
@@ -952,6 +975,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
         source, dtype=dtype, chunks=chunks,
         overview_level=overview_level, window=window, band=band,
         max_pixels=max_pixels, name=name,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
     )
 
     cpu_dask_arr = cpu_da.data
@@ -973,7 +998,9 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
 
 def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
                                   dtype, chunks, window, band, name,
-                                  max_pixels):
+                                  max_pixels,
+                                  allow_rotated: bool = False,
+                                  allow_unparseable_crs: bool = False):
     """Build a Dask+CuPy graph that decodes each chunk disk->GPU.
 
     Caller must have verified that the source qualifies via
@@ -1158,6 +1185,12 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         coords['band'] = np.arange(n_bands_out)
     else:
         dims = ['y', 'x']
+
+    _validate_read_geo_info(
+        geo_info, window=window,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+    )
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)

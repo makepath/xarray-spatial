@@ -266,10 +266,22 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # Issue #1987 ambiguous-metadata checks; mirrors ``to_geotiff`` so the
     # GPU writer enforces the same crs/crs_wkt consistency rule.
     _attrs = getattr(data, 'attrs', None) or {}
+    _coords = getattr(data, 'coords', None)
+    _coord_y = _coords['y'].values if (
+        _coords is not None and 'y' in _coords
+    ) else None
+    _coord_x = _coords['x'].values if (
+        _coords is not None and 'x' in _coords
+    ) else None
     validate_write_metadata({
         'crs_kwarg': crs,
         'attrs_crs': _attrs.get('crs'),
         'attrs_crs_wkt': _attrs.get('crs_wkt'),
+        'nodata_kwarg': nodata,
+        'attrs_nodata': _attrs.get('nodata'),
+        'attrs_nodatavals': _attrs.get('nodatavals'),
+        'coord_y': _coord_y,
+        'coord_x': _coord_x,
     })
     if max_z_error < 0:
         raise ValueError(
