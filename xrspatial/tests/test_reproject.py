@@ -2251,6 +2251,135 @@ class TestVerticalShift:
                       src_vertical_crs='egm96',  # case-sensitive
                       tgt_vertical_crs='ellipsoidal')
 
+    def test_dask_backend_matches_numpy(self):
+        """Dask-backed input must apply the vertical shift correctly (#2025).
+
+        Boolean fancy indexing on a dask array used to crash; the dask
+        path now runs through ``map_blocks`` and matches the numpy result
+        bit-for-bit.
+        """
+        import dask.array as da
+        from xrspatial.reproject import reproject
+
+        np.random.seed(0)
+        host = (np.random.rand(48, 48) * 100).astype(np.float64)
+        ds = xr.DataArray(
+            host, dims=['y', 'x'],
+            coords={'y': np.linspace(41.1, 40.3, 48),
+                    'x': np.linspace(-74.4, -73.6, 48)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        ds_d = xr.DataArray(
+            da.from_array(host, chunks=(16, 16)), dims=['y', 'x'],
+            coords=ds.coords, attrs=ds.attrs,
+        )
+        out_np = reproject(ds, 'EPSG:4326',
+                           src_vertical_crs='EGM96',
+                           tgt_vertical_crs='ellipsoidal')
+        out_da = reproject(ds_d, 'EPSG:4326',
+                           src_vertical_crs='EGM96',
+                           tgt_vertical_crs='ellipsoidal')
+        # Output is still dask-backed so the graph stays lazy.
+        assert isinstance(out_da.data, da.Array)
+        np.testing.assert_allclose(
+            np.asarray(out_da.data), out_np.values, rtol=0, atol=1e-12,
+        )
+
+    def test_multiband_3d_applies_shift_per_band(self):
+        """3-D (y, x, band) result must apply the same N per pixel to
+        every band (#2025).
+
+        The earlier per-strip boolean update raised a broadcasting
+        ValueError for any 3-D source. The shift now loops over bands.
+        """
+        from xrspatial.reproject import reproject
+
+        np.random.seed(1)
+        data = (np.random.rand(48, 48, 3) * 100).astype(np.float64)
+        raster = xr.DataArray(
+            data, dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(41.1, 40.3, 48),
+                    'x': np.linspace(-74.4, -73.6, 48),
+                    'band': [1, 2, 3]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        result = reproject(raster, 'EPSG:4326',
+                           src_vertical_crs='EGM96',
+                           tgt_vertical_crs='ellipsoidal')
+        assert result.shape == (48, 48, 3)
+
+        # Same N applied to every band -> inter-band differences are
+        # preserved up to interpolation noise.
+        for b in range(1, 3):
+            diff_in = data[:, :, 0] - data[:, :, b]
+            diff_out = result.values[:, :, 0] - result.values[:, :, b]
+            np.testing.assert_allclose(diff_out, diff_in, rtol=0, atol=1e-6)
+
+        # Reference: band 0 should equal the 2-D shift result.
+        raster_2d = xr.DataArray(
+            data[:, :, 0], dims=['y', 'x'],
+            coords={'y': raster.coords['y'], 'x': raster.coords['x']},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        out_2d = reproject(raster_2d, 'EPSG:4326',
+                           src_vertical_crs='EGM96',
+                           tgt_vertical_crs='ellipsoidal')
+        np.testing.assert_allclose(
+            result.values[:, :, 0], out_2d.values, rtol=0, atol=1e-9,
+        )
+
+    def test_cupy_backend_matches_numpy(self):
+        """CuPy-backed input must apply the vertical shift correctly (#2025).
+
+        The CPU JIT geoid lookup cannot accept cupy arrays directly; the
+        shift now round-trips through host and returns cupy output. Only
+        the vertical-shift increment is compared so this test does not
+        require the cupy reproject path to match numpy bit-for-bit (which
+        is tracked separately).
+        """
+        cp = pytest.importorskip('cupy')
+        from xrspatial.reproject import reproject
+
+        host = np.full((32, 32), 100.0, dtype=np.float64)
+        ds_np = xr.DataArray(
+            host, dims=['y', 'x'],
+            coords={'y': np.linspace(41.1, 40.3, 32),
+                    'x': np.linspace(-74.4, -73.6, 32)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        ds_cu = xr.DataArray(
+            cp.asarray(host), dims=['y', 'x'],
+            coords=ds_np.coords, attrs=ds_np.attrs,
+        )
+
+        base_np = reproject(ds_np, 'EPSG:4326')
+        shifted_np = reproject(ds_np, 'EPSG:4326',
+                               src_vertical_crs='EGM96',
+                               tgt_vertical_crs='ellipsoidal')
+        delta_np = shifted_np.values - base_np.values
+
+        base_cu = reproject(ds_cu, 'EPSG:4326')
+        shifted_cu = reproject(ds_cu, 'EPSG:4326',
+                               src_vertical_crs='EGM96',
+                               tgt_vertical_crs='ellipsoidal')
+        assert isinstance(shifted_cu.data, cp.ndarray)
+        delta_cu = (cp.asnumpy(shifted_cu.data)
+                    - cp.asnumpy(base_cu.data))
+
+        # Guard against a silent no-op regression: if the cupy shift
+        # ever fails to fire, delta_cu collapses to zero and the
+        # cross-backend allclose below would still pass wherever
+        # delta_np is also zero.
+        assert np.any(np.abs(delta_cu) > 0), (
+            "vertical shift did not fire on cupy backend"
+        )
+
+        # The increment from the geoid shift must agree across backends.
+        finite = np.isfinite(delta_np) & np.isfinite(delta_cu)
+        np.testing.assert_allclose(
+            delta_cu[finite], delta_np[finite], rtol=0, atol=1e-9,
+        )
+
 
 class TestMetadataPreservation:
     """reproject() and merge() must carry input attrs forward."""
