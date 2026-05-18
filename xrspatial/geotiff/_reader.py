@@ -5,11 +5,11 @@ import math
 import mmap
 import os as _os_module
 import threading
-import urllib.request
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+import urllib3
 
 from ._compression import (
     COMPRESSION_LERC,
@@ -342,28 +342,24 @@ class _FileSource:
 
 
 def _get_http_pool():
-    """Return a module-level urllib3 PoolManager, or None if unavailable."""
+    """Return the module-level urllib3 PoolManager, building it on first call."""
     global _http_pool
     if _http_pool is not None:
         return _http_pool
-    try:
-        import urllib3
-        _http_pool = urllib3.PoolManager(
-            num_pools=10,
-            maxsize=10,
-            retries=urllib3.Retry(
-                total=2,
-                backoff_factor=0.1,
-                # Redirects are *not* delegated to urllib3 -- they're
-                # followed manually in ``_HTTPSource._request`` so each
-                # ``Location`` runs through ``_validate_http_url`` before
-                # the next GET. Issue #1664.
-                redirect=False,
-            ),
-        )
-        return _http_pool
-    except ImportError:
-        return None
+    _http_pool = urllib3.PoolManager(
+        num_pools=10,
+        maxsize=10,
+        retries=urllib3.Retry(
+            total=2,
+            backoff_factor=0.1,
+            # Redirects are *not* delegated to urllib3 -- they're
+            # followed manually in ``_HTTPSource._request`` so each
+            # ``Location`` runs through ``_validate_http_url`` before
+            # the next GET. Issue #1664.
+            redirect=False,
+        ),
+    )
+    return _http_pool
 
 
 _http_pool = None
@@ -381,10 +377,10 @@ _HTTP_CONNECT_TIMEOUT_DEFAULT = 10.0
 _HTTP_READ_TIMEOUT_DEFAULT = 30.0
 
 #: URL schemes that ``_HTTPSource`` accepts. The HTTP source is a Range
-#: GET implementation backed by urllib3 / urllib, both of which only speak
-#: ``http`` and ``https`` -- widening here would just push the failure to
-#: connect time. fsspec handles every other ``scheme://`` and is routed
-#: separately by :func:`_open_source`.
+#: GET implementation backed by urllib3, which only speaks ``http`` and
+#: ``https`` -- widening here would just push the failure to connect time.
+#: fsspec handles every other ``scheme://`` and is routed separately by
+#: :func:`_open_source`.
 _HTTP_ALLOWED_SCHEMES = ('http', 'https')
 
 
@@ -663,23 +659,6 @@ def split_coalesced_bytes(
     return out
 
 
-class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Stdlib redirect handler that re-validates each ``Location``.
-
-    The default ``HTTPRedirectHandler`` follows 3xx responses with no
-    awareness of the SSRF allow-list, so a public URL could 302 into a
-    loopback or private IP. This subclass calls :func:`_validate_http_url`
-    on every redirect target before building the follow-up request, and
-    caps the chain at :data:`_HTTP_MAX_REDIRECTS`. Issue #1664.
-    """
-
-    max_redirections = _HTTP_MAX_REDIRECTS
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _validate_http_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
 # ---------------------------------------------------------------------------
 # Pinned-IP urllib3 connection (issue #1846)
 # ---------------------------------------------------------------------------
@@ -872,24 +851,16 @@ def _make_pinned_pool(scheme: str, host: str, port: int, pinned_ip: str,
     return pool
 
 
-_stdlib_opener = None
-
-
-def _get_stdlib_opener():
-    """Return a stdlib opener with the validating redirect handler installed."""
-    global _stdlib_opener
-    if _stdlib_opener is None:
-        _stdlib_opener = urllib.request.build_opener(
-            _ValidatingRedirectHandler())
-    return _stdlib_opener
-
-
 class _HTTPSource:
     """HTTP data source using range requests with connection reuse.
 
-    Uses urllib3.PoolManager when available (reuses TCP connections and
-    TLS sessions across range requests to the same host). Falls back to
-    stdlib urllib.request if urllib3 is not installed.
+    Uses :class:`urllib3.PoolManager` for the unpinned escape-hatch path
+    and a per-hop pinned ``HTTP[S]ConnectionPool`` for the default path,
+    so TCP and TLS state is reused across range requests to the same host.
+    urllib3 is a hard install dependency; there is no stdlib fallback.
+    The stdlib ``urllib.request`` path was removed in #2050 because it
+    re-resolved the hostname at request time, defeating the IP pin that
+    closes the DNS-rebinding TOCTOU from #1846.
     """
 
     def __init__(self, url: str):
@@ -918,12 +889,7 @@ class _HTTPSource:
         self._read_timeout = _http_read_timeout()
 
     def _urllib3_timeout(self):
-        """Build a urllib3 Timeout object lazily.
-
-        Imported here so that the module-level import of urllib3 stays
-        optional (we fall back to stdlib if urllib3 is missing).
-        """
-        import urllib3
+        """Build a :class:`urllib3.Timeout` for this source."""
         return urllib3.Timeout(
             connect=self._connect_timeout, read=self._read_timeout)
 
@@ -1030,34 +996,14 @@ class _HTTPSource:
             return b''
         end = start + length - 1
         headers = {'Range': f'bytes={start}-{end}'}
-        if self._pool is not None:
-            resp = self._request(headers=headers)
-            data = resp.data
-            return self._validate_range_response(
-                status=resp.status,
-                content_range=resp.headers.get('Content-Range'),
-                data=data,
-                start=start,
-                length=length,
-            )
-        # Fallback: stdlib. urlopen's ``timeout`` is a single value, so
-        # use the more conservative read timeout; the connect timeout
-        # isn't separately controllable on stdlib urllib. The opener
-        # carries ``_ValidatingRedirectHandler`` so 3xx hops are re-
-        # validated and capped at ``_HTTP_MAX_REDIRECTS``.
-        req = urllib.request.Request(self._url, headers=headers)
-        with _get_stdlib_opener().open(req, timeout=self._read_timeout) as resp:
-            data = resp.read()
-            # stdlib raises HTTPError for 4xx/5xx automatically; we still
-            # need to catch the "server ignored Range and returned 200
-            # with the whole object" case, plus any short body.
-            return self._validate_range_response(
-                status=getattr(resp, 'status', None) or resp.getcode(),
-                content_range=resp.headers.get('Content-Range'),
-                data=data,
-                start=start,
-                length=length,
-            )
+        resp = self._request(headers=headers)
+        return self._validate_range_response(
+            status=resp.status,
+            content_range=resp.headers.get('Content-Range'),
+            data=resp.data,
+            start=start,
+            length=length,
+        )
 
     @staticmethod
     def _validate_range_response(*, status, content_range, data,
@@ -1217,11 +1163,7 @@ class _HTTPSource:
         return split_coalesced_bytes(merged_bytes, mapping)
 
     def read_all(self) -> bytes:
-        if self._pool is not None:
-            return self._request().data
-        req = urllib.request.Request(self._url)
-        with _get_stdlib_opener().open(req, timeout=self._read_timeout) as resp:
-            return resp.read()
+        return self._request().data
 
     @property
     def size(self) -> int | None:

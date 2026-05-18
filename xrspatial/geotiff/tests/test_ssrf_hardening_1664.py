@@ -267,17 +267,13 @@ class _MockPool:
 
 
 class TestRedirectRevalidation:
-    # The test_urllib3_* tests exercise the urllib3 transport path: they mock
-    # urllib3.PoolManager and call read_range(), which internally builds a
-    # urllib3.Timeout via _urllib3_timeout(). urllib3 is an optional runtime
-    # dependency (_HTTPSource falls back to stdlib urllib.request when it's
-    # missing -- see _reader.py:615-617), so each urllib3-using test starts
-    # with pytest.importorskip("urllib3"). The test_stdlib_* tests below
-    # exercise the stdlib redirect handler directly and run regardless.
+    # urllib3 is a hard install dependency (see setup.cfg install_requires),
+    # so the urllib3 transport path is the only path. The stdlib fallback
+    # was removed in #2050 along with ``_ValidatingRedirectHandler``: it
+    # bypassed the IP pin that closes the #1846 DNS-rebinding TOCTOU.
 
     def test_urllib3_redirect_to_private_rejected(self, monkeypatch):
         """Public host that 302-redirects to loopback must be rejected."""
-        pytest.importorskip("urllib3")
         # Initial validator pass: example.com resolves to a public IP.
         monkeypatch.setattr(
             socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
@@ -299,7 +295,6 @@ class TestRedirectRevalidation:
 
     def test_urllib3_redirect_to_public_followed(self, monkeypatch):
         """Public -> public redirect is followed; validator passes each hop."""
-        pytest.importorskip("urllib3")
         monkeypatch.setattr(
             socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
         src = _reader_mod._HTTPSource('https://example.com/cog.tif')
@@ -315,7 +310,6 @@ class TestRedirectRevalidation:
 
     def test_urllib3_redirect_chain_capped(self, monkeypatch):
         """More than _HTTP_MAX_REDIRECTS hops raises rather than looping."""
-        pytest.importorskip("urllib3")
         monkeypatch.setattr(
             socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
         src = _reader_mod._HTTPSource('https://example.com/cog.tif')
@@ -333,7 +327,6 @@ class TestRedirectRevalidation:
 
     def test_urllib3_relative_location_resolved(self, monkeypatch):
         """Relative Location like ``/other.tif`` resolves against the source."""
-        pytest.importorskip("urllib3")
         monkeypatch.setattr(
             socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
         src = _reader_mod._HTTPSource('https://example.com/dir/cog.tif')
@@ -344,55 +337,6 @@ class TestRedirectRevalidation:
         data = src.read_range(0, 100)
         assert data == b'after-relative'
         assert src._pool.calls[1] == 'https://example.com/other.tif'
-
-    def test_stdlib_redirect_handler_rejects_private(self):
-        """The stdlib redirect handler re-validates each ``Location``.
-
-        Direct test of :class:`_ValidatingRedirectHandler` -- we don't go
-        through a real HTTP request, we just confirm that
-        ``redirect_request`` runs the URL through ``_validate_http_url``
-        before allowing the follow-up. Loopback IP literal (``127.0.0.1``)
-        is rejected without needing DNS, so the test stays hermetic.
-        """
-        import http.client
-        import io
-        from urllib.request import Request
-
-        handler = _reader_mod._ValidatingRedirectHandler()
-        original = Request('https://example.com/cog.tif')
-        new_url = 'http://127.0.0.1:8000/inner.tif'
-        # ``http_error_30x`` is what urllib calls on a redirect; it
-        # delegates to ``redirect_request`` for policy. The new URL has
-        # to be re-validated *before* the next request is built.
-        headers = http.client.HTTPMessage()
-        with pytest.raises(UnsafeURLError):
-            handler.redirect_request(
-                original, io.BytesIO(b''), 302, 'Found', headers, new_url)
-
-    def test_stdlib_redirect_handler_allows_public(self, monkeypatch):
-        """Public redirect target passes through unchanged."""
-        import http.client
-        import io
-        from urllib.request import Request
-
-        monkeypatch.setattr(
-            socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
-
-        handler = _reader_mod._ValidatingRedirectHandler()
-        original = Request('https://example.com/cog.tif')
-        new_url = 'https://cdn.example.com/x.tif'
-        headers = http.client.HTTPMessage()
-        # Should not raise; returns a Request for the new URL (parent
-        # class behaviour) so urllib can follow it.
-        result = handler.redirect_request(
-            original, io.BytesIO(b''), 302, 'Found', headers, new_url)
-        assert result is None or result.full_url == new_url
-
-    def test_stdlib_redirect_handler_caps_chain(self):
-        """The handler's max_redirections matches _HTTP_MAX_REDIRECTS."""
-        handler = _reader_mod._ValidatingRedirectHandler()
-        assert handler.max_redirections == _reader_mod._HTTP_MAX_REDIRECTS
-
 
 # ---------------------------------------------------------------------------
 # Integration: _HTTPSource.__init__ runs the validator
