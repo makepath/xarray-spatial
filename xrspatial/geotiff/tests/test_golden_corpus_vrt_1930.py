@@ -35,6 +35,9 @@ rasterio = pytest.importorskip("rasterio")
 
 from xrspatial.geotiff import open_geotiff, write_vrt  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
+from xrspatial.geotiff.tests.golden_corpus._oracle import (  # noqa: E402
+    compare_to_oracle,
+)
 
 
 FIXTURES_DIR = (
@@ -59,7 +62,7 @@ def _build_two_source_vrt(
     with rasterio.open(src_path) as src:
         data = src.read(1)
         profile = src.profile.copy()
-        height, width = data.shape
+        _height, width = data.shape
         t = src.transform
     pw = float(t.a)
     ox = float(t.c)
@@ -112,7 +115,11 @@ def test_vrt_two_source_horizontal_mosaic(
 
     vrt_path, expected = _build_two_source_vrt(src_path, tmp_path)
 
-    # rasterio reference read of the VRT.
+    # Independent sanity: the rasterio read of the VRT really does
+    # produce the horizontally concatenated mosaic. If the VRT writer
+    # ever drifts, this assertion catches it before the oracle does --
+    # which matters because the oracle also reads through rasterio and
+    # would silently agree with itself on a busted VRT.
     with rasterio.open(vrt_path) as src:
         ref = src.read(1)
     assert ref.shape == expected.shape, (
@@ -121,21 +128,11 @@ def test_vrt_two_source_horizontal_mosaic(
     )
     np.testing.assert_array_equal(ref, expected)
 
-    # xrspatial read of the VRT.
+    # Parity check via the shared oracle. Compares pixels, dtype,
+    # transform, CRS, and nodata against the rasterio reference read of
+    # the same VRT, the same as every other phase 3 backend module.
     candidate = open_geotiff(str(vrt_path))
-    cand_pixels = np.asarray(candidate.data)
-    if cand_pixels.ndim == 3 and cand_pixels.shape[0] == 1:
-        cand_pixels = cand_pixels[0]
-    elif cand_pixels.ndim == 3 and cand_pixels.shape[-1] == 1:
-        cand_pixels = cand_pixels[..., 0]
-    assert cand_pixels.shape == expected.shape, (
-        f"xrspatial VRT read shape mismatch: cand={cand_pixels.shape}, "
-        f"expected={expected.shape}"
-    )
-    np.testing.assert_array_equal(cand_pixels, expected)
-    assert candidate.dtype == ref.dtype, (
-        f"dtype mismatch: rasterio={ref.dtype}, xrspatial={candidate.dtype}"
-    )
+    compare_to_oracle(vrt_path, candidate)
 
 
 def test_vrt_source_ids_exist_in_manifest() -> None:
