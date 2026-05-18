@@ -364,6 +364,38 @@ class TestValidation:
                       width=10, height=10, bounds=(0, 0, 1, 1),
                       chunks=bad)
 
+    def test_empty_geometry_does_not_poison_inferred_bounds(self):
+        # Issue #2065: an empty geometry returns nan from .bounds; the
+        # caller used .min()/.max() unfiltered, so a single empty geom
+        # poisoned the inferred extent and produced a raster with nan
+        # x/y coords.  Drop the empty and infer from the rest.
+        empty = Polygon()
+        result = rasterize(
+            [(empty, 99), (box(0, 0, 1, 1), 1)],
+            width=2, height=2)
+        assert np.all(np.isfinite(result.x.values))
+        assert np.all(np.isfinite(result.y.values))
+        assert np.all(result.values == 1)
+
+    def test_only_empty_geometry_requires_explicit_bounds(self):
+        empty = Polygon()
+        with pytest.raises(ValueError, match="bounds must be provided"):
+            rasterize([(empty, 1.0)], width=2, height=2)
+
+    def test_empty_geodataframe_requires_explicit_bounds(self):
+        # Issue #2065: total_bounds on an empty frame is (nan,nan,nan,nan).
+        # That used to bypass the empty-bounds guard.
+        import geopandas as gpd
+        empty_gdf = gpd.GeoDataFrame(
+            {'value': []}, geometry=gpd.GeoSeries([]))
+        with pytest.raises(ValueError, match="bounds must be provided"):
+            rasterize(empty_gdf, width=2, height=2, column='value')
+
+    def test_explicit_nan_bounds_rejected(self):
+        with pytest.raises(ValueError, match="must be finite"):
+            rasterize([(box(0, 0, 1, 1), 1.0)], width=2, height=2,
+                      bounds=(0, 0, float('nan'), 1))
+
 
 # ---------------------------------------------------------------------------
 # all_touched mode
