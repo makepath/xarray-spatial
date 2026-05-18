@@ -736,7 +736,13 @@ def write_fixture(entry: dict[str, Any], output_dir: pathlib.Path) -> pathlib.Pa
     # External overviews are built by re-opening the file in `r+` with
     # the TIFF_USE_OVR=YES env hint so GDAL writes a `<path>.ovr` sidecar
     # instead of appending an internal overview IFD. The sidecar is
-    # committed alongside the .tif.
+    # committed alongside the .tif. The reopen mutates the .tif mtime,
+    # which the final ``os.utime`` below renormalises.
+    #
+    # COMPRESS_OVERVIEW is hard-coded to DEFLATE because every current
+    # external-overview fixture wants a compressed sidecar. If a future
+    # fixture needs another codec (or none), promote this to a manifest
+    # knob rather than threading another env override here.
     overviews = entry.get("overviews") or []
     if overviews and entry.get("external_overview"):
         from rasterio.enums import Resampling
@@ -754,8 +760,9 @@ def write_fixture(entry: dict[str, Any], output_dir: pathlib.Path) -> pathlib.Pa
     if extra_tags:
         _apply_extra_tags_with_tifffile(out_path, extra_tags)
 
-    # Normalise mtime so re-runs are byte-stable on filesystems that
-    # encode timestamps in sidecar files.
+    # Normalise mtime so re-runs are byte-stable. The .tif is touched here
+    # because both the rasterio writer above and the external-overview
+    # ``r+`` reopen bump mtime to wall-clock time.
     os.utime(out_path, (DETERMINISTIC_EPOCH, DETERMINISTIC_EPOCH))
     return out_path
 

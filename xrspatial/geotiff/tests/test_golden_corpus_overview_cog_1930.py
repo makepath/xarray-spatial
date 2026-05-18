@@ -29,8 +29,6 @@ import xarray as xr
 pytest.importorskip("yaml")
 rasterio = pytest.importorskip("rasterio")
 
-from rasterio.transform import Affine  # noqa: E402
-
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import (  # noqa: E402
     compare_to_oracle,
@@ -140,6 +138,23 @@ def test_external_overview_fixture_reports_overviews():
     path = _fixture_path(EXTERNAL_ID)
     with rasterio.open(path) as src:
         assert src.overviews(1) == [2, 4]
+
+
+def test_external_overview_fixture_has_no_internal_overviews():
+    """The .tif itself carries no overview IFDs; everything lives in the sidecar.
+
+    ``src.overviews()`` returns the union of internal IFD overviews and any
+    sidecar reachable through GDAL's directory scan. Masking the sidecar with
+    ``GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR`` forces rasterio to read only
+    the in-file overview chain, which must be empty for this fixture.
+    """
+    path = _fixture_path(EXTERNAL_ID)
+    with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+        with rasterio.open(path) as src:
+            assert src.overviews(1) == [], (
+                "external-overview fixture must keep the .tif IFD chain "
+                "free of internal overviews"
+            )
 
 
 def test_external_overview_fixture_matches_oracle():
