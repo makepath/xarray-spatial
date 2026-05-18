@@ -236,75 +236,14 @@ def test_read_all_passes_when_body_fits_budget():
 # Stdlib fallback (urllib3 unavailable)
 # ---------------------------------------------------------------------------
 
-def test_read_all_stdlib_fallback_rejects_oversized_content_length():
-    """When urllib3 is not in play, ``read_all`` drops to stdlib
-    ``urllib.request``. The Content-Length pre-flight check must still
-    fire on that path."""
-
-    class _Handler(_BaseHandler):
-        payload = b'E' * 2048
-
-        def do_GET(self):  # noqa: N802
-            self.send_response(200)
-            self.send_header('Content-Length', str(len(self.payload)))
-            self.end_headers()
-            self.wfile.write(self.payload)
-
-    url, httpd, _ = _serve(_Handler)
-    try:
-        src = _HTTPSource(url)
-        # Force the stdlib branch by dropping the pool reference.
-        src._pool = None
-        with pytest.raises(OSError, match="Content-Length"):
-            src.read_all(max_bytes=1024)
-    finally:
-        _stop(httpd)
-
-
-def test_read_all_stdlib_fallback_catches_missing_content_length():
-    """Stdlib path with chunked-encoded body must also cap on the
-    streamed bytes."""
-
-    class _Handler(_BaseHandler):
-        def do_GET(self):  # noqa: N802
-            body = b'F' * (100 * 1024)
-            self.send_response(200)
-            self.send_header('Transfer-Encoding', 'chunked')
-            self.end_headers()
-            self.wfile.write(f'{len(body):x}\r\n'.encode('ascii'))
-            self.wfile.write(body)
-            self.wfile.write(b'\r\n0\r\n\r\n')
-
-    url, httpd, _ = _serve(_Handler)
-    try:
-        src = _HTTPSource(url)
-        src._pool = None
-        with pytest.raises(OSError, match="exceeded the byte budget"):
-            src.read_all(max_bytes=1024)
-    finally:
-        _stop(httpd)
-
-
-def test_read_all_stdlib_fallback_passes_when_body_fits():
-    """Stdlib path returns the body cleanly when it fits the budget."""
-
-    class _Handler(_BaseHandler):
-        payload = b'G' * 1024
-
-        def do_GET(self):  # noqa: N802
-            self.send_response(200)
-            self.send_header('Content-Length', str(len(self.payload)))
-            self.end_headers()
-            self.wfile.write(self.payload)
-
-    url, httpd, _ = _serve(_Handler)
-    try:
-        src = _HTTPSource(url)
-        src._pool = None
-        data = src.read_all(max_bytes=2048)
-        assert data == b'G' * 1024
-    finally:
-        _stop(httpd)
+# The stdlib ``urllib.request`` fallback path was removed in #2050 /
+# #2055 (urllib3 is now a hard dependency). The three tests that
+# previously covered the fallback's byte-budget enforcement no longer
+# have a code path to exercise; the urllib3-only equivalents above
+# (test_read_all_rejects_oversized_content_length,
+# test_read_all_catches_missing_content_length,
+# test_read_all_passes_when_body_fits_budget) keep the contract
+# covered.
 
 
 # ---------------------------------------------------------------------------
