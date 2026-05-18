@@ -1607,6 +1607,11 @@ def _slice_props_for_tile(geom_idx, props):
 
 def _polys_to_wkb(geoms):
     """Pre-serialize polygon geometries to WKB for cheap pickling."""
+    if not geoms:
+        return []
+    if _HAS_SHAPELY2:
+        import shapely
+        return shapely.to_wkb(np.asarray(geoms, dtype=object)).tolist()
     return [g.wkb for g in geoms]
 
 
@@ -1689,7 +1694,7 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
     # Store as object array for single-pass boolean indexing per tile.
     if poly_geoms:
         poly_bboxes = _geometry_bboxes(poly_geoms)
-        poly_wkb_arr = np.array([g.wkb for g in poly_geoms], dtype=object)
+        poly_wkb_arr = np.array(_polys_to_wkb(poly_geoms), dtype=object)
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
         poly_wkb_arr = np.empty(0, dtype=object)
@@ -1849,7 +1854,7 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
     # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely).
     if poly_geoms:
         poly_bboxes = _geometry_bboxes(poly_geoms)
-        poly_wkb_arr = np.array([g.wkb for g in poly_geoms], dtype=object)
+        poly_wkb_arr = np.array(_polys_to_wkb(poly_geoms), dtype=object)
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
         poly_wkb_arr = np.empty(0, dtype=object)
