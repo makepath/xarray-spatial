@@ -8,8 +8,20 @@ layouts, tile-size multiples of 16, etc.) stay in lockstep across
 every backend.
 
 Extracted in step 4 of issue #1813.
+
+Ambiguous-metadata hooks (issue #1987)
+--------------------------------------
+``validate_read_metadata`` and ``validate_write_metadata`` are
+plug-points for the per-case checks listed in #1987 (unparseable CRS,
+rotated transforms, non-uniform coords, mixed band metadata, conflicting
+crs/crs_wkt, conflicting nodata aliases). PR 0 lands the hook
+signatures and a registry; each follow-up PR registers its check.
+The hooks are no-ops until at least one check is registered, so
+behaviour does not change until a per-case PR opts in.
 """
 from __future__ import annotations
+
+from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
@@ -302,3 +314,122 @@ def _validate_nodata_arg(nodata) -> None:
             f"the array dtype; a non-numeric value would otherwise "
             f"crash inside NumPy with a ufunc TypeError."
         ) from e
+
+
+# ---------------------------------------------------------------------------
+# Ambiguous-metadata hooks (issue #1987 PR 0)
+#
+# Each per-case PR (#1987 PRs 2-7) registers a check via
+# ``register_read_metadata_check`` / ``register_write_metadata_check``.
+# The hooks below iterate the registered checks in registration order.
+# A check raises one of the ``_errors.GeoTIFFAmbiguousMetadataError``
+# subclasses to refuse the input; returning normally lets the call
+# continue.
+#
+# The registry is process-global and additive. Tests that need to
+# unregister a check should use ``unregister_*`` rather than mutating
+# the list in place so the surrounding helpers stay typed.
+# ---------------------------------------------------------------------------
+
+_ReadCheck = Callable[[Mapping[str, Any]], None]
+_WriteCheck = Callable[[Mapping[str, Any]], None]
+
+_READ_METADATA_CHECKS: list[_ReadCheck] = []
+_WRITE_METADATA_CHECKS: list[_WriteCheck] = []
+
+
+def register_read_metadata_check(check: _ReadCheck) -> _ReadCheck:
+    """Register a read-side ambiguous-metadata check (issue #1987).
+
+    Returns ``check`` so the call can be used as a decorator. Idempotent:
+    re-registering the same callable is a no-op.
+    """
+    if check not in _READ_METADATA_CHECKS:
+        _READ_METADATA_CHECKS.append(check)
+    return check
+
+
+def register_write_metadata_check(check: _WriteCheck) -> _WriteCheck:
+    """Register a write-side ambiguous-metadata check (issue #1987)."""
+    if check not in _WRITE_METADATA_CHECKS:
+        _WRITE_METADATA_CHECKS.append(check)
+    return check
+
+
+def unregister_read_metadata_check(check: _ReadCheck) -> None:
+    """Remove a previously-registered read-side check.
+
+    Tolerant of ``check`` not being registered so tests can call this
+    in teardown without guarding on ``in``.
+    """
+    try:
+        _READ_METADATA_CHECKS.remove(check)
+    except ValueError:
+        pass
+
+
+def unregister_write_metadata_check(check: _WriteCheck) -> None:
+    """Remove a previously-registered write-side check."""
+    try:
+        _WRITE_METADATA_CHECKS.remove(check)
+    except ValueError:
+        pass
+
+
+def _registered_read_metadata_checks() -> Iterable[_ReadCheck]:
+    """Snapshot of registered read-side checks for testing/introspection."""
+    return tuple(_READ_METADATA_CHECKS)
+
+
+def _registered_write_metadata_checks() -> Iterable[_WriteCheck]:
+    """Snapshot of registered write-side checks for testing/introspection."""
+    return tuple(_WRITE_METADATA_CHECKS)
+
+
+def validate_read_metadata(context: Mapping[str, Any] | None = None) -> None:
+    """Run all registered read-side ambiguous-metadata checks (issue #1987).
+
+    Parameters
+    ----------
+    context : mapping, optional
+        Keys consumed by the registered checks. The PR-0 hook does not
+        prescribe a schema; each per-case PR documents the keys it
+        reads (e.g. ``'crs_wkt'``, ``'transform'``, ``'band_nodata'``).
+        A missing key is treated as "nothing to check" by the
+        downstream check, not as an error here.
+
+    Raises
+    ------
+    GeoTIFFAmbiguousMetadataError
+        Or one of its subclasses, from a registered check.
+
+    Notes
+    -----
+    No-op when no checks are registered, so PR 0 does not change
+    behaviour at any entry point.
+    """
+    if not _READ_METADATA_CHECKS:
+        return
+    ctx: Mapping[str, Any] = {} if context is None else context
+    # Iterate over a snapshot. A check that registers or unregisters another
+    # check during dispatch (whether on purpose or via an import side effect)
+    # would otherwise reshape the list mid-loop and skip or repeat entries.
+    # The cost is one tuple per dispatch, paid only when at least one check
+    # is registered.
+    for check in tuple(_READ_METADATA_CHECKS):
+        check(ctx)
+
+
+def validate_write_metadata(context: Mapping[str, Any] | None = None) -> None:
+    """Run all registered write-side ambiguous-metadata checks (issue #1987).
+
+    Mirror of ``validate_read_metadata`` for ``to_geotiff`` /
+    ``write_geotiff_gpu`` / ``write_vrt``. See that docstring for the
+    context-schema convention and the no-op-when-empty guarantee.
+    """
+    if not _WRITE_METADATA_CHECKS:
+        return
+    ctx: Mapping[str, Any] = {} if context is None else context
+    # Snapshot for the same reason as the read hook above.
+    for check in tuple(_WRITE_METADATA_CHECKS):
+        check(ctx)
