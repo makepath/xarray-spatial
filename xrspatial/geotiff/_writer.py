@@ -209,6 +209,51 @@ def _resolve_photometric(photometric, samples_per_pixel: int):
     return photo_int, []
 
 
+def _reject_disagreeing_photometric_override(
+    extra_tags, resolved_photo: int, samples: int, photometric
+) -> None:
+    """Reject an ``extra_tags`` entry that overrides ``TAG_PHOTOMETRIC``
+    across the MinIsWhite boundary for a single-band raster.
+
+    The single-band MinIsWhite path requires the writer to pre-invert
+    pixels (and the nodata sentinel) so the round-trip matches what the
+    reader unconditionally inverts. An ``extra_tags`` entry that flips
+    ``TAG_PHOTOMETRIC`` between MinIsWhite (0) and anything else makes
+    the on-disk tag advertise one model while the bytes were
+    pre-processed for the other -- the round-trip silently corrupts.
+
+    The eager and streaming writers both call this guard before any
+    pre-inversion runs. Only the MinIsWhite-crossing single-band case
+    is rejected; multi-band rasters and non-crossing overrides (e.g.
+    photometric='minisblack' with extra_tags=[(262, SHORT, 1, 1)])
+    pass through unchanged. Issues #2073 / #1769 / #1836.
+    """
+    if extra_tags is None:
+        return
+    override = None
+    for _et in extra_tags:
+        if _et[0] == TAG_PHOTOMETRIC:
+            override = int(_et[3])
+            break
+    if override is None:
+        return
+    if override == resolved_photo:
+        return
+    if not (override == 0 or resolved_photo == 0):
+        return
+    if samples != 1:
+        return
+    raise ValueError(
+        f"extra_tags TAG_PHOTOMETRIC override ({override}) "
+        f"disagrees with photometric={photometric!r} for a "
+        f"single-band raster where MinIsWhite (photometric=0) "
+        f"requires writer-side pixel inversion. The override would "
+        f"either pre-invert pixels for a non-MinIsWhite tag or skip "
+        f"inversion for a MinIsWhite tag. Pass photometric= directly "
+        f"instead, or drop the override."
+    )
+
+
 # Byte order: always write little-endian
 BO = '<'
 
@@ -1591,30 +1636,9 @@ def write(data: np.ndarray, path: str, *,
     # them to NaN. Issue #1836.
     _samples = data.shape[2] if data.ndim == 3 else 1
     _resolved_photo, _ = _resolve_photometric(photometric, _samples)
-    # An ``extra_tags`` entry with TAG_PHOTOMETRIC silently overrides the
-    # kwarg-resolved value when the IFD is written (issue #1769). The
-    # pre-inversion decision below would otherwise transform pixels for
-    # one photometric value while the on-disk tag advertises a different
-    # one. Refuse the combination so callers do not end up with corrupt
-    # round-trips through the override path.
-    _extra_tags_photo = None
-    if extra_tags is not None:
-        for _et in extra_tags:
-            if _et[0] == TAG_PHOTOMETRIC:
-                _extra_tags_photo = int(_et[3])
-                break
-    if (_extra_tags_photo is not None
-            and _extra_tags_photo != _resolved_photo
-            and (_extra_tags_photo == 0 or _resolved_photo == 0)
-            and _samples == 1):
-        raise ValueError(
-            f"extra_tags TAG_PHOTOMETRIC override ({_extra_tags_photo}) "
-            f"disagrees with photometric={photometric!r} for a "
-            f"single-band raster where MinIsWhite (photometric=0) "
-            f"requires writer-side pixel inversion. The override would "
-            f"either pre-invert pixels for a non-MinIsWhite tag or skip "
-            f"inversion for a MinIsWhite tag. Pass photometric= directly "
-            f"instead, or drop the override.")
+    _reject_disagreeing_photometric_override(
+        extra_tags, _resolved_photo, _samples, photometric
+    )
     if _resolved_photo == 0 and _samples == 1:
         if cog or overview_levels is not None:
             raise NotImplementedError(
@@ -1917,30 +1941,12 @@ def write_streaming(dask_data, path: str, *,
             "writer, or write with photometric='minisblack' / 'auto'.")
     # The kwarg guard above only catches photometric='miniswhite'. An
     # ``extra_tags`` entry of ``(TAG_PHOTOMETRIC, ...)`` silently
-    # overrides the IFD tag further down (see the user_photometric_
-    # override branch). Without this check, a caller passing
-    # photometric='auto' but extra_tags=[(262, SHORT, 1, 0)] writes
-    # uninverted MinIsBlack pixels with a MinIsWhite tag on disk, and
-    # the reader's unconditional MinIsWhite inversion produces inverted
-    # values on read. Mirror the eager guard at ``write`` (issue #2073).
-    _extra_tags_photo_ds = None
-    if extra_tags is not None:
-        for _et in extra_tags:
-            if _et[0] == TAG_PHOTOMETRIC:
-                _extra_tags_photo_ds = int(_et[3])
-                break
-    if (_extra_tags_photo_ds is not None
-            and _extra_tags_photo_ds != _resolved_photo_ds
-            and (_extra_tags_photo_ds == 0 or _resolved_photo_ds == 0)
-            and samples == 1):
-        raise ValueError(
-            f"extra_tags TAG_PHOTOMETRIC override ({_extra_tags_photo_ds}) "
-            f"disagrees with photometric={photometric!r} for a "
-            f"single-band raster where MinIsWhite (photometric=0) "
-            f"requires writer-side pixel inversion. The override would "
-            f"either pre-invert pixels for a non-MinIsWhite tag or skip "
-            f"inversion for a MinIsWhite tag. Pass photometric= directly "
-            f"instead, or drop the override.")
+    # overrides the IFD tag further down, so the writer must reject the
+    # MinIsWhite-crossing single-band case the same way the eager
+    # writer does. Issue #2073.
+    _reject_disagreeing_photometric_override(
+        extra_tags, _resolved_photo_ds, samples, photometric
+    )
 
     # Match the eager path's dtype promotion
     out_dtype = dtype
