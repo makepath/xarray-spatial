@@ -18,6 +18,14 @@ pixels a backend produces. The corpus is intentionally rigid -- any
 unintended change shows up as a test failure -- so blessing a change is
 an explicit step.
 
+.. note::
+
+   This page describes the system as of the full Phase 3 (backend
+   wiring) and Phase 4.1 (fast / slow split) PR set. File and symbol
+   references (``_marks.py``, ``_PARITY_GAPS``, the per-backend test
+   modules) assume those PRs have merged. If one is still in flight,
+   check the matching open PR before chasing a missing file.
+
 When a corpus test fails
 ========================
 
@@ -57,12 +65,12 @@ output is correct, the corpus baseline needs updating. The workflow:
 
       python -m xrspatial.geotiff.tests.golden_corpus.generate
 
-   Or, for one fixture by id:
+   Or, for one fixture by id (one-line invocation; portable across
+   POSIX shells and ``cmd.exe``):
 
    .. code-block:: bash
 
-      python -m xrspatial.geotiff.tests.golden_corpus.generate \
-          --only <fixture-id>
+      python -m xrspatial.geotiff.tests.golden_corpus.generate --only <fixture-id>
 
    The generator is deterministic. If two runs produce different bytes
    for the same fixture, that is the bug -- file an issue rather than
@@ -89,10 +97,11 @@ Adding a new fixture
 Adding a fixture is cheaper than blessing a baseline change because no
 existing test is asserting against the new bytes yet:
 
-1. Add the entry to ``fixtures:`` in ``manifest.yaml``. Re-use the
+1. Add the entry to ``fixtures:`` in
+   ``xrspatial/geotiff/tests/golden_corpus/manifest.yaml``. Re-use the
    ``defaults`` block; only override what is interesting for the new
    axis you are exercising. The schema is documented at the top of
-   ``manifest.yaml`` and enforced by ``generate.validate()``.
+   the manifest file and enforced by ``generate.validate()``.
 
 2. Run ``python -m xrspatial.geotiff.tests.golden_corpus.generate
    --only <new-id>``. Confirm the file lands under ``fixtures/`` and
@@ -111,7 +120,9 @@ Fast / slow split
 Each fixture's ``tags:`` list controls which lane it runs in. A fixture
 is fast iff ``"fast"`` is in its tags; everything else picks up
 ``pytest.mark.slow`` via the helper in
-``xrspatial/geotiff/tests/golden_corpus/_marks.py``.
+``xrspatial/geotiff/tests/golden_corpus/_marks.py``. See the corpus
+``README.md`` next to that helper for a shorter version of this same
+table aimed at someone editing the manifest directly.
 
 * ``pytest``: runs every cell.
 * ``pytest -m "not slow"``: PR fast lane.
