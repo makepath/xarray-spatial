@@ -136,6 +136,49 @@ _ATTRS_CONTRACT_VERSION = 1
 _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
 
 
+def _emit_deprecated_geokey_attr(
+    attrs: dict,
+    name: str,
+    value,
+    *,
+    reason: str,
+    migration: str | None = None,
+) -> None:
+    """Set ``attrs[name] = value`` and fire a ``DeprecationWarning``.
+
+    Shared shape for the issue #1984 PR 7 deprecation slices (vertical,
+    geographic, projected, colormap variants). The attr is still emitted
+    during the warning-only phase so existing consumers keep working;
+    removal lands in a follow-up release.
+
+    ``reason`` is the one-liner explaining why the attr cannot
+    round-trip (e.g. "the writer cannot reconstruct it from the
+    canonical CRS"). ``migration`` is an optional one-liner pointing
+    at the canonical replacement.
+
+    Warning text shape::
+
+        xrspatial.geotiff: attrs['<name>'] is deprecated; <reason>
+        <migration?> It will be removed in a future release. See
+        issue #1984.
+
+    ``stacklevel=2`` aims the warning at the caller of
+    ``_populate_attrs_from_geo_info``, which is the closest frame the
+    user controls today. Python silences ``DeprecationWarning`` for
+    library code by default, so the warning is visible mainly to test
+    runners and developers who opt in with ``-W default::DeprecationWarning``.
+    """
+    parts = [
+        f"xrspatial.geotiff: attrs[{name!r}] is deprecated;",
+        reason.rstrip('.') + '.',
+    ]
+    if migration:
+        parts.append(migration.rstrip('.') + '.')
+    parts.append("It will be removed in a future release. See issue #1984.")
+    warnings.warn(' '.join(parts), DeprecationWarning, stacklevel=2)
+    attrs[name] = value
+
+
 def _extent_to_window(transform, file_height, file_width,
                       y_min, y_max, x_min, x_max):
     """Convert geographic extent to pixel window (row_start, col_start, row_stop, col_stop).
@@ -295,40 +338,32 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
             geo_info.resolution_unit, str(geo_info.resolution_unit))
 
     if geo_info.colormap is not None:
+        _colormap_reason = (
+            "the writer cannot set Photometric=3 so it does not round-trip"
+        )
+        _colormap_migration = (
+            "Construct a ListedColormap from attrs['colormap'] in caller "
+            "code if needed"
+        )
         try:
             from matplotlib.colors import ListedColormap
-            warnings.warn(
-                "xrspatial.geotiff: attrs['cmap'] is deprecated; the writer "
-                "cannot set Photometric=3 so it does not round-trip. "
-                "Construct a ListedColormap from attrs['colormap'] in caller "
-                "code if needed. It will be removed in a future release. "
-                "See issue #1984.",
-                DeprecationWarning,
-                stacklevel=2,
+            _emit_deprecated_geokey_attr(
+                attrs, 'cmap',
+                ListedColormap(geo_info.colormap, name='tiff_palette'),
+                reason=_colormap_reason,
+                migration=_colormap_migration,
             )
-            attrs['cmap'] = ListedColormap(
-                geo_info.colormap, name='tiff_palette')
-            warnings.warn(
-                "xrspatial.geotiff: attrs['colormap_rgba'] is deprecated; "
-                "the writer cannot set Photometric=3 so it does not "
-                "round-trip. Construct a ListedColormap from "
-                "attrs['colormap'] in caller code if needed. It will be "
-                "removed in a future release. See issue #1984.",
-                DeprecationWarning,
-                stacklevel=2,
+            _emit_deprecated_geokey_attr(
+                attrs, 'colormap_rgba', geo_info.colormap,
+                reason=_colormap_reason,
+                migration=_colormap_migration,
             )
-            attrs['colormap_rgba'] = geo_info.colormap
         except ImportError:
-            warnings.warn(
-                "xrspatial.geotiff: attrs['colormap_rgba'] is deprecated; "
-                "the writer cannot set Photometric=3 so it does not "
-                "round-trip. Construct a ListedColormap from "
-                "attrs['colormap'] in caller code if needed. It will be "
-                "removed in a future release. See issue #1984.",
-                DeprecationWarning,
-                stacklevel=2,
+            _emit_deprecated_geokey_attr(
+                attrs, 'colormap_rgba', geo_info.colormap,
+                reason=_colormap_reason,
+                migration=_colormap_migration,
             )
-            attrs['colormap_rgba'] = geo_info.colormap
 
     if geo_info.extra_tags is not None:
         for _tag_id, _tt, _tc, _tv in geo_info.extra_tags:
