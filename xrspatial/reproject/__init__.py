@@ -822,13 +822,22 @@ def _apply_vertical_shift(data, y_coords, x_coords,
     Supported vertical CRS:
     - 'EGM96', 'EGM2008': orthometric heights (above geoid/MSL)
     - 'ellipsoidal': heights above WGS84 ellipsoid
-    """
-    from ._vertical import _load_geoid, _interp_geoid_2d
 
-    # Determine direction
+    Backend handling
+    ----------------
+    The geoid undulation lookup is CPU-only (Numba JIT). To stay
+    correct across backends:
+
+    - For ``cupy`` arrays, the input is brought to host, shifted, and
+      moved back to GPU.
+    - For ``dask`` arrays, the shift is wrapped in ``map_blocks`` so
+      each chunk's slab is materialised, shifted, and returned in place.
+    - For 3-D ``(y, x, band)`` results, the shift is applied per band
+      because the geoid undulation depends only on horizontal position.
+    """
+    # Direction (sign convention) is the same regardless of backend.
     geoid_models = []
     signs = []
-
     if src_vcrs in ('EGM96', 'EGM2008') and tgt_vcrs == 'ellipsoidal':
         geoid_models.append(src_vcrs)
         signs.append(1.0)  # H + N = h
@@ -840,6 +849,57 @@ def _apply_vertical_shift(data, y_coords, x_coords,
         signs.extend([1.0, -1.0])  # H1 + N1 - N2
     else:
         return data
+
+    x_arr = np.asarray(x_coords, dtype=np.float64)
+    y_arr = np.asarray(y_coords, dtype=np.float64)
+
+    # Dask backend: wrap the per-block computation. Each block sees its
+    # own row slab of x/y coords, so we route through map_blocks and
+    # delegate to the numpy path on every chunk.
+    try:
+        import dask.array as _da
+        is_dask = isinstance(data, _da.Array)
+    except ImportError:
+        is_dask = False
+
+    if is_dask:
+        return _apply_vertical_shift_dask(
+            data, y_arr, x_arr,
+            geoid_models, signs, nodata, tgt_crs_wkt,
+        )
+
+    # CuPy backend: round-trip via host. The geoid lookup is small
+    # relative to the reprojection itself, and the CPU JIT path is
+    # already well-tested.
+    try:
+        import cupy as cp
+        is_cupy = isinstance(data, cp.ndarray)
+    except ImportError:
+        is_cupy = False
+
+    if is_cupy:
+        host = cp.asnumpy(data)
+        shifted = _apply_vertical_shift_numpy(
+            host, y_arr, x_arr,
+            geoid_models, signs, nodata, tgt_crs_wkt,
+        )
+        return cp.asarray(shifted)
+
+    return _apply_vertical_shift_numpy(
+        np.asarray(data), y_arr, x_arr,
+        geoid_models, signs, nodata, tgt_crs_wkt,
+    )
+
+
+def _apply_vertical_shift_numpy(data, y_arr, x_arr,
+                                geoid_models, signs, nodata, tgt_crs_wkt):
+    """Apply geoid shift on a numpy array.
+
+    Handles both 2-D ``(H, W)`` and 3-D ``(H, W, B)`` shapes by looping
+    over band slices; the geoid undulation depends only on horizontal
+    position, so each band sees the same N(y, x) correction.
+    """
+    from ._vertical import _load_geoid, _interp_geoid_2d
 
     # Determine if we need inverse projection (output CRS is projected)
     need_inverse = False
@@ -858,17 +918,13 @@ def _apply_vertical_shift(data, y_coords, x_coords,
         except Exception:
             pass
 
-    x_arr = np.asarray(x_coords, dtype=np.float64)
-    y_arr = np.asarray(y_coords, dtype=np.float64)
-    out_h, out_w = data.shape[:2] if hasattr(data, 'shape') else (len(y_arr), len(x_arr))
+    out_h, out_w = data.shape[:2]
+    is_3d = data.ndim == 3
 
-    # Load geoid grids once
-    geoids = []
-    for gm in geoid_models:
-        geoids.append(_load_geoid(gm))
+    geoids = [_load_geoid(gm) for gm in geoid_models]
 
     # Process in row strips to bound memory (128 rows at a time)
-    result = data.copy() if hasattr(data, 'copy') else np.array(data)
+    result = data.copy()
     is_nan_nodata = np.isnan(nodata) if isinstance(nodata, float) else False
     strip = 128
 
@@ -895,21 +951,58 @@ def _apply_vertical_shift(data, y_coords, x_coords,
             xx_strip = np.where(finite_coord, xx_strip, np.nan)
             yy_strip = np.where(finite_coord, yy_strip, np.nan)
 
-        # Apply each geoid shift
-        strip_data = result[r0:r1]
-        if is_nan_nodata:
-            is_valid = np.isfinite(strip_data)
-        else:
-            is_valid = strip_data != nodata
-        is_valid = is_valid & finite_coord
-
+        # Compute the total shift N_total for this strip once, regardless
+        # of how many geoid models contribute.
+        N_total = np.zeros((n_rows, out_w), dtype=np.float64)
         for (grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w), sign in zip(geoids, signs):
             N_strip = np.empty((n_rows, out_w), dtype=np.float64)
             _interp_geoid_2d(xx_strip, yy_strip, N_strip,
                              grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w)
-            strip_data[is_valid] += sign * N_strip[is_valid]
+            N_total += sign * N_strip
+
+        # Apply to each band slice. For 2-D this loop runs once.
+        n_bands = data.shape[2] if is_3d else 1
+        for b in range(n_bands):
+            if is_3d:
+                strip_data = result[r0:r1, :, b]
+            else:
+                strip_data = result[r0:r1]
+            if is_nan_nodata:
+                is_valid = np.isfinite(strip_data)
+            else:
+                is_valid = strip_data != nodata
+            is_valid = is_valid & finite_coord
+            strip_data[is_valid] += N_total[is_valid]
 
     return result
+
+
+def _apply_vertical_shift_dask(data, y_arr, x_arr,
+                               geoid_models, signs, nodata, tgt_crs_wkt):
+    """Dask-backed geoid shift via ``map_blocks``.
+
+    Each block receives only its row/column slab of the input. The block
+    function recomputes per-block y/x slices from ``block_info`` and
+    delegates to the numpy path so all backends share one implementation.
+    """
+    import dask.array as da
+
+    def _block(block, block_info=None):
+        if block_info is None:
+            return _apply_vertical_shift_numpy(
+                block, y_arr, x_arr,
+                geoid_models, signs, nodata, tgt_crs_wkt,
+            )
+        info = block_info[0]
+        (r0, r1), (c0, c1) = info['array-location'][:2]
+        y_slab = y_arr[r0:r1]
+        x_slab = x_arr[c0:c1]
+        return _apply_vertical_shift_numpy(
+            block, y_slab, x_slab,
+            geoid_models, signs, nodata, tgt_crs_wkt,
+        )
+
+    return da.map_blocks(_block, data, dtype=data.dtype, meta=np.array((), dtype=data.dtype))
 
 
 def _reproject_inmemory_numpy(
