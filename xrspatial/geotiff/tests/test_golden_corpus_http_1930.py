@@ -168,7 +168,27 @@ def test_http_cog_parity(fixture_id: str, allow_private_http) -> None:
         host, port = httpd.server_address
         url = f"http://{host}:{port}/{fixture_id}.tif"
         candidate = open_geotiff(url)
-        compare_to_oracle(path, candidate, lossy=_is_lossy(fixture_id))
+        # COG fixtures with internal overviews exercise the
+        # overview-IFD code path through the HTTP range-request reader.
+        # The factory points at the same served URL, so each overview
+        # level is fetched through the same pipeline the full-
+        # resolution candidate used.
+        entry = next(
+            (e for e in _resolved_fixtures() if e["id"] == fixture_id),
+            None,
+        )
+        overviews = (entry or {}).get("overviews") or []
+        factory = (
+            (lambda lvl, u=url: open_geotiff(u, overview_level=lvl))
+            if overviews
+            else None
+        )
+        compare_to_oracle(
+            path,
+            candidate,
+            lossy=_is_lossy(fixture_id),
+            candidate_factory=factory,
+        )
     finally:
         httpd.shutdown()
         httpd.server_close()

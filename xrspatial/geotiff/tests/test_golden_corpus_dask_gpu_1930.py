@@ -74,6 +74,16 @@ _PARITY_GAPS: dict[str, str] = {}
 # for such gaps.
 _DASK_GPU_SKIPS: dict[str, str] = {}
 
+# Fixtures whose overview-IFD code path is not yet wired into the
+# xrspatial reader. The base-IFD parity check still runs; the
+# overview-level loop driven by ``candidate_factory`` is skipped for
+# these ids. See the eager module for the rationale.
+_OVERVIEW_READER_GAPS: dict[str, str] = {
+    "overview_external_ovr_uint16": (
+        "External .ovr sidecar reader is not implemented in xrspatial."
+    ),
+}
+
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
         "MinIsWhite photometric inversion: xrspatial inverts pixels per "
@@ -151,13 +161,34 @@ def test_dask_gpu_parity(manifest_entry: dict) -> None:
     candidate = open_geotiff(
         str(path), gpu=True, chunks=CHUNK_SIZE, on_gpu_failure="strict"
     )
-    compare_to_oracle(path, candidate, lossy=_is_lossy(manifest_entry))
+    # Wire the oracle's overview-IFD check when the fixture carries
+    # overviews. The factory inherits the dask+GPU read options so each
+    # overview level exercises the same chunked nvCOMP pipeline the
+    # full-resolution candidate did.
+    overviews = manifest_entry.get("overviews") or []
+    factory = (
+        (lambda lvl, p=path: open_geotiff(
+            str(p), gpu=True, chunks=CHUNK_SIZE,
+            on_gpu_failure="strict", overview_level=lvl,
+        ))
+        if overviews and fixture_id not in _OVERVIEW_READER_GAPS
+        else None
+    )
+    compare_to_oracle(
+        path,
+        candidate,
+        lossy=_is_lossy(manifest_entry),
+        candidate_factory=factory,
+    )
 
 
 def test_taxonomy_ids_are_in_manifest() -> None:
     manifest_ids = {e["id"] for e in _FIXTURES}
     tagged = (
-        set(_PARITY_GAPS) | set(_DASK_GPU_SKIPS) | set(_INTENTIONAL_SKIPS)
+        set(_PARITY_GAPS)
+        | set(_DASK_GPU_SKIPS)
+        | set(_OVERVIEW_READER_GAPS)
+        | set(_INTENTIONAL_SKIPS)
     )
     stale = tagged - manifest_ids
     assert not stale, (
