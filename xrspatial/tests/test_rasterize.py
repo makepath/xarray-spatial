@@ -574,6 +574,98 @@ class TestMixedGeometries:
 
 
 # ---------------------------------------------------------------------------
+# Issue #2064: merge='first'/'last' must honour user input order across
+# geometry types, not the polygon -> line -> point burn order.
+# ---------------------------------------------------------------------------
+
+class TestMergeOrderAcrossTypes:
+    """A polygon supplied after a point in the user input must win the
+    pixel under merge='last', and vice versa for merge='first'.  Before
+    the fix, the burn pipeline rastered polygons first then points last,
+    so points always overwrote polygons regardless of input order.
+    """
+
+    def _mixed_input(self):
+        # Point covers pixel (1, 1); polygon also covers (1, 1).
+        # Point comes FIRST in user input, polygon SECOND.
+        pt = Point(1.5, 1.5)
+        poly = box(0, 0, 3, 3)
+        return [(pt, 9.0), (poly, 1.0)]
+
+    def test_last_respects_input_order_polygon_after_point(self):
+        result = rasterize(self._mixed_input(),
+                           width=3, height=3, bounds=(0, 0, 3, 3),
+                           fill=0, merge='last')
+        # Polygon is the LAST input, so it wins at the shared pixel.
+        assert result.values[1, 1] == 1.0
+
+    def test_first_respects_input_order_polygon_after_point(self):
+        result = rasterize(self._mixed_input(),
+                           width=3, height=3, bounds=(0, 0, 3, 3),
+                           fill=0, merge='first')
+        # Point is the FIRST input, so it wins at the shared pixel.
+        assert result.values[1, 1] == 9.0
+
+    def test_last_three_types_reverse_order(self):
+        # Input order: point -> line -> polygon (reverse of burn order).
+        pt = Point(1.5, 1.5)
+        line = LineString([(0.0, 1.5), (3.0, 1.5)])
+        poly = box(0, 0, 3, 3)
+        result = rasterize(
+            [(pt, 9.0), (line, 5.0), (poly, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='last')
+        # Polygon is last in input -> polygon wins everywhere it covers.
+        assert (result.values == 1.0).all()
+
+    def test_first_three_types_reverse_order(self):
+        pt = Point(1.5, 1.5)
+        line = LineString([(0.0, 1.5), (3.0, 1.5)])
+        poly = box(0, 0, 3, 3)
+        result = rasterize(
+            [(pt, 9.0), (line, 5.0), (poly, 1.0)],
+            width=3, height=3, bounds=(0, 0, 3, 3),
+            fill=0, merge='first')
+        # Point is first -> point wins at (1,1).
+        # Line is second -> line wins on row 1 except (1,1).
+        # Polygon is third -> polygon fills everything else.
+        assert result.values[1, 1] == 9.0
+        assert result.values[1, 0] == 5.0
+        assert result.values[1, 2] == 5.0
+        assert result.values[0, 0] == 1.0
+        assert result.values[2, 2] == 1.0
+
+    def test_commutative_merges_unaffected(self):
+        # max/min/sum should not change behaviour with the new order logic.
+        pt = Point(1.5, 1.5)
+        poly = box(0, 0, 3, 3)
+        r_max = rasterize([(pt, 9.0), (poly, 1.0)],
+                          width=3, height=3, bounds=(0, 0, 3, 3),
+                          fill=0, merge='max')
+        # Pixel (1,1) sees both; max is 9.0.
+        assert r_max.values[1, 1] == 9.0
+        # Other polygon-only pixels are 1.0.
+        assert r_max.values[0, 0] == 1.0
+
+        r_sum = rasterize([(pt, 9.0), (poly, 1.0)],
+                          width=3, height=3, bounds=(0, 0, 3, 3),
+                          fill=0, merge='sum')
+        assert r_sum.values[1, 1] == 10.0
+        assert r_sum.values[0, 0] == 1.0
+
+    def test_dask_numpy_respects_input_order(self):
+        result = rasterize(self._mixed_input(),
+                           width=3, height=3, bounds=(0, 0, 3, 3),
+                           fill=0, merge='last', chunks=2)
+        # Materialize the dask result.
+        if hasattr(result.data, 'compute'):
+            arr = result.data.compute()
+        else:
+            arr = result.values
+        assert arr[1, 1] == 1.0
+
+
+# ---------------------------------------------------------------------------
 # GeoDataFrame with mixed geometry types
 # ---------------------------------------------------------------------------
 
