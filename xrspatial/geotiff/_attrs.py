@@ -195,17 +195,46 @@ _DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS = (
 )
 
 
+# Per-category reason clauses spliced into the deprecation warning by
+# :func:`_emit_deprecated_geokey_attr`. Kept here so the wording stays
+# in lockstep across the three GeoKey-axis tiers (geographic, projected,
+# vertical) and so the test suite can match the canonical strings
+# verbatim.
+_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS = (
+    "the writer cannot reconstruct it from the canonical CRS"
+)
+_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS = (
+    "the writer cannot reconstruct vertical-CRS GeoKeys"
+)
+
+
+def _deprecated_geokey_warning(name: str, *, reason: str) -> str:
+    """Warning text for a deprecated GeoKey-derived attr.
+
+    ``reason`` is the per-category clause that explains why the value
+    will not round-trip; the rest of the message is fixed so callers
+    only have to keep track of the short reason string. The wording is
+    pinned by ``test_warning_message_format`` (geographic tier) and by
+    sibling tests for the projected / vertical tiers, so any tweak
+    here needs to land alongside an update to those tests.
+    """
+    return (
+        f"xrspatial.geotiff: attrs[{name!r}] is deprecated; {reason} "
+        f"so it will not round-trip. It will be removed in a future "
+        f"release. See issue #1984."
+    )
+
+
 def _deprecated_geographic_geokey_warning(name: str) -> str:
     """Warning text shared by every deprecated geographic-GeoKey attr.
 
-    Centralised so the test suite can match the wording verbatim and so
-    every emission site uses identical phrasing. See issue #1984 PR 7.
+    Thin shim over :func:`_deprecated_geokey_warning` that fixes the
+    reason clause to the geographic-tier wording. Retained so existing
+    callers (notably the unit tests that pin the canonical wording)
+    keep working unchanged.
     """
-    return (
-        f"xrspatial.geotiff: attrs[{name!r}] is deprecated; the writer "
-        f"cannot reconstruct it from the canonical CRS so it will not "
-        f"round-trip. It will be removed in a future release. See "
-        f"issue #1984."
+    return _deprecated_geokey_warning(
+        name, reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
     )
 
 
@@ -258,26 +287,49 @@ def _stacklevel_to_external_caller() -> int:
     return 2
 
 
-def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
-    """Emit a deprecated geographic-GeoKey attr with a DeprecationWarning.
+def _emit_deprecated_geokey_attr(attrs: dict, name: str, value,
+                                 *, reason: str) -> None:
+    """Emit a deprecated GeoKey-derived attr with a ``DeprecationWarning``.
 
-    Sets ``attrs[name] = value`` (keeping the read-side emission alive
-    for one release cycle) after firing a ``DeprecationWarning`` so
-    callers learn the attr is going away. Used for the six attrs listed
-    in ``_DEPRECATED_GEOGRAPHIC_GEOKEY_ATTRS``.
+    Generic helper shared by the geographic, projected, and vertical
+    deprecation tiers (issue #1984 PR 7). ``reason`` is the per-category
+    clause that explains why the value will not round-trip; it is
+    spliced into the warning text by :func:`_deprecated_geokey_warning`.
+    Use :data:`_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS` for the
+    geographic and projected tiers (both lose the value because the
+    writer cannot reconstruct it from the canonical CRS) and
+    :data:`_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS` for the vertical
+    tier (the writer skips the entire vertical GeoKey block).
+
+    Sets ``attrs[name] = value`` after the warning so the read-side
+    emission stays alive for one release cycle and external callers
+    have time to migrate to ``crs`` / ``crs_wkt``.
 
     The ``stacklevel`` is computed by walking past every
     ``xrspatial.geotiff*`` frame so the warning is attributed to the
     user's call site (e.g. ``open_geotiff(...)``) rather than to one of
-    the internal read paths. A fixed level (e.g. ``stacklevel=2``)
-    would only be correct for one of the backend dispatch paths.
+    the internal read paths.
     """
     warnings.warn(
-        _deprecated_geographic_geokey_warning(name),
+        _deprecated_geokey_warning(name, reason=reason),
         DeprecationWarning,
         stacklevel=_stacklevel_to_external_caller(),
     )
     attrs[name] = value
+
+
+def _emit_deprecated_geographic_geokey(attrs: dict, name: str, value) -> None:
+    """Geographic-tier wrapper around :func:`_emit_deprecated_geokey_attr`.
+
+    Kept as a thin shim so the geographic emission sites in
+    :func:`_populate_attrs_from_geo_info` stay readable and so a future
+    diff touching only the geographic tier does not need to repeat the
+    ``reason=`` clause at every call site.
+    """
+    _emit_deprecated_geokey_attr(
+        attrs, name, value,
+        reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
+    )
 
 
 def _extent_to_window(transform, file_height, file_width,
@@ -406,15 +458,10 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
         _emit_deprecated_geographic_geokey(
             attrs, 'angular_units', geo_info.angular_units)
     if geo_info.linear_units is not None:
-        warnings.warn(
-            "xrspatial.geotiff: attrs['linear_units'] is deprecated; "
-            "the writer cannot reconstruct it from the canonical CRS "
-            "so it will not round-trip. It will be removed in a future "
-            "release. See issue #1984.",
-            DeprecationWarning,
-            stacklevel=2,
+        _emit_deprecated_geokey_attr(
+            attrs, 'linear_units', geo_info.linear_units,
+            reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
         )
-        attrs['linear_units'] = geo_info.linear_units
     if geo_info.semi_major_axis is not None:
         _emit_deprecated_geographic_geokey(
             attrs, 'semi_major_axis', geo_info.semi_major_axis)
@@ -422,45 +469,25 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
         _emit_deprecated_geographic_geokey(
             attrs, 'inv_flattening', geo_info.inv_flattening)
     if geo_info.projection_code is not None:
-        warnings.warn(
-            "xrspatial.geotiff: attrs['projection_code'] is deprecated; "
-            "the writer cannot reconstruct it from the canonical CRS "
-            "so it will not round-trip. It will be removed in a future "
-            "release. See issue #1984.",
-            DeprecationWarning,
-            stacklevel=2,
+        _emit_deprecated_geokey_attr(
+            attrs, 'projection_code', geo_info.projection_code,
+            reason=_GEOKEY_DEPRECATION_REASON_HORIZONTAL_CRS,
         )
-        attrs['projection_code'] = geo_info.projection_code
     if geo_info.vertical_epsg is not None:
-        warnings.warn(
-            "xrspatial.geotiff: attrs['vertical_crs'] is deprecated; "
-            "the writer cannot reconstruct vertical-CRS GeoKeys so it "
-            "will not round-trip. It will be removed in a future "
-            "release. See issue #1984.",
-            DeprecationWarning,
-            stacklevel=2,
+        _emit_deprecated_geokey_attr(
+            attrs, 'vertical_crs', geo_info.vertical_epsg,
+            reason=_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS,
         )
-        attrs['vertical_crs'] = geo_info.vertical_epsg
     if geo_info.vertical_citation is not None:
-        warnings.warn(
-            "xrspatial.geotiff: attrs['vertical_citation'] is deprecated; "
-            "the writer cannot reconstruct vertical-CRS GeoKeys so it "
-            "will not round-trip. It will be removed in a future "
-            "release. See issue #1984.",
-            DeprecationWarning,
-            stacklevel=2,
+        _emit_deprecated_geokey_attr(
+            attrs, 'vertical_citation', geo_info.vertical_citation,
+            reason=_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS,
         )
-        attrs['vertical_citation'] = geo_info.vertical_citation
     if geo_info.vertical_units is not None:
-        warnings.warn(
-            "xrspatial.geotiff: attrs['vertical_units'] is deprecated; "
-            "the writer cannot reconstruct vertical-CRS GeoKeys so it "
-            "will not round-trip. It will be removed in a future "
-            "release. See issue #1984.",
-            DeprecationWarning,
-            stacklevel=2,
+        _emit_deprecated_geokey_attr(
+            attrs, 'vertical_units', geo_info.vertical_units,
+            reason=_GEOKEY_DEPRECATION_REASON_VERTICAL_CRS,
         )
-        attrs['vertical_units'] = geo_info.vertical_units
 
     if geo_info.gdal_metadata is not None:
         attrs['gdal_metadata'] = geo_info.gdal_metadata
