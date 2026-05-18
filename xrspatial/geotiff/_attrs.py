@@ -69,13 +69,20 @@ from canonical state, otherwise dropped on round-trip):
 - ``semi_major_axis``: GeogSemiMajorAxisGeoKey value.
 - ``inv_flattening``: GeogInvFlatteningGeoKey value.
 - ``projection_code``: ProjectedCSTypeGeoKey value.
-- ``vertical_crs``: VerticalCSTypeGeoKey value.
-- ``vertical_citation``: VerticalCitationGeoKey value.
-- ``vertical_units``: VerticalUnitsGeoKey value.
 - ``image_description``: TIFF ImageDescription tag.
 - ``extra_samples``: TIFF ExtraSamples tag.
 - ``colormap``, ``colormap_rgba``, ``cmap``: palette data attached to
   single-band paletted images.
+
+Deprecated (will be removed in a future release; see issue #1984):
+
+- ``vertical_crs``: VerticalCSTypeGeoKey value. The writer never emits
+  the vertical GeoKey block, so this attr cannot round-trip. It still
+  appears on read but triggers a ``DeprecationWarning``.
+- ``vertical_citation``: VerticalCitationGeoKey value. Same deprecation
+  reason as ``vertical_crs``.
+- ``vertical_units``: VerticalUnitsGeoKey value. Same deprecation reason
+  as ``vertical_crs``.
 """
 from __future__ import annotations
 
@@ -256,10 +263,34 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     if geo_info.projection_code is not None:
         attrs['projection_code'] = geo_info.projection_code
     if geo_info.vertical_epsg is not None:
+        warnings.warn(
+            "xrspatial.geotiff: attrs['vertical_crs'] is deprecated; "
+            "the writer cannot reconstruct vertical-CRS GeoKeys so it "
+            "will not round-trip. It will be removed in a future "
+            "release. See issue #1984.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         attrs['vertical_crs'] = geo_info.vertical_epsg
     if geo_info.vertical_citation is not None:
+        warnings.warn(
+            "xrspatial.geotiff: attrs['vertical_citation'] is deprecated; "
+            "the writer cannot reconstruct vertical-CRS GeoKeys so it "
+            "will not round-trip. It will be removed in a future "
+            "release. See issue #1984.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         attrs['vertical_citation'] = geo_info.vertical_citation
     if geo_info.vertical_units is not None:
+        warnings.warn(
+            "xrspatial.geotiff: attrs['vertical_units'] is deprecated; "
+            "the writer cannot reconstruct vertical-CRS GeoKeys so it "
+            "will not round-trip. It will be removed in a future "
+            "release. See issue #1984.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         attrs['vertical_units'] = geo_info.vertical_units
 
     if geo_info.gdal_metadata is not None:

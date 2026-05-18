@@ -5,6 +5,7 @@
 ### Unreleased
 
 #### Bug fixes and improvements
+- Deprecate read-side emission of vertical-CRS GeoKey attrs (vertical_crs, vertical_citation, vertical_units); the writer does not emit vertical GeoKeys so they do not round-trip. These attrs still emit for now but trigger a DeprecationWarning. Removal planned for a future release. (#1984)
 - Refresh the geotiff mmap cache when a file is replaced under the same path so re-reads after an atomic-rename overwrite no longer return stale bytes
 - Decode TIFF predictor=3 un-transpose by file byte order so big-endian floating-point TIFFs read back exactly
 - Default internal `_vrt.read_vrt` `missing_sources` to `'raise'` so an unreadable VRT source no longer produces a silent zero-fill hole on integer rasters; pass `missing_sources='warn'` to opt back into the previous lenient behaviour (#1843)
