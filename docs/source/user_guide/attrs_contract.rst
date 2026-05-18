@@ -246,6 +246,50 @@ present on the original file may be absent after write→read if the
 canonical CRS does not carry enough information to rebuild it.
 
 
+Deprecated GeoKey attrs (issue #1984)
+=====================================
+
+The following attrs are still populated on read for one release
+cycle but each emission fires a ``DeprecationWarning``. The writer's
+``build_geo_tags`` only emits the primary CRS GeoKey and citation for
+each axis (geographic, projected, vertical), so the secondary GeoKeys
+these attrs derive from are never written and the values do not
+survive a write→read round-trip. Migrate to ``crs`` / ``crs_wkt`` and
+derive any needed value with :mod:`pyproj`.
+
+Geographic-CRS GeoKey attrs: ``crs_name``, ``geog_citation``,
+``datum_code``, ``angular_units``, ``semi_major_axis``,
+``inv_flattening``.
+
+Projected-CRS GeoKey attrs: ``linear_units``, ``projection_code``.
+
+Vertical-CRS GeoKey attrs: ``vertical_crs``, ``vertical_citation``,
+``vertical_units``.
+
+Migration recipe::
+
+    from pyproj import CRS
+    crs = CRS.from_wkt(attrs['crs_wkt'])  # or CRS.from_epsg(attrs['crs'])
+
+    # Geographic
+    crs.name                                 # crs_name
+    crs.datum.to_epsg()                      # datum_code
+    crs.ellipsoid.semi_major_metre           # semi_major_axis
+    crs.ellipsoid.inverse_flattening         # inv_flattening
+    # geog_citation / angular_units: best-effort derive from
+    # ``crs`` / ``crs.axis_info``; the original GeoKey citation text
+    # is not generally recoverable.
+
+    # Projected
+    crs.coordinate_system.axis_list[0].unit_name   # linear_units
+    crs.to_epsg()                                  # projection_code
+
+    # Vertical
+    crs.sub_crs_list[-1].to_epsg()                 # vertical_crs
+    crs.sub_crs_list[-1].name                      # vertical_citation
+    crs.sub_crs_list[-1].axis_info[0].unit_name    # vertical_units
+
+
 Versioning
 ==========
 
