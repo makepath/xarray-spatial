@@ -270,3 +270,72 @@ def test_plain_colormap_attr_not_deprecated(tmp_path):
         "the matplotlib variants (cmap, colormap_rgba) are deprecated. "
         f"Got: {[str(w.message) for w in bad]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct unit tests for the shared helper ``_emit_deprecated_attr``.
+#
+# The colormap-variants tests above exercise the helper indirectly through
+# the full ``open_geotiff`` path. The two cases below cover the message
+# shape and the optional-``migration`` branch directly so the contract
+# stays pinned even if every consumer of the helper changes.
+# ---------------------------------------------------------------------------
+
+
+def test_emit_deprecated_attr_with_migration_text():
+    """``_emit_deprecated_attr`` builds the documented warning shape and
+    sets the attr value."""
+    from xrspatial.geotiff._attrs import _emit_deprecated_attr
+
+    attrs: dict = {}
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always')
+        _emit_deprecated_attr(
+            attrs,
+            'sample_attr',
+            42,
+            reason="the writer cannot reconstruct it from canonical state",
+            migration="Use attrs['other_attr'] instead",
+        )
+
+    dep = [
+        w for w in record
+        if issubclass(w.category, DeprecationWarning)
+    ]
+    assert len(dep) == 1
+    msg = str(dep[0].message)
+    assert msg == (
+        "xrspatial.geotiff: attrs['sample_attr'] is deprecated; "
+        "the writer cannot reconstruct it from canonical state. "
+        "Use attrs['other_attr'] instead. "
+        "It will be removed in a future release. See issue #1984."
+    )
+    assert attrs == {'sample_attr': 42}
+
+
+def test_emit_deprecated_attr_without_migration_text():
+    """``migration=None`` omits the migration sentence cleanly (no dangling
+    space or empty clause)."""
+    from xrspatial.geotiff._attrs import _emit_deprecated_attr
+
+    attrs: dict = {}
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always')
+        _emit_deprecated_attr(
+            attrs,
+            'foo',
+            'bar',
+            reason="some reason",
+        )
+
+    dep = [
+        w for w in record
+        if issubclass(w.category, DeprecationWarning)
+    ]
+    assert len(dep) == 1
+    msg = str(dep[0].message)
+    assert msg == (
+        "xrspatial.geotiff: attrs['foo'] is deprecated; some reason. "
+        "It will be removed in a future release. See issue #1984."
+    )
+    assert attrs == {'foo': 'bar'}

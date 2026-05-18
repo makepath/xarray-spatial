@@ -174,13 +174,38 @@ must not assume a specific pass-through key survives a round-trip.
    * - ``colormap``
      - tuple
      - Raw ``ColorMap`` TIFF tag (tag id 320) values.
+
+
+Deprecated keys
+===============
+
+These keys are still emitted on read for one release cycle, but each
+emission triggers a ``DeprecationWarning``. The writer cannot
+reconstruct them from canonical attrs, so they do not round-trip.
+Callers should migrate to the canonical alternative listed below
+before the warning-only window closes. See issue #1984.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 60
+
+   * - Key
+     - Type
+     - Definition and migration
    * - ``colormap_rgba``
      - array
-     - Decoded RGBA colormap, when one is present.
+     - Decoded RGBA colormap. Emitted on read when the file's
+       photometric interpretation is ``Photometric == 3`` (palette).
+       The writer cannot set ``Photometric == 3`` so the attr does
+       not round-trip. Reshape ``attrs['colormap']`` to
+       ``(n_colors, 3)`` and append an alpha channel in caller code
+       if needed.
    * - ``cmap``
      - ``matplotlib.colors.ListedColormap``
-     - Matplotlib colormap built from ``colormap_rgba``. Present only
-       when matplotlib is importable.
+     - Matplotlib colormap built from the palette. Same
+       ``Photometric == 3`` gate, same round-trip gap. Construct a
+       ``ListedColormap`` from ``attrs['colormap']`` in caller code
+       if needed.
 
 
 Round-trip invariants
