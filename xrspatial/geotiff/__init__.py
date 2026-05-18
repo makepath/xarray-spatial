@@ -280,7 +280,9 @@ def open_geotiff(source: str | BinaryIO, *,
     window : tuple or None
         (row_start, col_start, row_stop, col_stop) for windowed reading.
     overview_level : int or None
-        Overview level (0 = full resolution).
+        Overview level (0 = full resolution). Must be a non-negative int
+        or ``None``; passing ``bool`` or any other type raises
+        ``TypeError``.
     band : int or None
         Band index (0-based). None returns all bands.
     name : str or None
@@ -370,6 +372,21 @@ def open_geotiff(source: str | BinaryIO, *,
     from ._reader import _coerce_path
 
     source = _coerce_path(source)
+
+    # ``overview_level`` must be an int or ``None``. ``bool`` is rejected
+    # explicitly because Python treats it as a subclass of ``int``: without
+    # this guard, ``overview_level=True`` is coerced to ``1`` and silently
+    # returns the first overview level instead of failing, and other non-int
+    # types leak raw ``TypeError`` messages from the internal numeric
+    # comparison or list indexing. See issue #2074.
+    if overview_level is not None and (
+        not isinstance(overview_level, int)
+        or isinstance(overview_level, bool)
+    ):
+        raise TypeError(
+            f"overview_level must be an int or None, got "
+            f"{type(overview_level).__name__}: {overview_level!r}"
+        )
 
     # ``on_gpu_failure`` is GPU-only. Reject it up front for CPU/dask paths
     # rather than silently dropping it once dispatch is decided -- callers
