@@ -6,6 +6,15 @@ on:
   pull_request:
     branches:
     - '*'
+  # Nightly cron and a manual trigger so the full corpus (slow lane
+  # included) runs at least once a day. PR runs stay on the fast lane
+  # via `-m "not slow"`; this job has no such filter and exercises
+  # every fixture in the golden corpus, including the heavier
+  # compression cells. See issue #1930 for the fast / slow split.
+  schedule:
+    # 03:00 UTC daily. Off-peak to avoid contention with weekday PRs.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 jobs:
   run:
@@ -27,5 +36,13 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -e .[tests]
-    - name: Run pytest
+    - name: Run pytest (fast lane)
+      # PR triggers run the fast lane: `-m "not slow"` deselects the
+      # heavier corpus cells tagged via `_marks.fast_slow_marks_for`
+      # (today: the six compression fixtures). push-to-main and the
+      # nightly schedule run the full set with no filter.
+      if: github.event_name == 'pull_request'
+      run: pytest -m "not slow"
+    - name: Run pytest (full)
+      if: github.event_name != 'pull_request'
       run: pytest
