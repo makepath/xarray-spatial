@@ -120,6 +120,24 @@ def test_unknown_only_id_errors():
             lambda e: e.update(external_overview="yes"),
             "external_overview must be a bool",
         ),
+        # Non-bool sparse
+        (
+            lambda e: e.update(sparse="maybe"),
+            "sparse must be a bool",
+        ),
+        # sparse=true on a stripped layout: only the tiled path is wired
+        (
+            lambda e: (
+                e.update(sparse=True, layout="stripped", blocksize=16),
+                e.pop("tile_size", None),
+            ),
+            r"sparse=true requires layout=tiled",
+        ),
+        # sparse + cog: COG copy step drops sparse tiles
+        (
+            lambda e: e.update(sparse=True, cog=True, layout="tiled"),
+            r"sparse=true is incompatible with cog=true",
+        ),
     ],
 )
 def test_validator_rejects_bad_entries(mutate, match):

@@ -296,6 +296,26 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
             f"the COG spec requires internal overviews"
         )
 
+    if "sparse" in entry and not isinstance(entry["sparse"], bool):
+        raise ManifestError(
+            f"{fid}: sparse must be a bool, got {entry['sparse']!r}"
+        )
+    if entry.get("sparse"):
+        # Sparse encoding needs tiles or strips that can be elided. The
+        # implementation only wires the tiled path (the only realistic
+        # COG-shaped sparse case in the wild); reject other layouts up
+        # front so the manifest stays honest.
+        if entry["layout"] != "tiled":
+            raise ManifestError(
+                f"{fid}: sparse=true requires layout=tiled (the generator "
+                f"only implements the tiled sparse path)"
+            )
+        if entry.get("cog"):
+            raise ManifestError(
+                f"{fid}: sparse=true is incompatible with cog=true; the "
+                f"COG copy driver rewrites the file and drops sparse tiles"
+            )
+
 
 def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate the parsed manifest and return resolved fixture entries.
@@ -506,6 +526,15 @@ def _rasterio_kwargs(entry: dict[str, Any]) -> dict[str, Any]:
         # the lowercase ``endian`` kwarg is intercepted by rasterio and
         # silently dropped, so we route through the GDAL name directly.
         kwargs["ENDIANNESS"] = "BIG"
+
+    if entry.get("sparse"):
+        # GDAL GTiff driver creation option SPARSE_OK=TRUE. Lets the writer
+        # elide tiles whose pixels are all zero (or all nodata); their
+        # ``TileByteCounts`` entry becomes 0 and the reader treats them as
+        # implicit zeros on read. The flag passes through rasterio as a
+        # GDAL creation option because rasterio has no native handle for
+        # it. See https://gdal.org/drivers/raster/gtiff.html#creation-options
+        kwargs["SPARSE_OK"] = "TRUE"
 
     nd = entry.get("nodata")
     if isinstance(nd, (int, float)):

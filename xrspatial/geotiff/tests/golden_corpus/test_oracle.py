@@ -1313,3 +1313,92 @@ def test_compare_to_oracle_overview_corpus_external_ovr_fixture() -> None:
 
     base_candidate = _build_candidate(base, transform=base_transform)
     compare_to_oracle(path, base_candidate, candidate_factory=factory)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 fixtures: planar-separate + sparse tiles (#1930)
+#
+# Bytes-on-disk pins for the two fixtures added by this PR. The smoke
+# tests open each one with rasterio (planar) or tifffile (sparse) and
+# assert the on-disk property the fixture is meant to expose. Phase 3
+# backend parametrisations run the same files through compare_to_oracle.
+# ---------------------------------------------------------------------------
+
+_PHASE4_FIXTURE_DIR = Path(__file__).resolve().parent / 'fixtures'
+
+
+def test_planar_separate_fixture_reports_planarconfig_2() -> None:
+    """``planar_separate_uint8_rgb`` is written with PLANARCONFIG=2 (BSQ).
+
+    rasterio surfaces the layout as ``interleave='band'`` in the profile;
+    tifffile reports the raw ``PlanarConfiguration`` tag as 2. Either way
+    the bytes-on-disk axis under test is the planar config.
+    """
+    import tifffile
+
+    path = _PHASE4_FIXTURE_DIR / 'planar_separate_uint8_rgb.tif'
+    assert path.exists(), f'missing fixture {path}'
+    with rasterio.open(path) as src:
+        assert src.profile['interleave'] == 'band'
+        assert src.count == 3
+        assert src.dtypes[0] == 'uint8'
+        assert src.width == 32 and src.height == 32
+    with tifffile.TiffFile(path) as t:
+        # tifffile maps PLANARCONFIG_SEPARATE to enum value 2.
+        assert int(t.pages[0].planarconfig) == 2
+
+
+def test_sparse_tiled_fixture_has_zero_tilebytecounts() -> None:
+    """``sparse_tiled_uint16`` has at least one zero entry in TileByteCounts.
+
+    SPARSE_OK=TRUE plus a uniform-zero pixel pattern lets GDAL elide
+    every tile. The on-disk TileByteCounts array reads zero for elided
+    tiles; on read the decoder reconstructs the implicit zeros.
+    """
+    import tifffile
+
+    path = _PHASE4_FIXTURE_DIR / 'sparse_tiled_uint16.tif'
+    assert path.exists(), f'missing fixture {path}'
+    with tifffile.TiffFile(path) as t:
+        page = t.pages[0]
+        byte_counts = page.tags['TileByteCounts'].value
+    # 64x64 with 16-px tiles is a 4x4 = 16-tile grid; uniform 0 + deflate
+    # + SPARSE_OK=TRUE elides every tile.
+    assert len(byte_counts) == 16
+    assert any(bc == 0 for bc in byte_counts), (
+        f'sparse fixture must have at least one elided tile, '
+        f'got TileByteCounts={byte_counts}'
+    )
+
+
+def test_sparse_tiled_fixture_reads_back_as_zeros() -> None:
+    """The sparse fixture decodes to an all-zero raster of the right shape.
+
+    The reader has to materialise zeros for every elided tile; this pins
+    the round-trip so a future regression in the decode path surfaces
+    here rather than as a silent corruption.
+    """
+    path = _PHASE4_FIXTURE_DIR / 'sparse_tiled_uint16.tif'
+    with rasterio.open(path) as src:
+        assert src.width == 64 and src.height == 64
+        assert src.dtypes[0] == 'uint16'
+        data = src.read(1)
+    assert data.shape == (64, 64)
+    assert data.dtype == np.uint16
+    assert (data == 0).all()
+
+
+def test_planar_separate_fixture_size_budget() -> None:
+    path = _PHASE4_FIXTURE_DIR / 'planar_separate_uint8_rgb.tif'
+    assert path.stat().st_size < 12 * 1024, (
+        f'{path.name} exceeds the 12 KB per-fixture budget '
+        f'({path.stat().st_size} bytes)'
+    )
+
+
+def test_sparse_tiled_fixture_size_budget() -> None:
+    path = _PHASE4_FIXTURE_DIR / 'sparse_tiled_uint16.tif'
+    assert path.stat().st_size < 12 * 1024, (
+        f'{path.name} exceeds the 12 KB per-fixture budget '
+        f'({path.stat().st_size} bytes)'
+    )
