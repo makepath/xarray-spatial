@@ -272,7 +272,19 @@ def read_vrt(source: str, *,
     # ``_populate_attrs_from_geo_info``; stamp the contract version here
     # so both code paths emit the same marker.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
-    if vrt.crs_wkt:
+    # A rotated VRT under ``allow_rotated=True`` is treated as no-georef
+    # by the GeoTIFF contract (#2115): the in-memory array is a pixel
+    # grid, not a projected raster, so ``attrs['crs']`` would mislead
+    # downstream code that branches on ``'crs' in attrs`` (#2122). The
+    # rotated case is the non-zero ``b`` / ``d`` term on the GDAL
+    # GeoTransform (positions 2 and 4). A VRT with no ``<GeoTransform>``
+    # at all is the general no-georef case and the CRS is still
+    # surfaced (the writer-side ``crs=`` kwarg path emits CRS without a
+    # transform; see ``test_crs_kwarg_no_coords``).
+    _vrt_is_rotated = (
+        gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)
+    )
+    if vrt.crs_wkt and not _vrt_is_rotated:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
         if epsg is not None:
             attrs['crs'] = epsg
@@ -324,7 +336,11 @@ def read_vrt(source: str, *,
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
     # vrt.geo_transform is GDAL ordering, so reorder. For a windowed read
     # the origin shifts by (col_offset * res_x, row_offset * res_y).
-    if gt is not None:
+    # Rotated VRTs (allow_rotated=True opt-in) intentionally skip the
+    # transform attr because the axis-aligned 6-tuple would silently drop
+    # the rotation terms and downstream code that branches on
+    # ``'transform' in attrs`` would treat the array as projected (#2122).
+    if gt is not None and not _vrt_is_rotated:
         if window is not None:
             tt_window = (max(0, window[0]), max(0, window[1]), 0, 0)
         else:
@@ -676,6 +692,16 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # ``_populate_attrs_from_geo_info``, so the contract version is
     # stamped inline using the shared constant to stay in lockstep.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
+    # ``_vrt_is_rotated`` matches the eager VRT branch's gate (#2122):
+    # rotated VRTs read with ``allow_rotated=True`` opt out of the
+    # georef attrs (``crs`` / ``crs_wkt`` / ``transform``) so downstream
+    # code that branches on ``'crs' in attrs`` does not treat the pixel
+    # grid as projected. A VRT with no ``<GeoTransform>`` still
+    # surfaces CRS (mirroring the GeoTIFF writer's ``crs=`` kwarg
+    # path).
+    _vrt_is_rotated = (
+        gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)
+    )
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
         coord_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)
@@ -684,12 +710,13 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
             is_point=vrt.raster_type == 'point',
             window=coord_window,
         )
-        attrs['transform'] = _transform_tuple_from_pixel_geometry(
-            origin_x, origin_y, res_x, res_y,
-            window=(win_r0, win_c0, 0, 0),
-        )
+        if not _vrt_is_rotated:
+            attrs['transform'] = _transform_tuple_from_pixel_geometry(
+                origin_x, origin_y, res_x, res_y,
+                window=(win_r0, win_c0, 0, 0),
+            )
 
-    if vrt.crs_wkt:
+    if vrt.crs_wkt and not _vrt_is_rotated:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
         if epsg is not None:
             attrs['crs'] = epsg

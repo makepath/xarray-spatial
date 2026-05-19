@@ -30,13 +30,18 @@ split changes in a future release.
 
 Canonical (xrspatial owns these; round-trip stable):
 
-- ``crs``: EPSG integer code for the horizontal CRS.
+- ``crs``: EPSG integer code for the horizontal CRS. Dropped on rotated
+  reads opened with ``allow_rotated=True`` (issue #2122) -- the array is
+  treated as a no-georef pixel grid in that case.
 - ``crs_wkt``: WKT string for the horizontal CRS. Present on read whenever
-  any CRS information is available.
+  any CRS information is available. Dropped on rotated reads opened with
+  ``allow_rotated=True`` (issue #2122), in lockstep with ``crs``.
 - ``transform``: rasterio-style 6-tuple
   ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``. Omitted
   for files with no GeoTIFF transform tags (ModelTransformation,
-  ModelPixelScale, or ModelTiepoint).
+  ModelPixelScale, or ModelTiepoint), and for rotated reads opened with
+  ``allow_rotated=True`` (axis-aligned 6-tuple would silently drop the
+  rotation terms).
 - ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag.
   Set whenever the source declares one, as a scalar of the source
   dtype, regardless of whether the in-memory array is float-with-NaN
@@ -355,23 +360,38 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     # rather than the bare literal.
     attrs['_xrspatial_geotiff_contract'] = _ATTRS_CONTRACT_VERSION
 
-    if geo_info.crs_epsg is not None:
-        attrs['crs'] = geo_info.crs_epsg
-    if geo_info.crs_wkt is not None:
-        attrs['crs_wkt'] = geo_info.crs_wkt
+    src_t = geo_info.transform
+    has_georef = getattr(geo_info, 'has_georef', True)
+    # Rotated reads under ``allow_rotated=True`` drop the CRS attrs so
+    # the in-memory pixel grid is not mistaken for a projected raster.
+    # The marker is ``geo_info.transform.rotated_affine``, which the
+    # geotag parser sets when it sees a rotated ``ModelTransformationTag``
+    # under the opt-in (#2115). General no-georef reads (axis-aligned
+    # rasters that simply lack transform tags -- e.g. arrays written
+    # with ``to_geotiff(..., crs=NNN)`` and no coords) still surface
+    # ``crs`` / ``crs_wkt`` because the CRS is meaningful even without
+    # an embedded transform; only the rotated case is misleading.
+    # See ``open_geotiff`` docstring + issue #2122.
+    is_rotated_no_georef = (
+        not has_georef
+        and src_t is not None
+        and getattr(src_t, 'rotated_affine', None) is not None
+    )
+    if not is_rotated_no_georef:
+        if geo_info.crs_epsg is not None:
+            attrs['crs'] = geo_info.crs_epsg
+        if geo_info.crs_wkt is not None:
+            attrs['crs_wkt'] = geo_info.crs_wkt
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         attrs['raster_type'] = 'point'
 
-    src_t = geo_info.transform
     # Skip the transform attr for files where no GeoTIFF transform tags
     # (ModelTransformation, ModelPixelScale, or ModelTiepoint) are
-    # present, signalled by ``has_georef=False``. GeoKeys / CRS metadata
-    # can still be present in that case. The default unit
+    # present, signalled by ``has_georef=False``. The default unit
     # ``GeoTransform`` is a struct placeholder, not real georef --
     # emitting it leaks an identity transform into attrs and confuses
     # downstream code that expects ``'transform' in attrs`` to mean
     # "this raster has a georef transform" (#1710).
-    has_georef = getattr(geo_info, 'has_georef', True)
     if src_t is not None and has_georef:
         attrs['transform'] = _transform_tuple_from_pixel_geometry(
             src_t.origin_x, src_t.origin_y,

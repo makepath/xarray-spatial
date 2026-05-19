@@ -44,6 +44,9 @@ write.
    * - ``crs``
      - int
      - EPSG code of the horizontal CRS, when one can be resolved.
+       Dropped on rotated reads opened with ``allow_rotated=True``
+       (issue #2122); the in-memory array is a pixel grid with integer
+       coords and is not georeferenced.
    * - ``crs_wkt``
      - str
      - WKT string of the horizontal CRS. Present on read when any CRS
@@ -52,7 +55,8 @@ write.
        dialect depends on the source: paths that synthesise a WKT from
        an EPSG code via pyproj emit WKT2; paths that read a WKT
        verbatim from the file (e.g. a VRT ``SRS`` tag) carry whatever
-       dialect was stored.
+       dialect was stored. Dropped on rotated reads opened with
+       ``allow_rotated=True`` (issue #2122), in lockstep with ``crs``.
    * - ``transform``
      - tuple
      - ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``
