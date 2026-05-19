@@ -254,7 +254,7 @@ def read_geotiff_gpu(source: str, *,
 
     from .._reader import (
         _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
-        _resolve_masked_fill,
+        _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
     from .._header import (
@@ -488,6 +488,33 @@ def read_geotiff_gpu(source: str, *,
         # supplied TileOffsets length. The GPU tile-assembly kernel would
         # read OOB otherwise. See issue #1219.
         validate_tile_layout(ifd)
+
+        # Per-tile compressed-byte cap, matching the CPU paths
+        # ``_read_tiles`` and ``_fetch_decode_cog_http_tiles`` apply
+        # via the same env var (issue #1664). ``validate_tile_layout``
+        # bounds the offsets array length but not the byte_counts
+        # entries; a crafted ``TileByteCounts`` value can still ask
+        # the GPU pipeline to fetch and decompress a multi-hundred-MB
+        # tile that the CPU paths would already refuse. The
+        # ``_check_gpu_memory`` guard in the downstream kvikio /
+        # nvCOMP paths runs against ``sum(byte_counts)`` so it only
+        # catches the extreme aggregate case; this loop closes the
+        # per-tile asymmetry between the CPU and GPU readers. Sparse
+        # tiles (``byte_count == 0``) pass under any positive cap by
+        # design -- they carry no compressed bytes to decode and the
+        # CPU mirror at ``_reader.py`` does the same.
+        max_tile_bytes = _max_tile_bytes_from_env()
+        for tile_idx, bc in enumerate(byte_counts):
+            if bc > max_tile_bytes:
+                raise ValueError(
+                    f"TIFF tile {tile_idx} declares "
+                    f"TileByteCount={bc:,} bytes, which exceeds the "
+                    f"per-tile safety cap of {max_tile_bytes:,} bytes. "
+                    f"The file is malformed or attempting "
+                    f"denial-of-service. Override via "
+                    f"XRSPATIAL_COG_MAX_TILE_BYTES if this file is "
+                    f"legitimate."
+                )
 
     finally:
         src.close()
@@ -936,11 +963,55 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     """
     import cupy
 
-    from .._reader import _FileSource, _coerce_path
+    from .._reader import (
+        _FileSource, _coerce_path, _max_tile_bytes_from_env,
+    )
     from .._header import parse_header, parse_all_ifds, select_overview_ifd
     from .._geotags import extract_geo_info_with_overview_inheritance
 
     src_path = _coerce_path(source)
+
+    # Per-tile compressed-byte cap, mirroring the eager GPU path and
+    # the CPU readers (issue #1664 + the GPU eager fix in this PR).
+    # The chunked dask + GPU path either qualifies for the GDS fast
+    # path (handled in ``_read_geotiff_gpu_chunked_gds`` which runs
+    # the same cap on its own metadata parse) or falls through to
+    # ``read_geotiff_dask`` whose per-chunk ``read_to_array`` calls
+    # apply the cap inside the CPU reader. The check here closes the
+    # window between "qualification probe parses the IFDs" and "the
+    # dispatch decides which path to take" so a forged tile is
+    # rejected at graph-build time rather than at first ``.compute()``.
+    # Sparse tiles (``byte_count == 0``) pass under any positive cap
+    # by design.
+    if isinstance(src_path, str) and not src_path.startswith(
+            ('http://', 'https://')):
+        try:
+            _cap_fs = _FileSource(src_path)
+            try:
+                _cap_raw = _cap_fs.read_all()
+            finally:
+                _cap_fs.close()
+            _cap_header = parse_header(_cap_raw)
+            _cap_ifds = parse_all_ifds(_cap_raw, _cap_header)
+            _cap_ifd = select_overview_ifd(_cap_ifds, overview_level)
+            _cap_byte_counts = _cap_ifd.tile_byte_counts
+        except Exception:
+            # If metadata parse fails here, the downstream path will
+            # surface a clear error; do not double-report.
+            _cap_byte_counts = None
+        if _cap_byte_counts is not None:
+            _cap = _max_tile_bytes_from_env()
+            for _tile_idx, _bc in enumerate(_cap_byte_counts):
+                if _bc > _cap:
+                    raise ValueError(
+                        f"TIFF tile {_tile_idx} declares "
+                        f"TileByteCount={_bc:,} bytes, which exceeds "
+                        f"the per-tile safety cap of {_cap:,} bytes. "
+                        f"The file is malformed or attempting "
+                        f"denial-of-service. Override via "
+                        f"XRSPATIAL_COG_MAX_TILE_BYTES if this file "
+                        f"is legitimate."
+                    )
 
     # Try the disk->GPU path. Parse metadata once; if the file does not
     # qualify, fall through to the CPU-decode path. Any unexpected
@@ -1028,7 +1099,8 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     import dask.array as da_mod
 
     from .._reader import (
-        _check_dimensions, MAX_PIXELS_DEFAULT, _resolve_masked_fill,
+        _check_dimensions, MAX_PIXELS_DEFAULT,
+        _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
     from .._header import validate_tile_layout
@@ -1054,6 +1126,27 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     _check_dimensions(full_w, full_h, samples, max_pixels)
     _check_dimensions(tw, th, samples, max_pixels)
     validate_tile_layout(ifd)
+
+    # Per-tile compressed-byte cap, mirroring the eager GPU path's loop
+    # (issue #1664 + the original eager fix above). The chunked GDS
+    # graph fans tile reads out across dask tasks, so a forged
+    # ``TileByteCount`` would otherwise slip past every task's GDS
+    # request and the downstream ``_check_gpu_memory`` guard, which
+    # only catches the aggregate sum. Running the check here means the
+    # dask graph never builds for a hostile file. Sparse tiles
+    # (``byte_count == 0``) pass under any positive cap by design.
+    max_tile_bytes = _max_tile_bytes_from_env()
+    for tile_idx, bc in enumerate(byte_counts):
+        if bc > max_tile_bytes:
+            raise ValueError(
+                f"TIFF tile {tile_idx} declares "
+                f"TileByteCount={bc:,} bytes, which exceeds the "
+                f"per-tile safety cap of {max_tile_bytes:,} bytes. "
+                f"The file is malformed or attempting "
+                f"denial-of-service. Override via "
+                f"XRSPATIAL_COG_MAX_TILE_BYTES if this file is "
+                f"legitimate."
+            )
 
     # Window restricts the visible region; offsets are computed relative
     # to the windowed origin so chunks line up with the user's request.
