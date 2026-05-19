@@ -3132,26 +3132,37 @@ GPU_OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode',
 def _block_reduce_2d_gpu(arr2d, method, nodata=None):
     """2x block-reduce a single 2D CuPy plane using *method*.
 
+    Output dimensions follow GDAL's ceil semantics (5x5 -> 3x3) so the
+    overview pyramid covers the full source extent for odd-sized rasters.
+    Odd inputs are NaN-padded along the trailing edge (float-promoted for
+    integer dtypes) so the 2x2 block reshape works and the residual block
+    is reduced via the same nan-aware aggregations (issue #2105). Mirrors
+    the CPU helper :func:`xrspatial.geotiff._writer._block_reduce_2d` so
+    the two backends produce identical overviews.
+
     When ``nodata`` is supplied and ``arr2d`` is a float dtype, cells that
     equal the sentinel are masked back to NaN before the reduction so the
-    ``cupy.nan*`` aggregation routines correctly skip them. Mirrors the
-    CPU helper :func:`xrspatial.geotiff._writer._block_reduce_2d` so the
-    two backends produce identical overviews when ``nodata`` is set.
+    ``cupy.nan*`` aggregation routines correctly skip them.
     """
     import cupy
     import numpy as np
 
     h, w = arr2d.shape
-    h2 = (h // 2) * 2
-    w2 = (w // 2) * 2
-    cropped = arr2d[:h2, :w2]
-    oh, ow = h2 // 2, w2 // 2
+    # Ceil semantics match GDAL and the CPU mirror in _writer.
+    oh, ow = (h + 1) // 2, (w + 1) // 2
+    h2, w2 = 2 * oh, 2 * ow
+    need_pad = (h2, w2) != (h, w)
 
     if method == 'nearest':
-        return cropped[::2, ::2].copy()
+        # Top-left pixel of each 2x2 block; direct stride keeps the
+        # trailing row/col for odd-sized inputs (issue #2105). The
+        # ``.copy()`` materialises a contiguous device buffer so
+        # downstream nodata-mask rewrites don't touch ``arr2d``.
+        return arr2d[::2, ::2].copy()
 
     if method == 'mode':
-        # Mode is expensive on GPU; fall back to CPU
+        # Mode is expensive on GPU; fall back to CPU. The CPU helper
+        # now handles odd-sized inputs natively.
         cpu_arr = arr2d.get()
         from ._writer import _block_reduce_2d
         cpu_result = _block_reduce_2d(cpu_arr, 'mode', nodata=nodata)
@@ -3162,15 +3173,26 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
         # factors with the same prefilter=False NaN-safety the CPU
         # helper uses for issue #1623. Fall back to CPU so cubic on
         # the GPU writer path produces the same overview bytes as the
-        # CPU writer and so the sentinel handling matches.
+        # CPU writer and so the sentinel handling matches. The CPU
+        # helper handles odd-sized inputs via edge-replicate padding.
         cpu_arr = arr2d.get()
         from ._writer import _block_reduce_2d
         cpu_result = _block_reduce_2d(cpu_arr, 'cubic', nodata=nodata)
         return cupy.asarray(cpu_result)
 
-    # Block reshape for mean/min/max/median
+    # Block reshape for mean/min/max/median. Odd-sized inputs get a
+    # NaN-padded trailing edge so the residual block reduces correctly;
+    # the nan-aware reductions exclude the padded cells. The padded
+    # buffer keeps the source float dtype (float32 stays float32) so an
+    # odd-shape GPU read does not pay a 2x device-memory cost for a
+    # silent promote to float64.
     if arr2d.dtype.kind == 'f':
-        blocks = cropped.reshape(oh, 2, ow, 2)
+        if need_pad:
+            padded = cupy.full((h2, w2), np.nan, dtype=arr2d.dtype)
+            padded[:h, :w] = arr2d
+            blocks = padded.reshape(oh, 2, ow, 2)
+        else:
+            blocks = arr2d.reshape(oh, 2, ow, 2)
         # Mask the sentinel back to NaN so cupy.nanmean and friends
         # honour it as missing-data (issue #1613). Match the upstream
         # NaN->sentinel rewrite gate so ``nodata=+/-inf`` is masked here.
@@ -3185,7 +3207,12 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
                     blocks = cupy.where(
                         mask, cupy.float64('nan'), blocks)
     else:
-        blocks = cropped.astype(cupy.float64).reshape(oh, 2, ow, 2)
+        if need_pad:
+            blocks = cupy.full((h2, w2), cupy.float64('nan'), dtype=cupy.float64)
+            blocks[:h, :w] = arr2d
+            blocks = blocks.reshape(oh, 2, ow, 2)
+        else:
+            blocks = arr2d.astype(cupy.float64).reshape(oh, 2, ow, 2)
         # Integer GPU mirror of the CPU sentinel-mask: without it,
         # cupy.nanmean / nanmin / nanmax / nanmedian average the sentinel
         # value into surrounding valid cells and produce overview pixels
@@ -3200,8 +3227,18 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
             info = np.iinfo(arr2d.dtype)
             if info.min <= nodata_int <= info.max:
                 sentinel = np.dtype(str(arr2d.dtype)).type(nodata_int)
-                int_blocks = cropped.reshape(oh, 2, ow, 2)
-                mask = int_blocks == sentinel
+                if need_pad:
+                    # Compute the integer-width sentinel mask before
+                    # padding, so a 64-bit sentinel near INT64_MAX (not
+                    # exactly representable in float64) still matches.
+                    # The padded edge already holds NaN in ``blocks`` and
+                    # stays False here so the where below leaves it alone.
+                    int_mask = cupy.zeros((h2, w2), dtype=bool)
+                    int_mask[:h, :w] = arr2d == sentinel
+                    mask = int_mask.reshape(oh, 2, ow, 2)
+                else:
+                    int_blocks = arr2d.reshape(oh, 2, ow, 2)
+                    mask = int_blocks == sentinel
                 if bool(mask.any().item()):
                     blocks = cupy.where(
                         mask, cupy.float64('nan'), blocks)
