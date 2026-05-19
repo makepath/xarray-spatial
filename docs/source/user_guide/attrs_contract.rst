@@ -102,6 +102,16 @@ write.
    * - ``_xrspatial_geotiff_contract``
      - int
      - Contract version. Currently ``2``. See `Versioning`_.
+   * - ``_xrspatial_no_georef``
+     - bool
+     - Stamped ``True`` on reads of files with no GeoTIFF transform
+       tags. The reader emits int64 placeholder y/x coords for these
+       files; the marker tells the writer to reproduce that
+       no-georef shape on round-trip rather than synthesising a
+       fake unit transform. Absence of the marker means the array
+       has spatial coords the writer can interpret as georef. A
+       caller can opt into no-georef writes on a hand-built array
+       by setting this attr explicitly. See issue #2120.
 
 
 Compatibility aliases

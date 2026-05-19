@@ -129,7 +129,11 @@ import numpy as np
 from ._coords import (
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
-from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
+from ._geotags import (
+    RASTER_PIXEL_IS_AREA,
+    RASTER_PIXEL_IS_POINT,
+    _NO_GEOREF_KEY,
+)
 
 
 # Per-codec valid compression-level ranges, used by ``to_geotiff`` for
@@ -378,6 +382,14 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
             src_t.pixel_width, src_t.pixel_height,
             window=window,
         )
+    else:
+        # Stamp the no-georef marker so the writer can tell our
+        # placeholder int64 step-1 coords apart from a user-authored
+        # integer-coord grid (#2120). Pre-#2120 the writer detected the
+        # placeholder by shape alone, which silently stripped georef
+        # from any user array whose coords matched the same arange
+        # pattern.
+        attrs[_NO_GEOREF_KEY] = True
 
     # Contract v2 (issue #2016) removed the 13 secondary GeoKey-derived
     # attrs that v1 emitted under a ``DeprecationWarning`` (``crs_name``,
