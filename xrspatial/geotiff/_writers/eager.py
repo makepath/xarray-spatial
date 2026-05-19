@@ -439,7 +439,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          bigtiff=bigtiff,
                          max_z_error=max_z_error,
                          photometric=photometric,
-                         allow_unparseable_crs=allow_unparseable_crs)
+                         allow_unparseable_crs=allow_unparseable_crs,
+                         allow_internal_only_jpeg=allow_internal_only_jpeg)
         return path
 
     # Dispatch to write_geotiff_gpu when GPU was selected (explicit
@@ -784,7 +785,9 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
                        gdal_metadata_xml=None,
                        extra_tags=None,
                        photometric: str | int = 'auto',
-                       restore_sentinel: bool = True):
+                       restore_sentinel: bool = True,
+                       allow_internal_only_jpeg: bool = False,
+                       allow_unparseable_crs: bool = False):
     """Write a single tile GeoTIFF. Used by _write_vrt_tiled.
 
     Forwards the same rich-tag set that ``to_geotiff`` passes through to
@@ -839,7 +842,12 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
           bigtiff=bigtiff,
           max_z_error=max_z_error,
           photometric=photometric,
-          restore_sentinel=restore_sentinel)
+          restore_sentinel=restore_sentinel,
+          # Forward the JPEG / CRS-fallback opt-ins so the per-tile
+          # write does not re-trip the push-down gate ``to_geotiff``
+          # / ``_write_vrt_tiled`` already cleared upstream (#2138).
+          allow_internal_only_jpeg=allow_internal_only_jpeg,
+          allow_unparseable_crs=allow_unparseable_crs)
 
 
 def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
@@ -847,7 +855,8 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                      tile_size=256, predictor: bool | int = False,
                      bigtiff=None, max_z_error: float = 0.0,
                      photometric: str | int = 'auto',
-                     allow_unparseable_crs: bool = False):
+                     allow_unparseable_crs: bool = False,
+                     allow_internal_only_jpeg: bool = False):
     """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
 
     This enables streaming dask arrays to disk without materializing the
@@ -1063,7 +1072,9 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                     gdal_metadata_xml=gdal_meta_xml,
                     extra_tags=extra_tags_list,
                     photometric=photometric,
-                    restore_sentinel=restore_sentinel)
+                    restore_sentinel=restore_sentinel,
+                    allow_internal_only_jpeg=allow_internal_only_jpeg,
+                    allow_unparseable_crs=allow_unparseable_crs)
                 delayed_tasks.append(task)
             else:
                 # Numpy: slice and write directly
@@ -1080,7 +1091,9 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                     gdal_metadata_xml=gdal_meta_xml,
                     extra_tags=extra_tags_list,
                     photometric=photometric,
-                    restore_sentinel=restore_sentinel)
+                    restore_sentinel=restore_sentinel,
+                    allow_internal_only_jpeg=allow_internal_only_jpeg,
+                    allow_unparseable_crs=allow_unparseable_crs)
 
             col_offset += chunk_w
         row_offset += chunk_h

@@ -318,3 +318,19 @@ def test_aliases_match_underscore_names():
     assert _writer.write is _writer._write
     assert _writer.write_streaming is _writer._write_streaming
     assert _reader.read_to_array is _reader._read_to_array
+
+
+def test_write_not_leaked_into_public_namespace():
+    """The array-level write entry points are module-private. They
+    must not appear as attributes of ``xrspatial.geotiff`` (the
+    documented public surface is ``to_geotiff``). Mirrors the #1708
+    contract for ``read_to_array``."""
+    import xrspatial.geotiff as g
+
+    for name in ('write', 'write_streaming', '_write', '_write_streaming'):
+        assert not hasattr(g, name), (
+            f"{name!r} leaked into xrspatial.geotiff's public namespace. "
+            "The supported public eager-write entry point is to_geotiff. "
+            "Internal callers should import the array-level function "
+            "from xrspatial.geotiff._writer directly. See issue #2138."
+        )
