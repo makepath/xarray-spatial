@@ -129,7 +129,10 @@ def _probe_fsspec(uri: str) -> str | None:
         return None
 
 
-def load_sidecar(path: str) -> SidecarOverviews:
+def load_sidecar(path: str,
+                 *,
+                 max_cloud_bytes: int | None = None,
+                 ) -> SidecarOverviews:
     """Open and parse a sidecar ``.ovr`` file.
 
     Accepts local file paths, HTTP / HTTPS URLs, and fsspec URIs.
@@ -141,9 +144,32 @@ def load_sidecar(path: str) -> SidecarOverviews:
     full-resolution IFD, level 2 when the base file already carries
     one internal overview, and so on).
 
+    Parameters
+    ----------
+    path
+        Sidecar path or URL returned by :func:`find_sidecar`.
+    max_cloud_bytes
+        Byte ceiling applied to HTTP and fsspec downloads. Mirrors the
+        base-file ``max_cloud_bytes`` budget that ``read_to_array`` and
+        ``_CloudSource`` enforce so a hostile or malformed sidecar can
+        not bypass the cap a caller already set on the source. ``None``
+        (the default) means unbounded -- matches the base-file semantics
+        when the caller passes ``max_cloud_bytes=None`` explicitly.
+        Ignored on the local-file path because mmap does not allocate
+        the file. Issue #2121.
+
     The returned ``data`` is either an ``mmap`` (local) or ``bytes``
     (remote). Callers should close the mmap variant via
     ``data.close()`` when present; the bytes case is no-op.
+
+    Raises
+    ------
+    CloudSizeLimitError
+        If the fsspec sidecar's declared size exceeds ``max_cloud_bytes``.
+        The HTTP transport raises ``OSError`` from its streaming
+        overshoot detector rather than ``CloudSizeLimitError`` because
+        the size is checked mid-stream against ``Content-Length`` (when
+        present) and the running byte count (always).
     """
     if "://" not in path:
         f = open(path, "rb")
@@ -156,12 +182,39 @@ def load_sidecar(path: str) -> SidecarOverviews:
         # inherits SSRF validation, IP pinning, the shared urllib3
         # PoolManager, and manual redirect re-validation. See
         # ``_probe_http`` for the threat model the indirection closes.
+        # ``max_bytes`` here closes a separate gap: without it, the
+        # sidecar fetch ignores the ``max_cloud_bytes`` budget the
+        # caller set on the base file and a hostile server can serve a
+        # multi-GB ``.ovr`` to OOM the process. Issue #2121.
         from ._reader import _HTTPSource
-        data = _HTTPSource(path).read_all()
+        data = _HTTPSource(path).read_all(max_bytes=max_cloud_bytes)
     else:
-        # fsspec URI
+        # fsspec URI. Stat the sidecar first so an oversized object is
+        # rejected before any bytes hit memory, mirroring the
+        # ``_CloudSource`` size guard at ``_reader.py:3239-3260``.
+        # Issue #2121.
         import fsspec
-        with fsspec.open(path, "rb") as f:
+        fs, fs_path = fsspec.core.url_to_fs(path)
+        if max_cloud_bytes is not None:
+            size = fs.size(fs_path)
+            from ._reader import CloudSizeLimitError
+            if size is None:
+                raise CloudSizeLimitError(
+                    f"Sidecar {path!r} reports unknown size; refusing "
+                    f"to download to avoid an unbounded read. Pass "
+                    f"max_cloud_bytes=None on the source to disable the "
+                    f"check for this sidecar."
+                )
+            if size > max_cloud_bytes:
+                raise CloudSizeLimitError(
+                    f"Sidecar {path!r} is {size:,} bytes, which exceeds "
+                    f"max_cloud_bytes={max_cloud_bytes:,}. Raise "
+                    f"max_cloud_bytes (or set "
+                    f"XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES) if the sidecar "
+                    f"is legitimate, or pass max_cloud_bytes=None on the "
+                    f"source to disable the check."
+                )
+        with fs.open(fs_path, "rb") as f:
             data = f.read()
     header = parse_header(data)
     ifds = parse_all_ifds(data, header)
