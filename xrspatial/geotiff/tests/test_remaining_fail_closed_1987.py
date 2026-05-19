@@ -19,10 +19,11 @@ land in the bundled follow-up:
   entry in ``attrs['nodatavals']``. Opt-out via explicit ``nodata=``
   kwarg.
 
-``MixedBandMetadataError`` (#1987 PR 5) is intentionally NOT
-registered in this PR (see the corresponding ``# register_...`` comment
-in ``_validation.py``); the migration cost on existing VRT fixtures is
-its own follow-up.
+``MixedBandMetadataError`` (#1987 PR 5) was staged but unregistered in
+the bundle above. The activation, opt-out wiring on ``open_geotiff`` /
+``read_geotiff_dask``, and VRT test sweep ship in a follow-up PR; the
+dedicated fail-closed coverage for that case lives in
+``test_mixed_band_metadata_fail_closed_1987.py``.
 """
 from __future__ import annotations
 

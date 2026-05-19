@@ -41,6 +41,7 @@ def read_geotiff_dask(source: str, *,
                       max_pixels: int | None = None,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
+                      band_nodata: str | None = None,
                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
@@ -74,6 +75,11 @@ def read_geotiff_dask(source: str, *,
         directly.
     name : str or None
         Name for the DataArray.
+    band_nodata : {'first', None}, optional
+        VRT-only opt-out for the fail-closed mixed-band-metadata check
+        (issue #1987 PR 5). Forwarded verbatim to ``read_vrt`` when the
+        source is a ``.vrt`` file. Passing it with a non-VRT GeoTIFF
+        source raises ``ValueError``.
     mask_nodata : bool, default True
         If True, replace the nodata sentinel with NaN per chunk (integer
         rasters get promoted to ``float64``). If False, skip the
@@ -114,8 +120,21 @@ def read_geotiff_dask(source: str, *,
         return read_vrt(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
+            allow_rotated=allow_rotated,
+            allow_unparseable_crs=allow_unparseable_crs,
+            band_nodata=band_nodata,
             mask_nodata=mask_nodata,
         )
+    # ``band_nodata`` only has meaning for the VRT path (per-band sentinel
+    # ambiguity). Reject the kwarg up front on non-VRT GeoTIFF inputs so
+    # callers learn the opt-out is being dropped, matching the
+    # ``open_geotiff`` guard. See issue #1987 PR 5.
+    if band_nodata is not None:
+        raise ValueError(
+            "band_nodata only applies to VRT sources. "
+            "Pass a .vrt path to enable the VRT pipeline, or drop "
+            "band_nodata to keep the default GeoTIFF path. "
+            "See issue #1987.")
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.

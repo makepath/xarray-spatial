@@ -63,9 +63,15 @@ def test_read_vrt_band0_uses_band0_nodata(tmp_path):
     """Sanity check the band-0 selection still works after the fix.
 
     Confirms the refactor did not flip the index.
+
+    The fixture mosaics two bands with distinct per-band sentinels, so
+    after #1987 PR 5 the default read raises ``MixedBandMetadataError``.
+    The pre-#1987 flatten-to-first-band semantics this regression tests
+    are still reachable via ``band_nodata='first'``; the opt-in surfaces
+    at the call site that the test is exercising the legacy behaviour.
     """
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path, band=0)
+    r = read_vrt(vrt_path, band=0, band_nodata='first')
     assert r.dtype == np.float64
     assert r.attrs.get('nodata') == 65535.0
     assert np.isnan(r.values[1, 1])
@@ -79,7 +85,7 @@ def test_read_vrt_band1_uses_band1_nodata(tmp_path):
     [9,65000]] and attrs['nodata']=65535.
     """
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path, band=1)
+    r = read_vrt(vrt_path, band=1, band_nodata='first')
     assert r.dtype == np.float64, (
         "band=1 read kept uint16 dtype; per-band nodata regression."
     )
@@ -104,7 +110,7 @@ def test_read_vrt_no_band_keeps_band0_nodata_attr(tmp_path):
     "first band wins" contract for multi-band reads.
     """
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path)
+    r = read_vrt(vrt_path, band_nodata='first')
     assert r.attrs.get('nodata') == 65535.0
 
 
@@ -126,7 +132,7 @@ def test_read_vrt_out_of_range_band_raises(tmp_path):
     """
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
     with pytest.raises(ValueError, match="out of range"):
-        read_vrt(vrt_path, band=5)
+        read_vrt(vrt_path, band=5, band_nodata='first')
 
 
 def test_read_vrt_non_integer_band_raises(tmp_path):

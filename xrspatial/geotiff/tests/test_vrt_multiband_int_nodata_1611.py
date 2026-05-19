@@ -14,6 +14,13 @@ each ``arr[..., i]`` slice against its own ``<NoDataValue>``.
 
 This file mirrors test_vrt_band_nodata_1598.py for the multi-band
 ``band=None`` path. PR #1602 fixed ``band=N`` single-band selection.
+
+After #1987 PR 5 (mixed-band-metadata fail-closed), the fixtures here --
+which mosaic bands with deliberately distinct per-band sentinels --
+raise ``MixedBandMetadataError`` by default. Each call passes
+``band_nodata='first'`` to assert the legacy flatten-to-first-band
+behaviour is still reachable via the documented opt-out, which is the
+exact semantics the regression covers.
 """
 from __future__ import annotations
 
@@ -80,7 +87,7 @@ def test_multiband_uint16_per_band_sentinel_each_masked(tmp_path):
     as NaN but band 1's (1,1) cell as the literal 65000.0.
     """
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path)
+    r = read_vrt(vrt_path, band_nodata="first")
     assert r.shape == (2, 2, 2)
     assert r.dtype == np.float64, (
         f"expected float64 promotion, got {r.dtype}"
@@ -111,7 +118,7 @@ def test_multiband_int32_negative_per_band_sentinel(tmp_path):
         tmp_path, dtype_str="Int32", np_dtype=np.int32,
         band0_sentinel=-9999, band1_sentinel=-7777,
         band0_other=(10, 20, 30), band1_other=(40, 50, 60))
-    r = read_vrt(vrt_path)
+    r = read_vrt(vrt_path, band_nodata="first")
     assert r.dtype == np.float64
     assert np.isnan(r.values[1, 1, 0])
     assert np.isnan(r.values[1, 1, 1])
@@ -138,7 +145,7 @@ def test_multiband_only_one_band_has_sentinel_present(tmp_path):
     write(b1_no_sentinel, p1, nodata=65000, compression='none',
           tiled=False)
 
-    r = read_vrt(vrt_path)
+    r = read_vrt(vrt_path, band_nodata="first")
     assert r.dtype == np.float64, (
         "Even when only band 0 has a present sentinel, the array still "
         "needs promotion so band 0's NaN can be expressed."
@@ -164,7 +171,7 @@ def test_multiband_no_sentinel_present_anywhere_keeps_int_dtype(tmp_path):
     write(b0, p0, nodata=65535, compression='none', tiled=False)
     write(b1, p1, nodata=65000, compression='none', tiled=False)
 
-    r = read_vrt(vrt_path)
+    r = read_vrt(vrt_path, band_nodata="first")
     # Sentinels not present -> integer dtype preserved (matches the
     # eager open_geotiff fast-path which also skips promotion when the
     # mask is empty).
@@ -194,7 +201,7 @@ def test_multiband_per_band_out_of_range_sentinel_is_no_op(tmp_path):
         f.write(xml)
 
     # Should not raise and should still mask band 0.
-    r = read_vrt(vrt_path)
+    r = read_vrt(vrt_path, band_nodata="first")
     assert np.isnan(r.values[1, 1, 0])  # band 0 sentinel still masked
     # Band 1's sentinel (-9999) is out of uint16 range; the value 10
     # in band1[1,1] survives unchanged.
@@ -209,8 +216,8 @@ def test_multiband_band_kwarg_still_per_band_post_pr1602(tmp_path):
     sentinel.
     """
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r0 = read_vrt(vrt_path, band=0)
-    r1 = read_vrt(vrt_path, band=1)
+    r0 = read_vrt(vrt_path, band=0, band_nodata="first")
+    r1 = read_vrt(vrt_path, band=1, band_nodata="first")
     assert r0.dtype == np.float64
     assert r1.dtype == np.float64
     assert r0.attrs.get('nodata') == 65535.0
@@ -225,5 +232,5 @@ def test_multiband_attrs_nodata_still_band0(tmp_path):
     The pixel-level fix must not change that contract.
     """
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path)
+    r = read_vrt(vrt_path, band_nodata="first")
     assert r.attrs.get('nodata') == 65535.0
