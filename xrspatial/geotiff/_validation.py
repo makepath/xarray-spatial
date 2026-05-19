@@ -149,6 +149,14 @@ def _validate_writer_spatial_shape(shape, dims=None,
     the IFD assembly with ``samples_per_pixel == 0``. The resulting TIFF
     was readable as a 2D single-band raster, masking the upstream
     collapse of the band axis.
+
+    Note that this validator runs before ``_validate_3d_writer_dims``
+    (#1812 / #1972) in ``to_geotiff``. For an ambiguous-dim input like
+    ``(5, 5, 0)`` with dims ``('y', 'x', 'time')``, the band-last branch
+    sees ``bands == 0`` and the "no bands" error wins over the friendlier
+    ambiguous-dim message. Both errors name the right call to fix, so
+    the ordering is acceptable; reorder only if the ambiguous-dim
+    diagnostic becomes more important than the empty-axis one.
     """
     if shape is None:
         return

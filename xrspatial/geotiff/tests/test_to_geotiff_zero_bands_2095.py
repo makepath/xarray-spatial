@@ -93,7 +93,13 @@ def test_write_band_last_zero_bands_direct(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         write(arr, str(out))
     msg = str(excinfo.value)
-    assert "write" in msg
+    # The error template starts with ``"<entry_point> cannot write a
+    # raster with no bands"``. Anchor to that exact prefix so the
+    # assertion fails if the wrong entry point fires (every message
+    # also contains the substring "write" further on, so an `in`
+    # check would not distinguish ``write`` from ``write_streaming``
+    # or ``write_geotiff_gpu``).
+    assert msg.startswith("write cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()
     assert not out.exists()
 
@@ -109,7 +115,7 @@ def test_write_streaming_zero_bands_direct(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         write_streaming(arr, str(out))
     msg = str(excinfo.value)
-    assert "write_streaming" in msg
+    assert msg.startswith("write_streaming cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()
     assert not out.exists()
 
@@ -130,6 +136,6 @@ def test_write_geotiff_gpu_rejects_zero_bands(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         write_geotiff_gpu(arr, str(out))
     msg = str(excinfo.value)
-    assert "write_geotiff_gpu" in msg
+    assert msg.startswith("write_geotiff_gpu cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()
     assert not out.exists()
