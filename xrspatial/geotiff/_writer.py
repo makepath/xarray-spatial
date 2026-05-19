@@ -1620,8 +1620,19 @@ def write(data: np.ndarray, path: str, *,
     # arrays (eager moveaxis ran upstream), so the ndim-based pair
     # picked by ``_validate_writer_spatial_shape`` without ``dims`` is
     # correct.
-    from ._validation import _validate_writer_spatial_shape
+    #
+    # Issue #2094: the post-layout helper runs in addition because the
+    # pre-layout check leaves the trailing band axis unchecked. A
+    # ``(5, 5, 0)`` direct ``write`` call must be refused here too --
+    # ``write`` is the lowest writer in the stack, so this is the last
+    # defence against a zero-band IFD reaching disk.
+    from ._validation import (
+        _validate_writer_post_layout_shape,
+        _validate_writer_spatial_shape,
+    )
     _validate_writer_spatial_shape(
+        getattr(data, 'shape', None), entry_point="write")
+    _validate_writer_post_layout_shape(
         getattr(data, 'shape', None), entry_point="write")
 
     comp_tag = _compression_tag(compression)
@@ -1938,8 +1949,20 @@ def write_streaming(dask_data, path: str, *,
     # silently produces zero entries. ``to_geotiff`` already validates
     # this upstream, but direct callers of ``write_streaming`` go
     # through here too.
-    from ._validation import _validate_writer_spatial_shape
+    #
+    # Issue #2094: also reject zero-band 3D shapes at this boundary.
+    # ``write_streaming`` derives ``samples`` from ``shape[2]`` below;
+    # a zero-band input would otherwise produce an IFD whose
+    # SamplesPerPixel field is 0 and yet whose tile/strip math claims
+    # h*w pixels of data per band, silently fabricating a single-band
+    # file from an empty input.
+    from ._validation import (
+        _validate_writer_post_layout_shape,
+        _validate_writer_spatial_shape,
+    )
     _validate_writer_spatial_shape(
+        getattr(dask_data, 'shape', None), entry_point="write_streaming")
+    _validate_writer_post_layout_shape(
         getattr(dask_data, 'shape', None), entry_point="write_streaming")
 
     height, width = dask_data.shape[:2]

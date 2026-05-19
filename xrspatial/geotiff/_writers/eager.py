@@ -46,6 +46,7 @@ from .._validation import (
     _validate_3d_writer_dims,
     _validate_nodata_arg,
     _validate_tile_size_arg,
+    _validate_writer_post_layout_shape,
     _validate_writer_spatial_shape,
     validate_write_metadata,
 )
@@ -630,6 +631,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             if dask_arr.ndim not in (2, 3):
                 raise ValueError(
                     f"Expected 2D or 3D array, got {dask_arr.ndim}D")
+            # Issue #2094: post-layout shape check. The pre-layout
+            # ``_validate_writer_spatial_shape`` above only inspects the
+            # spatial dims; a zero-band 3D input slips past it. Re-check
+            # the band axis now that layout has been normalised to
+            # band-last so the streaming writer cannot fabricate a
+            # single-band file from an empty input.
+            _validate_writer_post_layout_shape(
+                dask_arr.shape, entry_point="to_geotiff")
             # Validate compression_level
             if compression_level is not None:
                 level_range = _LEVEL_RANGES.get(compression.lower())
@@ -697,6 +706,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     if arr.ndim not in (2, 3):
         raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
+
+    # Issue #2094: post-layout shape check. Bare ndarray / cupy inputs
+    # skip the DataArray dims-aware checks above; the band axis is now
+    # the trailing one for 3D input. Refuse zero-band rasters here so
+    # an empty trailing axis cannot silently produce a single-band file.
+    _validate_writer_post_layout_shape(arr.shape, entry_point="to_geotiff")
 
     # Auto-promote unsupported dtypes
     if arr.dtype == np.float16:

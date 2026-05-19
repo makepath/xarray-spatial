@@ -34,6 +34,7 @@ from .._validation import (
     _validate_3d_writer_dims,
     _validate_nodata_arg,
     _validate_tile_size_arg,
+    _validate_writer_post_layout_shape,
     _validate_writer_spatial_shape,
     validate_write_metadata,
 )
@@ -455,6 +456,16 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
 
     if arr.ndim not in (2, 3):
         raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
+
+    # Issue #2094: post-layout shape check. The pre-layout sibling at
+    # the top of the function only inspects spatial dims and leaves the
+    # band axis unchecked. After the band-first ``moveaxis`` above, the
+    # trailing axis is the band axis for 3D inputs; an empty band axis
+    # would otherwise reach ``gpu_compress_tiles`` with
+    # ``samples_per_pixel=0`` and produce a TIFF whose IFD silently
+    # advertises a non-empty single-band raster from an empty input.
+    _validate_writer_post_layout_shape(
+        arr.shape, entry_point="write_geotiff_gpu")
 
     height, width = arr.shape[:2]
     samples = arr.shape[2] if arr.ndim == 3 else 1

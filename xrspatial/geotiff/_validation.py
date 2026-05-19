@@ -173,6 +173,63 @@ def _validate_writer_spatial_shape(shape, dims=None,
         )
 
 
+def _validate_writer_post_layout_shape(
+        shape, entry_point: str = "to_geotiff") -> None:
+    """Reject empty / unsupported post-layout writer inputs (issue #2094).
+
+    Runs AFTER the writer has normalised its input to the internal
+    convention: 2D ``(h, w)`` or band-last 3D ``(h, w, samples)``.
+    Validates every dimension that becomes a TIFF IFD field once the
+    array is on disk: height, width, and (for 3D) samples-per-pixel.
+
+    The pre-layout sibling ``_validate_writer_spatial_shape`` only
+    inspects the two spatial dims and leaves the band axis unchecked.
+    A 3D input with a zero-length band axis (``(0, 5, 5)`` band-first
+    or ``(5, 5, 0)`` band-last) used to pass that helper, hit the
+    band-first ``moveaxis``, and then be written as a TIFF whose IFD
+    advertised ``SamplesPerPixel=1`` and ``height=5, width=5`` -- the
+    file decoded back as a non-empty single-band raster from an
+    empty input. That is silent data fabrication; the writer must
+    refuse the input instead.
+
+    ``shape`` is the array shape AFTER any band-first -> band-last
+    ``moveaxis`` has run, so the helper does not need a ``dims`` arg.
+    ``entry_point`` is the function name used in the error message
+    so direct callers of ``write`` / ``write_streaming`` /
+    ``write_geotiff_gpu`` see the function they actually invoked.
+    """
+    if shape is None:
+        return
+    ndim = len(shape)
+    if ndim not in (2, 3):
+        # Other rank errors are handled by the existing ndim check in
+        # each writer; do not shadow that message.
+        return
+    h = int(shape[0])
+    w = int(shape[1])
+    if h <= 0 or w <= 0:
+        raise ValueError(
+            f"{entry_point} cannot write an empty raster: got shape "
+            f"{tuple(int(s) for s in shape)} with height={h}, width={w}. "
+            f"Both spatial dims must be positive. A common cause is a "
+            f"clip or window that produced an empty selection; check "
+            f"the upstream operation before writing."
+        )
+    if ndim == 3:
+        samples = int(shape[2])
+        if samples <= 0:
+            raise ValueError(
+                f"{entry_point} cannot write a zero-band raster: got "
+                f"shape {tuple(int(s) for s in shape)} with "
+                f"samples_per_pixel={samples}. A 3D writer input must "
+                f"have at least one band along the band axis; an empty "
+                f"band axis used to round-trip as a single-band TIFF, "
+                f"silently fabricating one band of pixels from an empty "
+                f"input (issue #2094). Check the upstream selection "
+                f"(e.g. ``data.isel(band=slice(0, 0))``) before writing."
+            )
+
+
 def _validate_dtype_cast(source_dtype, target_dtype):
     """Validate that casting source_dtype to target_dtype is allowed.
 
