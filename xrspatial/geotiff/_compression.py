@@ -1023,10 +1023,12 @@ def _packbits_encode_kernel(src, src_len, dst, dst_cap):
     """Encode src bytes as PackBits into dst, return number of bytes written.
 
     Numba cannot grow a ``bytearray``; the caller pre-allocates ``dst`` with
-    the worst-case size (``2 * src_len + 1``) and slices to the returned
-    length. The worst case is one literal-header byte for every input byte
-    (a degenerate stream where no byte equals its neighbour fills a fresh
-    1-byte literal header every two payload bytes).
+    a worst-case size and slices to the returned length. PackBits encodes
+    each block as ``1 + L`` bytes for a literal of length L in [1, 128] and
+    ``2`` bytes for a run of length L in [3, 128], so the tightest upper
+    bound on output is ``src_len + ceil(src_len / 128) + 1`` (pure literal
+    input, plus one byte of slack for the final block). The caller uses
+    the looser, simpler bound ``2 * src_len + 1``, which is always safe.
     """
     i = 0
     out_pos = 0
@@ -1085,8 +1087,9 @@ def packbits_compress(data: bytes) -> bytes:
     src_len = len(src)
     if src_len == 0:
         return b''
-    # Worst case: every byte becomes a (header, byte) pair; +1 covers the
-    # trailing header byte if encoding ends on a fresh literal of length 1.
+    # ``2 * src_len + 1`` is a safe overestimate of the tight PackBits bound
+    # ``src_len + ceil(src_len / 128) + 1``. The overhead is negligible at
+    # strip sizes and keeps the arithmetic obvious.
     dst_cap = 2 * src_len + 1
     dst = np.empty(dst_cap, dtype=np.uint8)
     n = _packbits_encode_kernel(src, src_len, dst, dst_cap)

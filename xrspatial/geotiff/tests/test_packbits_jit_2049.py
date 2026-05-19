@@ -111,3 +111,43 @@ class TestPackBitsJITKernel:
         dst = np.empty(1, dtype=np.uint8)
         n = _packbits_encode_kernel(src, 0, dst, 1)
         assert n == 0
+
+    def test_kernel_literal_golden(self):
+        # Three distinct bytes encode as a single literal header (lit_len-1=2)
+        # followed by the payload.
+        src = np.array([0x10, 0x20, 0x30], dtype=np.uint8)
+        dst = np.empty(2 * len(src) + 1, dtype=np.uint8)
+        n = _packbits_encode_kernel(src, len(src), dst, len(dst))
+        assert n == 4
+        assert dst[0] == 2
+        assert list(dst[1:4]) == [0x10, 0x20, 0x30]
+
+
+class TestPackBitsJITBufferCap:
+    """Output must always fit inside the worst-case allocation."""
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            b'',
+            b'\x00',
+            b'\x00\xFF',
+            b'\x55' * 128,
+            b'\x55' * 129,
+            bytes([i & 1 for i in range(256)]),
+            bytes(range(256)),
+        ],
+    )
+    def test_output_within_cap(self, data):
+        compressed = packbits_compress(data)
+        # The wrapper allocates 2 * src_len + 1 bytes for the encode buffer;
+        # the actual output must never exceed that bound.
+        assert len(compressed) <= 2 * len(data) + 1
+
+    def test_random_output_within_cap(self):
+        rng = np.random.default_rng(2049)
+        for _ in range(8):
+            length = int(rng.integers(0, 4096))
+            data = rng.integers(0, 256, size=length, dtype=np.uint8).tobytes()
+            compressed = packbits_compress(data)
+            assert len(compressed) <= 2 * length + 1
