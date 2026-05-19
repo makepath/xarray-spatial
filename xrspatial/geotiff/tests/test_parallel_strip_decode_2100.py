@@ -184,6 +184,134 @@ class TestHttpStripParallelDecode:
         np.testing.assert_array_equal(par, ser)
         np.testing.assert_array_equal(par, arr)
 
+    def test_serial_gate_engages_on_single_strip(self, monkeypatch):
+        """HTTP windowed-strip path with a single-strip source: the
+        gate at ``_fetch_decode_cog_http_strips`` (n_decode_strips > 1)
+        must short-circuit to the serial branch.
+
+        ``ThreadPoolExecutor`` is also used by ``read_ranges`` to fan
+        out fetches, but for a single-range fetch that path takes the
+        ``len(ranges) == 1`` short-circuit and never instantiates a
+        pool. So spying on ``_decode_strip_or_tile`` and asserting the
+        thread identity catches a regression that fires the pool when
+        it shouldn't, without false positives from the fetch layer.
+        """
+        monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+        # 2x32 uint16 → 1 strip with the writer's default rps.
+        arr = np.arange(2 * 32, dtype=np.uint16).reshape(2, 32)
+        da = xr.DataArray(arr, dims=["y", "x"])
+        with tempfile.NamedTemporaryFile(suffix=".tif",
+                                         delete=False) as f:
+            tif_path = f.name
+        try:
+            to_geotiff(da, tif_path, compression="deflate",
+                       tiled=False)
+            with open(tif_path, "rb") as f:
+                blob = f.read()
+        finally:
+            try:
+                os.remove(tif_path)
+            except OSError:
+                pass
+
+        threads_seen: list[int] = []
+        real_decode = _reader_mod._decode_strip_or_tile
+
+        def _spy(*args, **kwargs):
+            threads_seen.append(threading.get_ident())
+            return real_decode(*args, **kwargs)
+
+        monkeypatch.setattr(
+            _reader_mod, "_decode_strip_or_tile", _spy)
+
+        server, port = _start_server(blob)
+        try:
+            url = f"http://127.0.0.1:{port}/tiny.tif"
+            out, _ = read_to_array(url, window=(0, 0, 2, 32))
+        finally:
+            server.shutdown()
+
+        main_tid = threading.get_ident()
+        assert threads_seen, "_decode_strip_or_tile was never called"
+        assert all(tid == main_tid for tid in threads_seen), (
+            f"decode ran in worker thread(s) "
+            f"{set(threads_seen) - {main_tid}}; main is {main_tid}. "
+            f"The serial gate failed to short-circuit on a "
+            f"single-strip HTTP read."
+        )
+        np.testing.assert_array_equal(out, arr)
+
+
+# ----------------------------------------------------------------------
+# Planar=2 multi-band stripped TIFF
+# ----------------------------------------------------------------------
+
+
+class TestPlanar2MultibandStripParallel:
+    """Planar=2 multi-band stripped TIFF.
+
+    ``_read_strips`` has a separate ``planar == 2 and samples > 1``
+    branch in the strip-job collection loop (xrspatial/geotiff/
+    _reader.py:1949-1963). The parallel pool itself is planar-agnostic,
+    so a regression in band-ordering or per-band strip indexing would
+    survive the chunky tests above; this class covers that branch.
+    """
+
+    def test_parallel_matches_serial_planar2(self, tmp_path):
+        """Parallel and serial decode produce bit-identical output on
+        a planar=2 multi-band stripped TIFF."""
+        tifffile = pytest.importorskip("tifffile")
+        rng = np.random.default_rng(seed=20260518)
+        bands, height, width = 3, 1024, 1024
+        arr = rng.integers(
+            0, 1000, size=(bands, height, width), dtype=np.uint16)
+        p = str(tmp_path / "planar2.tif")
+        tifffile.imwrite(
+            p, arr,
+            photometric="rgb",
+            planarconfig="separate",
+            compression="deflate",
+            rowsperstrip=128,
+        )
+
+        par, _ = read_to_array(p)
+        with patch.object(
+                _reader_mod, "_PARALLEL_DECODE_PIXEL_THRESHOLD",
+                10 ** 12):
+            ser, _ = read_to_array(p)
+
+        np.testing.assert_array_equal(par, ser)
+        # The reader returns (height, width, samples); the fixture is
+        # (bands, height, width). Reorder for comparison.
+        np.testing.assert_array_equal(par, np.moveaxis(arr, 0, -1))
+
+    def test_windowed_planar2_parallel(self, tmp_path):
+        """A window across multiple strips on a planar=2 multi-band
+        stripped TIFF still matches the slice of the full decode."""
+        tifffile = pytest.importorskip("tifffile")
+        rng = np.random.default_rng(seed=20260519)
+        bands, height, width = 3, 1024, 1024
+        arr = rng.integers(
+            0, 1000, size=(bands, height, width), dtype=np.uint16)
+        p = str(tmp_path / "planar2_win.tif")
+        tifffile.imwrite(
+            p, arr,
+            photometric="rgb",
+            planarconfig="separate",
+            compression="deflate",
+            rowsperstrip=128,
+        )
+
+        par, _ = read_to_array(p, window=(100, 100, 900, 900))
+        with patch.object(
+                _reader_mod, "_PARALLEL_DECODE_PIXEL_THRESHOLD",
+                10 ** 12):
+            ser, _ = read_to_array(p, window=(100, 100, 900, 900))
+
+        np.testing.assert_array_equal(par, ser)
+        expected = np.moveaxis(arr, 0, -1)[100:900, 100:900]
+        np.testing.assert_array_equal(par, expected)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
