@@ -148,16 +148,17 @@ _BACKENDS: list[_BackendSpec] = [
     _BackendSpec(
         backend_id="numpy",
         kwargs={},
-        compat=frozenset({_SRC_LOCAL_TIFF, _SRC_LOCAL_VRT,
-                          _SRC_HTTP, _SRC_FSSPEC}),
+        # VRT fixtures are owned by the ``vrt-eager`` / ``vrt-dask``
+        # rows below; routing them through ``numpy`` too would
+        # duplicate identical cells.
+        compat=frozenset({_SRC_LOCAL_TIFF, _SRC_HTTP, _SRC_FSSPEC}),
     ),
     _BackendSpec(
         backend_id="dask+numpy",
         kwargs={"chunks": 16},
         # Dask path supports fsspec URIs (#1749) but does not accept
-        # raw BytesIO. .vrt files are handled by the VRT reader which
-        # itself supports chunks via read_vrt's matrix.
-        compat=frozenset({_SRC_LOCAL_TIFF, _SRC_LOCAL_VRT, _SRC_FSSPEC}),
+        # raw BytesIO. VRT lives on the ``vrt-dask`` row.
+        compat=frozenset({_SRC_LOCAL_TIFF, _SRC_FSSPEC}),
     ),
     _BackendSpec(
         backend_id="gpu",
@@ -581,12 +582,13 @@ class _MatrixRangeHandler(http.server.BaseHTTPRequestHandler):
 
 
 @pytest.fixture(scope="session")
-def _matrix_http_server():
+def _matrix_http_server_session():
     """Shared loopback HTTP server for the http-cog backend row.
 
-    Started once per pytest session; the per-test fixture below uploads
-    its payload into the handler's ``payload_by_path`` map and tears it
-    down on teardown. The server runs on a free port chosen by the OS.
+    Started once per pytest session and torn down on session exit. The
+    payload dict on the handler is cleared between tests by the
+    function-scoped ``_matrix_http_server`` wrapper below; this fixture
+    only owns the socket and the thread.
     """
     handler_cls = type(
         "MatrixRangeHandler", (_MatrixRangeHandler,),
@@ -603,10 +605,32 @@ def _matrix_http_server():
         httpd.server_close()
 
 
-def _deliver_via_http(spec: _FixtureSpec, on_disk: Path,
+@pytest.fixture
+def _matrix_http_server(_matrix_http_server_session):
+    """Function-scoped HTTP server view: clears stale payloads after each test.
+
+    Without this, the session-scoped ``payload_by_path`` dict accumulates
+    one entry per cell and never releases the bytes. Keeping it
+    function-scoped means a test only sees the URL paths it uploaded.
+    """
+    base_url, handler_cls = _matrix_http_server_session
+    handler_cls.payload_by_path.clear()
+    try:
+        yield base_url, handler_cls
+    finally:
+        handler_cls.payload_by_path.clear()
+
+
+def _deliver_via_http(spec: "_FixtureSpec | _ErrorFixtureSpec", on_disk: Path,
                       base_url: str, handler_cls,
                       monkeypatch) -> str:
-    """Upload an on-disk fixture into the shared HTTP server and return URL."""
+    """Upload an on-disk fixture into the shared HTTP server and return URL.
+
+    The success matrix passes a :class:`_FixtureSpec`; the error
+    sub-matrix passes an :class:`_ErrorFixtureSpec`. Both expose
+    ``fix_id`` so the function consumes either.
+    """
+    del spec  # the spec is unused; signature kept for symmetry with fsspec
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     with open(on_disk, "rb") as f:
         payload = f.read()
@@ -615,7 +639,8 @@ def _deliver_via_http(spec: _FixtureSpec, on_disk: Path,
     return f"{base_url}{url_path}"
 
 
-def _deliver_via_fsspec(spec: _FixtureSpec, on_disk: Path) -> str:
+def _deliver_via_fsspec(spec: "_FixtureSpec | _ErrorFixtureSpec",
+                        on_disk: Path) -> str:
     """Pipe an on-disk fixture into fsspec's memory:// filesystem.
 
     Returns the ``memory://`` URI the read path should consume. The
@@ -1000,15 +1025,6 @@ def test_backend_parity_matrix_errors(
         http_state=_matrix_http_server, monkeypatch=monkeypatch,
     )
 
-    label = (
-        f"error_fixture={error_spec.fix_id} backend={backend.backend_id} "
-        f"kwargs={backend.kwargs}"
-    )
-    # ``label`` is referenced via ``__tracebackhide__``-friendly assert
-    # messages on failure (pytest already prints the cell id in the
-    # parametrize header, but keeping the local mirrors the success
-    # matrix's assertion style).
-    del label
     with pytest.raises(error_spec.exc, match=error_spec.match):
         # ``open_geotiff`` may return lazily for chunked reads, so
         # force a materialisation inside the ``pytest.raises`` block
