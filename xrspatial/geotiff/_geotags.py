@@ -474,16 +474,34 @@ def _parse_geokeys(ifd: IFD, data: bytes | memoryview,
     return geokeys
 
 
-def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
+def _extract_transform(ifd: IFD,
+                       allow_rotated: bool = False
+                       ) -> tuple[GeoTransform, bool]:
     """Extract affine transform from ModelTransformation, or
     ModelTiepoint + ModelPixelScale tags.
+
+    Parameters
+    ----------
+    ifd : IFD
+        Parsed IFD.
+    allow_rotated : bool
+        When True, a rotated / sheared / z-coupled ``ModelTransformationTag``
+        does not raise. The function returns an identity ``GeoTransform``
+        with ``has_georef=False`` so the reader treats the file as an
+        ungeoreferenced pixel grid. The rotated 6-tuple itself is
+        attached to the returned ``GeoTransform`` via the ``rotated_affine``
+        attribute (rasterio Affine ordering: ``(pixel_width, b, origin_x,
+        d, pixel_height, origin_y)``) so the read-side rotated-transform
+        validator can see it and explicit attrs-roundtrip code can
+        preserve the matrix. Default ``False`` -- existing behaviour, raise
+        ``NotImplementedError``.
 
     Returns
     -------
     (transform, has_georef)
         ``has_georef`` is True when at least one of the geo-transform tags
-        was present.  When False, ``transform`` is the default identity
-        and callers should fall back to pixel coordinates.
+        was present *and* axis-aligned. When False, ``transform`` is the
+        default identity and callers should fall back to pixel coordinates.
     """
 
     # Try ModelTransformationTag (4x4 row-major matrix, 16 doubles).
@@ -494,8 +512,10 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
     #   y = M[4]*col + M[5]*row + M[6]*z + M[7]
     #
     # GeoTransform only carries the axis-aligned case.  For rotated, sheared,
-    # or z-coupled transforms we raise NotImplementedError instead of silently
-    # dropping the off-diagonal terms.
+    # or z-coupled transforms we raise NotImplementedError unless the caller
+    # opts out via ``allow_rotated`` (issue #2115). The opt-out drops the
+    # georef so downstream coord generation uses pixel indices and any
+    # spatial op that runs on the array sees no geo assumption to violate.
     transform_tag = ifd.get_value(TAG_MODEL_TRANSFORMATION)
     if transform_tag is not None:
         if isinstance(transform_tag, tuple) and len(transform_tag) >= 12:
@@ -507,14 +527,28 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
             rotation_terms = (m[1], m[4])
             z_terms = (m[2], m[6]) if len(m) >= 8 else (0.0, 0.0)
             if any(abs(t) > tol for t in rotation_terms + z_terms):
-                raise NotImplementedError(
-                    "ModelTransformationTag (34264) contains rotation, "
-                    "skew, or z-coupling terms "
-                    f"(M[1]={m[1]!r}, M[4]={m[4]!r}, "
-                    f"M[2]={m[2] if len(m) > 2 else 0.0!r}, "
-                    f"M[6]={m[6] if len(m) > 6 else 0.0!r}). "
-                    "Only axis-aligned affine transforms are supported."
+                if not allow_rotated:
+                    raise NotImplementedError(
+                        "ModelTransformationTag (34264) contains rotation, "
+                        "skew, or z-coupling terms "
+                        f"(M[1]={m[1]!r}, M[4]={m[4]!r}, "
+                        f"M[2]={m[2] if len(m) > 2 else 0.0!r}, "
+                        f"M[6]={m[6] if len(m) > 6 else 0.0!r}). "
+                        "Only axis-aligned affine transforms are supported. "
+                        "Pass ``allow_rotated=True`` to read the pixel grid "
+                        "without the geospatial assumption (issue #2115)."
+                    )
+                # Opt-in: drop georef, stash the rotated matrix on the
+                # GeoTransform so the validator + attrs-roundtrip code
+                # can see it. ``rasterio.Affine`` order: (a, b, c, d, e, f)
+                # = (pixel_width, b, origin_x, d, pixel_height, origin_y).
+                gt = GeoTransform()
+                object.__setattr__(
+                    gt,
+                    "rotated_affine",
+                    (m[0], m[1], m[3], m[4], m[5], m[7]),
                 )
+                return gt, False
             return GeoTransform(
                 origin_x=m[3],
                 origin_y=m[7],
@@ -621,7 +655,9 @@ def _parse_nodata_str(text: str | None) -> int | float | None:
 
 
 def extract_geo_info(ifd: IFD, data: bytes | memoryview,
-                     byte_order: str) -> GeoInfo:
+                     byte_order: str,
+                     *,
+                     allow_rotated: bool = False) -> GeoInfo:
     """Extract full geographic metadata from a parsed IFD.
 
     Parameters
@@ -632,12 +668,16 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         Full file data (needed for resolving GeoKey param offsets).
     byte_order : str
         '<' or '>'.
+    allow_rotated : bool, optional
+        Forwarded to :func:`_extract_transform`. When True, a rotated
+        ``ModelTransformationTag`` is read as an ungeoreferenced pixel
+        grid instead of raising ``NotImplementedError`` (issue #2115).
 
     Returns
     -------
     GeoInfo
     """
-    transform, has_georef = _extract_transform(ifd)
+    transform, has_georef = _extract_transform(ifd, allow_rotated=allow_rotated)
     geokeys = _parse_geokeys(ifd, data, byte_order)
 
     # Extract EPSG
@@ -881,6 +921,8 @@ def extract_geo_info_with_overview_inheritance(
     ifds: list,
     data: bytes | memoryview,
     byte_order: str,
+    *,
+    allow_rotated: bool = False,
 ) -> GeoInfo:
     """Extract geo metadata, inheriting from level 0 when the IFD lacks it.
 
@@ -935,7 +977,8 @@ def extract_geo_info_with_overview_inheritance(
     -------
     GeoInfo
     """
-    info = extract_geo_info(ifd, data, byte_order)
+    info = extract_geo_info(ifd, data, byte_order,
+                            allow_rotated=allow_rotated)
 
     # Overview IFDs have NewSubfileType bit 0 set; mask IFDs (bit 2) and
     # page IFDs (bit 1) are filtered out by ``select_overview_ifd``
@@ -959,7 +1002,8 @@ def extract_geo_info_with_overview_inheritance(
     if base_ifd is None:
         return info
 
-    base_info = extract_geo_info(base_ifd, data, byte_order)
+    base_info = extract_geo_info(base_ifd, data, byte_order,
+                                 allow_rotated=allow_rotated)
 
     # Inherit the per-IFD metadata that the COG writer emits only on the
     # level-0 IFD: GDAL_NODATA, GDAL_METADATA, x/y resolution, colormap,

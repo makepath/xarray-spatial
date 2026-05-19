@@ -301,7 +301,8 @@ def read_geotiff_gpu(source: str, *,
         # Inherit georef from the level-0 IFD when the overview itself
         # has no geokeys (issue #1640); pass-through for level 0.
         geo_info = extract_geo_info_with_overview_inheritance(
-            ifd, ifds, data, header.byte_order)
+            ifd, ifds, data, header.byte_order,
+            allow_rotated=allow_rotated)
         # Capture the Orientation tag (274) once so the post-decode flip
         # below picks it up for both the stripped fallback and the tiled
         # GPU pipelines. CPU read_to_array applies the array remap +
@@ -960,6 +961,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
             ifd = select_overview_ifd(ifds, overview_level)
             geo_info = extract_geo_info_with_overview_inheritance(
                 ifd, ifds, raw, header.byte_order,
+                allow_rotated=allow_rotated,
             )
             orientation = ifd.orientation
             has_sparse_tile = (

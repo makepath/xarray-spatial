@@ -3183,6 +3183,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
                   max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
+                  allow_rotated: bool = False,
                   ) -> tuple[np.ndarray, GeoInfo]:
     """Read a GeoTIFF/COG to a numpy array.
 
@@ -3271,7 +3272,8 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # no-op: the helper short-circuits when the IFD is not a
         # NewSubfileType=overview entry.
         geo_info = extract_geo_info_with_overview_inheritance(
-            ifd, ifds, data, header.byte_order)
+            ifd, ifds, data, header.byte_order,
+            allow_rotated=allow_rotated)
 
         # Orientation tag (274): values 2-8 mean the stored pixel order
         # differs from display order. We need to remap the array post

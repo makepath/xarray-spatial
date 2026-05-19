@@ -297,7 +297,7 @@ def test_overview_with_own_nodata_keeps_own_value(tmp_path):
 
     # Overview already has its own nodata (-5555); base has -9999.
     # Test: inheritance leaves the overview's -5555 untouched.
-    def fake_extract(ifd, data, byte_order):
+    def fake_extract(ifd, data, byte_order, *, allow_rotated=False):
         if ifd is ov_ifd:
             gi = GeoInfo()
             gi.nodata = -5555.0

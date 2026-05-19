@@ -140,7 +140,8 @@ __all__ = [
 ]
 
 
-def _read_geo_info(source, *, overview_level: int | None = None):
+def _read_geo_info(source, *, overview_level: int | None = None,
+                   allow_rotated: bool = False):
     """Read only the geographic metadata and image dimensions from a GeoTIFF.
 
     Returns (geo_info, height, width, dtype, n_bands) without reading pixel
@@ -154,6 +155,10 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         Path or any object with ``read``/``seek``.
     overview_level : int or None
         Overview IFD index (0 = full resolution).
+    allow_rotated : bool, optional
+        Forwarded to the geotag parser. When True, a rotated
+        ``ModelTransformationTag`` reads as an ungeoreferenced pixel
+        grid instead of raising ``NotImplementedError`` (issue #2115).
     """
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info_with_overview_inheritance
@@ -224,7 +229,8 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         # Inherit georef from the level-0 IFD when the overview itself
         # has no geokeys (issue #1640). Pass-through for level 0.
         geo_info = extract_geo_info_with_overview_inheritance(
-            ifd, ifds, data, header.byte_order)
+            ifd, ifds, data, header.byte_order,
+            allow_rotated=allow_rotated)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         _validate_predictor_sample_format(ifd.predictor, ifd.sample_format)
@@ -555,6 +561,7 @@ def open_geotiff(source: str | BinaryIO, *,
     arr, geo_info = _read_to_array(
         source, window=window,
         overview_level=overview_level, band=band,
+        allow_rotated=allow_rotated,
         **kwargs,
     )
 
