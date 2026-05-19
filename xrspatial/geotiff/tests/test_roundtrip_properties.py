@@ -49,8 +49,16 @@ Out of scope (deferred):
 
 Hypothesis profiles:
 
-* default: ``max_examples=200``, ``deadline=None``
-* ``ci``: ``max_examples=50``, ``derandomize=True``
+The two profiles below are registered as inheritance sources for the
+``@settings(parent=...)`` on the two test functions. They are not
+loaded as the active Hypothesis profile in CI -- the test functions
+inherit the settings directly via ``parent=``. Renaming or wiring up
+``settings.load_profile('reduced')`` from a CI conftest is fine; the
+contract is the example-count budget on each test, not the profile
+name.
+
+* ``local`` (numpy test): ``max_examples=200``, ``deadline=None``
+* ``reduced`` (dask test): ``max_examples=50``, ``derandomize=True``
 
 The module is skipped if ``hypothesis`` is not installed (same pattern
 as ``test_fuzz_hypothesis_1661.py``).
@@ -58,6 +66,7 @@ as ``test_fuzz_hypothesis_1661.py``).
 from __future__ import annotations
 
 import math
+import os
 
 import numpy as np
 import pytest
@@ -68,6 +77,7 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import (  # noqa: E402
     HealthCheck,
     assume,
+    event,
     given,
     settings,
 )
@@ -91,14 +101,14 @@ _COMMON_SUPPRESS = [
 ]
 
 settings.register_profile(
-    "ci",
+    "reduced",
     max_examples=50,
     deadline=None,
     derandomize=True,
     suppress_health_check=_COMMON_SUPPRESS,
 )
 settings.register_profile(
-    "rockout_default",
+    "local",
     max_examples=200,
     deadline=None,
     suppress_health_check=_COMMON_SUPPRESS,
@@ -175,10 +185,11 @@ def _pick_nodata(mode: str, dtype_name: str, rng: np.random.Generator):
     pixel sample range (so no real pixel happens to equal it).
     ``out_of_range`` -- only valid for floats (would raise for ints).
     ``fractional`` -- only valid for floats.
-    ``nan`` -- only valid for floats.
+    ``nan`` -- only valid for floats; returned as ``float('nan')``.
     ``none`` -- no sentinel.
 
-    Returns ``None`` for the ``none`` case, or a Python scalar otherwise.
+    Returns ``None`` for the ``none`` case, ``float('nan')`` for the
+    ``nan`` case, or a Python ``int`` / ``float`` scalar otherwise.
     """
     dtype = np.dtype(dtype_name)
     if mode == 'none':
@@ -234,8 +245,20 @@ def _round_trip_spec(draw):
     nodata_mode = draw(st.sampled_from(NODATA_MODES))
     band_layout = draw(st.sampled_from(BAND_LAYOUTS))
     pixel_dtype = draw(st.sampled_from(PIXEL_DTYPES))
-    crs_epsg = draw(st.sampled_from(CRS_CHOICES))
-    n_bands = draw(st.integers(min_value=2, max_value=3))
+    # Only draw the dependent axes when they're actually consumed.
+    # ``crs_epsg`` only matters when a CRS is going to be passed to
+    # the writer; ``n_bands`` only matters when the layout has a band
+    # axis. Conditional draws keep the strategy slot count tight.
+    crs_epsg = (
+        draw(st.sampled_from(CRS_CHOICES))
+        if georef in ('crs_only', 'both')
+        else None
+    )
+    n_bands = (
+        draw(st.integers(min_value=2, max_value=3))
+        if band_layout != 'no_band'
+        else 1
+    )
     seed = draw(st.integers(min_value=0, max_value=2**31 - 1))
 
     spec = dict(
@@ -365,7 +388,7 @@ def _assert_fixed_point(da1: xr.DataArray, da2: xr.DataArray) -> None:
 # ---------------------------------------------------------------------------
 
 @settings(
-    parent=settings.get_profile('rockout_default'),
+    parent=settings.get_profile('local'),
 )
 @given(spec=_round_trip_spec())
 def test_round_trip_fixed_point_numpy(tmp_path_factory, spec):
@@ -376,39 +399,48 @@ def test_round_trip_fixed_point_numpy(tmp_path_factory, spec):
     Skips the draw with ``assume`` when the writer is documented to
     refuse the combination (e.g. fractional / NaN nodata paired with an
     int pixel dtype). The intent is to lock the metadata round-trip
-    contract, not to enumerate every documented refusal.
+    contract, not to enumerate every documented refusal. Each skip is
+    tagged with a Hypothesis ``event(...)`` so the stats output records
+    which refusal class fired -- a regression that bumps the skip rate
+    will surface in CI.
     """
     rng = np.random.default_rng(spec['seed'])
     da0 = _build_dataarray(spec)
     kwargs = _writer_kwargs(spec, rng)
 
     tmp = tmp_path_factory.mktemp("rt_2134")
-
     p1 = str(tmp / 'rt1.tif')
+    p2 = str(tmp / 'rt2.tif')
+
     try:
         to_geotiff(da0, p1, **kwargs)
-    except (ValueError, TypeError) as e:
+    except (ValueError, TypeError) as exc:
         # The writer rejects some specific combinations up front (e.g.
         # a 1x1 raster with no transform attr but with float coords
         # whose step is undefined). Those refusals are documented
-        # behaviour, not round-trip failures.
+        # behaviour, not round-trip failures. Tag the skip class so a
+        # regression that pushes the rate up shows in Hypothesis stats.
+        event(f"writer_rejected:{type(exc).__name__}")
         assume(False)
         return  # pragma: no cover
 
-    da1 = open_geotiff(p1)
-
-    # Strip the read-only contract version attr before re-writing -- the
-    # writer doesn't consume it. Keep everything else; the round-trip
-    # invariant is that the writer can reproduce the read attrs.
-    da1_for_write = da1
-    p2 = str(tmp / 'rt2.tif')
-    # ``nodata=`` is not re-passed: the read result carries the sentinel
-    # in attrs['nodata'] and the writer picks it up there. Re-passing
-    # would double up the kwarg vs the attr.
-    to_geotiff(da1_for_write, p2, compression='none', tiled=False)
-    da2 = open_geotiff(p2)
-
-    _assert_fixed_point(da1, da2)
+    try:
+        da1 = open_geotiff(p1)
+        # ``nodata=`` is not re-passed on the second cycle: the read
+        # result carries the sentinel in attrs['nodata'] and the writer
+        # picks it up there. Re-passing would double up the kwarg.
+        to_geotiff(da1, p2, compression='none', tiled=False)
+        da2 = open_geotiff(p2)
+        _assert_fixed_point(da1, da2)
+    finally:
+        # Drop the tmp files eagerly so a 200-example session doesn't
+        # leave 400 .tif files on disk until session teardown. The
+        # mktemp directory itself is cleaned up by pytest.
+        for p in (p1, p2):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +448,7 @@ def test_round_trip_fixed_point_numpy(tmp_path_factory, spec):
 # ---------------------------------------------------------------------------
 
 @settings(
-    parent=settings.get_profile('ci'),
+    parent=settings.get_profile('reduced'),
 )
 @given(spec=_round_trip_spec())
 def test_round_trip_fixed_point_dask(tmp_path_factory, spec):
@@ -424,9 +456,9 @@ def test_round_trip_fixed_point_dask(tmp_path_factory, spec):
     initial DataArray is wrapped in dask chunks so the streaming write
     path is exercised.
 
-    The CI profile keeps this at 50 examples; the numpy property's
-    200-example budget already covers the strategy interior, this
-    pass exists to catch drift specific to the streaming writer.
+    Inherits the ``reduced`` profile (50 examples). The numpy property's
+    200-example budget already covers the strategy interior; this pass
+    exists to catch drift specific to the streaming writer.
     """
     pytest.importorskip('dask')
 
@@ -451,16 +483,23 @@ def test_round_trip_fixed_point_dask(tmp_path_factory, spec):
 
     tmp = tmp_path_factory.mktemp("rt_2134_dask")
     p1 = str(tmp / 'rt1.tif')
+    p2 = str(tmp / 'rt2.tif')
+
     try:
         to_geotiff(da0, p1, **kwargs)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        event(f"writer_rejected:{type(exc).__name__}")
         assume(False)
         return  # pragma: no cover
 
-    da1 = open_geotiff(p1)
-
-    p2 = str(tmp / 'rt2.tif')
-    to_geotiff(da1, p2, compression='none', tiled=False)
-    da2 = open_geotiff(p2)
-
-    _assert_fixed_point(da1, da2)
+    try:
+        da1 = open_geotiff(p1)
+        to_geotiff(da1, p2, compression='none', tiled=False)
+        da2 = open_geotiff(p2)
+        _assert_fixed_point(da1, da2)
+    finally:
+        for p in (p1, p2):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
