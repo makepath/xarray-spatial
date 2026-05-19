@@ -193,14 +193,23 @@ review is the audit trail.
 
 ## Step 10 -- Follow Up on Review Findings
 
-Treat the review output as expert input, not a verdict. The reviewer is
-another LLM running a checklist -- it catches real issues, but it also
-flags false positives, misreads context, and occasionally invents
-problems. Your job is to weigh each finding against the actual code, not
-to mechanically apply every suggestion.
+Treat the review output as expert input. The reviewer is another LLM
+running a checklist -- it catches real issues but occasionally misreads
+context or invents problems. Your default disposition is **fix it**.
+Deferral and dismissal are exceptions that require justification, not
+the easy path.
+
+**Default to fixing.** If a finding describes a real problem and the
+fix is a reasonable size (typically anything that can be done in the
+current session without expanding the PR's scope by more than ~50% or
+pulling in unrelated subsystems), fix it now in this PR. Do not defer
+work just because it is slightly more effort than the original change.
+Suggestions and Nits in particular should be applied unless you have a
+concrete reason not to -- "the PR already works" is not a reason.
 
 Address every Blocker first, then work through Suggestions and Nits in
-that order.
+that order. Treat Suggestions and Nits as work to be done, not
+optional polish.
 
 1. For each finding:
    - Read the referenced file at the cited line and understand the
@@ -209,19 +218,24 @@ that order.
      misread the code, the cited line does not exist, or the
      "issue" is actually intended behavior, mark it **dismissed**
      and record the reason -- do not fix phantom bugs.
-   - For Blockers: take them seriously, but they are not automatic.
-     Confirm the issue is real before fixing. Real blockers must be
-     either fixed or explicitly deferred with a written justification --
-     do not silently skip them. A blocker you genuinely believe is
-     wrong can be dismissed, but the dismissal note must explain why
-     the reviewer was mistaken.
-   - For Suggestions: consider each one seriously. Apply when the
-     change clearly improves correctness, clarity, or performance.
-     Dismiss when the suggestion conflicts with project conventions,
-     would regress something else, or the cost outweighs the value.
-   - For Nits: apply when trivially cheap and clearly an improvement.
-     Dismiss when stylistic preference, churn for churn's sake, or
-     not aligned with how the rest of the codebase is written.
+   - For Blockers: fix unless you can demonstrate the reviewer was
+     wrong. Deferral is not an option for Blockers -- either fix or
+     dismiss with a clear written explanation of the reviewer error.
+   - For Suggestions: **fix by default.** Apply the change unless it
+     conflicts with project conventions, would regress something else,
+     or the work would substantially exceed the original PR's scope.
+     A suggestion that takes a few edits and a test run is "reasonable
+     size" -- do it. Do not dismiss with vague rationales like "out of
+     scope" or "can be a follow-up" when the change fits in this PR.
+   - For Nits: **fix by default.** Apply the change unless it is purely
+     stylistic preference that conflicts with surrounding code. Nits
+     are cheap; the cost of leaving them is reviewer fatigue on the
+     next pass. Do not dismiss a nit just because it is a nit.
+   - Deferral to a follow-up issue is only appropriate when the fix
+     genuinely cannot fit in this PR -- e.g. it requires a separate
+     design decision, touches an unrelated subsystem, or would more
+     than roughly double the diff. When deferring, file a follow-up
+     issue with `gh issue create` and link it in the summary.
    - In all cases, record the reason for dismiss / defer so the
      summary captures the reasoning, not just the verdict.
 2. Group related fixes into focused commits referencing the issue number
@@ -234,8 +248,10 @@ that order.
    (`gh pr review <PR_NUMBER> --comment --body ...`). Stop iterating once
    only dismissed-with-reason items remain.
 5. Summarize the disposition of each original finding (fixed / deferred /
-   dismissed, with the reason for dismissals) in the final rockout summary
-   so the trail is visible.
+   dismissed, with the reason for dismissals or deferrals) in the final
+   rockout summary so the trail is visible. If the fixed count is low
+   relative to the total findings, the summary should explain why --
+   the expectation is that most findings get fixed in-PR.
 
 **Do not skip this step.** Even if Step 9 returned no Blockers,
 Suggestions, or Nits, the review of type `COMMENTED` from step 9.5 must
