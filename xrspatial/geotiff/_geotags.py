@@ -474,6 +474,77 @@ def _parse_geokeys(ifd: IFD, data: bytes | memoryview,
     return geokeys
 
 
+def _validate_tiepoint_consistency(tiepoint: tuple,
+                                   origin_x: float,
+                                   origin_y: float,
+                                   sx: float,
+                                   sy: float) -> None:
+    """Verify every ``ModelTiepointTag`` tuple agrees with the inferred affine.
+
+    A ``ModelTiepointTag`` may carry one or many ``(I, J, K, X, Y, Z)``
+    tuples. The single-tuple case (paired with ``ModelPixelScale``) is
+    by far the most common and is unambiguous. Files with multiple
+    tuples either repeat the same affine at every corner -- the tuples
+    agree within tolerance and the reader can keep its single-tiepoint
+    code path -- or carry a ground-control-point (GCP) set whose
+    tuples do not agree, because the mapping from pixel to world is
+    non-affine.
+
+    Before this check landed, the GCP case silently fabricated an
+    axis-aligned affine from the first tuple and downstream spatial
+    ops trusted wrong coordinates. The reader now validates that every
+    extra tuple is predicted by the inferred affine within a tolerance
+    scaled to the pixel size; mismatches raise ``NotImplementedError``
+    with a clear pointer at the GCP case so users know why their file
+    is being rejected (issue #2117).
+
+    Parameters
+    ----------
+    tiepoint : tuple
+        Raw ``ModelTiepointTag`` value (length ``6 * N``).
+    origin_x, origin_y : float
+        World coords of pixel ``(0, 0)`` inferred from the first tuple.
+    sx, sy : float
+        Pixel size (``ModelPixelScaleTag`` magnitudes, both positive).
+    """
+    n = len(tiepoint) // 6
+    if n <= 1:
+        return
+
+    # Tolerance scales with pixel size so files in different units
+    # (degrees vs metres) are treated consistently. The 1e-6 factor
+    # matches the rotation check in _extract_transform.
+    tol = 1e-6 * max(abs(sx), abs(sy), 1.0)
+
+    for k in range(1, n):
+        base = 6 * k
+        tp_i = tiepoint[base]
+        tp_j = tiepoint[base + 1]
+        tp_x = tiepoint[base + 3]
+        tp_y = tiepoint[base + 4]
+
+        predicted_x = origin_x + tp_i * sx
+        # The reader's sign convention: y decreases as row index
+        # increases, so the predicted world y at row J is
+        # ``origin_y - J * sy``.
+        predicted_y = origin_y - tp_j * sy
+
+        dx = tp_x - predicted_x
+        dy = tp_y - predicted_y
+        if abs(dx) > tol or abs(dy) > tol:
+            raise NotImplementedError(
+                "ModelTiepointTag carries multiple non-affine tiepoints "
+                f"(tuple {k} predicts world coords "
+                f"({predicted_x!r}, {predicted_y!r}) but the file "
+                f"declares ({tp_x!r}, {tp_y!r}); residual "
+                f"({dx!r}, {dy!r}) exceeds tolerance {tol!r}). The file "
+                "uses a ground-control-point warp that the reader "
+                "cannot represent as an axis-aligned affine. Project "
+                "the file to a rectified grid (e.g. ``gdalwarp``) "
+                "before reading. See issue #2117."
+            )
+
+
 def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
     """Extract affine transform from ModelTransformation, or
     ModelTiepoint + ModelPixelScale tags.
@@ -536,7 +607,14 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
         if tiepoint is not None:
             if not isinstance(tiepoint, tuple):
                 tiepoint = (tiepoint,)
-            # tiepoint: (I, J, K, X, Y, Z)
+            # tiepoint: (I, J, K, X, Y, Z); a ModelTiepointTag may carry
+            # more than one (I, J, K, X, Y, Z) tuple. Files use that to
+            # either repeat the same affine at every corner (the tuples
+            # agree, common case) or to encode a GCP warp where the
+            # tuples describe a non-affine mapping. Silently picking the
+            # first tuple turns the GCP case into wrong coordinates
+            # downstream (issue #2117). Validate that every tuple is
+            # consistent with the inferred affine; fail closed otherwise.
             tp_i = tiepoint[0] if len(tiepoint) > 0 else 0.0
             tp_j = tiepoint[1] if len(tiepoint) > 1 else 0.0
             tp_x = tiepoint[3] if len(tiepoint) > 3 else 0.0
@@ -544,6 +622,10 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
 
             origin_x = tp_x - tp_i * sx
             origin_y = tp_y + tp_j * sy  # sy is positive, but y goes down
+
+            _validate_tiepoint_consistency(
+                tiepoint, origin_x, origin_y, sx, sy,
+            )
 
             return GeoTransform(
                 origin_x=origin_x,
@@ -577,6 +659,13 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
         # Unit scale: pixel_width = 1.0, pixel_height = -1.0
         origin_x = tp_x - tp_i * 1.0
         origin_y = tp_y + tp_j * 1.0
+
+        # Same multi-tiepoint consistency check the scale branch above
+        # runs; the absence of ModelPixelScale just means the scale is
+        # the unit fallback (issue #2117).
+        _validate_tiepoint_consistency(
+            tiepoint, origin_x, origin_y, 1.0, 1.0,
+        )
 
         return GeoTransform(
             origin_x=origin_x,
