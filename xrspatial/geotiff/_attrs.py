@@ -169,6 +169,13 @@ _TIFF_SHORT = 3
 _ATTRS_CONTRACT_VERSION = 2
 
 
+# The no-georef marker key lives in ``_coords`` to avoid a circular
+# import (``_attrs`` already imports from ``_coords``). Re-export here
+# so callers using ``_attrs`` for the contract constants can find it
+# alongside.
+from ._coords import _NO_GEOREF_KEY  # noqa: E402,F401
+
+
 # String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
 _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
 
@@ -378,6 +385,14 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
             src_t.pixel_width, src_t.pixel_height,
             window=window,
         )
+    else:
+        # Stamp the no-georef marker so the writer can tell our
+        # placeholder int64 step-1 coords apart from a user-authored
+        # integer-coord grid (#2120). Pre-#2120 the writer detected the
+        # placeholder by shape alone, which silently stripped georef
+        # from any user array whose coords matched the same arange
+        # pattern.
+        attrs[_NO_GEOREF_KEY] = True
 
     # Contract v2 (issue #2016) removed the 13 secondary GeoKey-derived
     # attrs that v1 emitted under a ``DeprecationWarning`` (``crs_name``,
