@@ -267,6 +267,23 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
             window=window,
         )
 
+    # ``allow_rotated=True`` opt-in path (#2115): the parser returns a
+    # GeoTransform with ``rotated_affine`` set and ``has_georef=False``.
+    # The rotated 6-tuple cannot be expressed as an axis-aligned
+    # rasterio transform, so the writer cannot round-trip it via
+    # ``attrs['transform']``. Per the documented contract on
+    # ``open_geotiff(allow_rotated=True)``, CRS attrs are dropped on
+    # this path too -- otherwise downstream code that gates on
+    # ``"crs" in da.attrs`` treats the array as spatially meaningful
+    # while the actual mapping is gone (#2126).
+    rotated_optin = (
+        src_t is not None
+        and getattr(src_t, 'rotated_affine', None) is not None
+        and not has_georef
+    )
+    crs_epsg = None if rotated_optin else geo_info.crs_epsg
+    crs_wkt = None if rotated_optin else geo_info.crs_wkt
+
     raster_type = (
         'point' if geo_info.raster_type == RASTER_PIXEL_IS_POINT else 'area')
 
@@ -284,8 +301,8 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
 
     return GeoTIFFMetadata(
         transform=transform,
-        crs_epsg=geo_info.crs_epsg,
-        crs_wkt=geo_info.crs_wkt,
+        crs_epsg=crs_epsg,
+        crs_wkt=crs_wkt,
         raster_type=raster_type,
         has_georef=bool(has_georef and src_t is not None),
         extra_tags=geo_info.extra_tags,
@@ -632,7 +649,8 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     # (:func:`metadata_to_attrs` and the legacy field-by-field writes)
     # produce the same attrs surface; centralising on the record lets
     # the VRT path emit the same field set without copying this block.
-    # See issue #2139 / ``metadata_to_attrs``.
+    # The ``allow_rotated=True`` opt-in CRS-drop (#2126) is handled
+    # inside ``geo_info_to_metadata``. See issue #2139 / ``metadata_to_attrs``.
     md = geo_info_to_metadata(geo_info, window=window)
     attrs.update(metadata_to_attrs(md))
 
