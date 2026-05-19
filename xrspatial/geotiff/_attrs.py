@@ -198,7 +198,10 @@ GEOREF_STATUS_CRS_ONLY = 'crs_only'
 GEOREF_STATUS_NONE = 'none'
 GEOREF_STATUS_ROTATED_DROPPED = 'rotated_dropped'
 
-_GEOREF_STATUS_VALUES = frozenset({
+# Public frozenset of every valid ``georef_status`` value. Exposed so
+# downstream code can validate user-set values without hard-coding the
+# five-string list (e.g. ``status in GEOREF_STATUS_VALUES``).
+GEOREF_STATUS_VALUES = frozenset({
     GEOREF_STATUS_FULL,
     GEOREF_STATUS_TRANSFORM_ONLY,
     GEOREF_STATUS_CRS_ONLY,
@@ -388,11 +391,14 @@ def _compute_georef_status(geo_info) -> str:
     reader change cannot accidentally re-route a real "no transform"
     file into the rotated bucket.
 
-    The four backends (eager, dask, GPU) call this through
-    :func:`_populate_attrs_from_geo_info`; the VRT inline paths import
-    this helper directly because they build their attrs dicts inline
-    (see ``_backends/vrt.py``). Keep all five callers in lockstep by
-    routing every decision through this one function.
+    The eager numpy, dask, and three GPU read sites (chunked / eager /
+    tile in ``_backends/gpu.py``) all call this through
+    :func:`_populate_attrs_from_geo_info`. The two VRT inline branches
+    (eager + chunked in ``_backends/vrt.py``) call
+    :func:`_compute_georef_status_from_parts` directly because they
+    build their attrs dict from a different dataclass and would have to
+    synthesise a fake ``GeoInfo`` to reuse this helper. Keep all the
+    call sites in lockstep through one of the two helpers.
     """
     transform = getattr(geo_info, 'transform', None)
     rotated_affine = (

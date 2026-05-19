@@ -281,13 +281,14 @@ def read_vrt(source: str, *,
     # with the non-VRT read paths. The VRT reader does not currently
     # expose a rotated-dropped path (rotated VRT geo_transforms are
     # rejected upstream by ``_validate_read_geo_info``), so the rotated
-    # arg stays False here. The eager VRT branch derives
-    # ``has_transform`` from the parsed ``geo_transform`` element and
-    # ``has_crs`` from ``vrt.crs_wkt`` to keep the decision aligned
-    # with ``_compute_georef_status``.
+    # arg stays False here. ``has_crs`` uses ``is not None`` (not a
+    # truthiness check) to stay aligned with ``_compute_georef_status``;
+    # the VRT XML parser returns None for missing/empty ``<SRS>`` rather
+    # than ``""``, but pinning the rule defends the alignment if the
+    # parser ever changes.
     attrs['georef_status'] = _compute_georef_status_from_parts(
         has_transform=gt is not None,
-        has_crs=bool(vrt.crs_wkt),
+        has_crs=vrt.crs_wkt is not None,
     )
     if gt is None:
         # Mirror the eager non-VRT no-georef path: stamp the no-georef
@@ -716,7 +717,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # through the VRT reader today.
     attrs['georef_status'] = _compute_georef_status_from_parts(
         has_transform=gt is not None,
-        has_crs=bool(vrt.crs_wkt),
+        has_crs=vrt.crs_wkt is not None,
     )
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt

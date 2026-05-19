@@ -49,7 +49,6 @@ tifffile = pytest.importorskip("tifffile")
 # the byte layout. The function is private to that test module but
 # the test runner sees the package directory so the import succeeds.
 from xrspatial.geotiff.tests.test_allow_rotated_geotiff_2115 import (  # noqa: E402
-    _ROTATED_M,
     _write_rotated_tiff,
 )
 
@@ -79,6 +78,22 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 def test_contract_version_is_three():
     """The new attr lands in v3; pin the bump alongside the new key."""
     assert _ATTRS_CONTRACT_VERSION == 3
+
+
+def test_public_constants_reexported():
+    """The five status constants and ``GEOREF_STATUS_VALUES`` are part
+    of the public surface (issue #2136 / review follow-up). Downstream
+    consumers should be able to import them from ``xrspatial.geotiff``
+    rather than reaching into the private ``_attrs`` module."""
+    import xrspatial.geotiff as pkg
+    assert pkg.GEOREF_STATUS_FULL == GEOREF_STATUS_FULL
+    assert pkg.GEOREF_STATUS_TRANSFORM_ONLY == GEOREF_STATUS_TRANSFORM_ONLY
+    assert pkg.GEOREF_STATUS_CRS_ONLY == GEOREF_STATUS_CRS_ONLY
+    assert pkg.GEOREF_STATUS_NONE == GEOREF_STATUS_NONE
+    assert pkg.GEOREF_STATUS_ROTATED_DROPPED == GEOREF_STATUS_ROTATED_DROPPED
+    assert pkg.GEOREF_STATUS_VALUES == frozenset({
+        'full', 'transform_only', 'crs_only', 'none', 'rotated_dropped',
+    })
 
 
 def test_compute_status_full():
