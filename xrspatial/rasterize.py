@@ -1522,10 +1522,7 @@ def _polys_to_wkb(geoms):
     """Pre-serialize polygon geometries to WKB for cheap pickling."""
     if not geoms:
         return []
-    if _HAS_SHAPELY2:
-        import shapely
-        return shapely.to_wkb(np.asarray(geoms, dtype=object)).tolist()
-    return [g.wkb for g in geoms]
+    return shapely.to_wkb(np.asarray(geoms, dtype=object)).tolist()
 
 
 def _polys_from_wkb(wkb_list):
