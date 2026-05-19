@@ -3262,6 +3262,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         src = _FileSource(source)
     data = src.read_all()
 
+    sidecar = None
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
@@ -3269,15 +3270,42 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         if len(ifds) == 0:
             raise ValueError("No IFDs found in TIFF file")
 
+        # External `.tif.ovr` sidecar (issue #2112). GDAL/rasterio write
+        # overview pyramids to a sibling file when the source is not a
+        # COG; the sidecar's IFDs are the continuation of the base
+        # file's pyramid. Discovery only fires for local file paths;
+        # cloud / HTTP / file-like sources skip the lookup and keep the
+        # base-file-only behaviour. The sidecar must be loaded before
+        # IFD selection so ``overview_level`` can index into a unified
+        # pyramid list.
+        from ._sidecar import (
+            attach_sidecar_origin, find_sidecar, load_sidecar,
+        )
+        sidecar_origin: dict[int, tuple] = {}
+        sidecar_path = find_sidecar(source)
+        if sidecar_path is not None:
+            sidecar = load_sidecar(sidecar_path)
+            sidecar_origin = attach_sidecar_origin(
+                sidecar.ifds, sidecar.data, sidecar.header)
+            ifds = ifds + sidecar.ifds
+
         # Select IFD, skipping any mask IFDs
         ifd = select_overview_ifd(ifds, overview_level)
+
+        # If the selected IFD came from the sidecar, swap the data /
+        # header used for strip / tile reads below so byte offsets
+        # resolve against the right buffer.
+        ifd_data, ifd_header = sidecar_origin.get(id(ifd), (data, header))
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         # Inherit georef from level 0 when an overview IFD lacks its own
         # geokeys (issue #1640). For overview_level=0 (or None) this is a
         # no-op: the helper short-circuits when the IFD is not a
-        # NewSubfileType=overview entry.
+        # NewSubfileType=overview entry. Sidecar IFDs always lack
+        # geokeys, so the inheritance pulls from the base file's
+        # level-0 IFD (kept first in the merged list) which is the
+        # GDAL convention.
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order,
             allow_rotated=allow_rotated)
@@ -3358,10 +3386,10 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                     f"band={band} out of range for {ifd_samples}-band file.")
 
         if ifd.is_tiled:
-            arr = _read_tiles(data, ifd, header, dtype, window,
+            arr = _read_tiles(ifd_data, ifd, ifd_header, dtype, window,
                               max_pixels=max_pixels)
         else:
-            arr = _read_strips(data, ifd, header, dtype, window,
+            arr = _read_strips(ifd_data, ifd, ifd_header, dtype, window,
                                max_pixels=max_pixels)
 
         # Extract the requested band before reorienting so we work on a
@@ -3388,5 +3416,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             geo_info._mask_nodata = inverted_nodata
     finally:
         src.close()
+        from ._sidecar import close_sidecar
+        close_sidecar(sidecar)
 
     return arr, geo_info

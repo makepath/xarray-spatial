@@ -86,21 +86,10 @@ FIXTURES_DIR = (
 _PARITY_GAPS: dict[str, str] = {}
 
 # Fixtures whose overview-IFD code path is not yet wired into the
-# xrspatial reader. The base-IFD comparison still runs and passes; the
-# overview-level loop driven by ``candidate_factory`` is skipped for
-# these ids. Today this lists external sidecar overviews
-# (``.tif.ovr``): the reader walks only the in-file IFD chain and would
-# raise "overview_level out of range" for ``overview_level >= 1``. The
-# internal-IFD and COG fixtures exercise the overview code path on
-# every backend.
-_OVERVIEW_READER_GAPS: dict[str, str] = {
-    "overview_external_ovr_uint16": (
-        "External .ovr sidecar reader is not implemented in xrspatial. "
-        "The base IFD still parity-checks; the overview levels live in "
-        "a sibling .tif.ovr that the reader does not open. Track in a "
-        "follow-up issue if the corpus needs sidecar coverage."
-    ),
-}
+# xrspatial reader. Empty as of issue #2112, which taught the eager
+# numpy reader to discover and parse sibling ``.tif.ovr`` files. New
+# entries should include a follow-up issue link so the gap stays visible.
+_OVERVIEW_READER_GAPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
