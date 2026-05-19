@@ -13,9 +13,6 @@ keep their CRS attrs -- only the rotated path drops them.
 """
 from __future__ import annotations
 
-import io
-import struct
-
 import numpy as np
 import pytest
 
