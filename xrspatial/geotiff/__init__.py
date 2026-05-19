@@ -182,7 +182,8 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         _src = _CloudSource(source)
         try:
             _header, _ifd, geo_info, _ = _parse_cog_http_meta(
-                _src, overview_level=overview_level)
+                _src, overview_level=overview_level,
+                allow_rotated=allow_rotated)
         finally:
             _src.close()
         bps = resolve_bits_per_sample(_ifd.bits_per_sample)

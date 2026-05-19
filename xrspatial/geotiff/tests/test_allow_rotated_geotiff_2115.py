@@ -196,3 +196,54 @@ def test_open_geotiff_rotated_allow_rotated_with_dask(tmp_path):
     da = open_geotiff(str(src), allow_rotated=True, chunks=4)
     assert da.shape == arr.shape
     np.testing.assert_array_equal(da.compute().values, arr)
+
+
+# ---------------------------------------------------------------------------
+# HTTP path honours allow_rotated end-to-end.
+# ---------------------------------------------------------------------------
+def _start_http_server(directory):
+    import http.server
+    import socketserver
+    import threading
+
+    class _Handler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a, **kw):
+            return
+
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(directory), **kw)
+
+    httpd = socketserver.TCPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd
+
+
+def test_open_geotiff_http_rotated_default_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+    src = tmp_path / "rotated_2115_http_default.tif"
+    arr = np.arange(20, dtype='<u2').reshape(4, 5)
+    _write_rotated_tiff(str(src), arr)
+    httpd = _start_http_server(tmp_path)
+    try:
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/{src.name}"
+        with pytest.raises(NotImplementedError, match="rotation"):
+            open_geotiff(url)
+    finally:
+        httpd.shutdown()
+
+
+def test_open_geotiff_http_rotated_allow_rotated_reads_pixels(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+    src = tmp_path / "rotated_2115_http_optin.tif"
+    arr = np.arange(20, dtype='<u2').reshape(4, 5)
+    _write_rotated_tiff(str(src), arr)
+    httpd = _start_http_server(tmp_path)
+    try:
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/{src.name}"
+        da = open_geotiff(url, allow_rotated=True)
+        assert da.shape == arr.shape
+        np.testing.assert_array_equal(da.values, arr)
+    finally:
+        httpd.shutdown()

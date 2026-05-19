@@ -2275,6 +2275,8 @@ def _ifd_required_extent(
 def _parse_cog_http_meta(
     source: _HTTPSource,
     overview_level: int | None = None,
+    *,
+    allow_rotated: bool = False,
 ) -> tuple[TIFFHeader, IFD, GeoInfo, bytes]:
     """Fetch + parse the leading IFDs of an HTTP COG once.
 
@@ -2341,7 +2343,8 @@ def _parse_cog_http_meta(
     # IFD so overview reads do not silently lose CRS / transform.
     # See issue #1640.
     geo_info = extract_geo_info_with_overview_inheritance(
-        ifd, ifds, header_bytes, header.byte_order)
+        ifd, ifds, header_bytes, header.byte_order,
+        allow_rotated=allow_rotated)
     return header, ifd, geo_info, header_bytes
 
 
@@ -2349,6 +2352,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                    band: int | None = None,
                    max_pixels: int = MAX_PIXELS_DEFAULT,
                    window: tuple[int, int, int, int] | None = None,
+                   *,
+                   allow_rotated: bool = False,
                    ) -> tuple[np.ndarray, GeoInfo]:
     """Read a COG via HTTP range requests.
 
@@ -2386,7 +2391,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # calls in the validation blocks below stay as-is.
     try:
         header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
-            source, overview_level=overview_level)
+            source, overview_level=overview_level,
+            allow_rotated=allow_rotated)
 
         # Mirror the local-path orientation guard in ``read_to_array``: a
         # windowed read against a non-default Orientation tag (274) has
@@ -3219,7 +3225,8 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
     source = _coerce_path(source)
     if isinstance(source, str) and source.startswith(('http://', 'https://')):
         return _read_cog_http(source, overview_level=overview_level, band=band,
-                              max_pixels=max_pixels, window=window)
+                              max_pixels=max_pixels, window=window,
+                              allow_rotated=allow_rotated)
 
     # Local file, cloud storage, or file-like buffer: read all bytes then parse
     if _is_file_like(source):
