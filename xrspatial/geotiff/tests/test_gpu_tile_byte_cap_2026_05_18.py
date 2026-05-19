@@ -23,13 +23,14 @@ CPU paths so a side-by-side comparison is easy.
 from __future__ import annotations
 
 import importlib.util
-import struct
 
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+
+from ._tiff_surgery import patch_byte_counts as _patch_byte_counts
 
 
 def _cupy_available() -> bool:
@@ -47,54 +48,6 @@ _HAS_GPU = _cupy_available()
 _gpu_only = pytest.mark.skipif(
     not _HAS_GPU, reason="cupy + CUDA required for the GPU read path",
 )
-
-
-def _patch_byte_counts(data: bytearray, tag: int, value: int) -> None:
-    """Rewrite every entry for *tag* in the first IFD.
-
-    Mirrors the helper in ``test_local_tile_byte_cap_1664.py``: parses
-    the TIFF header, walks the IFD, and writes ``value`` over every
-    occurrence of the named tag's value array. ``tag=325`` is
-    ``TileByteCounts``; ``tag=279`` is ``StripByteCounts``.
-    """
-    from xrspatial.geotiff._header import parse_header
-
-    header = parse_header(bytes(data))
-    bo = header.byte_order
-    ifd_offset = header.first_ifd_offset
-    num_entries = struct.unpack_from(f"{bo}H", data, ifd_offset)[0]
-    entry_offset = ifd_offset + 2
-
-    for i in range(num_entries):
-        eo = entry_offset + i * 12
-        cur_tag = struct.unpack_from(f"{bo}H", data, eo)[0]
-        if cur_tag != tag:
-            continue
-        type_id = struct.unpack_from(f"{bo}H", data, eo + 2)[0]
-        count = struct.unpack_from(f"{bo}I", data, eo + 4)[0]
-        if type_id == 4:  # LONG
-            total = count * 4
-            if total <= 4:
-                for k in range(count):
-                    struct.pack_into(f"{bo}I", data, eo + 8 + k * 4, value)
-            else:
-                ptr = struct.unpack_from(f"{bo}I", data, eo + 8)[0]
-                for k in range(count):
-                    struct.pack_into(f"{bo}I", data, ptr + k * 4, value)
-        elif type_id == 3:  # SHORT
-            clipped = min(value, 0xFFFF)
-            total = count * 2
-            if total <= 4:
-                for k in range(count):
-                    struct.pack_into(
-                        f"{bo}H", data, eo + 8 + k * 2, clipped)
-            else:
-                ptr = struct.unpack_from(f"{bo}I", data, eo + 8)[0]
-                for k in range(count):
-                    struct.pack_into(
-                        f"{bo}H", data, ptr + k * 2, clipped)
-        return
-    raise AssertionError(f"tag {tag} not found in IFD")
 
 
 def _build_forged_tiled_cog(tmp_path, byte_count_value: int) -> str:
@@ -153,20 +106,51 @@ class TestGpuTileByteCap:
 
     @_gpu_only
     def test_env_override_lifts_cap(self, tmp_path, monkeypatch):
-        """A user with legitimate large tiles can lift the cap via env."""
+        """A user with legitimate large tiles can lift the cap via env.
+
+        The truncated forged payload makes the downstream codec raise;
+        the assertion below asserts only that whatever error fires is
+        *not* the cap rejection. Catch the broad ``Exception`` so the
+        test stays focused on the cap-loop contract rather than
+        chasing every decoder failure mode, but still inspect the
+        message string to make sure a regression that re-fires the cap
+        through a different error path would be visible.
+        """
         path = _build_forged_tiled_cog(tmp_path, 50 * 1024 * 1024)
         monkeypatch.setenv(
             "XRSPATIAL_COG_MAX_TILE_BYTES", str(64 * 1024 * 1024))
 
-        # The decompressor may raise on the truncated mmap slice, but
-        # the per-tile cap error must not be the source. Match the
-        # behaviour pinned by ``test_env_override_lifts_cap`` in the
-        # CPU companion module.
         try:
             read_geotiff_gpu(path)
-        except ValueError as exc:
-            assert "exceeds the per-tile safety cap" not in str(exc)
-        except Exception:
-            # Codec failures on the truncated payload are acceptable;
-            # we only care that the cap check did not fire.
-            pass
+        except Exception as exc:
+            assert "exceeds the per-tile safety cap" not in str(exc), (
+                "cap loop fired despite the env override lifting the cap"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Dask + GPU chunked path: same per-tile cap (added in the review pass)
+# ---------------------------------------------------------------------------
+
+
+class TestGpuChunkedTileByteCap:
+    @_gpu_only
+    def test_chunked_huge_tile_byte_count_rejected(
+            self, tmp_path, monkeypatch):
+        """Sibling check on the dask + GPU chunked path.
+
+        ``_read_geotiff_gpu_chunked_gds`` parses the IFDs and then fans
+        out per-chunk GDS reads. Without the cap, the chunked path
+        would build a graph that still pulls the forged tile per task;
+        the metadata-time check rejects the file before any graph is
+        built.
+        """
+        path = _build_forged_tiled_cog(tmp_path, 100 * 1024 * 1024)
+        monkeypatch.setenv(
+            "XRSPATIAL_COG_MAX_TILE_BYTES", str(1024 * 1024))
+
+        with pytest.raises(ValueError, match="TileByteCount"):
+            # ``chunks`` enables the dask + GPU pipeline; the read path
+            # internally routes through ``_read_geotiff_gpu_chunked_gds``
+            # when the file qualifies for the GDS chunked fast path.
+            read_geotiff_gpu(path, chunks=32)
