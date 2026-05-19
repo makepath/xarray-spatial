@@ -1222,6 +1222,25 @@ def _get_gpu_merge_fns():
 
 _gpu_kernel_cache = {}
 
+# Must stay in lock-step with the cuda.local.array(2048, ...) allocations in
+# _scanline_fill_gpu.  Raise both together if this is ever tuned.
+_GPU_MAX_ISECT = 2048
+
+
+def _check_gpu_edge_cap(row_ptr):
+    """Raise if any raster row needs more active edges than the GPU kernel
+    can hold in its fixed-size local array.  Without this guard the CUDA
+    scanline kernel would silently truncate and emit wrong pixels.
+    """
+    max_edges_per_row = int(np.diff(row_ptr).max())
+    if max_edges_per_row > _GPU_MAX_ISECT:
+        raise ValueError(
+            f"rasterize CUDA kernel: {max_edges_per_row} active edges in a "
+            f"single row exceeds the limit of {_GPU_MAX_ISECT}. The kernel "
+            f"would silently drop excess edges and produce wrong output. "
+            f"Use the numpy/dask+numpy backend, or reduce polygon density."
+        )
+
 
 def _ensure_gpu_kernels(merge_fn, should_write):
     """Compile CUDA kernels for the given merge + predicate pair and cache.
@@ -1480,17 +1499,10 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
         row_ptr, col_idx = _build_row_csr_numba(
             edge_y_min, edge_y_max, height)
 
-        # Check for rows exceeding the GPU kernel's local array limit
-        _GPU_MAX_ISECT = 2048
-        max_edges_per_row = int(np.diff(row_ptr).max())
-        if max_edges_per_row > _GPU_MAX_ISECT:
-            warnings.warn(
-                f"rasterize CUDA kernel: {max_edges_per_row} active edges "
-                f"in a single row exceeds the limit of {_GPU_MAX_ISECT}. "
-                f"Excess edges will be silently dropped, causing incorrect "
-                f"results. Reduce polygon density or use the numpy backend.",
-                stacklevel=3,
-            )
+        # The CUDA scanline kernel allocates a fixed-size local array; rows
+        # exceeding _GPU_MAX_ISECT would have edges silently dropped and
+        # produce wrong output.  Fail fast instead.
+        _check_gpu_edge_cap(row_ptr)
 
         d_y_min = cupy.asarray(edge_y_min)
         d_x_at_ymin = cupy.asarray(edge_x_at_ymin)
@@ -1924,6 +1936,9 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                 edge_geom_id = edge_arrays[1:]
             row_ptr, col_idx = _build_row_csr_numba(
                 edge_y_min, edge_y_max, tile_h)
+            # Same fail-fast as eager CuPy: per-tile truncation would be
+            # silent without this check.
+            _check_gpu_edge_cap(row_ptr)
             tpb = 256
             blocks = (tile_h + tpb - 1) // tpb
             kernels['scanline_fill'][blocks, tpb](

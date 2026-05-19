@@ -364,6 +364,32 @@ class TestValidation:
                       width=10, height=10, bounds=(0, 0, 1, 1),
                       chunks=bad)
 
+    def test_gpu_edge_cap_check_raises(self):
+        # Issue #2067: the CUDA scanline kernel allocates a fixed 2048-entry
+        # local array.  Without a guard, exceeding it silently truncates
+        # active edges and produces wrong output.  The validator runs on
+        # the host, so this is testable without a GPU.
+        from xrspatial.rasterize import _check_gpu_edge_cap, _GPU_MAX_ISECT
+        # row_ptr where row 0 has _GPU_MAX_ISECT + 1 edges
+        row_ptr = np.array([0, _GPU_MAX_ISECT + 1, _GPU_MAX_ISECT + 1],
+                           dtype=np.int64)
+        with pytest.raises(ValueError, match="active edges"):
+            _check_gpu_edge_cap(row_ptr)
+
+    def test_gpu_edge_cap_check_passes_at_limit(self):
+        from xrspatial.rasterize import _check_gpu_edge_cap, _GPU_MAX_ISECT
+        row_ptr = np.array([0, _GPU_MAX_ISECT, _GPU_MAX_ISECT],
+                           dtype=np.int64)
+        # exactly at the cap is permitted
+        _check_gpu_edge_cap(row_ptr)
+
+    def test_gpu_edge_cap_check_passes_below_limit(self):
+        from xrspatial.rasterize import _check_gpu_edge_cap, _GPU_MAX_ISECT
+        row_ptr = np.array([0, _GPU_MAX_ISECT - 1, _GPU_MAX_ISECT - 1],
+                           dtype=np.int64)
+        # just under the cap, the common case
+        _check_gpu_edge_cap(row_ptr)
+
     def test_empty_geometry_does_not_poison_inferred_bounds(self):
         # Issue #2065: an empty geometry returns nan from .bounds; the
         # caller used .min()/.max() unfiltered, so a single empty geom
