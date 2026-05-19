@@ -686,10 +686,18 @@ def open_geotiff(source: str | BinaryIO, *,
         _validate_dtype_cast(arr.dtype, target)
         arr = arr.astype(target)
 
-    # Set ``attrs['nodata']`` + ``attrs['masked_nodata']`` after the
-    # mask + optional dtype cast so ``masked_nodata`` reflects the
-    # final array dtype (issue #1988).
-    _set_nodata_attrs(attrs, nodata, array_dtype=arr.dtype)
+    # ``attrs['masked_nodata']`` reflects whether the function
+    # actually replaced sentinel pixels with NaN (#2092). The pre-fix
+    # implementation inferred it from final dtype, which lied when
+    # ``mask_nodata=False`` left literal sentinel values in a float
+    # buffer. True iff the caller opted into masking and the result
+    # is a float-dtype buffer (the mask block above either ran the
+    # float-replacement step or promoted an int input to float64;
+    # either way the buffer holds NaN where the sentinel used to be).
+    _set_nodata_attrs(
+        attrs, nodata,
+        masked=(mask_nodata and arr.dtype.kind == 'f'),
+    )
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']

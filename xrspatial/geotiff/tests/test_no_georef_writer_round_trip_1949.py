@@ -126,11 +126,37 @@ def test_coords_to_transform_float_coords_unchanged():
     assert gt.pixel_height == pytest.approx(1.0)
 
 
-def test_coords_to_transform_3d_yxband_int_y_returns_none():
-    """3D (y, x, band) with int y coords also short-circuits.
+def test_coords_to_transform_3d_yxband_with_marker_returns_none():
+    """3D (y, x, band) carrying the no-georef marker short-circuits.
 
-    The helper picks the y/x dims (filtering out 'band'); the integer
-    check must apply to those, not to the band axis.
+    Pre-#2120 the helper short-circuited on coord shape alone (int64
+    step-1 on both spatial axes). After #2120 the marker
+    ``attrs[_NO_GEOREF_KEY] = True`` is the only signal; the same
+    coord shape without the marker now synthesises a real transform.
+    The helper picks the y/x dims (filtering out 'band'); the marker
+    check applies regardless of the band-axis layout.
+    """
+    from xrspatial.geotiff._coords import _NO_GEOREF_KEY
+    da = xr.DataArray(
+        np.zeros((4, 5, 3), dtype=np.float32),
+        dims=['y', 'x', 'band'],
+        coords={
+            'y': np.arange(4, dtype=np.int64),
+            'x': np.arange(5, dtype=np.int64),
+            'band': np.arange(3),
+        },
+        attrs={_NO_GEOREF_KEY: True},
+    )
+    assert _coords_to_transform(da) is None
+
+
+def test_coords_to_transform_3d_yxband_without_marker_synthesises_transform():
+    """3D (y, x, band) without the marker now writes a real transform.
+
+    Pre-#2120 this returned ``None`` because the shape-based check
+    treated the int64 step-1 coords as the no-georef placeholder. That
+    silently stripped georef from user-authored 3D arrays with
+    integer-aligned coords.
     """
     da = xr.DataArray(
         np.zeros((4, 5, 3), dtype=np.float32),
@@ -141,7 +167,10 @@ def test_coords_to_transform_3d_yxband_int_y_returns_none():
             'band': np.arange(3),
         },
     )
-    assert _coords_to_transform(da) is None
+    gt = _coords_to_transform(da)
+    assert gt is not None
+    assert gt.pixel_width == pytest.approx(1.0)
+    assert gt.pixel_height == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
