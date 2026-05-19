@@ -141,6 +141,19 @@ def test_eager_int_out_of_range_sentinel(tmp_path):
     assert out.attrs.get('nodata_pixels_present') is False
 
 
+def test_eager_int_sentinel_present_unmasked(tmp_path):
+    """Matrix row (5): int file + sentinel embedded + mask_nodata=False +
+    no dtype= kwarg. Buffer stays int with literal sentinel,
+    nodata_pixels_present=True from the no-mask scan branch."""
+    path = str(tmp_path / "tmp_2135_eager_int_present_unmasked.tif")
+    _make_int_raster(path)
+    out = open_geotiff(path, mask_nodata=False)
+    assert out.dtype.kind == 'i'
+    assert out.attrs.get('masked_nodata') is False
+    assert out.attrs.get('nodata_pixels_present') is True
+    assert 'nodata_dtype_cast' not in out.attrs
+
+
 def test_eager_dtype_cast_records_target(tmp_path):
     """``dtype=`` kwarg surfaces as nodata_dtype_cast."""
     path = str(tmp_path / "tmp_2135_eager_dtype_cast.tif")
