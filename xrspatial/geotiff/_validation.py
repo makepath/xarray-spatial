@@ -142,10 +142,26 @@ def _validate_writer_spatial_shape(shape, dims=None,
     ``entry_point`` is the function name used in the error message so
     direct callers of ``write`` / ``write_streaming`` / ``write_geotiff_gpu``
     see the function they actually invoked.
+
+    Also rejects 3D inputs whose band/sample axis is zero (issue #2095).
+    Without the band check, a DataArray of shape ``(0, y, x)`` band-first
+    or ``(y, x, 0)`` band-last passed every spatial guard and reached
+    the IFD assembly with ``samples_per_pixel == 0``. The resulting TIFF
+    was readable as a 2D single-band raster, masking the upstream
+    collapse of the band axis.
+
+    Note that this validator runs before ``_validate_3d_writer_dims``
+    (#1812 / #1972) in ``to_geotiff``. For an ambiguous-dim input like
+    ``(5, 5, 0)`` with dims ``('y', 'x', 'time')``, the band-last branch
+    sees ``bands == 0`` and the "no bands" error wins over the friendlier
+    ambiguous-dim message. Both errors name the right call to fix, so
+    the ordering is acceptable; reorder only if the ambiguous-dim
+    diagnostic becomes more important than the empty-axis one.
     """
     if shape is None:
         return
     ndim = len(shape)
+    bands = None
     if ndim == 2:
         h, w = int(shape[0]), int(shape[1])
     elif ndim == 3:
@@ -156,9 +172,11 @@ def _validate_writer_spatial_shape(shape, dims=None,
         if dims is not None and len(dims) == 3:
             band_first = dims[0] in _BAND_DIM_NAMES
         if band_first:
+            bands = int(shape[0])
             h, w = int(shape[1]), int(shape[2])
         else:
             h, w = int(shape[0]), int(shape[1])
+            bands = int(shape[2])
     else:
         # Other rank errors are handled by the existing ndim check; do
         # not shadow that message.
@@ -170,6 +188,15 @@ def _validate_writer_spatial_shape(shape, dims=None,
             f"Both spatial dims must be positive. A common cause is a "
             f"clip or window that produced an empty selection; check "
             f"the upstream operation before writing."
+        )
+    if bands is not None and bands <= 0:
+        raise ValueError(
+            f"{entry_point} cannot write a raster with no bands: got "
+            f"shape {tuple(int(s) for s in shape)} with {bands} bands. "
+            f"The band/sample dimension must be positive. A common "
+            f"cause is a selection or reduction that collapsed the "
+            f"band axis upstream; reduce to 2D before writing, or "
+            f"select at least one band (issue #2095)."
         )
 
 

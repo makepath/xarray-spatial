@@ -1,4 +1,4 @@
-"""Round-trip tests for issue #1949.
+"""Round-trip tests for issue #1949 (sentinel tightened in #2087).
 
 A TIFF with no GeoTIFF tags (no ``ModelPixelScale``, no
 ``ModelTiepoint``, no GeoKeys) reads back with integer pixel coords
@@ -7,15 +7,21 @@ A TIFF with no GeoTIFF tags (no ``ModelPixelScale``, no
 
 Before the fix, writing that DataArray back through ``to_geotiff``
 silently injected a synthetic ``ModelPixelScale`` + ``ModelTiepoint``
-because ``_coords_to_transform`` happily inferred a unit transform from
-the integer pixel coords. The next read then took the georef branch
+because ``_coords_to_transform`` happily inferred a unit transform
+from the integer pixel coords. The next read took the georef branch
 and the y/x dtype flipped from ``int64`` to ``float64`` with a
 ``transform`` attr present.
 
-The fix makes ``_coords_to_transform`` return ``None`` when either
-spatial coord array carries an integer dtype, so the no-georef contract
-survives an arbitrary number of read -> write -> read cycles across
-every writer path.
+The original #1949 fix made ``_coords_to_transform`` return ``None``
+whenever EITHER spatial coord array carried an integer dtype. That
+also caught user-authored projected grids with integer-spaced
+coords and silently stripped their georef -- the bug #2087 closes.
+The tightened sentinel requires BOTH axes to match the exact
+read-side pattern (``int64`` ascending arange) before returning
+``None``. The no-georef round-trip still survives an arbitrary
+number of read -> write -> read cycles because the reader always
+emits both axes as matching ``np.arange(start, stop,
+dtype=int64)``.
 """
 from __future__ import annotations
 
@@ -49,10 +55,10 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 # ---------------------------------------------------------------------------
 
 
-def test_coords_to_transform_returns_none_for_int64_y_coords():
-    """Integer y coords ``[0, 1, 2, ...]`` are the no-georef signal the
-    read side emits; ``_coords_to_transform`` must not fabricate a
-    transform from them."""
+def test_coords_to_transform_returns_transform_for_int_y_float_x():
+    """Mixed int / float coords are user-authored, not the read-side
+    sentinel; the sentinel requires both axes to match. The transform
+    inference path runs and produces a real GeoTransform (#2087)."""
     da = xr.DataArray(
         np.zeros((4, 5), dtype=np.float32),
         dims=['y', 'x'],
@@ -61,11 +67,14 @@ def test_coords_to_transform_returns_none_for_int64_y_coords():
             'x': np.arange(5, dtype=np.float64),
         },
     )
-    assert _coords_to_transform(da) is None
+    gt = _coords_to_transform(da)
+    assert gt is not None
+    assert gt.pixel_width == pytest.approx(1.0)
+    assert gt.pixel_height == pytest.approx(1.0)
 
 
-def test_coords_to_transform_returns_none_for_int64_x_coords():
-    """Same check on the other axis."""
+def test_coords_to_transform_returns_transform_for_float_y_int_x():
+    """Symmetric check on the other axis."""
     da = xr.DataArray(
         np.zeros((4, 5), dtype=np.float32),
         dims=['y', 'x'],
@@ -74,13 +83,19 @@ def test_coords_to_transform_returns_none_for_int64_x_coords():
             'x': np.arange(5, dtype=np.int64),
         },
     )
-    assert _coords_to_transform(da) is None
+    gt = _coords_to_transform(da)
+    assert gt is not None
+    assert gt.pixel_width == pytest.approx(1.0)
+    assert gt.pixel_height == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize("kind", [np.int32, np.int16, np.uint32])
-def test_coords_to_transform_returns_none_for_int32_coords(kind):
-    """int32 / int16 / uint also short-circuit -- the integer-dtype
-    signal is "no georef", regardless of width."""
+def test_coords_to_transform_returns_transform_for_non_int64_kinds(kind):
+    """The tightened sentinel only matches ``int64``. int32 / int16 /
+    uint32 are not the read-side placeholder (the reader explicitly
+    uses ``np.int64``), so a user authoring an integer-coord grid in
+    those dtypes gets a real transform instead of silent georef loss
+    (#2087)."""
     da = xr.DataArray(
         np.zeros((4, 5), dtype=np.float32),
         dims=['y', 'x'],
@@ -89,8 +104,10 @@ def test_coords_to_transform_returns_none_for_int32_coords(kind):
             'x': np.arange(5, dtype=kind),
         },
     )
-    assert _coords_to_transform(da) is None, (
-        f"expected None for {kind.__name__} coords")
+    gt = _coords_to_transform(da)
+    assert gt is not None, (
+        f"expected a real GeoTransform for {kind.__name__} coords; "
+        f"the sentinel only catches int64 ascending arange")
 
 
 def test_coords_to_transform_float_coords_unchanged():
