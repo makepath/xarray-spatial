@@ -361,6 +361,14 @@ def read_vrt(source: str, *,
     # already carry NaNs at the sentinel locations. Promote
     # ``nodata_pixels_present`` to reflect that, since a downstream "any
     # nodata?" check should answer yes for those tiles too.
+    #
+    # Invariant: at most one branch sets ``nodata_pixels_present`` to True
+    # before this block runs. ``_vrt_mask_with_presence`` only sets True
+    # on integer buffers (it short-circuits on float dtype), and
+    # ``_vrt_scan_for_sentinel`` is gated on the ``mask_nodata=False``
+    # branch above. Either way, the float-NaN proxy below is the only
+    # presence signal for float buffers, so the ``not present`` guard
+    # is sufficient -- we will not double-scan the same buffer.
     if (nodata is not None
             and pre_cast_dtype.kind == 'f'
             and not nodata_pixels_present):

@@ -858,6 +858,12 @@ def _apply_integer_sentinel_mask_with_presence(arr, vrt, band):
     buffer before masking. Used by the VRT eager and chunked paths to
     surface ``attrs['nodata_pixels_present']`` (issue #2135) without
     rescanning the (possibly promoted) float buffer.
+
+    Kept as a sibling of :func:`_apply_integer_sentinel_mask` rather
+    than collapsed into one helper with an opt-in flag because the
+    original helper is shared with the chunked-VRT per-task path that
+    cannot afford an extra Python-side branch per chunk. A future
+    refactor can unify them once a third variant is needed.
     """
     if arr.dtype.kind not in ('u', 'i'):
         return arr, False

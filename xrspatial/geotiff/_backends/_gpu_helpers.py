@@ -45,6 +45,15 @@ def _is_gpu_data(data) -> bool:
 def _apply_nodata_mask_gpu_with_presence(arr_gpu, nodata):
     """Same as :func:`_apply_nodata_mask_gpu` but also reports presence.
 
+    Kept as a sibling helper rather than collapsed with
+    ``_apply_nodata_mask_gpu`` because the original is a hot inner-loop
+    callee from the GPU writers and the per-call cost of computing the
+    presence bit (one extra ``.any().item()`` plus a small Python-side
+    tuple) is paid even when the caller does not need it. A future
+    refactor can fold both into one helper with an opt-in flag if a
+    third variant appears; for now the duplication keeps the original
+    no-overhead path intact.
+
     Returns ``(arr_gpu, pixels_present)`` where ``pixels_present`` is a
     bool indicating whether any pixel in ``arr_gpu`` matched the
     declared sentinel before masking. Lets the eager GPU read path

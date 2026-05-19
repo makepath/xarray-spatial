@@ -644,7 +644,13 @@ def open_geotiff(source: str | BinaryIO, *,
     # Only meaningful when a declared sentinel exists; reported via
     # ``attrs['nodata_pixels_present']`` (issue #2135) so consumers can
     # answer "any nodata in this tile" without rescanning. ``None``
-    # keeps the attr out when ``mask_nodata=False`` and no scan happened.
+    # keeps the attr out when no scan happened: that includes the no
+    # sentinel declared case (early-return in ``_set_nodata_attrs``) and
+    # any exotic dtype branch (e.g. complex source) that neither the
+    # float nor integer mask gates handle. Do not "fix" the asymmetry by
+    # forcing a False default -- the absence-means-unknown contract is
+    # deliberate so downstream can distinguish "scanned and saw nothing"
+    # from "did not scan."
     nodata_pixels_present: bool | None = None
     if nodata is not None and mask_nodata:
         # When the reader applied MinIsWhite, the sentinel-equality mask
