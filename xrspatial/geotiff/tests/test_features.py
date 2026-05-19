@@ -2783,6 +2783,9 @@ class TestPublicAPI:
             'UnparseableCRSError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
+            # Issue #2137: tiered feature inventory exposed alongside
+            # the writer's ``allow_experimental_codecs`` opt-in.
+            'SUPPORTED_FEATURES',
             'open_geotiff',
             'read_geotiff_gpu',
             'read_geotiff_dask',

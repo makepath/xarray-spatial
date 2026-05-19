@@ -49,7 +49,10 @@ class TestLerclessLossless:
         arr = _smooth_surface()
         da = _make_dataarray(arr)
         path = str(tmp_path / 'lerc_lossless.tif')
-        to_geotiff(da, path, compression='lerc', max_z_error=0.0)
+        # Tier 3 codec (issue #2137); opt in so the test exercises the
+        # encode path rather than the rejection gate.
+        to_geotiff(da, path, compression='lerc', max_z_error=0.0,
+                   allow_experimental_codecs=True)
 
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
@@ -65,8 +68,10 @@ class TestLossyShrinksAndStaysWithinTolerance:
         lossless_path = str(tmp_path / 'lerc_lossless.tif')
         lossy_path = str(tmp_path / 'lerc_lossy.tif')
 
-        to_geotiff(da, lossless_path, compression='lerc', max_z_error=0.0)
-        to_geotiff(da, lossy_path, compression='lerc', max_z_error=0.05)
+        to_geotiff(da, lossless_path, compression='lerc', max_z_error=0.0,
+                   allow_experimental_codecs=True)
+        to_geotiff(da, lossy_path, compression='lerc', max_z_error=0.05,
+                   allow_experimental_codecs=True)
 
         lossless_size = os.path.getsize(lossless_path)
         lossy_size = os.path.getsize(lossy_path)
@@ -93,7 +98,7 @@ class TestStreamingDaskPath:
         )
         path = str(tmp_path / 'lerc_dask.tif')
         to_geotiff(da, path, compression='lerc', max_z_error=0.05,
-                   tile_size=32)
+                   tile_size=32, allow_experimental_codecs=True)
 
         result = open_geotiff(path).values
         max_err = float(np.max(np.abs(result - arr)))
@@ -115,7 +120,8 @@ class TestValidation:
         da = _make_dataarray(arr)
         path = str(tmp_path / 'should_not_exist.tif')
         with pytest.raises(ValueError, match="max_z_error"):
-            to_geotiff(da, path, compression='lerc', max_z_error=-0.01)
+            to_geotiff(da, path, compression='lerc', max_z_error=-0.01,
+                       allow_experimental_codecs=True)
 
     def test_max_z_error_zero_with_other_codec_is_allowed(self, tmp_path):
         # The default value 0.0 must not error out for any other codec.
