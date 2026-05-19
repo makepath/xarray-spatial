@@ -539,9 +539,11 @@ def _validate_tiepoint_consistency(tiepoint: tuple,
                 f"declares ({tp_x!r}, {tp_y!r}); residual "
                 f"({dx!r}, {dy!r}) exceeds tolerance {tol!r}). The file "
                 "uses a ground-control-point warp that the reader "
-                "cannot represent as an axis-aligned affine. Project "
-                "the file to a rectified grid (e.g. ``gdalwarp``) "
-                "before reading. See issue #2117."
+                "cannot represent as an axis-aligned affine. Rectify the "
+                "file to a regular grid first (``gdalwarp``, "
+                "``rasterio.warp.reproject``, or any GIS tool that "
+                "resamples GCP files to an affine raster) and reopen "
+                "the rectified output. See issue #2117."
             )
 
 
