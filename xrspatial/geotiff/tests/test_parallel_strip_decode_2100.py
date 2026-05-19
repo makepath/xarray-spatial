@@ -46,66 +46,70 @@ def _make_stripped_uint16(height: int, width: int, *,
 class TestReadStripsParallelGate:
     """Local strip path: the parallel-decode gate engages on multi-strip."""
 
-    def test_parallel_decode_matches_serial(self):
+    def test_parallel_decode_matches_serial(self, tmp_path):
         """A wide stripped TIFF: parallel and serial decode return
-        identical bytes."""
+        identical bytes.
+
+        Uses pytest's ``tmp_path`` rather than
+        ``tempfile.TemporaryDirectory()`` because ``read_to_array``
+        leaves the mmap entry cached on close (see ``_MmapCache``);
+        on Windows the cached mmap holds the file handle, so an
+        eager ``TemporaryDirectory.__exit__`` rmtree races the mmap
+        and raises ``WinError 32``. ``tmp_path`` defers cleanup to
+        pytest's session teardown, which tolerates that race.
+        """
         arr, blob = _make_stripped_uint16(2048, 4096)
-        # Write to disk and read twice (parallel default, then forced serial).
-        with tempfile.TemporaryDirectory() as td:
-            p = os.path.join(td, "s.tif")
-            with open(p, "wb") as f:
-                f.write(blob)
-            par, _ = read_to_array(p)
-            with patch.object(_reader_mod,
-                              "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10**12):
-                ser, _ = read_to_array(p)
+        p = str(tmp_path / "s.tif")
+        with open(p, "wb") as f:
+            f.write(blob)
+        par, _ = read_to_array(p)
+        with patch.object(_reader_mod,
+                          "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10**12):
+            ser, _ = read_to_array(p)
         np.testing.assert_array_equal(par, ser)
         np.testing.assert_array_equal(par, arr)
 
-    def test_parallel_pool_engages_on_multi_strip(self):
+    def test_parallel_pool_engages_on_multi_strip(self, tmp_path):
         """Confirm the parallel branch is taken: patch ThreadPoolExecutor
         and assert it is constructed when n_strips > 1 and strip pixels
         clear the gate."""
         arr, blob = _make_stripped_uint16(1024, 2048)
-        with tempfile.TemporaryDirectory() as td:
-            p = os.path.join(td, "s.tif")
-            with open(p, "wb") as f:
-                f.write(blob)
-            with patch.object(_reader_mod, "ThreadPoolExecutor",
-                              wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
-                out, _ = read_to_array(p)
-                # n_strips for a 1024-row file with default rps -> at
-                # least 4 strips (TIFFs default rps=8KB / row).
-                assert mock_pool.called
+        p = str(tmp_path / "s.tif")
+        with open(p, "wb") as f:
+            f.write(blob)
+        with patch.object(_reader_mod, "ThreadPoolExecutor",
+                          wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+            out, _ = read_to_array(p)
+            # n_strips for a 1024-row file with default rps -> at
+            # least 4 strips (TIFFs default rps=8KB / row).
+            assert mock_pool.called
         np.testing.assert_array_equal(out, arr)
 
-    def test_serial_path_used_for_small_strip(self):
+    def test_serial_path_used_for_small_strip(self, tmp_path):
         """A single-row image will produce a single strip; the parallel
         gate must short-circuit to the serial branch."""
         arr = np.arange(2 * 32, dtype=np.uint16).reshape(2, 32)
         da = xr.DataArray(arr, dims=["y", "x"])
-        with tempfile.TemporaryDirectory() as td:
-            p = os.path.join(td, "tiny.tif")
-            to_geotiff(da, p, compression="deflate", tiled=False)
-            with patch.object(_reader_mod, "ThreadPoolExecutor",
-                              wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
-                out, _ = read_to_array(p)
-                # Single-strip file => no pool.
-                assert not mock_pool.called
+        p = str(tmp_path / "tiny.tif")
+        to_geotiff(da, p, compression="deflate", tiled=False)
+        with patch.object(_reader_mod, "ThreadPoolExecutor",
+                          wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+            out, _ = read_to_array(p)
+            # Single-strip file => no pool.
+            assert not mock_pool.called
         np.testing.assert_array_equal(out, arr)
 
-    def test_windowed_strip_read_parallel(self):
+    def test_windowed_strip_read_parallel(self, tmp_path):
         """A windowed read across multiple strips still matches the full
         decode."""
         arr, blob = _make_stripped_uint16(2048, 2048)
-        with tempfile.TemporaryDirectory() as td:
-            p = os.path.join(td, "w.tif")
-            with open(p, "wb") as f:
-                f.write(blob)
-            par, _ = read_to_array(p, window=(100, 100, 1500, 1500))
-            with patch.object(_reader_mod,
-                              "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10**12):
-                ser, _ = read_to_array(p, window=(100, 100, 1500, 1500))
+        p = str(tmp_path / "w.tif")
+        with open(p, "wb") as f:
+            f.write(blob)
+        par, _ = read_to_array(p, window=(100, 100, 1500, 1500))
+        with patch.object(_reader_mod,
+                          "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10**12):
+            ser, _ = read_to_array(p, window=(100, 100, 1500, 1500))
         np.testing.assert_array_equal(par, ser)
         np.testing.assert_array_equal(par, arr[100:1500, 100:1500])
 
