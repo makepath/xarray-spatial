@@ -140,7 +140,8 @@ __all__ = [
 ]
 
 
-def _read_geo_info(source, *, overview_level: int | None = None):
+def _read_geo_info(source, *, overview_level: int | None = None,
+                   allow_rotated: bool = False):
     """Read only the geographic metadata and image dimensions from a GeoTIFF.
 
     Returns (geo_info, height, width, dtype, n_bands) without reading pixel
@@ -154,6 +155,10 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         Path or any object with ``read``/``seek``.
     overview_level : int or None
         Overview IFD index (0 = full resolution).
+    allow_rotated : bool, optional
+        Forwarded to the geotag parser. When True, a rotated
+        ``ModelTransformationTag`` reads as an ungeoreferenced pixel
+        grid instead of raising ``NotImplementedError`` (issue #2115).
     """
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info_with_overview_inheritance
@@ -177,7 +182,8 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         _src = _CloudSource(source)
         try:
             _header, _ifd, geo_info, _ = _parse_cog_http_meta(
-                _src, overview_level=overview_level)
+                _src, overview_level=overview_level,
+                allow_rotated=allow_rotated)
         finally:
             _src.close()
         bps = resolve_bits_per_sample(_ifd.bits_per_sample)
@@ -215,16 +221,36 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         raise TypeError(
             "source must be a str path or binary file-like, "
             f"got {type(source).__name__}")
+    sidecar = None
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
         if not ifds:
             raise ValueError("No IFDs found in TIFF file")
+        # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list
+        # so ``overview_level`` indexes both internal and external
+        # overviews (issue #2112). Local file paths only.
+        from ._sidecar import (
+            attach_sidecar_origin, find_sidecar, load_sidecar,
+        )
+        sidecar_path = find_sidecar(source)
+        if sidecar_path is not None:
+            sidecar = load_sidecar(sidecar_path)
+            # Metadata-only path: drop the origin mapping. The reader
+            # only needs the merged IFD list to resolve the requested
+            # ``overview_level`` against; strip/tile bytes are sliced by
+            # ``read_to_array`` on the actual read.
+            attach_sidecar_origin(
+                sidecar.ifds, sidecar.data, sidecar.header)
+            ifds = ifds + sidecar.ifds
         ifd = select_overview_ifd(ifds, overview_level)
         # Inherit georef from the level-0 IFD when the overview itself
-        # has no geokeys (issue #1640). Pass-through for level 0.
+        # has no geokeys (issue #1640). Pass-through for level 0. The
+        # sidecar IFDs typically lack geokeys so the inheritance pulls
+        # from the base file's full-resolution IFD as GDAL does.
         geo_info = extract_geo_info_with_overview_inheritance(
-            ifd, ifds, data, header.byte_order)
+            ifd, ifds, data, header.byte_order,
+            allow_rotated=allow_rotated)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         _validate_predictor_sample_format(ifd.predictor, ifd.sample_format)
@@ -238,6 +264,8 @@ def _read_geo_info(source, *, overview_level: int | None = None):
     finally:
         if close_data:
             data.close()
+        from ._sidecar import close_sidecar
+        close_sidecar(sidecar)
 
 
 def open_geotiff(source: str | BinaryIO, *,
@@ -249,11 +277,12 @@ def open_geotiff(source: str | BinaryIO, *,
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
                  max_pixels: int | None = None,
-                 max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
+                 max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
                  on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
                  allow_unparseable_crs: bool = False,
+                 band_nodata: str | None = None,
                  mask_nodata: bool = True,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
@@ -325,6 +354,17 @@ def open_geotiff(source: str | BinaryIO, *,
         return a partial mosaic. Passing this kwarg with a non-VRT
         source raises ``ValueError`` because the policy only applies to
         the VRT pipeline. See ``read_vrt`` for the full description.
+    band_nodata : {'first', None}, optional
+        VRT-only. Opt-out for the fail-closed check that rejects VRT
+        sources whose bands declare disagreeing per-band nodata
+        sentinels (issue #1987 PR 5). When ``None`` (the default), a VRT
+        that mosaics bands with different sentinels raises
+        ``MixedBandMetadataError``; flattening to one value would let
+        one band's valid pixels collide with another band's sentinel.
+        Pass ``band_nodata='first'`` to keep the legacy behaviour of
+        using band 0's sentinel for the whole mosaic. Passing this
+        kwarg with a non-VRT source raises ``ValueError`` because the
+        policy only applies to the VRT pipeline.
     mask_nodata : bool, default True
         If True (the default), replace the nodata sentinel with ``NaN``;
         integer rasters get promoted to ``float64`` first so NaN can be
@@ -336,6 +376,19 @@ def open_geotiff(source: str | BinaryIO, *,
         promotes to ``float64`` whenever the sentinel matches an actual
         pixel, and ``dtype=<integer>`` then raises ``ValueError`` on the
         float-to-int cast.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files. By default the reader raises ``NotImplementedError``
+        because the rest of xrspatial assumes an axis-aligned grid.
+        ``allow_rotated=True`` reads the pixel grid without the
+        geospatial assumption: the result has integer pixel coords on
+        ``x`` / ``y`` and ``attrs['crs']`` is dropped. The original
+        rotated 6-tuple is preserved on
+        ``geo_info.transform.rotated_affine`` for callers that want it
+        (issue #2115). The contract is read-only -- ``to_geotiff`` does
+        not currently emit ``rotated_affine``, so a read-then-write
+        round-trip writes an identity-affine output and silently drops
+        the rotation.
 
     Returns
     -------
@@ -409,6 +462,19 @@ def open_geotiff(source: str | BinaryIO, *,
             "Pass a .vrt path to enable the VRT pipeline, or drop "
             "missing_sources to keep the default GeoTIFF path.")
 
+    # ``band_nodata`` is the #1987 PR 5 opt-out for the mixed-band
+    # metadata fail-closed check. It only has meaning on the VRT pipeline
+    # (a plain GeoTIFF has one nodata sentinel per file, not per band),
+    # so reject the kwarg up front on non-VRT sources rather than letting
+    # it leak into ``read_vrt`` and confuse the caller about what the
+    # opt-out actually controls.
+    if band_nodata is not None and not _is_vrt_source:
+        raise ValueError(
+            "band_nodata only applies to VRT sources. "
+            "Pass a .vrt path to enable the VRT pipeline, or drop "
+            "band_nodata to keep the default GeoTIFF path. "
+            "See issue #1987.")
+
     # ``max_cloud_bytes`` is the eager fsspec-read budget. Only
     # ``_read_to_array`` on the eager non-VRT, non-GPU, non-dask branch
     # consumes it; the GPU (``read_geotiff_gpu``), dask
@@ -473,6 +539,7 @@ def open_geotiff(source: str | BinaryIO, *,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
                         allow_unparseable_crs=allow_unparseable_crs,
+                        band_nodata=band_nodata,
                         mask_nodata=mask_nodata,
                         **vrt_kwargs)
 
@@ -529,6 +596,7 @@ def open_geotiff(source: str | BinaryIO, *,
     arr, geo_info = _read_to_array(
         source, window=window,
         overview_level=overview_level, band=band,
+        allow_rotated=allow_rotated,
         **kwargs,
     )
 

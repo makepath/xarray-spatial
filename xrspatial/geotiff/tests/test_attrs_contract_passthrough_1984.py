@@ -25,21 +25,15 @@ Current state of every pass-through key, as locked here:
   - ``extra_samples``      -> tag 338 (ExtraSamples)
   - ``colormap``           -> tag 320 (ColorMap, raw uint16 triples)
 
-* Dropped on round-trip (writer never emits the GeoKey, reader has
-  nothing to rebuild from):
-  - ``crs_name``           (GTCitationGeoKey / ProjCitationGeoKey)
-  - ``geog_citation``      (GeogCitationGeoKey)
-  - ``datum_code``         (GeogGeodeticDatumGeoKey)
-  - ``angular_units``      (GeogAngularUnitsGeoKey)
-  - ``linear_units``       (ProjLinearUnitsGeoKey)
-  - ``semi_major_axis``    (GeogSemiMajorAxisGeoKey)
-  - ``inv_flattening``     (GeogInvFlatteningGeoKey)
-  - ``projection_code``    (ProjectionGeoKey)
-  - ``vertical_crs``       (VerticalCSTypeGeoKey)
-  - ``vertical_citation``  (VerticalCitationGeoKey)
-  - ``vertical_units``     (VerticalUnitsGeoKey)
-  - ``colormap_rgba``      (only set on read when Photometric == 3)
-  - ``cmap``               (matplotlib ListedColormap; same gate)
+Contract v2 (issue #2016) removed the 13 GeoKey-derived and
+matplotlib-colormap keys that v1 emitted on read under a
+``DeprecationWarning`` (``crs_name``, ``geog_citation``,
+``datum_code``, ``angular_units``, ``linear_units``,
+``semi_major_axis``, ``inv_flattening``, ``projection_code``,
+``vertical_crs``, ``vertical_citation``, ``vertical_units``,
+``colormap_rgba``, ``cmap``). The reader no longer surfaces them as
+attrs; ``test_removed_attrs_not_emitted`` and
+``test_removed_attrs_absent_after_roundtrip`` lock that absence.
 """
 from __future__ import annotations
 
@@ -52,8 +46,22 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
 
-# Full set of pass-through keys defined by the contract.
+# Full set of pass-through keys defined by the contract. Contract v2
+# (issue #2016) trimmed this set to the three TIFF-tag-derived keys
+# that actually round-trip via ``_merge_friendly_extra_tags``.
 _ALL_PASSTHROUGH_KEYS = (
+    'image_description',
+    'extra_samples',
+    'colormap',
+)
+
+
+# Attrs that the reader emitted under a ``DeprecationWarning`` in
+# contract v1 and that contract v2 (issue #2016) removed entirely.
+# ``test_removed_attrs_not_emitted`` pins their absence after a fresh
+# read; ``test_removed_attrs_absent_after_roundtrip`` pins their
+# absence after a write -> read cycle.
+_REMOVED_IN_V2_ATTRS = (
     'crs_name',
     'geog_citation',
     'datum_code',
@@ -65,9 +73,6 @@ _ALL_PASSTHROUGH_KEYS = (
     'vertical_crs',
     'vertical_citation',
     'vertical_units',
-    'image_description',
-    'extra_samples',
-    'colormap',
     'colormap_rgba',
     'cmap',
 )
@@ -96,43 +101,23 @@ def _roundtrip(tmp_path, da, name='roundtrip.tif'):
 
 # (key, crs_to_use, value_set_on_write_or_None, expected_outcome)
 #
-# ``crs_to_use``: 4326 for geographic GeoKey-derived keys, 32633 for
-# projected ones. The CRS pins which GeoKeys the writer would emit if it
-# emitted any; today it emits only the EPSG code, but the test brackets
-# both branches anyway.
+# ``crs_to_use``: the CRS attached to the test DataArray; 4326 is
+# fine for every remaining key.
 #
 # ``value_set_on_write``: the value the test sets on ``da.attrs`` before
-# write. ``None`` means "do not set this key" (the test only needs the
-# CRS to be present so any reconstruction would have a path to fire).
+# write.
 #
-# ``expected``: one of ``'reconstructible'`` or ``'dropped'``.
-#   - reconstructible: key must be present in read-back attrs AND, when a
-#     value was supplied, must equal that value.
-#   - dropped: key must be absent from read-back attrs.
+# ``expected``: ``'reconstructible'`` (key must be present in the
+# read-back attrs and equal to the written value) or ``'dropped'``
+# (key must be absent). After contract v2 (issue #2016), every
+# row carries ``'reconstructible'``; the ``'dropped'`` arm is kept
+# so a future addition can use it without restructuring the test.
 _PASSTHROUGH_CASES = [
-    # GeoKey-derived geographic CRS attrs -- writer emits only EPSG, so
-    # the reader has no GeoKey to reconstruct these from.
-    ('crs_name',          4326,  'WGS 84',           'dropped'),
-    ('geog_citation',     4326,  'WGS 84',           'dropped'),
-    ('datum_code',        4326,  6326,               'dropped'),
-    ('angular_units',     4326,  'degree',           'dropped'),
-    ('semi_major_axis',   4326,  6378137.0,          'dropped'),
-    ('inv_flattening',    4326,  298.257223563,      'dropped'),
-    # GeoKey-derived projected CRS attrs.
-    ('linear_units',      32633, 'metre',            'dropped'),
-    ('projection_code',   32633, 16033,              'dropped'),
-    # Vertical CRS attrs -- writer never emits the vertical GeoKey block.
-    ('vertical_crs',      4326,  5703,               'dropped'),
-    ('vertical_citation', 4326,  'NAVD88',           'dropped'),
-    ('vertical_units',    4326,  'metre',            'dropped'),
     # Non-GeoKey tag passthroughs. The writer folds these into extra_tags
     # via _merge_friendly_extra_tags, so the reader can rebuild them.
     ('image_description', 4326,  'pr1984 fixture',   'reconstructible'),
     ('extra_samples',     4326,  (1,),               'reconstructible'),
-    # ``colormap`` round-trips as the raw uint16 triple list; the
-    # derived ``colormap_rgba`` / ``cmap`` attrs are only emitted when
-    # Photometric == 3 on read, which the writer does not set just
-    # because attrs carries a colormap.
+    # ``colormap`` round-trips as the raw uint16 triple list.
     # The TIFF ColorMap tag (320) stores RGB triples as uint16 values in
     # the 0-65535 range. Values below are written as-is and compared
     # by-equality after the round-trip; if the writer ever rescales 8-bit
@@ -140,8 +125,6 @@ _PASSTHROUGH_CASES = [
     # the contract.
     ('colormap',          4326,  tuple([0] * 256 + [128] * 256 + [255] * 256),
                                                     'reconstructible'),
-    ('colormap_rgba',     4326,  None,               'dropped'),
-    ('cmap',              4326,  None,               'dropped'),
 ]
 
 
@@ -168,12 +151,6 @@ def test_passthrough_key_roundtrip(tmp_path, key, crs, value, expected):
     attrs = {}
     if value is not None:
         attrs[key] = value
-    # For colormap-derived keys we still need an attrs payload that
-    # actually puts a colormap tag on disk; setting ``colormap`` itself
-    # does that, so probe ``colormap_rgba`` / ``cmap`` via a separate
-    # write that does NOT include a colormap. The contract for those two
-    # keys is "absent on round-trip unless Photometric=3", and the
-    # writer never selects Photometric=3 from attrs alone.
     da = _make_da(crs=crs, attrs=attrs)
     # Single-band uint8 needed for the colormap tag to be valid in TIFF.
     if key == 'colormap':
@@ -226,11 +203,16 @@ def test_passthrough_dropped_when_no_crs(tmp_path):
 
 
 def test_passthrough_does_not_promote_to_canonical(tmp_path):
-    """Setting pass-through attrs without a CRS must not inject a CRS."""
-    # Mix of GeoKey-derived and tag-derived pass-through keys, but no
-    # ``crs`` / ``crs_wkt``. If the writer ever started inferring a CRS
-    # from these (e.g. picking 4326 because angular_units == 'degree')
-    # this test would fail.
+    """Setting legacy GeoKey-derived attrs without a CRS must not inject one.
+
+    Contract v2 (issue #2016) removed these keys from the reader's
+    emission set, but a user with a hand-built ``DataArray`` may still
+    set them. The writer must treat them as advisory and never synthesise
+    a CRS from them; this test pins that invariant.
+    """
+    # Mix of GeoKey-derived keys, but no ``crs`` / ``crs_wkt``. If the
+    # writer ever started inferring a CRS from these (e.g. picking 4326
+    # because angular_units == 'degree') this test would fail.
     attrs = {
         'crs_name': 'WGS 84',
         'geog_citation': 'WGS 84',
@@ -258,4 +240,78 @@ def test_passthrough_does_not_promote_to_canonical(tmp_path):
     assert 'crs_wkt' not in rd.attrs, (
         f"pass-through attrs caused the writer to synthesise a CRS WKT: "
         f"crs_wkt={rd.attrs.get('crs_wkt')!r}."
+    )
+
+
+def test_removed_attrs_not_emitted(tmp_path):
+    """Contract v2 (issue #2016) removed 13 deprecated reader attrs.
+
+    A freshly read DataArray must not carry any of them, even when the
+    underlying GeoTIFF's GeoKey directory advertises the values. This
+    test pins the removal so a regression that re-adds an emit site
+    fails here rather than silently leaking the attr back into the
+    public surface.
+    """
+    da = _make_da(crs=4326)
+    rd = _roundtrip(tmp_path, da, name='removed_attrs_no_emit.tif')
+
+    leaked = sorted(k for k in _REMOVED_IN_V2_ATTRS if k in rd.attrs)
+    assert leaked == [], (
+        f"contract v2 attrs leaked into a fresh read: {leaked}. "
+        f"All attrs keys present: {sorted(rd.attrs.keys())}. Issue "
+        f"#2016 dropped these from the reader; re-emitting them is a "
+        f"behaviour regression."
+    )
+
+
+def test_removed_attrs_absent_after_roundtrip(tmp_path):
+    """A write -> read cycle must not resurrect any v2-removed attr.
+
+    Even when the input ``DataArray`` carries every removed attr as a
+    legacy value, the writer ignores them and the reader never adds
+    them back. The reopened DataArray's attrs is the public surface
+    callers rely on.
+    """
+    legacy_payload = {
+        'crs_name': 'WGS 84',
+        'geog_citation': 'WGS 84',
+        'datum_code': 6326,
+        'angular_units': 'degree',
+        'linear_units': 'metre',
+        'semi_major_axis': 6378137.0,
+        'inv_flattening': 298.257223563,
+        'projection_code': 16033,
+        'vertical_crs': 5703,
+        'vertical_citation': 'NAVD88',
+        'vertical_units': 'metre',
+        'colormap_rgba': ((1.0, 0.0, 0.0, 1.0),),
+        'cmap': 'tiff_palette_placeholder',
+    }
+    da = _make_da(crs=4326, attrs=legacy_payload)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        rd = _roundtrip(tmp_path, da, name='removed_attrs_roundtrip.tif')
+
+    resurrected = sorted(k for k in _REMOVED_IN_V2_ATTRS if k in rd.attrs)
+    assert resurrected == [], (
+        f"removed attrs survived a write -> read cycle: {resurrected}. "
+        f"All attrs keys present: {sorted(rd.attrs.keys())}. The "
+        f"reader must drop these per contract v2 (issue #2016)."
+    )
+
+
+def test_contract_version_is_two(tmp_path):
+    """``attrs['_xrspatial_geotiff_contract']`` is ``2`` on every read.
+
+    The contract version is the user-visible signal that the removal
+    landed. Downstream code branching on the integer needs the bump
+    to fire here on every read path.
+    """
+    da = _make_da(crs=4326)
+    rd = _roundtrip(tmp_path, da, name='contract_v2_signal.tif')
+
+    assert rd.attrs.get('_xrspatial_geotiff_contract') == 2, (
+        f"contract version stamp on a fresh read is "
+        f"{rd.attrs.get('_xrspatial_geotiff_contract')!r}; issue "
+        f"#2016 bumped it to 2."
     )

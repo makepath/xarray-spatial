@@ -482,31 +482,29 @@ def _to_geopandas(
     import shapely
     from shapely.geometry import Polygon
 
-    if hasattr(shapely, 'polygons'):
-        # Shapely 2.0+: batch-construct hole-free polygons via
-        # linearrings -> polygons pipeline (both are C-level batch ops).
-        no_holes = [i for i, pts in enumerate(polygon_points)
-                    if len(pts) == 1]
+    # Batch-construct hole-free polygons via the shapely 2.0
+    # linearrings -> polygons pipeline (both are C-level batch ops).
+    # The pre-#2060 fallback to ``[Polygon(...) for pts in ...]`` for
+    # shapely < 2 is gone now that the package pins ``shapely>=2.0``.
+    no_holes = [i for i, pts in enumerate(polygon_points)
+                if len(pts) == 1]
 
-        if len(no_holes) == len(polygon_points):
-            # All hole-free: batch create LinearRings then Polygons.
-            rings = [shapely.linearrings(pts[0])
-                     for pts in polygon_points]
-            polygons = list(shapely.polygons(rings))
-        else:
-            polygons = [None] * len(polygon_points)
-            if no_holes:
-                rings = [shapely.linearrings(polygon_points[i][0])
-                         for i in no_holes]
-                batch = shapely.polygons(rings)
-                for idx, poly in zip(no_holes, batch):
-                    polygons[idx] = poly
-            for i, pts in enumerate(polygon_points):
-                if polygons[i] is None:
-                    polygons[i] = Polygon(pts[0], pts[1:])
+    if len(no_holes) == len(polygon_points):
+        # All hole-free: batch create LinearRings then Polygons.
+        rings = [shapely.linearrings(pts[0])
+                 for pts in polygon_points]
+        polygons = list(shapely.polygons(rings))
     else:
-        # Shapely < 2.0 fallback.
-        polygons = [Polygon(pts[0], pts[1:]) for pts in polygon_points]
+        polygons = [None] * len(polygon_points)
+        if no_holes:
+            rings = [shapely.linearrings(polygon_points[i][0])
+                     for i in no_holes]
+            batch = shapely.polygons(rings)
+            for idx, poly in zip(no_holes, batch):
+                polygons[idx] = poly
+        for i, pts in enumerate(polygon_points):
+            if polygons[i] is None:
+                polygons[i] = Polygon(pts[0], pts[1:])
 
     df = gpd.GeoDataFrame({column_name: column, "geometry": polygons})
     return df

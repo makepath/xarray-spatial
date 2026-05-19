@@ -279,7 +279,11 @@ def test_nodata_round_trip_through_widened_int_dtype(tmp_path):
 </VRTDataset>"""
     out = tmp_path / 'mixed.vrt'
     out.write_text(vrt_path)
-    r = read_vrt(str(out))
+    # ``255`` (band 0) and ``-9999`` (band 1) are distinct sentinels, so
+    # after #1987 PR 5 the default read raises. The widened-dtype
+    # behaviour this regression covers is still reachable through
+    # ``band_nodata='first'``.
+    r = read_vrt(str(out), band_nodata='first')
     # Per-band nodata masking in __init__.py promotes uint/int VRT
     # buffers to float64 when at least one band's sentinel hits a pixel.
     # Either we land on float64 (NaN-masked) or stay int16 (sentinel

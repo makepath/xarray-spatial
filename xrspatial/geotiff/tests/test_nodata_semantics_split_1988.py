@@ -545,3 +545,457 @@ class TestSetNodataAttrsHelper:
         attrs = {}
         _set_nodata_attrs(attrs, 0, masked=0)
         assert attrs["masked_nodata"] is False
+
+
+# ----------------------------------------------------------------------------
+# Writer-side consultation of ``attrs['masked_nodata']``.
+#
+# The forward (read) step promotes the file sentinel to NaN and tags
+# the result with ``attrs['masked_nodata'] = True``. The reverse
+# (write) step rewrites NaN back to the sentinel. The reverse must
+# only run when the forward ran. When ``masked_nodata=False`` the
+# array did not go through the forward step, so any NaN present came
+# from elsewhere and the writer must preserve it rather than silently
+# converting to the integer sentinel.
+# ----------------------------------------------------------------------------
+
+
+class TestShouldRestoreNanSentinelHelper:
+    """Direct coverage of :func:`_should_restore_nan_sentinel`."""
+
+    def test_missing_attr_defaults_to_true(self):
+        from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
+        assert _should_restore_nan_sentinel({}) is True
+        # The default preserves pre-#1988 behaviour for any DataArray
+        # that did not pass through xrspatial's reader.
+        assert _should_restore_nan_sentinel({"nodata": -9999}) is True
+
+    def test_masked_nodata_true_returns_true(self):
+        from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
+        attrs = {"nodata": -9999, "masked_nodata": True}
+        assert _should_restore_nan_sentinel(attrs) is True
+
+    def test_masked_nodata_false_returns_false(self):
+        from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
+        attrs = {"nodata": -9999, "masked_nodata": False}
+        assert _should_restore_nan_sentinel(attrs) is False
+
+    def test_none_attrs_defaults_to_true(self):
+        """GPU writer's positional-cupy branch has no attrs to read."""
+        from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
+        assert _should_restore_nan_sentinel(None) is True
+
+    def test_non_mapping_defaults_to_true(self):
+        """A misuse that hands in a non-mapping must not crash the writer."""
+        from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
+        assert _should_restore_nan_sentinel("not a dict") is True
+
+    def test_stray_truthy_value_is_true(self):
+        """Only literal ``False`` disables. Stray ``0`` / ``''`` stays True."""
+        from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
+        # Anything other than literal False should keep the default
+        # behaviour. ``0`` is falsy but is not the contract value.
+        assert _should_restore_nan_sentinel({"masked_nodata": 0}) is True
+        assert _should_restore_nan_sentinel({"masked_nodata": None}) is True
+
+
+class TestWriterRoundTripEager:
+    """Round-trip through ``to_geotiff`` to verify the writer respects
+    ``attrs['masked_nodata']``."""
+
+    def test_masked_nodata_true_restores_sentinel(self, tmp_path):
+        """Reader-style attrs (masked_nodata=True): NaN -> sentinel on write."""
+        from xrspatial.geotiff import to_geotiff
+        import xarray as xr
+
+        path = tmp_path / "test_1988_writer_masked.tif"
+        arr = np.array(
+            [[1.0, 2.0, np.nan, 4.0],
+             [5.0, np.nan, 7.0, 8.0]],
+            dtype=np.float32,
+        )
+        da = xr.DataArray(
+            arr,
+            dims=("y", "x"),
+            coords={"y": [1.0, 0.0], "x": [0.0, 1.0, 2.0, 3.0]},
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 2.0),
+                "nodata": -9999.0,
+                "masked_nodata": True,
+            },
+        )
+        to_geotiff(da, str(path), compression="none")
+
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+            assert ds.nodata == -9999.0
+        # NaN pixels should have been rewritten to the sentinel.
+        assert not np.isnan(on_disk).any()
+        assert (on_disk == -9999.0).sum() == 2
+
+    def test_masked_nodata_false_preserves_nan(self, tmp_path):
+        """``masked_nodata=False`` -> NaN survives, no silent sentinel rewrite."""
+        from xrspatial.geotiff import to_geotiff
+        import xarray as xr
+
+        path = tmp_path / "test_1988_writer_unmasked.tif"
+        arr = np.array(
+            [[1.0, 2.0, np.nan, 4.0],
+             [5.0, np.nan, 7.0, 8.0]],
+            dtype=np.float32,
+        )
+        da = xr.DataArray(
+            arr,
+            dims=("y", "x"),
+            coords={"y": [1.0, 0.0], "x": [0.0, 1.0, 2.0, 3.0]},
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 2.0),
+                "nodata": -9999.0,
+                "masked_nodata": False,
+            },
+        )
+        to_geotiff(da, str(path), compression="none")
+
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+            # The GDAL_NODATA tag is still set, regardless of the
+            # in-memory masking state. The two attrs carry independent
+            # meanings (see issue #1988).
+            assert ds.nodata == -9999.0
+        # NaN pixels survive unchanged: the writer must NOT rewrite
+        # them to the integer sentinel because the array did not pass
+        # through the reader's sentinel-to-NaN promotion.
+        assert np.isnan(on_disk).sum() == 2
+        assert (on_disk == -9999.0).sum() == 0
+
+    def test_missing_masked_nodata_attr_restores_sentinel(self, tmp_path):
+        """External DataArrays without the attr keep pre-#1988 behaviour."""
+        from xrspatial.geotiff import to_geotiff
+        import xarray as xr
+
+        path = tmp_path / "test_1988_writer_no_attr.tif"
+        arr = np.array(
+            [[1.0, 2.0, np.nan, 4.0],
+             [5.0, np.nan, 7.0, 8.0]],
+            dtype=np.float32,
+        )
+        # No ``masked_nodata`` attr -> default True.
+        da = xr.DataArray(
+            arr,
+            dims=("y", "x"),
+            coords={"y": [1.0, 0.0], "x": [0.0, 1.0, 2.0, 3.0]},
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 2.0),
+                "nodata": -9999.0,
+            },
+        )
+        to_geotiff(da, str(path), compression="none")
+
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+            assert ds.nodata == -9999.0
+        # Pre-#1988 behaviour: missing attr = treat as masked.
+        assert not np.isnan(on_disk).any()
+        assert (on_disk == -9999.0).sum() == 2
+
+    def test_round_trip_preserves_masked_nodata_true(self, tmp_path):
+        """Read sentinel TIFF -> attrs say masked=True -> write -> reread.
+
+        Closes the loop: a file with a declared sentinel reads back
+        with NaN-masked pixels and ``masked_nodata=True``. Writing it
+        out then reading again must produce the same sentinel-tagged
+        file (the writer correctly inverts the read-side promotion).
+        """
+        from xrspatial.geotiff import to_geotiff
+
+        src = tmp_path / "test_1988_round_trip_src.tif"
+        _write_float_tiff(str(src), with_sentinel=True)
+
+        da = open_geotiff(str(src))
+        assert da.attrs["masked_nodata"] is True
+        # The reader promoted the sentinel value to NaN.
+        arr_in = np.asarray(da.data)
+        assert np.isnan(arr_in).sum() == 2
+
+        dst = tmp_path / "test_1988_round_trip_dst.tif"
+        to_geotiff(da, str(dst), compression="none")
+
+        with rasterio.open(str(dst)) as ds:
+            on_disk = ds.read(1)
+            assert ds.nodata == _SENTINEL
+        # Sentinel values restored at the expected positions.
+        assert (on_disk == _SENTINEL).sum() == 2
+        assert not np.isnan(on_disk).any()
+
+    def test_dask_streaming_path_respects_flag(self, tmp_path):
+        """Dask + tiled streaming write must honour the gate too."""
+        from xrspatial.geotiff import to_geotiff
+        import dask.array as da_mod
+        import xarray as xr
+
+        path = tmp_path / "test_1988_writer_dask.tif"
+        # 32x32 with NaN sprinkled in -- the tiled streaming writer
+        # requires tile_size to be a positive multiple of 16.
+        arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+        arr[5, 7] = np.nan
+        arr[12, 19] = np.nan
+        dask_arr = da_mod.from_array(arr, chunks=(16, 16))
+        da = xr.DataArray(
+            dask_arr,
+            dims=("y", "x"),
+            coords={
+                "y": np.arange(32, 0, -1, dtype=np.float64),
+                "x": np.arange(32, dtype=np.float64),
+            },
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 32.0),
+                "nodata": -9999.0,
+                "masked_nodata": False,
+            },
+        )
+        to_geotiff(
+            da, str(path), compression="none",
+            tile_size=16, tiled=True,
+        )
+
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+            assert ds.nodata == -9999.0
+        # NaN preserved through the streaming path.
+        assert np.isnan(on_disk).sum() == 2
+        assert (on_disk == -9999.0).sum() == 0
+
+
+class TestWriteStreamingRestoreSentinelKwarg:
+    """Direct coverage of ``restore_sentinel`` on the low-level
+    ``write_streaming`` callable surface, where the gate actually
+    suppresses an internal NaN-to-sentinel rewrite step.
+
+    The non-streaming ``write`` function expects its caller (e.g.
+    ``to_geotiff``) to have already performed the NaN-to-sentinel
+    rewrite, so its own ``restore_sentinel`` flag only gates the
+    overview-decimation rewrite (a no-op when ``cog=False``).
+    """
+
+    def test_streaming_restore_sentinel_true_rewrites(self, tmp_path):
+        import dask.array as da_mod
+        from xrspatial.geotiff._writer import write_streaming
+
+        path = tmp_path / "test_1988_stream_true.tif"
+        arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+        arr[5, 7] = np.nan
+        dask_arr = da_mod.from_array(arr, chunks=(16, 16))
+        write_streaming(
+            dask_arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=True,
+            tile_size=16,
+            restore_sentinel=True,
+        )
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+        assert (on_disk == -9999.0).sum() == 1
+        assert not np.isnan(on_disk).any()
+
+    def test_streaming_restore_sentinel_false_preserves_nan(self, tmp_path):
+        import dask.array as da_mod
+        from xrspatial.geotiff._writer import write_streaming
+
+        path = tmp_path / "test_1988_stream_false.tif"
+        arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+        arr[5, 7] = np.nan
+        dask_arr = da_mod.from_array(arr, chunks=(16, 16))
+        write_streaming(
+            dask_arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=True,
+            tile_size=16,
+            restore_sentinel=False,
+        )
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+        # GDAL_NODATA tag still set; only the array bytes change.
+        assert ds.nodata == -9999.0
+        assert np.isnan(on_disk).sum() == 1
+        assert (on_disk == -9999.0).sum() == 0
+
+    def test_streaming_default_is_true(self, tmp_path):
+        """Default preserves pre-#1988 behaviour."""
+        import dask.array as da_mod
+        from xrspatial.geotiff._writer import write_streaming
+
+        path = tmp_path / "test_1988_stream_default.tif"
+        arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+        arr[5, 7] = np.nan
+        dask_arr = da_mod.from_array(arr, chunks=(16, 16))
+        write_streaming(
+            dask_arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=True,
+            tile_size=16,
+        )
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+        assert (on_disk == -9999.0).sum() == 1
+        assert not np.isnan(on_disk).any()
+
+    def test_streaming_strip_layout_restore_false_preserves_nan(self, tmp_path):
+        """The strip-write branch in ``write_streaming`` must honour the gate."""
+        import dask.array as da_mod
+        from xrspatial.geotiff._writer import write_streaming
+
+        path = tmp_path / "test_1988_stream_strip_false.tif"
+        arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+        arr[5, 7] = np.nan
+        dask_arr = da_mod.from_array(arr, chunks=(16, 16))
+        write_streaming(
+            dask_arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=False,
+            restore_sentinel=False,
+        )
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+        assert np.isnan(on_disk).sum() == 1
+        assert (on_disk == -9999.0).sum() == 0
+
+
+class TestWriteCOGOverviewGateInteraction:
+    """The ``write()`` function's only gated branch is the overview-
+    level NaN-to-sentinel rewrite (the user-data rewrite has already
+    been done by ``to_geotiff`` upstream). Close that coverage gap
+    with a direct ``write(..., cog=True, ...)`` exercise of the
+    gated branch at ``_writer.py:1742-1749``."""
+
+    def test_cog_overview_rewrite_runs_by_default(self, tmp_path):
+        """Default ``restore_sentinel=True`` rewrites NaN in overviews."""
+        from xrspatial.geotiff._writer import write
+
+        path = tmp_path / "test_1988_cog_default.tif"
+        # 64x64 with a sentinel-valued patch that the float pyramid
+        # will average down through several overview levels. The
+        # sentinel value (-9999.0) becomes the literal float pixel
+        # value the writer expects (NaN was already rewritten by an
+        # upstream ``to_geotiff`` in a normal flow; here we hand-roll
+        # an array that contains NaN to trigger the gated overview
+        # rewrite inside ``write``).
+        arr = np.ones((64, 64), dtype=np.float32)
+        arr[0:16, 0:16] = np.nan
+        write(
+            arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=True,
+            tile_size=32,
+            cog=True,
+            overview_levels=[2, 4],
+        )
+        with rasterio.open(str(path)) as ds:
+            assert ds.nodata == -9999.0
+            # Read overview level 1 (factor=2). Pure-NaN 2x2 blocks
+            # reduce to NaN under nanmean; the gated branch rewrites
+            # those back to the sentinel.
+            ov = ds.read(1, out_shape=(32, 32))
+        # Overview tiles covering the all-NaN corner should hold the
+        # sentinel, not NaN.
+        assert (ov[0:8, 0:8] == -9999.0).any() or np.isnan(ov[0:8, 0:8]).sum() == 0
+
+    def test_cog_overview_rewrite_skipped_when_gated_off(self, tmp_path):
+        """``restore_sentinel=False`` preserves NaN in overview pyramid."""
+        from xrspatial.geotiff._writer import write
+
+        path = tmp_path / "test_1988_cog_gated.tif"
+        arr = np.ones((64, 64), dtype=np.float32)
+        arr[0:16, 0:16] = np.nan
+        write(
+            arr, str(path),
+            nodata=-9999.0,
+            compression='none',
+            tiled=True,
+            tile_size=32,
+            cog=True,
+            overview_levels=[2, 4],
+            restore_sentinel=False,
+        )
+        with rasterio.open(str(path)) as ds:
+            assert ds.nodata == -9999.0
+            # Same overview read. With the gate off, the all-NaN 2x2
+            # blocks stay NaN through the pyramid.
+            ov = ds.read(1, out_shape=(32, 32))
+        # NaN survives in the overview corner.
+        assert np.isnan(ov[0:8, 0:8]).any()
+
+
+@_gpu_only
+class TestWriterGPU:
+    """GPU writer also gates on ``attrs['masked_nodata']``."""
+
+    def test_masked_nodata_false_preserves_nan_gpu(self, tmp_path):
+        import cupy
+        import xarray as xr
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        path = tmp_path / "test_1988_writer_gpu_unmasked.tif"
+        arr_np = np.array(
+            [[1.0, 2.0, np.nan, 4.0],
+             [5.0, np.nan, 7.0, 8.0]],
+            dtype=np.float32,
+        )
+        arr = cupy.asarray(arr_np)
+        da = xr.DataArray(
+            arr,
+            dims=("y", "x"),
+            coords={"y": [1.0, 0.0], "x": [0.0, 1.0, 2.0, 3.0]},
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 2.0),
+                "nodata": -9999.0,
+                "masked_nodata": False,
+            },
+        )
+        write_geotiff_gpu(da, str(path), compression="none")
+
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+            assert ds.nodata == -9999.0
+        assert np.isnan(on_disk).sum() == 2
+        assert (on_disk == -9999.0).sum() == 0
+
+    def test_masked_nodata_true_restores_sentinel_gpu(self, tmp_path):
+        import cupy
+        import xarray as xr
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        path = tmp_path / "test_1988_writer_gpu_masked.tif"
+        arr_np = np.array(
+            [[1.0, 2.0, np.nan, 4.0],
+             [5.0, np.nan, 7.0, 8.0]],
+            dtype=np.float32,
+        )
+        arr = cupy.asarray(arr_np)
+        da = xr.DataArray(
+            arr,
+            dims=("y", "x"),
+            coords={"y": [1.0, 0.0], "x": [0.0, 1.0, 2.0, 3.0]},
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 2.0),
+                "nodata": -9999.0,
+                "masked_nodata": True,
+            },
+        )
+        write_geotiff_gpu(da, str(path), compression="none")
+
+        with rasterio.open(str(path)) as ds:
+            on_disk = ds.read(1)
+            assert ds.nodata == -9999.0
+        assert not np.isnan(on_disk).any()
+        assert (on_disk == -9999.0).sum() == 2

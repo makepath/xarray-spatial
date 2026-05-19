@@ -1939,62 +1939,78 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     else:
         result = np.empty((out_h, out_w), dtype=dtype)
 
+    # Collect strip jobs; decode in parallel when the pool overhead pays off.
+    # Mirrors the tile path's gate at ``_PARALLEL_DECODE_PIXEL_THRESHOLD``:
+    # codec decode (deflate, zstd, LZW) releases the GIL inside the C
+    # extension so threads actually overlap codec work across cores. The
+    # placement loop that copies pixels into ``result`` stays serial to
+    # avoid contending writes to the output buffer. See issue #2100.
+    strip_jobs: list[tuple[int, int, int]] = []  # (band_idx, strip_idx, global_idx)
     if planar == 2 and samples > 1:
         first_strip = r0 // rps
         last_strip = min((r1 - 1) // rps, strips_per_band - 1)
-
         for band_idx in range(samples):
             band_offset = band_idx * strips_per_band
             for strip_idx in range(first_strip, last_strip + 1):
                 global_idx = band_offset + strip_idx
                 if byte_counts[global_idx] == 0:
-                    # Sparse strip: result is already pre-filled.
                     continue
                 strip_row = strip_idx * rps
                 strip_rows = min(rps, height - strip_row)
                 if strip_rows <= 0:
                     continue
-
-                strip_data = data[offsets[global_idx]:offsets[global_idx] + byte_counts[global_idx]]
-                strip_pixels = _decode_strip_or_tile(
-                    strip_data, compression, width, strip_rows, 1,
-                    bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                    byte_order=header.byte_order,
-                    jpeg_tables=jpeg_tables,
-                    masked_fill=masked_fill)
-
-                src_r0 = max(r0 - strip_row, 0)
-                src_r1 = min(r1 - strip_row, strip_rows)
-                dst_r0 = max(strip_row - r0, 0)
-                dst_r1 = dst_r0 + (src_r1 - src_r0)
-                if dst_r1 > dst_r0:
-                    result[dst_r0:dst_r1, :, band_idx] = strip_pixels[src_r0:src_r1, c0:c1]
+                strip_jobs.append((band_idx, strip_idx, global_idx))
+        strip_samples = 1
     else:
         first_strip = r0 // rps
         last_strip = min((r1 - 1) // rps, len(offsets) - 1)
-
         for strip_idx in range(first_strip, last_strip + 1):
             strip_row = strip_idx * rps
             strip_rows = min(rps, height - strip_row)
             if strip_rows <= 0:
                 continue
             if byte_counts[strip_idx] == 0:
-                # Sparse strip: result is already pre-filled.
                 continue
+            strip_jobs.append((0, strip_idx, strip_idx))
+        strip_samples = samples
 
-            strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
-            strip_pixels = _decode_strip_or_tile(
-                strip_data, compression, width, strip_rows, samples,
-                bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                byte_order=header.byte_order,
-                jpeg_tables=jpeg_tables,
-                masked_fill=masked_fill)
+    def _decode_strip_job(job):
+        _band_idx, strip_idx, global_idx = job
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        strip_data = data[
+            offsets[global_idx]:offsets[global_idx] + byte_counts[global_idx]]
+        return _decode_strip_or_tile(
+            strip_data, compression, width, strip_rows, strip_samples,
+            bps, bytes_per_sample, is_sub_byte, dtype, pred,
+            byte_order=header.byte_order,
+            jpeg_tables=jpeg_tables,
+            masked_fill=masked_fill)
 
-            src_r0 = max(r0 - strip_row, 0)
-            src_r1 = min(r1 - strip_row, strip_rows)
-            dst_r0 = max(strip_row - r0, 0)
-            dst_r1 = dst_r0 + (src_r1 - src_r0)
-            if dst_r1 > dst_r0:
+    n_strips = len(strip_jobs)
+    strip_pixel_count = width * rps
+    use_parallel = (n_strips > 1
+                    and strip_pixel_count >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
+    if use_parallel:
+        n_workers = min(n_strips, _os_module.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            decoded_strips = list(pool.map(_decode_strip_job, strip_jobs))
+    else:
+        decoded_strips = [_decode_strip_job(job) for job in strip_jobs]
+
+    for (band_idx, strip_idx, _global_idx), strip_pixels in zip(
+            strip_jobs, decoded_strips):
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        src_r0 = max(r0 - strip_row, 0)
+        src_r1 = min(r1 - strip_row, strip_rows)
+        dst_r0 = max(strip_row - r0, 0)
+        dst_r1 = dst_r0 + (src_r1 - src_r0)
+        if dst_r1 > dst_r0:
+            if planar == 2 and samples > 1:
+                result[dst_r0:dst_r1, :, band_idx] = (
+                    strip_pixels[src_r0:src_r1, c0:c1])
+            else:
                 result[dst_r0:dst_r1] = strip_pixels[src_r0:src_r1, c0:c1]
 
     return result
@@ -2259,6 +2275,8 @@ def _ifd_required_extent(
 def _parse_cog_http_meta(
     source: _HTTPSource,
     overview_level: int | None = None,
+    *,
+    allow_rotated: bool = False,
 ) -> tuple[TIFFHeader, IFD, GeoInfo, bytes]:
     """Fetch + parse the leading IFDs of an HTTP COG once.
 
@@ -2325,7 +2343,8 @@ def _parse_cog_http_meta(
     # IFD so overview reads do not silently lose CRS / transform.
     # See issue #1640.
     geo_info = extract_geo_info_with_overview_inheritance(
-        ifd, ifds, header_bytes, header.byte_order)
+        ifd, ifds, header_bytes, header.byte_order,
+        allow_rotated=allow_rotated)
     return header, ifd, geo_info, header_bytes
 
 
@@ -2333,6 +2352,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                    band: int | None = None,
                    max_pixels: int = MAX_PIXELS_DEFAULT,
                    window: tuple[int, int, int, int] | None = None,
+                   *,
+                   allow_rotated: bool = False,
                    ) -> tuple[np.ndarray, GeoInfo]:
     """Read a COG via HTTP range requests.
 
@@ -2370,7 +2391,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # calls in the validation blocks below stay as-is.
     try:
         header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
-            source, overview_level=overview_level)
+            source, overview_level=overview_level,
+            allow_rotated=allow_rotated)
 
         # Mirror the local-path orientation guard in ``read_to_array``: a
         # windowed read against a non-default Orientation tag (274) has
@@ -2667,7 +2689,51 @@ def _fetch_decode_cog_http_strips(
         strip_bytes_list = []
 
     # Pass 3: decode each strip and place its intersection with the window.
-    for (band_idx, strip_idx), strip_data in zip(placements, strip_bytes_list):
+    #
+    # Codec decode (deflate, zstd, LZW, ...) releases the GIL inside the C
+    # extension, so threading the per-strip decode overlaps codec work
+    # across cores. The local tile / strip paths and the HTTP tile path
+    # use the same ``_PARALLEL_DECODE_PIXEL_THRESHOLD`` gate; mirror it
+    # here so HTTP COG strip reads of wide windows benefit from the same
+    # parallelism rather than serialising the decode after a parallel
+    # fetch. The placement loop that copies pixels into ``result`` stays
+    # serial to avoid contending writes to the output buffer. Issue #2100.
+    n_decode_strips = len(strip_bytes_list)
+    strip_pixel_count = width * rps
+    decode_in_parallel = (
+        n_decode_strips > 1
+        and strip_pixel_count >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
+
+    def _decode_http_strip(args):
+        strip_idx, strip_data = args
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        if strip_rows <= 0:
+            return None
+        # Per-strip decoded-dimension cap (#1851). See note below.
+        _check_dimensions(width, strip_rows, strip_samples,
+                          MAX_PIXELS_DEFAULT)
+        return _decode_strip_or_tile(
+            strip_data, compression, width, strip_rows, strip_samples,
+            bps, bytes_per_sample, is_sub_byte, dtype, pred,
+            byte_order=header.byte_order,
+            jpeg_tables=jpeg_tables,
+            masked_fill=masked_fill)
+
+    decode_inputs = [(strip_idx, strip_data)
+                     for (_band, strip_idx), strip_data
+                     in zip(placements, strip_bytes_list)]
+
+    if decode_in_parallel:
+        n_decode_workers = min(n_decode_strips, _os_module.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_decode_workers) as pool:
+            decoded_strips = list(pool.map(_decode_http_strip, decode_inputs))
+    else:
+        decoded_strips = [_decode_http_strip(item) for item in decode_inputs]
+
+    for (band_idx, strip_idx), strip_pixels in zip(placements, decoded_strips):
+        if strip_pixels is None:
+            continue
         strip_row = strip_idx * rps
         strip_rows = min(rps, height - strip_row)
         if strip_rows <= 0:
@@ -2681,15 +2747,7 @@ def _fetch_decode_cog_http_strips(
         # the window clip. Use ``MAX_PIXELS_DEFAULT`` rather than the
         # caller's ``max_pixels`` so a small output-window budget does
         # not reject normal strip sizes.
-        _check_dimensions(width, strip_rows, strip_samples,
-                          MAX_PIXELS_DEFAULT)
-
-        strip_pixels = _decode_strip_or_tile(
-            strip_data, compression, width, strip_rows, strip_samples,
-            bps, bytes_per_sample, is_sub_byte, dtype, pred,
-            byte_order=header.byte_order,
-            jpeg_tables=jpeg_tables,
-            masked_fill=masked_fill)
+        # The decoded-dimension cap fired inside ``_decode_http_strip``.
 
         src_r0 = max(r0 - strip_row, 0)
         src_r1 = min(r1 - strip_row, strip_rows)
@@ -3131,6 +3189,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
                   max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
+                  allow_rotated: bool = False,
                   ) -> tuple[np.ndarray, GeoInfo]:
     """Read a GeoTIFF/COG to a numpy array.
 
@@ -3166,7 +3225,8 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
     source = _coerce_path(source)
     if isinstance(source, str) and source.startswith(('http://', 'https://')):
         return _read_cog_http(source, overview_level=overview_level, band=band,
-                              max_pixels=max_pixels, window=window)
+                              max_pixels=max_pixels, window=window,
+                              allow_rotated=allow_rotated)
 
     # Local file, cloud storage, or file-like buffer: read all bytes then parse
     if _is_file_like(source):
@@ -3202,6 +3262,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         src = _FileSource(source)
     data = src.read_all()
 
+    sidecar = None
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
@@ -3209,17 +3270,45 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         if len(ifds) == 0:
             raise ValueError("No IFDs found in TIFF file")
 
+        # External `.tif.ovr` sidecar (issue #2112). GDAL/rasterio write
+        # overview pyramids to a sibling file when the source is not a
+        # COG; the sidecar's IFDs are the continuation of the base
+        # file's pyramid. Discovery only fires for local file paths;
+        # cloud / HTTP / file-like sources skip the lookup and keep the
+        # base-file-only behaviour. The sidecar must be loaded before
+        # IFD selection so ``overview_level`` can index into a unified
+        # pyramid list.
+        from ._sidecar import (
+            attach_sidecar_origin, find_sidecar, load_sidecar,
+        )
+        sidecar_origin: dict[int, tuple] = {}
+        sidecar_path = find_sidecar(source)
+        if sidecar_path is not None:
+            sidecar = load_sidecar(sidecar_path)
+            sidecar_origin = attach_sidecar_origin(
+                sidecar.ifds, sidecar.data, sidecar.header)
+            ifds = ifds + sidecar.ifds
+
         # Select IFD, skipping any mask IFDs
         ifd = select_overview_ifd(ifds, overview_level)
+
+        # If the selected IFD came from the sidecar, swap the data /
+        # header used for strip / tile reads below so byte offsets
+        # resolve against the right buffer.
+        ifd_data, ifd_header = sidecar_origin.get(id(ifd), (data, header))
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         # Inherit georef from level 0 when an overview IFD lacks its own
         # geokeys (issue #1640). For overview_level=0 (or None) this is a
         # no-op: the helper short-circuits when the IFD is not a
-        # NewSubfileType=overview entry.
+        # NewSubfileType=overview entry. Sidecar IFDs always lack
+        # geokeys, so the inheritance pulls from the base file's
+        # level-0 IFD (kept first in the merged list) which is the
+        # GDAL convention.
         geo_info = extract_geo_info_with_overview_inheritance(
-            ifd, ifds, data, header.byte_order)
+            ifd, ifds, data, header.byte_order,
+            allow_rotated=allow_rotated)
 
         # Orientation tag (274): values 2-8 mean the stored pixel order
         # differs from display order. We need to remap the array post
@@ -3297,10 +3386,10 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                     f"band={band} out of range for {ifd_samples}-band file.")
 
         if ifd.is_tiled:
-            arr = _read_tiles(data, ifd, header, dtype, window,
+            arr = _read_tiles(ifd_data, ifd, ifd_header, dtype, window,
                               max_pixels=max_pixels)
         else:
-            arr = _read_strips(data, ifd, header, dtype, window,
+            arr = _read_strips(ifd_data, ifd, ifd_header, dtype, window,
                                max_pixels=max_pixels)
 
         # Extract the requested band before reorienting so we work on a
@@ -3327,5 +3416,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             geo_info._mask_nodata = inverted_nodata
     finally:
         src.close()
+        from ._sidecar import close_sidecar
+        close_sidecar(sidecar)
 
     return arr, geo_info

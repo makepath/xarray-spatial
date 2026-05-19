@@ -364,6 +364,75 @@ class TestValidation:
                       width=10, height=10, bounds=(0, 0, 1, 1),
                       chunks=bad)
 
+    def test_gpu_edge_cap_check_raises(self):
+        # Issue #2067: the CUDA scanline kernel allocates a fixed 2048-entry
+        # local array.  Without a guard, exceeding it silently truncates
+        # active edges and produces wrong output.  The validator runs on
+        # the host, so this is testable without a GPU.
+        from xrspatial.rasterize import _check_gpu_edge_cap, _GPU_MAX_ISECT
+        # row_ptr where row 0 has _GPU_MAX_ISECT + 1 edges
+        row_ptr = np.array([0, _GPU_MAX_ISECT + 1, _GPU_MAX_ISECT + 1],
+                           dtype=np.int64)
+        with pytest.raises(ValueError, match="active edges"):
+            _check_gpu_edge_cap(row_ptr)
+
+    def test_gpu_edge_cap_check_passes_at_limit(self):
+        from xrspatial.rasterize import _check_gpu_edge_cap, _GPU_MAX_ISECT
+        row_ptr = np.array([0, _GPU_MAX_ISECT, _GPU_MAX_ISECT],
+                           dtype=np.int64)
+        # exactly at the cap is permitted
+        _check_gpu_edge_cap(row_ptr)
+
+    def test_gpu_edge_cap_check_passes_below_limit(self):
+        from xrspatial.rasterize import _check_gpu_edge_cap, _GPU_MAX_ISECT
+        row_ptr = np.array([0, _GPU_MAX_ISECT - 1, _GPU_MAX_ISECT - 1],
+                           dtype=np.int64)
+        # just under the cap, the common case
+        _check_gpu_edge_cap(row_ptr)
+
+    def test_empty_geometry_does_not_poison_inferred_bounds(self):
+        # Issue #2065: an empty geometry returns nan from .bounds; the
+        # caller used .min()/.max() unfiltered, so a single empty geom
+        # poisoned the inferred extent and produced a raster with nan
+        # x/y coords.  Drop the empty and infer from the rest.
+        empty = Polygon()
+        result = rasterize(
+            [(empty, 99), (box(0, 0, 1, 1), 1)],
+            width=2, height=2)
+        assert np.all(np.isfinite(result.x.values))
+        assert np.all(np.isfinite(result.y.values))
+        assert np.all(result.values == 1)
+
+    def test_only_empty_geometry_requires_explicit_bounds(self):
+        empty = Polygon()
+        with pytest.raises(ValueError, match="bounds must be provided"):
+            rasterize([(empty, 1.0)], width=2, height=2)
+
+    def test_empty_geodataframe_requires_explicit_bounds(self):
+        # Issue #2065: total_bounds on an empty frame is (nan,nan,nan,nan).
+        # That used to bypass the empty-bounds guard.
+        import geopandas as gpd
+        empty_gdf = gpd.GeoDataFrame(
+            {'value': []}, geometry=gpd.GeoSeries([]))
+        with pytest.raises(ValueError, match="bounds must be provided"):
+            rasterize(empty_gdf, width=2, height=2, column='value')
+
+    def test_explicit_nan_bounds_rejected(self):
+        with pytest.raises(ValueError, match="must be finite"):
+            rasterize([(box(0, 0, 1, 1), 1.0)], width=2, height=2,
+                      bounds=(0, 0, float('nan'), 1))
+
+    def test_empty_multipolygon_filtered_from_inferred_bounds(self):
+        # Same shape as the empty-Polygon case but exercises the
+        # MultiPolygon branch in shapely's is_empty / bounds path.
+        empty_mp = MultiPolygon()
+        result = rasterize(
+            [(empty_mp, 99), (box(0, 0, 1, 1), 1)],
+            width=2, height=2)
+        assert np.all(np.isfinite(result.x.values))
+        assert np.all(np.isfinite(result.y.values))
+        assert np.all(result.values == 1)
+
 
 # ---------------------------------------------------------------------------
 # all_touched mode

@@ -10,6 +10,7 @@ output or a ``.vrt`` path.
 """
 from __future__ import annotations
 
+import numbers
 import os
 import warnings
 from typing import TYPE_CHECKING
@@ -25,6 +26,7 @@ from .._attrs import (
     _VALID_COMPRESSIONS,
     _extract_rich_tags,
     _resolve_nodata_attr,
+    _should_restore_nan_sentinel,
 )
 from .._backends._gpu_helpers import _is_gpu_data
 from .._coords import (
@@ -94,10 +96,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (e.g. ``io.BytesIO``). When a file-like is passed, the encoded
         TIFF bytes are written to that object once assembly completes.
         ``cog=True`` and ``.vrt`` outputs require a string path.
-    crs : int, str, or None
-        EPSG code (int), WKT string, or PROJ string. If None and data
-        is a DataArray, tries to read from attrs ('crs' for EPSG,
-        'crs_wkt' for WKT).
+    crs : int, numpy.integer, str, or None
+        EPSG code (int or numpy integer scalar), WKT string, or PROJ
+        string. If None and data is a DataArray, tries to read from
+        attrs ('crs' for EPSG, 'crs_wkt' for WKT).
 
         EPSG codes are strongly preferred for interop. The WKT-only
         path writes ``ProjectedCSType`` / ``GeographicType`` = 32767
@@ -534,11 +536,19 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     res_unit = None
     gdal_meta_xml = None
     extra_tags_list = None
+    # Default for the issue #1988 gate. Overwritten with the actual
+    # ``attrs['masked_nodata']`` value below when ``data`` is a
+    # DataArray; bare numpy / cupy positional inputs have no attrs
+    # so they keep the pre-#1988 NaN->sentinel rewrite.
+    restore_sentinel = True
 
-    # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ)
+    # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ).
+    # ``numbers.Integral`` covers plain ``int`` and numpy integer scalars
+    # (``np.int32``, ``np.int64``); ``_validate_crs_arg`` already rejects
+    # bool. Coerce to plain ``int`` so downstream ``epsg`` is a real int.
     _validate_crs_arg(crs)
-    if isinstance(crs, int):
-        epsg = crs
+    if isinstance(crs, numbers.Integral):
+        epsg = int(crs)
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)  # try to extract EPSG from WKT/PROJ
         if epsg is None:
@@ -582,6 +592,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                         wkt_fallback = wkt
         if nodata is None:
             nodata = _resolve_nodata_attr(data.attrs)
+        # Issue #1988: ``attrs['masked_nodata']`` records whether the
+        # reader promoted the sentinel to NaN. Writers reverse that
+        # rewrite only when the read side did the forward step. Default
+        # (attr absent) is True, which preserves pre-#1988 behaviour for
+        # external DataArrays.
+        restore_sentinel = _should_restore_nan_sentinel(data.attrs)
         # Pull raster_type, gdal_metadata_xml, extra_tags (folded with
         # the friendly image_description / extra_samples / colormap
         # attrs), x/y_resolution, and resolution_unit via the shared
@@ -651,6 +667,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 streaming_buffer_bytes=streaming_buffer_bytes,
                 max_z_error=max_z_error,
                 photometric=photometric,
+                restore_sentinel=restore_sentinel,
             )
             return path
 
@@ -694,7 +711,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # ``np.asarray(raw)`` of a caller-owned numpy DataArray (a view,
     # not a copy) or ``np.moveaxis(arr, 0, -1)`` of one (also a view).
     # Mutating without a copy would corrupt the user's input buffer.
-    if nodata is not None and arr.dtype.kind == 'f' and not np.isnan(nodata):
+    if (nodata is not None and arr.dtype.kind == 'f'
+            and not np.isnan(nodata) and restore_sentinel):
         nan_mask = np.isnan(arr)
         if nan_mask.any():
             arr = arr.copy()
@@ -737,6 +755,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         bigtiff=bigtiff,
         max_z_error=max_z_error,
         photometric=photometric,
+        restore_sentinel=restore_sentinel,
     )
     return path
 
@@ -751,7 +770,8 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
                        resolution_unit=None,
                        gdal_metadata_xml=None,
                        extra_tags=None,
-                       photometric: str | int = 'auto'):
+                       photometric: str | int = 'auto',
+                       restore_sentinel: bool = True):
     """Write a single tile GeoTIFF. Used by _write_vrt_tiled.
 
     Forwards the same rich-tag set that ``to_geotiff`` passes through to
@@ -780,7 +800,8 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
     # from ``np.asarray(chunk_data)`` where ``chunk_data`` may be a
     # caller-owned numpy buffer. Mutating without a copy would corrupt
     # the user's input.
-    if nodata is not None and arr.dtype.kind == 'f' and not np.isnan(nodata):
+    if (nodata is not None and arr.dtype.kind == 'f'
+            and not np.isnan(nodata) and restore_sentinel):
         nan_mask = np.isnan(arr)
         if nan_mask.any():
             arr = arr.copy()
@@ -804,7 +825,8 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
           extra_tags=extra_tags,
           bigtiff=bigtiff,
           max_z_error=max_z_error,
-          photometric=photometric)
+          photometric=photometric,
+          restore_sentinel=restore_sentinel)
 
 
 def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
@@ -864,12 +886,15 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
             f"Tiles directory already contains files: {tiles_dir}")
     os.makedirs(tiles_dir, exist_ok=True)
 
-    # Resolve CRS
+    # Resolve CRS. ``numbers.Integral`` covers numpy integer scalars
+    # (``np.int32``, ``np.int64``) so ``crs=np.int64(4326)`` does not
+    # silently fall through to ``epsg=None``. Validator already
+    # rejects bool.
     _validate_crs_arg(crs)
     epsg = None
     wkt_fallback = None
-    if isinstance(crs, int):
-        epsg = crs
+    if isinstance(crs, numbers.Integral):
+        epsg = int(crs)
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)
         if epsg is None:
@@ -913,6 +938,11 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
             # the VRT path used ``attrs.get('nodata')`` directly and
             # silently dropped both aliases (issue #1606).
             nodata = _resolve_nodata_attr(data.attrs)
+        # Issue #1988: mirror the ``to_geotiff`` gate so per-tile
+        # writes only NaN-rewrite when the read side promoted the
+        # sentinel. See ``_should_restore_nan_sentinel`` for the
+        # semantics; default True keeps existing behaviour.
+        restore_sentinel = _should_restore_nan_sentinel(data.attrs)
         geo_transform = _transform_from_attr(data.attrs.get('transform'))
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
@@ -1019,7 +1049,8 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                     resolution_unit=res_unit,
                     gdal_metadata_xml=gdal_meta_xml,
                     extra_tags=extra_tags_list,
-                    photometric=photometric)
+                    photometric=photometric,
+                    restore_sentinel=restore_sentinel)
                 delayed_tasks.append(task)
             else:
                 # Numpy: slice and write directly
@@ -1035,7 +1066,8 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                     resolution_unit=res_unit,
                     gdal_metadata_xml=gdal_meta_xml,
                     extra_tags=extra_tags_list,
-                    photometric=photometric)
+                    photometric=photometric,
+                    restore_sentinel=restore_sentinel)
 
             col_offset += chunk_w
         row_offset += chunk_h

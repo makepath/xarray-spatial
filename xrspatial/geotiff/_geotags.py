@@ -114,11 +114,18 @@ class GeoTransform:
         y = origin_y + row * pixel_height
 
     pixel_height is typically negative (y decreases downward).
+
+    ``rotated_affine`` carries the original 6-tuple
+    ``(pixel_width, b, origin_x, d, pixel_height, origin_y)`` (rasterio
+    ``Affine`` ordering) for files opened with ``allow_rotated=True``.
+    It is ``None`` for axis-aligned reads. Storing it as a real field
+    means ``dataclasses.replace`` and similar helpers preserve it.
     """
     origin_x: float = 0.0
     origin_y: float = 0.0
     pixel_width: float = 1.0
     pixel_height: float = -1.0
+    rotated_affine: tuple | None = None
 
 
 @dataclass
@@ -332,10 +339,11 @@ def _synthesize_user_defined_wkt(
     Returns a WKT string when pyproj is installed and the GeoKeys
     expose enough of the ellipsoid to feed ``pyproj.CRS.from_dict``,
     otherwise ``None``. The synthesized CRS is name-stripped (PROJ
-    drops the GEOGCS name on ``to_dict()`` anyway), so callers that
-    need the user-supplied name should still consult
-    ``attrs['geog_citation']`` -- this helper exists to close the
-    canonical-CRS parity gap, not to round-trip the citation field.
+    drops the GEOGCS name on ``to_dict()`` anyway). The underlying
+    ``GeoInfo.geog_citation`` field is consumed elsewhere in the
+    reader, but contract v2 (issue #2016) stopped surfacing it on
+    ``DataArray.attrs``; this helper exists to close the canonical-CRS
+    parity gap, not to round-trip the citation field.
 
     Angular units are not threaded through. PROJ's ``longlat`` always
     emits degrees, and the corpus has no radian-unit user-defined
@@ -473,16 +481,162 @@ def _parse_geokeys(ifd: IFD, data: bytes | memoryview,
     return geokeys
 
 
-def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
+# Default relative tolerance for the multi-tiepoint consistency check.
+# Applied as ``rel_tol * max(|sx|, |sy|, 1.0)``, so the absolute threshold
+# tracks pixel size: on a 10 m pixel file the threshold is 10 µm, on a
+# 1° pixel file it is ~11 cm. Surveying / high-precision geodetic workflows
+# that want to catch GCP files with smaller residuals can pass a tighter
+# ``rel_tol`` to :func:`_validate_tiepoint_consistency` directly.
+_TIEPOINT_CONSISTENCY_REL_TOL = 1e-6
+
+
+def _validate_tiepoint_consistency(tiepoint: tuple,
+                                   origin_x: float,
+                                   origin_y: float,
+                                   sx: float,
+                                   sy: float,
+                                   *,
+                                   rel_tol: float = _TIEPOINT_CONSISTENCY_REL_TOL,
+                                   scale_source: str = "ModelPixelScale") -> None:
+    """Verify every ``ModelTiepointTag`` tuple agrees with the inferred affine.
+
+    A ``ModelTiepointTag`` may carry one or many ``(I, J, K, X, Y, Z)``
+    tuples. The single-tuple case (paired with ``ModelPixelScale``) is
+    by far the most common and is unambiguous. Files with multiple
+    tuples either repeat the same affine at every corner -- the tuples
+    agree within tolerance and the reader can keep its single-tiepoint
+    code path -- or carry a ground-control-point (GCP) set whose
+    tuples do not agree, because the mapping from pixel to world is
+    non-affine.
+
+    Before this check landed, the GCP case silently fabricated an
+    axis-aligned affine from the first tuple and downstream spatial
+    ops trusted wrong coordinates. The reader now validates that every
+    extra tuple is predicted by the inferred affine within a tolerance
+    scaled to the pixel size; mismatches raise ``NotImplementedError``
+    with a clear pointer at the GCP case so users know why their file
+    is being rejected (issue #2117).
+
+    Parameters
+    ----------
+    tiepoint : tuple
+        Raw ``ModelTiepointTag`` value (length ``6 * N``).
+    origin_x, origin_y : float
+        World coords of pixel ``(0, 0)`` inferred from the first tuple.
+    sx, sy : float
+        Pixel size (``ModelPixelScaleTag`` magnitudes, both positive).
+    rel_tol : float, optional
+        Relative tolerance factor. The absolute threshold is
+        ``rel_tol * max(|sx|, |sy|, 1.0)``. Defaults to
+        :data:`_TIEPOINT_CONSISTENCY_REL_TOL`.
+    scale_source : str, optional
+        Where ``sx`` / ``sy`` came from. ``"ModelPixelScale"`` (default)
+        names the scale tag in the GCP-case error. ``"unit fallback"``
+        is used when ``ModelPixelScale`` was absent and the caller fell
+        back to ``sx = sy = 1.0``; in that case a multi-tiepoint file is
+        almost certainly malformed rather than a real GCP warp, and the
+        error message says so.
+    """
+    n = len(tiepoint) // 6
+    if n <= 1:
+        return
+
+    # Tolerance scales with pixel size so files in different units
+    # (degrees vs metres) are treated consistently. The factor lives in
+    # _TIEPOINT_CONSISTENCY_REL_TOL and is a relative residual on world
+    # coordinates -- distinct from the 1e-12 absolute floor that the
+    # rotation check in _extract_transform applies to raw
+    # ModelTransformation matrix off-diagonals.
+    tol = rel_tol * max(abs(sx), abs(sy), 1.0)
+
+    for k in range(1, n):
+        base = 6 * k
+        tp_i = tiepoint[base + 0]
+        tp_j = tiepoint[base + 1]
+        tp_x = tiepoint[base + 3]
+        tp_y = tiepoint[base + 4]
+
+        # Sign convention: ``_extract_transform`` recovers the origin via
+        # ``origin_y = tp_y + tp_j * sy`` because ``sy`` is a positive
+        # magnitude and the raster's y decreases as row index increases.
+        # Inverting that gives the predicted world y at row J below.
+        predicted_x = origin_x + tp_i * sx
+        predicted_y = origin_y - tp_j * sy
+
+        dx = tp_x - predicted_x
+        dy = tp_y - predicted_y
+        if abs(dx) > tol or abs(dy) > tol:
+            primary = (
+                "ModelTiepointTag carries multiple non-affine tiepoints "
+                f"(tuple {k} predicts world coords "
+                f"({predicted_x!r}, {predicted_y!r}) but the file "
+                f"declares ({tp_x!r}, {tp_y!r}); residual "
+                f"({dx!r}, {dy!r}) exceeds tolerance {tol!r})."
+            )
+            if scale_source == "unit fallback":
+                cause = (
+                    "The file has multiple tiepoints but no "
+                    "ModelPixelScale tag, so the reader cannot recover a "
+                    "consistent affine. The file is most likely "
+                    "malformed; if it is a real ground-control-point "
+                    "warp, add a ModelPixelScale tag or rectify it first."
+                )
+            else:
+                cause = (
+                    "The file uses a ground-control-point warp that the "
+                    "reader cannot represent as an axis-aligned affine."
+                )
+            hint = (
+                "Rectify the file to a regular grid first (``gdalwarp``, "
+                "``rasterio.warp.reproject``, or any GIS tool that "
+                "resamples GCP files to an affine raster) and reopen "
+                "the rectified output. See issue #2117."
+            )
+            raise NotImplementedError(f"{primary}\n{cause}\n{hint}")
+
+
+def _extract_transform(ifd: IFD,
+                       allow_rotated: bool = False
+                       ) -> tuple[GeoTransform, bool]:
     """Extract affine transform from ModelTransformation, or
     ModelTiepoint + ModelPixelScale tags.
+
+    Parameters
+    ----------
+    ifd : IFD
+        Parsed IFD.
+    allow_rotated : bool
+        When True, a rotated / sheared / z-coupled ``ModelTransformationTag``
+        does not raise. The function returns an *intentionally inert*
+        identity ``GeoTransform`` (``origin_x=origin_y=0``,
+        ``pixel_width=1``, ``pixel_height=-1``) with ``has_georef=False``
+        so the reader treats the file as an ungeoreferenced pixel grid.
+        Consumers MUST NOT read ``transform.origin_x`` /
+        ``transform.pixel_width`` / etc. as a stand-in for the real
+        mapping in this case -- those fields are the default identity,
+        not a fallback. The rotated 6-tuple is attached to the returned
+        ``GeoTransform`` via ``transform.rotated_affine`` (rasterio
+        ``Affine`` ordering: ``(pixel_width, b, origin_x, d,
+        pixel_height, origin_y)``); read it directly when the rotated
+        mapping is needed. Default ``False`` -- existing behaviour,
+        raise ``NotImplementedError``.
+
+        This contract is read-only. ``rotated_affine`` is not currently
+        emitted by the writer, so a read-with-``allow_rotated``
+        followed by ``to_geotiff`` round-trip silently writes an
+        identity-affine output and drops the original rotation. If
+        round-trip preservation matters, the writer needs a separate
+        ``ModelTransformationTag`` emit path that consumes
+        ``rotated_affine`` (see issue #2115 follow-up).
 
     Returns
     -------
     (transform, has_georef)
         ``has_georef`` is True when at least one of the geo-transform tags
-        was present.  When False, ``transform`` is the default identity
-        and callers should fall back to pixel coordinates.
+        was present *and* axis-aligned. When False, ``transform`` is the
+        default identity and callers should fall back to pixel coordinates.
+        For the ``allow_rotated=True`` opt-in path, ``has_georef`` is
+        False and the rotated 6-tuple lives on ``transform.rotated_affine``.
     """
 
     # Try ModelTransformationTag (4x4 row-major matrix, 16 doubles).
@@ -493,8 +647,10 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
     #   y = M[4]*col + M[5]*row + M[6]*z + M[7]
     #
     # GeoTransform only carries the axis-aligned case.  For rotated, sheared,
-    # or z-coupled transforms we raise NotImplementedError instead of silently
-    # dropping the off-diagonal terms.
+    # or z-coupled transforms we raise NotImplementedError unless the caller
+    # opts out via ``allow_rotated`` (issue #2115). The opt-out drops the
+    # georef so downstream coord generation uses pixel indices and any
+    # spatial op that runs on the array sees no geo assumption to violate.
     transform_tag = ifd.get_value(TAG_MODEL_TRANSFORMATION)
     if transform_tag is not None:
         if isinstance(transform_tag, tuple) and len(transform_tag) >= 12:
@@ -506,14 +662,24 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
             rotation_terms = (m[1], m[4])
             z_terms = (m[2], m[6]) if len(m) >= 8 else (0.0, 0.0)
             if any(abs(t) > tol for t in rotation_terms + z_terms):
-                raise NotImplementedError(
-                    "ModelTransformationTag (34264) contains rotation, "
-                    "skew, or z-coupling terms "
-                    f"(M[1]={m[1]!r}, M[4]={m[4]!r}, "
-                    f"M[2]={m[2] if len(m) > 2 else 0.0!r}, "
-                    f"M[6]={m[6] if len(m) > 6 else 0.0!r}). "
-                    "Only axis-aligned affine transforms are supported."
-                )
+                if not allow_rotated:
+                    raise NotImplementedError(
+                        "ModelTransformationTag (34264) contains rotation, "
+                        "skew, or z-coupling terms "
+                        f"(M[1]={m[1]!r}, M[4]={m[4]!r}, "
+                        f"M[2]={m[2] if len(m) > 2 else 0.0!r}, "
+                        f"M[6]={m[6] if len(m) > 6 else 0.0!r}). "
+                        "Only axis-aligned affine transforms are supported. "
+                        "Pass ``allow_rotated=True`` to read the pixel grid "
+                        "without the geospatial assumption (issue #2115)."
+                    )
+                # Opt-in: drop georef, stash the rotated matrix on the
+                # GeoTransform so the validator + attrs-roundtrip code
+                # can see it. ``rasterio.Affine`` order: (a, b, c, d, e, f)
+                # = (pixel_width, b, origin_x, d, pixel_height, origin_y).
+                return GeoTransform(
+                    rotated_affine=(m[0], m[1], m[3], m[4], m[5], m[7]),
+                ), False
             return GeoTransform(
                 origin_x=m[3],
                 origin_y=m[7],
@@ -535,7 +701,14 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
         if tiepoint is not None:
             if not isinstance(tiepoint, tuple):
                 tiepoint = (tiepoint,)
-            # tiepoint: (I, J, K, X, Y, Z)
+            # tiepoint: (I, J, K, X, Y, Z); a ModelTiepointTag may carry
+            # more than one (I, J, K, X, Y, Z) tuple. Files use that to
+            # either repeat the same affine at every corner (the tuples
+            # agree, common case) or to encode a GCP warp where the
+            # tuples describe a non-affine mapping. Silently picking the
+            # first tuple turns the GCP case into wrong coordinates
+            # downstream (issue #2117). Validate that every tuple is
+            # consistent with the inferred affine; fail closed otherwise.
             tp_i = tiepoint[0] if len(tiepoint) > 0 else 0.0
             tp_j = tiepoint[1] if len(tiepoint) > 1 else 0.0
             tp_x = tiepoint[3] if len(tiepoint) > 3 else 0.0
@@ -543,6 +716,10 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
 
             origin_x = tp_x - tp_i * sx
             origin_y = tp_y + tp_j * sy  # sy is positive, but y goes down
+
+            _validate_tiepoint_consistency(
+                tiepoint, origin_x, origin_y, sx, sy,
+            )
 
             return GeoTransform(
                 origin_x=origin_x,
@@ -576,6 +753,17 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
         # Unit scale: pixel_width = 1.0, pixel_height = -1.0
         origin_x = tp_x - tp_i * 1.0
         origin_y = tp_y + tp_j * 1.0
+
+        # Same multi-tiepoint consistency check the scale branch above
+        # runs; the absence of ModelPixelScale just means the scale is
+        # the unit fallback. ``scale_source`` tells the helper to blame
+        # the missing scale tag rather than the GCP-warp case in the
+        # error message, since a multi-tiepoint file without
+        # ModelPixelScale is almost certainly malformed (issue #2117).
+        _validate_tiepoint_consistency(
+            tiepoint, origin_x, origin_y, 1.0, 1.0,
+            scale_source="unit fallback",
+        )
 
         return GeoTransform(
             origin_x=origin_x,
@@ -620,7 +808,9 @@ def _parse_nodata_str(text: str | None) -> int | float | None:
 
 
 def extract_geo_info(ifd: IFD, data: bytes | memoryview,
-                     byte_order: str) -> GeoInfo:
+                     byte_order: str,
+                     *,
+                     allow_rotated: bool = False) -> GeoInfo:
     """Extract full geographic metadata from a parsed IFD.
 
     Parameters
@@ -631,12 +821,16 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         Full file data (needed for resolving GeoKey param offsets).
     byte_order : str
         '<' or '>'.
+    allow_rotated : bool, optional
+        Forwarded to :func:`_extract_transform`. When True, a rotated
+        ``ModelTransformationTag`` is read as an ungeoreferenced pixel
+        grid instead of raising ``NotImplementedError`` (issue #2115).
 
     Returns
     -------
     GeoInfo
     """
-    transform, has_georef = _extract_transform(ifd)
+    transform, has_georef = _extract_transform(ifd, allow_rotated=allow_rotated)
     geokeys = _parse_geokeys(ifd, data, byte_order)
 
     # Extract EPSG
@@ -880,6 +1074,8 @@ def extract_geo_info_with_overview_inheritance(
     ifds: list,
     data: bytes | memoryview,
     byte_order: str,
+    *,
+    allow_rotated: bool = False,
 ) -> GeoInfo:
     """Extract geo metadata, inheriting from level 0 when the IFD lacks it.
 
@@ -934,7 +1130,8 @@ def extract_geo_info_with_overview_inheritance(
     -------
     GeoInfo
     """
-    info = extract_geo_info(ifd, data, byte_order)
+    info = extract_geo_info(ifd, data, byte_order,
+                            allow_rotated=allow_rotated)
 
     # Overview IFDs have NewSubfileType bit 0 set; mask IFDs (bit 2) and
     # page IFDs (bit 1) are filtered out by ``select_overview_ifd``
@@ -958,7 +1155,8 @@ def extract_geo_info_with_overview_inheritance(
     if base_ifd is None:
         return info
 
-    base_info = extract_geo_info(base_ifd, data, byte_order)
+    base_info = extract_geo_info(base_ifd, data, byte_order,
+                                 allow_rotated=allow_rotated)
 
     # Inherit the per-IFD metadata that the COG writer emits only on the
     # level-0 IFD: GDAL_NODATA, GDAL_METADATA, x/y resolution, colormap,

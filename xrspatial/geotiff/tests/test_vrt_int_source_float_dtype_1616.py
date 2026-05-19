@@ -181,14 +181,18 @@ def test_float_vrt_int_source_with_band_select(tmp_path):
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
 
+    # Mixed per-band sentinels in the VRT XML: after #1987 PR 5 this
+    # raises by default. ``band_nodata='first'`` opts back into the
+    # legacy flatten-to-first-band behaviour, which is what the
+    # band-selection regression in this test is asserting.
     # band 0 -> 65535 sentinel masked
-    r0 = read_vrt(vrt_path, band=0)
+    r0 = read_vrt(vrt_path, band=0, band_nodata='first')
     assert r0.dtype == np.float32
     assert np.isnan(r0.values[1, 1])
     assert r0.attrs.get('nodata') == 65535.0
 
     # band 1 -> 65000 sentinel masked, not 65535
-    r1 = read_vrt(vrt_path, band=1)
+    r1 = read_vrt(vrt_path, band=1, band_nodata='first')
     assert r1.dtype == np.float32
     # band b had its sentinel at the same [1, 1] cell
     assert np.isnan(r1.values[1, 1])

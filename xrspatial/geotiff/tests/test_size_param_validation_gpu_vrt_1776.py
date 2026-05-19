@@ -113,9 +113,10 @@ class TestWriteGeotiffGpuTileSize:
             write_geotiff_gpu(gpu_da, out, tile_size=False)
 
     def test_tile_size_positive_works(self, gpu_da, tmp_path):
-        """tile_size=4 (small but valid) still round-trips."""
+        """tile_size=16 (smallest valid multiple of 16 per TIFF 6) still
+        round-trips."""
         out = os.path.join(str(tmp_path), 'out_1776.tif')
-        write_geotiff_gpu(gpu_da, out, tile_size=4)
+        write_geotiff_gpu(gpu_da, out, tile_size=16)
         assert os.path.exists(out)
 
     def test_tile_size_numpy_int_scalar_works(self, gpu_da, tmp_path):

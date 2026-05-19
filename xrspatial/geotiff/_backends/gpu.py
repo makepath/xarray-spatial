@@ -254,7 +254,7 @@ def read_geotiff_gpu(source: str, *,
 
     from .._reader import (
         _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
-        _resolve_masked_fill,
+        _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
     from .._header import (
@@ -286,6 +286,8 @@ def read_geotiff_gpu(source: str, *,
     src = _FileSource(source)
     data = src.read_all()
 
+    sidecar = None
+    sidecar_owned_ifd = False
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
@@ -293,15 +295,42 @@ def read_geotiff_gpu(source: str, *,
         if len(ifds) == 0:
             raise ValueError("No IFDs found in TIFF file")
 
+        # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list so
+        # ``overview_level`` indexes both internal and external overviews
+        # (issue #2112). When the selected IFD comes from the sidecar,
+        # we swap ``data`` / ``header`` to the sidecar's buffers below
+        # and skip the GDS fast path -- GDS reads the source file path,
+        # which would point at the base file rather than the sidecar.
+        from .._sidecar import (
+            attach_sidecar_origin, close_sidecar, find_sidecar,
+            load_sidecar,
+        )
+        sidecar_origin: dict[int, tuple] = {}
+        sidecar_path = find_sidecar(source)
+        if sidecar_path is not None:
+            sidecar = load_sidecar(sidecar_path)
+            sidecar_origin = attach_sidecar_origin(
+                sidecar.ifds, sidecar.data, sidecar.header)
+            ifds = ifds + sidecar.ifds
+
         # Skip mask IFDs (NewSubfileType bit 2)
         ifd = select_overview_ifd(ifds, overview_level)
+
+        # Swap base data / header for the sidecar's buffers when the
+        # requested overview level lives in the sidecar. Subsequent
+        # tile / strip reads slice the right buffer.
+        origin = sidecar_origin.get(id(ifd))
+        if origin is not None:
+            data, header = origin
+            sidecar_owned_ifd = True
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         # Inherit georef from the level-0 IFD when the overview itself
         # has no geokeys (issue #1640); pass-through for level 0.
         geo_info = extract_geo_info_with_overview_inheritance(
-            ifd, ifds, data, header.byte_order)
+            ifd, ifds, data, header.byte_order,
+            allow_rotated=allow_rotated)
         # Capture the Orientation tag (274) once so the post-decode flip
         # below picks it up for both the stripped fallback and the tiled
         # GPU pipelines. CPU read_to_array applies the array remap +
@@ -492,293 +521,346 @@ def read_geotiff_gpu(source: str, *,
         # read OOB otherwise. See issue #1219.
         validate_tile_layout(ifd)
 
-    finally:
-        src.close()
+        # Per-tile compressed-byte cap, matching the CPU paths
+        # ``_read_tiles`` and ``_fetch_decode_cog_http_tiles`` apply
+        # via the same env var (issue #1664). ``validate_tile_layout``
+        # bounds the offsets array length but not the byte_counts
+        # entries; a crafted ``TileByteCounts`` value can still ask
+        # the GPU pipeline to fetch and decompress a multi-hundred-MB
+        # tile that the CPU paths would already refuse. The
+        # ``_check_gpu_memory`` guard in the downstream kvikio /
+        # nvCOMP paths runs against ``sum(byte_counts)`` so it only
+        # catches the extreme aggregate case; this loop closes the
+        # per-tile asymmetry between the CPU and GPU readers. Sparse
+        # tiles (``byte_count == 0``) pass under any positive cap by
+        # design -- they carry no compressed bytes to decode and the
+        # CPU mirror at ``_reader.py`` does the same.
+        max_tile_bytes = _max_tile_bytes_from_env()
+        for tile_idx, bc in enumerate(byte_counts):
+            if bc > max_tile_bytes:
+                raise ValueError(
+                    f"TIFF tile {tile_idx} declares "
+                    f"TileByteCount={bc:,} bytes, which exceeds the "
+                    f"per-tile safety cap of {max_tile_bytes:,} bytes. "
+                    f"The file is malformed or attempting "
+                    f"denial-of-service. Override via "
+                    f"XRSPATIAL_COG_MAX_TILE_BYTES if this file is "
+                    f"legitimate."
+                )
 
-    # GPU decode: try GDS (SSD→GPU direct) first, then CPU mmap path.
-    # Sparse tiles (byte_count == 0) are unsupported on the GPU pipeline;
-    # the CPU reader fills them with nodata and copies onto the GPU.
-    has_sparse_tile = any(bc == 0 for bc in byte_counts)
-    # LERC tiles can carry a per-pixel valid mask that GDAL writes
-    # zero-filled in the data array.  Compute the nodata fill the same
-    # way the CPU reader does so the GPU decode path can restore it
-    # post-assembly (mirrors PR #1529 for the CPU path). Only the
-    # chunky (planar=1) GPU path threads masked_fill into its kernel
-    # call below; the planar=2 per-band branch falls back to the CPU
-    # reader for masked pixels (rare in practice -- LERC files
-    # typically use chunky layout).
-    masked_fill = (_resolve_masked_fill(ifd.nodata_str, file_dtype)
-                   if compression == COMPRESSION_LERC else None)
+        # GPU decode: try GDS (SSD→GPU direct) first, then CPU mmap path.
+        # Sparse tiles (byte_count == 0) are unsupported on the GPU pipeline;
+        # the CPU reader fills them with nodata and copies onto the GPU.
+        has_sparse_tile = any(bc == 0 for bc in byte_counts)
+        # LERC tiles can carry a per-pixel valid mask that GDAL writes
+        # zero-filled in the data array.  Compute the nodata fill the same
+        # way the CPU reader does so the GPU decode path can restore it
+        # post-assembly (mirrors PR #1529 for the CPU path). Only the
+        # chunky (planar=1) GPU path threads masked_fill into its kernel
+        # call below; the planar=2 per-band branch falls back to the CPU
+        # reader for masked pixels (rare in practice -- LERC files
+        # typically use chunky layout).
+        masked_fill = (_resolve_masked_fill(ifd.nodata_str, file_dtype)
+                       if compression == COMPRESSION_LERC else None)
 
-    # Track whether the array we end up with was already orientation-flipped
-    # by `read_to_array`. Any path that falls back to CPU decode picks up
-    # the orientation remap from PR #1521 + #1537 for free; the pure GPU
-    # paths still need the explicit remap added in #1540.
-    arr_was_cpu_decoded = False
-    # When a CPU fallback runs, ``read_to_array`` has already applied the
-    # MinIsWhite inversion and stashed the post-inversion sentinel on
-    # ``_mask_nodata``. Keep that geo_info alongside the pre-extracted one
-    # so the downstream nodata mask compares against the correct value
-    # (Copilot review of #1817).
-    _cpu_fallback_geo = None
+        # Track whether the array we end up with was already orientation-flipped
+        # by `read_to_array`. Any path that falls back to CPU decode picks up
+        # the orientation remap from PR #1521 + #1537 for free; the pure GPU
+        # paths still need the explicit remap added in #1540.
+        arr_was_cpu_decoded = False
+        # When a CPU fallback runs, ``read_to_array`` has already applied the
+        # MinIsWhite inversion and stashed the post-inversion sentinel on
+        # ``_mask_nodata``. Keep that geo_info alongside the pre-extracted one
+        # so the downstream nodata mask compares against the correct value
+        # (Copilot review of #1817).
+        _cpu_fallback_geo = None
 
-    # PlanarConfiguration=2 (separate bands): each band has its own list
-    # of tiles back-to-back in TileOffsets / TileByteCounts. The GPU
-    # tile-assembly kernel assumes a single chunky tile sequence with
-    # bytes_per_pixel = itemsize * samples, so it cannot handle planar=2
-    # directly. Decode each band's tile slab as a single-band image, then
-    # stack into (H, W, samples). For planar=1 (chunky) the existing
-    # single-pass kernel is correct. Sparse-tile files always route to
-    # the CPU reader regardless of planar config.
-    if planar == 2 and samples > 1 and not has_sparse_tile:
-        tiles_across = math.ceil(width / tw)
-        tiles_down = math.ceil(height / th)
-        tiles_per_band = tiles_across * tiles_down
-        # validate_tile_layout already requires len(offsets) >= the grid;
-        # accept extra trailing entries (some writers emit padding) and
-        # only consume the first tiles_per_band * samples.
-        expected_min = tiles_per_band * samples
-        if len(offsets) < expected_min:
-            raise ValueError(
-                f"PlanarConfiguration=2 expects at least {expected_min} "
-                f"TileOffsets entries ({tiles_across} x {tiles_down} x "
-                f"{samples} bands), got {len(offsets)}"
-            )
-        # Lazy shared file read for the per-band stage-2 fallback. When
-        # every band's GDS path succeeds, _read_once is never called
-        # and we skip the read_all() entirely; when any band falls
-        # back, the first call materialises the bytes and subsequent
-        # bands reuse the same buffer (so N bands cost at most one
-        # read_all(), not N).
-        _shared_data_cache: list = []
+        # PlanarConfiguration=2 (separate bands): each band has its own list
+        # of tiles back-to-back in TileOffsets / TileByteCounts. The GPU
+        # tile-assembly kernel assumes a single chunky tile sequence with
+        # bytes_per_pixel = itemsize * samples, so it cannot handle planar=2
+        # directly. Decode each band's tile slab as a single-band image, then
+        # stack into (H, W, samples). For planar=1 (chunky) the existing
+        # single-pass kernel is correct. Sparse-tile files always route to
+        # the CPU reader regardless of planar config.
+        if planar == 2 and samples > 1 and not has_sparse_tile:
+            tiles_across = math.ceil(width / tw)
+            tiles_down = math.ceil(height / th)
+            tiles_per_band = tiles_across * tiles_down
+            # validate_tile_layout already requires len(offsets) >= the grid;
+            # accept extra trailing entries (some writers emit padding) and
+            # only consume the first tiles_per_band * samples.
+            expected_min = tiles_per_band * samples
+            if len(offsets) < expected_min:
+                raise ValueError(
+                    f"PlanarConfiguration=2 expects at least {expected_min} "
+                    f"TileOffsets entries ({tiles_across} x {tiles_down} x "
+                    f"{samples} bands), got {len(offsets)}"
+                )
+            # Lazy shared file read for the per-band stage-2 fallback. When
+            # every band's GDS path succeeds, _read_once is never called
+            # and we skip the read_all() entirely; when any band falls
+            # back, the first call materialises the bytes and subsequent
+            # bands reuse the same buffer (so N bands cost at most one
+            # read_all(), not N).
+            _shared_data_cache: list = []
 
-        def _read_once():
-            if not _shared_data_cache:
-                src2 = _FileSource(source)
-                try:
-                    _shared_data_cache.append(src2.read_all())
-                finally:
-                    src2.close()
-            return _shared_data_cache[0]
+            def _read_once():
+                if not _shared_data_cache:
+                    src2 = _FileSource(source)
+                    try:
+                        _shared_data_cache.append(src2.read_all())
+                    finally:
+                        src2.close()
+                return _shared_data_cache[0]
 
-        band_arrays = []
-        cpu_fallback_needed = False
-        for band_idx in range(samples):
-            b0 = band_idx * tiles_per_band
-            b1 = b0 + tiles_per_band
-            band_offsets = list(offsets[b0:b1])
-            band_byte_counts = list(byte_counts[b0:b1])
-            band_arr = _gpu_decode_single_band_tiles(
-                source, _read_once, band_offsets, band_byte_counts,
-                tw, th, width, height,
-                compression, predictor, file_dtype,
-                byte_order=header.byte_order,
-                gpu=gpu,
-            )
-            if band_arr is None:
-                # Auto-mode signal: stage-2 GPU decode failed for this
-                # band. There's no per-band CPU decode path, so fall
-                # back to a whole-image CPU read + GPU upload, matching
-                # the chunky path's auto-mode semantics.
-                cpu_fallback_needed = True
-                break
-            band_arrays.append(band_arr)
-        if cpu_fallback_needed:
-            # Drop read_to_array's geo_info for orientation transform
-            # handling (below operates on our pre-extracted geo_info so the
-            # 2/3/4 case is covered regardless of #1539's merge state), but
-            # keep it on ``_cpu_fallback_geo`` so the MinIsWhite-aware nodata
-            # mask below sees ``_mask_nodata``.
+            band_arrays = []
+            cpu_fallback_needed = False
+            for band_idx in range(samples):
+                b0 = band_idx * tiles_per_band
+                b1 = b0 + tiles_per_band
+                band_offsets = list(offsets[b0:b1])
+                band_byte_counts = list(byte_counts[b0:b1])
+                band_arr = _gpu_decode_single_band_tiles(
+                    source, _read_once, band_offsets, band_byte_counts,
+                    tw, th, width, height,
+                    compression, predictor, file_dtype,
+                    byte_order=header.byte_order,
+                    gpu=gpu,
+                )
+                if band_arr is None:
+                    # Auto-mode signal: stage-2 GPU decode failed for this
+                    # band. There's no per-band CPU decode path, so fall
+                    # back to a whole-image CPU read + GPU upload, matching
+                    # the chunky path's auto-mode semantics.
+                    cpu_fallback_needed = True
+                    break
+                band_arrays.append(band_arr)
+            if cpu_fallback_needed:
+                # Drop read_to_array's geo_info for orientation transform
+                # handling (below operates on our pre-extracted geo_info so the
+                # 2/3/4 case is covered regardless of #1539's merge state), but
+                # keep it on ``_cpu_fallback_geo`` so the MinIsWhite-aware nodata
+                # mask below sees ``_mask_nodata``.
+                arr_cpu, _cpu_fallback_geo = _read_to_array(
+                    source, overview_level=overview_level)
+                arr_gpu = cupy.asarray(arr_cpu)
+                arr_was_cpu_decoded = True
+            else:
+                arr_gpu = cupy.stack(band_arrays, axis=2)
+                if arr_gpu.shape != (height, width, samples):
+                    raise RuntimeError(
+                        f"planar=2 GPU assembly produced shape "
+                        f"{arr_gpu.shape}, expected "
+                        f"({height}, {width}, {samples})"
+                    )
+        elif has_sparse_tile:
             arr_cpu, _cpu_fallback_geo = _read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True
         else:
-            arr_gpu = cupy.stack(band_arrays, axis=2)
-            if arr_gpu.shape != (height, width, samples):
+            from .._gpu_decode import gpu_decode_tiles_from_file
+            arr_gpu = None
+
+            if sidecar_owned_ifd:
+                # The selected IFD lives in a sibling .tif.ovr sidecar; tile
+                # offsets index into the sidecar's bytes, not the base file
+                # path that ``gpu_decode_tiles_from_file`` would open via
+                # kvikio. Skip GDS and let the CPU-mmap fallback below slice
+                # the already-loaded sidecar buffer (issue #2112).
+                arr_gpu = None
+            else:
+                try:
+                    arr_gpu = gpu_decode_tiles_from_file(
+                        source, offsets, byte_counts,
+                        tw, th, width, height,
+                        compression, predictor, file_dtype, samples,
+                        byte_order=header.byte_order,
+                        masked_fill=masked_fill,
+                    )
+                except Exception as e:
+                    if gpu == 'strict' or _geotiff_strict_mode():
+                        raise
+                    warnings.warn(
+                        f"read_geotiff_gpu: GPU decode failed "
+                        f"({type(e).__name__}: {e}); falling back to CPU.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    arr_gpu = None
+
+        if arr_gpu is None:
+            # Fallback: extract tiles via CPU mmap, then GPU decode. For
+            # sidecar IFDs the tile bytes already live in ``data`` (loaded
+            # from the .ovr above); re-opening ``source`` would point at the
+            # base file. Use the in-scope ``data`` directly in that case.
+            if sidecar_owned_ifd:
+                compressed_tiles = [
+                    bytes(data[offsets[i]:offsets[i] + byte_counts[i]])
+                    for i in range(len(offsets))
+                ]
+            else:
+                src2 = _FileSource(source)
+                data2 = src2.read_all()
+                try:
+                    compressed_tiles = [
+                        bytes(data2[offsets[i]:offsets[i] + byte_counts[i]])
+                        for i in range(len(offsets))
+                    ]
+                finally:
+                    src2.close()
+
+        if arr_gpu is None:
+            try:
+                arr_gpu = gpu_decode_tiles(
+                    compressed_tiles,
+                    tw, th, width, height,
+                    compression, predictor, file_dtype, samples,
+                    byte_order=header.byte_order,
+                    masked_fill=masked_fill,
+                )
+            except Exception as e:
+                if gpu == 'strict' or _geotiff_strict_mode():
+                    raise
+                warnings.warn(
+                    f"read_geotiff_gpu: GPU decode failed "
+                    f"({type(e).__name__}: {e}); falling back to CPU.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                arr_cpu, _cpu_fallback_geo = _read_to_array(
+                    source, overview_level=overview_level)
+                arr_gpu = cupy.asarray(arr_cpu)
+                arr_was_cpu_decoded = True
+
+        # Multi-band tiled output must be (H, W, samples) regardless of planar
+        # config -- catch any shape regression in the kernels before we attach
+        # dims/coords below. Plain `raise` rather than `assert` so the check
+        # survives `python -O`.
+        if samples > 1:
+            if (arr_gpu.shape[:2] != (height, width)
+                    or arr_gpu.shape[2] != samples):
                 raise RuntimeError(
-                    f"planar=2 GPU assembly produced shape "
+                    f"GPU multi-band tile assembly produced shape "
                     f"{arr_gpu.shape}, expected "
                     f"({height}, {width}, {samples})"
                 )
-    elif has_sparse_tile:
-        arr_cpu, _cpu_fallback_geo = _read_to_array(
-            source, overview_level=overview_level)
-        arr_gpu = cupy.asarray(arr_cpu)
-        arr_was_cpu_decoded = True
-    else:
-        from .._gpu_decode import gpu_decode_tiles_from_file
-        arr_gpu = None
 
-        try:
-            arr_gpu = gpu_decode_tiles_from_file(
-                source, offsets, byte_counts,
-                tw, th, width, height,
-                compression, predictor, file_dtype, samples,
-                byte_order=header.byte_order,
-                masked_fill=masked_fill,
-            )
-        except Exception as e:
-            if gpu == 'strict' or _geotiff_strict_mode():
-                raise
-            warnings.warn(
-                f"read_geotiff_gpu: GPU decode failed "
-                f"({type(e).__name__}: {e}); falling back to CPU.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            arr_gpu = None
+        # Apply the TIFF Orientation tag (274). The pure GPU paths land here
+        # with a raw stored-order buffer; the CPU-fallback paths land here
+        # with arr_gpu already remapped (read_to_array does the data flip)
+        # but with their pre-orientation geo_info (we discarded the one
+        # read_to_array returned because it does not handle 2/3/4 today).
+        # Skip the GPU array remap on CPU-decoded paths to avoid a double
+        # flip, but always apply the geo_info update so coords match.
+        if orientation != 1:
+            if not arr_was_cpu_decoded:
+                arr_gpu = _apply_orientation_gpu(arr_gpu, orientation)
+            geo_info = _apply_orientation_geo_info(
+                geo_info, orientation, file_h=height, file_w=width)
 
-    if arr_gpu is None:
-        # Fallback: extract tiles via CPU mmap, then GPU decode
-        src2 = _FileSource(source)
-        data2 = src2.read_all()
-        try:
-            compressed_tiles = [
-                bytes(data2[offsets[i]:offsets[i] + byte_counts[i]])
-                for i in range(len(offsets))
-            ]
-        finally:
-            src2.close()
+        _mw_mask_nodata = None
+        if (ifd.photometric == 0 and samples == 1 and not arr_was_cpu_decoded):
+            from .._reader import _miniswhite_inverted_nodata as _miw_inv_nd
+            gpu_dtype = np.dtype(str(arr_gpu.dtype))
+            # Compute the post-MinIsWhite sentinel BEFORE inverting the array,
+            # so the downstream ``_apply_nodata_mask_gpu`` call compares
+            # against the right value (#1809).
+            _mw_mask_nodata = _miw_inv_nd(geo_info.nodata, ifd, gpu_dtype)
+            if gpu_dtype.kind == 'u':
+                arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
+            elif gpu_dtype.kind == 'f':
+                arr_gpu = -arr_gpu
 
-    if arr_gpu is None:
-        try:
-            arr_gpu = gpu_decode_tiles(
-                compressed_tiles,
-                tw, th, width, height,
-                compression, predictor, file_dtype, samples,
-                byte_order=header.byte_order,
-                masked_fill=masked_fill,
-            )
-        except Exception as e:
-            if gpu == 'strict' or _geotiff_strict_mode():
-                raise
-            warnings.warn(
-                f"read_geotiff_gpu: GPU decode failed "
-                f"({type(e).__name__}: {e}); falling back to CPU.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            arr_cpu, _cpu_fallback_geo = _read_to_array(
-                source, overview_level=overview_level)
-            arr_gpu = cupy.asarray(arr_cpu)
-            arr_was_cpu_decoded = True
+        # Apply nodata mask + record sentinel so the GPU read agrees with the
+        # CPU eager path (issue #1542). Without this, integer rasters keep the
+        # literal sentinel value and float rasters keep the sentinel rather
+        # than NaN -- a silent backend divergence. Apply before the optional
+        # dtype cast so the float promotion for masked integer rasters doesn't
+        # surprise a user-supplied dtype.
+        nodata = geo_info.nodata
+        if nodata is not None and mask_nodata:
+            # When MinIsWhite was applied, the mask must use the inverted
+            # sentinel; otherwise the original sentinel. The pure GPU path
+            # records the inverted sentinel in ``_mw_mask_nodata`` above; the
+            # CPU-fallback paths (sparse-tile, planar=2 auto-fallback, and
+            # post-decode CPU fallback) get it from ``read_to_array`` via
+            # ``_cpu_fallback_geo._mask_nodata`` (Copilot review of #1817).
+            if _mw_mask_nodata is not None:
+                _gpu_mask_value = _mw_mask_nodata
+            elif _cpu_fallback_geo is not None:
+                _gpu_mask_value = getattr(
+                    _cpu_fallback_geo, '_mask_nodata', nodata)
+            else:
+                _gpu_mask_value = nodata
+            arr_gpu = _apply_nodata_mask_gpu(arr_gpu, _gpu_mask_value)
 
-    # Multi-band tiled output must be (H, W, samples) regardless of planar
-    # config -- catch any shape regression in the kernels before we attach
-    # dims/coords below. Plain `raise` rather than `assert` so the check
-    # survives `python -O`.
-    if samples > 1:
-        if (arr_gpu.shape[:2] != (height, width)
-                or arr_gpu.shape[2] != samples):
-            raise RuntimeError(
-                f"GPU multi-band tile assembly produced shape "
-                f"{arr_gpu.shape}, expected "
-                f"({height}, {width}, {samples})"
-            )
+        if dtype is not None:
+            target = np.dtype(dtype)
+            _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
+            arr_gpu = arr_gpu.astype(target)
 
-    # Apply the TIFF Orientation tag (274). The pure GPU paths land here
-    # with a raw stored-order buffer; the CPU-fallback paths land here
-    # with arr_gpu already remapped (read_to_array does the data flip)
-    # but with their pre-orientation geo_info (we discarded the one
-    # read_to_array returned because it does not handle 2/3/4 today).
-    # Skip the GPU array remap on CPU-decoded paths to avoid a double
-    # flip, but always apply the geo_info update so coords match.
-    if orientation != 1:
-        if not arr_was_cpu_decoded:
-            arr_gpu = _apply_orientation_gpu(arr_gpu, orientation)
-        geo_info = _apply_orientation_geo_info(
-            geo_info, orientation, file_h=height, file_w=width)
+        # Build DataArray
+        if name is None:
+            import os
+            name = os.path.splitext(os.path.basename(source))[0]
 
-    _mw_mask_nodata = None
-    if (ifd.photometric == 0 and samples == 1 and not arr_was_cpu_decoded):
-        from .._reader import _miniswhite_inverted_nodata as _miw_inv_nd
-        gpu_dtype = np.dtype(str(arr_gpu.dtype))
-        # Compute the post-MinIsWhite sentinel BEFORE inverting the array,
-        # so the downstream ``_apply_nodata_mask_gpu`` call compares
-        # against the right value (#1809).
-        _mw_mask_nodata = _miw_inv_nd(geo_info.nodata, ifd, gpu_dtype)
-        if gpu_dtype.kind == 'u':
-            arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
-        elif gpu_dtype.kind == 'f':
-            arr_gpu = -arr_gpu
+        _validate_read_geo_info(
+            geo_info, window=window,
+            allow_rotated=allow_rotated,
+            allow_unparseable_crs=allow_unparseable_crs,
+        )
 
-    # Apply nodata mask + record sentinel so the GPU read agrees with the
-    # CPU eager path (issue #1542). Without this, integer rasters keep the
-    # literal sentinel value and float rasters keep the sentinel rather
-    # than NaN -- a silent backend divergence. Apply before the optional
-    # dtype cast so the float promotion for masked integer rasters doesn't
-    # surprise a user-supplied dtype.
-    nodata = geo_info.nodata
-    if nodata is not None and mask_nodata:
-        # When MinIsWhite was applied, the mask must use the inverted
-        # sentinel; otherwise the original sentinel. The pure GPU path
-        # records the inverted sentinel in ``_mw_mask_nodata`` above; the
-        # CPU-fallback paths (sparse-tile, planar=2 auto-fallback, and
-        # post-decode CPU fallback) get it from ``read_to_array`` via
-        # ``_cpu_fallback_geo._mask_nodata`` (Copilot review of #1817).
-        if _mw_mask_nodata is not None:
-            _gpu_mask_value = _mw_mask_nodata
-        elif _cpu_fallback_geo is not None:
-            _gpu_mask_value = getattr(
-                _cpu_fallback_geo, '_mask_nodata', nodata)
+        attrs = {}
+        _populate_attrs_from_geo_info(attrs, geo_info, window=window)
+        # ``attrs['masked_nodata']`` reflects whether the function
+        # actually replaced sentinel pixels with NaN (#2092). The GPU
+        # mask kernel runs only when ``mask_nodata=True`` and a sentinel
+        # is declared, so the post-cast float dtype alone is not enough
+        # to claim masking.
+        _set_nodata_attrs(
+            attrs, nodata,
+            masked=(mask_nodata
+                    and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
+        )
+
+        # Apply window/band slicing post-decode. Coords are derived from the
+        # sliced array so the (y, x) labels line up with the user's requested
+        # subrectangle. This mirrors the ``open_geotiff`` / ``read_geotiff_dask``
+        # contract: ``attrs['transform']`` always carries the full-source
+        # GeoTransform shifted to the window origin (via
+        # ``_populate_attrs_from_geo_info(..., window=window)``), while
+        # ``coords['y']`` / ``coords['x']`` cover only the windowed cells.
+        arr_gpu, coords = _gpu_apply_window_band(
+            arr_gpu, geo_info, window=window, band=band)
+
+        if arr_gpu.ndim == 3:
+            dims = ['y', 'x', 'band']
+            coords['band'] = np.arange(arr_gpu.shape[2])
         else:
-            _gpu_mask_value = nodata
-        arr_gpu = _apply_nodata_mask_gpu(arr_gpu, _gpu_mask_value)
+            dims = ['y', 'x']
 
-    if dtype is not None:
-        target = np.dtype(dtype)
-        _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
-        arr_gpu = arr_gpu.astype(target)
+        result = xr.DataArray(arr_gpu, dims=dims, coords=coords,
+                              name=name, attrs=attrs)
 
-    # Build DataArray
-    if name is None:
-        import os
-        name = os.path.splitext(os.path.basename(source))[0]
+        # ``chunks=`` is handled at function entry via
+        # ``_read_geotiff_gpu_chunked`` for real out-of-core support; this
+        # eager path always returns a non-chunked CuPy-backed DataArray.
 
-    _validate_read_geo_info(
-        geo_info, window=window,
-        allow_rotated=allow_rotated,
-        allow_unparseable_crs=allow_unparseable_crs,
-    )
+        return result
 
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``attrs['masked_nodata']`` reflects whether the function
-    # actually replaced sentinel pixels with NaN (#2092). The GPU
-    # mask kernel runs only when ``mask_nodata=True`` and a sentinel
-    # is declared, so the post-cast float dtype alone is not enough
-    # to claim masking.
-    _set_nodata_attrs(
-        attrs, nodata,
-        masked=(mask_nodata
-                and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
-    )
-
-    # Apply window/band slicing post-decode. Coords are derived from the
-    # sliced array so the (y, x) labels line up with the user's requested
-    # subrectangle. This mirrors the ``open_geotiff`` / ``read_geotiff_dask``
-    # contract: ``attrs['transform']`` always carries the full-source
-    # GeoTransform shifted to the window origin (via
-    # ``_populate_attrs_from_geo_info(..., window=window)``), while
-    # ``coords['y']`` / ``coords['x']`` cover only the windowed cells.
-    arr_gpu, coords = _gpu_apply_window_band(
-        arr_gpu, geo_info, window=window, band=band)
-
-    if arr_gpu.ndim == 3:
-        dims = ['y', 'x', 'band']
-        coords['band'] = np.arange(arr_gpu.shape[2])
-    else:
-        dims = ['y', 'x']
-
-    result = xr.DataArray(arr_gpu, dims=dims, coords=coords,
-                          name=name, attrs=attrs)
-
-    # ``chunks=`` is handled at function entry via
-    # ``_read_geotiff_gpu_chunked`` for real out-of-core support; this
-    # eager path always returns a non-chunked CuPy-backed DataArray.
-
-    return result
+    finally:
+        # Single close site for the file source and any sidecar mmap.
+        # The sidecar can only be released here, AFTER the GPU decode
+        # has finished reading ``data`` -- the decode slices
+        # ``sidecar.data`` directly when ``sidecar_owned_ifd`` is true.
+        # Deferring to Python GC instead would leak file descriptors
+        # in long-running processes opening many GeoTIFFs in sequence
+        # (review of #2112).
+        src.close()
+        if sidecar is not None:
+            close_sidecar(sidecar)
 
 
 def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
@@ -944,11 +1026,55 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     """
     import cupy
 
-    from .._reader import _FileSource, _coerce_path
+    from .._reader import (
+        _FileSource, _coerce_path, _max_tile_bytes_from_env,
+    )
     from .._header import parse_header, parse_all_ifds, select_overview_ifd
     from .._geotags import extract_geo_info_with_overview_inheritance
 
     src_path = _coerce_path(source)
+
+    # Per-tile compressed-byte cap, mirroring the eager GPU path and
+    # the CPU readers (issue #1664 + the GPU eager fix in this PR).
+    # The chunked dask + GPU path either qualifies for the GDS fast
+    # path (handled in ``_read_geotiff_gpu_chunked_gds`` which runs
+    # the same cap on its own metadata parse) or falls through to
+    # ``read_geotiff_dask`` whose per-chunk ``read_to_array`` calls
+    # apply the cap inside the CPU reader. The check here closes the
+    # window between "qualification probe parses the IFDs" and "the
+    # dispatch decides which path to take" so a forged tile is
+    # rejected at graph-build time rather than at first ``.compute()``.
+    # Sparse tiles (``byte_count == 0``) pass under any positive cap
+    # by design.
+    if isinstance(src_path, str) and not src_path.startswith(
+            ('http://', 'https://')):
+        try:
+            _cap_fs = _FileSource(src_path)
+            try:
+                _cap_raw = _cap_fs.read_all()
+            finally:
+                _cap_fs.close()
+            _cap_header = parse_header(_cap_raw)
+            _cap_ifds = parse_all_ifds(_cap_raw, _cap_header)
+            _cap_ifd = select_overview_ifd(_cap_ifds, overview_level)
+            _cap_byte_counts = _cap_ifd.tile_byte_counts
+        except Exception:
+            # If metadata parse fails here, the downstream path will
+            # surface a clear error; do not double-report.
+            _cap_byte_counts = None
+        if _cap_byte_counts is not None:
+            _cap = _max_tile_bytes_from_env()
+            for _tile_idx, _bc in enumerate(_cap_byte_counts):
+                if _bc > _cap:
+                    raise ValueError(
+                        f"TIFF tile {_tile_idx} declares "
+                        f"TileByteCount={_bc:,} bytes, which exceeds "
+                        f"the per-tile safety cap of {_cap:,} bytes. "
+                        f"The file is malformed or attempting "
+                        f"denial-of-service. Override via "
+                        f"XRSPATIAL_COG_MAX_TILE_BYTES if this file "
+                        f"is legitimate."
+                    )
 
     # Try the disk->GPU path. Parse metadata once; if the file does not
     # qualify, fall through to the CPU-decode path. Any unexpected
@@ -969,6 +1095,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
             ifd = select_overview_ifd(ifds, overview_level)
             geo_info = extract_geo_info_with_overview_inheritance(
                 ifd, ifds, raw, header.byte_order,
+                allow_rotated=allow_rotated,
             )
             orientation = ifd.orientation
             has_sparse_tile = (
@@ -1035,7 +1162,8 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     import dask.array as da_mod
 
     from .._reader import (
-        _check_dimensions, MAX_PIXELS_DEFAULT, _resolve_masked_fill,
+        _check_dimensions, MAX_PIXELS_DEFAULT,
+        _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
     from .._header import validate_tile_layout
@@ -1061,6 +1189,27 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     _check_dimensions(full_w, full_h, samples, max_pixels)
     _check_dimensions(tw, th, samples, max_pixels)
     validate_tile_layout(ifd)
+
+    # Per-tile compressed-byte cap, mirroring the eager GPU path's loop
+    # (issue #1664 + the original eager fix above). The chunked GDS
+    # graph fans tile reads out across dask tasks, so a forged
+    # ``TileByteCount`` would otherwise slip past every task's GDS
+    # request and the downstream ``_check_gpu_memory`` guard, which
+    # only catches the aggregate sum. Running the check here means the
+    # dask graph never builds for a hostile file. Sparse tiles
+    # (``byte_count == 0``) pass under any positive cap by design.
+    max_tile_bytes = _max_tile_bytes_from_env()
+    for tile_idx, bc in enumerate(byte_counts):
+        if bc > max_tile_bytes:
+            raise ValueError(
+                f"TIFF tile {tile_idx} declares "
+                f"TileByteCount={bc:,} bytes, which exceeds the "
+                f"per-tile safety cap of {max_tile_bytes:,} bytes. "
+                f"The file is malformed or attempting "
+                f"denial-of-service. Override via "
+                f"XRSPATIAL_COG_MAX_TILE_BYTES if this file is "
+                f"legitimate."
+            )
 
     # Window restricts the visible region; offsets are computed relative
     # to the windowed origin so chunks line up with the user's request.

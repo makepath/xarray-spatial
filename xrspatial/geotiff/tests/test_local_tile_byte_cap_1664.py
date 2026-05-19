@@ -12,8 +12,6 @@ decoder runs.
 """
 from __future__ import annotations
 
-import struct
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -26,46 +24,7 @@ from xrspatial.geotiff import _reader as _reader_mod
 # Helpers -- patch in-place IFD entries for tile / strip byte counts
 # ---------------------------------------------------------------------------
 
-
-def _patch_byte_counts(data: bytearray, tag: int, value: int) -> None:
-    """Rewrite every entry for *tag* (325=TileByteCounts, 279=StripByteCounts)."""
-    from xrspatial.geotiff._header import parse_header
-    header = parse_header(bytes(data))
-    bo = header.byte_order
-    ifd_offset = header.first_ifd_offset
-    num_entries = struct.unpack_from(f'{bo}H', data, ifd_offset)[0]
-    entry_offset = ifd_offset + 2
-
-    for i in range(num_entries):
-        eo = entry_offset + i * 12
-        cur_tag = struct.unpack_from(f'{bo}H', data, eo)[0]
-        if cur_tag != tag:
-            continue
-        type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
-        count = struct.unpack_from(f'{bo}I', data, eo + 4)[0]
-        if type_id == 4:  # LONG
-            total = count * 4
-            if total <= 4:
-                for k in range(count):
-                    struct.pack_into(f'{bo}I', data, eo + 8 + k * 4, value)
-            else:
-                ptr = struct.unpack_from(f'{bo}I', data, eo + 8)[0]
-                for k in range(count):
-                    struct.pack_into(f'{bo}I', data, ptr + k * 4, value)
-        elif type_id == 3:  # SHORT
-            clipped = min(value, 0xFFFF)
-            total = count * 2
-            if total <= 4:
-                for k in range(count):
-                    struct.pack_into(
-                        f'{bo}H', data, eo + 8 + k * 2, clipped)
-            else:
-                ptr = struct.unpack_from(f'{bo}I', data, eo + 8)[0]
-                for k in range(count):
-                    struct.pack_into(
-                        f'{bo}H', data, ptr + k * 2, clipped)
-        return
-    raise AssertionError(f"tag {tag} not found in IFD")
+from ._tiff_surgery import patch_byte_counts as _patch_byte_counts  # noqa: E402
 
 
 def _build_forged_tiled_cog(tmp_path, byte_count_value: int) -> str:

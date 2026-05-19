@@ -978,6 +978,78 @@ def unpack_bits(data: np.ndarray, bps: int, pixel_count: int) -> np.ndarray:
 
 # -- PackBits (simple RLE) ----------------------------------------------------
 
+@ngjit
+def _packbits_decode_kernel(src, src_len, dst, dst_cap):
+    """Decode PackBits (TIFF compression tag 32773) into a uint8 buffer.
+
+    Parameters
+    ----------
+    src : uint8 array
+        Compressed bytes.
+    src_len : int
+        Number of valid bytes in ``src``.
+    dst : uint8 array
+        Pre-allocated output buffer.
+    dst_cap : int
+        Maximum bytes to write before bailing out. When ``0``, the kernel
+        writes up to ``len(dst)`` (the wrapper sizes ``dst`` for the
+        no-cap path so this is safe).
+
+    Returns
+    -------
+    int
+        Number of bytes written. ``-1`` signals the cap was exceeded
+        (the wrapper turns this into ``ValueError``).
+    """
+    out_pos = 0
+    i = 0
+    # When dst_cap is zero we use the full buffer length as the write limit.
+    if dst_cap > 0:
+        write_limit = dst_cap
+        enforce_cap = True
+    else:
+        write_limit = len(dst)
+        enforce_cap = False
+
+    while i < src_len:
+        header = src[i]
+        i += 1
+        if header < 128:
+            # Literal run of header + 1 bytes.
+            count = header + 1
+            # Don't read past end of src on a truncated stream.
+            available = src_len - i
+            if count > available:
+                count = available
+            for k in range(count):
+                if out_pos >= write_limit:
+                    if enforce_cap:
+                        return -1
+                    # write_limit equals len(dst); refuse to write past it.
+                    return out_pos
+                dst[out_pos] = src[i + k]
+                out_pos += 1
+            i += count
+        elif header > 128:
+            # Replicate run: header interpreted as signed yields n in
+            # [-127, -1]; repeat count is 1 - n == 257 - header.
+            count = 257 - header
+            if i >= src_len:
+                break
+            byte_val = src[i]
+            i += 1
+            for _ in range(count):
+                if out_pos >= write_limit:
+                    if enforce_cap:
+                        return -1
+                    return out_pos
+                dst[out_pos] = byte_val
+                out_pos += 1
+        # header == 128: no-op marker.
+
+    return out_pos
+
+
 def packbits_decompress(data: bytes, expected_size: int = 0) -> bytes:
     """Decompress PackBits (TIFF compression tag 32773).
 
@@ -990,65 +1062,119 @@ def packbits_decompress(data: bytes, expected_size: int = 0) -> bytes:
     ``expected_size * 1.05 + 1`` bytes and raises ``ValueError`` on overflow
     (decompression-bomb guard).
     """
-    src = data if isinstance(data, (bytes, bytearray)) else bytes(data)
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        src = np.frombuffer(data, dtype=np.uint8)
+    else:
+        src = np.frombuffer(bytes(data), dtype=np.uint8)
+
+    src_len = len(src)
+    if src_len == 0:
+        return b""
+
     cap = _max_output_with_margin(expected_size)
-    out = bytearray()
-    i = 0
-    length = len(src)
-    while i < length:
-        n = src[i]
-        if n > 127:
-            n = n - 256  # interpret as signed
-        i += 1
-        if 0 <= n <= 127:
-            count = n + 1
-            out.extend(src[i:i + count])
-            i += count
-        elif -127 <= n <= -1:
-            if i < length:
-                out.extend(bytes([src[i]]) * (1 - n))
-                i += 1
-        # n == -128: skip
-        if cap and len(out) > cap:
-            raise ValueError(
-                f"packbits decode exceeded expected size: {len(out)} bytes "
-                f"produced, cap is {cap} (expected {expected_size}).  "
-                f"Likely a decompression bomb."
-            )
-    return bytes(out)
+    if cap > 0:
+        # dst sized exactly to the cap; the kernel returns -1 the moment
+        # out_pos would reach write_limit (= cap), so we never need a
+        # sentinel byte past the cap.
+        dst = np.empty(cap, dtype=np.uint8)
+        n_written = _packbits_decode_kernel(src, src_len, dst, cap)
+    else:
+        # No cap supplied. PackBits expands by at most 128:1 (a single
+        # replicate header byte yields 128 output bytes), so this bound
+        # is tight enough to keep the decoder bounded even on adversarial
+        # input while still always fitting the legitimate output. The
+        # reader path always supplies expected_size, so this branch is
+        # only hit by direct callers and round-trip tests where the
+        # peak allocation is acceptable.
+        worst_case = src_len * 128
+        dst = np.empty(worst_case, dtype=np.uint8)
+        n_written = _packbits_decode_kernel(src, src_len, dst, 0)
+
+    if n_written < 0:
+        raise ValueError(
+            f"packbits decode exceeded expected size: produced more than "
+            f"{cap} bytes (cap = expected_size * 1.05 + 1, expected "
+            f"{expected_size}).  Likely a decompression bomb."
+        )
+    return bytes(dst[:n_written])
 
 
-def packbits_compress(data: bytes) -> bytes:
-    """Compress data using PackBits."""
-    src = data if isinstance(data, (bytes, bytearray)) else bytes(data)
-    out = bytearray()
+@ngjit
+def _packbits_encode_kernel(src, src_len, dst, dst_cap):
+    """Encode src bytes as PackBits into dst, return number of bytes written.
+
+    Numba cannot grow a ``bytearray``; the caller pre-allocates ``dst`` with
+    a worst-case size and slices to the returned length. PackBits encodes
+    each block as ``1 + L`` bytes for a literal of length L in [1, 128] and
+    ``2`` bytes for a run of length L in [3, 128], so the tightest upper
+    bound on output is ``src_len + ceil(src_len / 128) + 1`` (pure literal
+    input, plus one byte of slack for the final block). The caller uses
+    the looser, simpler bound ``2 * src_len + 1``, which is always safe.
+    """
     i = 0
-    length = len(src)
-    while i < length:
-        # Check for a run of identical bytes
+    out_pos = 0
+    while i < src_len:
+        # Scan for a run of identical bytes, capped at 128
         j = i + 1
-        while j < length and j - i < 128 and src[j] == src[i]:
+        while j < src_len and j - i < 128 and src[j] == src[i]:
             j += 1
         run_len = j - i
 
         if run_len >= 3:
-            # Encode as run
-            out.append((256 - (run_len - 1)) & 0xFF)
-            out.append(src[i])
+            # Encode as run: header byte is the signed value 1 - run_len
+            # stored as unsigned. (256 - (run_len - 1)) gives the same bit
+            # pattern as a signed int8 of value 1 - run_len.
+            if out_pos < dst_cap:
+                dst[out_pos] = np.uint8((256 - (run_len - 1)) & 0xFF)
+                out_pos += 1
+            if out_pos < dst_cap:
+                dst[out_pos] = src[i]
+                out_pos += 1
             i = j
         else:
-            # Literal run: accumulate non-repeating bytes
+            # Literal run: accumulate bytes that are not the start of a
+            # 3-byte run, capped at 128.
             lit_start = i
             i = j
-            while i < length and i - lit_start < 128:
-                # Check if a run starts here
-                if i + 2 < length and src[i] == src[i + 1] == src[i + 2]:
+            while i < src_len and i - lit_start < 128:
+                if i + 2 < src_len and src[i] == src[i + 1] and src[i + 1] == src[i + 2]:
                     break
                 i += 1
             lit_len = i - lit_start
-            out.append(lit_len - 1)
-            out.extend(src[lit_start:lit_start + lit_len])
-    return bytes(out)
+            if out_pos < dst_cap:
+                dst[out_pos] = np.uint8(lit_len - 1)
+                out_pos += 1
+            k = 0
+            while k < lit_len and out_pos < dst_cap:
+                dst[out_pos] = src[lit_start + k]
+                out_pos += 1
+                k += 1
+    return out_pos
+
+
+def packbits_compress(data: bytes) -> bytes:
+    """Compress data using PackBits.
+
+    Parameters
+    ----------
+    data : bytes
+        Raw data to compress.
+
+    Returns
+    -------
+    bytes
+    """
+    src = np.frombuffer(data, dtype=np.uint8)
+    src_len = len(src)
+    if src_len == 0:
+        return b''
+    # ``2 * src_len + 1`` is a safe overestimate of the tight PackBits bound
+    # ``src_len + ceil(src_len / 128) + 1``. The overhead is negligible at
+    # strip sizes and keeps the arithmetic obvious.
+    dst_cap = 2 * src_len + 1
+    dst = np.empty(dst_cap, dtype=np.uint8)
+    n = _packbits_encode_kernel(src, src_len, dst, dst_cap)
+    return dst[:n].tobytes()
 
 
 # -- JPEG codec (via Pillow) --------------------------------------------------

@@ -7,6 +7,7 @@ under ``on_gpu_failure='auto'``.
 """
 from __future__ import annotations
 
+import numbers
 import warnings
 from typing import TYPE_CHECKING
 
@@ -16,7 +17,11 @@ import xarray as xr
 if TYPE_CHECKING:
     from typing import BinaryIO
 
-from .._attrs import _extract_rich_tags, _resolve_nodata_attr
+from .._attrs import (
+    _extract_rich_tags,
+    _resolve_nodata_attr,
+    _should_restore_nan_sentinel,
+)
 from .._coords import (
     _BAND_DIM_NAMES,
     coords_to_transform as _coords_to_transform,
@@ -32,6 +37,32 @@ from .._validation import (
     _validate_writer_spatial_shape,
     validate_write_metadata,
 )
+
+
+def _compute_gpu_samples_hint(data) -> int:
+    """Return the band count using the same convention the GPU writer's
+    band-first -> band-last remap uses (issue #2097).
+
+    The remap below in ``write_geotiff_gpu`` moves bands from
+    ``shape[0]`` to ``shape[2]`` for band-first DataArrays. The
+    MinIsWhite single-band guard runs *before* that remap, so reading
+    ``data.shape[2]`` blindly would treat a band-first ``(1, H, W)``
+    array as having ``W`` samples and miss the single-band rejection.
+    Picking the band axis the same way the remap does keeps the guard
+    and the actual on-device band placement in sync.
+
+    Returns 1 for non-3D inputs. For 3D inputs without ``.dims`` (raw
+    arrays), defaults to band-last (``shape[2]``); the writer's other
+    entry-point validators reject ambiguous-dim DataArrays separately.
+    """
+    if getattr(data, 'ndim', None) != 3:
+        return 1
+    dims = getattr(data, 'dims', None)
+    if (dims is not None
+            and len(dims) == 3
+            and dims[0] in _BAND_DIM_NAMES):
+        return int(data.shape[0])
+    return int(data.shape[2])
 
 
 def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
@@ -78,12 +109,13 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         the auto-dispatch path through ``to_geotiff(gpu=True, cog=True)``
         rejects file-like destinations, and the explicit GPU writer
         mirrors that rule (issue #1652).
-    crs : int, str, or None
-        EPSG code or WKT string. EPSG codes are strongly preferred for
-        interop; the WKT-only path emits a user-defined CRS (32767) with
-        the WKT stored in ``GTCitationGeoKey``, which many non-libgeotiff
-        readers ignore. A ``UserWarning`` is emitted when the WKT-only
-        path is taken. See issue #1768.
+    crs : int, numpy.integer, str, or None
+        EPSG code (int or numpy integer scalar) or WKT string. EPSG
+        codes are strongly preferred for interop; the WKT-only path
+        emits a user-defined CRS (32767) with the WKT stored in
+        ``GTCitationGeoKey``, which many non-libgeotiff readers
+        ignore. A ``UserWarning`` is emitted when the WKT-only path
+        is taken. See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str
@@ -246,8 +278,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # do not silently get inverted on-disk values. Move the array to the
     # CPU and call the eager ``write`` path for MinIsWhite output.
     from .._writer import _resolve_photometric as _resolve_photo_gpu
-    _gpu_samples_hint = (data.shape[2] if hasattr(data, 'shape')
-                         and data.ndim == 3 else 1)
+    _gpu_samples_hint = _compute_gpu_samples_hint(data)
     _gpu_resolved_photo, _ = _resolve_photo_gpu(
         photometric, _gpu_samples_hint)
     if _gpu_resolved_photo == 0 and _gpu_samples_hint == 1:
@@ -345,15 +376,24 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     y_res = None
     res_unit = None
 
+    # ``numbers.Integral`` covers numpy integer scalars (``np.int32``,
+    # ``np.int64``) so they hit the EPSG branch instead of falling
+    # through to ``epsg=None``. Validator already rejects bool.
     _validate_crs_arg(crs)
-    if isinstance(crs, int):
-        epsg = crs
+    if isinstance(crs, numbers.Integral):
+        epsg = int(crs)
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)
         if epsg is None:
             wkt_fallback = crs
 
+    # Issue #1988: ``attrs['masked_nodata']`` records whether the read
+    # side promoted the sentinel to NaN. Default True preserves the
+    # pre-#1988 NaN->sentinel rewrite for external DataArrays and bare
+    # cupy / numpy positional arrays that have no attrs to read from.
+    restore_sentinel = True
     if isinstance(data, xr.DataArray):
+        restore_sentinel = _should_restore_nan_sentinel(data.attrs)
         arr = data.data
         # Handle Dask arrays: compute to materialize
         if hasattr(arr, 'compute'):
@@ -466,7 +506,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # in every case.
     if (nodata is not None
             and np_dtype.kind == 'f'
-            and not np.isnan(float(nodata))):
+            and not np.isnan(float(nodata))
+            and restore_sentinel):
         nan_mask = cupy.isnan(arr)
         if bool(nan_mask.any()):
             arr = arr.copy()
@@ -547,6 +588,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             nodata is not None
             and np_dtype.kind == 'f'
             and not np.isnan(float(nodata))
+            and restore_sentinel
         )
         sentinel_scalar = (
             np_dtype.type(nodata) if rewrite_nodata else None

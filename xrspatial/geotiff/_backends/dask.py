@@ -41,6 +41,7 @@ def read_geotiff_dask(source: str, *,
                       max_pixels: int | None = None,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
+                      band_nodata: str | None = None,
                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
@@ -74,6 +75,11 @@ def read_geotiff_dask(source: str, *,
         directly.
     name : str or None
         Name for the DataArray.
+    band_nodata : {'first', None}, optional
+        VRT-only opt-out for the fail-closed mixed-band-metadata check
+        (issue #1987 PR 5). Forwarded verbatim to ``read_vrt`` when the
+        source is a ``.vrt`` file. Passing it with a non-VRT GeoTIFF
+        source raises ``ValueError``.
     mask_nodata : bool, default True
         If True, replace the nodata sentinel with NaN per chunk (integer
         rasters get promoted to ``float64``). If False, skip the
@@ -114,8 +120,21 @@ def read_geotiff_dask(source: str, *,
         return read_vrt(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
+            allow_rotated=allow_rotated,
+            allow_unparseable_crs=allow_unparseable_crs,
+            band_nodata=band_nodata,
             mask_nodata=mask_nodata,
         )
+    # ``band_nodata`` only has meaning for the VRT path (per-band sentinel
+    # ambiguity). Reject the kwarg up front on non-VRT GeoTIFF inputs so
+    # callers learn the opt-out is being dropped, matching the
+    # ``open_geotiff`` guard. See issue #1987 PR 5.
+    if band_nodata is not None:
+        raise ValueError(
+            "band_nodata only applies to VRT sources. "
+            "Pass a .vrt path to enable the VRT pipeline, or drop "
+            "band_nodata to keep the default GeoTIFF path. "
+            "See issue #1987.")
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
@@ -183,7 +202,8 @@ def read_geotiff_dask(source: str, *,
         # above: ``_read_geo_info`` still lives in ``xrspatial.geotiff``.
         from .. import _read_geo_info
         geo_info, full_h, full_w, file_dtype, n_bands = _read_geo_info(
-            source, overview_level=overview_level)
+            source, overview_level=overview_level,
+            allow_rotated=allow_rotated)
     nodata = geo_info.nodata
     nodata_attr = nodata  # original sentinel preserved for attrs['nodata']
     # When the source is MinIsWhite (photometric == 0, samples_per_pixel == 1),
@@ -410,7 +430,8 @@ def read_geotiff_dask(source: str, *,
                                      band_arg,
                                      target_dtype=target_dtype,
                                      http_meta_key=http_meta_key,
-                                     max_pixels=max_pixels),
+                                     max_pixels=max_pixels,
+                                     allow_rotated=allow_rotated),
                 shape=block_shape,
                 dtype=target_dtype,
             )
@@ -432,7 +453,7 @@ def read_geotiff_dask(source: str, *,
 
 def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                          band, *, target_dtype=None, http_meta_key=None,
-                         max_pixels=None):
+                         max_pixels=None, allow_rotated=False):
     """Dask-delayed function to read a single window.
 
     *http_meta_key* is an optional ``Delayed[(TIFFHeader, IFD)]`` parsed
@@ -488,7 +509,9 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                 _r2a_kwargs['max_pixels'] = max_pixels
             arr, _ = _read_to_array(source, window=(r0, c0, r1, c1),
                                     overview_level=overview_level,
-                                    band=band, **_r2a_kwargs)
+                                    band=band,
+                                    allow_rotated=allow_rotated,
+                                    **_r2a_kwargs)
         if nodata is not None:
             # ``arr`` was just decoded by ``_fetch_decode_cog_http_tiles``
             # or ``read_to_array``; both return freshly-allocated buffers
