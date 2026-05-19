@@ -161,8 +161,15 @@ def read_geotiff_dask(source: str, *,
             from .._reader import _CloudSource
             _src = _CloudSource(source)
         try:
+            # Forward ``allow_rotated`` so the HTTP dask path honours the
+            # rotated opt-in the same way as the eager HTTP path and the
+            # local chunked path (#2130). Without this, rotated remote
+            # GeoTIFFs raised ``NotImplementedError`` from
+            # ``_parse_cog_http_meta`` even when the caller had passed
+            # ``allow_rotated=True``.
             http_header, http_ifd, http_geo, _ = _parse_cog_http_meta(
-                _src, overview_level=overview_level)
+                _src, overview_level=overview_level,
+                allow_rotated=allow_rotated)
         finally:
             _src.close()
         http_meta = (http_header, http_ifd)
