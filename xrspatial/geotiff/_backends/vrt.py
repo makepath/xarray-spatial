@@ -320,6 +320,17 @@ def read_vrt(source: str, *,
     if mask_nodata:
         arr = _vrt_apply_integer_sentinel_mask(arr, vrt, band)
 
+    # Capture pre-cast dtype: ``_vrt._read_data`` NaN-masks float source
+    # arrays (and int sources feeding a float VRT dataType) inline, and
+    # ``_vrt_apply_integer_sentinel_mask`` above promotes int-with-sentinel
+    # to float64 with NaNs written in place. Any of those paths yield a
+    # float pre-cast dtype; an int pre-cast dtype means literal sentinels
+    # are still in the buffer. The optional user dtype cast below may
+    # promote int -> float without masking, so reading dtype after the
+    # cast would falsely claim ``masked_nodata=True`` (issue #2092
+    # follow-up).
+    pre_cast_dtype = np.dtype(str(arr.dtype))
+
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
     # vrt.geo_transform is GDAL ordering, so reorder. For a windowed read
@@ -343,19 +354,9 @@ def read_vrt(source: str, *,
         _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
         arr = arr.astype(target)
 
-    # Record ``nodata`` + ``masked_nodata``. The VRT internal reader
-    # NaN-masks float source arrays inline (see ``_vrt._read_data``)
-    # regardless of the ``mask_nodata`` kwarg, so a float final dtype
-    # really does mean "sentinel pixels are NaN in the buffer." The
-    # ``mask_nodata`` kwarg only gates the integer-sentinel mask
-    # helper that runs above; when it's skipped on an int source the
-    # final dtype stays integer and the rule below correctly reports
-    # False. The dtype-driven rule is therefore still accurate for
-    # this backend; the per-backend explanation is in
-    # ``_set_nodata_attrs`` (#2092).
     _set_nodata_attrs(
         attrs, nodata,
-        masked=(np.dtype(str(arr.dtype)).kind == 'f'),
+        masked=(pre_cast_dtype.kind == 'f'),
     )
 
     if arr.ndim == 3:
@@ -717,12 +718,19 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata_meta = vrt.bands[band_idx_for_nodata].nodata
-    # VRT chunked path: the per-task VRT reader inlines float
-    # NaN-masking unconditionally, so a float graph dtype really does
-    # mean "buffer is NaN-aware." See ``_set_nodata_attrs`` (#2092).
+    # VRT chunked path: the per-task VRT reader NaN-masks float source
+    # arrays inline, and ``declared_dtype`` is promoted to float64 only
+    # when ``mask_nodata`` is on and an integer band has a representable
+    # sentinel (see the ``declared_dtype`` block earlier in this
+    # function). Either way, ``declared_dtype.kind == 'f'`` is the
+    # correct gate for "buffer is NaN-aware." A user-supplied
+    # ``dtype=`` cast happens on top of the lazy graph above (see
+    # ``final_dtype`` block) and must not flip this attr, so we read
+    # the pre-cast ``declared_dtype`` here rather than ``final_dtype``
+    # (#2092 follow-up).
     _set_nodata_attrs(
         attrs, nodata_meta,
-        masked=(final_dtype.kind == 'f'),
+        masked=(declared_dtype.kind == 'f'),
     )
 
     # Static hole detection: mirror the eager-path ``attrs['vrt_holes']``

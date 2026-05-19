@@ -244,32 +244,28 @@ def _should_restore_nan_sentinel(attrs) -> bool:
 def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
 
-    Splits the two meanings previously fused into ``attrs['nodata']``
-    (issue #1988):
+    ``masked`` is the actual mask-decision the read path made: True iff
+    sentinel pixels in the in-memory buffer have been replaced with NaN
+    (or the buffer is NaN-aware as a result of the reader's masking
+    step). False iff the literal sentinel values are still present in
+    the buffer.
+
+    Contract (splits the two meanings previously fused into
+    ``attrs['nodata']`` per issue #1988):
 
     * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
       source dtype. Set whenever the source declared one, regardless of
       whether the array is float-with-NaN or int-with-sentinels.
-    * ``attrs['masked_nodata']`` -- boolean flag. ``True`` iff the
-      reader replaced sentinel pixels with NaN (or the buffer is
-      otherwise NaN-aware as a result of the reader's masking step).
-      ``False`` iff the literal sentinel values are still present in
-      the buffer.
+    * ``attrs['masked_nodata']`` -- the ``masked`` value the caller
+      passed, coerced to bool. Only emitted when ``nodata is not
+      None``; absence of the flag means there is no declared sentinel.
 
-    Callers pass ``masked`` as the actual decision made by the read
-    path. The pre-#2092 implementation inferred this from the final
-    array dtype, which lied when ``mask_nodata=False`` left literal
-    sentinel values in a float buffer; downstream code that trusted
-    the attr treated those literal values as already-NaN. The eager,
-    dask, and GPU paths compute ``masked`` as
-    ``mask_nodata and final_dtype.kind == 'f'``. The VRT path inlines
-    NaN-masking on float sources unconditionally, so it keeps the
-    dtype-driven rule (``final_dtype.kind == 'f'``) which is still
-    accurate for that backend. See issue #2092.
-
-    ``masked_nodata`` is only emitted when ``nodata is not None``.
-    With no declared sentinel, the flag is meaningless and its
-    absence is the signal.
+    Pre-#2092 the helper inferred ``masked`` from the final array
+    dtype, which lied when ``mask_nodata=False`` left literal sentinel
+    values in a float buffer; downstream code that trusted the attr
+    treated those literal values as already-NaN. The eager, dask, GPU,
+    and VRT paths now compute ``masked`` as
+    ``mask_nodata and final_dtype.kind == 'f'``. See issue #2092.
     """
     if nodata is None:
         return

@@ -68,11 +68,13 @@ write.
        ``_resolve_nodata_attr``.
    * - ``masked_nodata``
      - bool
-     - Paired with ``nodata``. ``True`` when the in-memory array is
-       float dtype and the reader's sentinel-to-NaN step ran;
-       ``False`` when the array still carries the literal integer
-       sentinel. Only set when ``nodata`` is set; absence means no
-       declared sentinel.
+     - Paired with ``nodata``. ``True`` when the reader actually
+       replaced sentinel pixels with NaN (so the buffer is NaN-aware);
+       ``False`` when the array still carries the literal sentinel
+       values, including the case where the array is float dtype
+       because the caller passed ``mask_nodata=False`` together with
+       ``dtype=float...``. Only set when ``nodata`` is set; absence
+       means no declared sentinel. See issue #2092.
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;

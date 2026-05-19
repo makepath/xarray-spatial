@@ -119,6 +119,29 @@ def test_eager_int_file_mask_nodata_true_no_match_reports_false(tmp_path):
     assert out.attrs.get('masked_nodata') is False
 
 
+def test_eager_explicit_float_dtype_mask_off_reports_false(tmp_path):
+    """Eager path: int file + mask_nodata=False + dtype=float64.
+    The mask block at __init__.py is gated on ``mask_nodata``, then
+    the explicit ``dtype=`` cast promotes the int buffer to float
+    with literal sentinels still in it. The rule must report False
+    (mask_nodata short-circuits the conjunction). Mirrors the dask
+    edge in test_dask_explicit_float_dtype_mask_off_reports_false."""
+    da = xr.DataArray(
+        np.array([[10, 20, 30], [40, 50, 60]], dtype=np.int16),
+        coords={'y': np.array([0.5, 1.5]), 'x': np.array([0.5, 1.5, 2.5])},
+        dims=('y', 'x'),
+        attrs={'nodata': 30},
+    )
+    path = str(tmp_path / "tmp_2092_eager_int_to_float_unmasked.tif")
+    to_geotiff(da, path)
+
+    out = open_geotiff(path, mask_nodata=False, dtype=np.float64)
+    assert out.dtype == np.float64
+    assert out.attrs.get('masked_nodata') is False
+    # The literal 30 is still in the float buffer (cast, not masked).
+    assert 30.0 in out.values
+
+
 # --- Dask path ----------------------------------------------------------
 
 
@@ -236,6 +259,27 @@ def test_vrt_int_source_mask_nodata_true_reports_true(tmp_path):
         f"expected float64 promotion, got {out.dtype}")
     assert out.attrs.get('masked_nodata') is True
     assert np.isnan(out.values).sum() == 1  # the lone 30 cell
+
+
+def test_vrt_int_source_mask_off_with_float_cast_reports_false(tmp_path):
+    """VRT int source + mask_nodata=False + dtype=float64 cast.
+
+    Initial PR landed a dtype-only VRT rule (``arr.dtype.kind == 'f'``)
+    which mis-claimed ``masked_nodata=True`` here -- the integer mask
+    helper is skipped under ``mask_nodata=False``, then the explicit
+    dtype cast promotes the int buffer to float64 with literal
+    sentinels still in it. The fix reads the pre-cast dtype, so
+    pre_cast is int and the attr is False. Pins the follow-up fix."""
+    vrt = _write_int_vrt(
+        tmp_path,
+        "tmp_2092_vrt_src_cast.tif",
+        "tmp_2092_vrt_unmasked_cast.vrt",
+    )
+    out = open_geotiff(vrt, mask_nodata=False, dtype=np.float64)
+    assert out.dtype == np.float64
+    assert out.attrs.get('masked_nodata') is False
+    # The literal 30 is still in the float buffer (cast, not masked).
+    assert 30.0 in out.values
 
 
 # --- GPU path -----------------------------------------------------------
