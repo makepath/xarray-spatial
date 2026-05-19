@@ -2658,7 +2658,6 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
         return None
 
     import ctypes
-    import cupy
 
     n_tiles = len(compressed_tiles)
     bytes_per_pixel = dtype.itemsize * samples
@@ -2738,6 +2737,11 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
         # default-stream serialisation that defeats nvJPEG2000's internal
         # pipelining. One pool allocation + one trailing sync removes both
         # costs without changing the output layout. See issue #2107.
+        # Defer the cupy import until past the dtype guard so a CPU-only
+        # host that exercises the early-return branches (lib missing or
+        # unsupported dtype) does not need cupy installed (#2110 CI fix).
+        import cupy
+
         pitch = tile_width * dtype.itemsize
         per_tile_comp_bytes = samples * tile_height * pitch
         _check_gpu_memory(n_tiles * per_tile_comp_bytes,
