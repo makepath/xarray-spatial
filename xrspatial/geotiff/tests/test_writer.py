@@ -100,5 +100,10 @@ class TestWriteRoundTrip:
 class TestWriteInvalidInput:
     def test_unsupported_compression(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
-        with pytest.raises(ValueError, match="Unsupported compression"):
+        # Issue #2138 pushed the canonical compression-list check from
+        # ``to_geotiff`` down into ``_write`` so direct callers get the
+        # same actionable error as the public wrapper. The wording
+        # shifted from ``_compression_tag``'s "Unsupported compression"
+        # to the wrapper's "Unknown compression" + canonical list.
+        with pytest.raises(ValueError, match="(Unsupported|Unknown) compression"):
             write(arr, str(tmp_path / 'bad.tif'), compression='bzip2')

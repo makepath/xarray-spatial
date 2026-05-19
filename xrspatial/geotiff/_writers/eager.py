@@ -668,6 +668,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 max_z_error=max_z_error,
                 photometric=photometric,
                 restore_sentinel=restore_sentinel,
+                # ``to_geotiff`` ran the JPEG opt-in and the CRS
+                # fallback gates upstream; forwarding the kwargs lets
+                # ``_write_streaming``'s push-down check stay aligned
+                # rather than rejecting input the wrapper accepted.
+                # Issue #2138.
+                allow_internal_only_jpeg=allow_internal_only_jpeg,
+                allow_unparseable_crs=allow_unparseable_crs,
             )
             return path
 
@@ -756,6 +763,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         max_z_error=max_z_error,
         photometric=photometric,
         restore_sentinel=restore_sentinel,
+        # ``to_geotiff`` ran the JPEG opt-in and the CRS fallback
+        # gates upstream; forwarding the kwargs keeps ``_write``'s
+        # push-down check from rejecting input the wrapper accepted.
+        # Issue #2138.
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
+        allow_unparseable_crs=allow_unparseable_crs,
     )
     return path
 

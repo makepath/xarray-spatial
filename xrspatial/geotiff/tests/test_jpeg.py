@@ -77,7 +77,8 @@ class TestJpegWriteRoundTrip:
         rng = np.random.RandomState(1050)
         expected = rng.randint(50, 200, (32, 32), dtype=np.uint8)
         path = str(tmp_path / 'gray_1050_tiled.tif')
-        write(expected, path, compression='jpeg', tiled=True, tile_size=16)
+        write(expected, path, compression='jpeg', tiled=True, tile_size=16,
+              allow_internal_only_jpeg=True)
 
         arr, geo = read_to_array(path)
         assert arr.shape == expected.shape
@@ -89,7 +90,8 @@ class TestJpegWriteRoundTrip:
         rng = np.random.RandomState(1050)
         expected = rng.randint(50, 200, (32, 32), dtype=np.uint8)
         path = str(tmp_path / 'gray_1050_stripped.tif')
-        write(expected, path, compression='jpeg', tiled=False)
+        write(expected, path, compression='jpeg', tiled=False,
+              allow_internal_only_jpeg=True)
 
         arr, geo = read_to_array(path)
         assert arr.shape == expected.shape
@@ -104,7 +106,8 @@ class TestJpegWriteRoundTrip:
         b = np.full((32, 32), 128, dtype=np.uint8)
         expected = np.stack([r, g, b], axis=2)
         path = str(tmp_path / 'rgb_1050_tiled.tif')
-        write(expected, path, compression='jpeg', tiled=True, tile_size=16)
+        write(expected, path, compression='jpeg', tiled=True, tile_size=16,
+              allow_internal_only_jpeg=True)
 
         arr, geo = read_to_array(path)
         assert arr.shape == expected.shape
@@ -118,19 +121,22 @@ class TestJpegValidation:
         arr = np.zeros((8, 8), dtype=np.float32)
         path = str(tmp_path / 'bad_1050.tif')
         with pytest.raises(ValueError, match="uint8"):
-            write(arr, path, compression='jpeg')
+            write(arr, path, compression='jpeg',
+                  allow_internal_only_jpeg=True)
 
     def test_uint16_data_rejected(self, tmp_path):
         arr = np.zeros((8, 8), dtype=np.uint16)
         path = str(tmp_path / 'bad16_1050.tif')
         with pytest.raises(ValueError, match="uint8"):
-            write(arr, path, compression='jpeg')
+            write(arr, path, compression='jpeg',
+                  allow_internal_only_jpeg=True)
 
     def test_4band_rejected(self, tmp_path):
         arr = np.zeros((8, 8, 4), dtype=np.uint8)
         path = str(tmp_path / 'bad4b_1050.tif')
         with pytest.raises(ValueError, match="1 or 3 bands"):
-            write(arr, path, compression='jpeg')
+            write(arr, path, compression='jpeg',
+                  allow_internal_only_jpeg=True)
 
 
 class TestWriteGeotiffJpeg:
