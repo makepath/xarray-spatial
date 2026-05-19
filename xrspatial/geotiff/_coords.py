@@ -36,6 +36,47 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_POINT
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 
+def _is_no_georef_sentinel(coord: np.ndarray) -> bool:
+    """True iff ``coord`` matches the read-side no-georef placeholder.
+
+    ``coords_from_pixel_geometry`` emits ``np.arange(start, stop,
+    dtype=np.int64)`` for the y/x coords whenever the source file
+    carries no GeoTIFF transform tags -- both for full reads
+    (``start=0``) and windowed reads (``start=window_offset``). See
+    issues #1710, #1753, #1949. Round-tripping such an array through
+    ``to_geotiff`` should not invent a synthetic unit transform, so
+    the writer's transform-inference code paths skip it.
+
+    The pre-#2087 check was ``dtype.kind in ('i', 'u')`` on either
+    axis, which also caught user-authored projected grids with
+    integer-spaced coords (e.g. ``x=[100, 101, 102]``,
+    ``y=[200, 199]``). Those were silently stripped of georef on
+    write -- the file landed on disk with no transform tags and read
+    back as pixel coords. This helper tightens the match to the
+    exact pattern the reader emits: ``int64`` dtype, ascending,
+    contiguous step ``+1``, starting at an arbitrary integer
+    (windowed reads do not start at 0). A descending or
+    non-unit-step int array does not match, so the writer falls
+    through to the normal ``coords_to_transform`` path and either
+    synthesises a real transform or raises ``NonUniformCoordsError``.
+
+    Trade-off: a user-authored array whose coords happen to match
+    the read-side ``arange`` pattern exactly (e.g. ascending step-1
+    int64 starting at any integer, with no ``attrs['transform']``
+    set) is still treated as no-georef. Callers in that niche can
+    write a real transform by setting ``attrs['transform']``
+    explicitly or by using float coords.
+    """
+    if coord.dtype != np.int64:
+        return False
+    n = len(coord)
+    if n < 1:
+        return False
+    return bool(np.array_equal(
+        coord, np.arange(coord[0], coord[0] + n, dtype=np.int64)
+    ))
+
+
 def coords_from_pixel_geometry(
     origin_x: float,
     origin_y: float,
@@ -264,12 +305,18 @@ def require_transform_for_georeferenced(
     if xdim in da.coords and ydim in da.coords:
         x = da.coords[xdim].values
         y = da.coords[ydim].values
-        # Integer coord dtype is the read-side no-georef sentinel
-        # (#1710, #1753, #1949). ``coords_to_transform`` returns ``None``
-        # for these so int-coord arrays round-trip cleanly without a
-        # synthetic unit transform; mirror that here so the writer does
-        # not fail-close on a legitimate no-georef write.
-        if x.dtype.kind in ('i', 'u') or y.dtype.kind in ('i', 'u'):
+        # The read-side no-georef sentinel is ``np.arange(start, stop,
+        # dtype=int64)`` on both axes (#1710, #1753, #1949). When both
+        # axes match that shape, ``coords_to_transform`` returns
+        # ``None`` and the array round-trips cleanly without a fake
+        # unit transform; mirror that here so the validator doesn't
+        # fail-close on a legitimate no-georef write. A
+        # user-authored integer-coord grid that does *not* match the
+        # sentinel (e.g. ``x=[100,101,102], y=[200,199]``) falls
+        # through to the raise below and the caller has to either
+        # supply ``attrs['transform']`` or accept the
+        # ``coords_to_transform`` path (#2087).
+        if _is_no_georef_sentinel(x) and _is_no_georef_sentinel(y):
             return
         raise ValueError(
             f"Cannot infer GeoTIFF transform from a "
@@ -301,10 +348,14 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     helper must handle both layouts to keep the geo-transform consistent
     with the file's coord arrays. See issue #1643.
 
-    Integer-dtype x/y coords are treated as a no-georef sentinel and
-    return ``None`` before the uniformity check runs; this is
-    intentional so the read-side ``np.arange`` placeholder round-trips
-    without inventing a fake unit transform (see issue #1949).
+    Coords matching the read-side no-georef placeholder
+    (``np.arange(start, stop, dtype=int64)`` on both axes) return
+    ``None`` before the uniformity check runs; this is intentional
+    so the placeholder round-trips without inventing a fake unit
+    transform (#1949). The check was tightened in #2087 from "any
+    integer dtype" to the exact ``arange`` pattern because the
+    broader check was silently stripping georef from user-authored
+    integer-coord projected grids.
     """
     if da.ndim == 3:
         # Drop the band-like dim and keep the two spatial dims in their
@@ -336,21 +387,29 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     if len(x) < 2 and len(y) < 2:
         return None
 
-    # Integer coord dtype is the read-side no-georef signal: the
-    # ``has_georef=False`` branch in ``coords_from_pixel_geometry``
-    # emits ``np.arange(N, dtype=np.int64)`` for files without GeoTIFF
-    # transform tags (#1710, #1753). Synthesising a GeoTransform from
-    # those ``[0, 1, 2, ...]`` arrays would inject a fake unit transform
-    # (``origin=-0.5, pixel_width=1.0``) into the written file's
-    # ModelPixelScale / ModelTiepoint tags. The next read then takes
-    # the georef branch and the coord dtype silently flips to
-    # ``float64`` with ``attrs['transform']`` present, breaking the
-    # no-georef contract that downstream code branches on. See issue
-    # #1949. Float coord arrays still produce a GeoTransform (the
-    # canonical georef path), and an explicit ``attrs['transform']``
-    # bypasses this helper entirely so callers can still write a
-    # transform alongside int coords by setting the attr.
-    if x.dtype.kind in ('i', 'u') or y.dtype.kind in ('i', 'u'):
+    # No-georef sentinel: the ``has_georef=False`` branch in
+    # ``coords_from_pixel_geometry`` emits
+    # ``np.arange(start, stop, dtype=np.int64)`` for files without
+    # GeoTIFF transform tags (#1710, #1753). Synthesising a
+    # GeoTransform from those arrays would inject a fake unit
+    # transform (``pixel_width=1.0``, origin derived from
+    # ``coord[0]``) into the written file's ModelPixelScale /
+    # ModelTiepoint tags. The next read then takes the georef branch
+    # and the coord dtype silently flips to ``float64`` with
+    # ``attrs['transform']`` present, breaking the no-georef
+    # contract that downstream code branches on (#1949).
+    #
+    # The check used to be ``dtype.kind in ('i', 'u')`` on either
+    # axis, which was too broad: user-authored projected grids with
+    # integer-spaced coords (e.g. ``x=[100, 101, 102]``,
+    # ``y=[200, 199]``) matched the sentinel and lost their georef
+    # silently on write. The tightened check accepts only the exact
+    # shape the reader emits (``int64``, ascending, contiguous step
+    # ``+1`` on both axes). Anything else falls through here and
+    # gets a real transform synthesised below, or raises
+    # ``NonUniformCoordsError`` if the spacing is irregular. See
+    # issue #2087.
+    if _is_no_georef_sentinel(x) and _is_no_georef_sentinel(y):
         return None
 
     # GeoTIFF only supports an affine transform; non-uniform spacing
