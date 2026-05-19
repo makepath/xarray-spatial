@@ -7,6 +7,7 @@ under ``on_gpu_failure='auto'``.
 """
 from __future__ import annotations
 
+import numbers
 import warnings
 from typing import TYPE_CHECKING
 
@@ -82,12 +83,13 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         the auto-dispatch path through ``to_geotiff(gpu=True, cog=True)``
         rejects file-like destinations, and the explicit GPU writer
         mirrors that rule (issue #1652).
-    crs : int, str, or None
-        EPSG code or WKT string. EPSG codes are strongly preferred for
-        interop; the WKT-only path emits a user-defined CRS (32767) with
-        the WKT stored in ``GTCitationGeoKey``, which many non-libgeotiff
-        readers ignore. A ``UserWarning`` is emitted when the WKT-only
-        path is taken. See issue #1768.
+    crs : int, numpy.integer, str, or None
+        EPSG code (int or numpy integer scalar) or WKT string. EPSG
+        codes are strongly preferred for interop; the WKT-only path
+        emits a user-defined CRS (32767) with the WKT stored in
+        ``GTCitationGeoKey``, which many non-libgeotiff readers
+        ignore. A ``UserWarning`` is emitted when the WKT-only path
+        is taken. See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str
@@ -349,9 +351,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     y_res = None
     res_unit = None
 
+    # ``numbers.Integral`` covers numpy integer scalars (``np.int32``,
+    # ``np.int64``) so they hit the EPSG branch instead of falling
+    # through to ``epsg=None``. Validator already rejects bool.
     _validate_crs_arg(crs)
-    if isinstance(crs, int):
-        epsg = crs
+    if isinstance(crs, numbers.Integral):
+        epsg = int(crs)
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)
         if epsg is None:

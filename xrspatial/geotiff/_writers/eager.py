@@ -10,6 +10,7 @@ output or a ``.vrt`` path.
 """
 from __future__ import annotations
 
+import numbers
 import os
 import warnings
 from typing import TYPE_CHECKING
@@ -95,10 +96,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (e.g. ``io.BytesIO``). When a file-like is passed, the encoded
         TIFF bytes are written to that object once assembly completes.
         ``cog=True`` and ``.vrt`` outputs require a string path.
-    crs : int, str, or None
-        EPSG code (int), WKT string, or PROJ string. If None and data
-        is a DataArray, tries to read from attrs ('crs' for EPSG,
-        'crs_wkt' for WKT).
+    crs : int, numpy.integer, str, or None
+        EPSG code (int or numpy integer scalar), WKT string, or PROJ
+        string. If None and data is a DataArray, tries to read from
+        attrs ('crs' for EPSG, 'crs_wkt' for WKT).
 
         EPSG codes are strongly preferred for interop. The WKT-only
         path writes ``ProjectedCSType`` / ``GeographicType`` = 32767
@@ -541,10 +542,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # so they keep the pre-#1988 NaN->sentinel rewrite.
     restore_sentinel = True
 
-    # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ)
+    # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ).
+    # ``numbers.Integral`` covers plain ``int`` and numpy integer scalars
+    # (``np.int32``, ``np.int64``); ``_validate_crs_arg`` already rejects
+    # bool. Coerce to plain ``int`` so downstream ``epsg`` is a real int.
     _validate_crs_arg(crs)
-    if isinstance(crs, int):
-        epsg = crs
+    if isinstance(crs, numbers.Integral):
+        epsg = int(crs)
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)  # try to extract EPSG from WKT/PROJ
         if epsg is None:
@@ -882,12 +886,15 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
             f"Tiles directory already contains files: {tiles_dir}")
     os.makedirs(tiles_dir, exist_ok=True)
 
-    # Resolve CRS
+    # Resolve CRS. ``numbers.Integral`` covers numpy integer scalars
+    # (``np.int32``, ``np.int64``) so ``crs=np.int64(4326)`` does not
+    # silently fall through to ``epsg=None``. Validator already
+    # rejects bool.
     _validate_crs_arg(crs)
     epsg = None
     wkt_fallback = None
-    if isinstance(crs, int):
-        epsg = crs
+    if isinstance(crs, numbers.Integral):
+        epsg = int(crs)
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)
         if epsg is None:
