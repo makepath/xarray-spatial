@@ -215,14 +215,29 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         raise TypeError(
             "source must be a str path or binary file-like, "
             f"got {type(source).__name__}")
+    sidecar = None
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
         if not ifds:
             raise ValueError("No IFDs found in TIFF file")
+        # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list
+        # so ``overview_level`` indexes both internal and external
+        # overviews (issue #2112). Local file paths only.
+        from ._sidecar import (
+            attach_sidecar_origin, find_sidecar, load_sidecar,
+        )
+        sidecar_path = find_sidecar(source)
+        if sidecar_path is not None:
+            sidecar = load_sidecar(sidecar_path)
+            attach_sidecar_origin(
+                sidecar.ifds, sidecar.data, sidecar.header)
+            ifds = ifds + sidecar.ifds
         ifd = select_overview_ifd(ifds, overview_level)
         # Inherit georef from the level-0 IFD when the overview itself
-        # has no geokeys (issue #1640). Pass-through for level 0.
+        # has no geokeys (issue #1640). Pass-through for level 0. The
+        # sidecar IFDs typically lack geokeys so the inheritance pulls
+        # from the base file's full-resolution IFD as GDAL does.
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
@@ -238,6 +253,11 @@ def _read_geo_info(source, *, overview_level: int | None = None):
     finally:
         if close_data:
             data.close()
+        if sidecar is not None:
+            try:
+                sidecar.data.close()
+            except Exception:
+                pass
 
 
 def open_geotiff(source: str | BinaryIO, *,
