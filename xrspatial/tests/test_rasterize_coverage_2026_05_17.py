@@ -16,8 +16,9 @@ test-coverage sweep on 2026-05-17:
   and the ceil-and-clamp-to-1 logic have no positive coverage on any
   backend.
 - Cat 4 HIGH  -- Non-empty ``GeometryCollection`` unpacking is
-  implemented by ``_classify_geometries_loop`` but only the empty-GC
-  case is tested.  All four backends route through this path.
+  implemented by the GeometryCollection slow path in
+  ``_classify_geometries`` but only the empty-GC case is tested.
+  All four backends route through this path.
 - Cat 1 MEDIUM -- eager cupy ``all_touched=True`` is covered only on the
   dask+cupy path; the eager cupy branch invokes a different kernel and
   had no direct test.
@@ -406,12 +407,12 @@ class TestGeometryCollection:
     """Non-empty GeometryCollections should be recursively unpacked.
 
     rasterize.py:1995 documents: "GeometryCollection -- recursively
-    unpacked".  The fast-path classifier (``_classify_geometries_vectorized``)
-    falls through to ``_classify_geometries_loop`` whenever any element is
-    a GeometryCollection (line 199), so this path has its own polygon /
-    line / point sub-bucketing logic that test_rasterize.py only
-    exercises with empty collections (test_unsupported_geom_type_skipped
-    at line 269).  A regression in the loop classifier (dropping a
+    unpacked".  The fast-path classifier in ``_classify_geometries``
+    falls through to the per-geometry GC slow path whenever any element
+    is a GeometryCollection, so this path has its own polygon / line /
+    point sub-bucketing logic that test_rasterize.py only exercises
+    with empty collections (test_unsupported_geom_type_skipped at
+    line 269).  A regression in the slow-path classifier (dropping a
     geometry type, mis-counting indices) would ship undetected.
     """
 

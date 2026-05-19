@@ -15,6 +15,7 @@ import warnings
 from typing import Optional, Tuple, Union
 
 import numpy as np
+import shapely
 import xarray as xr
 
 from xrspatial.utils import ngjit
@@ -28,13 +29,6 @@ try:
     import cuspatial  # noqa: F401  -- reserved for future GPU geometry parsing
 except ImportError:
     cuspatial = None
-
-# Detect shapely 2.0+ for vectorized extraction
-try:
-    import shapely as _shapely_mod
-    _HAS_SHAPELY2 = hasattr(_shapely_mod, 'get_parts')
-except ImportError:
-    _HAS_SHAPELY2 = False
 
 
 # ---------------------------------------------------------------------------
@@ -184,11 +178,16 @@ def _apply_merge(out, written, order, r, c, props, new_idx,
 def _classify_geometries(geometries, props_array):
     """Classify geometries by type in a single pass.
 
+    Two internal paths: a vectorized fast path that uses shapely 2.0
+    array ops (``get_type_id`` / ``is_empty``) for the common case of
+    no ``GeometryCollection`` inputs, and a recursive slow path that
+    unpacks nested collections so their contents are rasterized rather
+    than silently dropped. The slow path runs only when at least one
+    input is a ``GeometryCollection``; both paths produce identical
+    output shapes.
+
     Also tracks each polygon's input index so the scanline fill can
     process geometries in input order (needed for first/last merge).
-
-    GeometryCollections are recursively unpacked so their contents are
-    rasterized rather than silently dropped.
 
     Parameters
     ----------
@@ -207,15 +206,6 @@ def _classify_geometries(geometries, props_array):
     index back to the original input position.  The global index is what
     decides ordered merges (`first`, `last`) across geometry types.
     """
-    if _HAS_SHAPELY2:
-        return _classify_geometries_vectorized(geometries, props_array)
-    return _classify_geometries_loop(geometries, props_array)
-
-
-def _classify_geometries_vectorized(geometries, props_array):
-    """Vectorized classification using shapely 2.0 array ops."""
-    import shapely
-
     n_props = props_array.shape[1] if props_array.ndim == 2 else 1
     geom_arr = np.array(geometries, dtype=object)
     n = len(geom_arr)
@@ -240,10 +230,8 @@ def _classify_geometries_vectorized(geometries, props_array):
     point_mask = valid & ((type_ids == 0) | (type_ids == 4))
     gc_mask = valid & (type_ids == 7)
 
-    has_gc = np.any(gc_mask)
-
     # Fast path: no GeometryCollections (common case)
-    if not has_gc:
+    if not np.any(gc_mask):
         poly_idx = np.where(poly_mask)[0]
         line_idx = np.where(line_mask)[0]
         point_idx = np.where(point_mask)[0]
@@ -268,30 +256,25 @@ def _classify_geometries_vectorized(geometries, props_array):
                 (line_geoms, line_props, line_global),
                 (point_geoms, point_props, point_global))
 
-    # Slow path: unpack GeometryCollections, then classify
-    return _classify_geometries_loop(geometries, props_array)
-
-
-def _classify_geometries_loop(geometries, props_array):
-    """Per-object classification fallback (handles GeometryCollections)."""
-    n_props = props_array.shape[1] if props_array.ndim == 2 else 1
+    # Slow path: recursively unpack GeometryCollections before classifying.
+    # Only taken when at least one input is a GeometryCollection.
     poly_geoms, poly_prop_rows, poly_ids = [], [], []
     poly_global, line_global, point_global = [], [], []
     line_geoms, line_prop_rows = [], []
     point_geoms, point_prop_rows = [], []
-
-    poly_counter = [0]
+    poly_counter = 0
 
     def _classify_one(geom, prop_row, global_idx):
+        nonlocal poly_counter
         if geom is None or geom.is_empty:
             return
         gt = geom.geom_type
         if gt in ('Polygon', 'MultiPolygon'):
             poly_geoms.append(geom)
             poly_prop_rows.append(prop_row)
-            poly_ids.append(poly_counter[0])
+            poly_ids.append(poly_counter)
             poly_global.append(global_idx)
-            poly_counter[0] += 1
+            poly_counter += 1
         elif gt in ('LineString', 'MultiLineString'):
             line_geoms.append(geom)
             line_prop_rows.append(prop_row)
@@ -341,18 +324,13 @@ def _extract_edges(geometries, geom_ids, bounds, height, width,
     """
     if not geometries:
         return _EMPTY_EDGES
-    if _HAS_SHAPELY2:
-        return _extract_edges_vectorized(
-            geometries, geom_ids, bounds, height, width, all_touched)
-    return _extract_edges_loop(
+    return _extract_edges_vectorized(
         geometries, geom_ids, bounds, height, width, all_touched)
 
 
 def _extract_edges_vectorized(geometries, geom_ids, bounds,
                               height, width, all_touched):
     """Vectorized edge extraction using shapely 2.0 array ops."""
-    import shapely
-
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -450,85 +428,6 @@ def _extract_edges_vectorized(geometries, geom_ids, bounds,
             edge_ids[valid])
 
 
-def _extract_edges_loop(geometries, geom_ids, bounds, height, width,
-                        all_touched):
-    """Loop-based edge extraction (shapely < 2.0 fallback).
-
-    Pre-allocates output arrays sized to the total vertex count (an upper
-    bound on edge count) to avoid per-edge Python list appends and
-    np.int32() scalar wrapping overhead.
-    """
-    xmin, ymin, xmax, ymax = bounds
-    px = (xmax - xmin) / width
-    py = (ymax - ymin) / height
-
-    # Upper bound: each ring vertex pair can produce at most one edge.
-    # Sum of (len(ring.coords) - 1) across all rings.
-    est = 0
-    ring_data = []  # (coords_array, gid) pairs
-    for geom, gid in zip(geometries, geom_ids):
-        if geom is None or geom.is_empty:
-            continue
-        if geom.geom_type == 'Polygon':
-            parts = [geom]
-        elif geom.geom_type == 'MultiPolygon':
-            parts = list(geom.geoms)
-        else:
-            continue
-        for poly in parts:
-            rings = [poly.exterior] + list(poly.interiors)
-            for ring in rings:
-                coords = np.asarray(ring.coords)
-                n = len(coords) - 1
-                if n > 0:
-                    ring_data.append((coords, gid))
-                    est += n
-
-    if est == 0:
-        return _EMPTY_EDGES
-
-    # Pre-allocate arrays
-    buf_ymin = np.empty(est, dtype=np.int32)
-    buf_ymax = np.empty(est, dtype=np.int32)
-    buf_xmin = np.empty(est, dtype=np.float64)
-    buf_inv = np.empty(est, dtype=np.float64)
-    buf_gid = np.empty(est, dtype=np.int32)
-    pos = 0
-
-    for coords, gid in ring_data:
-        row = (ymax - coords[:, 1]) / py - 0.5
-        col = (coords[:, 0] - xmin) / px - 0.5
-        n = len(row) - 1
-        for i in range(n):
-            r0, c0 = row[i], col[i]
-            r1, c1 = row[i + 1], col[i + 1]
-            if r0 == r1:
-                continue
-            if r0 > r1:
-                r0, c0, r1, c1 = r1, c1, r0, c0
-            if all_touched:
-                ry_min = max(int(np.floor(r0 - 0.5)), 0)
-                ry_max = min(int(np.ceil(r1 + 0.5)) - 1, height - 1)
-            else:
-                ry_min = max(int(np.ceil(r0)), 0)
-                ry_max = min(int(np.ceil(r1)) - 1, height - 1)
-            if ry_min > ry_max:
-                continue
-            inv_slope = (c1 - c0) / (r1 - r0)
-            buf_ymin[pos] = ry_min
-            buf_ymax[pos] = ry_max
-            buf_xmin[pos] = c0 + (ry_min - r0) * inv_slope
-            buf_inv[pos] = inv_slope
-            buf_gid[pos] = gid
-            pos += 1
-
-    if pos == 0:
-        return _EMPTY_EDGES
-
-    return (buf_ymin[:pos], buf_ymax[:pos], buf_xmin[:pos],
-            buf_inv[:pos], buf_gid[:pos])
-
-
 def _sort_edges(edge_arrays):
     """Sort edge table by y_min for scanline early termination."""
     if len(edge_arrays[0]) == 0:
@@ -550,17 +449,12 @@ def _extract_points(geometries, bounds, height, width):
     if not geometries:
         return (np.empty(0, np.int32), np.empty(0, np.int32),
                 np.empty(0, np.int32))
-    if _HAS_SHAPELY2:
-        return _extract_points_vectorized(
-            geometries, bounds, height, width)
-    return _extract_points_loop(
+    return _extract_points_vectorized(
         geometries, bounds, height, width)
 
 
 def _extract_points_vectorized(geometries, bounds, height, width):
     """Vectorized point extraction using shapely 2.0 array ops."""
-    import shapely
-
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -588,39 +482,6 @@ def _extract_points_vectorized(geometries, bounds, height, width):
     return (rows[valid], cols[valid], pt_geom_idx[valid])
 
 
-def _extract_points_loop(geometries, bounds, height, width):
-    """Loop-based point extraction (shapely < 2.0 fallback)."""
-    xmin, ymin, xmax, ymax = bounds
-    px = (xmax - xmin) / width
-    py = (ymax - ymin) / height
-
-    all_rows, all_cols, all_idx = [], [], []
-
-    for gi, geom in enumerate(geometries):
-        if geom is None or geom.is_empty:
-            continue
-        if geom.geom_type == 'Point':
-            pts = [geom]
-        elif geom.geom_type == 'MultiPoint':
-            pts = list(geom.geoms)
-        else:
-            continue
-        for pt in pts:
-            col = int(np.floor((pt.x - xmin) / px))
-            row = int(np.floor((ymax - pt.y) / py))
-            if 0 <= row < height and 0 <= col < width:
-                all_rows.append(row)
-                all_cols.append(col)
-                all_idx.append(gi)
-
-    if not all_rows:
-        return (np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.int32))
-    return (np.array(all_rows, np.int32),
-            np.array(all_cols, np.int32),
-            np.array(all_idx, np.int32))
-
-
 # ---------------------------------------------------------------------------
 # Line segment extraction (always on host)
 # ---------------------------------------------------------------------------
@@ -641,49 +502,12 @@ def _extract_line_segments(geometries, bounds, height, width):
     """
     if not geometries:
         return _EMPTY_LINES
-    if _HAS_SHAPELY2:
-        return _extract_lines_vectorized(
-            geometries, bounds, height, width)
-    return _extract_lines_loop(
+    return _extract_lines_vectorized(
         geometries, bounds, height, width)
-
-
-def _liang_barsky_clip(x0, y0, x1, y1, xmin, ymin, xmax, ymax):
-    """Liang-Barsky line clipping.  Returns clipped (x0,y0,x1,y1) or None."""
-    dx = x1 - x0
-    dy = y1 - y0
-    p = np.array([-dx, dx, -dy, dy])
-    q = np.array([x0 - xmin, xmax - x0, y0 - ymin, ymax - y0])
-
-    t0, t1 = 0.0, 1.0
-    for i in range(4):
-        if p[i] == 0.0:
-            if q[i] < 0.0:
-                return None
-        elif p[i] < 0.0:
-            t = q[i] / p[i]
-            if t > t1:
-                return None
-            if t > t0:
-                t0 = t
-        else:
-            t = q[i] / p[i]
-            if t < t0:
-                return None
-            if t < t1:
-                t1 = t
-
-    cx0 = x0 + t0 * dx
-    cy0 = y0 + t0 * dy
-    cx1 = x0 + t1 * dx
-    cy1 = y0 + t1 * dy
-    return cx0, cy0, cx1, cy1
 
 
 def _extract_lines_vectorized(geometries, bounds, height, width):
     """Vectorized line extraction with Liang-Barsky clipping."""
-    import shapely
-
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -772,50 +596,6 @@ def _extract_lines_vectorized(geometries, bounds, height, width):
 
     v = valid
     return (r0[v], c0[v], r1[v], c1[v], seg_geom_idx[v])
-
-
-def _extract_lines_loop(geometries, bounds, height, width):
-    """Loop-based line extraction with Liang-Barsky clipping (fallback)."""
-    xmin, ymin, xmax, ymax = bounds
-    px = (xmax - xmin) / width
-    py = (ymax - ymin) / height
-
-    all_r0, all_c0, all_r1, all_c1, all_idx = [], [], [], [], []
-
-    for gi, geom in enumerate(geometries):
-        if geom is None or geom.is_empty:
-            continue
-        if geom.geom_type == 'LineString':
-            lines = [geom]
-        elif geom.geom_type == 'MultiLineString':
-            lines = list(geom.geoms)
-        else:
-            continue
-        for line in lines:
-            coords = np.asarray(line.coords)
-            for i in range(len(coords) - 1):
-                clipped = _liang_barsky_clip(
-                    coords[i, 0], coords[i, 1],
-                    coords[i + 1, 0], coords[i + 1, 1],
-                    xmin, ymin, xmax, ymax)
-                if clipped is None:
-                    continue
-                cx0, cy0, cx1, cy1 = clipped
-                r0 = min(max(int(np.floor((ymax - cy0) / py)), 0), height - 1)
-                c0 = min(max(int(np.floor((cx0 - xmin) / px)), 0), width - 1)
-                r1 = min(max(int(np.floor((ymax - cy1) / py)), 0), height - 1)
-                c1 = min(max(int(np.floor((cx1 - xmin) / px)), 0), width - 1)
-                all_r0.append(r0)
-                all_c0.append(c0)
-                all_r1.append(r1)
-                all_c1.append(c1)
-                all_idx.append(gi)
-
-    if not all_r0:
-        return _EMPTY_LINES
-    return (np.array(all_r0, np.int32), np.array(all_c0, np.int32),
-            np.array(all_r1, np.int32), np.array(all_c1, np.int32),
-            np.array(all_idx, np.int32))
 
 
 # ---------------------------------------------------------------------------
@@ -1575,10 +1355,7 @@ def _geometry_bboxes(geometries):
     """Return (N, 4) float64 array of [xmin, ymin, xmax, ymax] per geometry."""
     if len(geometries) == 0:
         return np.empty((0, 4), dtype=np.float64)
-    if _HAS_SHAPELY2:
-        import shapely
-        return shapely.bounds(np.asarray(geometries, dtype=object))
-    return np.array([g.bounds for g in geometries], dtype=np.float64)
+    return shapely.bounds(np.asarray(geometries, dtype=object))
 
 
 def _tile_grid(bounds, height, width, row_chunks, col_chunks):
@@ -1745,16 +1522,12 @@ def _polys_to_wkb(geoms):
     """Pre-serialize polygon geometries to WKB for cheap pickling."""
     if not geoms:
         return []
-    if _HAS_SHAPELY2:
-        import shapely
-        return shapely.to_wkb(np.asarray(geoms, dtype=object)).tolist()
-    return [g.wkb for g in geoms]
+    return shapely.to_wkb(np.asarray(geoms, dtype=object)).tolist()
 
 
 def _polys_from_wkb(wkb_list):
     """Deserialize WKB back to shapely geometries."""
-    from shapely import from_wkb
-    geoms = from_wkb(wkb_list)
+    geoms = shapely.from_wkb(wkb_list)
     if not isinstance(geoms, (list, np.ndarray)):
         geoms = [geoms]
     return list(geoms)
