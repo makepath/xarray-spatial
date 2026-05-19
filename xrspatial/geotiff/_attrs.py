@@ -30,13 +30,18 @@ split changes in a future release.
 
 Canonical (xrspatial owns these; round-trip stable):
 
-- ``crs``: EPSG integer code for the horizontal CRS.
+- ``crs``: EPSG integer code for the horizontal CRS. Dropped on rotated
+  reads opened with ``allow_rotated=True`` (issue #2122) -- the array is
+  treated as a no-georef pixel grid in that case.
 - ``crs_wkt``: WKT string for the horizontal CRS. Present on read whenever
-  any CRS information is available.
+  any CRS information is available. Dropped on rotated reads opened with
+  ``allow_rotated=True`` (issue #2122), in lockstep with ``crs``.
 - ``transform``: rasterio-style 6-tuple
   ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``. Omitted
   for files with no GeoTIFF transform tags (ModelTransformation,
-  ModelPixelScale, or ModelTiepoint).
+  ModelPixelScale, or ModelTiepoint), and for rotated reads opened with
+  ``allow_rotated=True`` (axis-aligned 6-tuple would silently drop the
+  rotation terms).
 - ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag.
   Set whenever the source declares one, as a scalar of the source
   dtype, regardless of whether the in-memory array is float-with-NaN
@@ -500,7 +505,7 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     # ``open_geotiff(allow_rotated=True)``, CRS attrs are dropped on
     # this path too -- otherwise downstream code that gates on
     # ``"crs" in da.attrs`` treats the array as spatially meaningful
-    # while the actual mapping is gone (#2126). The
+    # while the actual mapping is gone (#2122 / #2126). The
     # ``georef_status='rotated_dropped'`` stamp above still records the
     # state for consumers that branch on it.
     rotated_optin = (
