@@ -2719,7 +2719,31 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
             lib.nvjpeg2kDestroy(handle)
             return None
 
-        # Decode each tile
+        # Decode each tile. Pre-allocate a single contiguous device buffer
+        # sized for every component of every tile, then derive per-tile /
+        # per-component pointers as views into it. Sibling helpers in this
+        # module already adopted the same pattern:
+        #
+        #   * ``_try_nvcomp_from_device_bufs`` (#1659) -- per-tile alloc +
+        #     trailing concat -> single contiguous buffer + pointer offsets.
+        #   * ``_try_kvikio_read_tiles`` (#1688) -- per-tile cupy.empty +
+        #     serial pread -> single buffer + batched submit.
+        #   * ``_nvcomp_batch_compress`` (#1712) -- per-tile cupy.empty +
+        #     per-tile cupy.get -> single pool + concat + single get.
+        #
+        # The previous nvJPEG2000 path allocated ``samples`` fresh
+        # ``cupy.empty`` buffers per tile (each round-trip through the
+        # memory pool ~tens of microseconds) and called
+        # ``cupy.cuda.Device().synchronize()`` once per tile, which forces
+        # default-stream serialisation that defeats nvJPEG2000's internal
+        # pipelining. One pool allocation + one trailing sync removes both
+        # costs without changing the output layout. See issue #2107.
+        pitch = tile_width * dtype.itemsize
+        per_tile_comp_bytes = samples * tile_height * pitch
+        _check_gpu_memory(n_tiles * per_tile_comp_bytes,
+                          what="nvJPEG2000 per-component decode pool")
+        d_comp_pool = cupy.empty(
+            n_tiles * per_tile_comp_bytes, dtype=cupy.uint8)
         d_all_tiles = cupy.empty(n_tiles * tile_bytes, dtype=cupy.uint8)
 
         for i, tile_data in enumerate(compressed_tiles):
@@ -2736,12 +2760,17 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
             if s != 0:
                 continue
 
-            # Allocate per-component output buffers on GPU
-            comp_bufs = []
-            pitch = tile_width * dtype.itemsize
-            for c in range(samples):
-                buf = cupy.empty(tile_height * pitch, dtype=cupy.uint8)
-                comp_bufs.append(buf)
+            # Derive per-component output views into the shared pool. The
+            # slab for tile ``i`` starts at ``i * per_tile_comp_bytes`` and
+            # holds ``samples`` consecutive ``tile_height * pitch`` blocks.
+            tile_pool_start = i * per_tile_comp_bytes
+            comp_bufs = [
+                d_comp_pool[
+                    tile_pool_start + c * tile_height * pitch:
+                    tile_pool_start + (c + 1) * tile_height * pitch
+                ]
+                for c in range(samples)
+            ]
 
             # Build nvjpeg2kImage_t
             img = _NvJpeg2kImage()
@@ -2751,13 +2780,15 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
                 img.pixel_data[c] = comp_bufs[c].data.ptr
                 img.pitch_in_bytes[c] = pitch
 
-            # Decode
+            # Decode. The per-tile ``Device().synchronize()`` that used to
+            # live here forced default-stream serialisation across every
+            # tile; defer the wait to the batch-end sync below so successive
+            # tiles can pipeline through nvJPEG2000.
             s = lib.nvjpeg2kDecode(
                 handle, state, stream, params,
                 ctypes.byref(img),
                 ctypes.c_void_p(0),  # default CUDA stream
             )
-            cupy.cuda.Device().synchronize()
 
             if s != 0:
                 continue
@@ -2776,6 +2807,13 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
                 interleaved = cupy.stack(comp_arrays, axis=-1)
                 d_all_tiles[tile_offset:tile_offset + tile_bytes] = \
                     interleaved.view(cupy.uint8).ravel()
+
+        # Single batch-end sync: nvjpeg2kDecode is asynchronous on the
+        # default stream, so we have to wait once before returning so the
+        # decoded bytes are visible to the caller's downstream kernels.
+        # Replacing the per-tile sync with this single sync is the main
+        # performance win on multi-tile reads (#2107).
+        cupy.cuda.Device().synchronize()
 
         # Cleanup
         lib.nvjpeg2kDecodeParamsDestroy(params)
