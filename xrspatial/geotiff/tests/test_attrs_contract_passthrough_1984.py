@@ -300,18 +300,24 @@ def test_removed_attrs_absent_after_roundtrip(tmp_path):
     )
 
 
-def test_contract_version_is_two(tmp_path):
-    """``attrs['_xrspatial_geotiff_contract']`` is ``2`` on every read.
+def test_contract_version_is_current(tmp_path):
+    """``attrs['_xrspatial_geotiff_contract']`` matches the constant on
+    every read.
 
-    The contract version is the user-visible signal that the removal
-    landed. Downstream code branching on the integer needs the bump
-    to fire here on every read path.
+    The contract version is the user-visible signal that a tier change
+    landed. Issue #2016 bumped it to 2 (removal of deprecated GeoKey
+    attrs); issue #2136 bumped it to 3 (addition of
+    ``attrs['georef_status']``). Pinning against ``_ATTRS_CONTRACT_VERSION``
+    means the next bump only has to touch the constant and the
+    bump-specific tests, not every "is the stamp set" assertion.
     """
-    da = _make_da(crs=4326)
-    rd = _roundtrip(tmp_path, da, name='contract_v2_signal.tif')
+    from xrspatial.geotiff._attrs import _ATTRS_CONTRACT_VERSION
 
-    assert rd.attrs.get('_xrspatial_geotiff_contract') == 2, (
+    da = _make_da(crs=4326)
+    rd = _roundtrip(tmp_path, da, name='contract_version_signal.tif')
+
+    assert rd.attrs.get('_xrspatial_geotiff_contract') == _ATTRS_CONTRACT_VERSION, (
         f"contract version stamp on a fresh read is "
-        f"{rd.attrs.get('_xrspatial_geotiff_contract')!r}; issue "
-        f"#2016 bumped it to 2."
+        f"{rd.attrs.get('_xrspatial_geotiff_contract')!r}; expected "
+        f"{_ATTRS_CONTRACT_VERSION}."
     )

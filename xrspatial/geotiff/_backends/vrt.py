@@ -13,7 +13,11 @@ import math
 import numpy as np
 import xarray as xr
 
-from .._attrs import _ATTRS_CONTRACT_VERSION, _set_nodata_attrs
+from .._attrs import (
+    _ATTRS_CONTRACT_VERSION,
+    _compute_georef_status_from_parts,
+    _set_nodata_attrs,
+)
 from .._coords import (
     coords_from_pixel_geometry as _coords_from_pixel_geometry,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
@@ -273,6 +277,18 @@ def read_vrt(source: str, *,
     # ``_populate_attrs_from_geo_info``; stamp the contract version here
     # so both code paths emit the same marker.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
+    # ``georef_status`` (issue #2136): five-valued classifier shared
+    # with the non-VRT read paths. The VRT reader does not currently
+    # expose a rotated-dropped path (rotated VRT geo_transforms are
+    # rejected upstream by ``_validate_read_geo_info``), so the rotated
+    # arg stays False here. The eager VRT branch derives
+    # ``has_transform`` from the parsed ``geo_transform`` element and
+    # ``has_crs`` from ``vrt.crs_wkt`` to keep the decision aligned
+    # with ``_compute_georef_status``.
+    attrs['georef_status'] = _compute_georef_status_from_parts(
+        has_transform=gt is not None,
+        has_crs=bool(vrt.crs_wkt),
+    )
     if gt is None:
         # Mirror the eager non-VRT no-georef path: stamp the no-georef
         # marker whenever the source carries no transform. The current
@@ -695,6 +711,13 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # ``_populate_attrs_from_geo_info``, so the contract version is
     # stamped inline using the shared constant to stay in lockstep.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
+    # ``georef_status`` (issue #2136). See the eager VRT branch above
+    # for the rationale; the rotated-dropped state is not reachable
+    # through the VRT reader today.
+    attrs['georef_status'] = _compute_georef_status_from_parts(
+        has_transform=gt is not None,
+        has_crs=bool(vrt.crs_wkt),
+    )
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
         coord_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)

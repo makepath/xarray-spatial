@@ -82,6 +82,11 @@ _CANONICAL_KEYS = (
     'x_resolution',
     'y_resolution',
     'resolution_unit',
+    # Added in contract v3 (issue #2136). The fixture is georef + CRS
+    # so the round-tripped value is the ``'full'`` literal; the
+    # value-equality check lives on ``test_georef_status_roundtrip``
+    # below to keep the membership and value assertions independent.
+    'georef_status',
     _CONTRACT_KEY,
 )
 
@@ -290,6 +295,14 @@ def test_contract_version_roundtrip(canonical_roundtrip):
     coverage lives in ``test_attrs_contract_version_1984.py``."""
     rd, _ = canonical_roundtrip
     assert rd.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
+
+
+def test_georef_status_roundtrip(canonical_roundtrip):
+    """``georef_status`` (issue #2136) is canonical from contract v3.
+    The fixture sets ``crs`` + axis-aligned transform-from-coords, so
+    the round-tripped value must be the ``'full'`` literal."""
+    rd, _ = canonical_roundtrip
+    assert rd.attrs['georef_status'] == 'full'
 
 
 # ---------------------------------------------------------------------------

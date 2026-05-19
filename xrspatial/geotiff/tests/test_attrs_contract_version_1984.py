@@ -78,9 +78,14 @@ def _write_minimal_vrt(vrt_path, source_name, *, height, width):
     )
 
 
-def test_attrs_contract_version_constant_is_two():
-    """Pin the integer value so a careless bump shows up here first."""
-    assert _ATTRS_CONTRACT_VERSION == 2
+def test_attrs_contract_version_constant_is_current():
+    """Pin the integer value so a careless bump shows up here first.
+
+    Contract v3 (issue #2136) added ``attrs['georef_status']`` to the
+    canonical tier. Bumping past 3 should be paired with a docs update
+    and a sibling test for the new key.
+    """
+    assert _ATTRS_CONTRACT_VERSION == 3
 
 
 def test_eager_numpy_stamps_contract_version(tmp_path):
@@ -89,7 +94,7 @@ def test_eager_numpy_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path)
 
-    assert da.attrs[_CONTRACT_KEY] == 2
+    assert da.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
 
 
 def test_dask_numpy_stamps_contract_version(tmp_path):
@@ -98,7 +103,7 @@ def test_dask_numpy_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path, chunks=32)
 
-    assert da.attrs[_CONTRACT_KEY] == 2
+    assert da.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
 
 
 @_gpu_only
@@ -108,7 +113,7 @@ def test_gpu_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path, gpu=True)
 
-    assert da.attrs[_CONTRACT_KEY] == 2
+    assert da.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
 
 
 @_gpu_only
@@ -118,7 +123,7 @@ def test_dask_gpu_stamps_contract_version(tmp_path):
 
     da = open_geotiff(path, gpu=True, chunks=32)
 
-    assert da.attrs[_CONTRACT_KEY] == 2
+    assert da.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
 
 
 def test_vrt_eager_stamps_contract_version(tmp_path):
@@ -129,7 +134,7 @@ def test_vrt_eager_stamps_contract_version(tmp_path):
 
     da = read_vrt(str(vrt))
 
-    assert da.attrs[_CONTRACT_KEY] == 2
+    assert da.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
 
 
 def test_vrt_chunked_stamps_contract_version(tmp_path):
@@ -140,4 +145,4 @@ def test_vrt_chunked_stamps_contract_version(tmp_path):
 
     da = read_vrt(str(vrt), chunks=32)
 
-    assert da.attrs[_CONTRACT_KEY] == 2
+    assert da.attrs[_CONTRACT_KEY] == _ATTRS_CONTRACT_VERSION
