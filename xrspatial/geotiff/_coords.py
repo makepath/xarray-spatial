@@ -24,6 +24,7 @@ windowed vs full reads.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 import xarray as xr
@@ -38,7 +39,7 @@ from ._geotags import _NO_GEOREF_KEY, GeoTransform, RASTER_PIXEL_IS_POINT
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 
-def _has_no_georef_marker(da) -> bool:
+def _has_no_georef_marker(da: Any) -> bool:
     """True iff ``da`` was stamped by the reader as carrying no georef.
 
     The reader sets ``attrs[_NO_GEOREF_KEY] = True`` whenever it emits

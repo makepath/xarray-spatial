@@ -113,7 +113,12 @@ write.
        fake unit transform. Absence of the marker means the array
        has spatial coords the writer can interpret as georef. A
        caller can opt into no-georef writes on a hand-built array
-       by setting this attr explicitly. See issue #2120.
+       by setting this attr explicitly. The writer uses an identity
+       check (``attrs[_xrspatial_no_georef] is True``), so only the
+       exact boolean ``True`` flips the no-georef path; truthy
+       strings like ``'yes'`` or ``1`` are ignored and the writer
+       proceeds with normal transform synthesis. See issues #2120
+       and #2133.
 
 
 Compatibility aliases
