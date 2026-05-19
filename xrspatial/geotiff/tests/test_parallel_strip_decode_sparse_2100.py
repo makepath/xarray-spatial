@@ -43,10 +43,15 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-import rasterio
 
-from xrspatial.geotiff._reader import read_to_array
-from xrspatial.geotiff import _reader as _reader_mod
+# Sparse-stripped fixtures depend on rasterio's TIFF writer (GDAL's
+# ``SPARSE_OK`` driver option). Skip the module wholesale when rasterio
+# is unavailable in the test environment; the GeoTIFF reader code paths
+# under test do not depend on rasterio at runtime.
+rasterio = pytest.importorskip("rasterio")
+
+from xrspatial.geotiff._reader import read_to_array  # noqa: E402
+from xrspatial.geotiff import _reader as _reader_mod  # noqa: E402
 
 
 # Local-strip helpers -------------------------------------------------------
