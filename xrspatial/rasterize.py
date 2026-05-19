@@ -176,13 +176,18 @@ def _apply_merge(out, written, order, r, c, props, new_idx,
 # ---------------------------------------------------------------------------
 
 def _classify_geometries(geometries, props_array):
-    """Classify geometries by type in a single pass using shapely 2.0 array ops.
+    """Classify geometries by type in a single pass.
+
+    Two internal paths: a vectorized fast path that uses shapely 2.0
+    array ops (``get_type_id`` / ``is_empty``) for the common case of
+    no ``GeometryCollection`` inputs, and a recursive slow path that
+    unpacks nested collections so their contents are rasterized rather
+    than silently dropped. The slow path runs only when at least one
+    input is a ``GeometryCollection``; both paths produce identical
+    output shapes.
 
     Also tracks each polygon's input index so the scanline fill can
     process geometries in input order (needed for first/last merge).
-
-    GeometryCollections are recursively unpacked so their contents are
-    rasterized rather than silently dropped.
 
     Parameters
     ----------
@@ -257,18 +262,19 @@ def _classify_geometries(geometries, props_array):
     poly_global, line_global, point_global = [], [], []
     line_geoms, line_prop_rows = [], []
     point_geoms, point_prop_rows = [], []
-    poly_counter = [0]
+    poly_counter = 0
 
-    def _classify_one(geom, prop_row):
+    def _classify_one(geom, prop_row, global_idx):
+        nonlocal poly_counter
         if geom is None or geom.is_empty:
             return
         gt = geom.geom_type
         if gt in ('Polygon', 'MultiPolygon'):
             poly_geoms.append(geom)
             poly_prop_rows.append(prop_row)
-            poly_ids.append(poly_counter[0])
+            poly_ids.append(poly_counter)
             poly_global.append(global_idx)
-            poly_counter[0] += 1
+            poly_counter += 1
         elif gt in ('LineString', 'MultiLineString'):
             line_geoms.append(geom)
             line_prop_rows.append(prop_row)
@@ -279,10 +285,10 @@ def _classify_geometries(geometries, props_array):
             point_global.append(global_idx)
         elif gt == 'GeometryCollection':
             for sub in geom.geoms:
-                _classify_one(sub, prop_row)
+                _classify_one(sub, prop_row, global_idx)
 
     for idx, geom in enumerate(geometries):
-        _classify_one(geom, props_array[idx])
+        _classify_one(geom, props_array[idx], idx)
 
     def _to_2d(rows):
         if rows:
@@ -1524,8 +1530,7 @@ def _polys_to_wkb(geoms):
 
 def _polys_from_wkb(wkb_list):
     """Deserialize WKB back to shapely geometries."""
-    from shapely import from_wkb
-    geoms = from_wkb(wkb_list)
+    geoms = shapely.from_wkb(wkb_list)
     if not isinstance(geoms, (list, np.ndarray)):
         geoms = [geoms]
     return list(geoms)
