@@ -68,11 +68,13 @@ write.
        ``_resolve_nodata_attr``.
    * - ``masked_nodata``
      - bool
-     - Paired with ``nodata``. ``True`` when the in-memory array is
-       float dtype and the reader's sentinel-to-NaN step ran;
-       ``False`` when the array still carries the literal integer
-       sentinel. Only set when ``nodata`` is set; absence means no
-       declared sentinel.
+     - Paired with ``nodata``. ``True`` when the reader actually
+       replaced sentinel pixels with NaN (so the buffer is NaN-aware);
+       ``False`` when the array still carries the literal sentinel
+       values, including the case where the array is float dtype
+       because the caller passed ``mask_nodata=False`` together with
+       ``dtype=float...``. Only set when ``nodata`` is set; absence
+       means no declared sentinel. See issue #2092.
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;
@@ -102,6 +104,16 @@ write.
    * - ``_xrspatial_geotiff_contract``
      - int
      - Contract version. Currently ``2``. See `Versioning`_.
+   * - ``_xrspatial_no_georef``
+     - bool
+     - Stamped ``True`` on reads of files with no GeoTIFF transform
+       tags. The reader emits int64 placeholder y/x coords for these
+       files; the marker tells the writer to reproduce that
+       no-georef shape on round-trip rather than synthesising a
+       fake unit transform. Absence of the marker means the array
+       has spatial coords the writer can interpret as georef. A
+       caller can opt into no-georef writes on a hand-built array
+       by setting this attr explicitly. See issue #2120.
 
 
 Compatibility aliases

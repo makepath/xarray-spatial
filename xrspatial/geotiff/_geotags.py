@@ -4,6 +4,17 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
+
+# Stamped by the reader on arrays read from files that carry no
+# GeoTIFF transform tags (ModelTransformation, ModelPixelScale, or
+# ModelTiepoint). The reader emits int64 ``arange`` placeholder y/x
+# coords for those files, and the writer checks this marker to
+# distinguish them from user-authored int64 step-1 grids that match
+# the same shape. Lives here (alongside the other geotiff tag
+# constants) so both ``_coords`` and ``_attrs`` can import it
+# without a cycle. See issue #2120.
+_NO_GEOREF_KEY = '_xrspatial_no_georef'
+
 from ._header import (
     IFD,
     TAG_NEW_SUBFILE_TYPE,

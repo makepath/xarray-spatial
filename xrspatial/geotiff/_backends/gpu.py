@@ -450,11 +450,15 @@ def read_geotiff_gpu(source: str, *,
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
                 arr_gpu = arr_gpu.astype(target)
-            # ``attrs['nodata']`` + ``attrs['masked_nodata']`` reflect the
-            # post-mask, post-cast array dtype (issue #1988).
+            # ``attrs['masked_nodata']`` reflects whether the function
+            # actually replaced sentinel pixels with NaN (#2092). With
+            # ``mask_nodata=False`` the GPU mask kernel above is
+            # skipped, so the buffer holds literal sentinel values
+            # even if the final dtype is float.
             _set_nodata_attrs(
                 attrs, nodata,
-                array_dtype=np.dtype(str(arr_gpu.dtype)),
+                masked=(mask_nodata
+                        and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
             )
             # ``read_to_array`` already applied window + band slicing, so
             # ``arr_gpu`` is at output shape. Compute coords for that
@@ -810,10 +814,15 @@ def read_geotiff_gpu(source: str, *,
 
         attrs = {}
         _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-        # ``attrs['nodata']`` + ``attrs['masked_nodata']`` reflect the
-        # post-mask, post-cast array dtype (issue #1988).
+        # ``attrs['masked_nodata']`` reflects whether the function
+        # actually replaced sentinel pixels with NaN (#2092). The GPU
+        # mask kernel runs only when ``mask_nodata=True`` and a sentinel
+        # is declared, so the post-cast float dtype alone is not enough
+        # to claim masking.
         _set_nodata_attrs(
-            attrs, nodata, array_dtype=np.dtype(str(arr_gpu.dtype)),
+            attrs, nodata,
+            masked=(mask_nodata
+                    and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
         )
 
         # Apply window/band slicing post-decode. Coords are derived from the
@@ -1358,9 +1367,16 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``masked_nodata`` reflects the declared dask graph dtype; mirrors
-    # the dask+numpy backend contract (issue #1988).
-    _set_nodata_attrs(attrs, nodata, array_dtype=declared_dtype)
+    # ``masked_nodata`` reflects whether per-chunk masking actually
+    # runs in the lazy graph (#2092); mirrors the dask+numpy backend
+    # contract. With ``mask_nodata=False`` ``declared_dtype`` stays
+    # equal to ``file_dtype`` (see the float-promotion gate earlier
+    # in this function), so the rule below is equivalent to "graph
+    # dtype is float AND the caller opted into masking."
+    _set_nodata_attrs(
+        attrs, nodata,
+        masked=(mask_nodata and declared_dtype.kind == 'f'),
+    )
 
     if name is None:
         import os

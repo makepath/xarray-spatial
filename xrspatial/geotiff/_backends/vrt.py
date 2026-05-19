@@ -18,6 +18,7 @@ from .._coords import (
     coords_from_pixel_geometry as _coords_from_pixel_geometry,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
+from .._geotags import _NO_GEOREF_KEY
 from .._crs import _wkt_to_epsg
 from .._validation import _validate_chunks_arg, _validate_dtype_cast
 
@@ -272,6 +273,14 @@ def read_vrt(source: str, *,
     # ``_populate_attrs_from_geo_info``; stamp the contract version here
     # so both code paths emit the same marker.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
+    if gt is None:
+        # Mirror the eager non-VRT no-georef path: stamp the no-georef
+        # marker whenever the source carries no transform. The current
+        # VRT no-transform branch emits empty coords so the writer has
+        # nothing to misinterpret, but stamping defensively keeps the
+        # contract consistent if a future change adds placeholder
+        # coords here. See issue #2120.
+        attrs[_NO_GEOREF_KEY] = True
     if vrt.crs_wkt:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
         if epsg is not None:
@@ -320,6 +329,17 @@ def read_vrt(source: str, *,
     if mask_nodata:
         arr = _vrt_apply_integer_sentinel_mask(arr, vrt, band)
 
+    # Capture pre-cast dtype: ``_vrt._read_data`` NaN-masks float source
+    # arrays (and int sources feeding a float VRT dataType) inline, and
+    # ``_vrt_apply_integer_sentinel_mask`` above promotes int-with-sentinel
+    # to float64 with NaNs written in place. Any of those paths yield a
+    # float pre-cast dtype; an int pre-cast dtype means literal sentinels
+    # are still in the buffer. The optional user dtype cast below may
+    # promote int -> float without masking, so reading dtype after the
+    # cast would falsely claim ``masked_nodata=True`` (issue #2092
+    # follow-up).
+    pre_cast_dtype = np.dtype(str(arr.dtype))
+
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
     # vrt.geo_transform is GDAL ordering, so reorder. For a windowed read
@@ -343,11 +363,10 @@ def read_vrt(source: str, *,
         _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
         arr = arr.astype(target)
 
-    # Record ``nodata`` + ``masked_nodata`` from the final array dtype
-    # (issue #1988). On GPU the dtype is read off the CuPy array via
-    # ``str(arr.dtype)`` so ``np.dtype`` accepts it without a CuPy
-    # dependency in ``_set_nodata_attrs``.
-    _set_nodata_attrs(attrs, nodata, array_dtype=np.dtype(str(arr.dtype)))
+    _set_nodata_attrs(
+        attrs, nodata,
+        masked=(pre_cast_dtype.kind == 'f'),
+    )
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
@@ -688,6 +707,9 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
             origin_x, origin_y, res_x, res_y,
             window=(win_r0, win_c0, 0, 0),
         )
+    else:
+        # Defensive marker (issue #2120). See the eager VRT branch.
+        attrs[_NO_GEOREF_KEY] = True
 
     if vrt.crs_wkt:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
@@ -708,7 +730,20 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata_meta = vrt.bands[band_idx_for_nodata].nodata
-    _set_nodata_attrs(attrs, nodata_meta, array_dtype=final_dtype)
+    # VRT chunked path: the per-task VRT reader NaN-masks float source
+    # arrays inline, and ``declared_dtype`` is promoted to float64 only
+    # when ``mask_nodata`` is on and an integer band has a representable
+    # sentinel (see the ``declared_dtype`` block earlier in this
+    # function). Either way, ``declared_dtype.kind == 'f'`` is the
+    # correct gate for "buffer is NaN-aware." A user-supplied
+    # ``dtype=`` cast happens on top of the lazy graph above (see
+    # ``final_dtype`` block) and must not flip this attr, so we read
+    # the pre-cast ``declared_dtype`` here rather than ``final_dtype``
+    # (#2092 follow-up).
+    _set_nodata_attrs(
+        attrs, nodata_meta,
+        masked=(declared_dtype.kind == 'f'),
+    )
 
     # Static hole detection: mirror the eager-path ``attrs['vrt_holes']``
     # contract (#1734) by scanning every source referenced in the parsed

@@ -129,7 +129,11 @@ import numpy as np
 from ._coords import (
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
-from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
+from ._geotags import (
+    RASTER_PIXEL_IS_AREA,
+    RASTER_PIXEL_IS_POINT,
+    _NO_GEOREF_KEY,
+)
 
 
 # Per-codec valid compression-level ranges, used by ``to_geotiff`` for
@@ -241,34 +245,36 @@ def _should_restore_nan_sentinel(attrs) -> bool:
     return value is not False
 
 
-def _set_nodata_attrs(attrs: dict, nodata, *, array_dtype) -> None:
+def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
 
-    Splits the two meanings previously fused into ``attrs['nodata']``
-    (issue #1988):
+    ``masked`` is the actual mask-decision the read path made: True iff
+    sentinel pixels in the in-memory buffer have been replaced with NaN
+    (or the buffer is NaN-aware as a result of the reader's masking
+    step). False iff the literal sentinel values are still present in
+    the buffer.
+
+    Contract (splits the two meanings previously fused into
+    ``attrs['nodata']`` per issue #1988):
 
     * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
       source dtype. Set whenever the source declared one, regardless of
       whether the array is float-with-NaN or int-with-sentinels.
-    * ``attrs['masked_nodata']`` -- boolean flag. ``True`` iff the in-
-      memory array has been NaN-masked (i.e. it is float dtype and the
-      reader's sentinel-to-NaN step ran). ``False`` iff the array still
-      carries the literal integer sentinel value.
+    * ``attrs['masked_nodata']`` -- the ``masked`` value the caller
+      passed, coerced to bool. Only emitted when ``nodata is not
+      None``; absence of the flag means there is no declared sentinel.
 
-    Callers pass ``array_dtype`` as the final post-mask, post-cast dtype
-    of the array that will be wrapped in the returned DataArray. The
-    float/non-float split drives the ``masked_nodata`` value: any float
-    output is treated as NaN-aware (NaN is the sentinel proxy), any
-    integer output still carries the raw sentinel.
-
-    ``masked_nodata`` is only emitted when ``nodata is not None``. With
-    no declared sentinel, the flag is meaningless and its absence is the
-    signal.
+    Pre-#2092 the helper inferred ``masked`` from the final array
+    dtype, which lied when ``mask_nodata=False`` left literal sentinel
+    values in a float buffer; downstream code that trusted the attr
+    treated those literal values as already-NaN. The eager, dask, GPU,
+    and VRT paths now compute ``masked`` as
+    ``mask_nodata and final_dtype.kind == 'f'``. See issue #2092.
     """
     if nodata is None:
         return
     attrs['nodata'] = nodata
-    attrs['masked_nodata'] = bool(np.dtype(array_dtype).kind == 'f')
+    attrs['masked_nodata'] = bool(masked)
 
 
 def _validate_read_geo_info(
@@ -395,6 +401,14 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
             src_t.pixel_width, src_t.pixel_height,
             window=window,
         )
+    else:
+        # Stamp the no-georef marker so the writer can tell our
+        # placeholder int64 step-1 coords apart from a user-authored
+        # integer-coord grid (#2120). Pre-#2120 the writer detected the
+        # placeholder by shape alone, which silently stripped georef
+        # from any user array whose coords matched the same arange
+        # pattern.
+        attrs[_NO_GEOREF_KEY] = True
 
     # Contract v2 (issue #2016) removed the 13 secondary GeoKey-derived
     # attrs that v1 emitted under a ``DeprecationWarning`` (``crs_name``,
