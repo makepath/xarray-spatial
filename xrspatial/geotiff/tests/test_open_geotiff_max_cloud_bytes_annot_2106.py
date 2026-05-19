@@ -48,13 +48,15 @@ def test_open_geotiff_max_cloud_bytes_has_type_annotation():
         "open_geotiff(max_cloud_bytes=...) is missing a type annotation; "
         "the docstring declares ``int or None`` so the surface should match."
     )
-    # Use ``str(...)`` rather than identity so the assertion survives the
-    # ``from __future__ import annotations`` lazy-eval form ``open_geotiff``
-    # itself uses (its annotations come back as strings).
+    # ``xrspatial.geotiff.__init__`` uses ``from __future__ import
+    # annotations``, so ``param.annotation`` comes back as the source
+    # string. Pin the exact PEP 604 form rather than ``"int" in s and
+    # "None" in s`` -- the looser check would also pass on something
+    # like ``Mapping[int, None]``.
     annotation_repr = str(param.annotation)
-    assert "int" in annotation_repr and "None" in annotation_repr, (
-        f"open_geotiff(max_cloud_bytes=...) annotation should mention "
-        f"int and None; got {annotation_repr!r}"
+    assert annotation_repr == "int | None", (
+        f"open_geotiff(max_cloud_bytes=...) annotation should be exactly "
+        f"``int | None`` to match the docstring; got {annotation_repr!r}"
     )
 
 
