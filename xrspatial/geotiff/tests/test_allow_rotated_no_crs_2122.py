@@ -213,7 +213,7 @@ def test_axis_aligned_read_still_emits_crs(tmp_path):
     axis-aligned ModelTransformation. Without this guard, narrowing the
     CRS emission could regress the common case.
     """
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
 
     src = tmp_path / "aligned_2122.tif"
     arr = np.arange(20, dtype=np.uint16).reshape(4, 5)
@@ -245,7 +245,7 @@ def test_axis_aligned_read_still_emits_crs(tmp_path):
 
 def _write_minimal_aligned_tiff(path):
     """Tiny axis-aligned TIFF used as the VRT's source band."""
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
     arr = np.arange(16, dtype=np.uint16).reshape(4, 4)
     tifffile.imwrite(str(path), arr, photometric='minisblack')
 
