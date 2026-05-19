@@ -89,36 +89,35 @@ def test_2d_single_band_miniswhite_still_rejected(tmp_path):
     assert not out.exists()
 
 
+class _FakeArray:
+    """Stand-in for a DataArray-like object that exposes ``ndim``,
+    ``shape``, and ``dims``. Used to drive ``_compute_gpu_samples_hint``
+    on a CI runner without cupy or a CUDA device."""
+
+    def __init__(self, shape, dims):
+        self.shape = shape
+        self.dims = dims
+        self.ndim = len(shape)
+
+
 def test_samples_hint_band_first_without_gpu():
-    """The samples-hint computation does not actually need cupy to be
-    exercised. Build a fake band-first DataArray-shaped object and
-    verify the new logic picks ``shape[0]`` for band-first inputs
-    and ``shape[2]`` for band-last inputs.
-
-    This mirrors the inline computation in
-    ``write_geotiff_gpu`` so a regression that moves the samples-hint
-    detection back to ``shape[2]`` blindly will fail here without
-    requiring a CUDA device on CI.
+    """Call the production ``_compute_gpu_samples_hint`` helper
+    directly so a future change that moves the samples-hint detection
+    back to a blind ``shape[2]`` lookup fails here even on a no-GPU
+    CI runner. (Pre-fix the test redefined the logic inline, which
+    would not catch a regression in the production code.)
     """
-    from xrspatial.geotiff._coords import _BAND_DIM_NAMES
+    from xrspatial.geotiff._writers.gpu import _compute_gpu_samples_hint
 
-    def _samples_hint(ndim, shape, dims):
-        if ndim == 3:
-            if (dims is not None and len(dims) == 3
-                    and dims[0] in _BAND_DIM_NAMES):
-                return int(shape[0])
-            return int(shape[2])
-        return 1
-
-    # Band-first single-band: bands = shape[0] = 1.
-    assert _samples_hint(3, (1, 4, 8), ("band", "y", "x")) == 1
-    # Band-last single-band: bands = shape[2] = 1.
-    assert _samples_hint(3, (4, 8, 1), ("y", "x", "band")) == 1
-    # Band-first 3-band: bands = shape[0] = 3.
-    assert _samples_hint(3, (3, 4, 8), ("band", "y", "x")) == 3
-    # Band-last 3-band: bands = shape[2] = 3.
-    assert _samples_hint(3, (4, 8, 3), ("y", "x", "band")) == 3
-    # 2D: always 1.
-    assert _samples_hint(2, (4, 8), ("y", "x")) == 1
-    # No dims (raw array path): defaults to band-last (shape[2]).
-    assert _samples_hint(3, (4, 8, 1), None) == 1
+    cases = [
+        # (shape, dims, expected_samples)
+        ((1, 4, 8), ("band", "y", "x"), 1),    # band-first single-band
+        ((4, 8, 1), ("y", "x", "band"), 1),    # band-last single-band
+        ((3, 4, 8), ("band", "y", "x"), 3),    # band-first 3-band
+        ((4, 8, 3), ("y", "x", "band"), 3),    # band-last 3-band
+        ((4, 8), ("y", "x"), 1),                # 2D always 1
+        ((4, 8, 1), None, 1),                   # raw 3D defaults band-last
+    ]
+    for shape, dims, expected in cases:
+        got = _compute_gpu_samples_hint(_FakeArray(shape, dims))
+        assert got == expected, (shape, dims, got, expected)

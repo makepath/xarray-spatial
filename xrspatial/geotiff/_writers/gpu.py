@@ -39,6 +39,32 @@ from .._validation import (
 )
 
 
+def _compute_gpu_samples_hint(data) -> int:
+    """Return the band count using the same convention the GPU writer's
+    band-first -> band-last remap uses (issue #2097).
+
+    The remap below in ``write_geotiff_gpu`` moves bands from
+    ``shape[0]`` to ``shape[2]`` for band-first DataArrays. The
+    MinIsWhite single-band guard runs *before* that remap, so reading
+    ``data.shape[2]`` blindly would treat a band-first ``(1, H, W)``
+    array as having ``W`` samples and miss the single-band rejection.
+    Picking the band axis the same way the remap does keeps the guard
+    and the actual on-device band placement in sync.
+
+    Returns 1 for non-3D inputs. For 3D inputs without ``.dims`` (raw
+    arrays), defaults to band-last (``shape[2]``); the writer's other
+    entry-point validators reject ambiguous-dim DataArrays separately.
+    """
+    if getattr(data, 'ndim', None) != 3:
+        return 1
+    dims = getattr(data, 'dims', None)
+    if (dims is not None
+            and len(dims) == 3
+            and dims[0] in _BAND_DIM_NAMES):
+        return int(data.shape[0])
+    return int(data.shape[2])
+
+
 def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       path: str | BinaryIO, *,
                       crs: int | str | None = None,
@@ -251,25 +277,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # of scope for the round-trip fix. Refuse the combination so callers
     # do not silently get inverted on-disk values. Move the array to the
     # CPU and call the eager ``write`` path for MinIsWhite output.
-    #
-    # The samples hint must match the writer's own band-axis convention.
-    # The band-first -> band-last remap below at the ``_BAND_DIM_NAMES``
-    # check moves bands from ``shape[0]`` to ``shape[2]``, so reading
-    # ``data.shape[2]`` *before* that remap would treat a single-band
-    # ``('band', 'y', 'x')`` array of shape ``(1, H, W)`` as having
-    # ``W`` samples and let the guard miss the MinIsWhite/single-band
-    # case (issue #2097). Use the same band-axis logic the remap uses.
     from .._writer import _resolve_photometric as _resolve_photo_gpu
-    _gpu_data_dims = getattr(data, 'dims', None)
-    if getattr(data, 'ndim', None) == 3:
-        if (_gpu_data_dims is not None
-                and len(_gpu_data_dims) == 3
-                and _gpu_data_dims[0] in _BAND_DIM_NAMES):
-            _gpu_samples_hint = int(data.shape[0])
-        else:
-            _gpu_samples_hint = int(data.shape[2])
-    else:
-        _gpu_samples_hint = 1
+    _gpu_samples_hint = _compute_gpu_samples_hint(data)
     _gpu_resolved_photo, _ = _resolve_photo_gpu(
         photometric, _gpu_samples_hint)
     if _gpu_resolved_photo == 0 and _gpu_samples_hint == 1:
