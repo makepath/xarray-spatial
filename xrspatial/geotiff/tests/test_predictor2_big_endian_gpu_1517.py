@@ -46,14 +46,16 @@ def _block_cpu_fallback(monkeypatch):
     ``read_geotiff_gpu`` returns a cupy-backed array even when its silent CPU
     fallback fires (the fallback wraps the CPU result with ``cupy.asarray``),
     so ``isinstance(gpu_da.data, cupy.ndarray)`` cannot distinguish the two
-    paths. Patching the module-bound ``read_to_array`` to raise turns any
-    silent fallback into a hard test failure, which is what we want when the
-    point of a test is to exercise the actual GPU decode kernels.
+    paths. ``read_geotiff_gpu`` lives in ``xrspatial.geotiff._backends.gpu``
+    and calls the locally bound ``_read_to_array`` symbol there; patching
+    that binding to raise turns any silent fallback into a hard test failure,
+    which is what we want when the point of a test is to exercise the actual
+    GPU decode kernels.
 
     Tests that legitimately rely on the CPU fallback (e.g. stripped
     layouts) must not call this helper.
     """
-    from xrspatial import geotiff as geotiff_pkg
+    from xrspatial.geotiff._backends import gpu as gpu_backend
 
     def _no_fallback(*args, **kwargs):
         raise AssertionError(
@@ -62,7 +64,7 @@ def _block_cpu_fallback(monkeypatch):
         )
 
     monkeypatch.setattr(
-        geotiff_pkg, 'read_to_array', _no_fallback, raising=True,
+        gpu_backend, '_read_to_array', _no_fallback, raising=True,
     )
 
 
