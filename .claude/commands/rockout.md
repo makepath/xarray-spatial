@@ -155,44 +155,91 @@ review-pr / follow-up loop runs in parallel. If CI surfaces a failure
 later, address it as a separate follow-up commit on the same branch --
 do not block the review pass on green CI.
 
-## Step 9 -- Run the Domain-Aware PR Review
+## Step 9 -- Run the Domain-Aware PR Review and Post It as a GitHub Review
+
+Every rockout PR MUST receive a review posted to GitHub as a proper review
+(not a plain issue comment), regardless of how clean the change looks. The
+review is the audit trail.
 
 1. Invoke the `/review-pr` command against the PR number from Step 8:
    ```
    /review-pr <PR_NUMBER>
    ```
-2. Do not pass "post" -- keep the review local so the rockout workflow can act
-   on the findings before any of it lands as a public comment.
+2. Do not pass "post" -- keep `/review-pr` from posting on its own. Rockout
+   will post the review explicitly in step 5 below so it lands as a GitHub
+   review event, not a free-form comment.
 3. Capture the structured output. It will list findings grouped as:
    - **Blockers** -- must fix before merge
    - **Suggestions** -- should fix, not blocking
    - **Nits** -- optional improvements
 4. Run this step regardless of CI status. Do not poll `gh pr checks` or
    wait for workflows to finish before invoking `/review-pr`.
+5. Post the captured review body to GitHub as a review event of type
+   `COMMENT` so it shows up under the PR's Reviews tab (not just the
+   Conversation tab). Use a heredoc to preserve formatting:
+   ```bash
+   gh pr review <PR_NUMBER> --comment --body "$(cat <<'EOF'
+   <humanized review body from /review-pr>
+   EOF
+   )"
+   ```
+   - Use `--comment`, never `--approve` or `--request-changes`. Rockout
+     does not have authority to approve its own work or block it.
+   - If the review body is empty (no findings at all), still post a short
+     review of type `--comment` summarizing that no issues were found, so
+     every rockout PR has a visible review entry.
+   - Confirm via `gh pr view <PR_NUMBER> --json reviews` that a review of
+     state `COMMENTED` now exists on the PR before moving on.
 
 ## Step 10 -- Follow Up on Review Findings
 
-Address every Blocker, then work through Suggestions and Nits in that order.
+Treat the review output as expert input, not a verdict. The reviewer is
+another LLM running a checklist -- it catches real issues, but it also
+flags false positives, misreads context, and occasionally invents
+problems. Your job is to weigh each finding against the actual code, not
+to mechanically apply every suggestion.
+
+Address every Blocker first, then work through Suggestions and Nits in
+that order.
 
 1. For each finding:
-   - Read the referenced file at the cited line.
-   - Decide one of: **fix**, **defer with reason**, or **dismiss with reason**.
-   - Blockers must be either fixed or explicitly deferred with a written
-     justification -- do not silently skip them.
-   - Suggestions and nits may be dismissed when the cost outweighs the value,
-     but record the reason.
+   - Read the referenced file at the cited line and understand the
+     surrounding context before deciding anything.
+   - Verify the finding describes a real problem. If the reviewer
+     misread the code, the cited line does not exist, or the
+     "issue" is actually intended behavior, mark it **dismissed**
+     and record the reason -- do not fix phantom bugs.
+   - For Blockers: take them seriously, but they are not automatic.
+     Confirm the issue is real before fixing. Real blockers must be
+     either fixed or explicitly deferred with a written justification --
+     do not silently skip them. A blocker you genuinely believe is
+     wrong can be dismissed, but the dismissal note must explain why
+     the reviewer was mistaken.
+   - For Suggestions: consider each one seriously. Apply when the
+     change clearly improves correctness, clarity, or performance.
+     Dismiss when the suggestion conflicts with project conventions,
+     would regress something else, or the cost outweighs the value.
+   - For Nits: apply when trivially cheap and clearly an improvement.
+     Dismiss when stylistic preference, churn for churn's sake, or
+     not aligned with how the rest of the codebase is written.
+   - In all cases, record the reason for dismiss / defer so the
+     summary captures the reasoning, not just the verdict.
 2. Group related fixes into focused commits referencing the issue number
    (e.g. `Address review nits: fix NaN propagation in dask path (#<NUMBER>)`).
 3. After applying fixes:
    - Re-run the tests touched by the changes.
    - Push the new commits to the PR branch.
-4. Re-run `/review-pr <PR_NUMBER>` once after the follow-up commits to confirm
-   the prior findings are resolved and no new ones surfaced. Stop iterating
-   once only dismissed-with-reason items remain.
+4. Re-run `/review-pr <PR_NUMBER>` once after the follow-up commits, and
+   post the follow-up review the same way as step 9.5 above
+   (`gh pr review <PR_NUMBER> --comment --body ...`). Stop iterating once
+   only dismissed-with-reason items remain.
 5. Summarize the disposition of each original finding (fixed / deferred /
-   dismissed) in the final rockout summary so the trail is visible.
+   dismissed, with the reason for dismissals) in the final rockout summary
+   so the trail is visible.
 
-**Skip this step** only if Step 9 returned no Blockers, Suggestions, or Nits.
+**Do not skip this step.** Even if Step 9 returned no Blockers,
+Suggestions, or Nits, the review of type `COMMENTED` from step 9.5 must
+still be posted so every rockout PR carries a visible review entry.
 
 ---
 
