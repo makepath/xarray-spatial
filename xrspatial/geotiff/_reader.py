@@ -1939,62 +1939,79 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     else:
         result = np.empty((out_h, out_w), dtype=dtype)
 
+    # Collect strip jobs; decode in parallel when the pool overhead pays off.
+    # Mirrors the tile path's gate at ``_PARALLEL_DECODE_PIXEL_THRESHOLD``:
+    # codec decode (deflate, zstd, LZW) releases the GIL inside the C
+    # extension so threads actually overlap codec work across cores. The
+    # placement loop that copies pixels into ``result`` stays serial to
+    # avoid contending writes to the output buffer. See issue #2100.
+    strip_jobs: list[tuple[int, int, int]] = []  # (band_idx, strip_idx, global_idx)
     if planar == 2 and samples > 1:
         first_strip = r0 // rps
         last_strip = min((r1 - 1) // rps, strips_per_band - 1)
-
         for band_idx in range(samples):
             band_offset = band_idx * strips_per_band
             for strip_idx in range(first_strip, last_strip + 1):
                 global_idx = band_offset + strip_idx
                 if byte_counts[global_idx] == 0:
-                    # Sparse strip: result is already pre-filled.
                     continue
                 strip_row = strip_idx * rps
                 strip_rows = min(rps, height - strip_row)
                 if strip_rows <= 0:
                     continue
-
-                strip_data = data[offsets[global_idx]:offsets[global_idx] + byte_counts[global_idx]]
-                strip_pixels = _decode_strip_or_tile(
-                    strip_data, compression, width, strip_rows, 1,
-                    bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                    byte_order=header.byte_order,
-                    jpeg_tables=jpeg_tables,
-                    masked_fill=masked_fill)
-
-                src_r0 = max(r0 - strip_row, 0)
-                src_r1 = min(r1 - strip_row, strip_rows)
-                dst_r0 = max(strip_row - r0, 0)
-                dst_r1 = dst_r0 + (src_r1 - src_r0)
-                if dst_r1 > dst_r0:
-                    result[dst_r0:dst_r1, :, band_idx] = strip_pixels[src_r0:src_r1, c0:c1]
+                strip_jobs.append((band_idx, strip_idx, global_idx))
+        strip_samples = 1
     else:
         first_strip = r0 // rps
         last_strip = min((r1 - 1) // rps, len(offsets) - 1)
-
         for strip_idx in range(first_strip, last_strip + 1):
             strip_row = strip_idx * rps
             strip_rows = min(rps, height - strip_row)
             if strip_rows <= 0:
                 continue
             if byte_counts[strip_idx] == 0:
-                # Sparse strip: result is already pre-filled.
                 continue
+            strip_jobs.append((0, strip_idx, strip_idx))
+        strip_samples = samples
 
-            strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
-            strip_pixels = _decode_strip_or_tile(
-                strip_data, compression, width, strip_rows, samples,
-                bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                byte_order=header.byte_order,
-                jpeg_tables=jpeg_tables,
-                masked_fill=masked_fill)
+    def _decode_strip_job(job):
+        _band_idx, strip_idx, global_idx = job
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        strip_data = data[
+            offsets[global_idx]:offsets[global_idx] + byte_counts[global_idx]]
+        return _decode_strip_or_tile(
+            strip_data, compression, width, strip_rows, strip_samples,
+            bps, bytes_per_sample, is_sub_byte, dtype, pred,
+            byte_order=header.byte_order,
+            jpeg_tables=jpeg_tables,
+            masked_fill=masked_fill)
 
-            src_r0 = max(r0 - strip_row, 0)
-            src_r1 = min(r1 - strip_row, strip_rows)
-            dst_r0 = max(strip_row - r0, 0)
-            dst_r1 = dst_r0 + (src_r1 - src_r0)
-            if dst_r1 > dst_r0:
+    n_strips = len(strip_jobs)
+    strip_pixel_count = width * rps
+    use_parallel = (n_strips > 1
+                    and strip_pixel_count >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
+    if use_parallel:
+        import os as _os
+        n_workers = min(n_strips, _os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            decoded_strips = list(pool.map(_decode_strip_job, strip_jobs))
+    else:
+        decoded_strips = [_decode_strip_job(job) for job in strip_jobs]
+
+    for (band_idx, strip_idx, _global_idx), strip_pixels in zip(
+            strip_jobs, decoded_strips):
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        src_r0 = max(r0 - strip_row, 0)
+        src_r1 = min(r1 - strip_row, strip_rows)
+        dst_r0 = max(strip_row - r0, 0)
+        dst_r1 = dst_r0 + (src_r1 - src_r0)
+        if dst_r1 > dst_r0:
+            if planar == 2 and samples > 1:
+                result[dst_r0:dst_r1, :, band_idx] = (
+                    strip_pixels[src_r0:src_r1, c0:c1])
+            else:
                 result[dst_r0:dst_r1] = strip_pixels[src_r0:src_r1, c0:c1]
 
     return result
@@ -2667,7 +2684,51 @@ def _fetch_decode_cog_http_strips(
         strip_bytes_list = []
 
     # Pass 3: decode each strip and place its intersection with the window.
-    for (band_idx, strip_idx), strip_data in zip(placements, strip_bytes_list):
+    #
+    # Codec decode (deflate, zstd, LZW, ...) releases the GIL inside the C
+    # extension, so threading the per-strip decode overlaps codec work
+    # across cores. The local tile / strip paths and the HTTP tile path
+    # use the same ``_PARALLEL_DECODE_PIXEL_THRESHOLD`` gate; mirror it
+    # here so HTTP COG strip reads of wide windows benefit from the same
+    # parallelism rather than serialising the decode after a parallel
+    # fetch. The placement loop that copies pixels into ``result`` stays
+    # serial to avoid contending writes to the output buffer. Issue #2100.
+    n_decode_strips = len(strip_bytes_list)
+    strip_pixel_count = width * rps
+    decode_in_parallel = (
+        n_decode_strips > 1
+        and strip_pixel_count >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
+
+    def _decode_http_strip(args):
+        strip_idx, strip_data = args
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        if strip_rows <= 0:
+            return None
+        # Per-strip decoded-dimension cap (#1851). See note below.
+        _check_dimensions(width, strip_rows, strip_samples,
+                          MAX_PIXELS_DEFAULT)
+        return _decode_strip_or_tile(
+            strip_data, compression, width, strip_rows, strip_samples,
+            bps, bytes_per_sample, is_sub_byte, dtype, pred,
+            byte_order=header.byte_order,
+            jpeg_tables=jpeg_tables,
+            masked_fill=masked_fill)
+
+    decode_inputs = [(strip_idx, strip_data)
+                     for (_band, strip_idx), strip_data
+                     in zip(placements, strip_bytes_list)]
+
+    if decode_in_parallel:
+        n_decode_workers = min(n_decode_strips, _os_module.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_decode_workers) as pool:
+            decoded_strips = list(pool.map(_decode_http_strip, decode_inputs))
+    else:
+        decoded_strips = [_decode_http_strip(item) for item in decode_inputs]
+
+    for (band_idx, strip_idx), strip_pixels in zip(placements, decoded_strips):
+        if strip_pixels is None:
+            continue
         strip_row = strip_idx * rps
         strip_rows = min(rps, height - strip_row)
         if strip_rows <= 0:
@@ -2681,15 +2742,7 @@ def _fetch_decode_cog_http_strips(
         # the window clip. Use ``MAX_PIXELS_DEFAULT`` rather than the
         # caller's ``max_pixels`` so a small output-window budget does
         # not reject normal strip sizes.
-        _check_dimensions(width, strip_rows, strip_samples,
-                          MAX_PIXELS_DEFAULT)
-
-        strip_pixels = _decode_strip_or_tile(
-            strip_data, compression, width, strip_rows, strip_samples,
-            bps, bytes_per_sample, is_sub_byte, dtype, pred,
-            byte_order=header.byte_order,
-            jpeg_tables=jpeg_tables,
-            masked_fill=masked_fill)
+        # The decoded-dimension cap fired inside ``_decode_http_strip``.
 
         src_r0 = max(r0 - strip_row, 0)
         src_r1 = min(r1 - strip_row, strip_rows)
