@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
 from .._attrs import (
+    _EXPERIMENTAL_CODECS,
     _extract_rich_tags,
     _resolve_nodata_attr,
     _should_restore_nan_sentinel,
@@ -305,7 +306,6 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # mirrors ``allow_internal_only_jpeg`` (which already double-warns
     # under that codepath) and keeps the explicit GPU entry point usable
     # standalone.
-    from .. import _EXPERIMENTAL_CODECS
     if isinstance(compression, str):
         _gpu_codec = compression.lower()
         if (_gpu_codec in _EXPERIMENTAL_CODECS

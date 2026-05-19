@@ -218,6 +218,16 @@ def test_experimental_codec_opt_in_emits_warning(tmp_path, codec):
         f"to_geotiff(compression={codec!r}, allow_experimental_codecs="
         "True) must emit GeoTIFFFallbackWarning so the caller knows "
         "the codec carries no cross-backend parity claim.")
+    # Exactly one warning per call. Pinning the count catches the
+    # double-warn regression where the CPU dispatcher fires the
+    # warning and then ``write_geotiff_gpu`` fires it again on the GPU
+    # dispatch path; the CPU dispatcher gates its warning on
+    # ``not use_gpu`` to keep this invariant on the GPU path too.
+    assert len(fallback) == 1, (
+        f"expected exactly one GeoTIFFFallbackWarning for "
+        f"to_geotiff(compression={codec!r}, allow_experimental_codecs="
+        f"True); got {len(fallback)}: "
+        f"{[str(w.message) for w in fallback]}")
     # Warning text names both the codec and the opt-in flag so logs
     # are self-describing rather than pointing to a docs URL.
     msg = str(fallback[0].message)

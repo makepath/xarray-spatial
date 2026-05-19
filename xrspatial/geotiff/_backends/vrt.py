@@ -45,6 +45,13 @@ def read_vrt(source: str, *,
              mask_nodata: bool = True) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
+    Tier: Advanced (issue #2137). VRT mosaics work and are tested, but
+    the caller should know the failure modes: cross-source nodata can
+    disagree (gated by ``band_nodata``), backing files can be missing
+    (gated by ``missing_sources``), and per-band metadata mismatch
+    raises a typed error rather than silently flattening. See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
+
     The VRT's source GeoTIFFs are read via windowed reads and assembled
     into a single array.
 

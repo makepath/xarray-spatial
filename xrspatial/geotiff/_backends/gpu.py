@@ -91,6 +91,12 @@ def read_geotiff_gpu(source: str, *,
                      ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
+    Tier: Experimental (issue #2137). Requires cupy + numba CUDA plus
+    optional nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
+    acceleration; cross-backend numerical parity with the CPU reader
+    is tested for the Tier 1 codec set only. See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
+
     Decompresses all tiles in parallel on the GPU and returns a
     CuPy-backed DataArray that stays on device memory. No CPU->GPU
     transfer needed for downstream xrspatial GPU operations.

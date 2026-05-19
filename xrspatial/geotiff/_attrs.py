@@ -155,6 +155,61 @@ _VALID_COMPRESSIONS = (
 )
 
 
+# Tiered feature inventory for the public geotiff surface (issue #2137).
+# Defined in ``_attrs.py`` (not the package ``__init__.py``) so the writers
+# can import it at module scope without a circular dependency: the package
+# ``__init__`` already imports the writers. The package re-exports
+# ``SUPPORTED_FEATURES`` so the public API stays
+# ``xrspatial.geotiff.SUPPORTED_FEATURES``.
+#
+# See ``xrspatial/geotiff/__init__.py`` for the per-tier semantics; the
+# inline comments here track the codec/reader/writer split used by the
+# user-guide notebook table.
+SUPPORTED_FEATURES = {
+    # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
+    'codec.none': 'stable',
+    'codec.deflate': 'stable',
+    'codec.lzw': 'stable',
+    'codec.packbits': 'stable',
+    'codec.zstd': 'stable',
+    # Tier 3 codecs: require ``allow_experimental_codecs=True``.
+    'codec.lerc': 'experimental',
+    'codec.jpeg2000': 'experimental',
+    'codec.j2k': 'experimental',
+    'codec.lz4': 'experimental',
+    # Tier 4 codec: requires the dedicated ``allow_internal_only_jpeg``
+    # opt-in (issue #1845). Not covered by ``allow_experimental_codecs``.
+    'codec.jpeg': 'internal_only',
+    # Read paths.
+    'reader.local_file': 'stable',
+    'reader.fsspec': 'advanced',
+    'reader.http': 'advanced',
+    'reader.vrt': 'advanced',
+    'reader.sidecar_ovr': 'advanced',
+    'reader.allow_rotated': 'advanced',
+    'reader.allow_unparseable_crs': 'advanced',
+    'reader.gpu': 'experimental',
+    # Write paths.
+    'writer.local_file': 'stable',
+    'writer.cog': 'advanced',
+    'writer.overviews': 'advanced',
+    'writer.bigtiff': 'advanced',
+    'writer.gpu': 'experimental',
+    'writer.gdal_metadata_xml': 'experimental',
+    'writer.extra_tags': 'experimental',
+}
+
+
+# Tier 3 codec names (lower-cased) gated behind
+# ``allow_experimental_codecs`` on the writers. Derived from
+# ``SUPPORTED_FEATURES`` so the gate cannot drift from the docs.
+_EXPERIMENTAL_CODECS = frozenset(
+    name.split('.', 1)[1].lower()
+    for name, tier in SUPPORTED_FEATURES.items()
+    if name.startswith('codec.') and tier == 'experimental'
+)
+
+
 # TIFF type ids needed when synthesizing extra_tags entries from attrs.
 _TIFF_BYTE = 1
 _TIFF_ASCII = 2

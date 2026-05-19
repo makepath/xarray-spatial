@@ -141,86 +141,42 @@ __all__ = [
 ]
 
 
-# Tiered feature inventory for the public geotiff surface (issue #2137).
+# ``SUPPORTED_FEATURES`` and its derived ``_EXPERIMENTAL_CODECS`` set
+# live in ``_attrs.py`` so the writers can import them at module scope
+# without a circular dependency (this ``__init__`` already imports the
+# writers, so the writers cannot import from ``..`` at module scope).
+# The names are re-exported below to keep the public API at
+# ``xrspatial.geotiff.SUPPORTED_FEATURES``.
 #
-# Each entry maps a feature name (``"<category>.<name>"``) to one of the
-# four tiers below.
-#
-# - ``"stable"``     -- the path a new user should be on. Local file in,
-#                       local file out, lossless codec, axis-aligned grid.
-#                       Covered by the cross-backend parity matrix.
-# - ``"advanced"``   -- works and is tested, but the caller should know
-#                       what they are signing up for (cloud cost, partial
-#                       VRT mosaics, rotated transforms dropping on write,
-#                       BigTIFF promotion, etc.). No kwarg gate; the
-#                       docstring carries an ``Advanced:`` marker.
+# Tier semantics
+# --------------
+# - ``"stable"`` -- the path a new user should be on. Local file in,
+#   local file out, lossless codec, axis-aligned grid. Covered by the
+#   cross-backend parity matrix.
+# - ``"advanced"`` -- works and is tested, but the caller should know
+#   what they are signing up for (cloud cost, partial VRT mosaics,
+#   rotated transforms dropping on write, BigTIFF promotion, etc.). No
+#   kwarg gate; the docstring carries an ``Advanced:`` marker.
 # - ``"experimental"`` -- works in our tests, no claim about external
-#                       interop or numerical parity across backends.
-#                       Tier 3 codecs (``lerc``, ``jpeg2000`` / ``j2k``,
-#                       ``lz4``) require the explicit
-#                       ``allow_experimental_codecs=True`` opt-in on the
-#                       writers; the GPU paths use the existing
-#                       ``gpu=True`` kwarg as the explicit opt-in.
-# - ``"internal_only"`` -- the strictest tier. Already gated behind its
-#                       own dedicated flag because the output does not
-#                       round-trip through libtiff / GDAL / rasterio.
-#                       ``codec.jpeg`` requires
-#                       ``allow_internal_only_jpeg=True`` (issue #1845);
-#                       ``allow_experimental_codecs`` does NOT cover it,
-#                       because internal-only is a stricter tier than
-#                       experimental.
+#   interop or numerical parity across backends. Tier 3 codecs
+#   (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``) require
+#   ``allow_experimental_codecs=True`` on the writers; the GPU paths
+#   use ``gpu=True`` as the explicit opt-in.
+# - ``"internal_only"`` -- the strictest tier. Already gated behind
+#   its own dedicated flag because the output does not round-trip
+#   through libtiff / GDAL / rasterio. ``codec.jpeg`` requires
+#   ``allow_internal_only_jpeg=True`` (issue #1845);
+#   ``allow_experimental_codecs`` does NOT cover it.
 #
 # Tests in ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``
-# walk this mapping and assert that every Tier 3 codec rejects without
+# walk the mapping and assert that every Tier 3 codec rejects without
 # the opt-in flag and every Tier 4 codec rejects without its own
 # dedicated flag. The user-guide notebook
-# (``examples/user_guide/39_GeoTIFF_IO.ipynb``) renders the same mapping
-# as a table so the documentation cannot drift from the code.
+# (``examples/user_guide/39_GeoTIFF_IO.ipynb``) renders the same
+# mapping as a table so the documentation cannot drift from the code.
 #
 # See issue #2137.
-SUPPORTED_FEATURES = {
-    # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
-    'codec.none': 'stable',
-    'codec.deflate': 'stable',
-    'codec.lzw': 'stable',
-    'codec.packbits': 'stable',
-    'codec.zstd': 'stable',
-    # Tier 3 codecs: require ``allow_experimental_codecs=True``.
-    'codec.lerc': 'experimental',
-    'codec.jpeg2000': 'experimental',
-    'codec.j2k': 'experimental',
-    'codec.lz4': 'experimental',
-    # Tier 4 codec: requires the dedicated ``allow_internal_only_jpeg``
-    # opt-in (issue #1845). Not covered by ``allow_experimental_codecs``.
-    'codec.jpeg': 'internal_only',
-    # Read paths.
-    'reader.local_file': 'stable',
-    'reader.fsspec': 'advanced',
-    'reader.http': 'advanced',
-    'reader.vrt': 'advanced',
-    'reader.sidecar_ovr': 'advanced',
-    'reader.allow_rotated': 'advanced',
-    'reader.allow_unparseable_crs': 'advanced',
-    'reader.gpu': 'experimental',
-    # Write paths.
-    'writer.local_file': 'stable',
-    'writer.cog': 'advanced',
-    'writer.overviews': 'advanced',
-    'writer.bigtiff': 'advanced',
-    'writer.gpu': 'experimental',
-    'writer.gdal_metadata_xml': 'experimental',
-    'writer.extra_tags': 'experimental',
-}
-
-
-# Tier 3 codec names (lower-cased) gated behind
-# ``allow_experimental_codecs`` on the writers. Derived from
-# ``SUPPORTED_FEATURES`` so the gate cannot drift from the docs.
-_EXPERIMENTAL_CODECS = frozenset(
-    name.split('.', 1)[1].lower()
-    for name, tier in SUPPORTED_FEATURES.items()
-    if name.startswith('codec.') and tier == 'experimental'
-)
+from ._attrs import SUPPORTED_FEATURES  # noqa: E402
 
 
 def _read_geo_info(source, *, overview_level: int | None = None,

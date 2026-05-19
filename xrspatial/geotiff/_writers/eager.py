@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
 from .._attrs import (
+    _EXPERIMENTAL_CODECS,
     _LEVEL_RANGES,
     _VALID_COMPRESSIONS,
     _extract_rich_tags,
@@ -403,31 +404,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # behaviour all carry caveats the default writer should not
         # silently accept. Mirror the ``allow_internal_only_jpeg`` shape
         # so callers learn the opt-in name from the rejection message
-        # and can fix the call site in one line.
-        from .. import _EXPERIMENTAL_CODECS
-        _codec = compression.lower()
-        if _codec in _EXPERIMENTAL_CODECS and not allow_experimental_codecs:
+        # and can fix the call site in one line. The opt-in warning is
+        # emitted below once the GPU dispatch decision is known so the
+        # GPU path does not double-warn (``write_geotiff_gpu`` emits its
+        # own warning on the GPU path).
+        if (compression.lower() in _EXPERIMENTAL_CODECS
+                and not allow_experimental_codecs):
             raise ValueError(
                 f"compression={compression!r} is experimental: cross-backend "
                 "numerical parity is not claimed and reader support across "
                 "GDAL versions is uneven. Pass allow_experimental_codecs=True "
                 "to opt in, or use 'deflate', 'zstd', or 'lzw' for a "
                 "stable lossless codec (issue #2137).")
-        if _codec in _EXPERIMENTAL_CODECS and allow_experimental_codecs:
-            # Emit once at call time. ``write_geotiff_gpu`` re-emits when
-            # the GPU dispatch path forwards an experimental codec on,
-            # mirroring how ``allow_internal_only_jpeg`` warns on both
-            # entry points; the GPU path's own warning carries the
-            # backend-specific caveat (nvJPEG2K vs glymur, no nvCOMP LERC,
-            # etc.) so the two warnings do not duplicate information.
-            warnings.warn(
-                f"to_geotiff(compression={compression!r}, "
-                "allow_experimental_codecs=True): experimental codec, "
-                "no cross-backend parity claim and uneven reader support "
-                "across GDAL versions. See issue #2137.",
-                GeoTIFFFallbackWarning,
-                stacklevel=2,
-            )
 
     # max_z_error only applies to LERC; reject negative values and reject
     # non-zero values paired with any other codec so the caller learns the
@@ -478,6 +466,23 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             "without the TIFF JPEGTables tag (347); the file decodes "
             "through xrspatial but may fail in libtiff, GDAL, or "
             "rasterio. See issue #1845.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
+    # Tier 3 experimental-codec opt-in warning (issue #2137). Mirrors
+    # the JPEG flag's "warn once, after dispatch is resolved" shape:
+    # ``write_geotiff_gpu`` emits its own warning on the GPU path with
+    # a backend-specific caveat, so the CPU dispatcher only warns when
+    # the write is staying on CPU.
+    if (isinstance(compression, str)
+            and compression.lower() in _EXPERIMENTAL_CODECS
+            and allow_experimental_codecs
+            and not use_gpu):
+        warnings.warn(
+            f"to_geotiff(compression={compression!r}, "
+            "allow_experimental_codecs=True): experimental codec, "
+            "no cross-backend parity claim and uneven reader support "
+            "across GDAL versions. See issue #2137.",
             GeoTIFFFallbackWarning,
             stacklevel=2,
         )
