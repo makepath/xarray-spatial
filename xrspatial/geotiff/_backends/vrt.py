@@ -252,35 +252,6 @@ def read_vrt(source: str, *,
     # the origin already *is* the center of pixel (0, 0) and no shift
     # is applied.  This mirrors ``_geo_to_coords`` for non-VRT reads.
     gt = vrt.geo_transform
-    if gt is not None:
-        origin_x, res_x, _, origin_y, _, res_y = gt
-        height, width = arr.shape[:2]
-        if window is not None:
-            r0 = max(0, window[0])
-            c0 = max(0, window[1])
-            coord_window = (r0, c0, r0 + height, c0 + width)
-        else:
-            coord_window = None
-        coords = _coords_from_pixel_geometry(
-            origin_x, origin_y, res_x, res_y, height, width,
-            is_point=vrt.raster_type == 'point',
-            window=coord_window,
-        )
-    else:
-        coords = {}
-
-    # VRT builds its attrs dict inline rather than going through
-    # ``_populate_attrs_from_geo_info``; stamp the contract version here
-    # so both code paths emit the same marker.
-    attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
-    if gt is None:
-        # Mirror the eager non-VRT no-georef path: stamp the no-georef
-        # marker whenever the source carries no transform. The current
-        # VRT no-transform branch emits empty coords so the writer has
-        # nothing to misinterpret, but stamping defensively keeps the
-        # contract consistent if a future change adds placeholder
-        # coords here. See issue #2120.
-        attrs[_NO_GEOREF_KEY] = True
     # A rotated VRT under ``allow_rotated=True`` is treated as no-georef
     # by the GeoTIFF contract (#2115): the in-memory array is a pixel
     # grid, not a projected raster, so ``attrs['crs']`` would mislead
@@ -293,6 +264,44 @@ def read_vrt(source: str, *,
     _vrt_is_rotated = (
         gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)
     )
+    if gt is not None:
+        origin_x, res_x, _, origin_y, _, res_y = gt
+        height, width = arr.shape[:2]
+        if window is not None:
+            r0 = max(0, window[0])
+            c0 = max(0, window[1])
+            coord_window = (r0, c0, r0 + height, c0 + width)
+        else:
+            coord_window = None
+        # Rotated VRTs emit int64 pixel coords to match the eager
+        # non-VRT rotated path (#2122 follow-up). Without this gate
+        # the VRT branch handed back float projected coords while
+        # the rest of the read pretended the array had no georef,
+        # so a downstream consumer saw float64 x/y dtypes on a
+        # no-georef array, the inverse of the contract documented in
+        # ``docs/source/user_guide/attrs_contract.rst``.
+        coords = _coords_from_pixel_geometry(
+            origin_x, origin_y, res_x, res_y, height, width,
+            is_point=vrt.raster_type == 'point',
+            window=coord_window,
+            has_georef=not _vrt_is_rotated,
+        )
+    else:
+        coords = {}
+
+    # VRT builds its attrs dict inline rather than going through
+    # ``_populate_attrs_from_geo_info``; stamp the contract version here
+    # so both code paths emit the same marker.
+    attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
+    if gt is None or _vrt_is_rotated:
+        # Mirror the eager non-VRT no-georef path: stamp the no-georef
+        # marker whenever the read produced placeholder int64 coords.
+        # Covers both "no transform tags at all" and rotated reads under
+        # ``allow_rotated=True``. Without the rotated arm, the writer
+        # round-trip on a rotated read mistook the int64 coords for a
+        # user-authored integer-coord grid and stripped georef from the
+        # output (#2120 / #2122 follow-up).
+        attrs[_NO_GEOREF_KEY] = True
     if vrt.crs_wkt and not _vrt_is_rotated:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
         if epsg is not None:
@@ -724,16 +733,28 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
         coord_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)
+        # Rotated VRTs emit int64 pixel coords to match the eager
+        # non-VRT rotated path (#2122 follow-up). Without this gate the
+        # chunked VRT branch handed back float projected coords on a
+        # no-georef array, the inverse of the contract documented in
+        # ``docs/source/user_guide/attrs_contract.rst``.
         coords = _coords_from_pixel_geometry(
             origin_x, origin_y, res_x, res_y, full_h, full_w,
             is_point=vrt.raster_type == 'point',
             window=coord_window,
+            has_georef=not _vrt_is_rotated,
         )
         if not _vrt_is_rotated:
             attrs['transform'] = _transform_tuple_from_pixel_geometry(
                 origin_x, origin_y, res_x, res_y,
                 window=(win_r0, win_c0, 0, 0),
             )
+        else:
+            # Mirrors the no-transform arm: rotated reads emit
+            # placeholder int64 coords, so stamp the marker that lets
+            # the writer tell them apart from a user-authored integer
+            # grid (#2120 / #2122 follow-up).
+            attrs[_NO_GEOREF_KEY] = True
     else:
         # Defensive marker (issue #2120). See the eager VRT branch.
         attrs[_NO_GEOREF_KEY] = True

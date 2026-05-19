@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff._geotags import TAG_MODEL_TRANSFORMATION
+from xrspatial.geotiff._geotags import _NO_GEOREF_KEY, TAG_MODEL_TRANSFORMATION
 
 
 # Rotated 4x4 ModelTransformation: pixel_width 1.0, b=0.1 (column-axis
@@ -295,6 +295,13 @@ def test_vrt_eager_rotated_read_drops_crs(tmp_path):
     assert 'crs' not in da.attrs, sorted(da.attrs.keys())
     assert 'crs_wkt' not in da.attrs, sorted(da.attrs.keys())
     assert 'transform' not in da.attrs, sorted(da.attrs.keys())
+    # VRT rotated reads must match the eager non-VRT contract: int64
+    # pixel coords plus the no-georef marker, so the writer round-trip
+    # treats the array as a no-georef pixel grid rather than a
+    # user-authored integer-coord raster.
+    assert da.x.dtype == np.int64, da.x.dtype
+    assert da.y.dtype == np.int64, da.y.dtype
+    assert da.attrs.get(_NO_GEOREF_KEY) is True, sorted(da.attrs.keys())
 
 
 def test_vrt_chunked_rotated_read_drops_crs(tmp_path):
@@ -310,6 +317,9 @@ def test_vrt_chunked_rotated_read_drops_crs(tmp_path):
     assert 'crs' not in da.attrs, sorted(da.attrs.keys())
     assert 'crs_wkt' not in da.attrs, sorted(da.attrs.keys())
     assert 'transform' not in da.attrs, sorted(da.attrs.keys())
+    assert da.x.dtype == np.int64, da.x.dtype
+    assert da.y.dtype == np.int64, da.y.dtype
+    assert da.attrs.get(_NO_GEOREF_KEY) is True, sorted(da.attrs.keys())
 
 
 def test_vrt_axis_aligned_still_emits_crs(tmp_path):
