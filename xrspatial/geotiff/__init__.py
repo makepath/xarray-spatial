@@ -230,6 +230,10 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
             sidecar = load_sidecar(sidecar_path)
+            # Metadata-only path: drop the origin mapping. The reader
+            # only needs the merged IFD list to resolve the requested
+            # ``overview_level`` against; strip/tile bytes are sliced by
+            # ``read_to_array`` on the actual read.
             attach_sidecar_origin(
                 sidecar.ifds, sidecar.data, sidecar.header)
             ifds = ifds + sidecar.ifds

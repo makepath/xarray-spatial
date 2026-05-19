@@ -18,15 +18,26 @@ from __future__ import annotations
 
 import mmap
 import os
-from typing import NamedTuple
+from typing import NamedTuple, Union
 
 from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
+# Single source of truth for the fsspec gate; mirroring it here drifts
+# silently the moment ``_reader._is_fsspec_uri`` learns a new scheme.
+# ``_reader`` imports ``_sidecar`` lazily (inside functions), so this
+# top-level import does not form a cycle at module load time.
+from ._reader import _is_fsspec_uri
+
+
+#: Type of the bytes-like buffer a sidecar carries: an mmap for local
+#: files, bytes for HTTP / fsspec downloads. Narrowed from ``object``
+#: so the reader sees the actual variants when slicing IFD data.
+SidecarBuffer = Union[mmap.mmap, bytes]
 
 
 class SidecarOverviews(NamedTuple):
     """Bytes, header, and IFDs from a sibling ``.tif.ovr`` sidecar."""
 
-    data: object  # bytes-like (mmap or bytes)
+    data: SidecarBuffer
     header: TIFFHeader
     ifds: list[IFD]
     path: str
@@ -36,25 +47,16 @@ def _is_http_url(source: str) -> bool:
     return source.startswith(("http://", "https://"))
 
 
-def _is_fsspec_uri(source: str) -> bool:
-    # Same gate ``_reader._is_fsspec_uri`` uses: any ``scheme://`` that is
-    # not http / https / local-mmap-able. We avoid importing the reader
-    # helper here to keep the dependency direction one-way.
-    if "://" not in source:
-        return False
-    if _is_http_url(source):
-        return False
-    return True
-
-
 def find_sidecar(source) -> str | None:
     """Return the path / URL of a sibling ``.ovr`` sidecar if one exists.
 
     Scopes:
 
     * Local file paths -- probe with :func:`os.path.isfile`.
-    * HTTP / HTTPS URLs -- issue a single HEAD request to
-      ``<url>.ovr``; treat any 2xx as "exists".
+    * HTTP / HTTPS URLs -- issue a 1-byte Range GET to ``<url>.ovr``
+      through the eager reader's ``_HTTPSource`` so the probe inherits
+      SSRF validation, IP pinning, the shared urllib3 pool, and manual
+      redirect re-validation. See :func:`_probe_http`.
     * fsspec URIs (``s3://``, ``gs://``, ``az://``, ``memory://`` ...)
       -- call ``fsspec.AbstractFileSystem.exists`` on ``<uri>.ovr``.
     * File-like buffers (``io.BytesIO``, etc.) -- no sidecar concept,
@@ -79,18 +81,41 @@ def find_sidecar(source) -> str | None:
 
 
 def _probe_http(url: str) -> str | None:
-    """Return ``url`` if a HEAD request reports an existing object."""
+    """Return ``url`` if an existence probe succeeds via ``_HTTPSource``.
+
+    Routes through :class:`xrspatial.geotiff._reader._HTTPSource` so the
+    probe inherits the same defences the eager reader applies to every
+    HTTP fetch:
+
+    * SSRF allow-list via :func:`_validate_http_url` -- loopback /
+      link-local / private hostnames are rejected unless
+      ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set (#1664).
+    * IP pinning so a DNS-rebind between probe and download cannot
+      flip the target (#1846).
+    * Shared urllib3 ``PoolManager`` with retries and connection reuse,
+      so opening many sidecar-bearing files in a row keeps TCP/TLS
+      state warm instead of re-handshaking per probe.
+    * ``redirect=False`` with manual re-validation of every ``Location``
+      header, so a 302 from a public host to a private one is rejected
+      the same way the eager reader rejects it.
+
+    Existence is probed with a 1-byte Range GET (``bytes=0-0``) rather
+    than HEAD because HEAD support is inconsistent across CDNs and
+    object stores; a 1-byte GET works everywhere Range works (which is
+    the same precondition the eager COG reader assumes) and the
+    one-byte payload is cheaper than the headers urllib3 already
+    fetches for either method.
+
+    Any failure -- ``UnsafeURLError``, 4xx/5xx, network timeout,
+    missing dependency -- returns ``None`` so the caller falls back
+    to base-only behaviour without raising.
+    """
     try:
-        import urllib.request
-        req = urllib.request.Request(url, method="HEAD")
-        # 10 second timeout matches the eager HTTP reader's defaults;
-        # a stuck remote should not block sidecar discovery indefinitely.
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return url if 200 <= resp.status < 300 else None
+        from ._reader import _HTTPSource
+        src = _HTTPSource(url)
+        src.read_range(0, 1)
+        return url
     except Exception:
-        # 404 (urllib raises HTTPError) and any network error reach
-        # here; either way the sidecar is unavailable from our point
-        # of view and we fall back to base-only.
         return None
 
 
@@ -127,9 +152,12 @@ def load_sidecar(path: str) -> SidecarOverviews:
         finally:
             f.close()
     elif _is_http_url(path):
-        import urllib.request
-        with urllib.request.urlopen(path, timeout=30) as resp:
-            data = resp.read()
+        # Reuse the eager reader's HTTP source so the sidecar download
+        # inherits SSRF validation, IP pinning, the shared urllib3
+        # PoolManager, and manual redirect re-validation. See
+        # ``_probe_http`` for the threat model the indirection closes.
+        from ._reader import _HTTPSource
+        data = _HTTPSource(path).read_all()
     else:
         # fsspec URI
         import fsspec
@@ -157,18 +185,22 @@ def close_sidecar(sidecar: SidecarOverviews | None) -> None:
         pass
 
 
-def attach_sidecar_origin(ifds: list[IFD],
-                          data: object,
-                          header: TIFFHeader) -> None:
-    """Tag each IFD in ``ifds`` with its source bytes and header.
+def attach_sidecar_origin(
+    ifds: list[IFD],
+    data: SidecarBuffer,
+    header: TIFFHeader,
+) -> dict[int, tuple[SidecarBuffer, TIFFHeader]]:
+    """Return a mapping from ``id(ifd)`` to its ``(data, header)`` origin.
 
-    The reader checks ``ifd._source_data`` / ``ifd._source_header`` to
-    decide which buffer to slice for strip/tile reads. Untagged IFDs
-    fall through to the base-file ``data`` / ``header`` the caller
-    already has in scope.
+    The reader looks up the selected IFD in this mapping and slices
+    the corresponding buffer for strip/tile reads. IFDs not in the
+    mapping fall through to the base-file ``data`` / ``header`` the
+    caller already has in scope.
+
+    Returns a fresh dict per call rather than mutating the parsed IFD
+    instances. Mutation via ``object.__setattr__`` would persist on the
+    IFD across requests if a future caller cached or reused the parsed
+    pyramid list. A side dict is request-scoped and discarded with the
+    surrounding ``read_to_array`` call frame.
     """
-    for ifd in ifds:
-        # Use ``object.__setattr__`` so this works whether IFD is a
-        # plain dataclass or a frozen one in a future revision.
-        object.__setattr__(ifd, "_source_data", data)
-        object.__setattr__(ifd, "_source_header", header)
+    return {id(ifd): (data, header) for ifd in ifds}

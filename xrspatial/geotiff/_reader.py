@@ -3273,10 +3273,11 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         from ._sidecar import (
             attach_sidecar_origin, find_sidecar, load_sidecar,
         )
+        sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
             sidecar = load_sidecar(sidecar_path)
-            attach_sidecar_origin(
+            sidecar_origin = attach_sidecar_origin(
                 sidecar.ifds, sidecar.data, sidecar.header)
             ifds = ifds + sidecar.ifds
 
@@ -3286,8 +3287,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # If the selected IFD came from the sidecar, swap the data /
         # header used for strip / tile reads below so byte offsets
         # resolve against the right buffer.
-        ifd_data = getattr(ifd, '_source_data', None) or data
-        ifd_header = getattr(ifd, '_source_header', None) or header
+        ifd_data, ifd_header = sidecar_origin.get(id(ifd), (data, header))
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)

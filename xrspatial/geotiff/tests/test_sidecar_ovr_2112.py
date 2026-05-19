@@ -253,7 +253,14 @@ def _start_http_server(directory):
     return httpd, httpd.server_address[1]
 
 
-def test_find_sidecar_http_probe_returns_url_when_present(tmp_path):
+def test_find_sidecar_http_probe_returns_url_when_present(
+        tmp_path, monkeypatch):
+    # The sidecar probe now routes through ``_HTTPSource``, which
+    # rejects loopback hostnames under the SSRF guard added in #1664.
+    # Loopback is the standard local-server pattern in this repo's HTTP
+    # tests (see ``test_golden_corpus_http_1930.py``); opt into the
+    # escape hatch the production reader exposes.
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     src = _fixture_or_skip()
     import shutil
     shutil.copy(src, tmp_path / "x.tif")
@@ -266,7 +273,9 @@ def test_find_sidecar_http_probe_returns_url_when_present(tmp_path):
         httpd.shutdown()
 
 
-def test_find_sidecar_http_probe_returns_none_when_missing(tmp_path):
+def test_find_sidecar_http_probe_returns_none_when_missing(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     src = _fixture_or_skip()
     import shutil
     shutil.copy(src, tmp_path / "x.tif")  # no .ovr copied
@@ -278,7 +287,25 @@ def test_find_sidecar_http_probe_returns_none_when_missing(tmp_path):
         httpd.shutdown()
 
 
-def test_load_sidecar_http_returns_ifds(tmp_path):
+def test_find_sidecar_http_probe_rejects_loopback_without_env_override(
+        tmp_path):
+    """Without ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1``, the SSRF
+    guard makes a loopback probe silently return ``None`` -- same
+    silent-fail-to-base contract the rest of ``find_sidecar`` uses."""
+    src = _fixture_or_skip()
+    import shutil
+    shutil.copy(src, tmp_path / "x.tif")
+    shutil.copy(str(src) + ".ovr", tmp_path / "x.tif.ovr")
+    httpd, port = _start_http_server(tmp_path)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif"
+        assert find_sidecar(url) is None
+    finally:
+        httpd.shutdown()
+
+
+def test_load_sidecar_http_returns_ifds(tmp_path, monkeypatch):
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     src = _fixture_or_skip()
     import shutil
     shutil.copy(str(src) + ".ovr", tmp_path / "x.tif.ovr")
