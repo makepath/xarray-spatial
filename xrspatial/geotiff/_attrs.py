@@ -46,6 +46,18 @@ Canonical (xrspatial owns these; round-trip stable):
   step ran; ``False`` iff the array still carries the literal integer
   sentinel. Only emitted when ``nodata`` is set; absence is the
   "no declared sentinel" signal. See ``_set_nodata_attrs``.
+- ``nodata_pixels_present`` (#2135): bool, only emitted when
+  ``nodata`` is set and the backend computed the answer cheaply.
+  True iff the read window contained at least one pixel matching the
+  declared sentinel before masking. Lets QA and writer code answer
+  "are any sentinel pixels in this tile" without scanning the buffer.
+  The dask path leaves this unset because a strict per-chunk
+  reduction would force an eager ``.compute()``.
+- ``nodata_dtype_cast`` (#2135): string dtype name (e.g.
+  ``"float64"``), only emitted when ``nodata`` is set and the caller
+  passed an explicit ``dtype=`` kwarg. Records that a post-mask cast
+  happened so consumers can tell float-because-masked from
+  float-because-promoted.
 - ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
   (explicit / RasterPixelIsPoint).
 - ``extra_tags``: list of ``(tag_id, type_id, count, value)`` tuples for
@@ -245,8 +257,15 @@ def _should_restore_nan_sentinel(attrs) -> bool:
     return value is not False
 
 
-def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
-    """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
+def _set_nodata_attrs(
+    attrs: dict,
+    nodata,
+    *,
+    masked: bool,
+    pixels_present: bool | None = None,
+    dtype_cast: str | None = None,
+) -> None:
+    """Set the nodata lifecycle attrs on a read.
 
     ``masked`` is the actual mask-decision the read path made: True iff
     sentinel pixels in the in-memory buffer have been replaced with NaN
@@ -254,8 +273,24 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     step). False iff the literal sentinel values are still present in
     the buffer.
 
+    ``pixels_present`` is the lifecycle signal added in issue #2135. If
+    not ``None``, the read path computed whether the read window
+    contained at least one pixel matching the declared sentinel before
+    masking; the value is forwarded to ``attrs['nodata_pixels_present']``
+    so consumers can answer "any nodata in this tile" without scanning
+    the buffer. Pass ``None`` when the backend cannot cheaply produce
+    the value (e.g. dask, where a strict per-chunk reduction would
+    force eager compute).
+
+    ``dtype_cast`` is the second lifecycle signal added in issue #2135.
+    If the caller passed an explicit ``dtype=`` kwarg, the backend
+    forwards the resolved target dtype string (e.g. ``"float64"``) so
+    consumers can distinguish "float because masking promoted it" from
+    "float because the caller cast it". ``None`` means no caller cast
+    happened; the attr is omitted in that case.
+
     Contract (splits the two meanings previously fused into
-    ``attrs['nodata']`` per issue #1988):
+    ``attrs['nodata']`` per issue #1988, extended for #2135):
 
     * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
       source dtype. Set whenever the source declared one, regardless of
@@ -263,6 +298,14 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     * ``attrs['masked_nodata']`` -- the ``masked`` value the caller
       passed, coerced to bool. Only emitted when ``nodata is not
       None``; absence of the flag means there is no declared sentinel.
+    * ``attrs['nodata_pixels_present']`` (additive, #2135) -- bool,
+      only emitted when ``nodata is not None`` and ``pixels_present``
+      is not ``None``. Tracks whether the read window contained any
+      sentinel pixel before masking.
+    * ``attrs['nodata_dtype_cast']`` (additive, #2135) -- string dtype
+      name (e.g. ``"float64"``), only emitted when ``nodata is not
+      None`` and ``dtype_cast`` is not ``None``. Records that a
+      caller-requested cast happened after masking.
 
     Pre-#2092 the helper inferred ``masked`` from the final array
     dtype, which lied when ``mask_nodata=False`` left literal sentinel
@@ -275,6 +318,10 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
         return
     attrs['nodata'] = nodata
     attrs['masked_nodata'] = bool(masked)
+    if pixels_present is not None:
+        attrs['nodata_pixels_present'] = bool(pixels_present)
+    if dtype_cast is not None:
+        attrs['nodata_dtype_cast'] = str(dtype_cast)
 
 
 def _validate_read_geo_info(

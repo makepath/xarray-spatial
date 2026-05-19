@@ -850,6 +850,101 @@ def _apply_integer_sentinel_mask(arr, vrt, band):
     return arr
 
 
+def _apply_integer_sentinel_mask_with_presence(arr, vrt, band):
+    """Same as :func:`_apply_integer_sentinel_mask` but also reports presence.
+
+    Returns ``(arr, pixels_present)`` where ``pixels_present`` is a bool
+    indicating whether any sentinel pixel was found in the integer
+    buffer before masking. Used by the VRT eager and chunked paths to
+    surface ``attrs['nodata_pixels_present']`` (issue #2135) without
+    rescanning the (possibly promoted) float buffer.
+    """
+    if arr.dtype.kind not in ('u', 'i'):
+        return arr, False
+    if arr.ndim == 3 and band is None and vrt.bands:
+        int_arr = arr
+        int_dtype = int_arr.dtype
+        any_hit = False
+        for i, vrt_band in enumerate(vrt.bands):
+            if i >= int_arr.shape[-1]:
+                break
+            sentinel = _sentinel_for_dtype(vrt_band.nodata, int_dtype)
+            if sentinel is None:
+                continue
+            mask = int_arr[..., i] == sentinel
+            if not mask.any():
+                continue
+            any_hit = True
+            if arr.dtype != np.float64:
+                arr = arr.astype(np.float64)
+            arr[..., i][mask] = np.nan
+        return arr, any_hit
+    band_idx = band if band is not None else 0
+    nodata = None
+    if vrt.bands and 0 <= band_idx < len(vrt.bands):
+        nodata = vrt.bands[band_idx].nodata
+    if nodata is None:
+        return arr, False
+    sentinel = _sentinel_for_dtype(nodata, arr.dtype)
+    if sentinel is None:
+        return arr, False
+    mask = arr == sentinel
+    present = bool(mask.any())
+    if present:
+        arr = arr.astype(np.float64)
+        arr[mask] = np.nan
+    return arr, present
+
+
+def _scan_for_sentinel(arr, vrt, band):
+    """Detect whether ``arr`` contains any pixel matching a declared sentinel.
+
+    Used by the VRT eager path when ``mask_nodata=False`` so
+    ``attrs['nodata_pixels_present']`` (issue #2135) still surfaces a
+    meaningful answer even though the masking branch was skipped. The
+    multi-band case checks each band against its own ``<NoDataValue>``;
+    the single-band case checks the selected band's sentinel.
+
+    Returns a plain bool. ``False`` covers the no-declared-sentinel and
+    sentinel-out-of-range cases (mirrors the masking-branch gates).
+    """
+    if arr.ndim == 3 and band is None and vrt.bands:
+        for i, vrt_band in enumerate(vrt.bands):
+            if i >= arr.shape[-1]:
+                break
+            if vrt_band.nodata is None:
+                continue
+            if arr.dtype.kind == 'f':
+                if np.isnan(vrt_band.nodata):
+                    if bool(np.isnan(arr[..., i]).any()):
+                        return True
+                else:
+                    if bool((arr[..., i]
+                             == arr.dtype.type(vrt_band.nodata)).any()):
+                        return True
+            else:
+                sentinel = _sentinel_for_dtype(vrt_band.nodata, arr.dtype)
+                if sentinel is None:
+                    continue
+                if bool((arr[..., i] == sentinel).any()):
+                    return True
+        return False
+    band_idx = band if band is not None else 0
+    nodata = None
+    if vrt.bands and 0 <= band_idx < len(vrt.bands):
+        nodata = vrt.bands[band_idx].nodata
+    if nodata is None:
+        return False
+    if arr.dtype.kind == 'f':
+        if np.isnan(nodata):
+            return bool(np.isnan(arr).any())
+        return bool((arr == arr.dtype.type(nodata)).any())
+    sentinel = _sentinel_for_dtype(nodata, arr.dtype)
+    if sentinel is None:
+        return False
+    return bool((arr == sentinel).any())
+
+
 def read_vrt(vrt_path: str, *, window=None,
              band: int | None = None,
              max_pixels: int | None = None,

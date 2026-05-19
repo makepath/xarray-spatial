@@ -149,6 +149,8 @@ def read_vrt(source: str, *,
     from .._vrt import (
         read_vrt as _read_vrt_internal,
         _apply_integer_sentinel_mask as _vrt_apply_integer_sentinel_mask,
+        _apply_integer_sentinel_mask_with_presence as _vrt_mask_with_presence,
+        _scan_for_sentinel as _vrt_scan_for_sentinel,
     )
 
     source = _coerce_path(source)
@@ -326,8 +328,21 @@ def read_vrt(source: str, *,
     # (issue #1825) so behaviour stays in lockstep. See issue #1611.
     # ``mask_nodata=False`` skips this so callers can preserve an
     # integer source dtype via ``dtype=...`` (issue #2052).
+    # ``nodata_pixels_present`` tracks whether the read window contained
+    # any sentinel pixel before masking (issue #2135). On the VRT eager
+    # path it has two sources: the integer-sentinel helper below (which
+    # returns ``True`` iff at least one band hit its sentinel during
+    # promotion), and the inline float-NaN masking inside ``_read_data``
+    # (proxied via NaN presence on the resulting float buffer when the
+    # source declared a sentinel). Stays ``None`` only when no sentinel
+    # was declared.
+    nodata_pixels_present: bool | None = None
     if mask_nodata:
-        arr = _vrt_apply_integer_sentinel_mask(arr, vrt, band)
+        arr, nodata_pixels_present = _vrt_mask_with_presence(arr, vrt, band)
+    elif nodata is not None:
+        # ``mask_nodata=False``: skip the masking helper but still scan
+        # for the literal sentinel so callers can branch on the attr.
+        nodata_pixels_present = _vrt_scan_for_sentinel(arr, vrt, band)
 
     # Capture pre-cast dtype: ``_vrt._read_data`` NaN-masks float source
     # arrays (and int sources feeding a float VRT dataType) inline, and
@@ -339,6 +354,24 @@ def read_vrt(source: str, *,
     # cast would falsely claim ``masked_nodata=True`` (issue #2092
     # follow-up).
     pre_cast_dtype = np.dtype(str(arr.dtype))
+
+    # When the inline float-NaN masking inside ``_vrt._read_data`` already
+    # ran (float source + float VRT dataType + declared sentinel), the
+    # integer helper above is a no-op but the resulting float buffer may
+    # already carry NaNs at the sentinel locations. Promote
+    # ``nodata_pixels_present`` to reflect that, since a downstream "any
+    # nodata?" check should answer yes for those tiles too.
+    if (nodata is not None
+            and pre_cast_dtype.kind == 'f'
+            and not nodata_pixels_present):
+        # ``arr`` is still on the CPU at this point (the optional
+        # ``cupy.asarray`` lift happens further down).
+        try:
+            nodata_pixels_present = bool(np.isnan(arr).any())
+        except (TypeError, ValueError):
+            # Defensive: an unexpected dtype that fails ``np.isnan`` falls
+            # back to the helper's answer rather than raising mid-read.
+            pass
 
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
@@ -358,14 +391,18 @@ def read_vrt(source: str, *,
         import cupy
         arr = cupy.asarray(arr)
 
+    dtype_cast_attr: str | None = None
     if dtype is not None:
         target = np.dtype(dtype)
         _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
         arr = arr.astype(target)
+        dtype_cast_attr = target.name
 
     _set_nodata_attrs(
         attrs, nodata,
         masked=(pre_cast_dtype.kind == 'f'),
+        pixels_present=nodata_pixels_present,
+        dtype_cast=dtype_cast_attr,
     )
 
     if arr.ndim == 3:
@@ -740,9 +777,17 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # ``final_dtype`` block) and must not flip this attr, so we read
     # the pre-cast ``declared_dtype`` here rather than ``final_dtype``
     # (#2092 follow-up).
+    # ``nodata_pixels_present`` is intentionally left unset on the
+    # chunked VRT path: a per-chunk reduction would force eager
+    # ``.compute()`` (matches the dask backend's policy for issue
+    # #2135). ``dtype_cast`` records the caller-supplied ``dtype=``
+    # kwarg when present so downstream can tell float-by-cast apart
+    # from float-by-masking even on the lazy output.
     _set_nodata_attrs(
         attrs, nodata_meta,
         masked=(declared_dtype.kind == 'f'),
+        pixels_present=None,
+        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
     )
 
     # Static hole detection: mirror the eager-path ``attrs['vrt_holes']``
