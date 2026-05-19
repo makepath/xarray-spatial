@@ -3407,10 +3407,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             geo_info._mask_nodata = inverted_nodata
     finally:
         src.close()
-        if sidecar is not None:
-            try:
-                sidecar.data.close()
-            except Exception:
-                pass
+        from ._sidecar import close_sidecar
+        close_sidecar(sidecar)
 
     return arr, geo_info

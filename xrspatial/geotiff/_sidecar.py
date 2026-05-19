@@ -7,14 +7,12 @@ whose IFDs are the continuation of the base file's pyramid: base IFD 0
 is overview level 0, sidecar IFD 0 is level 1, sidecar IFD 1 is level
 2, and so on.
 
-This module discovers the sidecar next to a local-file source and
-parses its IFDs, returning the inputs needed for the reader to switch
-to the sidecar's bytes/header when the selected overview level lives
-there. Cloud / HTTP / file-like sources are not in scope for the first
-cut (see issue #2112): they would need sidecar URLs to be discoverable
-in their respective namespaces, which is not a TIFF concern. Callers
-that hit a non-local source skip the sidecar discovery entirely and
-fall back to base-file-only behaviour.
+This module discovers the sidecar next to a local-file, HTTP, or
+fsspec source and parses its IFDs, returning the inputs the reader
+needs to switch to the sidecar's bytes/header when the requested
+overview level lives there. Discovery is gated on a cheap existence
+check (local stat, HTTP HEAD, or fsspec ``exists``); a missing sidecar
+returns ``None`` and the caller falls back to base-file-only behaviour.
 """
 from __future__ import annotations
 
@@ -34,54 +32,129 @@ class SidecarOverviews(NamedTuple):
     path: str
 
 
+def _is_http_url(source: str) -> bool:
+    return source.startswith(("http://", "https://"))
+
+
+def _is_fsspec_uri(source: str) -> bool:
+    # Same gate ``_reader._is_fsspec_uri`` uses: any ``scheme://`` that is
+    # not http / https / local-mmap-able. We avoid importing the reader
+    # helper here to keep the dependency direction one-way.
+    if "://" not in source:
+        return False
+    if _is_http_url(source):
+        return False
+    return True
+
+
 def find_sidecar(source) -> str | None:
-    """Return the path to a sibling ``.ovr`` sidecar if one exists.
+    """Return the path / URL of a sibling ``.ovr`` sidecar if one exists.
 
-    Only local file paths are considered. File-like buffers and fsspec
-    / HTTP URIs are out of scope (their sidecar conventions differ and
-    discovery is non-trivial); they return ``None`` so callers fall
-    back to base-file-only behaviour.
+    Scopes:
 
-    The sidecar lives at ``<source>.ovr`` per the GDAL convention. The
-    function returns the absolute path on success and ``None`` if the
-    sidecar does not exist or the source is not a local file path.
+    * Local file paths -- probe with :func:`os.path.isfile`.
+    * HTTP / HTTPS URLs -- issue a single HEAD request to
+      ``<url>.ovr``; treat any 2xx as "exists".
+    * fsspec URIs (``s3://``, ``gs://``, ``az://``, ``memory://`` ...)
+      -- call ``fsspec.AbstractFileSystem.exists`` on ``<uri>.ovr``.
+    * File-like buffers (``io.BytesIO``, etc.) -- no sidecar concept,
+      return ``None``.
+
+    Discovery failures are silent: any network error, missing fsspec,
+    or unreadable path returns ``None`` so the caller falls back to
+    base-file-only behaviour. The existence check is bounded and does
+    not download or open the sidecar itself; :func:`load_sidecar`
+    handles the actual read once the path is known.
     """
     if not isinstance(source, str):
         return None
-    # fsspec URIs (s3://, gs://, az://, memory://, http://, https://)
-    # share the str type with local paths but should not be probed via
-    # ``os.path.exists``: the latter would either succeed against a
-    # local file that happens to share the name or fail and we cannot
-    # safely fetch a remote sidecar from this layer.
-    if "://" in source:
+    candidate = source + ".ovr"
+    if "://" not in source:
+        return candidate if os.path.isfile(candidate) else None
+    if _is_http_url(source):
+        return _probe_http(candidate)
+    if _is_fsspec_uri(source):
+        return _probe_fsspec(candidate)
+    return None
+
+
+def _probe_http(url: str) -> str | None:
+    """Return ``url`` if a HEAD request reports an existing object."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, method="HEAD")
+        # 10 second timeout matches the eager HTTP reader's defaults;
+        # a stuck remote should not block sidecar discovery indefinitely.
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return url if 200 <= resp.status < 300 else None
+    except Exception:
+        # 404 (urllib raises HTTPError) and any network error reach
+        # here; either way the sidecar is unavailable from our point
+        # of view and we fall back to base-only.
         return None
-    sidecar = source + ".ovr"
-    if not os.path.isfile(sidecar):
+
+
+def _probe_fsspec(uri: str) -> str | None:
+    """Return ``uri`` if fsspec reports the object exists."""
+    try:
+        import fsspec
+        fs, path = fsspec.core.url_to_fs(uri)
+        return uri if fs.exists(path) else None
+    except Exception:
         return None
-    return sidecar
 
 
 def load_sidecar(path: str) -> SidecarOverviews:
     """Open and parse a sidecar ``.ovr`` file.
 
-    The returned ``data`` is an ``mmap`` object the caller must close
-    (or wrap in a ``try / finally`` next to its own data close). The
-    IFD list is the sidecar's full IFD chain in file order; the reader
-    treats them as overview levels (the first sidecar IFD is level 1
-    when the base file holds only a full-resolution IFD, level 2 when
-    the base file already carries one internal overview, and so on).
+    Accepts local file paths, HTTP / HTTPS URLs, and fsspec URIs.
+    Local paths are mmap'd; remote sources are downloaded once via the
+    matching transport (HTTP via :mod:`urllib`, fsspec URIs via the
+    fsspec filesystem). The IFD list is the sidecar's full IFD chain
+    in file order; the reader treats them as overview levels (the
+    first sidecar IFD is level 1 when the base file holds only a
+    full-resolution IFD, level 2 when the base file already carries
+    one internal overview, and so on).
+
+    The returned ``data`` is either an ``mmap`` (local) or ``bytes``
+    (remote). Callers should close the mmap variant via
+    ``data.close()`` when present; the bytes case is no-op.
     """
-    f = open(path, "rb")
-    try:
-        # ``mmap`` over the whole file matches the eager reader's
-        # ``read_to_array`` path for local sources; the lifetime is
-        # owned by the caller.
-        data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-    finally:
-        f.close()
+    if "://" not in path:
+        f = open(path, "rb")
+        try:
+            data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        finally:
+            f.close()
+    elif _is_http_url(path):
+        import urllib.request
+        with urllib.request.urlopen(path, timeout=30) as resp:
+            data = resp.read()
+    else:
+        # fsspec URI
+        import fsspec
+        with fsspec.open(path, "rb") as f:
+            data = f.read()
     header = parse_header(data)
     ifds = parse_all_ifds(data, header)
     return SidecarOverviews(data=data, header=header, ifds=ifds, path=path)
+
+
+def close_sidecar(sidecar: SidecarOverviews | None) -> None:
+    """Close the sidecar's data buffer if it holds a ``close`` method.
+
+    Mmap data buffers need explicit close; ``bytes`` from a remote
+    download does not. Safe to call with ``None``.
+    """
+    if sidecar is None:
+        return
+    closer = getattr(sidecar.data, "close", None)
+    if closer is None:
+        return
+    try:
+        closer()
+    except Exception:
+        pass
 
 
 def attach_sidecar_origin(ifds: list[IFD],

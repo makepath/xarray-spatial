@@ -286,6 +286,8 @@ def read_geotiff_gpu(source: str, *,
     src = _FileSource(source)
     data = src.read_all()
 
+    sidecar = None
+    sidecar_owned_ifd = False
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
@@ -293,8 +295,35 @@ def read_geotiff_gpu(source: str, *,
         if len(ifds) == 0:
             raise ValueError("No IFDs found in TIFF file")
 
+        # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list so
+        # ``overview_level`` indexes both internal and external overviews
+        # (issue #2112). When the selected IFD comes from the sidecar,
+        # we swap ``data`` / ``header`` to the sidecar's buffers below
+        # and skip the GDS fast path -- GDS reads the source file path,
+        # which would point at the base file rather than the sidecar.
+        from .._sidecar import (
+            attach_sidecar_origin, close_sidecar, find_sidecar,
+            load_sidecar,
+        )
+        sidecar_path = find_sidecar(source)
+        if sidecar_path is not None:
+            sidecar = load_sidecar(sidecar_path)
+            attach_sidecar_origin(
+                sidecar.ifds, sidecar.data, sidecar.header)
+            ifds = ifds + sidecar.ifds
+
         # Skip mask IFDs (NewSubfileType bit 2)
         ifd = select_overview_ifd(ifds, overview_level)
+
+        # Swap base data / header for the sidecar's buffers when the
+        # requested overview level lives in the sidecar. Subsequent
+        # tile / strip reads slice the right buffer.
+        sidecar_data = getattr(ifd, "_source_data", None)
+        sidecar_header = getattr(ifd, "_source_header", None)
+        if sidecar_data is not None and sidecar_header is not None:
+            data = sidecar_data
+            header = sidecar_header
+            sidecar_owned_ifd = True
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
@@ -490,6 +519,11 @@ def read_geotiff_gpu(source: str, *,
 
     finally:
         src.close()
+        # ``sidecar`` (if any) holds an mmap that is sliced by the GPU
+        # decode below; do not close it here. Python's GC closes the
+        # underlying file descriptor when ``sidecar`` falls out of
+        # function scope at return, which is the same lifetime the
+        # base-file ``data`` already relies on after ``src.close()``.
 
     # GPU decode: try GDS (SSD→GPU direct) first, then CPU mmap path.
     # Sparse tiles (byte_count == 0) are unsupported on the GPU pipeline;
@@ -606,36 +640,53 @@ def read_geotiff_gpu(source: str, *,
         from .._gpu_decode import gpu_decode_tiles_from_file
         arr_gpu = None
 
-        try:
-            arr_gpu = gpu_decode_tiles_from_file(
-                source, offsets, byte_counts,
-                tw, th, width, height,
-                compression, predictor, file_dtype, samples,
-                byte_order=header.byte_order,
-                masked_fill=masked_fill,
-            )
-        except Exception as e:
-            if gpu == 'strict' or _geotiff_strict_mode():
-                raise
-            warnings.warn(
-                f"read_geotiff_gpu: GPU decode failed "
-                f"({type(e).__name__}: {e}); falling back to CPU.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        if sidecar_owned_ifd:
+            # The selected IFD lives in a sibling .tif.ovr sidecar; tile
+            # offsets index into the sidecar's bytes, not the base file
+            # path that ``gpu_decode_tiles_from_file`` would open via
+            # kvikio. Skip GDS and let the CPU-mmap fallback below slice
+            # the already-loaded sidecar buffer (issue #2112).
             arr_gpu = None
+        else:
+            try:
+                arr_gpu = gpu_decode_tiles_from_file(
+                    source, offsets, byte_counts,
+                    tw, th, width, height,
+                    compression, predictor, file_dtype, samples,
+                    byte_order=header.byte_order,
+                    masked_fill=masked_fill,
+                )
+            except Exception as e:
+                if gpu == 'strict' or _geotiff_strict_mode():
+                    raise
+                warnings.warn(
+                    f"read_geotiff_gpu: GPU decode failed "
+                    f"({type(e).__name__}: {e}); falling back to CPU.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                arr_gpu = None
 
     if arr_gpu is None:
-        # Fallback: extract tiles via CPU mmap, then GPU decode
-        src2 = _FileSource(source)
-        data2 = src2.read_all()
-        try:
+        # Fallback: extract tiles via CPU mmap, then GPU decode. For
+        # sidecar IFDs the tile bytes already live in ``data`` (loaded
+        # from the .ovr above); re-opening ``source`` would point at the
+        # base file. Use the in-scope ``data`` directly in that case.
+        if sidecar_owned_ifd:
             compressed_tiles = [
-                bytes(data2[offsets[i]:offsets[i] + byte_counts[i]])
+                bytes(data[offsets[i]:offsets[i] + byte_counts[i]])
                 for i in range(len(offsets))
             ]
-        finally:
-            src2.close()
+        else:
+            src2 = _FileSource(source)
+            data2 = src2.read_all()
+            try:
+                compressed_tiles = [
+                    bytes(data2[offsets[i]:offsets[i] + byte_counts[i]])
+                    for i in range(len(offsets))
+                ]
+            finally:
+                src2.close()
 
     if arr_gpu is None:
         try:

@@ -253,11 +253,8 @@ def _read_geo_info(source, *, overview_level: int | None = None):
     finally:
         if close_data:
             data.close()
-        if sidecar is not None:
-            try:
-                sidecar.data.close()
-            except Exception:
-                pass
+        from ._sidecar import close_sidecar
+        close_sidecar(sidecar)
 
 
 def open_geotiff(source: str | BinaryIO, *,

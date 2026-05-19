@@ -192,6 +192,118 @@ def test_missing_sidecar_raises_overview_out_of_range(tmp_path):
 # ---------------------------------------------------------------------------
 # File-like buffer source still works for the base level (no sidecar lookup).
 # ---------------------------------------------------------------------------
+@pytest.fixture
+def _gpu_or_skip():
+    if not _gpu_available():
+        pytest.skip("cupy + CUDA required")
+
+
+def _gpu_available() -> bool:
+    import importlib.util
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+def test_gpu_eager_reads_sidecar_level_1(_gpu_or_skip):
+    src = _fixture_or_skip()
+    cpu = open_geotiff(str(src), overview_level=1)
+    gpu = open_geotiff(str(src), overview_level=1, gpu=True)
+    assert gpu.shape == cpu.shape
+    np.testing.assert_array_equal(gpu.data.get(), cpu.values)
+
+
+def test_gpu_eager_reads_sidecar_level_2(_gpu_or_skip):
+    src = _fixture_or_skip()
+    cpu = open_geotiff(str(src), overview_level=2)
+    gpu = open_geotiff(str(src), overview_level=2, gpu=True)
+    assert gpu.shape == cpu.shape
+    np.testing.assert_array_equal(gpu.data.get(), cpu.values)
+
+
+def test_gpu_eager_base_level_unchanged(_gpu_or_skip):
+    src = _fixture_or_skip()
+    gpu = open_geotiff(str(src), gpu=True)
+    assert gpu.shape == (64, 64)
+
+
+# ---------------------------------------------------------------------------
+# HTTP sidecar discovery: tests use a tiny local HTTP server so the
+# probe and download paths are exercised without a network round-trip.
+# ---------------------------------------------------------------------------
+def _start_http_server(directory):
+    import http.server
+    import socketserver
+    import threading
+
+    class _Handler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a, **kw):
+            return  # silence
+
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(directory), **kw)
+
+    httpd = socketserver.TCPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, httpd.server_address[1]
+
+
+def test_find_sidecar_http_probe_returns_url_when_present(tmp_path):
+    src = _fixture_or_skip()
+    import shutil
+    shutil.copy(src, tmp_path / "x.tif")
+    shutil.copy(str(src) + ".ovr", tmp_path / "x.tif.ovr")
+    httpd, port = _start_http_server(tmp_path)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif"
+        assert find_sidecar(url) == url + ".ovr"
+    finally:
+        httpd.shutdown()
+
+
+def test_find_sidecar_http_probe_returns_none_when_missing(tmp_path):
+    src = _fixture_or_skip()
+    import shutil
+    shutil.copy(src, tmp_path / "x.tif")  # no .ovr copied
+    httpd, port = _start_http_server(tmp_path)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif"
+        assert find_sidecar(url) is None
+    finally:
+        httpd.shutdown()
+
+
+def test_load_sidecar_http_returns_ifds(tmp_path):
+    src = _fixture_or_skip()
+    import shutil
+    shutil.copy(str(src) + ".ovr", tmp_path / "x.tif.ovr")
+    httpd, port = _start_http_server(tmp_path)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif.ovr"
+        sidecar = load_sidecar(url)
+        assert len(sidecar.ifds) == 2
+        assert (sidecar.ifds[0].width, sidecar.ifds[0].height) == (32, 32)
+        assert (sidecar.ifds[1].width, sidecar.ifds[1].height) == (16, 16)
+    finally:
+        httpd.shutdown()
+
+
+def test_find_sidecar_fsspec_probe_returns_uri_when_present(tmp_path):
+    pytest.importorskip("fsspec")
+    src = _fixture_or_skip()
+    import shutil
+    shutil.copy(src, tmp_path / "y.tif")
+    shutil.copy(str(src) + ".ovr", tmp_path / "y.tif.ovr")
+    # file:// is a valid fsspec scheme that uses LocalFileSystem.
+    uri = f"file://{tmp_path}/y.tif"
+    assert find_sidecar(uri) == uri + ".ovr"
+
+
 def test_file_like_source_reads_base_without_sidecar():
     src = _fixture_or_skip()
     with open(src, "rb") as f:
