@@ -1709,6 +1709,10 @@ def _validate_lowlevel_write_kwargs(*,
                 f"Unknown compression {compression!r} (in {entry_point}). "
                 f"Valid options: {list(_VALID_COMPRESSIONS)}.")
     elif compression is not None:
+        # Unreachable from ``to_geotiff`` (which only forwards ``str``
+        # or the default), but direct callers can hit this. Without the
+        # explicit guard the downstream ``compression.lower()`` would
+        # surface as ``AttributeError`` instead of a typed error.
         raise TypeError(
             f"compression must be a str (in {entry_point}); "
             f"got {type(compression).__name__}.")
@@ -1917,6 +1921,12 @@ def _write(data: np.ndarray, path: str, *,
     # the dtype mapper. ``to_geotiff`` already does this upstream; the
     # push-down here lets direct callers feed unsupported dtypes without
     # tripping ``numpy_to_tiff_dtype`` with a less actionable error.
+    # The guard on ``isinstance(data, np.ndarray)`` is intentional:
+    # ``_write`` is the numpy-array entry point, so the dask streaming
+    # path goes through ``_write_streaming`` (which handles ``out_dtype``
+    # promotion separately). A bare ``dask.array`` reaching ``_write``
+    # is already a misuse; the dtype mapper below will surface the
+    # mismatch.
     if isinstance(data, np.ndarray):
         if data.dtype == np.float16:
             data = data.astype(np.float32)
