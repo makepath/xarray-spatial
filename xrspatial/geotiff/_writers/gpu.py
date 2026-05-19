@@ -16,7 +16,11 @@ import xarray as xr
 if TYPE_CHECKING:
     from typing import BinaryIO
 
-from .._attrs import _extract_rich_tags, _resolve_nodata_attr
+from .._attrs import (
+    _extract_rich_tags,
+    _resolve_nodata_attr,
+    _should_restore_nan_sentinel,
+)
 from .._coords import (
     _BAND_DIM_NAMES,
     coords_to_transform as _coords_to_transform,
@@ -353,7 +357,13 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         if epsg is None:
             wkt_fallback = crs
 
+    # Issue #1988: ``attrs['masked_nodata']`` records whether the read
+    # side promoted the sentinel to NaN. Default True preserves the
+    # pre-#1988 NaN->sentinel rewrite for external DataArrays and bare
+    # cupy / numpy positional arrays that have no attrs to read from.
+    restore_sentinel = True
     if isinstance(data, xr.DataArray):
+        restore_sentinel = _should_restore_nan_sentinel(data.attrs)
         arr = data.data
         # Handle Dask arrays: compute to materialize
         if hasattr(arr, 'compute'):
@@ -466,7 +476,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # in every case.
     if (nodata is not None
             and np_dtype.kind == 'f'
-            and not np.isnan(float(nodata))):
+            and not np.isnan(float(nodata))
+            and restore_sentinel):
         nan_mask = cupy.isnan(arr)
         if bool(nan_mask.any()):
             arr = arr.copy()
@@ -547,6 +558,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             nodata is not None
             and np_dtype.kind == 'f'
             and not np.isnan(float(nodata))
+            and restore_sentinel
         )
         sentinel_scalar = (
             np_dtype.type(nodata) if rewrite_nodata else None

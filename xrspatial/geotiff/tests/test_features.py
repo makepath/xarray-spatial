@@ -265,7 +265,12 @@ class TestZstd:
 class TestGeoKeys:
 
     def test_geographic_crs_attrs(self, tmp_path):
-        """Geographic CRS files expose citation and angular units."""
+        """Geographic CRS files expose ``crs`` / ``crs_wkt``.
+
+        Contract v2 (issue #2016) dropped the secondary GeoKey-derived
+        attrs (``geog_citation``, ``angular_units``, etc.) from the
+        reader. ``crs`` and ``crs_wkt`` are the canonical surface.
+        """
         from xrspatial.geotiff._geotags import GeoTransform
 
         arr = np.ones((4, 4), dtype=np.float32)
@@ -276,10 +281,10 @@ class TestGeoKeys:
 
         da = open_geotiff(path)
         assert da.attrs['crs'] == 4326
-        assert da.attrs.get('geog_citation') is not None or da.attrs['crs'] == 4326
+        assert 'geog_citation' not in da.attrs
 
     def test_projected_crs_attrs(self, tmp_path):
-        """Projected CRS files expose linear units."""
+        """Projected CRS files expose ``crs`` / ``crs_wkt``."""
         from xrspatial.geotiff._geotags import GeoTransform
 
         arr = np.ones((4, 4), dtype=np.float32)
@@ -290,9 +295,10 @@ class TestGeoKeys:
 
         da = open_geotiff(path)
         assert da.attrs['crs'] == 32610
+        assert 'linear_units' not in da.attrs
 
     def test_geoinfo_fields_from_real_file(self):
-        """Verify GeoInfo fields populated from a real geographic file."""
+        """Verify ``crs`` is populated from a real geographic file."""
         import os
         path = '../rtxpy/examples/render_demo_terrain.tif'
         if not os.path.exists(path):
@@ -300,13 +306,15 @@ class TestGeoKeys:
 
         da = open_geotiff(path)
         assert da.attrs['crs'] == 4269
-        assert da.attrs['geog_citation'] == 'NAD83'
-        assert da.attrs['angular_units'] == 'degree'
-        assert da.attrs['semi_major_axis'] == pytest.approx(6378137.0)
-        assert da.attrs['inv_flattening'] == pytest.approx(298.257, rel=1e-3)
+        # Contract v2 (issue #2016) removed ``geog_citation``,
+        # ``angular_units``, ``semi_major_axis``, ``inv_flattening``.
+        # Callers derive these via pyproj from ``crs`` / ``crs_wkt``.
+        for removed in ('geog_citation', 'angular_units',
+                        'semi_major_axis', 'inv_flattening'):
+            assert removed not in da.attrs
 
     def test_geoinfo_fields_from_projected_file(self):
-        """Verify projected CRS fields from a real UTM file."""
+        """Verify ``crs`` is populated from a real UTM file."""
         import os
         path = '../rtxpy/examples/USGS_one_meter_x65y454_NY_LongIsland_Z18_2014.tif'
         if not os.path.exists(path):
@@ -314,12 +322,17 @@ class TestGeoKeys:
 
         da = open_geotiff(path)
         assert da.attrs['crs'] == 26918
-        assert da.attrs['crs_name'] == 'NAD83 / UTM zone 18N'
-        assert da.attrs['geog_citation'] == 'NAD83'
-        assert da.attrs['linear_units'] == 'metre'
+        # Contract v2 removed the secondary GeoKey-derived attrs.
+        for removed in ('crs_name', 'geog_citation', 'linear_units'):
+            assert removed not in da.attrs
 
     def test_no_crs_no_geokey_attrs(self, tmp_path):
-        """Files without CRS don't get geokey attrs."""
+        """Files without CRS don't get geokey attrs.
+
+        Contract v2 (issue #2016) removed the secondary GeoKey-derived
+        attrs from the reader entirely, so this invariant now holds
+        unconditionally rather than just for the no-CRS case.
+        """
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'bare.tif')
         write(arr, path, compression='none', tiled=False)
@@ -2426,13 +2439,6 @@ def _make_palette_tiff(width, height, bps, pixel_values, palette_rgb):
     return bytes(out)
 
 
-@pytest.mark.filterwarnings(
-    # PR 7 of issue #1984 deprecates attrs['cmap'] and
-    # attrs['colormap_rgba'] on palette-photometric reads. These tests
-    # exist specifically to exercise that path; the deprecation is
-    # locked in test_attrs_pr7_deprecate_colormap_variants_1984.py.
-    "ignore:.*attrs..(cmap|colormap_rgba)...is deprecated.*:DeprecationWarning"
-)
 class TestPalette:
 
     def test_palette_8bit_read(self, tmp_path):
@@ -2458,16 +2464,31 @@ class TestPalette:
         assert da.dtype == np.uint8
         np.testing.assert_array_equal(da.values, pixels)
 
-        # Should have cmap and colormap_rgba in attrs
-        assert 'cmap' in da.attrs
-        assert 'colormap_rgba' in da.attrs
+        # Contract v2 (issue #2016) removed ``attrs['cmap']`` and
+        # ``attrs['colormap_rgba']``. The canonical ``attrs['colormap']``
+        # (raw uint16 RGB triples from TIFF tag 320) carries the
+        # palette information; callers reconstruct an RGBA palette or a
+        # matplotlib colormap from it.
+        assert 'cmap' not in da.attrs
+        assert 'colormap_rgba' not in da.attrs
+        assert 'colormap' in da.attrs
 
-        # Verify the palette colors
-        rgba = da.attrs['colormap_rgba']
-        assert len(rgba) == 256
-        assert rgba[0] == pytest.approx((1.0, 0.0, 0.0, 1.0))
-        assert rgba[1] == pytest.approx((0.0, 1.0, 0.0, 1.0))
-        assert rgba[2] == pytest.approx((0.0, 0.0, 1.0, 1.0))
+        # Verify the palette colors via the canonical raw uint16 triples
+        # at TIFF tag 320.
+        raw = da.attrs['colormap']
+        assert len(raw) == 3 * 256
+        # Red entry at index 0: R=65535, G=0, B=0
+        assert raw[0] == 65535
+        assert raw[256] == 0
+        assert raw[512] == 0
+        # Green entry at index 1
+        assert raw[1] == 0
+        assert raw[257] == 65535
+        assert raw[513] == 0
+        # Blue entry at index 2
+        assert raw[2] == 0
+        assert raw[258] == 0
+        assert raw[514] == 65535
 
     def test_palette_4bit(self, tmp_path):
         """Read a 4-bit palette TIFF."""
@@ -2483,11 +2504,18 @@ class TestPalette:
         da = open_geotiff(path)
         assert da.dtype == np.uint8
         np.testing.assert_array_equal(da.values, pixels)
-        assert 'cmap' in da.attrs
-        assert len(da.attrs['colormap_rgba']) == 16
+        # ``attrs['cmap']`` was removed by contract v2 (issue #2016).
+        assert 'cmap' not in da.attrs
+        # Raw uint16 RGB triples at tag 320: 3 * 16 entries.
+        assert len(da.attrs['colormap']) == 3 * 16
 
     def test_palette_cmap_works_with_plot(self, tmp_path):
-        """Verify the colormap can be used with matplotlib."""
+        """The ``.xrs.plot()`` accessor still uses the embedded palette
+        after the contract v2 removal."""
+        import matplotlib
+        matplotlib.use('Agg')
+        import xrspatial.accessor  # register .xrs accessor
+        from xrspatial.accessor import _listed_colormap_from_attrs
         from matplotlib.colors import ListedColormap
 
         palette = [
@@ -2504,7 +2532,9 @@ class TestPalette:
             f.write(tiff_data)
 
         da = open_geotiff(path)
-        cmap = da.attrs['cmap']
+        # ``attrs['cmap']`` is gone; build the ListedColormap from the
+        # canonical raw colormap via the accessor helper.
+        cmap = _listed_colormap_from_attrs(da.attrs)
         assert isinstance(cmap, ListedColormap)
 
         # Verify color mapping at known indices
@@ -2575,7 +2605,13 @@ class TestPalette:
         plt.close('all')
 
     def test_non_palette_no_cmap(self, tmp_path):
-        """Non-palette TIFFs should not have a cmap attr."""
+        """Non-palette TIFFs should not have any colormap attr.
+
+        Contract v2 (issue #2016) removed ``cmap`` and
+        ``colormap_rgba`` entirely; ``colormap`` is the canonical raw
+        uint16 RGB triple list and is still absent on a non-palette
+        TIFF.
+        """
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'no_palette.tif')
         write(arr, path, compression='none', tiled=False)
@@ -2583,6 +2619,7 @@ class TestPalette:
         da = open_geotiff(path)
         assert 'cmap' not in da.attrs
         assert 'colormap_rgba' not in da.attrs
+        assert 'colormap' not in da.attrs
 
 
 class TestPlanarConfig:

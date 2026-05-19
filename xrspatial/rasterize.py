@@ -2108,6 +2108,11 @@ def _parse_input(geometries, column=None, columns=None):
         if isinstance(geometries, gpd.GeoDataFrame):
             geom_list = geometries.geometry.tolist()
             total_bounds = tuple(geometries.total_bounds)
+            # GeoPandas returns (nan, nan, nan, nan) for an empty frame.
+            # Treat as "no inferred bounds" so the caller's explicit-bounds
+            # guard fires instead of producing a raster with nan coords.
+            if any(not np.isfinite(v) for v in total_bounds):
+                total_bounds = None
             if columns is not None:
                 props_array = geometries[columns].values.astype(np.float64)
             else:
@@ -2381,19 +2386,28 @@ def rasterize(
     if final_bounds is None:
         final_bounds = inferred_bounds
     if final_bounds is None and geom_list:
-        # Compute bounds lazily only when not supplied by the caller
+        # Compute bounds lazily only when not supplied by the caller.
+        # Drop empty/invalid geoms whose bbox is nan so they don't poison
+        # the inferred extent.
         geom_bboxes = _geometry_bboxes(geom_list)
         if len(geom_bboxes) > 0:
-            final_bounds = (geom_bboxes[:, 0].min(),
-                            geom_bboxes[:, 1].min(),
-                            geom_bboxes[:, 2].max(),
-                            geom_bboxes[:, 3].max())
+            finite = np.all(np.isfinite(geom_bboxes), axis=1)
+            geom_bboxes = geom_bboxes[finite]
+            if len(geom_bboxes) > 0:
+                final_bounds = (geom_bboxes[:, 0].min(),
+                                geom_bboxes[:, 1].min(),
+                                geom_bboxes[:, 2].max(),
+                                geom_bboxes[:, 3].max())
     if final_bounds is None:
         raise ValueError(
             "bounds must be provided when geometries are empty or have "
             "no spatial extent")
 
     xmin, ymin, xmax, ymax = final_bounds
+    if not all(np.isfinite(v) for v in (xmin, ymin, xmax, ymax)):
+        raise ValueError(
+            f"Invalid bounds: all of (xmin, ymin, xmax, ymax) must be "
+            f"finite, got {(xmin, ymin, xmax, ymax)!r}")
     if xmin >= xmax or ymin >= ymax:
         raise ValueError(
             f"Invalid bounds: xmin ({xmin}) must be < xmax ({xmax}) and "
