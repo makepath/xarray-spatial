@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
 from .._attrs import (
+    _EXPERIMENTAL_CODECS,
     _extract_rich_tags,
     _resolve_nodata_attr,
     _should_restore_nan_sentinel,
@@ -83,9 +84,21 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       max_z_error: float = 0.0,
                       photometric: str | int = 'auto',
                       allow_internal_only_jpeg: bool = False,
+                      allow_experimental_codecs: bool = False,
                       allow_unparseable_crs: bool = False
                       ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
+
+    Tier: Experimental (issue #2137). The GPU writer requires cupy +
+    numba CUDA plus optional nvCOMP / nvJPEG / nvJPEG2K libraries for
+    codec-specific acceleration; cross-backend numerical parity with
+    ``to_geotiff`` is tested for the Tier 1 codec set only. Tier 3
+    codecs (``'lerc'``, ``'jpeg2000'`` / ``'j2k'``, ``'lz4'``) require
+    the explicit ``allow_experimental_codecs=True`` opt-in; the
+    internal-only ``'jpeg'`` codec keeps its own dedicated
+    ``allow_internal_only_jpeg`` flag. See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
+    map.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
     assembled into a TIFF file on CPU. The CuPy array stays on device
@@ -202,6 +215,18 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         GPU writer forwards this kwarg unchanged. Default ``'auto'``
         writes MinIsBlack for any band count, so a 4-band raster is
         not silently tagged as RGB+alpha (issue #1769).
+    allow_experimental_codecs : bool
+        Opt in to the Tier 3 experimental codecs ``'lerc'``,
+        ``'jpeg2000'`` / ``'j2k'``, and ``'lz4'`` (default ``False``).
+        Mirrors the same kwarg on ``to_geotiff`` so the two writers
+        expose a consistent surface; the GPU dispatch path through
+        ``to_geotiff`` forwards the kwarg unchanged. Setting
+        ``compression=`` to one of those codecs without this flag
+        raises ``ValueError`` whose message names the flag. With the
+        flag set, the write proceeds and a ``GeoTIFFFallbackWarning``
+        is emitted once per call. Does NOT cover ``compression='jpeg'``:
+        the internal-only JPEG path keeps its own dedicated
+        ``allow_internal_only_jpeg`` flag. See issue #2137.
     allow_internal_only_jpeg : bool
         Opt in to the experimental ``compression='jpeg'`` encode path
         (default ``False``). The encoder emits self-contained JFIF
@@ -272,6 +297,36 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             GeoTIFFFallbackWarning,
             stacklevel=2,
         )
+    # Tier 3 experimental-codec gate (issue #2137). Lerc, jpeg2000 /
+    # j2k, and lz4 require ``allow_experimental_codecs=True``; the GPU
+    # writer mirrors the same gate ``to_geotiff`` enforces so the two
+    # entry points agree.  The GPU dispatch path through
+    # ``to_geotiff(gpu=True, compression='lerc', ...)`` forwards the
+    # kwarg, so the warning is emitted once at the CPU dispatcher and a
+    # second time here when the GPU writer re-runs the same check; that
+    # mirrors ``allow_internal_only_jpeg`` (which already double-warns
+    # under that codepath) and keeps the explicit GPU entry point usable
+    # standalone.
+    if isinstance(compression, str):
+        _gpu_codec = compression.lower()
+        if (_gpu_codec in _EXPERIMENTAL_CODECS
+                and not allow_experimental_codecs):
+            raise ValueError(
+                f"compression={compression!r} is experimental: cross-backend "
+                "numerical parity is not claimed and reader support across "
+                "GDAL versions is uneven. Pass allow_experimental_codecs=True "
+                "to opt in, or use 'deflate', 'zstd', or 'lzw' for a "
+                "stable lossless codec (issue #2137).")
+        if (_gpu_codec in _EXPERIMENTAL_CODECS
+                and allow_experimental_codecs):
+            warnings.warn(
+                f"write_geotiff_gpu(compression={compression!r}, "
+                "allow_experimental_codecs=True): experimental codec, "
+                "GPU encode path is not byte-identical to the CPU writer "
+                "(different backend libraries). See issue #2137.",
+                GeoTIFFFallbackWarning,
+                stacklevel=2,
+            )
     # MinIsWhite pre-inversion (issue #1836) runs in the eager CPU writer.
     # The GPU writer assembles tile bytes directly on device; threading
     # the pixel + nodata-sentinel transform through that pipeline is out

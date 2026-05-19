@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
 from .._attrs import (
+    _EXPERIMENTAL_CODECS,
     _LEVEL_RANGES,
     _VALID_COMPRESSIONS,
     _extract_rich_tags,
@@ -72,8 +73,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                max_z_error: float = 0.0,
                photometric: str | int = 'auto',
                allow_internal_only_jpeg: bool = False,
+               allow_experimental_codecs: bool = False,
                allow_unparseable_crs: bool = False) -> str | BinaryIO:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
+
+    Tier: Stable for local-file output with ``compression`` in
+    ``{'none', 'deflate', 'lzw', 'packbits', 'zstd'}`` on an axis-aligned
+    grid. ``cog=True`` / overviews / BigTIFF are Advanced (work, but the
+    caller should know the failure modes). GPU output, GDAL XML metadata
+    pass-through, and ``extra_tags`` are Experimental. ``compression`` in
+    ``{'lerc', 'jpeg2000', 'j2k', 'lz4'}`` is Experimental and requires
+    ``allow_experimental_codecs=True``. ``compression='jpeg'`` is
+    Internal-only and requires the dedicated ``allow_internal_only_jpeg``
+    flag. See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full
+    tier map (issue #2137).
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
     at a time, without materialising the full array into RAM.  Peak
@@ -115,14 +128,28 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         Codec name. One of ``'none'``, ``'deflate'``, ``'lzw'``,
         ``'jpeg'``, ``'packbits'``, ``'zstd'``, ``'lz4'``,
         ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
-        ``'jpeg'`` is rejected on write by default because the encoder
-        omits the JPEGTables tag and produced files do not round-trip
-        through libtiff / GDAL / rasterio. Pass
-        ``allow_internal_only_jpeg=True`` to opt in to the experimental
-        internal-reader-only path (see that parameter for details), or
-        use ``'deflate'``, ``'zstd'``, or ``'lzw'`` instead. ``'lerc'``
+
+        Stable codecs (Tier 1, lossless, byte-for-byte round-trip):
+        ``'none'``, ``'deflate'``, ``'lzw'``, ``'packbits'``,
+        ``'zstd'``.
+
+        Experimental codecs (Tier 3): ``'lerc'``, ``'jpeg2000'`` /
+        ``'j2k'``, ``'lz4'``. Rejected by default; pass
+        ``allow_experimental_codecs=True`` to opt in. The opt-in emits
+        ``GeoTIFFFallbackWarning`` once per call so the caller knows
+        the chosen codec carries no cross-backend numerical parity
+        claim and uneven reader support across GDAL versions. ``'lerc'``
         accepts ``max_z_error`` for lossy compression with a bounded
         per-pixel error.
+
+        Internal-only codec (Tier 4): ``'jpeg'``. Rejected on write by
+        default because the encoder omits the JPEGTables tag and the
+        produced files do not round-trip through libtiff / GDAL /
+        rasterio. Pass ``allow_internal_only_jpeg=True`` to opt in to
+        the internal-reader-only path (see that parameter for details).
+        ``allow_experimental_codecs=True`` does NOT cover ``'jpeg'``:
+        internal-only is a stricter tier than experimental, and the two
+        flags do not collapse into one switch.
     compression_level : int or None
         Compression effort level. None uses each codec's default (6 for
         deflate/zstd). Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
@@ -145,9 +172,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         * ``3`` -> floating-point predictor (float dtypes only; typically
           gives better deflate/zstd ratios on float data than predictor 2).
     cog : bool
-        Write as Cloud Optimized GeoTIFF.
+        Advanced: COG output materialises the full array because
+        overview pyramids need it, and the all-IFDs-at-file-start layout
+        only round-trips through readers that honour the COG layout
+        contract. Write as Cloud Optimized GeoTIFF.
     overview_levels : list[int] or None
-        Overview decimation factors relative to full resolution.
+        Advanced: overview pyramids are an optional COG feature; the
+        decimation factors and resampling choice affect downstream
+        analytics in ways that are not byte-for-byte reproducible
+        across backends. Overview decimation factors relative to full
+        resolution.
         Each entry must be a power-of-two integer >= 2, and the list
         must be strictly increasing (e.g. ``[2, 4, 8]`` writes
         overviews at 1/2, 1/4 and 1/8 of the full resolution).
@@ -159,11 +193,17 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         Resampling method for overviews: 'mean' (default), 'nearest',
         'min', 'max', 'median', 'mode', or 'cubic'.
     bigtiff : bool or None
-        Force BigTIFF (64-bit offsets). None (default) auto-promotes
-        when the estimated file size would exceed the classic-TIFF 4 GB
-        limit. Matches the same kwarg on ``write_geotiff_gpu``.
+        Advanced: BigTIFF uses 64-bit offsets; older readers that only
+        speak classic TIFF cannot open the output. Force BigTIFF
+        (64-bit offsets). None (default) auto-promotes when the
+        estimated file size would exceed the classic-TIFF 4 GB limit.
+        Matches the same kwarg on ``write_geotiff_gpu``.
     gpu : bool or None
-        Force GPU compression. None (default) auto-detects CuPy data.
+        Experimental: requires cupy + numba CUDA, plus the optional
+        nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
+        acceleration; backend parity with the CPU writer is tested for
+        the Tier 1 codec set only. Force GPU compression. None
+        (default) auto-detects CuPy data.
     streaming_buffer_bytes : int
         Soft cap on bytes materialised per dask compute call when
         streaming a dask-backed DataArray. Defaults to 256 MB. Wide
@@ -200,6 +240,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         chosen value; only these two tag ids are overridable so other
         auto-emitted tags such as ``ImageWidth`` or ``StripOffsets``
         remain protected.
+    allow_experimental_codecs : bool
+        Opt in to the Tier 3 experimental codecs ``'lerc'``,
+        ``'jpeg2000'`` / ``'j2k'``, and ``'lz4'`` (default ``False``).
+        Setting ``compression=`` to one of those codecs without this
+        flag raises ``ValueError`` whose message names the flag. With
+        the flag set, the write proceeds and a
+        ``GeoTIFFFallbackWarning`` is emitted once per call so the
+        caller knows the chosen codec carries no cross-backend
+        numerical parity claim and uneven reader support across GDAL
+        versions. Does NOT cover ``compression='jpeg'``: the
+        internal-only JPEG path keeps its own dedicated
+        ``allow_internal_only_jpeg`` flag because internal-only is a
+        stricter tier than experimental. The kwarg is forwarded
+        unchanged to ``write_geotiff_gpu`` on the GPU dispatch path.
+        See issue #2137.
     allow_internal_only_jpeg : bool
         Opt in to the experimental ``compression='jpeg'`` encode path
         (default ``False``). The encoder writes self-contained JFIF
@@ -344,6 +399,26 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # of ``to_geotiff(gpu=True, compression='jpeg',
         # allow_internal_only_jpeg=True)``.
 
+        # Tier 3 experimental-codec gate (issue #2137). Lerc, jpeg2000 /
+        # j2k, and lz4 sit in ``_VALID_COMPRESSIONS`` for wire-format
+        # reasons but their cross-backend numerical parity, reader
+        # support across GDAL versions, and (for lerc) bounded lossy
+        # behaviour all carry caveats the default writer should not
+        # silently accept. Mirror the ``allow_internal_only_jpeg`` shape
+        # so callers learn the opt-in name from the rejection message
+        # and can fix the call site in one line. The opt-in warning is
+        # emitted below once the GPU dispatch decision is known so the
+        # GPU path does not double-warn (``write_geotiff_gpu`` emits its
+        # own warning on the GPU path).
+        if (compression.lower() in _EXPERIMENTAL_CODECS
+                and not allow_experimental_codecs):
+            raise ValueError(
+                f"compression={compression!r} is experimental: cross-backend "
+                "numerical parity is not claimed and reader support across "
+                "GDAL versions is uneven. Pass allow_experimental_codecs=True "
+                "to opt in, or use 'deflate', 'zstd', or 'lzw' for a "
+                "stable lossless codec (issue #2137).")
+
     # max_z_error only applies to LERC; reject negative values and reject
     # non-zero values paired with any other codec so the caller learns the
     # parameter was ignored before bytes hit disk.
@@ -393,6 +468,23 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             "without the TIFF JPEGTables tag (347); the file decodes "
             "through xrspatial but may fail in libtiff, GDAL, or "
             "rasterio. See issue #1845.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
+    # Tier 3 experimental-codec opt-in warning (issue #2137). Mirrors
+    # the JPEG flag's "warn once, after dispatch is resolved" shape:
+    # ``write_geotiff_gpu`` emits its own warning on the GPU path with
+    # a backend-specific caveat, so the CPU dispatcher only warns when
+    # the write is staying on CPU.
+    if (isinstance(compression, str)
+            and compression.lower() in _EXPERIMENTAL_CODECS
+            and allow_experimental_codecs
+            and not use_gpu):
+        warnings.warn(
+            f"to_geotiff(compression={compression!r}, "
+            "allow_experimental_codecs=True): experimental codec, "
+            "no cross-backend parity claim and uneven reader support "
+            "across GDAL versions. See issue #2137.",
             GeoTIFFFallbackWarning,
             stacklevel=2,
         )
@@ -486,6 +578,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 streaming_buffer_bytes=streaming_buffer_bytes,
                 photometric=photometric,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
+                allow_experimental_codecs=allow_experimental_codecs,
                 allow_unparseable_crs=allow_unparseable_crs,
             )
             return path

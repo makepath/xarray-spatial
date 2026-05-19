@@ -45,6 +45,13 @@ def read_geotiff_dask(source: str, *,
                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
+    Tier: Stable for local-file reads on axis-aligned grids with the
+    Tier 1 codec set. ``allow_rotated`` / ``allow_unparseable_crs``
+    are Advanced (read-only opt-ins; round-trip semantics are listed
+    on the parameter docs). See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map
+    (issue #2137).
+
     Each chunk is loaded lazily via windowed reads.
 
     Parameters
