@@ -42,6 +42,66 @@ def _is_gpu_data(data) -> bool:
     return isinstance(data, _cupy_type)
 
 
+def _apply_nodata_mask_gpu_with_presence(arr_gpu, nodata):
+    """Same as :func:`_apply_nodata_mask_gpu` but also reports presence.
+
+    Kept as a sibling helper rather than collapsed with
+    ``_apply_nodata_mask_gpu`` because the original is a hot inner-loop
+    callee from the GPU writers and the per-call cost of computing the
+    presence bit (one extra ``.any().item()`` plus a small Python-side
+    tuple) is paid even when the caller does not need it. A future
+    refactor can fold both into one helper with an opt-in flag if a
+    third variant appears; for now the duplication keeps the original
+    no-overhead path intact.
+
+    Returns ``(arr_gpu, pixels_present)`` where ``pixels_present`` is a
+    bool indicating whether any pixel in ``arr_gpu`` matched the
+    declared sentinel before masking. Lets the eager GPU read path
+    surface ``attrs['nodata_pixels_present']`` (issue #2135) without
+    rescanning the buffer.
+
+    ``pixels_present`` is ``False`` when ``nodata`` is ``None`` (no
+    declared sentinel), when the sentinel is out of range for an
+    integer buffer, or when the sentinel is fractional / non-finite
+    and cannot match an integer pixel -- the same fast-paths the
+    masking branch takes. On a NaN-only sentinel against a float
+    buffer, ``pixels_present`` is whether the buffer already contains
+    NaN.
+    """
+    import cupy
+
+    if nodata is None:
+        return arr_gpu, False
+    arr_dtype = np.dtype(str(arr_gpu.dtype))
+    if arr_dtype.kind == 'f':
+        if np.isnan(nodata):
+            # NaN-only sentinel: no replacement happens, but report
+            # whether any NaN already lives in the buffer so the attr
+            # stays informative.
+            return arr_gpu, bool(cupy.isnan(arr_gpu).any().item())
+        sentinel = arr_dtype.type(nodata)
+        mask = arr_gpu == sentinel
+        present = bool(mask.any().item())
+        if present:
+            cupy.putmask(arr_gpu, mask, arr_dtype.type('nan'))
+        return arr_gpu, present
+    if arr_dtype.kind in ('u', 'i'):
+        if not (np.isfinite(nodata) and float(nodata).is_integer()):
+            return arr_gpu, False
+        nodata_int = int(nodata)
+        info = np.iinfo(arr_dtype)
+        if not (info.min <= nodata_int <= info.max):
+            return arr_gpu, False
+        sentinel = arr_dtype.type(nodata_int)
+        mask = arr_gpu == sentinel
+        present = bool(mask.any().item())
+        if present:
+            arr_gpu = arr_gpu.astype(cupy.float64)
+            cupy.putmask(arr_gpu, mask, cupy.float64('nan'))
+        return arr_gpu, present
+    return arr_gpu, False
+
+
 def _apply_nodata_mask_gpu(arr_gpu, nodata):
     """Replace nodata sentinel values with NaN on a CuPy array.
 

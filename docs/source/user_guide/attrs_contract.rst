@@ -79,6 +79,23 @@ write.
        because the caller passed ``mask_nodata=False`` together with
        ``dtype=float...``. Only set when ``nodata`` is set; absence
        means no declared sentinel. See issue #2092.
+   * - ``nodata_pixels_present``
+     - bool
+     - Paired with ``nodata``. ``True`` iff the read window contained
+       at least one pixel matching the declared sentinel before
+       masking. Lets QA and writer code answer "any nodata in this
+       tile" without rescanning the buffer. Only emitted by the
+       eager-numpy, GPU, and VRT paths; the dask path leaves the attr
+       unset because a strict per-chunk reduction would force eager
+       ``.compute()``. See issue #2135.
+   * - ``nodata_dtype_cast``
+     - str
+     - Paired with ``nodata``. Set to the resolved target dtype name
+       (e.g. ``"float64"``) when the caller passed an explicit
+       ``dtype=`` kwarg, otherwise absent. Distinguishes
+       float-because-masked from float-because-promoted, which a
+       ``masked_nodata`` lookup alone cannot disambiguate. See issue
+       #2135.
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;
