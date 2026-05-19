@@ -85,6 +85,16 @@ def read_vrt(source: str, *,
         sentinel (or zero on integer bands without a sentinel).
         ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
         module regardless of this kwarg.
+    band_nodata : {'first', None}, optional
+        Opt-out for the fail-closed mixed-band-metadata check (issue
+        #1987 PR 5). ``None`` (the default) rejects a VRT whose bands
+        declare disagreeing per-band ``<NoDataValue>`` sentinels with
+        ``MixedBandMetadataError``; flattening to one value would
+        otherwise let one band's valid pixels collide with another
+        band's sentinel after the flatten. Pass ``band_nodata='first'``
+        to keep the legacy flatten-to-band-0 semantics explicitly. Any
+        other value raises ``ValueError`` at the boundary so typos
+        surface up front instead of degrading silently into strict mode.
     mask_nodata : bool, default True
         If True, run the integer-sentinel-to-NaN promotion on the
         assembled mosaic. If False, skip it and keep the source dtype
@@ -153,6 +163,23 @@ def read_vrt(source: str, *,
         raise ValueError(
             f"missing_sources must be 'warn' or 'raise', got "
             f"{missing_sources!r}")
+
+    # ``band_nodata`` accepts only ``None`` (strict, the default) and
+    # ``'first'`` (legacy flatten-to-band-0 opt-out for the fail-closed
+    # mixed-band-metadata check, issue #1987 PR 5). Any other value would
+    # silently degrade to strict mode because the registered check treats
+    # anything other than ``'first'`` as "no opt-out", which means a typo
+    # like ``band_nodata='firs'`` looks like opt-out at the call site but
+    # raises ``MixedBandMetadataError`` at run time. Mirror the
+    # ``missing_sources`` value-validation pattern above so the typo
+    # surfaces at the boundary instead.
+    if band_nodata not in (None, 'first'):
+        raise ValueError(
+            f"band_nodata must be None or 'first', got {band_nodata!r}. "
+            f"Pass ``band_nodata='first'`` to opt back into the legacy "
+            f"flatten-to-first-band semantics for VRT sources with "
+            f"disagreeing per-band nodata sentinels, or drop the kwarg "
+            f"to keep the fail-closed default. See issue #1987.")
 
     # Lazy chunked path (issue #1814). The eager call below materialises
     # the full mosaic on host RAM and then wraps the array via

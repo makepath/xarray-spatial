@@ -254,6 +254,34 @@ def test_mixed_band_metadata_error_subclasses_base(tmp_path):
         read_vrt(vrt_path)
 
 
+def test_read_vrt_band_nodata_rejects_unknown_value(tmp_path):
+    """Typos like ``band_nodata='firs'`` raise at the boundary.
+
+    Without the value check, an unknown string degrades to strict mode
+    (the registered check treats anything other than ``'first'`` as "no
+    opt-out") and the caller sees ``MixedBandMetadataError`` from a call
+    site that looked like an explicit opt-out. Mirrors the
+    ``missing_sources`` value-validation pattern in ``read_vrt``.
+    """
+    vrt_path = _write_mixed_band_vrt(tmp_path)
+    with pytest.raises(ValueError, match="band_nodata must be None or 'first'"):
+        read_vrt(vrt_path, band_nodata='firs')
+
+
+def test_open_geotiff_band_nodata_rejects_unknown_value(tmp_path):
+    """``open_geotiff`` surfaces the same value-validation on VRT sources."""
+    vrt_path = _write_mixed_band_vrt(tmp_path)
+    with pytest.raises(ValueError, match="band_nodata must be None or 'first'"):
+        open_geotiff(vrt_path, band_nodata='legacy')
+
+
+def test_read_geotiff_dask_band_nodata_rejects_unknown_value(tmp_path):
+    """``read_geotiff_dask`` forwards the value-validation on VRT sources."""
+    vrt_path = _write_mixed_band_vrt(tmp_path)
+    with pytest.raises(ValueError, match="band_nodata must be None or 'first'"):
+        read_geotiff_dask(vrt_path, chunks=1, band_nodata='banana')
+
+
 def _wrap_2d(arr):
     """Wrap a 2D numpy array as a minimal DataArray for ``to_geotiff``."""
     import xarray as xr
