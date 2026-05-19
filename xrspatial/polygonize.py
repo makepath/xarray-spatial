@@ -588,11 +588,42 @@ def _polygonize_numpy(
 _DIR_ANGLE = {(1, 0): 0, (0, 1): 1, (-1, 0): 2, (0, -1): 3}
 
 
+def _group_float_values_by_tolerance(unique_vals_np):
+    """Greedy chaining of sorted float values using the numpy backend's
+    tolerance (matches ``_is_close``: ``atol=1e-8, rtol=1e-5``).
+
+    Returns a list of numpy arrays, one per group of near-equal values.
+    Two consecutive sorted values ``a`` and ``b`` (``a <= b``) are placed in
+    the same group when ``|b - a| <= atol + rtol * max(|a|, |b|)``, which
+    captures both orderings of the asymmetric per-pair predicate used by the
+    numba CPU path.
+    """
+    atol = 1e-8
+    rtol = 1e-5
+    groups = []
+    current = [unique_vals_np[0]]
+    for v in unique_vals_np[1:]:
+        prev = current[-1]
+        tol = atol + rtol * max(abs(prev), abs(v))
+        if abs(v - prev) <= tol:
+            current.append(v)
+        else:
+            groups.append(np.asarray(current, dtype=unique_vals_np.dtype))
+            current = [v]
+    groups.append(np.asarray(current, dtype=unique_vals_np.dtype))
+    return groups
+
+
 def _calculate_regions_cupy(data, mask_data, connectivity_8):
     """CuPy GPU backend for connected-component labeling.
 
     Uses cupyx.scipy.ndimage.label per unique value to produce a regions
     array compatible with _scan.  Returns a cupy uint32 2D array.
+
+    For float dtypes the per-value binning is tolerance-aware so that the
+    cupy backend produces the same regions as the numba CPU path, which
+    compares neighbouring pixels via ``_is_close`` (``atol=1e-8``,
+    ``rtol=1e-5``).  Integer dtypes keep exact equality.
     """
     import cupy as cp
     from cupyx.scipy.ndimage import label as cp_label
@@ -616,20 +647,50 @@ def _calculate_regions_cupy(data, mask_data, connectivity_8):
     unique_vals = data[valid] if valid is not None else data.ravel()
     unique_vals = cp.unique(unique_vals)
 
+    if is_float:
+        # Group near-equal float values so the cupy path matches the numba
+        # ``_is_close`` semantics used by the numpy/dask backends.
+        unique_vals_np = cp.asnumpy(unique_vals)
+        value_groups = (_group_float_values_by_tolerance(unique_vals_np)
+                        if unique_vals_np.size else [])
+    else:
+        value_groups = None
+
     uid = 1
-    for v in unique_vals:
-        bin_mask = (data == v)
-        if valid is not None:
-            bin_mask &= valid
-        labeled, n_features = cp_label(bin_mask, structure=structure)
-        if n_features == 0:
-            continue
-        # Vectorized assignment: offset labeled region IDs by (uid - 1) so
-        # label 1 → uid, label 2 → uid+1, etc.  Single kernel, no Python loop.
-        where = labeled > 0
-        regions[where] = (labeled[where].astype(cp.uint32) +
-                          cp.uint32(uid - 1))
-        uid += n_features
+    if value_groups is not None:
+        for group in value_groups:
+            if group.size == 1:
+                bin_mask = (data == cp.asarray(group[0]))
+            else:
+                # Per-value masks combined with OR.  Each value is compared
+                # exactly (cp.unique already deduplicated), and the group
+                # carries all values the CPU path would have merged.
+                group_cp = cp.asarray(group)
+                # ``cp.isin`` performs the broadcast OR in a single kernel.
+                bin_mask = cp.isin(data, group_cp)
+            if valid is not None:
+                bin_mask &= valid
+            labeled, n_features = cp_label(bin_mask, structure=structure)
+            if n_features == 0:
+                continue
+            where = labeled > 0
+            regions[where] = (labeled[where].astype(cp.uint32) +
+                              cp.uint32(uid - 1))
+            uid += n_features
+    else:
+        for v in unique_vals:
+            bin_mask = (data == v)
+            if valid is not None:
+                bin_mask &= valid
+            labeled, n_features = cp_label(bin_mask, structure=structure)
+            if n_features == 0:
+                continue
+            # Vectorized assignment: offset labeled region IDs by (uid - 1) so
+            # label 1 → uid, label 2 → uid+1, etc.  Single kernel, no Python loop.
+            where = labeled > 0
+            regions[where] = (labeled[where].astype(cp.uint32) +
+                              cp.uint32(uid - 1))
+            uid += n_features
 
     return regions
 

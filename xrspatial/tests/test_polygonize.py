@@ -459,6 +459,46 @@ def test_polygonize_dask_cupy_matches_numpy(chunks):
                         err_msg=f"Area mismatch for value {val}")
 
 
+@cuda_and_cupy_available
+def test_polygonize_cupy_float_tolerance_matches_numpy_2151():
+    """CuPy backend must use the same float tolerance as the numpy/numba
+    path for grouping pixels into regions (#2151).
+
+    Before the fix, the cupy backend binned pixels by exact value while
+    the numpy/numba backend used ``_is_close`` (atol=1e-8, rtol=1e-5),
+    yielding different polygon counts on float rasters with near-equal
+    values.
+    """
+    import cupy
+
+    data = np.array([
+        [1.0, 1.000001, 2.0],
+        [1.000001, 1.0, 2.0],
+        [3.0, 3.0, 2.0],
+    ], dtype=np.float64)
+
+    raster_np = xr.DataArray(data)
+    vals_np, polys_np = polygonize(raster_np, connectivity=4)
+
+    raster_cp = xr.DataArray(cupy.asarray(data))
+    vals_cp, polys_cp = polygonize(raster_cp, connectivity=4)
+
+    # Both backends should return the same number of polygons.
+    assert len(polys_np) == len(polys_cp), (
+        f"polygon count differs: numpy={len(polys_np)} cupy={len(polys_cp)}; "
+        f"numpy values={vals_np}, cupy values={vals_cp}"
+    )
+    # Per-value total area must agree across backends.
+    areas_np = _area_by_value(vals_np, polys_np)
+    areas_cp = _area_by_value(vals_cp, polys_cp)
+    assert set(areas_np.keys()) == set(areas_cp.keys()), (
+        f"value sets differ: numpy={set(areas_np.keys())} "
+        f"cupy={set(areas_cp.keys())}"
+    )
+    for v, a in areas_np.items():
+        assert_allclose(areas_cp[v], a, atol=1e-10)
+
+
 # --- Performance-related regression tests (#1008) ---
 
 def test_polygonize_1008_jit_merge_helpers():
