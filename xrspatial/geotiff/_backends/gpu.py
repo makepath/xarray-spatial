@@ -254,7 +254,7 @@ def read_geotiff_gpu(source: str, *,
 
     from .._reader import (
         _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
-        _resolve_masked_fill,
+        _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
     from .._header import (
@@ -487,6 +487,30 @@ def read_geotiff_gpu(source: str, *,
         # supplied TileOffsets length. The GPU tile-assembly kernel would
         # read OOB otherwise. See issue #1219.
         validate_tile_layout(ifd)
+
+        # Per-tile compressed-byte cap, matching the CPU paths
+        # ``_read_tiles`` and ``_fetch_decode_cog_http_tiles`` apply
+        # via the same env var (issue #1664). ``validate_tile_layout``
+        # bounds the offsets array length but not the byte_counts
+        # entries; a crafted ``TileByteCounts`` value can still ask
+        # the GPU pipeline to fetch and decompress a multi-hundred-MB
+        # tile that the CPU paths would already refuse. The
+        # ``_check_gpu_memory`` guard in the downstream kvikio /
+        # nvCOMP paths runs against ``sum(byte_counts)`` so it only
+        # catches the extreme aggregate case; this loop closes the
+        # per-tile asymmetry between the CPU and GPU readers.
+        max_tile_bytes = _max_tile_bytes_from_env()
+        for _tile_idx, _bc in enumerate(byte_counts):
+            if _bc > max_tile_bytes:
+                raise ValueError(
+                    f"TIFF tile {_tile_idx} declares "
+                    f"TileByteCount={_bc:,} bytes, which exceeds the "
+                    f"per-tile safety cap of {max_tile_bytes:,} bytes. "
+                    f"The file is malformed or attempting "
+                    f"denial-of-service. Override via "
+                    f"XRSPATIAL_COG_MAX_TILE_BYTES if this file is "
+                    f"legitimate."
+                )
 
     finally:
         src.close()
