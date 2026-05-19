@@ -251,9 +251,25 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # of scope for the round-trip fix. Refuse the combination so callers
     # do not silently get inverted on-disk values. Move the array to the
     # CPU and call the eager ``write`` path for MinIsWhite output.
+    #
+    # The samples hint must match the writer's own band-axis convention.
+    # The band-first -> band-last remap below at the ``_BAND_DIM_NAMES``
+    # check moves bands from ``shape[0]`` to ``shape[2]``, so reading
+    # ``data.shape[2]`` *before* that remap would treat a single-band
+    # ``('band', 'y', 'x')`` array of shape ``(1, H, W)`` as having
+    # ``W`` samples and let the guard miss the MinIsWhite/single-band
+    # case (issue #2097). Use the same band-axis logic the remap uses.
     from .._writer import _resolve_photometric as _resolve_photo_gpu
-    _gpu_samples_hint = (data.shape[2] if hasattr(data, 'shape')
-                         and data.ndim == 3 else 1)
+    _gpu_data_dims = getattr(data, 'dims', None)
+    if getattr(data, 'ndim', None) == 3:
+        if (_gpu_data_dims is not None
+                and len(_gpu_data_dims) == 3
+                and _gpu_data_dims[0] in _BAND_DIM_NAMES):
+            _gpu_samples_hint = int(data.shape[0])
+        else:
+            _gpu_samples_hint = int(data.shape[2])
+    else:
+        _gpu_samples_hint = 1
     _gpu_resolved_photo, _ = _resolve_photo_gpu(
         photometric, _gpu_samples_hint)
     if _gpu_resolved_photo == 0 and _gpu_samples_hint == 1:
