@@ -182,7 +182,9 @@ _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
 # Reverse map of ``_RESOLUTION_UNIT_IDS``: TIFF ResolutionUnit tag ids back to
 # the xrspatial string identifiers. Used by ``geo_info_to_metadata`` so the
 # read side stores the same string label the writer expects on the way out.
-_RESOLUTION_UNIT_NAMES = {1: 'none', 2: 'inch', 3: 'centimeter'}
+# Derived from ``_RESOLUTION_UNIT_IDS`` so the forward and reverse maps cannot
+# drift if a new unit is added.
+_RESOLUTION_UNIT_NAMES = {v: k for k, v in _RESOLUTION_UNIT_IDS.items()}
 
 
 @dataclass(frozen=True)
@@ -316,6 +318,19 @@ def metadata_to_attrs(md: GeoTIFFMetadata) -> dict:
     if md.raster_type == 'point':
         attrs['raster_type'] = 'point'
 
+    # Three states on the (transform, has_georef) pair:
+    #
+    # * transform set + has_georef -> emit ``attrs['transform']``.
+    # * not has_georef             -> emit ``attrs[_NO_GEOREF_KEY] = True``.
+    # * transform None + has_georef -> emit neither.
+    #
+    # The third state is the eager VRT path's contract: the VRT builder
+    # constructs the record with ``has_georef=True`` but leaves
+    # ``transform=None`` because the inline VRT code stamps the
+    # rasterio-ordered transform tuple onto the dict a few lines later
+    # (after the GPU transfer / dtype cast / nodata mask steps). Removing
+    # this branch would re-introduce a duplicate transform write or, worse,
+    # would emit ``_NO_GEOREF_KEY`` on a georef'd VRT array. See #2139.
     if md.transform is not None and md.has_georef:
         attrs['transform'] = md.transform
     elif not md.has_georef:
@@ -359,6 +374,19 @@ def attrs_to_metadata(attrs) -> GeoTIFFMetadata:
     Honours the alias resolution :func:`_resolve_nodata_attr` already
     implements. ``attrs`` may be a plain dict, an
     ``xarray.core.utils.Frozen``, or ``None``.
+
+    Boundary contract -- this function parses leniently and lets the
+    writer enforce strict validation against the parsed record:
+
+    * ``attrs['crs']=True`` lands as ``crs_epsg=None`` rather than
+      raising. ``_validate_crs_arg`` (called from the writers) is the
+      validator that should reject bool values; the boundary parser
+      only needs to keep the bad value out of the record so the writer
+      sees ``crs_epsg=None`` and falls through to ``crs_wkt``. See
+      ``test_crs_arg_validation_1971.py``.
+    * ``transform`` is coerced via ``tuple(...)`` with no length or
+      numeric-type check. ``_transform_from_attr`` is the canonical
+      validator and runs inside the writer.
     """
     if attrs is None:
         attrs = {}

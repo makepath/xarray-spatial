@@ -280,6 +280,9 @@ def read_vrt(source: str, *,
     # ``gdal_metadata`` and resolution tags continue to be omitted on
     # this path until the migration's VRT-tag-coverage follow-up lands.
     # See issue #2139.
+    # ``vrt.crs_wkt`` carries an empty string when the VRT XML has a
+    # ``<SRS>`` element but no recognised CRS body; treat empty as
+    # absent so ``metadata_to_attrs`` does not emit ``attrs['crs_wkt']=''``.
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if vrt.crs_wkt else None
     _vrt_md = GeoTIFFMetadata(
         crs_epsg=_vrt_epsg,
@@ -702,6 +705,9 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     else:
         _vrt_transform = None
 
+    # ``vrt.crs_wkt`` carries an empty string when the VRT XML has a
+    # ``<SRS>`` element but no recognised CRS body; treat empty as
+    # absent so ``metadata_to_attrs`` does not emit ``attrs['crs_wkt']=''``.
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if vrt.crs_wkt else None
     _vrt_md = GeoTIFFMetadata(
         transform=_vrt_transform,

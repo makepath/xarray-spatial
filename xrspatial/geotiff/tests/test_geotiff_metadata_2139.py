@@ -294,6 +294,29 @@ def test_round_trip_attrs_to_metadata_to_attrs(attrs):
         )
 
 
+@pytest.mark.parametrize(
+    'attrs',
+    list(_representative_attrs_dicts()),
+    ids=['eager', 'point', 'no_georef', 'user_wkt', 'vrt'],
+)
+def test_round_trip_emits_no_unexpected_keys(attrs):
+    """Round trip emits the input keys and the contract version, nothing else.
+
+    Locks the marshalling step so a future field added to
+    ``metadata_to_attrs`` without an attr-contract update fails this
+    test rather than silently appearing on every read.
+    """
+    md = attrs_to_metadata(attrs)
+    round_tripped = metadata_to_attrs(md)
+    expected_keys = set(attrs.keys()) | {'_xrspatial_geotiff_contract'}
+    extra = set(round_tripped) - expected_keys
+    assert not extra, (
+        f"metadata_to_attrs emitted unexpected keys {extra!r} not present in input "
+        f"{set(attrs)!r}; either add them to the attrs contract or fix "
+        f"the marshalling step."
+    )
+
+
 def test_round_trip_metadata_to_attrs_to_metadata():
     """Building a record, marshalling, parsing back recovers all fields."""
     md = GeoTIFFMetadata(
