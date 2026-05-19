@@ -241,6 +241,105 @@ that order.
 Suggestions, or Nits, the review of type `COMMENTED` from step 9.5 must
 still be posted so every rockout PR carries a visible review entry.
 
+## Step 11 -- Resolve Merge Conflicts With `main`
+
+After review follow-ups are done, sync the branch with `main` and resolve
+any conflicts before letting CI have the final word. Stay inside the
+worktree from Step 2 -- do NOT switch the main checkout.
+
+1. Confirm you are still in `$ROCKOUT_WT` on branch `issue-<NUMBER>`:
+   ```bash
+   [ "$(pwd)" = "$ROCKOUT_WT" ] || { echo "CWD drift"; exit 1; }
+   [ "$(git branch --show-current)" = "issue-<NUMBER>" ] || { echo "branch drift"; exit 1; }
+   ```
+2. Fetch the latest `main` and check whether the branch is behind:
+   ```bash
+   git fetch origin main
+   git log --oneline HEAD..origin/main | head
+   ```
+   If there are no new commits on `main`, skip to Step 12.
+3. Merge `origin/main` into the feature branch (prefer merge over rebase
+   so the PR history stays stable for reviewers):
+   ```bash
+   git merge --no-edit origin/main
+   ```
+4. If the merge reports conflicts:
+   - Run `git status` and list every conflicted path.
+   - For each conflicted file, read both sides, understand the intent,
+     and edit the file to a resolution that preserves the feature work
+     AND the incoming changes from `main`. Do NOT blindly accept one
+     side with `git checkout --ours/--theirs` unless you have read the
+     file and confirmed the other side is irrelevant.
+   - After editing, `git add <file>` for each resolved path.
+   - When all conflicts are resolved, finalize with `git commit` (no
+     `-m` flag needed -- git will use the prepared merge message).
+5. Re-run the test suite touched by the change to confirm the merge did
+   not break behaviour. If tests fail because of the merge, fix the
+   root cause; do not paper over with skips.
+6. Push the merge commit to the PR branch:
+   ```bash
+   git push origin issue-<NUMBER>
+   ```
+7. Confirm via `gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus`
+   that the PR is no longer in a conflicted state before moving on.
+
+If the merge produces no conflicts and no test fallout, this step is a
+fast no-op. Run it anyway -- the goal is to know the PR is mergeable
+before CI failures get evaluated in Step 12.
+
+## Step 12 -- Fix CI Failures
+
+CI runs asynchronously after the push in Step 8 (and again after the
+follow-up pushes in Steps 10 and 11). This is the final gate: drive every
+required check to green before declaring the rockout done.
+
+1. Poll the PR's check status until every check has completed (success
+   or failure -- not pending):
+   ```bash
+   gh pr checks <PR_NUMBER>
+   ```
+   If checks are still running, wait and re-poll. Do not declare done
+   while any required check is pending.
+2. For each failing check:
+   - Pull the failing job's logs:
+     ```bash
+     gh run view --log-failed --job <JOB_ID>
+     ```
+     or open the run via `gh pr checks <PR_NUMBER> --watch` and drill
+     into the failing job.
+   - Read the actual failure (test name, traceback, lint rule, etc.).
+     Do not guess from the check name.
+   - Classify the failure:
+     - **Real defect in the change** -- fix the code, add or update a
+       test if coverage was missing, commit the fix.
+     - **Pre-existing flake unrelated to the change** -- rerun the
+       failed job once with `gh run rerun <RUN_ID> --failed`. If it
+       passes, note it in the summary and move on. If it fails again
+       in the same way, treat it as a real failure and fix it.
+     - **Environment / infra issue** (cache miss, runner outage, token
+       expiry) -- rerun the failed job. If it keeps failing for the
+       same infra reason after one rerun, surface it to the user
+       rather than hacking around it.
+3. For real defects, follow the same isolation rules as earlier steps:
+   work inside `$ROCKOUT_WT` on `issue-<NUMBER>`, commit with a message
+   referencing the issue (e.g. `Fix dask path NaN handling for CI (#<NUMBER>)`),
+   and push to the PR branch.
+4. After each push, repeat from step 1 until every required check is
+   green. Do not merge or hand off while any required check is red.
+5. If a check is genuinely not relevant to the change and cannot be
+   made green (e.g. an unrelated workflow that is broken on `main`),
+   record the reason in the final summary and flag it to the user --
+   do not silently ignore red checks.
+6. Once all required checks are green, run the Step 11 conflict re-check
+   one more time (`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus`)
+   to confirm nothing landed on `main` while CI was running that would
+   re-conflict the branch.
+
+The rockout run is only complete when:
+- Every required CI check on the PR is green (or explicitly justified).
+- The PR reports `mergeable` with no conflicts against `main`.
+- The Step 9 / Step 10 review trail is posted.
+
 ---
 
 ## General Rules
