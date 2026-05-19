@@ -80,7 +80,7 @@ def test_extract_transform_allow_rotated_returns_no_georef():
         _ROTATED_M[0], _ROTATED_M[1], _ROTATED_M[3],
         _ROTATED_M[4], _ROTATED_M[5], _ROTATED_M[7],
     )
-    assert hasattr(gt, "rotated_affine")
+    assert gt.rotated_affine is not None
     assert gt.rotated_affine == pytest.approx(expected)
 
 
@@ -99,7 +99,7 @@ def test_extract_transform_allow_rotated_passes_through_axis_aligned():
     assert gt.pixel_height == -10.0
     assert gt.origin_x == 100.0
     assert gt.origin_y == 200.0
-    assert not hasattr(gt, "rotated_affine")
+    assert gt.rotated_affine is None
 
 
 def _write_rotated_tiff(path, arr: np.ndarray) -> None:

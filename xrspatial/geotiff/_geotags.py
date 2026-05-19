@@ -114,11 +114,18 @@ class GeoTransform:
         y = origin_y + row * pixel_height
 
     pixel_height is typically negative (y decreases downward).
+
+    ``rotated_affine`` carries the original 6-tuple
+    ``(pixel_width, b, origin_x, d, pixel_height, origin_y)`` (rasterio
+    ``Affine`` ordering) for files opened with ``allow_rotated=True``.
+    It is ``None`` for axis-aligned reads. Storing it as a real field
+    means ``dataclasses.replace`` and similar helpers preserve it.
     """
     origin_x: float = 0.0
     origin_y: float = 0.0
     pixel_width: float = 1.0
     pixel_height: float = -1.0
+    rotated_affine: tuple | None = None
 
 
 @dataclass
@@ -600,15 +607,27 @@ def _extract_transform(ifd: IFD,
         Parsed IFD.
     allow_rotated : bool
         When True, a rotated / sheared / z-coupled ``ModelTransformationTag``
-        does not raise. The function returns an identity ``GeoTransform``
-        with ``has_georef=False`` so the reader treats the file as an
-        ungeoreferenced pixel grid. The rotated 6-tuple itself is
-        attached to the returned ``GeoTransform`` via the ``rotated_affine``
-        attribute (rasterio Affine ordering: ``(pixel_width, b, origin_x,
-        d, pixel_height, origin_y)``) so the read-side rotated-transform
-        validator can see it and explicit attrs-roundtrip code can
-        preserve the matrix. Default ``False`` -- existing behaviour, raise
-        ``NotImplementedError``.
+        does not raise. The function returns an *intentionally inert*
+        identity ``GeoTransform`` (``origin_x=origin_y=0``,
+        ``pixel_width=1``, ``pixel_height=-1``) with ``has_georef=False``
+        so the reader treats the file as an ungeoreferenced pixel grid.
+        Consumers MUST NOT read ``transform.origin_x`` /
+        ``transform.pixel_width`` / etc. as a stand-in for the real
+        mapping in this case -- those fields are the default identity,
+        not a fallback. The rotated 6-tuple is attached to the returned
+        ``GeoTransform`` via ``transform.rotated_affine`` (rasterio
+        ``Affine`` ordering: ``(pixel_width, b, origin_x, d,
+        pixel_height, origin_y)``); read it directly when the rotated
+        mapping is needed. Default ``False`` -- existing behaviour,
+        raise ``NotImplementedError``.
+
+        This contract is read-only. ``rotated_affine`` is not currently
+        emitted by the writer, so a read-with-``allow_rotated``
+        followed by ``to_geotiff`` round-trip silently writes an
+        identity-affine output and drops the original rotation. If
+        round-trip preservation matters, the writer needs a separate
+        ``ModelTransformationTag`` emit path that consumes
+        ``rotated_affine`` (see issue #2115 follow-up).
 
     Returns
     -------
@@ -616,6 +635,8 @@ def _extract_transform(ifd: IFD,
         ``has_georef`` is True when at least one of the geo-transform tags
         was present *and* axis-aligned. When False, ``transform`` is the
         default identity and callers should fall back to pixel coordinates.
+        For the ``allow_rotated=True`` opt-in path, ``has_georef`` is
+        False and the rotated 6-tuple lives on ``transform.rotated_affine``.
     """
 
     # Try ModelTransformationTag (4x4 row-major matrix, 16 doubles).
@@ -656,13 +677,9 @@ def _extract_transform(ifd: IFD,
                 # GeoTransform so the validator + attrs-roundtrip code
                 # can see it. ``rasterio.Affine`` order: (a, b, c, d, e, f)
                 # = (pixel_width, b, origin_x, d, pixel_height, origin_y).
-                gt = GeoTransform()
-                object.__setattr__(
-                    gt,
-                    "rotated_affine",
-                    (m[0], m[1], m[3], m[4], m[5], m[7]),
-                )
-                return gt, False
+                return GeoTransform(
+                    rotated_affine=(m[0], m[1], m[3], m[4], m[5], m[7]),
+                ), False
             return GeoTransform(
                 origin_x=m[3],
                 origin_y=m[7],

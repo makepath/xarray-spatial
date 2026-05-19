@@ -355,6 +355,19 @@ def open_geotiff(source: str | BinaryIO, *,
         promotes to ``float64`` whenever the sentinel matches an actual
         pixel, and ``dtype=<integer>`` then raises ``ValueError`` on the
         float-to-int cast.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files. By default the reader raises ``NotImplementedError``
+        because the rest of xrspatial assumes an axis-aligned grid.
+        ``allow_rotated=True`` reads the pixel grid without the
+        geospatial assumption: the result has integer pixel coords on
+        ``x`` / ``y`` and ``attrs['crs']`` is dropped. The original
+        rotated 6-tuple is preserved on
+        ``geo_info.transform.rotated_affine`` for callers that want it
+        (issue #2115). The contract is read-only -- ``to_geotiff`` does
+        not currently emit ``rotated_affine``, so a read-then-write
+        round-trip writes an identity-affine output and silently drops
+        the rotation.
 
     Returns
     -------
