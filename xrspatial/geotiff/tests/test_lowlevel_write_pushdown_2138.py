@@ -35,6 +35,35 @@ from xrspatial.geotiff._writer import _write, _write_streaming
 from xrspatial.geotiff._reader import _read_to_array
 
 
+def _codec_available(name: str) -> bool:
+    """Optional codecs (``lz4``, ``lerc``, ``imagecodecs``-backed JPEG2000)
+    are not installed in every CI matrix slot. Probe the import the way
+    ``_compression`` itself does so tests skip cleanly rather than
+    failing on a missing dependency."""
+    if name in ("none", "deflate", "lzw", "packbits", "zstd"):
+        # Built into the bundled compression module; always present.
+        return True
+    if name == "lz4":
+        try:
+            import lz4  # noqa: F401
+        except ImportError:
+            return False
+        return True
+    if name == "lerc":
+        try:
+            import lerc  # noqa: F401
+        except ImportError:
+            return False
+        return True
+    if name in ("jpeg", "jpeg2000", "j2k"):
+        try:
+            import imagecodecs  # noqa: F401
+        except ImportError:
+            return False
+        return True
+    return True
+
+
 def _make_uint8_band(seed: int = 2138, shape=(32, 32)) -> np.ndarray:
     """Deterministic 2D uint8 array used by the byte-parity tests."""
     rng = np.random.RandomState(seed)
@@ -257,6 +286,8 @@ def test_write_vs_to_geotiff_byte_parity_uint8(compression, tmp_path):
     ``_VALID_COMPRESSIONS`` that round-trips losslessly. A divergence
     here is exactly the silent-different-file footgun #2138 names.
     """
+    if not _codec_available(compression):
+        pytest.skip(f"{compression} codec not installed")
     arr = _make_uint8_band(seed=2138 + hash(compression) % 1000)
     out_direct = str(tmp_path / f"tmp_2138_direct_{compression}.tif")
     out_wrapper = str(tmp_path / f"tmp_2138_wrapper_{compression}.tif")
@@ -302,6 +333,8 @@ def test_write_lerc_lossless_round_trip(tmp_path):
     """LERC with ``max_z_error=0`` is lossless. Confirm the codec
     survives the push-down and still round-trips bit-exactly when the
     pairing check passes."""
+    if not _codec_available("lerc"):
+        pytest.skip("lerc codec not installed")
     arr = _make_float32_band()
     out = str(tmp_path / "tmp_2138_lerc_lossless.tif")
     _write(arr, out, compression="lerc", max_z_error=0.0)
