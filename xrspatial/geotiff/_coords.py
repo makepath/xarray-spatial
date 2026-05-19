@@ -26,7 +26,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from ._geotags import GeoTransform, RASTER_PIXEL_IS_POINT
+from ._geotags import _NO_GEOREF_KEY, GeoTransform, RASTER_PIXEL_IS_POINT
 
 
 # Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
@@ -34,18 +34,6 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_POINT
 # ``(y, x, band)`` before writing and to skip the band axis when inferring
 # a GeoTransform from coords (see :func:`coords_to_transform` / #1643).
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
-
-
-# Stamped on reads from files that carry no GeoTIFF transform tags
-# (ModelTransformation, ModelPixelScale, or ModelTiepoint). The
-# reader emits ``np.arange(start, stop, dtype=int64)`` placeholder y/x
-# coords in that case, and the writer needs an unambiguous signal to
-# distinguish those from user-authored int64 step-1 coord grids that
-# happen to match the same shape (issue #2120). Treating any int64
-# ascending-step-1 grid as the placeholder silently stripped georef
-# from real user data; treating the marker as the signal makes that
-# round-trip safe again.
-_NO_GEOREF_KEY = '_xrspatial_no_georef'
 
 
 def _has_no_georef_marker(da: xr.DataArray) -> bool:
@@ -57,10 +45,19 @@ def _has_no_georef_marker(da: xr.DataArray) -> bool:
     that an int64 step-1 grid is the placeholder and skipping transform
     synthesis. See issue #2120 for the silent-strip regression this
     replaced.
+
+    The identity check (``is True``) is deliberate: only the exact
+    boolean ``True`` flips the writer into no-georef mode. A stray
+    third-party stamp like ``attrs['_xrspatial_no_georef'] = 'yes'``
+    should not be treated as truthy and silently drop a transform.
     """
     return da.attrs.get(_NO_GEOREF_KEY) is True
 
 
+# Kept for diagnostic / test pinning only. The writer no longer
+# calls this helper -- it checks ``attrs[_NO_GEOREF_KEY]`` instead
+# (see :func:`_has_no_georef_marker` / issue #2120). Only the tests
+# in ``test_int_coord_sentinel_2087.py`` reference it now.
 def _is_no_georef_sentinel(coord: np.ndarray) -> bool:
     """True iff ``coord`` matches the read-side no-georef placeholder shape.
 

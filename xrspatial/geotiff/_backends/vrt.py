@@ -18,6 +18,7 @@ from .._coords import (
     coords_from_pixel_geometry as _coords_from_pixel_geometry,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
+from .._geotags import _NO_GEOREF_KEY
 from .._crs import _wkt_to_epsg
 from .._validation import _validate_chunks_arg, _validate_dtype_cast
 
@@ -272,6 +273,14 @@ def read_vrt(source: str, *,
     # ``_populate_attrs_from_geo_info``; stamp the contract version here
     # so both code paths emit the same marker.
     attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
+    if gt is None:
+        # Mirror the eager non-VRT no-georef path: stamp the no-georef
+        # marker whenever the source carries no transform. The current
+        # VRT no-transform branch emits empty coords so the writer has
+        # nothing to misinterpret, but stamping defensively keeps the
+        # contract consistent if a future change adds placeholder
+        # coords here. See issue #2120.
+        attrs[_NO_GEOREF_KEY] = True
     if vrt.crs_wkt:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
         if epsg is not None:
@@ -688,6 +697,9 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
             origin_x, origin_y, res_x, res_y,
             window=(win_r0, win_c0, 0, 0),
         )
+    else:
+        # Defensive marker (issue #2120). See the eager VRT branch.
+        attrs[_NO_GEOREF_KEY] = True
 
     if vrt.crs_wkt:
         epsg = _wkt_to_epsg(vrt.crs_wkt)

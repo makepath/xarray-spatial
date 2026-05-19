@@ -129,7 +129,11 @@ import numpy as np
 from ._coords import (
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
-from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
+from ._geotags import (
+    RASTER_PIXEL_IS_AREA,
+    RASTER_PIXEL_IS_POINT,
+    _NO_GEOREF_KEY,
+)
 
 
 # Per-codec valid compression-level ranges, used by ``to_geotiff`` for
@@ -167,13 +171,6 @@ _TIFF_SHORT = 3
 # ``DeprecationWarning``. Downstream code that read those keys via
 # ``attrs[key]`` now sees ``KeyError`` rather than the deprecated value.
 _ATTRS_CONTRACT_VERSION = 2
-
-
-# The no-georef marker key lives in ``_coords`` to avoid a circular
-# import (``_attrs`` already imports from ``_coords``). Re-export here
-# so callers using ``_attrs`` for the contract constants can find it
-# alongside.
-from ._coords import _NO_GEOREF_KEY  # noqa: E402,F401
 
 
 # String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
