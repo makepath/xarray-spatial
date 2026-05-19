@@ -312,6 +312,56 @@ class TestPlanar2MultibandStripParallel:
         expected = np.moveaxis(arr, 0, -1)[100:900, 100:900]
         np.testing.assert_array_equal(par, expected)
 
+    def test_http_windowed_planar2_parallel(self, monkeypatch):
+        """HTTP windowed strip path on planar=2 multi-band: pins the
+        per-band strip-job loop inside
+        ``_fetch_decode_cog_http_strips`` (the local path's planar=2
+        coverage above does not reach the HTTP fetch+decode branch
+        because full-image HTTP reads dispatch back to
+        ``_read_strips``)."""
+        tifffile = pytest.importorskip("tifffile")
+        monkeypatch.setenv(
+            "XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+        rng = np.random.default_rng(seed=20260520)
+        bands, height, width = 3, 1024, 1024
+        arr = rng.integers(
+            0, 1000, size=(bands, height, width), dtype=np.uint16)
+        with tempfile.NamedTemporaryFile(
+                suffix=".tif", delete=False) as f:
+            tif_path = f.name
+        try:
+            tifffile.imwrite(
+                tif_path, arr,
+                photometric="rgb",
+                planarconfig="separate",
+                compression="deflate",
+                rowsperstrip=128,
+            )
+            with open(tif_path, "rb") as f:
+                blob = f.read()
+        finally:
+            try:
+                os.remove(tif_path)
+            except OSError:
+                pass
+
+        server, port = _start_server(blob)
+        try:
+            url = f"http://127.0.0.1:{port}/planar2.tif"
+            par, _ = read_to_array(
+                url, window=(100, 100, 900, 900))
+            with patch.object(
+                    _reader_mod, "_PARALLEL_DECODE_PIXEL_THRESHOLD",
+                    10 ** 12):
+                ser, _ = read_to_array(
+                    url, window=(100, 100, 900, 900))
+        finally:
+            server.shutdown()
+
+        np.testing.assert_array_equal(par, ser)
+        expected = np.moveaxis(arr, 0, -1)[100:900, 100:900]
+        np.testing.assert_array_equal(par, expected)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
