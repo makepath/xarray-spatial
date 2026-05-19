@@ -3229,6 +3229,12 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                               allow_rotated=allow_rotated)
 
     # Local file, cloud storage, or file-like buffer: read all bytes then parse
+    # Resolve the cloud byte budget once so both the base-file ``_CloudSource``
+    # size guard and the sidecar download below see the same effective cap.
+    # ``_resolve_max_cloud_bytes`` honours the kwarg, the env var, and the
+    # default in that order; the result is ``None`` only when the caller
+    # explicitly passed ``max_cloud_bytes=None``.
+    cloud_budget = _resolve_max_cloud_bytes(max_cloud_bytes)
     if _is_file_like(source):
         src = _BytesIOSource(source)
     elif _is_fsspec_uri(source):
@@ -3236,7 +3242,6 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # Check the compressed object size before any bytes are
         # downloaded. ``_CloudSource.__init__`` already fetched the size
         # via ``fsspec.size()``, so this is free. See issue #1928.
-        cloud_budget = _resolve_max_cloud_bytes(max_cloud_bytes)
         if cloud_budget is not None:
             size = src.size
             if size is None:
@@ -3273,10 +3278,12 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # External `.tif.ovr` sidecar (issue #2112). GDAL/rasterio write
         # overview pyramids to a sibling file when the source is not a
         # COG; the sidecar's IFDs are the continuation of the base
-        # file's pyramid. Discovery only fires for local file paths;
-        # cloud / HTTP / file-like sources skip the lookup and keep the
-        # base-file-only behaviour. The sidecar must be loaded before
-        # IFD selection so ``overview_level`` can index into a unified
+        # file's pyramid. Discovery fires for local files, HTTP, and
+        # fsspec sources; file-like buffers skip the lookup.
+        # ``max_cloud_bytes`` propagates to ``load_sidecar`` so the
+        # sidecar fetch inherits the same byte budget the base file
+        # enforces (#2121). The sidecar must be loaded before IFD
+        # selection so ``overview_level`` indexes into a unified
         # pyramid list.
         from ._sidecar import (
             attach_sidecar_origin, find_sidecar, load_sidecar,
@@ -3284,7 +3291,8 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
-            sidecar = load_sidecar(sidecar_path)
+            sidecar = load_sidecar(sidecar_path,
+                                   max_cloud_bytes=cloud_budget)
             sidecar_origin = attach_sidecar_origin(
                 sidecar.ifds, sidecar.data, sidecar.header)
             ifds = ifds + sidecar.ifds
