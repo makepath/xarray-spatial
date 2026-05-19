@@ -506,32 +506,42 @@ def test_int_source_with_out_of_range_sentinel(tmp_path):
 
 
 class TestSetNodataAttrsHelper:
-    """Direct coverage of :func:`_set_nodata_attrs` in ``_attrs.py``."""
+    """Direct coverage of :func:`_set_nodata_attrs` in ``_attrs.py``.
 
-    def test_float_dtype_marks_masked(self):
+    The helper signature changed in #2092 from ``array_dtype`` (dtype
+    inference) to ``masked`` (explicit decision passed by the
+    caller). These tests pin the new contract.
+    """
+
+    def test_masked_true_marks_masked(self):
         from xrspatial.geotiff._attrs import _set_nodata_attrs
         attrs: dict = {}
-        _set_nodata_attrs(attrs, -9999, array_dtype=np.float64)
+        _set_nodata_attrs(attrs, -9999, masked=True)
         assert attrs == {"nodata": -9999, "masked_nodata": True}
 
-    def test_int_dtype_marks_unmasked(self):
+    def test_masked_false_marks_unmasked(self):
         from xrspatial.geotiff._attrs import _set_nodata_attrs
         attrs: dict = {}
-        _set_nodata_attrs(attrs, -9999, array_dtype=np.uint16)
+        _set_nodata_attrs(attrs, -9999, masked=False)
         assert attrs == {"nodata": -9999, "masked_nodata": False}
 
     def test_none_nodata_is_noop(self):
         from xrspatial.geotiff._attrs import _set_nodata_attrs
         attrs: dict = {}
-        _set_nodata_attrs(attrs, None, array_dtype=np.uint16)
+        _set_nodata_attrs(attrs, None, masked=False)
+        assert attrs == {}
+        _set_nodata_attrs(attrs, None, masked=True)
         assert attrs == {}
 
-    def test_accepts_dtype_string(self):
-        """``array_dtype`` may be a numpy dtype object, type, or string."""
+    def test_masked_coerced_to_bool(self):
+        """Non-bool truthy/falsy values are coerced to bool so the
+        attr is always a plain Python bool (downstream serialisers
+        can't always handle numpy scalars or 0/1 ints)."""
         from xrspatial.geotiff._attrs import _set_nodata_attrs
         attrs: dict = {}
-        _set_nodata_attrs(attrs, 0, array_dtype="float32")
+        _set_nodata_attrs(attrs, 0, masked=np.True_)
         assert attrs["masked_nodata"] is True
+        assert type(attrs["masked_nodata"]) is bool
         attrs = {}
-        _set_nodata_attrs(attrs, 0, array_dtype="uint8")
+        _set_nodata_attrs(attrs, 0, masked=0)
         assert attrs["masked_nodata"] is False

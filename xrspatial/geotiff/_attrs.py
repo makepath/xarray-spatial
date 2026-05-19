@@ -443,7 +443,7 @@ def _extent_to_window(transform, file_height, file_width,
     return (row_start, col_start, row_stop, col_stop)
 
 
-def _set_nodata_attrs(attrs: dict, nodata, *, array_dtype) -> None:
+def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
 
     Splits the two meanings previously fused into ``attrs['nodata']``
@@ -452,25 +452,31 @@ def _set_nodata_attrs(attrs: dict, nodata, *, array_dtype) -> None:
     * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
       source dtype. Set whenever the source declared one, regardless of
       whether the array is float-with-NaN or int-with-sentinels.
-    * ``attrs['masked_nodata']`` -- boolean flag. ``True`` iff the in-
-      memory array has been NaN-masked (i.e. it is float dtype and the
-      reader's sentinel-to-NaN step ran). ``False`` iff the array still
-      carries the literal integer sentinel value.
+    * ``attrs['masked_nodata']`` -- boolean flag. ``True`` iff the
+      reader replaced sentinel pixels with NaN (or the buffer is
+      otherwise NaN-aware as a result of the reader's masking step).
+      ``False`` iff the literal sentinel values are still present in
+      the buffer.
 
-    Callers pass ``array_dtype`` as the final post-mask, post-cast dtype
-    of the array that will be wrapped in the returned DataArray. The
-    float/non-float split drives the ``masked_nodata`` value: any float
-    output is treated as NaN-aware (NaN is the sentinel proxy), any
-    integer output still carries the raw sentinel.
+    Callers pass ``masked`` as the actual decision made by the read
+    path. The pre-#2092 implementation inferred this from the final
+    array dtype, which lied when ``mask_nodata=False`` left literal
+    sentinel values in a float buffer; downstream code that trusted
+    the attr treated those literal values as already-NaN. The eager,
+    dask, and GPU paths compute ``masked`` as
+    ``mask_nodata and final_dtype.kind == 'f'``. The VRT path inlines
+    NaN-masking on float sources unconditionally, so it keeps the
+    dtype-driven rule (``final_dtype.kind == 'f'``) which is still
+    accurate for that backend. See issue #2092.
 
-    ``masked_nodata`` is only emitted when ``nodata is not None``. With
-    no declared sentinel, the flag is meaningless and its absence is the
-    signal.
+    ``masked_nodata`` is only emitted when ``nodata is not None``.
+    With no declared sentinel, the flag is meaningless and its
+    absence is the signal.
     """
     if nodata is None:
         return
     attrs['nodata'] = nodata
-    attrs['masked_nodata'] = bool(np.dtype(array_dtype).kind == 'f')
+    attrs['masked_nodata'] = bool(masked)
 
 
 def _validate_read_geo_info(

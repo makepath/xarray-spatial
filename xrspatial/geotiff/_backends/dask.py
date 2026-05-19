@@ -320,12 +320,17 @@ def read_geotiff_dask(source: str, *,
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``masked_nodata`` reflects the declared dask graph dtype: a float
-    # graph means every chunk runs the sentinel-to-NaN promotion (or
-    # already arrived as float), so the in-memory array is NaN-masked.
-    # An integer graph means each chunk keeps the literal sentinel
-    # value. See issue #1988.
-    _set_nodata_attrs(attrs, nodata_attr, array_dtype=target_dtype)
+    # ``masked_nodata`` reflects whether per-chunk masking actually
+    # runs in the lazy graph (#2092). With ``mask_nodata=False`` each
+    # chunk skips the sentinel-to-NaN step, so even if the graph
+    # dtype happens to be float (e.g. caller-supplied ``dtype=float64``
+    # on an int file), the in-memory buffers hold literal sentinel
+    # values. True iff the caller opted into masking and the graph
+    # dtype is float.
+    _set_nodata_attrs(
+        attrs, nodata_attr,
+        masked=(mask_nodata and target_dtype.kind == 'f'),
+    )
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks

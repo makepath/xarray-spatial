@@ -316,11 +316,20 @@ def read_vrt(source: str, *,
         _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
         arr = arr.astype(target)
 
-    # Record ``nodata`` + ``masked_nodata`` from the final array dtype
-    # (issue #1988). On GPU the dtype is read off the CuPy array via
-    # ``str(arr.dtype)`` so ``np.dtype`` accepts it without a CuPy
-    # dependency in ``_set_nodata_attrs``.
-    _set_nodata_attrs(attrs, nodata, array_dtype=np.dtype(str(arr.dtype)))
+    # Record ``nodata`` + ``masked_nodata``. The VRT internal reader
+    # NaN-masks float source arrays inline (see ``_vrt._read_data``)
+    # regardless of the ``mask_nodata`` kwarg, so a float final dtype
+    # really does mean "sentinel pixels are NaN in the buffer." The
+    # ``mask_nodata`` kwarg only gates the integer-sentinel mask
+    # helper that runs above; when it's skipped on an int source the
+    # final dtype stays integer and the rule below correctly reports
+    # False. The dtype-driven rule is therefore still accurate for
+    # this backend; the per-backend explanation is in
+    # ``_set_nodata_attrs`` (#2092).
+    _set_nodata_attrs(
+        attrs, nodata,
+        masked=(np.dtype(str(arr.dtype)).kind == 'f'),
+    )
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
@@ -681,7 +690,13 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata_meta = vrt.bands[band_idx_for_nodata].nodata
-    _set_nodata_attrs(attrs, nodata_meta, array_dtype=final_dtype)
+    # VRT chunked path: the per-task VRT reader inlines float
+    # NaN-masking unconditionally, so a float graph dtype really does
+    # mean "buffer is NaN-aware." See ``_set_nodata_attrs`` (#2092).
+    _set_nodata_attrs(
+        attrs, nodata_meta,
+        masked=(final_dtype.kind == 'f'),
+    )
 
     # Static hole detection: mirror the eager-path ``attrs['vrt_holes']``
     # contract (#1734) by scanning every source referenced in the parsed
