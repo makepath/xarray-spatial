@@ -31,6 +31,7 @@ from .._attrs import (
 from .._backends._gpu_helpers import _is_gpu_data
 from .._coords import (
     _BAND_DIM_NAMES,
+    _has_no_georef_marker,
     coords_to_transform as _coords_to_transform,
     require_transform_for_georeferenced as _require_transform_for_georeferenced,
     transform_from_attr as _transform_from_attr,
@@ -304,6 +305,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         'attrs_nodatavals': _attrs.get('nodatavals'),
         'coord_y': _coord_y,
         'coord_x': _coord_x,
+        'no_georef_marker': _has_no_georef_marker(data),
     })
 
     # Up-front validation: catch bad compression names before they reach
@@ -862,6 +864,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         'attrs_nodatavals': _attrs.get('nodatavals'),
         'coord_y': _coord_y,
         'coord_x': _coord_x,
+        'no_georef_marker': _has_no_georef_marker(data),
     })
 
     # Validate compression_level against codec-specific range
