@@ -202,7 +202,7 @@ def _write_int_vrt(tmp_path, src_basename, vrt_basename, sentinel=30):
     in-repo VRT reader; without them the reader returns a zero-fill
     buffer instead of decoding the source.
     """
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
     src = str(tmp_path / src_basename)
     tifffile.imwrite(src, np.array(
         [[10, 20, 30], [40, 50, 60]], dtype=np.int16,
