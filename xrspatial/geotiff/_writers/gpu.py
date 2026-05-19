@@ -24,6 +24,7 @@ from .._attrs import (
 )
 from .._coords import (
     _BAND_DIM_NAMES,
+    _has_no_georef_marker,
     coords_to_transform as _coords_to_transform,
     require_transform_for_georeferenced as _require_transform_for_georeferenced,
     transform_from_attr as _transform_from_attr,
@@ -324,6 +325,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         'attrs_nodatavals': _attrs.get('nodatavals'),
         'coord_y': _coord_y,
         'coord_x': _coord_x,
+        'no_georef_marker': _has_no_georef_marker(data),
     })
     if max_z_error < 0:
         raise ValueError(

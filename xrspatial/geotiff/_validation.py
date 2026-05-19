@@ -731,19 +731,29 @@ def _check_write_non_uniform_coords(context: Mapping[str, Any]) -> None:
     the coords disagree with that step (variable cell size, gaps),
     the on-disk file silently misrepresents the geometry.
 
-    Exemption: int-dtype coords keep the existing #1969 sentinel
-    contract. Those coords are the 0..N-1 fallback the no-georef
-    reader emits, not geographic positions, so non-uniformity is
-    meaningless for them.
+    Exemption: arrays carrying the no-georef marker
+    (``attrs[_NO_GEOREF_KEY] is True``, stamped by the reader on
+    files without GeoTIFF transform tags) skip the check. Their
+    coords are the placeholder pixel-index fallback rather than
+    projected positions, so uniformity is meaningless for them.
+    Issue #2120 moved this signal off coord dtype: a user-authored
+    int-coord grid no longer earns the exemption just by having an
+    integer dtype, only by carrying the marker.
 
     Context keys consumed:
 
     * ``coord_y`` -- ``data.coords['y'].values`` (or equivalent).
     * ``coord_x`` -- ``data.coords['x'].values``.
+    * ``no_georef_marker`` -- ``data.attrs[_NO_GEOREF_KEY] is True``.
 
     Missing or non-numeric coords are out of scope (handled by other
     writer validation upstream).
     """
+    if context.get('no_georef_marker') is True:
+        # Arrays the reader stamped as no-georef carry the 0..N-1
+        # placeholder coords. Uniformity is not meaningful there;
+        # the writer skips transform synthesis entirely.
+        return
     for axis_name in ('y', 'x'):
         coord = context.get(f'coord_{axis_name}')
         if coord is None:
@@ -752,10 +762,10 @@ def _check_write_non_uniform_coords(context: Mapping[str, Any]) -> None:
         if arr.size < 3:
             # Need at least 3 samples to detect non-uniformity.
             continue
-        if np.issubdtype(arr.dtype, np.integer):
-            # #1969 sentinel exemption.
-            continue
-        if not np.issubdtype(arr.dtype, np.floating):
+        if not (
+            np.issubdtype(arr.dtype, np.floating)
+            or np.issubdtype(arr.dtype, np.integer)
+        ):
             continue
         diffs = np.diff(arr.astype(np.float64))
         # Use a relative tolerance pegged to the step magnitude so that
