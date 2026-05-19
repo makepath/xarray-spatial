@@ -210,6 +210,24 @@ def test_min_int_5x5_with_nodata_does_not_select_sentinel_in_residual():
     assert out[2, 2] == sentinel
 
 
+def test_int64_sentinel_near_max_masks_in_padded_branch():
+    # INT64_MAX is not exactly representable in float64: float(INT64_MAX)
+    # rounds up to 2**63, which would miss the sentinel if the mask were
+    # computed against the float-padded view. The reader must compute the
+    # mask at native integer width before padding.
+    sentinel = np.iinfo(np.int64).max
+    arr = np.full((5, 5), 10, dtype=np.int64)
+    arr[0, 0] = sentinel
+    # Pad branch fires because shape (5, 5) is odd.
+    out = _block_reduce_2d(arr, "min", nodata=sentinel)
+    # Top-left 2x2 block has 1 sentinel + 3 valid 10s. nanmin -> 10
+    # (sentinel masked out). If the mask missed the sentinel, the int64
+    # value would be cast to float and the float min would pick up the
+    # sentinel's value or produce noise; either way out[0,0] would not
+    # be 10.
+    assert out[0, 0] == 10
+
+
 def test_max_int_5x5_with_nodata_does_not_select_sentinel_in_residual():
     sentinel = -9999
     arr = np.full((5, 5), 10, dtype=np.int16)

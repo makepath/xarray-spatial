@@ -3181,11 +3181,14 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
             if info.min <= nodata_int <= info.max:
                 sentinel = np.dtype(str(arr2d.dtype)).type(nodata_int)
                 if need_pad:
-                    # The float-padded view holds the original int values
-                    # exactly representable in float64; compare against
-                    # ``float(sentinel)`` to find sentinel cells in the
-                    # valid region (the padded edge is already NaN).
-                    mask = blocks == float(sentinel)
+                    # Compute the integer-width sentinel mask before
+                    # padding, so a 64-bit sentinel near INT64_MAX (not
+                    # exactly representable in float64) still matches.
+                    # The padded edge already holds NaN in ``blocks`` and
+                    # stays False here so the where below leaves it alone.
+                    int_mask = cupy.zeros((h2, w2), dtype=bool)
+                    int_mask[:h, :w] = arr2d == sentinel
+                    mask = int_mask.reshape(oh, 2, ow, 2)
                 else:
                     int_blocks = arr2d.reshape(oh, 2, ow, 2)
                     mask = int_blocks == sentinel

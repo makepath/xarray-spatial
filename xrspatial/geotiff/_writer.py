@@ -664,12 +664,16 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         if nodata_int is not None:
             sentinel = arr2d.dtype.type(nodata_int)
             if need_pad:
-                # The float-padded view holds the original int values
-                # exactly representable in float64; comparing against
-                # ``float(sentinel)`` is safe for the integer ranges the
-                # reader actually emits (``_resolve_int_nodata`` rejects
-                # values outside the dtype range).
-                mask = blocks == float(sentinel)
+                # Compute the sentinel mask at the integer's native width
+                # before padding, so a 64-bit sentinel near INT64_MAX (which
+                # is not exactly representable in float64) still matches.
+                # The mask is then padded with False to the same (h2, w2)
+                # shape as the float-promoted blocks view, so the residual
+                # padded cells (already NaN in ``blocks``) are not also
+                # rewritten via the where below.
+                int_mask = np.zeros((h2, w2), dtype=bool)
+                int_mask[:h, :w] = arr2d == sentinel
+                mask = int_mask.reshape(oh, 2, ow, 2)
             else:
                 # Compare against the original integer block view so the
                 # equality runs at the integer's native width (avoids any
