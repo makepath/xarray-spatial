@@ -13,7 +13,9 @@ These tests pin the new contract:
 * fsspec sidecar: declared size is checked against ``max_cloud_bytes``
   before any bytes are read, raising :class:`CloudSizeLimitError`.
 * HTTP sidecar: ``max_bytes`` is threaded into the streaming read and
-  the overshoot detector raises :class:`OSError` mid-download.
+  the overshoot is re-raised as :class:`CloudSizeLimitError` so both
+  transports surface a single exception type for "sidecar exceeds the
+  cap". Non-budget HTTP failures still raise ``OSError`` unchanged.
 * ``max_cloud_bytes=None`` preserves the legacy unbounded behaviour.
 * Local-file mmap path is unaffected (no byte budget needed -- mmap
   does not allocate the whole file).
@@ -130,7 +132,8 @@ def test_fsspec_sidecar_max_cloud_bytes_none_is_unbounded(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# HTTP: streaming overshoot detector raises OSError when bytes exceed cap.
+# HTTP: load_sidecar translates the underlying budget OSError into
+# CloudSizeLimitError so both cloud transports raise the same type.
 # ---------------------------------------------------------------------------
 def test_http_sidecar_rejects_when_exceeds_max_cloud_bytes(
         tmp_path, monkeypatch):
@@ -143,12 +146,17 @@ def test_http_sidecar_rejects_when_exceeds_max_cloud_bytes(
     httpd, port = _start_http_server(tmp_path)
     try:
         url = f"http://127.0.0.1:{port}/h_2121.tif.ovr"
-        # Streaming cap below the body size. The HTTP source surfaces the
-        # over-shoot as OSError (Content-Length pre-check on
-        # SimpleHTTPRequestHandler) or via the streaming probe -- either
-        # way, the download is rejected before the full payload lands.
-        with pytest.raises(OSError):
+        # Cap below the body size. Either the Content-Length pre-check
+        # or the streaming overshoot probe inside ``_HTTPSource.read_all``
+        # raises ``OSError``; ``load_sidecar`` re-raises it as
+        # ``CloudSizeLimitError`` so callers see a single exception
+        # type regardless of transport.
+        with pytest.raises(CloudSizeLimitError) as exc:
             load_sidecar(url, max_cloud_bytes=sidecar_size - 1)
+        assert "max_cloud_bytes" in str(exc.value)
+        # The original OSError is preserved as the cause so debuggers
+        # can still see the Content-Length / streaming detail.
+        assert isinstance(exc.value.__cause__, OSError)
     finally:
         httpd.shutdown()
 
@@ -227,3 +235,41 @@ def test_read_to_array_propagates_max_cloud_bytes_to_sidecar(
     uri = f"file://{base_copy}"
     with pytest.raises(CloudSizeLimitError):
         read_to_array(uri, overview_level=1, max_cloud_bytes=budget)
+
+
+# ---------------------------------------------------------------------------
+# Env-var precedence: XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES caps the sidecar
+# when the caller omits the kwarg, mirroring base-file semantics.
+# ---------------------------------------------------------------------------
+def test_env_var_propagates_to_sidecar(tmp_path, monkeypatch):
+    """``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` bounds the sidecar fetch.
+
+    ``read_to_array`` resolves the budget once via
+    ``_resolve_max_cloud_bytes`` and passes it into ``load_sidecar``.
+    When the caller does not pass the kwarg, the env var should still
+    cap the sidecar -- the kwarg path and the env-var path must agree.
+    """
+    pytest.importorskip("fsspec")
+    src = _fixture_or_skip()
+    base_copy = tmp_path / "env_2121.tif"
+    sidecar_copy = tmp_path / "env_2121.tif.ovr"
+    shutil.copy(src, base_copy)
+    shutil.copy(str(src) + ".ovr", sidecar_copy)
+    base_size = base_copy.stat().st_size
+    target_sidecar_size = base_size + 4096
+    with sidecar_copy.open("ab") as f:
+        f.write(b"\x00" * (target_sidecar_size - sidecar_copy.stat().st_size))
+    sidecar_size = sidecar_copy.stat().st_size
+    assert sidecar_size > base_size
+
+    # Env-var budget admits the base file but rejects the sidecar. The
+    # caller passes no ``max_cloud_bytes``, so the resolver picks up the
+    # env var and threads it through to ``load_sidecar``.
+    budget = base_size + 1
+    assert base_size <= budget < sidecar_size
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES", str(budget))
+
+    from xrspatial.geotiff._reader import read_to_array
+    uri = f"file://{base_copy}"
+    with pytest.raises(CloudSizeLimitError):
+        read_to_array(uri, overview_level=1)

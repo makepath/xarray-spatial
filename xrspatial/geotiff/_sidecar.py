@@ -165,11 +165,15 @@ def load_sidecar(path: str,
     Raises
     ------
     CloudSizeLimitError
-        If the fsspec sidecar's declared size exceeds ``max_cloud_bytes``.
-        The HTTP transport raises ``OSError`` from its streaming
-        overshoot detector rather than ``CloudSizeLimitError`` because
-        the size is checked mid-stream against ``Content-Length`` (when
-        present) and the running byte count (always).
+        If the sidecar's size exceeds ``max_cloud_bytes`` on either
+        transport. fsspec checks the declared size up front via
+        ``fs.size()``; HTTP catches the ``OSError`` that
+        :meth:`_HTTPSource.read_all` raises from its
+        ``Content-Length`` pre-check or streaming overshoot detector
+        and re-raises it as ``CloudSizeLimitError`` so callers see a
+        single exception type for "sidecar too big". Non-budget HTTP
+        failures (connection reset, DNS error, etc.) pass through as
+        ``OSError`` unchanged.
     """
     if "://" not in path:
         f = open(path, "rb")
@@ -186,8 +190,29 @@ def load_sidecar(path: str,
         # sidecar fetch ignores the ``max_cloud_bytes`` budget the
         # caller set on the base file and a hostile server can serve a
         # multi-GB ``.ovr`` to OOM the process. Issue #2121.
-        from ._reader import _HTTPSource
-        data = _HTTPSource(path).read_all(max_bytes=max_cloud_bytes)
+        from ._reader import CloudSizeLimitError, _HTTPSource
+        try:
+            data = _HTTPSource(path).read_all(max_bytes=max_cloud_bytes)
+        except OSError as e:
+            # ``_HTTPSource.read_all(max_bytes=...)`` raises ``OSError``
+            # with "byte budget" in the message for both the
+            # Content-Length pre-check and the streaming overshoot probe
+            # (see ``_HTTPSource._check_content_length`` and
+            # ``_read_capped``). Translate to ``CloudSizeLimitError`` so
+            # the HTTP and fsspec branches surface the same exception
+            # type for the same failure mode. Other ``OSError``
+            # subtypes (connection reset, DNS, etc.) pass through
+            # untouched.
+            if max_cloud_bytes is not None and "byte budget" in str(e):
+                raise CloudSizeLimitError(
+                    f"Sidecar {path!r} exceeds "
+                    f"max_cloud_bytes={max_cloud_bytes:,}. Raise "
+                    f"max_cloud_bytes (or set "
+                    f"XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES) if the sidecar "
+                    f"is legitimate, or pass max_cloud_bytes=None on the "
+                    f"source to disable the check."
+                ) from e
+            raise
     else:
         # fsspec URI. Stat the sidecar first so an oversized object is
         # rejected before any bytes hit memory, mirroring the
