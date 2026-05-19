@@ -443,13 +443,15 @@ def open_geotiff(source: str | BinaryIO, *,
         because the rest of xrspatial assumes an axis-aligned grid.
         ``allow_rotated=True`` reads the pixel grid without the
         geospatial assumption: the result has integer pixel coords on
-        ``x`` / ``y`` and ``attrs['crs']`` is dropped. The original
-        rotated 6-tuple is preserved on
-        ``geo_info.transform.rotated_affine`` for callers that want it
-        (issue #2115). The contract is read-only -- ``to_geotiff`` does
-        not currently emit ``rotated_affine``, so a read-then-write
+        ``x`` / ``y`` and both ``attrs['crs']`` and ``attrs['crs_wkt']``
+        are dropped. The CRS attrs are dropped together with the
+        transform because keeping them while the axis-aligned transform
+        is gone misleads downstream code that gates on
+        ``"crs" in da.attrs`` to mean the array is spatially usable
+        (issue #2126). The contract is read-only -- ``to_geotiff`` does
+        not currently emit rotated transforms, so a read-then-write
         round-trip writes an identity-affine output and silently drops
-        the rotation.
+        the rotation (issue #2115).
 
     Returns
     -------
