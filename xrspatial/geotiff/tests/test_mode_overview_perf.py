@@ -14,24 +14,22 @@ from xrspatial.geotiff._writer import _block_reduce_2d
 
 
 def _mode_resample_reference(arr2d):
-    """Original per-pixel reference implementation (pre-vectorization).
+    """Per-pixel mode reference using GDAL ceil semantics (issue #2105).
 
-    Copied verbatim from the loop body that used ``np.unique`` per 2x2
-    block, with the same crop-to-even-dims behavior as the production
-    function.
+    Walks each ceil-shaped output block over the source array, takes the
+    intersection of the 2x2 block window with the actual source extent,
+    and picks the most-frequent value with the "lowest wins" tie-break
+    that the vectorized production path also uses.
     """
     h, w = arr2d.shape
-    h2 = (h // 2) * 2
-    w2 = (w // 2) * 2
-    cropped = arr2d[:h2, :w2]
-    oh, ow = h2 // 2, w2 // 2
-    blocks = (
-        cropped.reshape(oh, 2, ow, 2).transpose(0, 2, 1, 3).reshape(oh, ow, 4)
-    )
+    oh, ow = (h + 1) // 2, (w + 1) // 2
     out = np.empty((oh, ow), dtype=arr2d.dtype)
     for r in range(oh):
         for c in range(ow):
-            vals, counts = np.unique(blocks[r, c], return_counts=True)
+            r0, r1 = 2 * r, min(2 * r + 2, h)
+            c0, c1 = 2 * c, min(2 * c + 2, w)
+            window = arr2d[r0:r1, c0:c1].ravel()
+            vals, counts = np.unique(window, return_counts=True)
             out[r, c] = vals[counts.argmax()]
     return out
 
@@ -47,12 +45,6 @@ def test_bit_exact_match_reference(dtype, shape):
     lo = max(info.min, 0)
     hi = min(info.max, 7)
     arr = rng.integers(lo, hi + 1, size=shape, dtype=dtype)
-
-    # Skip pathological 1x1 / 1xN / Nx1 cases that crop to empty.
-    h2 = (shape[0] // 2) * 2
-    w2 = (shape[1] // 2) * 2
-    if h2 == 0 or w2 == 0:
-        return
 
     expected = _mode_resample_reference(arr)
     actual = _block_reduce_2d(arr, 'mode')

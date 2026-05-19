@@ -435,6 +435,17 @@ def _resolve_int_nodata(dtype, nodata):
 def _block_reduce_2d(arr2d, method, nodata=None):
     """2x block-reduce a single 2D plane using *method*.
 
+    Output dimensions follow GDAL's ceil semantics (5x5 -> 3x3): every
+    base pixel contributes to the overview. Inputs with an odd height
+    or width are padded with NaN (or float-promoted and NaN-padded for
+    integer dtypes) along the trailing edge so the 2x2 block reshape
+    still works; the nan-aware aggregations then exclude the padded
+    cells from the residual blocks. ``nearest`` strides directly,
+    ``cubic`` replicates the last row/col so the spline kernel sees a
+    valid neighbourhood at the trailing edge, and ``mode`` ignores
+    NaN-padded cells when counting. Even-sized inputs take the
+    existing fast path with no padding overhead (issue #2105).
+
     When ``nodata`` is supplied, cells that equal the sentinel are
     treated as NaN during the reduction so the ``nan*`` aggregation
     routines correctly skip them. The float branch keeps any all-
@@ -458,14 +469,19 @@ def _block_reduce_2d(arr2d, method, nodata=None):
     well-defined (issue #1975).
     """
     h, w = arr2d.shape
-    h2 = (h // 2) * 2
-    w2 = (w // 2) * 2
-    cropped = arr2d[:h2, :w2]
-    oh, ow = h2 // 2, w2 // 2
+    # GDAL-style ceil semantics keep the trailing row/col when the input
+    # is odd-sized. Floor-and-crop drops those pixels and produces an
+    # overview that no longer covers the source extent (issue #2105).
+    oh, ow = (h + 1) // 2, (w + 1) // 2
+    h2, w2 = 2 * oh, 2 * ow
+    need_pad = (h2, w2) != (h, w)
 
     if method == 'nearest':
-        # Top-left pixel of each 2x2 block
-        return cropped[::2, ::2].copy()
+        # Top-left pixel of each 2x2 block. For odd-sized inputs the
+        # trailing 1x2 / 2x1 / 1x1 residual block's top-left is still
+        # the source pixel at (2*i, 2*j), so direct striding gives the
+        # correct ceil-shape output without padding.
+        return arr2d[::2, ::2].copy()
 
     if method == 'cubic':
         try:
@@ -495,6 +511,27 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # NaN can carry through the spline; the result is rewritten
         # back to the sentinel and rounded before casting to the source
         # integer dtype (issue #1975, integer mirror of #1623).
+        #
+        # Odd-sized inputs are first edge-replicated to even dimensions
+        # so the 0.5 zoom factor lands on the GDAL ceil shape and the
+        # spline sees a valid neighbourhood at the trailing edge.
+        # Replicating sentinel values is fine: they are masked to NaN
+        # in the steps below alongside any in-bounds sentinel, and the
+        # post-zoom NaN->sentinel restore stamps the trailing overview
+        # pixels back to the sentinel as expected (issue #2105).
+        def _replicate_pad(src):
+            if not need_pad:
+                return src
+            padded = np.empty((h2, w2), dtype=src.dtype)
+            padded[:h, :w] = src
+            if h2 != h:
+                padded[h:, :w] = src[h - 1:h, :]
+            if w2 != w:
+                padded[:h, w:] = src[:, w - 1:w]
+            if h2 != h and w2 != w:
+                padded[h:, w:] = src[h - 1, w - 1]
+            return padded
+
         if (nodata is not None
                 and arr2d.dtype.kind == 'f'
                 and not np.isnan(nodata)):
@@ -505,7 +542,9 @@ def _block_reduce_2d(arr2d, method, nodata=None):
             if sentinel is not None:
                 mask = arr2d == sentinel
                 if mask.any():
-                    masked = np.where(mask, np.float64('nan'), arr2d)
+                    src = _replicate_pad(arr2d)
+                    src_mask = src == sentinel
+                    masked = np.where(src_mask, np.float64('nan'), src)
                     with warnings.catch_warnings():
                         warnings.simplefilter('ignore', RuntimeWarning)
                         result = zoom(masked, 0.5, order=3,
@@ -520,8 +559,10 @@ def _block_reduce_2d(arr2d, method, nodata=None):
             sentinel = arr2d.dtype.type(nodata_int)
             mask = arr2d == sentinel
             if mask.any():
-                masked = np.where(mask, np.float64('nan'),
-                                  arr2d.astype(np.float64))
+                src = _replicate_pad(arr2d)
+                src_mask = src == sentinel
+                masked = np.where(src_mask, np.float64('nan'),
+                                  src.astype(np.float64))
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore', RuntimeWarning)
                     result = zoom(masked, 0.5, order=3,
@@ -531,7 +572,8 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                     result = np.where(nan_mask, float(nodata_int),
                                       result)
                 return np.round(result).astype(arr2d.dtype)
-        return zoom(arr2d, 0.5, order=3).astype(arr2d.dtype)
+        src = _replicate_pad(arr2d)
+        return zoom(src, 0.5, order=3).astype(arr2d.dtype)
 
     if method == 'mode':
         # Most-common value per 2x2 block (useful for classified rasters).
@@ -539,7 +581,28 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # how many cells equal it. argmax picks the leftmost max-count
         # position, which (post-sort) is the smallest tied value, matching
         # the prior np.unique+argmax tie-break behavior ("lowest wins").
-        blocks = cropped.reshape(oh, 2, ow, 2).transpose(0, 2, 1, 3).reshape(oh, ow, 4)
+        #
+        # Odd-sized inputs are float-promoted and NaN-padded so the
+        # residual block has at least one valid cell plus NaN cells that
+        # never match themselves (NaN != NaN). Counts for the NaN cells
+        # stay at zero, so argmax picks a valid cell, and numpy's sort
+        # places NaN at the end so the "lowest valid wins" tie-break
+        # still holds (issue #2105). The result is cast back to the
+        # source dtype.
+        if need_pad:
+            padded = np.full((h2, w2), np.nan, dtype=np.float64)
+            padded[:h, :w] = arr2d
+            blocks = padded.reshape(oh, 2, ow, 2).transpose(0, 2, 1, 3).reshape(oh, ow, 4)
+            srt = np.sort(blocks, axis=-1)
+            counts = np.zeros(srt.shape, dtype=np.int8)
+            for i in range(4):
+                counts[..., i] = np.sum(srt == srt[..., i:i + 1], axis=-1)
+            pick = np.argmax(counts, axis=-1)
+            picked = np.take_along_axis(srt, pick[..., None], axis=-1).squeeze(-1)
+            if arr2d.dtype.kind in ('i', 'u'):
+                return np.round(picked).astype(arr2d.dtype)
+            return picked.astype(arr2d.dtype)
+        blocks = arr2d.reshape(oh, 2, ow, 2).transpose(0, 2, 1, 3).reshape(oh, ow, 4)
         srt = np.sort(blocks, axis=-1)
         counts = np.empty_like(srt, dtype=np.int8)
         for i in range(4):
@@ -547,9 +610,19 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         pick = np.argmax(counts, axis=-1)
         return np.take_along_axis(srt, pick[..., None], axis=-1).squeeze(-1)
 
-    # Block reshape for mean/min/max/median
+    # Block reshape for mean/min/max/median. Odd-sized inputs are padded
+    # with NaN along the trailing edge so the reshape works on every
+    # input size; the padded cells are naturally excluded by the
+    # nan-aware aggregations below (issue #2105). The float branch
+    # promotes to float64 only when padding is needed; even-sized
+    # inputs keep the original dtype and follow the existing fast path.
     if arr2d.dtype.kind == 'f':
-        blocks = cropped.reshape(oh, 2, ow, 2)
+        if need_pad:
+            padded = np.full((h2, w2), np.nan, dtype=np.float64)
+            padded[:h, :w] = arr2d
+            blocks = padded.reshape(oh, 2, ow, 2)
+        else:
+            blocks = arr2d.reshape(oh, 2, ow, 2)
         # When a sentinel was used in place of NaN by an upstream
         # NaN-to-sentinel rewrite, mask it back to NaN here so nanmean /
         # nanmin / nanmax / nanmedian honour the missing-data semantic.
@@ -569,7 +642,12 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                     # array so the caller's input is not mutated.
                     blocks = np.where(mask, np.float64('nan'), blocks)
     else:
-        blocks = cropped.astype(np.float64).reshape(oh, 2, ow, 2)
+        if need_pad:
+            blocks = np.full((h2, w2), np.nan, dtype=np.float64)
+            blocks[:h, :w] = arr2d
+            blocks = blocks.reshape(oh, 2, ow, 2)
+        else:
+            blocks = arr2d.astype(np.float64).reshape(oh, 2, ow, 2)
         # Integer rasters with a sentinel need the same NaN-mask the float
         # branch above applies: without it, nanmean / nanmin / nanmax /
         # nanmedian average the sentinel value into surrounding valid
@@ -585,12 +663,20 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         nodata_int = _resolve_int_nodata(arr2d.dtype, nodata)
         if nodata_int is not None:
             sentinel = arr2d.dtype.type(nodata_int)
-            # Compare against the original integer block view so the
-            # equality runs at the integer's native width (avoids any
-            # float-cast rounding on adjacent values). The boolean
-            # mask broadcasts into the float64 block layout below.
-            int_blocks = cropped.reshape(oh, 2, ow, 2)
-            mask = int_blocks == sentinel
+            if need_pad:
+                # The float-padded view holds the original int values
+                # exactly representable in float64; comparing against
+                # ``float(sentinel)`` is safe for the integer ranges the
+                # reader actually emits (``_resolve_int_nodata`` rejects
+                # values outside the dtype range).
+                mask = blocks == float(sentinel)
+            else:
+                # Compare against the original integer block view so the
+                # equality runs at the integer's native width (avoids any
+                # float-cast rounding on adjacent values). The boolean
+                # mask broadcasts into the float64 block layout below.
+                int_blocks = arr2d.reshape(oh, 2, ow, 2)
+                mask = int_blocks == sentinel
             if mask.any():
                 blocks = np.where(mask, np.float64('nan'), blocks)
 
