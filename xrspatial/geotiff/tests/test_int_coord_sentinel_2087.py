@@ -27,8 +27,6 @@ These tests pin both directions:
 """
 from __future__ import annotations
 
-import io
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -99,14 +97,13 @@ def test_user_authored_int_grid_writes_real_transform(tmp_path):
     assert out.attrs.get('transform') is not None
 
 
-def test_user_authored_ascending_int_y_writes_real_transform(tmp_path):
-    # Mirror of the colleague's repro but with ascending y. Still does
-    # not match the sentinel because the x range [100, 101, 102]
-    # doesn't either (start != 0 is OK, but the *combination* of x
-    # and y values together is unusual). Both axes individually match
-    # the sentinel only if both are exactly arange-shaped; here both
-    # are -- so this case tests the trade-off corner: ascending int64
-    # step-1 on both axes is still treated as no-georef.
+def test_both_axes_ascending_int64_step1_trade_off(tmp_path):
+    # Documented trade-off corner: when both axes are int64 ascending
+    # step-1 (i.e. both match the read-side arange pattern exactly),
+    # the sentinel cannot distinguish a user-authored grid from the
+    # read-side no-georef placeholder. The writer resolves to
+    # no-georef. A caller wanting georef on this pattern must set
+    # ``attrs['transform']`` explicitly (see the next test).
     da = xr.DataArray(
         np.zeros((3, 3), dtype=np.float32),
         coords={
