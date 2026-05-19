@@ -138,14 +138,38 @@ def test_validate_helper_y_axis_sign():
 
 def test_tiepoint_without_scale_also_validates():
     # When ModelPixelScale is absent, the reader falls back to unit pixel
-    # size; the consistency check must still fire.
+    # size; the consistency check must still fire, and the error message
+    # must blame the missing ModelPixelScale tag (not the GCP-warp case),
+    # since a real multi-tiepoint file without ModelPixelScale is almost
+    # certainly malformed rather than a deliberate GCP set.
     tiepoint = (
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         10.0, 0.0, 0.0, 50.0, 0.0, 0.0,  # predicts x=10.0, declares 50.0
     )
     ifd = _make_ifd(tiepoint, scale=None)
-    with pytest.raises(NotImplementedError, match="ground-control-point"):
+    with pytest.raises(NotImplementedError, match="no ModelPixelScale"):
         _extract_transform(ifd)
+
+
+def test_validate_helper_honours_custom_rel_tol():
+    # A residual that passes the default 1e-6 * pixel_size tolerance
+    # (= 1e-5 here) can still be caught by a tighter caller-supplied
+    # rel_tol. Surveying / high-precision geodetic callers that want to
+    # flag near-affine GCP files can pass a smaller rel_tol.
+    residual = 5e-6  # below default tol (1e-5) but above tight tol (1e-7)
+    tiepoint = (
+        0.0, 0.0, 0.0, _ORIGIN_X, _ORIGIN_Y, 0.0,
+        100.0, 0.0, 0.0, _ORIGIN_X + 100 * _SX + residual, _ORIGIN_Y, 0.0,
+    )
+    # Default tolerance accepts it.
+    _validate_tiepoint_consistency(
+        tiepoint, _ORIGIN_X, _ORIGIN_Y, _SX, _SY,
+    )
+    # Tighter tolerance rejects it.
+    with pytest.raises(NotImplementedError, match="tuple 1"):
+        _validate_tiepoint_consistency(
+            tiepoint, _ORIGIN_X, _ORIGIN_Y, _SX, _SY, rel_tol=1e-8,
+        )
 
 
 def test_short_tiepoint_is_treated_as_single_tuple():

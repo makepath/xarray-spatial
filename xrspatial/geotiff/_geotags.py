@@ -474,11 +474,23 @@ def _parse_geokeys(ifd: IFD, data: bytes | memoryview,
     return geokeys
 
 
+# Default relative tolerance for the multi-tiepoint consistency check.
+# Applied as ``rel_tol * max(|sx|, |sy|, 1.0)``, so the absolute threshold
+# tracks pixel size: on a 10 m pixel file the threshold is 10 µm, on a
+# 1° pixel file it is ~11 cm. Surveying / high-precision geodetic workflows
+# that want to catch GCP files with smaller residuals can pass a tighter
+# ``rel_tol`` to :func:`_validate_tiepoint_consistency` directly.
+_TIEPOINT_CONSISTENCY_REL_TOL = 1e-6
+
+
 def _validate_tiepoint_consistency(tiepoint: tuple,
                                    origin_x: float,
                                    origin_y: float,
                                    sx: float,
-                                   sy: float) -> None:
+                                   sy: float,
+                                   *,
+                                   rel_tol: float = _TIEPOINT_CONSISTENCY_REL_TOL,
+                                   scale_source: str = "ModelPixelScale") -> None:
     """Verify every ``ModelTiepointTag`` tuple agrees with the inferred affine.
 
     A ``ModelTiepointTag`` may carry one or many ``(I, J, K, X, Y, Z)``
@@ -506,45 +518,74 @@ def _validate_tiepoint_consistency(tiepoint: tuple,
         World coords of pixel ``(0, 0)`` inferred from the first tuple.
     sx, sy : float
         Pixel size (``ModelPixelScaleTag`` magnitudes, both positive).
+    rel_tol : float, optional
+        Relative tolerance factor. The absolute threshold is
+        ``rel_tol * max(|sx|, |sy|, 1.0)``. Defaults to
+        :data:`_TIEPOINT_CONSISTENCY_REL_TOL`.
+    scale_source : str, optional
+        Where ``sx`` / ``sy`` came from. ``"ModelPixelScale"`` (default)
+        names the scale tag in the GCP-case error. ``"unit fallback"``
+        is used when ``ModelPixelScale`` was absent and the caller fell
+        back to ``sx = sy = 1.0``; in that case a multi-tiepoint file is
+        almost certainly malformed rather than a real GCP warp, and the
+        error message says so.
     """
     n = len(tiepoint) // 6
     if n <= 1:
         return
 
     # Tolerance scales with pixel size so files in different units
-    # (degrees vs metres) are treated consistently. The 1e-6 factor
-    # matches the rotation check in _extract_transform.
-    tol = 1e-6 * max(abs(sx), abs(sy), 1.0)
+    # (degrees vs metres) are treated consistently. The factor lives in
+    # _TIEPOINT_CONSISTENCY_REL_TOL and is a relative residual on world
+    # coordinates -- distinct from the 1e-12 absolute floor that the
+    # rotation check in _extract_transform applies to raw
+    # ModelTransformation matrix off-diagonals.
+    tol = rel_tol * max(abs(sx), abs(sy), 1.0)
 
     for k in range(1, n):
         base = 6 * k
-        tp_i = tiepoint[base]
+        tp_i = tiepoint[base + 0]
         tp_j = tiepoint[base + 1]
         tp_x = tiepoint[base + 3]
         tp_y = tiepoint[base + 4]
 
+        # Sign convention: ``_extract_transform`` recovers the origin via
+        # ``origin_y = tp_y + tp_j * sy`` because ``sy`` is a positive
+        # magnitude and the raster's y decreases as row index increases.
+        # Inverting that gives the predicted world y at row J below.
         predicted_x = origin_x + tp_i * sx
-        # The reader's sign convention: y decreases as row index
-        # increases, so the predicted world y at row J is
-        # ``origin_y - J * sy``.
         predicted_y = origin_y - tp_j * sy
 
         dx = tp_x - predicted_x
         dy = tp_y - predicted_y
         if abs(dx) > tol or abs(dy) > tol:
-            raise NotImplementedError(
+            primary = (
                 "ModelTiepointTag carries multiple non-affine tiepoints "
                 f"(tuple {k} predicts world coords "
                 f"({predicted_x!r}, {predicted_y!r}) but the file "
                 f"declares ({tp_x!r}, {tp_y!r}); residual "
-                f"({dx!r}, {dy!r}) exceeds tolerance {tol!r}). The file "
-                "uses a ground-control-point warp that the reader "
-                "cannot represent as an axis-aligned affine. Rectify the "
-                "file to a regular grid first (``gdalwarp``, "
+                f"({dx!r}, {dy!r}) exceeds tolerance {tol!r})."
+            )
+            if scale_source == "unit fallback":
+                cause = (
+                    "The file has multiple tiepoints but no "
+                    "ModelPixelScale tag, so the reader cannot recover a "
+                    "consistent affine. The file is most likely "
+                    "malformed; if it is a real ground-control-point "
+                    "warp, add a ModelPixelScale tag or rectify it first."
+                )
+            else:
+                cause = (
+                    "The file uses a ground-control-point warp that the "
+                    "reader cannot represent as an axis-aligned affine."
+                )
+            hint = (
+                "Rectify the file to a regular grid first (``gdalwarp``, "
                 "``rasterio.warp.reproject``, or any GIS tool that "
                 "resamples GCP files to an affine raster) and reopen "
                 "the rectified output. See issue #2117."
             )
+            raise NotImplementedError(f"{primary}\n{cause}\n{hint}")
 
 
 def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
@@ -664,9 +705,13 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
 
         # Same multi-tiepoint consistency check the scale branch above
         # runs; the absence of ModelPixelScale just means the scale is
-        # the unit fallback (issue #2117).
+        # the unit fallback. ``scale_source`` tells the helper to blame
+        # the missing scale tag rather than the GCP-warp case in the
+        # error message, since a multi-tiepoint file without
+        # ModelPixelScale is almost certainly malformed (issue #2117).
         _validate_tiepoint_consistency(
             tiepoint, origin_x, origin_y, 1.0, 1.0,
+            scale_source="unit fallback",
         )
 
         return GeoTransform(
