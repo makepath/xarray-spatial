@@ -117,6 +117,37 @@ def test_packbits_cap_allows_within_margin():
     assert out == b"BBCC"
 
 
+@pytest.mark.parametrize(
+    "expected_size, payload_bytes, should_pass",
+    [
+        # Cap = int(expected_size * 1.05) + 1.
+        # expected_size=1 -> cap=2; 2-byte legitimate decode lands on the cap.
+        (1, 2, True),
+        # expected_size=100 -> cap=106; 106-byte decode equals the cap.
+        (100, 106, True),
+        # expected_size=100 -> cap=106; 107-byte decode trips the guard.
+        (100, 107, False),
+    ],
+)
+def test_packbits_cap_boundary(expected_size, payload_bytes, should_pass):
+    # Encode `payload_bytes` zeros using replicate runs of 128 plus a tail.
+    full_runs, tail = divmod(payload_bytes, 128)
+    encoded = bytes([0x81, 0x00]) * full_runs
+    if tail:
+        # Replicate run of `tail` bytes: header = 257 - tail (for tail >= 2),
+        # or a single literal byte (header 0x00) for tail == 1.
+        if tail == 1:
+            encoded += bytes([0x00, 0x00])
+        else:
+            encoded += bytes([257 - tail, 0x00])
+    if should_pass:
+        out = packbits_decompress(encoded, expected_size=expected_size)
+        assert out == b"\x00" * payload_bytes
+    else:
+        with pytest.raises(ValueError, match="packbits decode exceeded"):
+            packbits_decompress(encoded, expected_size=expected_size)
+
+
 def test_packbits_no_cap_when_expected_size_is_zero():
     # expected_size=0 disables the cap (backward-compat path).
     out = packbits_decompress(bytes([0x81, 0x42]))

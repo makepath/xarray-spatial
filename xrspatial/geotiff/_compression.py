@@ -1077,7 +1077,7 @@ def packbits_decompress(data: bytes, expected_size: int = 0) -> bytes:
         # out_pos would reach write_limit (= cap), so we never need a
         # sentinel byte past the cap.
         dst = np.empty(cap, dtype=np.uint8)
-        n = _packbits_decode_kernel(src, src_len, dst, cap)
+        n_written = _packbits_decode_kernel(src, src_len, dst, cap)
     else:
         # No cap supplied. PackBits expands by at most 128:1 (a single
         # replicate header byte yields 128 output bytes), so this bound
@@ -1088,14 +1088,15 @@ def packbits_decompress(data: bytes, expected_size: int = 0) -> bytes:
         # peak allocation is acceptable.
         worst_case = src_len * 128
         dst = np.empty(worst_case, dtype=np.uint8)
-        n = _packbits_decode_kernel(src, src_len, dst, 0)
+        n_written = _packbits_decode_kernel(src, src_len, dst, 0)
 
-    if n < 0:
+    if n_written < 0:
         raise ValueError(
-            f"packbits decode exceeded expected size: cap is {cap} bytes "
-            f"(expected {expected_size}).  Likely a decompression bomb."
+            f"packbits decode exceeded expected size: produced more than "
+            f"{cap} bytes (cap = expected_size * 1.05 + 1, expected "
+            f"{expected_size}).  Likely a decompression bomb."
         )
-    return bytes(dst[:n])
+    return bytes(dst[:n_written])
 
 
 def packbits_compress(data: bytes) -> bytes:
