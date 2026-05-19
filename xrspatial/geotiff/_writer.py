@@ -432,6 +432,30 @@ def _resolve_int_nodata(dtype, nodata):
     return None
 
 
+def _replicate_pad_2d(src, h2, w2):
+    """Pad ``src`` to ``(h2, w2)`` by replicating its trailing row/col.
+
+    Used by the cubic overview branch to extend an odd-sized input to
+    even dimensions so a 0.5-zoom lands on the GDAL ceil shape and the
+    spline kernel sees a valid neighbourhood at the trailing edge. The
+    helper is dtype-preserving (no float promotion) so integer inputs
+    stay integer through the pad. Returns ``src`` unchanged when no
+    padding is needed.
+    """
+    h, w = src.shape
+    if (h, w) == (h2, w2):
+        return src
+    padded = np.empty((h2, w2), dtype=src.dtype)
+    padded[:h, :w] = src
+    if h2 != h:
+        padded[h:, :w] = src[h - 1:h, :]
+    if w2 != w:
+        padded[:h, w:] = src[:, w - 1:w]
+    if h2 != h and w2 != w:
+        padded[h:, w:] = src[h - 1, w - 1]
+    return padded
+
+
 def _block_reduce_2d(arr2d, method, nodata=None):
     """2x block-reduce a single 2D plane using *method*.
 
@@ -480,7 +504,11 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # Top-left pixel of each 2x2 block. For odd-sized inputs the
         # trailing 1x2 / 2x1 / 1x1 residual block's top-left is still
         # the source pixel at (2*i, 2*j), so direct striding gives the
-        # correct ceil-shape output without padding.
+        # correct ceil-shape output without padding. The trailing
+        # ``.copy()`` materialises the strided view so the caller owns
+        # a contiguous buffer (downstream nodata-mask rewrites mutate
+        # the result in place); without it those writes would also
+        # touch ``arr2d``.
         return arr2d[::2, ::2].copy()
 
     if method == 'cubic':
@@ -518,19 +546,9 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # Replicating sentinel values is fine: they are masked to NaN
         # in the steps below alongside any in-bounds sentinel, and the
         # post-zoom NaN->sentinel restore stamps the trailing overview
-        # pixels back to the sentinel as expected (issue #2105).
-        def _replicate_pad(src):
-            if not need_pad:
-                return src
-            padded = np.empty((h2, w2), dtype=src.dtype)
-            padded[:h, :w] = src
-            if h2 != h:
-                padded[h:, :w] = src[h - 1:h, :]
-            if w2 != w:
-                padded[:h, w:] = src[:, w - 1:w]
-            if h2 != h and w2 != w:
-                padded[h:, w:] = src[h - 1, w - 1]
-            return padded
+        # pixels back to the sentinel as expected (issue #2105). The
+        # ``_replicate_pad_2d`` helper is module-level so the cubic
+        # path does not redefine a closure on every call.
 
         if (nodata is not None
                 and arr2d.dtype.kind == 'f'
@@ -542,7 +560,7 @@ def _block_reduce_2d(arr2d, method, nodata=None):
             if sentinel is not None:
                 mask = arr2d == sentinel
                 if mask.any():
-                    src = _replicate_pad(arr2d)
+                    src = _replicate_pad_2d(arr2d, h2, w2)
                     src_mask = src == sentinel
                     masked = np.where(src_mask, np.float64('nan'), src)
                     with warnings.catch_warnings():
@@ -554,12 +572,15 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                         result = result.copy()
                         result[nan_mask] = float(nodata)
                     return result.astype(arr2d.dtype)
+                # No sentinel pixels present; fall through to the
+                # default cubic path below so the spline runs without
+                # the prefilter=False NaN-safety branch.
         nodata_int = _resolve_int_nodata(arr2d.dtype, nodata)
         if nodata_int is not None:
             sentinel = arr2d.dtype.type(nodata_int)
             mask = arr2d == sentinel
             if mask.any():
-                src = _replicate_pad(arr2d)
+                src = _replicate_pad_2d(arr2d, h2, w2)
                 src_mask = src == sentinel
                 masked = np.where(src_mask, np.float64('nan'),
                                   src.astype(np.float64))
@@ -572,7 +593,9 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                     result = np.where(nan_mask, float(nodata_int),
                                       result)
                 return np.round(result).astype(arr2d.dtype)
-        src = _replicate_pad(arr2d)
+            # No sentinel pixels present in this integer array; fall
+            # through to the default cubic path below.
+        src = _replicate_pad_2d(arr2d, h2, w2)
         return zoom(src, 0.5, order=3).astype(arr2d.dtype)
 
     if method == 'mode':
@@ -613,12 +636,13 @@ def _block_reduce_2d(arr2d, method, nodata=None):
     # Block reshape for mean/min/max/median. Odd-sized inputs are padded
     # with NaN along the trailing edge so the reshape works on every
     # input size; the padded cells are naturally excluded by the
-    # nan-aware aggregations below (issue #2105). The float branch
-    # promotes to float64 only when padding is needed; even-sized
-    # inputs keep the original dtype and follow the existing fast path.
+    # nan-aware aggregations below (issue #2105). The padded buffer
+    # keeps the source's float dtype (float32 inputs stay float32) so
+    # an odd-shape read does not pay a 2x intermediate-memory cost for
+    # a silent promote to float64.
     if arr2d.dtype.kind == 'f':
         if need_pad:
-            padded = np.full((h2, w2), np.nan, dtype=np.float64)
+            padded = np.full((h2, w2), np.nan, dtype=arr2d.dtype)
             padded[:h, :w] = arr2d
             blocks = padded.reshape(oh, 2, ow, 2)
         else:
@@ -648,18 +672,21 @@ def _block_reduce_2d(arr2d, method, nodata=None):
             blocks = blocks.reshape(oh, 2, ow, 2)
         else:
             blocks = arr2d.astype(np.float64).reshape(oh, 2, ow, 2)
-        # Integer rasters with a sentinel need the same NaN-mask the float
-        # branch above applies: without it, nanmean / nanmin / nanmax /
-        # nanmedian average the sentinel value into surrounding valid
-        # cells and produce overview pixels that are neither the sentinel
-        # nor any real measurement. The read-side int-to-NaN mask in
-        # ``open_geotiff`` only catches exact sentinel hits, so the
-        # poisoned values survive as silent garbage at every zoom level
-        # above 0. Gate on the sentinel being representable in the
-        # source integer dtype (mirrors ``_int_nodata_in_range`` in
-        # ``_reader.py``) so an out-of-range sentinel pair like
-        # ``uint16`` + ``GDAL_NODATA="-9999"`` stays a no-op rather than
-        # tripping ``OverflowError`` on the dtype cast.
+        # Integer rasters with a sentinel still need the NaN-mask the
+        # float branch above applies. The sentinel-equal cells in the
+        # original integer array are computed at the dtype's native
+        # width below (so a 64-bit sentinel near INT64_MAX still
+        # matches, which a float-cast comparison would miss) and the
+        # mask is then broadcast into the float64 ``blocks`` view.
+        # Without this, nanmean / nanmin / nanmax / nanmedian average
+        # the sentinel value into surrounding valid cells and produce
+        # overview pixels that the read side cannot remap because they
+        # no longer equal the sentinel. Gate on the sentinel being
+        # representable in the source integer dtype (mirrors
+        # ``_int_nodata_in_range`` in ``_reader.py``) so an out-of-
+        # range sentinel pair like ``uint16`` + ``GDAL_NODATA=-9999``
+        # stays a no-op rather than tripping ``OverflowError`` on the
+        # dtype cast.
         nodata_int = _resolve_int_nodata(arr2d.dtype, nodata)
         if nodata_int is not None:
             sentinel = arr2d.dtype.type(nodata_int)

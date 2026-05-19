@@ -3113,7 +3113,9 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
 
     if method == 'nearest':
         # Top-left pixel of each 2x2 block; direct stride keeps the
-        # trailing row/col for odd-sized inputs (issue #2105).
+        # trailing row/col for odd-sized inputs (issue #2105). The
+        # ``.copy()`` materialises a contiguous device buffer so
+        # downstream nodata-mask rewrites don't touch ``arr2d``.
         return arr2d[::2, ::2].copy()
 
     if method == 'mode':
@@ -3138,10 +3140,13 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
 
     # Block reshape for mean/min/max/median. Odd-sized inputs get a
     # NaN-padded trailing edge so the residual block reduces correctly;
-    # the nan-aware reductions exclude the padded cells.
+    # the nan-aware reductions exclude the padded cells. The padded
+    # buffer keeps the source float dtype (float32 stays float32) so an
+    # odd-shape GPU read does not pay a 2x device-memory cost for a
+    # silent promote to float64.
     if arr2d.dtype.kind == 'f':
         if need_pad:
-            padded = cupy.full((h2, w2), cupy.float64('nan'), dtype=cupy.float64)
+            padded = cupy.full((h2, w2), np.nan, dtype=arr2d.dtype)
             padded[:h, :w] = arr2d
             blocks = padded.reshape(oh, 2, ow, 2)
         else:

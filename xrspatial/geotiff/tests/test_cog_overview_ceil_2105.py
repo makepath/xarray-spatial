@@ -228,6 +228,32 @@ def test_int64_sentinel_near_max_masks_in_padded_branch():
     assert out[0, 0] == 10
 
 
+def test_uint64_sentinel_near_max_masks_in_padded_branch():
+    # UINT64_MAX = 2**64 - 1 is also not exactly representable in float64
+    # (float(UINT64_MAX) rounds up to 2**64). The native-width mask path
+    # must catch the sentinel for unsigned 64-bit dtypes too.
+    sentinel = np.iinfo(np.uint64).max
+    arr = np.full((5, 5), 10, dtype=np.uint64)
+    arr[0, 0] = sentinel
+    out = _block_reduce_2d(arr, "min", nodata=sentinel)
+    assert out[0, 0] == 10
+
+
+def test_float32_padded_branch_keeps_source_dtype():
+    # The padded mean/min/max/median branch used to allocate a float64
+    # NaN buffer regardless of the source dtype, doubling intermediate
+    # memory for an odd-shape float32 read. Verify the helper now keeps
+    # the source dtype across the pad so a float32 input round-trips as
+    # float32. The contract is checked end-to-end via the output dtype.
+    arr = np.arange(25, dtype=np.float32).reshape(5, 5)
+    out = _block_reduce_2d(arr, "mean")
+    assert out.dtype == np.float32
+    # And the values still match what a manual ceil-mean would produce
+    # for the top-left 2x2 block.
+    top_left_mean = float(arr[:2, :2].mean())
+    assert out[0, 0] == pytest.approx(top_left_mean)
+
+
 def test_max_int_5x5_with_nodata_does_not_select_sentinel_in_residual():
     sentinel = -9999
     arr = np.full((5, 5), 10, dtype=np.int16)
