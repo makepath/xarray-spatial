@@ -270,7 +270,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
                  max_pixels: int | None = None,
-                 max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
+                 max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
                  on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
