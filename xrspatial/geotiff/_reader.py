@@ -1992,8 +1992,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     use_parallel = (n_strips > 1
                     and strip_pixel_count >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
     if use_parallel:
-        import os as _os
-        n_workers = min(n_strips, _os.cpu_count() or 4)
+        n_workers = min(n_strips, _os_module.cpu_count() or 4)
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             decoded_strips = list(pool.map(_decode_strip_job, strip_jobs))
     else:
