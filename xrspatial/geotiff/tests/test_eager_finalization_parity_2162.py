@@ -16,6 +16,14 @@ The matrix walks:
 * ``mask_nodata=False`` left-alone semantics.
 * Source with no declared sentinel (helper short-circuits both
   ``nodata`` and ``masked_nodata`` attrs).
+* Explicit ``dtype=`` kwarg (records ``nodata_dtype_cast``).
+* Windowed read (pins the slice-before-mask behaviour on the GPU
+  local-eager path so ``nodata_pixels_present`` reflects the
+  window, not the full IFD).
+* MinIsWhite photometric (exercises the post-inversion sentinel
+  branch of the GPU local-eager ``mask_sentinel`` resolution).
+* Stripped multi-band file (exercises the 3-D output branch on
+  both backends through the GPU CPU-fallback eager site).
 
 For each case the test reads the file via the eager numpy backend
 (``open_geotiff(path)``) and the eager GPU backend
