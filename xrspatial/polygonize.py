@@ -264,24 +264,33 @@ def _is_close(
 
 # Pure-Python tolerance check that mirrors ``_is_close`` for use at the
 # orchestration layer (outside numba kernels).  Integer values fall back
-# to exact equality; floats use the same atol=1e-8, rtol=1e-5 tolerance
-# the CPU CCL uses to merge adjacent pixels.  See issue #2171.
-def _values_close(reference, value):
+# to exact equality; floats use the caller-supplied atol / rtol so the
+# cross-chunk merge honours ``polygonize(..., atol=, rtol=)`` (passing
+# atol=rtol=0 reduces the float branch to strict equality, matching the
+# CPU CCL behaviour inside a single chunk).  See issues #2171, #2173.
+def _values_close(reference, value,
+                  atol: float = _DEFAULT_ATOL,
+                  rtol: float = _DEFAULT_RTOL):
     if isinstance(reference, (int, np.integer)) and \
             isinstance(value, (int, np.integer)):
         return value == reference
-    return abs(value - reference) <= (1e-8 + 1e-5 * abs(reference))
+    return abs(value - reference) <= (atol + rtol * abs(reference))
 
 
-def _bucket_key_for_value(boundary_by_value, val):
+def _bucket_key_for_value(boundary_by_value, val,
+                          atol: float = _DEFAULT_ATOL,
+                          rtol: float = _DEFAULT_RTOL):
     """Return the dict key that ``val`` should bucket into.
 
     If an existing key in ``boundary_by_value`` is close to ``val`` under
-    ``_values_close``, return that key so close float values from adjacent
-    chunks land in the same bucket.  Otherwise return ``val`` unchanged.
+    ``_values_close`` (using the caller's ``atol`` / ``rtol``), return
+    that key so close float values from adjacent chunks land in the same
+    bucket.  Otherwise return ``val`` unchanged.
 
     This keeps Dask chunk-stitching consistent with the tolerance-based
-    grouping the NumPy / numba path uses inside a single chunk (#2171).
+    grouping the NumPy / numba path uses inside a single chunk (#2171),
+    and lets ``polygonize(atol=0, rtol=0)`` opt into exact-value
+    bucketing across chunks (#2173).
 
     Performance note: the float branch is a linear scan over existing
     keys, so total cost is O(B^2) in the number of distinct float
@@ -295,7 +304,7 @@ def _bucket_key_for_value(boundary_by_value, val):
     if isinstance(val, (int, np.integer)):
         return val
     for existing in boundary_by_value:
-        if _values_close(existing, val):
+        if _values_close(existing, val, atol, rtol):
             return existing
     return val
 
@@ -1669,7 +1678,8 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
                 ))[0]
             all_interior.extend(interior)
             for val, rings in boundary:
-                key = _bucket_key_for_value(boundary_by_value, val)
+                key = _bucket_key_for_value(
+                    boundary_by_value, val, atol, rtol)
                 boundary_by_value.setdefault(key, []).append(rings)
 
     return _merge_from_separated(all_interior, boundary_by_value, transform)
