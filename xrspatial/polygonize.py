@@ -594,10 +594,16 @@ _DIR_ANGLE = {(1, 0): 0, (0, 1): 1, (-1, 0): 2, (0, -1): 3}
 
 
 def _calculate_regions_cupy(data, mask_data, connectivity_8):
-    """CuPy GPU backend for connected-component labeling.
+    """CuPy GPU backend for connected-component labeling on integer data.
 
     Uses cupyx.scipy.ndimage.label per unique value to produce a regions
     array compatible with _scan.  Returns a cupy uint32 2D array.
+
+    Only used for integer dtypes; float dtypes route through the CPU
+    ``_calculate_regions`` so that connected components honour the numba
+    ``_is_close`` predicate (``atol=1e-8``, ``rtol=1e-5``) exactly.
+    A purely value-based grouping on the GPU cannot reproduce CPU spatial
+    CCL when transitively-close values are not spatially adjacent.
     """
     import cupy as cp
     from cupyx.scipy.ndimage import label as cp_label
@@ -609,14 +615,10 @@ def _calculate_regions_cupy(data, mask_data, connectivity_8):
 
     regions = cp.zeros(data.shape, dtype=cp.uint32)
 
-    # Build valid mask (unmask + handle float NaN).
-    is_float = cp.issubdtype(data.dtype, cp.floating)
     if mask_data is not None:
         valid = cp.asarray(mask_data, dtype=bool)
-        if is_float:
-            valid &= ~cp.isnan(data)
     else:
-        valid = ~cp.isnan(data) if is_float else None
+        valid = None
 
     unique_vals = data[valid] if valid is not None else data.ravel()
     unique_vals = cp.unique(unique_vals)
@@ -669,9 +671,19 @@ def _renumber_regions(regions, nx, ny):
 
 
 def _polygonize_cupy(data, mask_data, connectivity_8, transform):
-    """Hybrid GPU/CPU: GPU CCL, CPU boundary tracing."""
+    """Hybrid GPU/CPU: GPU CCL for integer data, CPU CCL for float data,
+    CPU boundary tracing in either case.
+
+    Float dtypes route through ``_polygonize_numpy`` so that connected
+    components honour the numba ``_is_close`` tolerance (``atol=1e-8``,
+    ``rtol=1e-5``) for spatially adjacent pixels (#2151).  GPU CCL is a
+    per-value labeling, which cannot reproduce spatial tolerance-aware
+    CCL when transitively-close values are not spatially adjacent.
+    """
     np_data = cupy.asnumpy(data)
     np_mask = cupy.asnumpy(mask_data) if mask_data is not None else None
+    if np.issubdtype(np_data.dtype, np.floating):
+        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform)
     ny, nx = np_data.shape
     if nx == 1:
         # Edge case: fall back to full numpy path (pads array).
