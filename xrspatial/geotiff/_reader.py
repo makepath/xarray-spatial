@@ -1,4 +1,20 @@
-"""TIFF/COG reader: tile/strip assembly, windowed reads, HTTP range requests."""
+"""TIFF/COG reader: tile/strip assembly, windowed reads, HTTP range requests.
+
+This module is private to :mod:`xrspatial.geotiff`. The supported public
+read entry points are :func:`xrspatial.geotiff.open_geotiff`,
+:func:`xrspatial.geotiff.read_geotiff_gpu`,
+:func:`xrspatial.geotiff.read_geotiff_dask`, and
+:func:`xrspatial.geotiff.read_vrt`. Direct callers of the helpers
+defined here bypass the DataArray-level work that the public wrappers
+perform (ambiguous-metadata fail-closed, nodata-to-NaN promotion,
+``masked_nodata`` attr, ``transform`` / ``crs`` attrs population) and
+have to replicate those steps by hand. See issue #2138.
+
+For source modules inside :mod:`xrspatial.geotiff`, the canonical
+internal name for the array-level reader is :func:`_read_to_array`.
+The non-underscored :func:`read_to_array` is kept as an alias for
+internal call sites that pre-date the rename.
+"""
 from __future__ import annotations
 
 import math
@@ -3185,13 +3201,13 @@ def _miniswhite_inverted_nodata(nodata, ifd: IFD, dtype: np.dtype):
     return nodata
 
 
-def read_to_array(source, *, window=None, overview_level: int | None = None,
+def _read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
                   max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
                   allow_rotated: bool = False,
                   ) -> tuple[np.ndarray, GeoInfo]:
-    """Read a GeoTIFF/COG to a numpy array.
+    """Read a GeoTIFF/COG to a numpy array (module-private).
 
     Parameters
     ----------
@@ -3428,3 +3444,10 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         close_sidecar(sidecar)
 
     return arr, geo_info
+
+
+# Backward-compatible alias for internal call sites that pre-date the
+# rename to :func:`_read_to_array`. New code inside
+# ``xrspatial.geotiff`` should import :func:`_read_to_array` directly.
+# See issue #2138.
+read_to_array = _read_to_array

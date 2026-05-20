@@ -2792,6 +2792,9 @@ class TestPublicAPI:
             'GEOREF_STATUS_ROTATED_DROPPED',
             'GEOREF_STATUS_TRANSFORM_ONLY',
             'GEOREF_STATUS_VALUES',
+            # Issue #2137: tiered feature inventory exposed alongside
+            # the writer's ``allow_experimental_codecs`` opt-in.
+            'SUPPORTED_FEATURES',
             'open_geotiff',
             'read_geotiff_gpu',
             'read_geotiff_dask',

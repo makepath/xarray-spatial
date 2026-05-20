@@ -146,7 +146,10 @@ class TestJPEG2000WriteRoundTrip:
                           coords={'y': np.arange(8), 'x': np.arange(8)},
                           attrs={'crs': 4326})
         path = str(tmp_path / 'j2k_1048_api.tif')
-        to_geotiff(da, path, compression='jpeg2000')
+        # Tier 3 codec (issue #2137); pass the opt-in so the round-trip
+        # test exercises the encode path rather than the rejection gate.
+        to_geotiff(da, path, compression='jpeg2000',
+                   allow_experimental_codecs=True)
 
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, data)

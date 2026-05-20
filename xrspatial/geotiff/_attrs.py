@@ -51,6 +51,18 @@ Canonical (xrspatial owns these; round-trip stable):
   step ran; ``False`` iff the array still carries the literal integer
   sentinel. Only emitted when ``nodata`` is set; absence is the
   "no declared sentinel" signal. See ``_set_nodata_attrs``.
+- ``nodata_pixels_present`` (#2135): bool, only emitted when
+  ``nodata`` is set and the backend computed the answer cheaply.
+  True iff the read window contained at least one pixel matching the
+  declared sentinel before masking. Lets QA and writer code answer
+  "are any sentinel pixels in this tile" without scanning the buffer.
+  The dask path leaves this unset because a strict per-chunk
+  reduction would force an eager ``.compute()``.
+- ``nodata_dtype_cast`` (#2135): string dtype name (e.g.
+  ``"float64"``), only emitted when ``nodata`` is set and the caller
+  passed an explicit ``dtype=`` kwarg. Records that a post-mask cast
+  happened so consumers can tell float-because-masked from
+  float-because-promoted.
 - ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
   (explicit / RasterPixelIsPoint).
 - ``georef_status``: one of ``'full'``, ``'transform_only'``, ``'crs_only'``,
@@ -135,6 +147,8 @@ migration notes.
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass, replace
+from typing import Any
 
 import numpy as np
 
@@ -164,6 +178,61 @@ _LEVEL_RANGES = {
 _VALID_COMPRESSIONS = (
     'none', 'deflate', 'lzw', 'jpeg', 'packbits', 'zstd', 'lz4',
     'jpeg2000', 'j2k', 'lerc',
+)
+
+
+# Tiered feature inventory for the public geotiff surface (issue #2137).
+# Defined in ``_attrs.py`` (not the package ``__init__.py``) so the writers
+# can import it at module scope without a circular dependency: the package
+# ``__init__`` already imports the writers. The package re-exports
+# ``SUPPORTED_FEATURES`` so the public API stays
+# ``xrspatial.geotiff.SUPPORTED_FEATURES``.
+#
+# See ``xrspatial/geotiff/__init__.py`` for the per-tier semantics; the
+# inline comments here track the codec/reader/writer split used by the
+# user-guide notebook table.
+SUPPORTED_FEATURES = {
+    # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
+    'codec.none': 'stable',
+    'codec.deflate': 'stable',
+    'codec.lzw': 'stable',
+    'codec.packbits': 'stable',
+    'codec.zstd': 'stable',
+    # Tier 3 codecs: require ``allow_experimental_codecs=True``.
+    'codec.lerc': 'experimental',
+    'codec.jpeg2000': 'experimental',
+    'codec.j2k': 'experimental',
+    'codec.lz4': 'experimental',
+    # Tier 4 codec: requires the dedicated ``allow_internal_only_jpeg``
+    # opt-in (issue #1845). Not covered by ``allow_experimental_codecs``.
+    'codec.jpeg': 'internal_only',
+    # Read paths.
+    'reader.local_file': 'stable',
+    'reader.fsspec': 'advanced',
+    'reader.http': 'advanced',
+    'reader.vrt': 'advanced',
+    'reader.sidecar_ovr': 'advanced',
+    'reader.allow_rotated': 'advanced',
+    'reader.allow_unparseable_crs': 'advanced',
+    'reader.gpu': 'experimental',
+    # Write paths.
+    'writer.local_file': 'stable',
+    'writer.cog': 'advanced',
+    'writer.overviews': 'advanced',
+    'writer.bigtiff': 'advanced',
+    'writer.gpu': 'experimental',
+    'writer.gdal_metadata_xml': 'experimental',
+    'writer.extra_tags': 'experimental',
+}
+
+
+# Tier 3 codec names (lower-cased) gated behind
+# ``allow_experimental_codecs`` on the writers. Derived from
+# ``SUPPORTED_FEATURES`` so the gate cannot drift from the docs.
+_EXPERIMENTAL_CODECS = frozenset(
+    name.split('.', 1)[1].lower()
+    for name, tier in SUPPORTED_FEATURES.items()
+    if name.startswith('codec.') and tier == 'experimental'
 )
 
 
@@ -217,6 +286,315 @@ GEOREF_STATUS_VALUES = frozenset({
 
 # String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
 _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
+
+
+# Reverse map of ``_RESOLUTION_UNIT_IDS``: TIFF ResolutionUnit tag ids back to
+# the xrspatial string identifiers. Used by ``geo_info_to_metadata`` so the
+# read side stores the same string label the writer expects on the way out.
+# Derived from ``_RESOLUTION_UNIT_IDS`` so the forward and reverse maps cannot
+# drift if a new unit is added.
+_RESOLUTION_UNIT_NAMES = {v: k for k, v in _RESOLUTION_UNIT_IDS.items()}
+
+
+@dataclass(frozen=True)
+class GeoTIFFMetadata:
+    """Typed internal record for GeoTIFF read/write metadata (issue #2139).
+
+    Mirrors the public attrs contract documented in this module's
+    docstring field-for-field. Read paths build a ``GeoTIFFMetadata``
+    once and call :func:`metadata_to_attrs` at the DataArray-construction
+    boundary; write paths call :func:`attrs_to_metadata` once at entry
+    and read fields off the record instead of re-resolving from
+    ``data.attrs``.
+
+    The public attrs surface is unchanged. The dataclass exists so the
+    four read paths (eager numpy, dask+numpy, GPU, VRT) and three writers
+    stop building / parsing the same dict by hand.
+    """
+
+    # Spatial reference
+    transform: tuple | None = None
+    crs_epsg: int | None = None
+    crs_wkt: str | None = None
+    raster_type: str = 'area'
+    has_georef: bool = True
+
+    # NoData semantics (issue #1988 / #2092)
+    nodata: Any = None
+    masked_nodata: bool | None = None
+
+    # Pass-through TIFF tags
+    extra_tags: list | None = None
+    image_description: str | None = None
+    extra_samples: tuple | None = None
+    colormap: tuple | None = None
+
+    # GDAL_METADATA
+    gdal_metadata: dict | None = None
+    gdal_metadata_xml: str | None = None
+
+    # Resolution tags
+    x_resolution: float | None = None
+    y_resolution: float | None = None
+    resolution_unit: str | None = None
+
+    # VRT-only
+    vrt_holes: list | None = None
+
+    # Canonical reader-state classifier (issue #2136). Carried on the
+    # record so the eager / dask / GPU / VRT read paths all stamp it via
+    # the same :func:`metadata_to_attrs` marshalling step instead of
+    # branching on attrs after the dict has been built.
+    georef_status: str | None = None
+
+    # Contract version stamped on read
+    contract_version: int = _ATTRS_CONTRACT_VERSION
+
+    def with_nodata(self, nodata, *, masked: bool) -> 'GeoTIFFMetadata':
+        """Return a copy with ``nodata`` and ``masked_nodata`` set.
+
+        Mirrors :func:`_set_nodata_attrs`: when ``nodata is None`` the
+        record is returned unchanged so absence keeps signalling "no
+        declared sentinel"; otherwise ``masked`` is coerced to ``bool``
+        and stored as ``masked_nodata``.
+        """
+        if nodata is None:
+            return self
+        return replace(self, nodata=nodata, masked_nodata=bool(masked))
+
+
+def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
+    """Build a :class:`GeoTIFFMetadata` from a reader's ``GeoInfo``.
+
+    Centralises the field-by-field copy previously done inline in
+    :func:`_populate_attrs_from_geo_info`. ``window`` carries the
+    ``(r0, c0, r1, c1)`` tuple for windowed reads and is applied to the
+    emitted transform.
+    """
+    has_georef = getattr(geo_info, 'has_georef', True)
+    src_t = geo_info.transform
+
+    transform = None
+    if src_t is not None and has_georef:
+        transform = _transform_tuple_from_pixel_geometry(
+            src_t.origin_x, src_t.origin_y,
+            src_t.pixel_width, src_t.pixel_height,
+            window=window,
+        )
+
+    # ``allow_rotated=True`` opt-in path (#2115): the parser returns a
+    # GeoTransform with ``rotated_affine`` set and ``has_georef=False``.
+    # The rotated 6-tuple cannot be expressed as an axis-aligned
+    # rasterio transform, so the writer cannot round-trip it via
+    # ``attrs['transform']``. Per the documented contract on
+    # ``open_geotiff(allow_rotated=True)``, CRS attrs are dropped on
+    # this path too -- otherwise downstream code that gates on
+    # ``"crs" in da.attrs`` treats the array as spatially meaningful
+    # while the actual mapping is gone (#2126).
+    rotated_optin = (
+        src_t is not None
+        and getattr(src_t, 'rotated_affine', None) is not None
+        and not has_georef
+    )
+    crs_epsg = None if rotated_optin else geo_info.crs_epsg
+    crs_wkt = None if rotated_optin else geo_info.crs_wkt
+
+    raster_type = (
+        'point' if geo_info.raster_type == RASTER_PIXEL_IS_POINT else 'area')
+
+    resolution_unit = None
+    if geo_info.resolution_unit is not None:
+        resolution_unit = _RESOLUTION_UNIT_NAMES.get(
+            geo_info.resolution_unit, str(geo_info.resolution_unit))
+
+    colormap = None
+    if geo_info.extra_tags is not None:
+        for _tag_id, _tt, _tc, _tv in geo_info.extra_tags:
+            if _tag_id == 320:  # TAG_COLORMAP
+                colormap = _tv
+                break
+
+    return GeoTIFFMetadata(
+        transform=transform,
+        crs_epsg=crs_epsg,
+        crs_wkt=crs_wkt,
+        raster_type=raster_type,
+        has_georef=bool(has_georef and src_t is not None),
+        extra_tags=geo_info.extra_tags,
+        image_description=geo_info.image_description,
+        extra_samples=geo_info.extra_samples,
+        colormap=colormap,
+        gdal_metadata=geo_info.gdal_metadata,
+        gdal_metadata_xml=geo_info.gdal_metadata_xml,
+        x_resolution=geo_info.x_resolution,
+        y_resolution=geo_info.y_resolution,
+        resolution_unit=resolution_unit,
+        # ``georef_status`` (#2136) is computed off the unmodified
+        # ``geo_info`` rather than the post-branch metadata fields so a
+        # future change to which fields the record carries cannot
+        # accidentally shift the status value. The VRT inline path uses
+        # ``_compute_georef_status_from_parts`` to fill this field
+        # without synthesising a ``GeoInfo``.
+        georef_status=_compute_georef_status(geo_info),
+        contract_version=_ATTRS_CONTRACT_VERSION,
+    )
+
+
+def metadata_to_attrs(md: GeoTIFFMetadata) -> dict:
+    """Build the public attrs dict from a :class:`GeoTIFFMetadata` record.
+
+    The output is identical to what
+    :func:`_populate_attrs_from_geo_info` writes today, so the read-path
+    swap is a behaviour no-op when the source record comes from
+    :func:`geo_info_to_metadata`.
+    """
+    attrs: dict = {'_xrspatial_geotiff_contract': md.contract_version}
+
+    # ``georef_status`` (#2136) is stamped before the optional CRS /
+    # transform branches so the value reflects the reader's state
+    # decision (computed off ``geo_info``) rather than which fields
+    # happened to land in the emitted dict.
+    if md.georef_status is not None:
+        attrs['georef_status'] = md.georef_status
+
+    if md.crs_epsg is not None:
+        attrs['crs'] = md.crs_epsg
+    if md.crs_wkt is not None:
+        attrs['crs_wkt'] = md.crs_wkt
+    if md.raster_type == 'point':
+        attrs['raster_type'] = 'point'
+
+    # Three states on the (transform, has_georef) pair:
+    #
+    # * transform set + has_georef -> emit ``attrs['transform']``.
+    # * not has_georef             -> emit ``attrs[_NO_GEOREF_KEY] = True``.
+    # * transform None + has_georef -> emit neither.
+    #
+    # The third state is the eager VRT path's contract: the VRT builder
+    # constructs the record with ``has_georef=True`` but leaves
+    # ``transform=None`` because the inline VRT code stamps the
+    # rasterio-ordered transform tuple onto the dict a few lines later
+    # (after the GPU transfer / dtype cast / nodata mask steps). Removing
+    # this branch would re-introduce a duplicate transform write or, worse,
+    # would emit ``_NO_GEOREF_KEY`` on a georef'd VRT array. See #2139.
+    if md.transform is not None and md.has_georef:
+        attrs['transform'] = md.transform
+    elif not md.has_georef:
+        attrs[_NO_GEOREF_KEY] = True
+
+    if md.nodata is not None:
+        attrs['nodata'] = md.nodata
+        attrs['masked_nodata'] = bool(md.masked_nodata)
+
+    if md.gdal_metadata is not None:
+        attrs['gdal_metadata'] = md.gdal_metadata
+    if md.gdal_metadata_xml is not None:
+        attrs['gdal_metadata_xml'] = md.gdal_metadata_xml
+
+    if md.extra_tags is not None:
+        attrs['extra_tags'] = md.extra_tags
+    if md.image_description is not None:
+        attrs['image_description'] = md.image_description
+    if md.extra_samples is not None:
+        attrs['extra_samples'] = md.extra_samples
+
+    if md.x_resolution is not None:
+        attrs['x_resolution'] = md.x_resolution
+    if md.y_resolution is not None:
+        attrs['y_resolution'] = md.y_resolution
+    if md.resolution_unit is not None:
+        attrs['resolution_unit'] = md.resolution_unit
+
+    if md.colormap is not None:
+        attrs['colormap'] = md.colormap
+
+    if md.vrt_holes:
+        attrs['vrt_holes'] = md.vrt_holes
+
+    return attrs
+
+
+def attrs_to_metadata(attrs) -> GeoTIFFMetadata:
+    """Parse a (possibly user-supplied) attrs dict into a metadata record.
+
+    Honours the alias resolution :func:`_resolve_nodata_attr` already
+    implements. ``attrs`` may be a plain dict, an
+    ``xarray.core.utils.Frozen``, or ``None``.
+
+    Boundary contract -- this function parses leniently and lets the
+    writer enforce strict validation against the parsed record:
+
+    * ``attrs['crs']=True`` lands as ``crs_epsg=None`` rather than
+      raising. ``_validate_crs_arg`` (called from the writers) is the
+      validator that should reject bool values; the boundary parser
+      only needs to keep the bad value out of the record so the writer
+      sees ``crs_epsg=None`` and falls through to ``crs_wkt``. See
+      ``test_crs_arg_validation_1971.py``.
+    * ``transform`` is coerced via ``tuple(...)`` with no length or
+      numeric-type check. ``_transform_from_attr`` is the canonical
+      validator and runs inside the writer.
+    """
+    if attrs is None:
+        attrs = {}
+
+    raster_type = 'point' if attrs.get('raster_type') == 'point' else 'area'
+
+    transform = attrs.get('transform')
+    no_georef = bool(attrs.get(_NO_GEOREF_KEY))
+    has_georef = (transform is not None) and not no_georef
+
+    nodata = _resolve_nodata_attr(attrs)
+    masked_attr = attrs.get('masked_nodata')
+    masked_nodata: bool | None
+    if nodata is None:
+        masked_nodata = None
+    elif masked_attr is None:
+        masked_nodata = None
+    else:
+        masked_nodata = bool(masked_attr)
+
+    crs_epsg = None
+    crs_wkt = attrs.get('crs_wkt') if isinstance(attrs.get('crs_wkt'), str) else None
+    crs_attr = attrs.get('crs')
+    if isinstance(crs_attr, str):
+        # ``attrs['crs']`` carries a WKT string under some pipelines; fold
+        # it into ``crs_wkt`` here so the writer's resolve step does not
+        # have to re-branch on type.
+        if crs_wkt is None:
+            crs_wkt = crs_attr
+    elif crs_attr is not None and not isinstance(crs_attr, bool):
+        # ``isinstance(True, int)`` is True; reject bool here so the
+        # writer's _validate_crs_arg gate is not bypassed at the
+        # boundary.
+        try:
+            crs_epsg = int(crs_attr)
+        except (TypeError, ValueError):
+            crs_epsg = None
+
+    contract_version = attrs.get(
+        '_xrspatial_geotiff_contract', _ATTRS_CONTRACT_VERSION)
+
+    return GeoTIFFMetadata(
+        transform=tuple(transform) if transform is not None else None,
+        crs_epsg=crs_epsg,
+        crs_wkt=crs_wkt,
+        raster_type=raster_type,
+        has_georef=has_georef,
+        nodata=nodata,
+        masked_nodata=masked_nodata,
+        extra_tags=attrs.get('extra_tags'),
+        image_description=attrs.get('image_description'),
+        extra_samples=attrs.get('extra_samples'),
+        colormap=attrs.get('colormap'),
+        gdal_metadata=attrs.get('gdal_metadata'),
+        gdal_metadata_xml=attrs.get('gdal_metadata_xml'),
+        x_resolution=attrs.get('x_resolution'),
+        y_resolution=attrs.get('y_resolution'),
+        resolution_unit=attrs.get('resolution_unit'),
+        vrt_holes=attrs.get('vrt_holes'),
+        georef_status=attrs.get('georef_status'),
+        contract_version=contract_version,
+    )
 
 
 def _extent_to_window(transform, file_height, file_width,
@@ -287,8 +665,15 @@ def _should_restore_nan_sentinel(attrs) -> bool:
     return value is not False
 
 
-def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
-    """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
+def _set_nodata_attrs(
+    attrs: dict,
+    nodata,
+    *,
+    masked: bool,
+    pixels_present: bool | None = None,
+    dtype_cast: str | None = None,
+) -> None:
+    """Set the nodata lifecycle attrs on a read.
 
     ``masked`` is the actual mask-decision the read path made: True iff
     sentinel pixels in the in-memory buffer have been replaced with NaN
@@ -296,8 +681,24 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     step). False iff the literal sentinel values are still present in
     the buffer.
 
+    ``pixels_present`` is the lifecycle signal added in issue #2135. If
+    not ``None``, the read path computed whether the read window
+    contained at least one pixel matching the declared sentinel before
+    masking; the value is forwarded to ``attrs['nodata_pixels_present']``
+    so consumers can answer "any nodata in this tile" without scanning
+    the buffer. Pass ``None`` when the backend cannot cheaply produce
+    the value (e.g. dask, where a strict per-chunk reduction would
+    force eager compute).
+
+    ``dtype_cast`` is the second lifecycle signal added in issue #2135.
+    If the caller passed an explicit ``dtype=`` kwarg, the backend
+    forwards the resolved target dtype string (e.g. ``"float64"``) so
+    consumers can distinguish "float because masking promoted it" from
+    "float because the caller cast it". ``None`` means no caller cast
+    happened; the attr is omitted in that case.
+
     Contract (splits the two meanings previously fused into
-    ``attrs['nodata']`` per issue #1988):
+    ``attrs['nodata']`` per issue #1988, extended for #2135):
 
     * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
       source dtype. Set whenever the source declared one, regardless of
@@ -305,6 +706,14 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     * ``attrs['masked_nodata']`` -- the ``masked`` value the caller
       passed, coerced to bool. Only emitted when ``nodata is not
       None``; absence of the flag means there is no declared sentinel.
+    * ``attrs['nodata_pixels_present']`` (additive, #2135) -- bool,
+      only emitted when ``nodata is not None`` and ``pixels_present``
+      is not ``None``. Tracks whether the read window contained any
+      sentinel pixel before masking.
+    * ``attrs['nodata_dtype_cast']`` (additive, #2135) -- string dtype
+      name (e.g. ``"float64"``), only emitted when ``nodata is not
+      None`` and ``dtype_cast`` is not ``None``. Records that a
+      caller-requested cast happened after masking.
 
     Pre-#2092 the helper inferred ``masked`` from the final array
     dtype, which lied when ``mask_nodata=False`` left literal sentinel
@@ -317,6 +726,10 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
         return
     attrs['nodata'] = nodata
     attrs['masked_nodata'] = bool(masked)
+    if pixels_present is not None:
+        attrs['nodata_pixels_present'] = bool(pixels_present)
+    if dtype_cast is not None:
+        attrs['nodata_dtype_cast'] = str(dtype_cast)
 
 
 def _validate_read_geo_info(
@@ -479,117 +892,17 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     overwritten with the current ``_ATTRS_CONTRACT_VERSION``; callers
     pass freshly built dicts, so this is the intended behaviour.
     """
-    # Stamp the contract version first so every read path that funnels
-    # through this helper carries the marker. The VRT backends build
-    # their attrs dict directly and stamp the version there (see
-    # ``_backends/vrt.py``); keep both sites in sync via the constant
-    # rather than the bare literal.
-    attrs['_xrspatial_geotiff_contract'] = _ATTRS_CONTRACT_VERSION
-
-    # Stamp ``georef_status`` (issue #2136) before any of the optional
-    # CRS / transform branches below. The decision uses the unmodified
-    # ``geo_info``, not the post-branch ``attrs`` dict, so a future
-    # change to which attrs get emitted cannot accidentally shift the
-    # status value. The VRT inline paths compute this directly via
-    # ``_compute_georef_status_from_parts``; keep both sites in lockstep
-    # via the same constants.
-    attrs['georef_status'] = _compute_georef_status(geo_info)
-
-    src_t = geo_info.transform
-    has_georef = getattr(geo_info, 'has_georef', True)
-    # ``allow_rotated=True`` opt-in path (#2115): the parser returns a
-    # GeoTransform with ``rotated_affine`` set and ``has_georef=False``.
-    # The rotated 6-tuple cannot be expressed as an axis-aligned
-    # rasterio transform, so the writer cannot round-trip it via
-    # ``attrs['transform']``. Per the documented contract on
-    # ``open_geotiff(allow_rotated=True)``, CRS attrs are dropped on
-    # this path too -- otherwise downstream code that gates on
-    # ``"crs" in da.attrs`` treats the array as spatially meaningful
-    # while the actual mapping is gone (#2122 / #2126). The
-    # ``georef_status='rotated_dropped'`` stamp above still records the
-    # state for consumers that branch on it.
-    rotated_optin = (
-        src_t is not None
-        and getattr(src_t, 'rotated_affine', None) is not None
-        and not has_georef
-    )
-
-    if not rotated_optin:
-        if geo_info.crs_epsg is not None:
-            attrs['crs'] = geo_info.crs_epsg
-        if geo_info.crs_wkt is not None:
-            attrs['crs_wkt'] = geo_info.crs_wkt
-    if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-        attrs['raster_type'] = 'point'
-
-    # Skip the transform attr for files where no GeoTIFF transform tags
-    # (ModelTransformation, ModelPixelScale, or ModelTiepoint) are
-    # present, signalled by ``has_georef=False``. GeoKeys / CRS metadata
-    # can still be present in that case (and are kept for plain
-    # no-georef files; the rotated opt-in path drops them above). The
-    # default unit ``GeoTransform`` is a struct placeholder, not real
-    # georef -- emitting it leaks an identity transform into attrs and
-    # confuses downstream code that expects ``'transform' in attrs`` to
-    # mean "this raster has a georef transform" (#1710).
-    if src_t is not None and has_georef:
-        attrs['transform'] = _transform_tuple_from_pixel_geometry(
-            src_t.origin_x, src_t.origin_y,
-            src_t.pixel_width, src_t.pixel_height,
-            window=window,
-        )
-    else:
-        # Stamp the no-georef marker so the writer can tell our
-        # placeholder int64 step-1 coords apart from a user-authored
-        # integer-coord grid (#2120). Pre-#2120 the writer detected the
-        # placeholder by shape alone, which silently stripped georef
-        # from any user array whose coords matched the same arange
-        # pattern.
-        attrs[_NO_GEOREF_KEY] = True
-
-    # Contract v2 (issue #2016) removed the 13 secondary GeoKey-derived
-    # attrs that v1 emitted under a ``DeprecationWarning`` (``crs_name``,
-    # ``geog_citation``, ``datum_code``, ``angular_units``,
-    # ``semi_major_axis``, ``inv_flattening``, ``linear_units``,
-    # ``projection_code``, ``vertical_crs``, ``vertical_citation``,
-    # ``vertical_units``). The underlying ``GeoInfo`` fields are still
-    # populated by the GeoKey parser because ``_synthesize_user_defined_wkt``
-    # consumes ``geog_citation`` (and siblings) to fill ``crs_wkt`` for
-    # user-defined CRSes; the reader no longer surfaces them as
-    # separate user-visible attrs.
-
-    if geo_info.gdal_metadata is not None:
-        attrs['gdal_metadata'] = geo_info.gdal_metadata
-    if geo_info.gdal_metadata_xml is not None:
-        attrs['gdal_metadata_xml'] = geo_info.gdal_metadata_xml
-
-    if geo_info.extra_tags is not None:
-        attrs['extra_tags'] = geo_info.extra_tags
-    if geo_info.image_description is not None:
-        attrs['image_description'] = geo_info.image_description
-    if geo_info.extra_samples is not None:
-        attrs['extra_samples'] = geo_info.extra_samples
-
-    if geo_info.x_resolution is not None:
-        attrs['x_resolution'] = geo_info.x_resolution
-    if geo_info.y_resolution is not None:
-        attrs['y_resolution'] = geo_info.y_resolution
-    if geo_info.resolution_unit is not None:
-        _unit_names = {1: 'none', 2: 'inch', 3: 'centimeter'}
-        attrs['resolution_unit'] = _unit_names.get(
-            geo_info.resolution_unit, str(geo_info.resolution_unit))
-
-    # Contract v2 (issue #2016) removed ``attrs['cmap']`` and
-    # ``attrs['colormap_rgba']``. The canonical ``attrs['colormap']``
-    # (raw uint16 RGB triples from TIFF tag 320) is still emitted below
-    # via the ``extra_tags`` scan; callers that need an RGBA palette or
-    # a :class:`matplotlib.colors.ListedColormap` should build one from
-    # ``attrs['colormap']`` directly.
-
-    if geo_info.extra_tags is not None:
-        for _tag_id, _tt, _tc, _tv in geo_info.extra_tags:
-            if _tag_id == 320:  # TAG_COLORMAP
-                attrs['colormap'] = _tv
-                break
+    # Compatibility shim: build a typed :class:`GeoTIFFMetadata` once
+    # and fold it into the caller's dict. The two routes
+    # (:func:`metadata_to_attrs` and the legacy field-by-field writes)
+    # produce the same attrs surface; centralising on the record lets
+    # the VRT path emit the same field set without copying this block.
+    # The ``allow_rotated=True`` opt-in CRS-drop (#2126) is handled
+    # inside ``geo_info_to_metadata``. ``georef_status`` (#2136) rides
+    # on the record so the VRT path can stamp it via the same
+    # marshalling step. See issue #2139 / ``metadata_to_attrs``.
+    md = geo_info_to_metadata(geo_info, window=window)
+    attrs.update(metadata_to_attrs(md))
 
 
 def _resolve_nodata_attr(attrs: dict):

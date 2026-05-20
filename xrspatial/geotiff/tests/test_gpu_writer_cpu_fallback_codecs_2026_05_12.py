@@ -240,7 +240,7 @@ def test_write_geotiff_gpu_lz4_roundtrip(tmp_path):
     da, arr = _make_int_da()
     path = str(tmp_path / "lz4_roundtrip.tif")
 
-    write_geotiff_gpu(da, path, compression='lz4')
+    write_geotiff_gpu(da, path, compression='lz4', allow_experimental_codecs=True)
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -254,7 +254,7 @@ def test_write_geotiff_gpu_lz4_compression_tag(tmp_path):
     da, _ = _make_int_da()
     path = str(tmp_path / "lz4_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='lz4')
+    write_geotiff_gpu(da, path, compression='lz4', allow_experimental_codecs=True)
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['lz4']
 
@@ -279,7 +279,7 @@ def test_write_geotiff_gpu_lerc_float_lossless_roundtrip(tmp_path):
     da, arr = _make_float_da(dtype=np.float32)
     path = str(tmp_path / "lerc_float.tif")
 
-    write_geotiff_gpu(da, path, compression='lerc')
+    write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -299,7 +299,7 @@ def test_write_geotiff_gpu_lerc_int_roundtrip(tmp_path):
     da, arr = _make_int_da(dtype=np.uint16)
     path = str(tmp_path / "lerc_int.tif")
 
-    write_geotiff_gpu(da, path, compression='lerc')
+    write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -313,7 +313,7 @@ def test_write_geotiff_gpu_lerc_compression_tag(tmp_path):
     da, _ = _make_float_da()
     path = str(tmp_path / "lerc_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='lerc')
+    write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['lerc']
 
@@ -341,7 +341,7 @@ def test_write_geotiff_gpu_jpeg2000_uint8_lossless_roundtrip(tmp_path):
     da, arr = _make_int_da(dtype=np.uint8)
     path = str(tmp_path / "j2k_uint8.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg2000')
+    write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -362,7 +362,7 @@ def test_write_geotiff_gpu_jpeg2000_rgb_roundtrip(tmp_path):
     da, arr = _make_uint8_rgb_da()
     path = str(tmp_path / "j2k_rgb.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg2000')
+    write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -383,8 +383,8 @@ def test_write_geotiff_gpu_j2k_alias_matches_jpeg2000(tmp_path):
     j2k_path = str(tmp_path / "alias_j2k.tif")
     jpeg2k_path = str(tmp_path / "alias_jpeg2000.tif")
 
-    write_geotiff_gpu(da, j2k_path, compression='j2k')
-    write_geotiff_gpu(da, jpeg2k_path, compression='jpeg2000')
+    write_geotiff_gpu(da, j2k_path, compression='j2k', allow_experimental_codecs=True)
+    write_geotiff_gpu(da, jpeg2k_path, compression='jpeg2000', allow_experimental_codecs=True)
 
     assert _read_compression_tag(j2k_path) == _COMPRESSION_TAGS['j2k']
     assert _read_compression_tag(jpeg2k_path) == _COMPRESSION_TAGS['jpeg2000']
@@ -399,7 +399,7 @@ def test_write_geotiff_gpu_jpeg2000_compression_tag(tmp_path):
     da, _ = _make_int_da(dtype=np.uint8)
     path = str(tmp_path / "j2k_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg2000')
+    write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['jpeg2000']
 

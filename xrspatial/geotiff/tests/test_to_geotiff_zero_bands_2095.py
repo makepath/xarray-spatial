@@ -99,7 +99,11 @@ def test_write_band_last_zero_bands_direct(tmp_path):
     # also contains the substring "write" further on, so an `in`
     # check would not distinguish ``write`` from ``write_streaming``
     # or ``write_geotiff_gpu``).
-    assert msg.startswith("write cannot write")
+    # The array-level entry point was renamed from ``write`` to
+    # ``_write`` in #2138 to mark it as module-private. ``write`` is
+    # kept as a backward-compatible alias, so the entry-point token in
+    # the error message reflects the underlying function name.
+    assert msg.startswith("_write cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()
     assert not out.exists()
 
@@ -115,7 +119,9 @@ def test_write_streaming_zero_bands_direct(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         write_streaming(arr, str(out))
     msg = str(excinfo.value)
-    assert msg.startswith("write_streaming cannot write")
+    # Renamed to ``_write_streaming`` in #2138; ``write_streaming``
+    # remains a backward-compatible alias.
+    assert msg.startswith("_write_streaming cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()
     assert not out.exists()
 

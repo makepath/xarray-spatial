@@ -125,7 +125,12 @@ def test_write_geotiff_gpu_accepts_cpu_fallback_codecs(tmp_path, codec):
                "transform": (1.0, 0.0, 0.0, 0.0, -1.0, 64.0)},
     )
     path = str(tmp_path / f"out_{codec}.tif")
-    write_geotiff_gpu(da, path, compression=codec)
+    # Tier 3 codecs (lerc / jpeg2000 / j2k / lz4) now require
+    # ``allow_experimental_codecs=True`` (issue #2137). Pass the opt-in
+    # so the test continues to exercise the actual encode path rather
+    # than the new rejection gate.
+    write_geotiff_gpu(da, path, compression=codec,
+                      allow_experimental_codecs=True)
     assert os.path.exists(path), (
         f"write_geotiff_gpu(compression={codec!r}) failed to write a file"
     )

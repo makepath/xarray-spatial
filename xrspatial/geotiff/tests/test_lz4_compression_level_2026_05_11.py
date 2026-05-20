@@ -75,7 +75,8 @@ class TestLZ4LevelRoundTrip:
         da = _make_da(seed=level)
         path = str(tmp_path / f"lz4_level_{level}.tif")
         to_geotiff(da, path, compression="lz4",
-                   compression_level=level)
+                   compression_level=level,
+                   allow_experimental_codecs=True)
         result = open_geotiff(path)
         # lz4 is lossless: assert_array_equal, not assert_allclose.
         np.testing.assert_array_equal(result.values, da.values)
@@ -86,7 +87,8 @@ class TestLZ4LevelRoundTrip:
         change is caught."""
         da = _make_da(seed=99)
         path = str(tmp_path / "lz4_default.tif")
-        to_geotiff(da, path, compression="lz4")
+        to_geotiff(da, path, compression="lz4",
+                   allow_experimental_codecs=True)
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, da.values)
 
@@ -105,8 +107,10 @@ class TestLZ4LevelSizeEffect:
         da = _make_compressible()
         path_lo = str(tmp_path / "lz4_lo.tif")
         path_hi = str(tmp_path / "lz4_hi.tif")
-        to_geotiff(da, path_lo, compression="lz4", compression_level=0)
-        to_geotiff(da, path_hi, compression="lz4", compression_level=16)
+        to_geotiff(da, path_lo, compression="lz4", compression_level=0,
+                   allow_experimental_codecs=True)
+        to_geotiff(da, path_hi, compression="lz4", compression_level=16,
+                   allow_experimental_codecs=True)
         size_lo = os.path.getsize(path_lo)
         size_hi = os.path.getsize(path_hi)
         # Allow equality: very small or already-compressed payloads can
@@ -133,7 +137,8 @@ class TestLZ4LevelOutOfRange:
         path = str(tmp_path / "lz4_bad.tif")
         with pytest.raises(ValueError, match="compression_level"):
             to_geotiff(da, path, compression="lz4",
-                       compression_level=level)
+                       compression_level=level,
+                       allow_experimental_codecs=True)
 
     def test_lz4_out_of_range_message_includes_range(self, tmp_path):
         """Error message advertises the valid (0, 16) range so callers
@@ -142,7 +147,8 @@ class TestLZ4LevelOutOfRange:
         path = str(tmp_path / "lz4_bad.tif")
         with pytest.raises(ValueError, match=r"lz4.*\(valid:\s*0-16\)"):
             to_geotiff(da, path, compression="lz4",
-                       compression_level=999)
+                       compression_level=999,
+                       allow_experimental_codecs=True)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +176,8 @@ class TestLZ4LevelDaskStreaming:
         dask_da, np_arr = self._make_dask_da()
         path = str(tmp_path / f"lz4_dask_level_{level}.tif")
         to_geotiff(dask_da, path, compression="lz4",
-                   compression_level=level, tile_size=16)
+                   compression_level=level, tile_size=16,
+                   allow_experimental_codecs=True)
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, np_arr)
 
@@ -180,4 +187,5 @@ class TestLZ4LevelDaskStreaming:
         path = str(tmp_path / "lz4_dask_bad.tif")
         with pytest.raises(ValueError, match="compression_level"):
             to_geotiff(dask_da, path, compression="lz4",
-                       compression_level=level, tile_size=16)
+                       compression_level=level, tile_size=16,
+                       allow_experimental_codecs=True)

@@ -14,15 +14,15 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import (
-    _ATTRS_CONTRACT_VERSION,
+    GeoTIFFMetadata,
     _compute_georef_status_from_parts,
     _set_nodata_attrs,
+    metadata_to_attrs,
 )
 from .._coords import (
     coords_from_pixel_geometry as _coords_from_pixel_geometry,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
-from .._geotags import _NO_GEOREF_KEY
 from .._crs import _wkt_to_epsg
 from .._validation import _validate_chunks_arg, _validate_dtype_cast
 
@@ -48,6 +48,13 @@ def read_vrt(source: str, *,
              band_nodata: str | None = None,
              mask_nodata: bool = True) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
+
+    Tier: Advanced (issue #2137). VRT mosaics work and are tested, but
+    the caller should know the failure modes: cross-source nodata can
+    disagree (gated by ``band_nodata``), backing files can be missing
+    (gated by ``missing_sources``), and per-band metadata mismatch
+    raises a typed error rather than silently flattening. See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
     into a single array.
@@ -153,6 +160,8 @@ def read_vrt(source: str, *,
     from .._vrt import (
         read_vrt as _read_vrt_internal,
         _apply_integer_sentinel_mask as _vrt_apply_integer_sentinel_mask,
+        _apply_integer_sentinel_mask_with_presence as _vrt_mask_with_presence,
+        _scan_for_sentinel as _vrt_scan_for_sentinel,
     )
 
     source = _coerce_path(source)
@@ -293,51 +302,53 @@ def read_vrt(source: str, *,
     else:
         coords = {}
 
-    # VRT builds its attrs dict inline rather than going through
-    # ``_populate_attrs_from_geo_info``; stamp the contract version here
-    # so both code paths emit the same marker.
-    attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
-    # ``georef_status`` (issue #2136): five-valued classifier shared
-    # with the non-VRT read paths. ``has_crs`` uses ``is not None`` (not
-    # a truthiness check) to stay aligned with ``_compute_georef_status``;
-    # the VRT XML parser returns None for missing/empty ``<SRS>`` rather
-    # than ``""``, but pinning the rule defends the alignment if the
-    # parser ever changes. ``rotated_dropped=_vrt_is_rotated`` matches
-    # the rotated arm of the read path (issue #2122): a VRT geo_transform
+    # Build the VRT attrs surface via :class:`GeoTIFFMetadata` so the
+    # eager VRT, chunked VRT, and non-VRT read paths share one
+    # field-set-to-attrs marshalling step. The VRT path intentionally
+    # populates only the subset of fields it owns (CRS, transform,
+    # raster_type, no-georef marker, vrt_holes); ``extra_tags``,
+    # ``gdal_metadata`` and resolution tags continue to be omitted on
+    # this path until the migration's VRT-tag-coverage follow-up lands.
+    # See issue #2139.
+    #
+    # Rotated VRT reads (``allow_rotated=True`` opt-in, #2122) drop both
+    # the transform AND the CRS attrs because the writer cannot
+    # round-trip a rotated 6-tuple as ``attrs['transform']``. Modelled by
+    # setting ``has_georef=False`` (so ``metadata_to_attrs`` emits the
+    # no-georef marker) and clearing the CRS fields below.
+    #
+    # ``vrt.crs_wkt`` carries an empty string when the VRT XML has a
+    # ``<SRS>`` element but no recognised CRS body; treat empty as
+    # absent so ``metadata_to_attrs`` does not emit ``attrs['crs_wkt']=''``.
+    #
+    # ``georef_status`` (issue #2136) is computed from raw booleans and
+    # carried on the record so the VRT path stamps the same five-valued
+    # classifier the non-VRT read paths emit. ``has_crs`` mirrors
+    # ``_compute_georef_status`` by gating on ``is not None`` rather than
+    # truthiness, so a future parser change that returns ``""`` instead
+    # of ``None`` for a missing ``<SRS>`` would still route to ``none``
+    # via the empty-string check above. ``rotated_dropped=_vrt_is_rotated``
+    # matches the rotated arm on the non-VRT path: a VRT ``geo_transform``
     # with non-zero rotation/skew lands the array in the same
-    # rotated_dropped bucket as a rotated ``ModelTransformationTag`` on
-    # the non-VRT path.
-    attrs['georef_status'] = _compute_georef_status_from_parts(
-        has_transform=gt is not None and not _vrt_is_rotated,
-        has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
-        rotated_dropped=_vrt_is_rotated,
+    # ``rotated_dropped`` bucket as a rotated ``ModelTransformationTag``.
+    _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
+    _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
+    _vrt_md = GeoTIFFMetadata(
+        crs_epsg=_vrt_epsg,
+        crs_wkt=vrt.crs_wkt if _vrt_keep_crs else None,
+        raster_type='point' if vrt.raster_type == 'point' else 'area',
+        has_georef=gt is not None and not _vrt_is_rotated,
+        # Surface skipped-source records as ``attrs['vrt_holes']`` so
+        # callers can detect a partial mosaic by attribute lookup. See
+        # issue #1734.
+        vrt_holes=list(vrt.holes) if vrt.holes else None,
+        georef_status=_compute_georef_status_from_parts(
+            has_transform=gt is not None and not _vrt_is_rotated,
+            has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
+            rotated_dropped=_vrt_is_rotated,
+        ),
     )
-    if gt is None or _vrt_is_rotated:
-        # Mirror the eager non-VRT no-georef path: stamp the no-georef
-        # marker whenever the read produced placeholder int64 coords.
-        # Covers both "no transform tags at all" and rotated reads under
-        # ``allow_rotated=True``. Without the rotated arm, the writer
-        # round-trip on a rotated read mistook the int64 coords for a
-        # user-authored integer-coord grid and stripped georef from the
-        # output (#2120 / #2122 follow-up).
-        attrs[_NO_GEOREF_KEY] = True
-    if vrt.crs_wkt and not _vrt_is_rotated:
-        epsg = _wkt_to_epsg(vrt.crs_wkt)
-        if epsg is not None:
-            attrs['crs'] = epsg
-        attrs['crs_wkt'] = vrt.crs_wkt
-    if vrt.raster_type == 'point':
-        attrs['raster_type'] = 'point'
-    # Surface skipped-source records as ``attrs['vrt_holes']`` so
-    # callers can detect a partial mosaic by attribute lookup. Under
-    # lenient mode (the default), the underlying ``_vrt.read_vrt``
-    # already warned per skipped source but the warning is easy to
-    # miss in a pipeline; the attr lets downstream code branch on
-    # ``"vrt_holes" in da.attrs`` instead of monitoring the warnings
-    # stream. Empty list is omitted so the attr only appears when
-    # there is actually a hole. See issue #1734.
-    if vrt.holes:
-        attrs['vrt_holes'] = list(vrt.holes)
+    attrs = metadata_to_attrs(_vrt_md)
     # When a specific band is selected, source its nodata from that
     # band's <NoDataValue> instead of band 0's. Otherwise multi-band
     # VRTs with per-band sentinels would mis-mask the read: attrs would
@@ -366,8 +377,21 @@ def read_vrt(source: str, *,
     # (issue #1825) so behaviour stays in lockstep. See issue #1611.
     # ``mask_nodata=False`` skips this so callers can preserve an
     # integer source dtype via ``dtype=...`` (issue #2052).
+    # ``nodata_pixels_present`` tracks whether the read window contained
+    # any sentinel pixel before masking (issue #2135). On the VRT eager
+    # path it has two sources: the integer-sentinel helper below (which
+    # returns ``True`` iff at least one band hit its sentinel during
+    # promotion), and the inline float-NaN masking inside ``_read_data``
+    # (proxied via NaN presence on the resulting float buffer when the
+    # source declared a sentinel). Stays ``None`` only when no sentinel
+    # was declared.
+    nodata_pixels_present: bool | None = None
     if mask_nodata:
-        arr = _vrt_apply_integer_sentinel_mask(arr, vrt, band)
+        arr, nodata_pixels_present = _vrt_mask_with_presence(arr, vrt, band)
+    elif nodata is not None:
+        # ``mask_nodata=False``: skip the masking helper but still scan
+        # for the literal sentinel so callers can branch on the attr.
+        nodata_pixels_present = _vrt_scan_for_sentinel(arr, vrt, band)
 
     # Capture pre-cast dtype: ``_vrt._read_data`` NaN-masks float source
     # arrays (and int sources feeding a float VRT dataType) inline, and
@@ -379,6 +403,32 @@ def read_vrt(source: str, *,
     # cast would falsely claim ``masked_nodata=True`` (issue #2092
     # follow-up).
     pre_cast_dtype = np.dtype(str(arr.dtype))
+
+    # When the inline float-NaN masking inside ``_vrt._read_data`` already
+    # ran (float source + float VRT dataType + declared sentinel), the
+    # integer helper above is a no-op but the resulting float buffer may
+    # already carry NaNs at the sentinel locations. Promote
+    # ``nodata_pixels_present`` to reflect that, since a downstream "any
+    # nodata?" check should answer yes for those tiles too.
+    #
+    # Invariant: at most one branch sets ``nodata_pixels_present`` to True
+    # before this block runs. ``_vrt_mask_with_presence`` only sets True
+    # on integer buffers (it short-circuits on float dtype), and
+    # ``_vrt_scan_for_sentinel`` is gated on the ``mask_nodata=False``
+    # branch above. Either way, the float-NaN proxy below is the only
+    # presence signal for float buffers, so the ``not present`` guard
+    # is sufficient -- we will not double-scan the same buffer.
+    if (nodata is not None
+            and pre_cast_dtype.kind == 'f'
+            and not nodata_pixels_present):
+        # ``arr`` is still on the CPU at this point (the optional
+        # ``cupy.asarray`` lift happens further down).
+        try:
+            nodata_pixels_present = bool(np.isnan(arr).any())
+        except (TypeError, ValueError):
+            # Defensive: an unexpected dtype that fails ``np.isnan`` falls
+            # back to the helper's answer rather than raising mid-read.
+            pass
 
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
@@ -402,14 +452,18 @@ def read_vrt(source: str, *,
         import cupy
         arr = cupy.asarray(arr)
 
+    dtype_cast_attr: str | None = None
     if dtype is not None:
         target = np.dtype(dtype)
         _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
         arr = arr.astype(target)
+        dtype_cast_attr = target.name
 
     _set_nodata_attrs(
         attrs, nodata,
         masked=(pre_cast_dtype.kind == 'f'),
+        pixels_present=nodata_pixels_present,
+        dtype_cast=dtype_cast_attr,
     )
 
     if arr.ndim == 3:
@@ -735,10 +789,9 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # eager reads share the same x/y arrays.
     gt = vrt.geo_transform
     coords = {}
-    # Mirrors the eager VRT branch: this code path bypasses
-    # ``_populate_attrs_from_geo_info``, so the contract version is
-    # stamped inline using the shared constant to stay in lockstep.
-    attrs = {'_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION}
+    # Build attrs via :class:`GeoTIFFMetadata` to share the marshalling
+    # step with the eager VRT branch. See issue #2139.
+    #
     # ``_vrt_is_rotated`` matches the eager VRT branch's gate (#2122):
     # rotated VRTs read with ``allow_rotated=True`` opt out of the
     # georef attrs (``crs`` / ``crs_wkt`` / ``transform``) so downstream
@@ -748,14 +801,6 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # path).
     _vrt_is_rotated = (
         gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)
-    )
-    # ``georef_status`` (issue #2136). See the eager VRT branch above
-    # for the rationale; the rotated VRT path lands the array in the
-    # ``rotated_dropped`` bucket so consumers can branch on it.
-    attrs['georef_status'] = _compute_georef_status_from_parts(
-        has_transform=gt is not None and not _vrt_is_rotated,
-        has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
-        rotated_dropped=_vrt_is_rotated,
     )
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
@@ -771,28 +816,42 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
             window=coord_window,
             has_georef=not _vrt_is_rotated,
         )
-        if not _vrt_is_rotated:
-            attrs['transform'] = _transform_tuple_from_pixel_geometry(
+        # Rotated VRTs (#2122) drop the transform because it cannot
+        # round-trip as ``attrs['transform']``; ``_vrt_md.has_georef``
+        # gates this below so ``metadata_to_attrs`` emits the no-georef
+        # marker on the rotated path.
+        _vrt_transform = (
+            None if _vrt_is_rotated
+            else _transform_tuple_from_pixel_geometry(
                 origin_x, origin_y, res_x, res_y,
                 window=(win_r0, win_c0, 0, 0),
             )
-        else:
-            # Mirrors the no-transform arm: rotated reads emit
-            # placeholder int64 coords, so stamp the marker that lets
-            # the writer tell them apart from a user-authored integer
-            # grid (#2120 / #2122 follow-up).
-            attrs[_NO_GEOREF_KEY] = True
+        )
     else:
-        # Defensive marker (issue #2120). See the eager VRT branch.
-        attrs[_NO_GEOREF_KEY] = True
+        _vrt_transform = None
 
-    if vrt.crs_wkt and not _vrt_is_rotated:
-        epsg = _wkt_to_epsg(vrt.crs_wkt)
-        if epsg is not None:
-            attrs['crs'] = epsg
-        attrs['crs_wkt'] = vrt.crs_wkt
-    if vrt.raster_type == 'point':
-        attrs['raster_type'] = 'point'
+    # ``vrt.crs_wkt`` carries an empty string when the VRT XML has a
+    # ``<SRS>`` element but no recognised CRS body; treat empty as
+    # absent so ``metadata_to_attrs`` does not emit ``attrs['crs_wkt']=''``.
+    # Rotated VRTs drop CRS attrs alongside the transform (#2122).
+    _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
+    _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
+    # ``georef_status`` (issue #2136). See the eager VRT branch above
+    # for the rationale; the rotated VRT path lands the array in the
+    # ``rotated_dropped`` bucket so consumers can branch on it.
+    _vrt_md = GeoTIFFMetadata(
+        transform=_vrt_transform,
+        crs_epsg=_vrt_epsg,
+        crs_wkt=vrt.crs_wkt if _vrt_keep_crs else None,
+        raster_type='point' if vrt.raster_type == 'point' else 'area',
+        has_georef=gt is not None and not _vrt_is_rotated,
+        georef_status=_compute_georef_status_from_parts(
+            has_transform=gt is not None and not _vrt_is_rotated,
+            has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
+            rotated_dropped=_vrt_is_rotated,
+        ),
+    )
+    attrs = metadata_to_attrs(_vrt_md)
 
     # Surface the nodata sentinel for the selected band. The chunked
     # path declares ``float64`` up front whenever any selected band has
@@ -815,9 +874,17 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # ``final_dtype`` block) and must not flip this attr, so we read
     # the pre-cast ``declared_dtype`` here rather than ``final_dtype``
     # (#2092 follow-up).
+    # ``nodata_pixels_present`` is intentionally left unset on the
+    # chunked VRT path: a per-chunk reduction would force eager
+    # ``.compute()`` (matches the dask backend's policy for issue
+    # #2135). ``dtype_cast`` records the caller-supplied ``dtype=``
+    # kwarg when present so downstream can tell float-by-cast apart
+    # from float-by-masking even on the lazy output.
     _set_nodata_attrs(
         attrs, nodata_meta,
         masked=(declared_dtype.kind == 'f'),
+        pixels_present=None,
+        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
     )
 
     # Static hole detection: mirror the eager-path ``attrs['vrt_holes']``

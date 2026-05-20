@@ -1,4 +1,21 @@
-"""GeoTIFF/COG writer."""
+"""GeoTIFF/COG writer (private).
+
+This module is private to :mod:`xrspatial.geotiff`. The supported public
+write entry points are :func:`xrspatial.geotiff.to_geotiff`,
+:func:`xrspatial.geotiff.write_geotiff_gpu`, and
+:func:`xrspatial.geotiff.write_vrt`. Direct callers of the helpers
+defined here bypass the DataArray-level validation that the public
+wrappers run (``transform`` derivation, ``masked_nodata`` handling,
+``band``-first dim reordering, ...) and must accept the resulting byte
+divergence. See issue #2138.
+
+For source modules inside :mod:`xrspatial.geotiff`, the canonical
+internal names for the array-level write functions are
+:func:`_write` and :func:`_write_streaming`. The non-underscored
+:func:`write` and :func:`write_streaming` are kept as aliases for
+internal call sites that pre-date the rename and may be removed in a
+future release.
+"""
 from __future__ import annotations
 
 import math
@@ -1632,10 +1649,129 @@ def _assemble_cog_layout(header_size: int,
 
 
 # ---------------------------------------------------------------------------
-# Public write function
+# Array-level write entry points (module-private; see module docstring)
 # ---------------------------------------------------------------------------
 
-def write(data: np.ndarray, path: str, *,
+
+def _validate_lowlevel_write_kwargs(*,
+                                    compression,
+                                    allow_internal_only_jpeg: bool,
+                                    max_z_error,
+                                    crs_epsg,
+                                    crs_wkt,
+                                    allow_unparseable_crs: bool,
+                                    entry_point: str) -> None:
+    """Push-down byte-affecting validation for ``_write`` / ``_write_streaming``.
+
+    Centralises the checks that the public :func:`to_geotiff` wrapper
+    runs but that the array-level entry points used to skip, so a
+    direct caller cannot quietly produce a different file. See issue
+    #2138 for the gap inventory. The checks are byte-affecting: each
+    of them changes the bytes on disk (or refuses to write garbage),
+    so they belong with the array-level writer rather than the
+    DataArray wrapper.
+
+    Parameters
+    ----------
+    compression : str or other
+        Codec name. Validated against :data:`_VALID_COMPRESSIONS` and
+        the JPEG-in-TIFF opt-in gate. Non-string values are not
+        rejected here; ``_compression_tag`` raises downstream.
+    allow_internal_only_jpeg : bool
+        If False (the default), ``compression='jpeg'`` is rejected
+        because the encoder writes JFIF tiles without the
+        ``JPEGTables`` tag (issue #1845).
+    max_z_error : float
+        Per-pixel LERC error budget. Must be ``>= 0`` and is only
+        meaningful with ``compression='lerc'``.
+    crs_epsg : int or None
+        EPSG kwarg. ``bool`` is rejected because it would otherwise
+        be silently written as ``EPSG=1`` / ``EPSG=0``.
+    crs_wkt : str or None
+        WKT fallback. Validated against the structural ``_looks_like_wkt``
+        gate unless ``allow_unparseable_crs=True``.
+    allow_unparseable_crs : bool
+        Opt-in to keep pre-#1929 behaviour for unparseable CRS strings.
+    entry_point : str
+        Name of the calling function ('_write' or '_write_streaming'),
+        used in error messages so the source of the rejection is clear.
+    """
+    from ._attrs import _VALID_COMPRESSIONS
+    from ._crs import _validate_crs_fallback
+
+    # Gap #1: compression name validation against the canonical list.
+    # ``_compression_tag`` already raises on unknown names with a list,
+    # but only ``str`` inputs reach it; non-string values would land in
+    # ``compression_name.lower()`` and surface as ``AttributeError``.
+    if isinstance(compression, str):
+        if compression.lower() not in _VALID_COMPRESSIONS:
+            raise ValueError(
+                f"Unknown compression {compression!r} (in {entry_point}). "
+                f"Valid options: {list(_VALID_COMPRESSIONS)}.")
+    elif compression is not None:
+        # Unreachable from ``to_geotiff`` (which only forwards ``str``
+        # or the default), but direct callers can hit this. Without the
+        # explicit guard the downstream ``compression.lower()`` would
+        # surface as ``AttributeError`` instead of a typed error.
+        raise TypeError(
+            f"compression must be a str (in {entry_point}); "
+            f"got {type(compression).__name__}.")
+
+    # Gap #2: JPEG opt-in gate. The encoder writes self-contained JFIF
+    # streams without the JPEGTables tag (347), so the file decodes
+    # through xrspatial but not through libtiff / GDAL / rasterio.
+    # ``to_geotiff`` already enforces this; surface the same gate here
+    # so direct callers cannot silently produce a non-interop file.
+    if (isinstance(compression, str)
+            and compression.lower() == 'jpeg'
+            and not allow_internal_only_jpeg):
+        raise ValueError(
+            "compression='jpeg' is not supported: the encoder writes "
+            "self-contained JFIF streams without the required "
+            "JPEGTables tag (347), so other readers (libtiff, GDAL, "
+            "rasterio) reject the file. Use 'deflate', 'zstd', or "
+            "'lzw' instead. Pass allow_internal_only_jpeg=True to "
+            "opt in to the experimental internal-reader-only path "
+            "(issue #1845).")
+
+    # Gap #3: max_z_error must be >= 0 and only applies with LERC.
+    # ``_write_tiled`` / ``_write_stripped`` silently ignore the value
+    # on non-LERC codecs, which lets a typo or a stale arg slip past.
+    if max_z_error is not None and max_z_error < 0:
+        raise ValueError(
+            f"max_z_error must be >= 0, got {max_z_error} "
+            f"(in {entry_point})")
+    if (max_z_error is not None and max_z_error != 0
+            and (not isinstance(compression, str)
+                 or compression.lower() != 'lerc')):
+        raise ValueError(
+            f"max_z_error is only valid with compression='lerc' "
+            f"(in {entry_point}); got compression={compression!r}.")
+
+    # Gap #4: ``crs_epsg`` must not be ``bool``. ``bool`` is an ``int``
+    # subclass in Python, so ``crs_epsg=True`` would otherwise be
+    # written as ``EPSG=1`` (and ``False`` as ``EPSG=0``) -- neither
+    # resolves with any CRS database. Mirrors the public
+    # ``_validate_crs_arg`` gate.
+    if isinstance(crs_epsg, bool):
+        raise ValueError(
+            f"crs_epsg must be an int (EPSG code) or None (in "
+            f"{entry_point}); got bool ({crs_epsg!r}). bool is an int "
+            f"subclass in Python, so True/False would otherwise be "
+            f"written as EPSG=1 / EPSG=0.")
+
+    # Gap #9: refuse to land an unvalidatable string in
+    # GTCitationGeoKey unless the caller opts in. ``to_geotiff`` runs
+    # this against the post-``_wkt_to_epsg`` fallback; ``_write`` only
+    # sees the raw ``crs_wkt`` kwarg, so apply the same structural
+    # check here. This is a strict subset of the upstream gate -- the
+    # upstream call already rejected the same input, so this is a
+    # no-op when ``to_geotiff`` is the caller.
+    if crs_wkt is not None and crs_epsg is None:
+        _validate_crs_fallback(crs_wkt, allow_unparseable_crs)
+
+
+def _write(data: np.ndarray, path: str, *,
           geo_transform: GeoTransform | None = None,
           crs_epsg: int | None = None,
           crs_wkt: str | None = None,
@@ -1657,7 +1793,9 @@ def write(data: np.ndarray, path: str, *,
           bigtiff: bool | None = None,
           max_z_error: float = 0.0,
           photometric='auto',
-          restore_sentinel: bool = True) -> None:
+          restore_sentinel: bool = True,
+          allow_internal_only_jpeg: bool = False,
+          allow_unparseable_crs: bool = False) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -1729,17 +1867,88 @@ def write(data: np.ndarray, path: str, *,
     max_z_error : float
         Per-pixel error budget for LERC compression. ``0.0`` (default)
         is lossless. Only valid with ``compression='lerc'``.
+    allow_internal_only_jpeg : bool
+        Opt in to the experimental JPEG-in-TIFF path. The encoder
+        writes self-contained JFIF tiles without the ``JPEGTables``
+        tag (347), so external readers (libtiff, GDAL, rasterio)
+        reject the file. ``False`` (default) rejects
+        ``compression='jpeg'`` with a clear error. See issue #1845.
+    allow_unparseable_crs : bool
+        Opt in to writing a ``crs_wkt`` string that does not parse as
+        WKT and does not resolve via pyproj into ``GTCitationGeoKey``
+        (pre-#1929 behaviour). Default ``False`` refuses to land
+        unvalidatable strings in the citation field.
+
+    Notes
+    -----
+    This is a module-private array-level entry point. The supported
+    public surface is :func:`xrspatial.geotiff.to_geotiff`. Several
+    DataArray-level checks (3D dim-order rejection, ``band``-first
+    reorder, fail-closed georeferenced-transform, ``masked_nodata``
+    handling) are deliberately *not* performed here -- they need
+    ``data.dims`` / ``data.attrs`` state that the array-level entry
+    point does not have. Direct callers that need those checks should
+    use :func:`xrspatial.geotiff.to_geotiff` instead. See issue #2138.
     """
     # Issue #2075: reject empty spatial shapes before any IFD layout
     # math runs. ``to_geotiff`` already guards this for DataArray inputs,
-    # but ``write`` is also called directly by tests and by the GPU
-    # path, so guard here too. ``write`` always receives band-last
+    # but ``_write`` is also called directly by tests and by the GPU
+    # path, so guard here too. ``_write`` always receives band-last
     # arrays (eager moveaxis ran upstream), so the ndim-based pair
     # picked by ``_validate_writer_spatial_shape`` without ``dims`` is
     # correct.
     from ._validation import _validate_writer_spatial_shape
     _validate_writer_spatial_shape(
-        getattr(data, 'shape', None), entry_point="write")
+        getattr(data, 'shape', None), entry_point="_write")
+
+    # Issue #2138: push down byte-affecting validation that the public
+    # ``to_geotiff`` wrapper used to perform on its own. The wrapper
+    # still runs the same checks upstream, so this is a no-op when
+    # ``to_geotiff`` is the caller; the gate matters for direct callers
+    # of ``_write`` (the GPU CPU-fallback path, internal tests, and
+    # downstream code that imports the array-level entry point).
+    _validate_lowlevel_write_kwargs(
+        compression=compression,
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
+        max_z_error=max_z_error,
+        crs_epsg=crs_epsg,
+        crs_wkt=crs_wkt,
+        allow_unparseable_crs=allow_unparseable_crs,
+        entry_point="_write",
+    )
+
+    # Issue #2138 gap #7: auto-promote ``float16`` and ``bool_`` before
+    # the dtype mapper. ``to_geotiff`` already does this upstream; the
+    # push-down here lets direct callers feed unsupported dtypes without
+    # tripping ``numpy_to_tiff_dtype`` with a less actionable error.
+    # The guard on ``isinstance(data, np.ndarray)`` is intentional:
+    # ``_write`` is the numpy-array entry point, so the dask streaming
+    # path goes through ``_write_streaming`` (which handles ``out_dtype``
+    # promotion separately). A bare ``dask.array`` reaching ``_write``
+    # is already a misuse; the dtype mapper below will surface the
+    # mismatch.
+    if isinstance(data, np.ndarray):
+        if data.dtype == np.float16:
+            data = data.astype(np.float32)
+        elif data.dtype == np.bool_:
+            data = data.astype(np.uint8)
+
+    # Issue #2138 gap #5: defensive copy on the NaN-to-sentinel rewrite.
+    # ``to_geotiff`` already copies for DataArray inputs, but a direct
+    # caller passing a NaN-containing float array would otherwise have
+    # their buffer mutated (numpy arrays are passed by reference). The
+    # rewrite is gated on ``restore_sentinel`` so DataArrays carrying
+    # ``masked_nodata=False`` (read with ``mask_nodata=False``) keep
+    # their literal sentinel bytes untouched (#1988).
+    if (isinstance(data, np.ndarray)
+            and nodata is not None
+            and data.dtype.kind == 'f'
+            and not np.isnan(nodata)
+            and restore_sentinel):
+        nan_mask = np.isnan(data)
+        if nan_mask.any():
+            data = data.copy()
+            data[nan_mask] = data.dtype.type(nodata)
 
     comp_tag = _compression_tag(compression)
     pred_int = normalize_predictor(predictor, data.dtype, comp_tag)
@@ -1891,6 +2100,13 @@ def write(data: np.ndarray, path: str, *,
     _write_bytes(file_bytes, path)
 
 
+# Backward-compatible alias for internal call sites that pre-date the
+# rename to :func:`_write`. New code inside ``xrspatial.geotiff`` should
+# import :func:`_write` directly. See issue #2138 and the module
+# docstring.
+write = _write
+
+
 def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
                     predictor: int, compression, compression_level=None,
                     max_z_error: float = 0.0, gil_friendly: bool = False):
@@ -1996,7 +2212,7 @@ def _should_use_bigtiff_streaming(uncompressed_bytes: int,
     return uncompressed_bytes + reserved_overhead > UINT32_MAX
 
 
-def write_streaming(dask_data, path: str, *,
+def _write_streaming(dask_data, path: str, *,
                     geo_transform: 'GeoTransform | None' = None,
                     crs_epsg: int | None = None,
                     crs_wkt: str | None = None,
@@ -2016,7 +2232,9 @@ def write_streaming(dask_data, path: str, *,
                     streaming_buffer_bytes: int = 256 * 1024 * 1024,
                     max_z_error: float = 0.0,
                     photometric='auto',
-                    restore_sentinel: bool = True) -> None:
+                    restore_sentinel: bool = True,
+                    allow_internal_only_jpeg: bool = False,
+                    allow_unparseable_crs: bool = False) -> None:
     """Write a dask array as a GeoTIFF by streaming pixel data.
 
     For tiled output, each tile-row is computed in horizontal segments
@@ -2040,6 +2258,18 @@ def write_streaming(dask_data, path: str, *,
         Soft cap on bytes materialised per dask compute call when
         writing tiles. Defaults to 256 MB. Values smaller than one tile
         column are clamped up to one tile column.
+    allow_internal_only_jpeg : bool
+        Opt in to the experimental JPEG-in-TIFF path. See ``_write`` for
+        the rationale. Default ``False``.
+    allow_unparseable_crs : bool
+        Opt in to writing an unparseable ``crs_wkt`` string into
+        ``GTCitationGeoKey``. Default ``False``.
+
+    Notes
+    -----
+    This is a module-private array-level entry point. The supported
+    public surface is :func:`xrspatial.geotiff.to_geotiff`. See
+    :func:`_write` and issue #2138 for the full rationale.
     """
     import os
     import tempfile
@@ -2053,11 +2283,24 @@ def write_streaming(dask_data, path: str, *,
     # Issue #2075: reject empty spatial shapes before tile/strip count
     # math (``math.ceil(width / tw)`` etc. below at the layout block)
     # silently produces zero entries. ``to_geotiff`` already validates
-    # this upstream, but direct callers of ``write_streaming`` go
+    # this upstream, but direct callers of ``_write_streaming`` go
     # through here too.
     from ._validation import _validate_writer_spatial_shape
     _validate_writer_spatial_shape(
-        getattr(dask_data, 'shape', None), entry_point="write_streaming")
+        getattr(dask_data, 'shape', None), entry_point="_write_streaming")
+
+    # Issue #2138: push-down validation for byte-affecting kwargs.
+    # ``to_geotiff`` runs these upstream as well, so this is a no-op
+    # on that path; the gate matters for direct callers.
+    _validate_lowlevel_write_kwargs(
+        compression=compression,
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
+        max_z_error=max_z_error,
+        crs_epsg=crs_epsg,
+        crs_wkt=crs_wkt,
+        allow_unparseable_crs=allow_unparseable_crs,
+        entry_point="_write_streaming",
+    )
 
     height, width = dask_data.shape[:2]
     samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
@@ -2506,6 +2749,13 @@ def write_streaming(dask_data, path: str, *,
         except OSError:
             pass
         raise
+
+
+# Backward-compatible alias for internal call sites that pre-date the
+# rename to :func:`_write_streaming`. New code inside
+# ``xrspatial.geotiff`` should import :func:`_write_streaming` directly.
+# See issue #2138.
+write_streaming = _write_streaming
 
 
 def _is_fsspec_uri(path) -> bool:

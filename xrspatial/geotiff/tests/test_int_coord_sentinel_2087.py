@@ -29,10 +29,58 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._coords import _is_no_georef_sentinel
+from xrspatial.geotiff._coords import _has_no_georef_marker
+from xrspatial.geotiff._geotags import _NO_GEOREF_KEY
 
 
-# --- Unit checks on the sentinel helper itself --------------------------
+# --- Unit checks on the no-georef marker predicate ----------------------
+#
+# Pre-#2133, ``xrspatial.geotiff._coords`` exported an
+# ``_is_no_georef_sentinel`` helper that inspected coord shape (int64,
+# ``np.arange``-style). The writer no longer consults that predicate;
+# the only signal is ``attrs[_NO_GEOREF_KEY]``. These tests pin the
+# marker-based predicate ``_has_no_georef_marker`` that replaced it.
+
+
+def _arange_int64_shape(coord: np.ndarray) -> bool:
+    """Test-local predicate matching the read-side placeholder shape.
+
+    ``coords_from_pixel_geometry`` emits ``np.arange(start, stop,
+    dtype=np.int64)`` for the y/x coords whenever the source file
+    carries no transform tags -- both for full reads (``start=0``) and
+    windowed reads (``start=window_offset``). This helper exists only
+    so a few legacy round-trip assertions can verify the on-disk shape
+    came back unchanged; it is not the production no-georef signal.
+    """
+    if coord.dtype != np.int64:
+        return False
+    n = len(coord)
+    if n < 1:
+        return False
+    return bool(np.array_equal(
+        coord, np.arange(coord[0], coord[0] + n, dtype=np.int64)
+    ))
+
+
+@pytest.mark.parametrize(
+    "attrs,expected",
+    [
+        ({_NO_GEOREF_KEY: True}, True),
+        ({}, False),
+        ({_NO_GEOREF_KEY: False}, False),
+        ({_NO_GEOREF_KEY: 'yes'}, False),     # not identity-True
+        ({_NO_GEOREF_KEY: 1}, False),         # truthy int, not True
+        ({'other': True}, False),
+    ],
+)
+def test_marker_predicate_identity_check(attrs, expected):
+    da = xr.DataArray(
+        np.zeros((2, 2), dtype=np.float32),
+        coords={'y': np.arange(2, dtype=np.int64), 'x': np.arange(2, dtype=np.int64)},
+        dims=('y', 'x'),
+        attrs=attrs,
+    )
+    assert _has_no_georef_marker(da) is expected
 
 
 @pytest.mark.parametrize(
@@ -44,8 +92,8 @@ from xrspatial.geotiff._coords import _is_no_georef_sentinel
         np.array([10, 11, 12], dtype=np.int64),
     ],
 )
-def test_sentinel_accepts_arange_int64(coord):
-    assert _is_no_georef_sentinel(coord)
+def test_arange_int64_shape_helper_accepts(coord):
+    assert _arange_int64_shape(coord)
 
 
 @pytest.mark.parametrize(
@@ -59,8 +107,8 @@ def test_sentinel_accepts_arange_int64(coord):
         np.array([], dtype=np.int64),                  # empty
     ],
 )
-def test_sentinel_rejects_non_arange(coord):
-    assert not _is_no_georef_sentinel(coord)
+def test_arange_int64_shape_helper_rejects(coord):
+    assert not _arange_int64_shape(coord)
 
 
 # --- Round-trip behaviour ------------------------------------------------
@@ -144,8 +192,13 @@ def test_user_authored_int_grid_with_explicit_transform(tmp_path):
 
 def test_non_uniform_int_coords_raise(tmp_path):
     # Non-uniform integer spacing under the old sentinel silently
-    # stripped georef. Under the tightened sentinel it falls through
-    # to ``coords_to_transform`` and trips the uniform-spacing check.
+    # stripped georef. The pre-#2133 fallback caught this via the
+    # lower-level ``coords_to_transform`` ("not uniformly spaced"
+    # message). Post-#2133, the write-metadata validator catches it
+    # first with a different message because the integer-dtype
+    # exemption has been replaced with a marker-based one. Either
+    # message satisfies the contract: a non-uniform write must
+    # raise rather than silently misrepresent the grid.
     da = xr.DataArray(
         np.zeros((3, 3), dtype=np.float32),
         coords={
@@ -155,7 +208,7 @@ def test_non_uniform_int_coords_raise(tmp_path):
         dims=('y', 'x'),
     )
     path = str(tmp_path / "tmp_2087_non_uniform.tif")
-    with pytest.raises(ValueError, match="not uniformly spaced"):
+    with pytest.raises(ValueError, match="non.?uniform"):
         to_geotiff(da, path)
 
 
