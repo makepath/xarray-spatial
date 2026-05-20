@@ -134,12 +134,34 @@ def _detect_nodata(raster, nodata=None, dtype=None):
     is allowed. +/-Inf would break downstream ``np.isnan`` masks, so it
     is rejected.
 
-    Integer dtypes can't carry NaN. When *dtype* is integer and no
-    upstream nodata is found, fall back to a dtype-appropriate sentinel
-    (see :func:`_default_integer_nodata`) instead of returning NaN.
-    Without this, the worker's cast-back step silently turned every
+    Integer dtypes can't carry NaN. When *dtype* is integer the
+    resolved nodata is checked against the dtype: a NaN coming from
+    upstream (or the absent-upstream default) is swapped for a
+    dtype-appropriate sentinel via :func:`_default_integer_nodata`
+    (signed -> ``dtype.min``, unsigned -> ``dtype.max``). Without that
+    swap, the worker's cast-back step silently turned every
     out-of-bounds pixel into ``0`` while ``attrs['nodata']`` still
-    advertised NaN.
+    advertised NaN (#2185).
+    """
+    nd = _detect_nodata_raw(raster, nodata)
+
+    # For integer outputs, swap any resolved NaN for a sentinel that
+    # actually fits the dtype. Finite values (including the
+    # user-supplied ones) pass through untouched so explicit nodata
+    # always wins.
+    if dtype is not None and np.isnan(nd):
+        dt = np.dtype(dtype)
+        if np.issubdtype(dt, np.integer):
+            return _default_integer_nodata(dt)
+
+    return nd
+
+
+def _detect_nodata_raw(raster, nodata):
+    """Resolve nodata from explicit arg, rioxarray, or attrs (raw).
+
+    Returns the resolved value with no dtype adjustment -- the
+    dtype-aware swap is layered on top by :func:`_detect_nodata`.
     """
     if nodata is not None:
         nd = float(nodata)
@@ -176,12 +198,5 @@ def _detect_nodata(raster, nodata=None, dtype=None):
             first = nv
         if first is not None:
             return float(first)
-
-    # No upstream nodata. For integer dtypes, NaN would round to 0 on
-    # cast-back so use a sentinel that fits the dtype instead.
-    if dtype is not None:
-        dt = np.dtype(dtype)
-        if np.issubdtype(dt, np.integer):
-            return _default_integer_nodata(dt)
 
     return float('nan')
