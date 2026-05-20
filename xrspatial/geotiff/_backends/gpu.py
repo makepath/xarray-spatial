@@ -21,6 +21,8 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import (
+    _apply_caller_dtype_cast,
+    _finalize_lazy_read_attrs,
     _populate_attrs_from_geo_info,
     _set_nodata_attrs,
     _validate_read_geo_info,
@@ -1560,29 +1562,30 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     else:
         dims = ['y', 'x']
 
-    _validate_read_geo_info(
-        geo_info, window=window,
+    # Wave 2 of #2162: share the validate-then-populate-then-stamp
+    # block with the dask+numpy backend via ``_finalize_lazy_read_attrs``.
+    #
+    # The helper takes ``dtype`` as the resolved graph dtype so
+    # ``masked_nodata`` reflects whether per-chunk masking actually
+    # runs in the lazy graph (#2092). ``nodata_pixels_present`` stays
+    # unset on this path for the same reason as the dask+numpy path:
+    # a strict per-chunk reduction would force an eager ``.compute()``
+    # (#2135). The helper's ``dtype`` argument is conflated with the
+    # caller-supplied cast attr; fix the attr up here so
+    # ``nodata_dtype_cast`` surfaces only when the caller explicitly
+    # asked for a cast, not when masking auto-promoted the graph
+    # dtype to float64.
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=geo_info,
+        nodata=nodata,
+        mask_nodata=mask_nodata,
+        dtype=declared_dtype,
+        window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``masked_nodata`` reflects whether per-chunk masking actually
-    # runs in the lazy graph (#2092); mirrors the dask+numpy backend
-    # contract. With ``mask_nodata=False`` ``declared_dtype`` stays
-    # equal to ``file_dtype`` (see the float-promotion gate earlier
-    # in this function), so the rule below is equivalent to "graph
-    # dtype is float AND the caller opted into masking."
-    # ``nodata_pixels_present`` stays unset on the dask+GPU path for the
-    # same reason as the dask+numpy path: a strict per-chunk reduction
-    # would force an eager ``.compute()`` (issue #2135). ``dtype_cast``
-    # records the caller-supplied ``dtype=`` kwarg when present.
-    _set_nodata_attrs(
-        attrs, nodata,
-        masked=(mask_nodata and declared_dtype.kind == 'f'),
-        pixels_present=None,
-        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
+    _apply_caller_dtype_cast(
+        attrs, caller_dtype=dtype, has_nodata=nodata is not None,
     )
 
     if name is None:
