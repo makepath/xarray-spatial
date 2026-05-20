@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from .._attrs import _finalize_lazy_read_attrs
+from .._attrs import _apply_caller_dtype_cast, _finalize_lazy_read_attrs
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
@@ -395,10 +395,9 @@ def read_geotiff_dask(source: str, *,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-    if dtype is None:
-        attrs.pop('nodata_dtype_cast', None)
-    elif nodata_attr is not None:
-        attrs['nodata_dtype_cast'] = np.dtype(dtype).name
+    _apply_caller_dtype_cast(
+        attrs, caller_dtype=dtype, has_nodata=nodata_attr is not None,
+    )
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks

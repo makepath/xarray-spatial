@@ -11,8 +11,7 @@ The tests in this module pin the lazy-attrs contract across the two
 backends so a future change to the helper (or to one backend's call
 site) cannot drift them apart without a visible failure. Each test
 opens the same fixture through ``read_geotiff_dask`` and
-``read_geotiff_gpu(chunks=...)`` and compares the attrs dicts after
-stripping backend-specific markers.
+``read_geotiff_gpu(chunks=...)`` and compares the attrs dicts.
 
 Pins per the issue body:
 
@@ -65,22 +64,6 @@ def _gpu_available() -> bool:
 
 _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
-
-
-# Backend-specific keys that we ignore when diffing two attrs dicts.
-# ``_xrspatial_no_georef`` is a private back-compat marker that lands on
-# both backends together; it's part of the shared output and stays in
-# the comparison. Nothing in the lazy attrs surface is backend-specific
-# today, but the set is here so adding (say) a GPU-only key in the
-# future doesn't quietly drop a real divergence.
-_BACKEND_MARKER_KEYS: frozenset[str] = frozenset()
-
-
-def _strip_backend_markers(attrs):
-    """Return a dict copy with backend-specific keys removed."""
-    return {
-        k: v for k, v in attrs.items() if k not in _BACKEND_MARKER_KEYS
-    }
 
 
 def _open_cpu_dask(path, **kwargs):
@@ -233,8 +216,6 @@ def test_georef_status_parity(tmp_path, fixture, expected_status,
     if _HAS_GPU:
         gpu = _open_gpu_dask(path, **kwargs)
         assert gpu.attrs.get('georef_status') == expected_status
-        # The status attr must agree across backends even if other
-        # attrs diverge for backend-specific reasons.
         assert cpu.attrs['georef_status'] == gpu.attrs['georef_status']
 
 
@@ -242,8 +223,7 @@ def test_georef_status_parity(tmp_path, fixture, expected_status,
                          _GEOREF_FIXTURES)
 def test_attrs_dict_parity(tmp_path, fixture, expected_status,
                            allow_rotated):
-    """Modulo the backend-marker filter, both dask backends emit the
-    same attrs dict for each fixture."""
+    """Both dask backends emit the same attrs dict for each fixture."""
     if not _HAS_GPU:
         pytest.skip("dask+cupy parity requires CUDA")
     path = str(tmp_path / f"tmp_2178_parity_{expected_status}.tif")
@@ -253,8 +233,8 @@ def test_attrs_dict_parity(tmp_path, fixture, expected_status,
     cpu = _open_cpu_dask(path, **kwargs)
     gpu = _open_gpu_dask(path, **kwargs)
 
-    cpu_attrs = _strip_backend_markers(cpu.attrs)
-    gpu_attrs = _strip_backend_markers(gpu.attrs)
+    cpu_attrs = dict(cpu.attrs)
+    gpu_attrs = dict(gpu.attrs)
     assert cpu_attrs == gpu_attrs, (
         f"attrs dicts diverged for fixture={expected_status}:\n"
         f"  cpu only: {set(cpu_attrs) - set(gpu_attrs)}\n"
@@ -338,3 +318,22 @@ def test_dtype_cast_absent_parity_cross_backend(tmp_path):
     gpu = _open_gpu_dask(path)
     assert 'nodata_dtype_cast' not in cpu.attrs
     assert 'nodata_dtype_cast' not in gpu.attrs
+
+
+@pytest.mark.parametrize("opener", _BACKENDS)
+def test_dtype_cast_records_integer_target(tmp_path, opener):
+    """Caller-supplied integer ``dtype=`` kwarg: ``nodata_dtype_cast``
+    records the integer dtype on both backends. Pins the
+    ``dtype.kind != 'f'`` branch of the call-site fixup (review
+    follow-up for #2178)."""
+    path = str(tmp_path / "tmp_2178_int_cast.tif")
+    _make_int_with_nodata_tiff(path)
+    # ``mask_nodata=False`` keeps the integer dtype; the caller cast
+    # then routes the graph dtype to ``int32`` without the masking
+    # auto-promotion firing. The pre-helper contract emits
+    # ``nodata_dtype_cast='int32'`` and ``masked_nodata=False`` here.
+    out = opener(path, mask_nodata=False, dtype=np.int32)
+    assert out.dtype == np.int32
+    assert out.attrs.get('masked_nodata') is False
+    assert out.attrs.get('nodata_dtype_cast') == 'int32'
+    assert 'nodata_pixels_present' not in out.attrs

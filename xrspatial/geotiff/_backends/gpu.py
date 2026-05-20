@@ -21,6 +21,7 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import (
+    _apply_caller_dtype_cast,
     _finalize_lazy_read_attrs,
     _populate_attrs_from_geo_info,
     _set_nodata_attrs,
@@ -1583,10 +1584,9 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-    if dtype is None:
-        attrs.pop('nodata_dtype_cast', None)
-    elif nodata is not None:
-        attrs['nodata_dtype_cast'] = np.dtype(dtype).name
+    _apply_caller_dtype_cast(
+        attrs, caller_dtype=dtype, has_nodata=nodata is not None,
+    )
 
     if name is None:
         import os
