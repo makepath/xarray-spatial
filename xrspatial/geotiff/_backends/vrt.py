@@ -24,7 +24,13 @@ from .._coords import (
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
 from .._crs import _wkt_to_epsg
-from .._validation import _validate_chunks_arg, _validate_dtype_cast
+from .._reader import _MAX_CLOUD_BYTES_SENTINEL
+from .._runtime import _ON_GPU_FAILURE_SENTINEL
+from .._validation import (
+    _validate_chunks_arg,
+    _validate_dispatch_kwargs,
+    _validate_dtype_cast,
+)
 
 
 # Hard cap on the per-VRT chunk task count. Matches the
@@ -37,11 +43,14 @@ _MAX_VRT_DASK_CHUNKS = 50_000
 def read_vrt(source: str, *,
              dtype: str | np.dtype | None = None,
              window: tuple | None = None,
+             overview_level: int | None = None,
              band: int | None = None,
              name: str | None = None,
              chunks: int | tuple | None = None,
              gpu: bool = False,
              max_pixels: int | None = None,
+             max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
+             on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
              missing_sources: str = 'raise',
              allow_rotated: bool = False,
              allow_unparseable_crs: bool = False,
@@ -165,6 +174,39 @@ def read_vrt(source: str, *,
     )
 
     source = _coerce_path(source)
+
+    # Shared dispatcher-kwarg validator so direct callers see the same
+    # rejections as ``open_geotiff`` (issue #2175 / parent #2162). For
+    # ``read_vrt`` the helper rejects ``on_gpu_failure`` (VRT reads do
+    # not go through a GPU decoder pipeline), ``max_cloud_bytes`` (the
+    # VRT reader does not consume the cloud-byte budget, issue #1974),
+    # and validates ``overview_level``'s type. ``missing_sources`` and
+    # ``band_nodata`` are legitimate VRT kwargs so the helper's
+    # VRT-only guard is a no-op here. ``gpu=False`` is passed so that
+    # an explicit ``on_gpu_failure`` is rejected regardless of the
+    # ``read_vrt(gpu=)`` output-device kwarg.
+    _validate_dispatch_kwargs(
+        source=source,
+        gpu=False,
+        chunks=chunks,
+        overview_level=overview_level,
+        on_gpu_failure=on_gpu_failure,
+        missing_sources=missing_sources,
+        band_nodata=band_nodata,
+        max_cloud_bytes=max_cloud_bytes,
+    )
+
+    # ``overview_level`` is not consumed by ``read_vrt`` (the VRT XML
+    # references its own source files; overview selection would need to
+    # apply to each one). ``overview_level=0`` matches the documented
+    # "full resolution" default, so treat it as a no-op. Mirrors the
+    # existing rejection inside ``open_geotiff``'s VRT branch
+    # (issue #1685).
+    if overview_level not in (None, 0):
+        raise ValueError(
+            "overview_level is not supported for VRT sources. "
+            "VRT references its own source files; pass overview_level "
+            "to open_geotiff on a .tif source, or drop the kwarg.")
 
     # Reject non-positive chunk sizes up front so the VRT dask path
     # surfaces the same error as ``read_geotiff_dask`` (#1776). Without
