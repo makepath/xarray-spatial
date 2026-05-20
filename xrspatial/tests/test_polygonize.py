@@ -515,6 +515,104 @@ def test_polygonize_cupy_float_tolerance_matches_numpy_2151(data):
         assert_allclose(areas_cp[v], a, atol=1e-10)
 
 
+# --- Dask float tolerance regression tests (#2171) ---
+
+@dask_array_available
+def test_polygonize_dask_float_tolerance_repro_2171():
+    """The original `[[1.0, 1.000001]]` repro from #2171.
+
+    The numpy path and the single-chunk Dask path return one polygon
+    because `_is_close` (atol=1e-8, rtol=1e-5) groups the two near-equal
+    values.  Before the fix the (1, 1) chunked Dask run returned two
+    polygons because the chunk-stitching step keyed on raw float values.
+    """
+    data = np.array([[1.0, 1.000001]], dtype=np.float64)
+
+    vals_np, polys_np = polygonize(xr.DataArray(data))
+    vals_single, polys_single = polygonize(
+        xr.DataArray(da.from_array(data, chunks=data.shape)))
+    vals_multi, polys_multi = polygonize(
+        xr.DataArray(da.from_array(data, chunks=(1, 1))))
+
+    assert len(polys_np) == 1
+    assert len(polys_single) == 1
+    assert len(polys_multi) == 1
+
+    # All three backends pick the same representative value.
+    assert vals_np == vals_single == vals_multi
+
+
+@dask_array_available
+@pytest.mark.parametrize(
+    "data,chunks",
+    [
+        # Single row, two near-equal cells, one cell per chunk.
+        (np.array([[1.0, 1.000001]], dtype=np.float64), (1, 1)),
+        # 2x2 with near-equal floats and a clearly different value,
+        # each cell in its own chunk.
+        (np.array([[1.0, 1.000001], [1.000001, 2.0]], dtype=np.float64),
+         (1, 1)),
+        # 3x3 with near-equal floats and a distinct value column.
+        (np.array([
+            [1.0, 1.000001, 2.0],
+            [1.000001, 1.0, 2.0],
+            [1.0, 1.0, 2.0],
+        ], dtype=np.float64), (1, 1)),
+        # Larger pattern at a slightly bigger chunk size to exercise
+        # multiple boundary segments per chunk.
+        (np.array([
+            [1.0, 1.000001, 1.0, 2.0],
+            [1.000001, 1.0, 1.000001, 2.0],
+            [1.0, 1.000001, 1.0, 2.0],
+            [1.000001, 1.0, 1.000001, 2.0],
+        ], dtype=np.float64), (2, 2)),
+    ],
+    ids=["1x2_chunks_1x1", "2x2_chunks_1x1", "3x3_chunks_1x1",
+         "4x4_chunks_2x2"],
+)
+def test_polygonize_dask_float_tolerance_matches_numpy_2171(data, chunks):
+    """Multi-chunk Dask must match numpy on near-equal float inputs.
+
+    The Dask chunk-stitching step must use the same `_is_close`
+    tolerance the numpy/numba path uses inside a single chunk so the
+    polygon count and per-value areas are independent of chunking.
+    """
+    raster_np = xr.DataArray(data)
+    raster_da = xr.DataArray(da.from_array(data, chunks=chunks))
+
+    vals_np, polys_np = polygonize(raster_np, connectivity=4)
+    vals_da, polys_da = polygonize(raster_da, connectivity=4)
+
+    assert len(polys_np) == len(polys_da), (
+        f"polygon count differs: numpy={len(polys_np)} "
+        f"dask={len(polys_da)}; numpy values={vals_np}, "
+        f"dask values={vals_da}"
+    )
+
+    areas_np = _area_by_value(vals_np, polys_np)
+    areas_da = _area_by_value(vals_da, polys_da)
+
+    # Per-value areas must agree under the tolerance: dask may report a
+    # nearby float (e.g. 1.000001 vs 1.0) as the bucket representative,
+    # so match each numpy bucket to the closest dask bucket within
+    # _is_close tolerance.
+    atol = 1e-8
+    rtol = 1e-5
+    unmatched_da = dict(areas_da)
+    for v_np, a_np in areas_np.items():
+        match = None
+        for v_da in unmatched_da:
+            if abs(v_da - v_np) <= atol + rtol * abs(v_np):
+                match = v_da
+                break
+        assert match is not None, (
+            f"numpy value {v_np!r} not found in dask values "
+            f"{list(unmatched_da.keys())}"
+        )
+        assert_allclose(unmatched_da.pop(match), a_np, atol=1e-10)
+    assert not unmatched_da, f"extra dask buckets: {unmatched_da}"
+
+
 # --- Performance-related regression tests (#1008) ---
 
 def test_polygonize_1008_jit_merge_helpers():
