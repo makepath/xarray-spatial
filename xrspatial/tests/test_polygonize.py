@@ -1170,3 +1170,97 @@ class TestPolygonizeInputValidation:
         from xrspatial.polygonize import polygonize
         with pytest.raises(TypeError, match="xarray.DataArray"):
             polygonize(self._good_raster(), mask=np.ones((4, 4), dtype=bool))
+
+
+# =====================================================================
+# Issue #2149: GeoDataFrame output drops input CRS
+# =====================================================================
+
+
+@pytest.mark.skipif(gpd is None, reason="geopandas not installed")
+class TestPolygonizeCRSPropagation:
+    """polygonize(return_type='geopandas') preserves the raster CRS (#2149)."""
+
+    @staticmethod
+    def _raster_with_attrs(**attrs):
+        data = np.array([[0, 0, 1], [0, 4, 0], [0, 0, 0]], dtype=np.int32)
+        return xr.DataArray(
+            data,
+            dims=('y', 'x'),
+            coords={'y': np.arange(3), 'x': np.arange(3)},
+            attrs=attrs,
+        )
+
+    def test_crs_attr_epsg_string(self):
+        raster = self._raster_with_attrs(crs="EPSG:4326")
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 4326
+
+    def test_crs_attr_epsg_int(self):
+        raster = self._raster_with_attrs(crs=3857)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 3857
+
+    def test_crs_wkt_attr(self):
+        # Use pyproj if available to get a canonical WKT.
+        pyproj = pytest.importorskip("pyproj")
+        wkt = pyproj.CRS.from_epsg(4326).to_wkt()
+        raster = self._raster_with_attrs(crs_wkt=wkt)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 4326
+
+    def test_no_crs_attr_yields_none(self):
+        """A raster without CRS info should still produce a GeoDataFrame
+        (with crs=None), not crash."""
+        data = np.array([[0, 0, 1], [0, 4, 0], [0, 0, 0]], dtype=np.int32)
+        raster = xr.DataArray(data, dims=('y', 'x'))
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is None
+
+    def test_unparseable_crs_does_not_crash(self):
+        """An invalid CRS attr should not break the polygonize call."""
+        raster = self._raster_with_attrs(crs="not a real crs at all")
+        # Should not raise; just yields no CRS on the GeoDataFrame.
+        df = polygonize(raster, return_type="geopandas")
+        assert isinstance(df, gpd.GeoDataFrame)
+
+    def test_crs_prefers_attrs_over_rio(self):
+        """When both attrs['crs'] and rio.crs exist, attrs wins."""
+        pytest.importorskip("rioxarray")
+        raster = self._raster_with_attrs(crs="EPSG:4326")
+        # rio.write_crs stores the CRS on a spatial_ref coord, not in
+        # attrs['crs'], so re-setting attrs['crs'] below is what makes
+        # the precedence assertion meaningful.
+        raster = raster.rio.write_crs("EPSG:3857")
+        raster.attrs['crs'] = "EPSG:4326"
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs.to_epsg() == 4326
+
+    def test_crs_from_rioxarray_only(self):
+        """rioxarray's CRS should be picked up when no attrs are set."""
+        pytest.importorskip("rioxarray")
+        data = np.array([[0, 0, 1], [0, 4, 0], [0, 0, 0]], dtype=np.int32)
+        raster = xr.DataArray(
+            data,
+            dims=('y', 'x'),
+            coords={'y': np.arange(3), 'x': np.arange(3)},
+        )
+        raster = raster.rio.write_crs("EPSG:3857")
+        # rioxarray adds a spatial_ref coord but typically does not write
+        # ``attrs['crs']`` on the DataArray itself.  Force-clear in case.
+        raster.attrs.pop('crs', None)
+        raster.attrs.pop('crs_wkt', None)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 3857
+
+    def test_no_crs_attr_simplify_still_works(self):
+        """CRS propagation must not interact badly with simplify."""
+        raster = self._raster_with_attrs(crs="EPSG:4326")
+        df = polygonize(
+            raster, return_type="geopandas", simplify_tolerance=0.5)
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 4326
