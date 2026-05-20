@@ -1434,3 +1434,39 @@ def _finalize_lazy_read_attrs(
     )
 
     return attrs
+
+
+def _apply_caller_dtype_cast(
+    attrs: dict,
+    *,
+    caller_dtype,
+    has_nodata: bool,
+) -> None:
+    """Stamp ``attrs['nodata_dtype_cast']`` from a caller-supplied ``dtype=``.
+
+    Companion to :func:`_finalize_lazy_read_attrs` for the two dask
+    backends (issue #2178). The helper's ``dtype`` argument doubles as
+    the resolved graph dtype (driving ``masked_nodata``) and the
+    caller-supplied cast attr (driving ``nodata_dtype_cast``); the
+    dask paths must keep those separate because ``mask_nodata=True``
+    on an integer source auto-promotes the graph dtype to ``float64``
+    without the caller asking, and that auto-promotion must not leak
+    out as ``nodata_dtype_cast``.
+
+    Call this immediately after :func:`_finalize_lazy_read_attrs` to
+    overwrite the attr with the caller's intent:
+
+    * ``caller_dtype is None`` -- the caller did not ask for a cast;
+      drop any value the helper wrote.
+    * ``caller_dtype is not None`` AND ``has_nodata`` -- the caller
+      asked for a cast on a source with a declared sentinel; write
+      ``np.dtype(caller_dtype).name``.
+    * ``caller_dtype is not None`` AND not ``has_nodata`` -- no
+      sentinel was declared, so the attr is meaningless and should
+      stay absent (matches the pre-helper contract where
+      ``_set_nodata_attrs(..., nodata=None)`` short-circuited).
+    """
+    if caller_dtype is None:
+        attrs.pop('nodata_dtype_cast', None)
+    elif has_nodata:
+        attrs['nodata_dtype_cast'] = np.dtype(caller_dtype).name
