@@ -460,7 +460,29 @@ def test_polygonize_dask_cupy_matches_numpy(chunks):
 
 
 @cuda_and_cupy_available
-def test_polygonize_cupy_float_tolerance_matches_numpy_2151():
+@pytest.mark.parametrize(
+    "data",
+    [
+        # Adjacent near-equal values, the originally reported pattern.
+        np.array([
+            [1.0, 1.000001, 2.0],
+            [1.000001, 1.0, 2.0],
+            [3.0, 3.0, 2.0],
+        ], dtype=np.float64),
+        # Transitivity edge case: three values 1.0, 1.000009, 1.000018 where
+        # 1.0 and 1.000018 are NOT pairwise close by ``_is_close`` but a
+        # value-only grouping heuristic would chain them transitively.  The
+        # CPU spatial CCL keeps them in separate regions when they are not
+        # bridged by an adjacent intermediate pixel; the cupy backend must
+        # match.
+        np.array([
+            [1.0, 1.000018],
+            [1.000009, 3.0],
+        ], dtype=np.float64),
+    ],
+    ids=["adjacent_near_equal", "transitive_non_adjacent"],
+)
+def test_polygonize_cupy_float_tolerance_matches_numpy_2151(data):
     """CuPy backend must use the same float tolerance as the numpy/numba
     path for grouping pixels into regions (#2151).
 
@@ -470,12 +492,6 @@ def test_polygonize_cupy_float_tolerance_matches_numpy_2151():
     values.
     """
     import cupy
-
-    data = np.array([
-        [1.0, 1.000001, 2.0],
-        [1.000001, 1.0, 2.0],
-        [3.0, 3.0, 2.0],
-    ], dtype=np.float64)
 
     raster_np = xr.DataArray(data)
     vals_np, polys_np = polygonize(raster_np, connectivity=4)
