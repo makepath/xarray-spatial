@@ -2245,6 +2245,11 @@ class TestLikeYOrientation2170:
         result = rasterize(geom, like=like, bounds=(0, 0, 4, 4), fill=0)
         # With explicit bounds, output coords are rebuilt descending,
         # which is the documented behaviour for any resized output.
-        assert result.y.values[0] > result.y.values[-1]
+        # Lock the exact coord centres so an off-by-one in the rebuild
+        # path would surface here instead of silently passing.
+        np.testing.assert_array_equal(
+            result.y.values, np.array([3.5, 2.5, 1.5, 0.5]))
+        np.testing.assert_array_equal(
+            result.x.values, np.array([0.5, 1.5, 2.5, 3.5]))
         # And world-coord selection still works correctly.
         assert float(result.sel(y=0.5, x=0.5, method='nearest').item()) == 1.0

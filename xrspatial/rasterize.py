@@ -12,7 +12,7 @@ Supports numpy, cupy, dask+numpy, and dask+cupy backends.
 from __future__ import annotations
 
 import warnings
-from typing import Optional, Tuple, Union
+from typing import NamedTuple, Optional, Tuple, Union
 
 import numpy as np
 import shapely
@@ -1924,6 +1924,24 @@ def _parse_input(geometries, column=None, columns=None):
     return geom_list, props_array, None
 
 
+class _LikeGrid(NamedTuple):
+    """Grid attributes extracted from a template DataArray.
+
+    Returned by :func:`_extract_grid_from_like`.  Using a named tuple
+    instead of a bare tuple keeps the call site readable as more
+    template-derived attributes accrete over time.
+    """
+    width: int
+    height: int
+    bounds: Tuple[float, float, float, float]
+    dtype: np.dtype
+    x_coord: xr.DataArray
+    y_coord: xr.DataArray
+    extra_coords: dict
+    attrs: dict
+    y_ascending: bool
+
+
 def _extract_grid_from_like(like):
     """Extract width, height, bounds, dtype from a template DataArray.
 
@@ -1963,8 +1981,12 @@ def _extract_grid_from_like(like):
     # at ymax (standard image convention), so if the template's y is
     # ascending (low-to-high), the burned rows have to be flipped before
     # we hand back the coords or downstream coord-aware ops line up
-    # against the wrong rows.  Only look at the first/last sample; the
-    # irregular-spacing case is handled separately.
+    # against the wrong rows.  Assumes ``like.y`` is monotonic -- only
+    # the first and last samples are inspected.  Non-monotonic or
+    # duplicate-valued coords (e.g. stitched templates) are out of
+    # scope and are handled by the irregular-spacing path separately.
+    # The x-axis is assumed ascending; descending-x templates would hit
+    # the same bug class and are not supported here.
     y_ascending = height > 1 and float(y[-1]) > float(y[0])
 
     # Carry through any non-dim coords (e.g. rioxarray's ``spatial_ref``
@@ -1975,9 +1997,17 @@ def _extract_grid_from_like(like):
         k: v for k, v in like.coords.items() if k not in ('x', 'y')
     }
 
-    return (width, height, (xmin, ymin, xmax, ymax), dt,
-            like.coords['x'], like.coords['y'],
-            extra_coords, dict(like.attrs), y_ascending)
+    return _LikeGrid(
+        width=width,
+        height=height,
+        bounds=(xmin, ymin, xmax, ymax),
+        dtype=dt,
+        x_coord=like.coords['x'],
+        y_coord=like.coords['y'],
+        extra_coords=extra_coords,
+        attrs=dict(like.attrs),
+        y_ascending=y_ascending,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2158,10 +2188,16 @@ def rasterize(
     like_y_ascending = False
     bounds_explicit = bounds is not None
     if like is not None:
-        (like_width, like_height, like_bounds, like_dtype,
-         like_x_coord, like_y_coord, like_extra_coords, like_attrs,
-         like_y_ascending) = \
-            _extract_grid_from_like(like)
+        grid = _extract_grid_from_like(like)
+        like_width = grid.width
+        like_height = grid.height
+        like_bounds = grid.bounds
+        like_dtype = grid.dtype
+        like_x_coord = grid.x_coord
+        like_y_coord = grid.y_coord
+        like_extra_coords = grid.extra_coords
+        like_attrs = grid.attrs
+        like_y_ascending = grid.y_ascending
 
     # Parse input geometries
     geom_list, props_array, inferred_bounds = _parse_input(
