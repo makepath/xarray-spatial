@@ -232,6 +232,15 @@ def _follow(
 # Generator of numba-compatible comparison functions for values.
 # If both values are integers use a fast equality operator, otherwise use a
 # slower floating-point comparison like numpy.isclose.
+#
+# Inf handling (issue #2174):  the plain tolerance check above misbehaves on
+# infinities.  ``abs(1.0 - inf) = inf`` and ``atol + rtol*abs(inf) = inf`` so
+# ``inf <= inf`` is True, which would merge a finite cell into an adjacent
+# Inf region.  ``abs(inf - inf) = nan`` and ``nan <= x = False`` would also
+# split two same-sign Inf cells.  Branch on whether either operand is
+# infinite and fall back to exact equality there: +inf == +inf, -inf == -inf,
+# +inf != -inf, and finite never equals inf.  NaN semantics are unchanged
+# (any comparison with NaN is False).
 @generated_jit(nogil=True, nopython=True)
 def _is_close(
     reference: Union[int, float],
@@ -243,8 +252,14 @@ def _is_close(
     else:
         atol = 1e-8
         rtol = 1e-5
-        return lambda reference, value: \
-            abs(value - reference) <= (atol + rtol*abs(reference))
+
+        def impl(reference, value):
+            # Exact equality short-circuit handles ±inf == ±inf correctly
+            # and finite-vs-inf falls through as not close.
+            if np.isinf(reference) or np.isinf(value):
+                return value == reference
+            return abs(value - reference) <= (atol + rtol*abs(reference))
+        return impl
 
 
 # Calculate region connectivity for the specified values raster and optional
