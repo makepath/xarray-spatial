@@ -652,6 +652,23 @@ def reproject(
                 f"{sorted(_VERTICAL_DATUM_EPSG)} or None."
             )
 
+    # Normalize 3-D inputs to canonical (y, x, band) layout.
+    # The per-chunk workers slice the source as ``source_data[r:, c:]`` and
+    # assume the band axis is trailing. A rasterio/rioxarray-style
+    # ``(band, y, x)`` input would otherwise slice the band/y axes instead
+    # of the y/x axes and either crash or return wrong-shape data (#2182).
+    # We record the input's original dim order so the output can be
+    # transposed back at the end, preserving downstream expectations.
+    _input_dims = tuple(raster.dims)
+    if raster.ndim == 3:
+        _ydim_in, _xdim_in = _find_spatial_dims(raster)
+        _band_dims_in = [d for d in _input_dims
+                         if d not in (_ydim_in, _xdim_in)]
+        _band_dim_in = _band_dims_in[0] if _band_dims_in else None
+        _canonical = (_ydim_in, _xdim_in, _band_dim_in)
+        if _band_dim_in is not None and _input_dims != _canonical:
+            raster = raster.transpose(*_canonical)
+
     # Resolve CRS
     src_crs = _resolve_crs(source_crs)
     if src_crs is None:
@@ -858,6 +875,14 @@ def reproject(
         name=name or raster.name,
         attrs=out_attrs,
     )
+
+    # Preserve the input's dim order so a ``(band, y, x)`` source produces a
+    # ``(band, y, x)`` output (#2182). The internal pipeline always builds the
+    # array as ``(y, x, band)`` for 3-D rasters; transpose back here.
+    if result.ndim == 3 and set(_input_dims) == set(result.dims):
+        if tuple(result.dims) != _input_dims:
+            result = result.transpose(*_input_dims)
+
     return result
 
 
