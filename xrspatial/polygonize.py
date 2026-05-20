@@ -267,6 +267,13 @@ def _bucket_key_for_value(boundary_by_value, val):
 
     This keeps Dask chunk-stitching consistent with the tolerance-based
     grouping the NumPy / numba path uses inside a single chunk (#2171).
+
+    Performance note: the float branch is a linear scan over existing
+    keys, so total cost is O(B^2) in the number of distinct float
+    buckets B.  Polygonize inputs in practice have a small B (a handful
+    of categorical values), so the scan is cheap.  If a workload with
+    many thousand distinct float buckets shows up, swap the scan for a
+    sorted-keys structure (e.g. bisect over a sorted list).
     """
     # Integer-valued rasters use exact equality, so the existing dict
     # lookup is already correct -- skip the linear scan.
