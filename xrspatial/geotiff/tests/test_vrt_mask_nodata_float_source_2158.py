@@ -18,7 +18,6 @@ the inline masking is skipped.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from xrspatial.geotiff import read_vrt
 from xrspatial.geotiff._writer import write
@@ -225,3 +224,70 @@ def test_masked_vs_unmasked_differ_only_at_sentinels(tmp_path):
     # Non-sentinel pixels bit-identical between the two reads.
     np.testing.assert_array_equal(masked[~nan_positions],
                                   unmasked[~sentinel_positions])
+
+
+# ---------------------------------------------------------------------------
+# Integer source feeding a float-dataType VRT: the other branch the fix gated.
+# ---------------------------------------------------------------------------
+
+
+def _write_uint16_with_sentinel(tmp_path, sentinel=65535,
+                                 filename='uint16_2158.tif'):
+    """uint16 GeoTIFF with a matching sentinel.
+
+    Used to exercise the integer-source-feeding-float-VRT promotion at
+    ``_vrt.py:1351-1390``. With ``mask_nodata=True`` the sentinel pixel
+    surfaces as NaN in the float buffer; with ``mask_nodata=False`` the
+    literal integer value flows through the int->float cast and lands
+    as ``65535.0``.
+    """
+    band = np.array([[1, 2], [3, sentinel]], dtype=np.uint16)
+    p = str(tmp_path / filename)
+    write(band, p, nodata=sentinel, compression='none', tiled=False)
+    return p, band
+
+
+def test_int_source_float_vrt_mask_nodata_false_keeps_literal(tmp_path):
+    """Integer source feeding a Float32 VRT preserves the literal sentinel.
+
+    Pins the second branch of the inline masking that #2158 gated.
+    Before the fix, ``_vrt._read_data`` ran the int->float-with-NaN
+    promotion unconditionally, so even ``mask_nodata=False`` lost the
+    sentinel. After the fix the integer source pixel survives the
+    int->float cast as ``65535.0`` and ``masked_nodata`` reflects
+    that no masking ran.
+    """
+    src, _ = _write_uint16_with_sentinel(tmp_path)
+    vrt = _build_vrt(tmp_path, src, 'Float32', 65535,
+                     filename='int_float_2158.vrt', shape=(2, 2))
+
+    r = read_vrt(vrt, mask_nodata=False)
+
+    assert r.dtype == np.float32
+    # No NaN substitution -- the sentinel survives as a literal float.
+    assert not np.isnan(r.values).any()
+    assert r.values[1, 1] == np.float32(65535.0)
+    assert r.values[0, 0] == 1.0
+    assert r.attrs.get('nodata') == 65535.0
+    # Buffer is not NaN-aware even though dtype is float.
+    assert r.attrs.get('masked_nodata') is False
+
+
+def test_int_source_float_vrt_default_still_promotes(tmp_path):
+    """Default ``mask_nodata=True`` still NaN-masks the int->float promotion.
+
+    Baseline that documents the pre-#2158 contract for the integer
+    source path: the existing #1616 behavior is unchanged when the
+    opt-out is not requested.
+    """
+    src, _ = _write_uint16_with_sentinel(tmp_path)
+    vrt = _build_vrt(tmp_path, src, 'Float32', 65535,
+                     filename='int_float_default_2158.vrt', shape=(2, 2))
+
+    r = read_vrt(vrt)
+
+    assert r.dtype == np.float32
+    assert np.isnan(r.values[1, 1])
+    assert r.values[0, 0] == 1.0
+    assert r.attrs.get('nodata') == 65535.0
+    assert r.attrs.get('masked_nodata') is True

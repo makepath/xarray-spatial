@@ -415,20 +415,30 @@ def read_vrt(source: str, *,
     # follow-up).
     pre_cast_dtype = np.dtype(str(arr.dtype))
 
-    # When the inline float-NaN masking inside ``_vrt._read_data`` already
-    # ran (float source + float VRT dataType + declared sentinel), the
-    # integer helper above is a no-op but the resulting float buffer may
-    # already carry NaNs at the sentinel locations. Promote
-    # ``nodata_pixels_present`` to reflect that, since a downstream "any
-    # nodata?" check should answer yes for those tiles too.
+    # Float-NaN proxy for ``nodata_pixels_present``. The signal for a
+    # float buffer can come from any of three places, only one of which
+    # actually fires per call:
+    #
+    # * ``mask_nodata=True`` + float source + declared sentinel: the
+    #   inline NaN masking in ``_vrt._read_data`` rewrote sentinels to
+    #   NaN, so ``np.isnan(arr).any()`` is the presence answer.
+    # * ``mask_nodata=False`` + declared sentinel: ``_vrt_scan_for_sentinel``
+    #   above already set ``nodata_pixels_present`` from a literal-value
+    #   scan, so this block short-circuits via ``not present``.
+    # * ``mask_nodata=True`` + float source with no inline masking (e.g.
+    #   source's natural NaN values, sentinel absent from window): the
+    #   NaN proxy catches the in-buffer NaNs.
     #
     # Invariant: at most one branch sets ``nodata_pixels_present`` to True
     # before this block runs. ``_vrt_mask_with_presence`` only sets True
     # on integer buffers (it short-circuits on float dtype), and
     # ``_vrt_scan_for_sentinel`` is gated on the ``mask_nodata=False``
     # branch above. Either way, the float-NaN proxy below is the only
-    # presence signal for float buffers, so the ``not present`` guard
-    # is sufficient -- we will not double-scan the same buffer.
+    # remaining presence signal for float buffers, so the ``not present``
+    # guard is sufficient -- we will not double-scan the same buffer.
+    # The ``mask_nodata=False`` arm fix from #2158 means the inline NaN
+    # masking no longer runs under the opt-out; the ``_vrt_scan_for_sentinel``
+    # short-circuit above is what keeps the presence attr honest there.
     if (nodata is not None
             and pre_cast_dtype.kind == 'f'
             and not nodata_pixels_present):

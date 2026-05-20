@@ -1352,13 +1352,12 @@ def read_vrt(vrt_path: str, *, window=None,
             # passing ``mask_nodata=False`` to ``read_vrt`` still lost
             # the literal sentinel pixels. See issue #2158.
             src_nodata = src.nodata if src.nodata is not None else nodata
-            if not mask_nodata:
-                pass
-            elif src_nodata is not None and src_arr.dtype.kind == 'f':
+            if mask_nodata and src_nodata is not None and src_arr.dtype.kind == 'f':
                 src_arr = src_arr.copy()
                 sentinel = src_arr.dtype.type(src_nodata)
                 src_arr[src_arr == sentinel] = np.nan
-            elif (src_nodata is not None
+            elif (mask_nodata
+                    and src_nodata is not None
                     and src_arr.dtype.kind in ('u', 'i')
                     and result.dtype.kind == 'f'):
                 # Integer source feeding a float-dataType VRT.  Without
