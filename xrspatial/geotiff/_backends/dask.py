@@ -27,7 +27,11 @@ from .._coords import (
     geo_to_coords as _geo_to_coords,
 )
 from .._reader import read_to_array as _read_to_array
-from .._validation import _validate_chunks_arg, _validate_dtype_cast
+from .._validation import (
+    _validate_chunks_arg,
+    _validate_dtype_cast,
+    _validate_overview_level_arg,
+)
 from .vrt import read_vrt
 
 
@@ -104,6 +108,12 @@ def read_geotiff_dask(source: str, *,
     import dask.array as da
 
     from .._reader import _coerce_path
+
+    # Match ``open_geotiff``'s ordering so a bad ``overview_level`` is
+    # reported before unrelated source / ``chunks=`` errors mask it
+    # (issue #2160). ``select_overview_ifd`` revalidates as defense in
+    # depth.
+    _validate_overview_level_arg(overview_level)
 
     source = _coerce_path(source)
 
