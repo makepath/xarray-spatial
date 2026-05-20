@@ -135,8 +135,15 @@ def _validate_regular_axis(coords, axis_name, func_name, rtol=_REGULAR_COORD_RTO
             f"{func_name}(): coordinate '{axis_name}' contains non-finite "
             f"values (NaN or inf)."
         )
-    diffs = np.diff(arr.astype(np.float64))
+    # np.asarray skips the copy when arr is already float64; np.diff promotes
+    # ints to int64, which is fine but we want float steps for the median /
+    # tolerance math below.
+    diffs = np.diff(np.asarray(arr, dtype=np.float64))
     # Strict monotonicity: every step has the same sign and is non-zero.
+    # `diffs > 0` AND `diffs < 0` are both False for zero steps (repeated
+    # coords), so the combined check rejects them. Do NOT replace this with
+    # a sign-only test like `np.all(np.sign(diffs) == np.sign(diffs[0]))` --
+    # that variant accepts zero steps and lets a repeated coord through.
     if not (np.all(diffs > 0) or np.all(diffs < 0)):
         raise ValueError(
             f"{func_name}(): coordinate '{axis_name}' must be strictly "

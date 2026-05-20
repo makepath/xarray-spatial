@@ -2019,7 +2019,8 @@ class TestValidateSourceCoords:
             coords={'y': y, 'x': x},
             attrs={'crs': 'EPSG:4326'},
         )
-        with pytest.raises(ValueError, match=r"strictly"):
+        with pytest.raises(ValueError,
+                           match=r"coordinate 'x' must be strictly monotonic"):
             reproject(raster, 'EPSG:3857')
 
     def test_reproject_rejects_nan_in_coord(self):
