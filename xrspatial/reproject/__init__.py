@@ -88,6 +88,93 @@ def _find_spatial_dims(raster):
     return dims[-2], dims[-1]
 
 
+# Default tolerance for the regular-spacing check. Coordinates loaded from
+# real GeoTIFFs can drift a few ULPs from perfectly uniform after pixel-to-
+# world transforms, so 1e-6 (relative) is loose enough to accept those while
+# still catching the single-pixel perturbation case in #2184.
+_REGULAR_COORD_RTOL = 1e-6
+
+
+def _validate_regular_axis(coords, axis_name, func_name, rtol=_REGULAR_COORD_RTOL):
+    """Validate that 1-D coordinate array is strictly monotonic and regular.
+
+    Pixel-resolution math in `_source_bounds` and the chunk workers assumes
+    a uniform grid. Without this check, irregular or non-monotonic coords
+    silently produce wrong georeferencing (see #2184).
+
+    Parameters
+    ----------
+    coords : array-like
+        1-D coordinate values along one axis.
+    axis_name : str
+        Name of the axis ("x" or "y") for the error message.
+    func_name : str
+        Calling function name for the error prefix.
+    rtol : float
+        Relative tolerance for spacing regularity.
+
+    Raises
+    ------
+    ValueError
+        If coords contain non-finite values, are not strictly monotonic,
+        or have spacing that varies by more than ``rtol`` relative to the
+        median step.
+    """
+    arr = np.asarray(coords)
+    if arr.ndim != 1:
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' must be 1-D, "
+            f"got shape {arr.shape}."
+        )
+    if arr.size < 2:
+        # A single-pixel raster has no spacing to validate; the caller
+        # will fall back to res=1.0 in _source_bounds, which is fine.
+        return
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' contains non-finite "
+            f"values (NaN or inf)."
+        )
+    # np.asarray skips the copy when arr is already float64; np.diff promotes
+    # ints to int64, which is fine but we want float steps for the median /
+    # tolerance math below.
+    diffs = np.diff(np.asarray(arr, dtype=np.float64))
+    # Strict monotonicity: every step has the same sign and is non-zero.
+    # `diffs > 0` AND `diffs < 0` are both False for zero steps (repeated
+    # coords), so the combined check rejects them. Do NOT replace this with
+    # a sign-only test like `np.all(np.sign(diffs) == np.sign(diffs[0]))` --
+    # that variant accepts zero steps and lets a repeated coord through.
+    if not (np.all(diffs > 0) or np.all(diffs < 0)):
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' must be strictly "
+            f"monotonic (all ascending or all descending). The reproject "
+            f"pipeline assumes a uniformly-spaced grid; see #2184."
+        )
+    median_step = float(np.median(diffs))
+    abs_med = abs(median_step)
+    deviation = np.abs(diffs - median_step)
+    worst = float(np.max(deviation))
+    if worst > rtol * abs_med:
+        # Report the index of the worst step in the original coords so the
+        # caller can locate the offending sample without re-running diff.
+        worst_idx = int(np.argmax(deviation))
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' is not regularly "
+            f"spaced. Median step is {median_step!r}; worst deviation is "
+            f"{worst!r} at index {worst_idx} (between {axis_name}[{worst_idx}]"
+            f"={float(arr[worst_idx])!r} and {axis_name}[{worst_idx + 1}]"
+            f"={float(arr[worst_idx + 1])!r}). The reproject pipeline "
+            f"assumes a uniformly-spaced grid; see #2184."
+        )
+
+
+def _validate_source_coords(raster, func_name):
+    """Validate both spatial axes of a raster before any reproject work."""
+    ydim, xdim = _find_spatial_dims(raster)
+    _validate_regular_axis(raster.coords[ydim].values, 'y', func_name)
+    _validate_regular_axis(raster.coords[xdim].values, 'x', func_name)
+
+
 def _source_bounds(raster):
     """Extract (left, bottom, right, top) from a DataArray's coordinates."""
     ydim, xdim = _find_spatial_dims(raster)
@@ -630,6 +717,13 @@ def reproject(
     """
     _validate_raster(raster, func_name='reproject', name='raster',
                      ndim=(2, 3))
+
+    # Reject irregular / non-monotonic source coords before any CRS
+    # resolution or grid math. _source_bounds() infers pixel size from
+    # only the first two coord samples and downstream pixel math assumes
+    # uniform spacing, so an unchecked irregular input would silently
+    # produce wrong georeferencing (#2184).
+    _validate_source_coords(raster, 'reproject')
 
     _validate_grid_params(
         resolution=resolution,
@@ -1751,6 +1845,11 @@ def merge(
         # (#2027). Reject 3-D up front so callers get a clear error.
         _validate_raster(r, func_name='merge', name=f'rasters[{i}]',
                          ndim=(2,))
+        # Each input must have strictly monotonic, regularly spaced spatial
+        # coords. _source_bounds() infers pixel size from only the first
+        # two samples, so irregular inputs would otherwise silently produce
+        # wrong georeferencing (#2184).
+        _validate_source_coords(r, f'merge[rasters[{i}]]')
 
     _validate_grid_params(
         resolution=resolution,
