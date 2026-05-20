@@ -1492,23 +1492,20 @@ def test_polygonize_dask_single_chunk_strict_float():
 
 @dask_array_available
 def test_polygonize_dask_multi_chunk_default_tolerance():
-    """Multi-chunk dask path must apply the default tolerance per chunk
-    so close floats merge inside each chunk and the merge step at chunk
-    boundaries does not split them further (#2173)."""
-    # Single-row raster, one chunk per column.  Each chunk holds a
-    # different float that is within atol of its neighbour, so the merge
-    # logic must connect them.
+    """Multi-chunk dask path applies the default atol/rtol both per-chunk
+    and at the chunk-stitching step, so close floats in adjacent chunks
+    bucket together (#2171, #2173).
+
+    Pairwise (not transitive) bucketing: with [1.0, 1.000009, 1.000018]
+    split across single-pixel chunks, 1.000009 is within tolerance of
+    1.0 (diff 9e-6, threshold ~1.0e-5) and joins that bucket, but
+    1.000018 is outside (diff 18e-6) and stays separate.  Total area
+    still covers the raster.
+    """
     raster = xr.DataArray(da.from_array(_REPRO_2173, chunks=(1, 1)))
     values, polygons = polygonize(raster)
-    # NOTE: The current dask merge keys polygons by exact value, so this
-    # specific multi-chunk case does not yet collapse to a single polygon.
-    # The contract asserted here is that the per-chunk tolerance is
-    # applied (each single-pixel chunk yields exactly one polygon with
-    # its own value, all three input values are accounted for, and the
-    # total area covers the raster).  Cross-chunk merge by-exact-value
-    # is in a separate rockout.
-    assert len(values) == 3
-    assert sorted(values) == sorted(_REPRO_2173[0].tolist())
+    assert len(values) == 2
+    assert_allclose(sorted(values), [1.0, 1.000018])
     total_area = sum(
         assert_polygon_valid_and_get_area(p) for p in polygons)
     assert_allclose(total_area, 3.0)
