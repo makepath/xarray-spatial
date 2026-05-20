@@ -535,6 +535,7 @@ def reproject(
     max_memory=None,
     src_vertical_crs=None,
     tgt_vertical_crs=None,
+    bounds_policy="auto",
 ):
     """Reproject a raster DataArray to a new coordinate reference system.
 
@@ -586,6 +587,32 @@ def reproject(
     tgt_vertical_crs : str or None
         Target vertical datum. Same options as *src_vertical_crs*.
         Both must be set to trigger a vertical transformation.
+    bounds_policy : {"auto", "raw", "clamp", "percentile"}, default "auto"
+        How to derive the output extent from the source extent when
+        ``bounds`` is not supplied. Only relevant when projecting near a
+        singularity (antimeridian, pole, projection edge):
+
+        - ``"raw"``: use the true projected extent of the source corners
+          and edges. No clamp, no percentile, no heuristic. The output
+          may be very large if the input straddles a projection
+          singularity. Use this when you want a true projection of the
+          source extent.
+        - ``"clamp"``: trim geographic source bounds inward by 0.01 deg
+          from +/-180 longitude and +/-90 latitude before projecting.
+          Avoids infinities at singularities. No percentile fallback.
+        - ``"percentile"``: project a dense interior grid of the source
+          extent and use the 2nd/98th percentiles of the result as the
+          output bounds. Rejects projection outliers at the cost of
+          trimming valid pixels.
+        - ``"auto"`` (default): apply ``"clamp"`` for geographic source
+          CRSes and fall back to ``"percentile"`` when the projected
+          extent is more than 50x the source extent. Matches the
+          historical behaviour.
+
+        When ``"auto"``, ``"clamp"``, or ``"percentile"`` actually alters
+        the bounds, a ``UserWarning`` is emitted naming the policy and
+        reporting the per-side delta versus the raw projected bounds.
+        Filter with ``warnings.filterwarnings`` if the crop is intentional.
 
     Returns
     -------
@@ -642,6 +669,9 @@ def reproject(
 
     _validate_resampling(resampling)
 
+    from ._grid import _validate_bounds_policy
+    _validate_bounds_policy(bounds_policy, func_name='reproject')
+
     # Reject unknown vertical-datum tokens at the API boundary so we never
     # write None into attrs['vertical_crs'] for typos / unsupported values.
     for _name, _val in (('src_vertical_crs', src_vertical_crs),
@@ -676,6 +706,7 @@ def reproject(
         src_bounds, src_shape, src_crs, tgt_crs,
         resolution=resolution, bounds=bounds,
         width=width, height=height,
+        bounds_policy=bounds_policy,
     )
     out_bounds = grid['bounds']
     out_shape = grid['shape']
@@ -1662,6 +1693,7 @@ def merge(
     chunk_size=None,
     transform_precision=16,
     name=None,
+    bounds_policy="auto",
 ):
     """Merge multiple rasters into a single mosaic.
 
@@ -1695,6 +1727,10 @@ def merge(
         Set to 0 for exact per-pixel transforms matching GDAL/rasterio.
     name : str or None
         Name for the output DataArray.
+    bounds_policy : {"auto", "raw", "clamp", "percentile"}, default "auto"
+        How to derive the unified output extent from the input rasters
+        when ``bounds`` is not supplied. See :func:`reproject` for the
+        full description of each option. Ignored when ``bounds`` is given.
 
     Returns
     -------
@@ -1760,6 +1796,9 @@ def merge(
     _validate_resampling(resampling)
     _validate_strategy(strategy)
 
+    from ._grid import _validate_bounds_policy
+    _validate_bounds_policy(bounds_policy, func_name='merge')
+
     # Resolve target CRS
     tgt_crs = _resolve_crs(target_crs)
     if tgt_crs is None:
@@ -1808,6 +1847,7 @@ def merge(
                 info['src_bounds'], info['src_shape'],
                 info['src_crs'], tgt_crs,
                 resolution=resolution,
+                bounds_policy=bounds_policy,
             )
             all_bounds.append(grid['bounds'])
         left = min(b[0] for b in all_bounds)
@@ -1824,6 +1864,7 @@ def merge(
         info0['src_bounds'], info0['src_shape'],
         info0['src_crs'], tgt_crs,
         resolution=resolution, bounds=merged_bounds,
+        bounds_policy=bounds_policy,
     )
     out_bounds = grid['bounds']
     out_shape = grid['shape']

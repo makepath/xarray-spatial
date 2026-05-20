@@ -3888,3 +3888,259 @@ class TestMerge3DRejection:
         )
         with pytest.raises(ValueError, match=r"must be 2D"):
             merge([a, b], resolution=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Issue #2187: bounds_policy parameter
+# ---------------------------------------------------------------------------
+
+class TestBoundsPolicy:
+    """reproject(): bounds_policy controls the bounds-derivation heuristics.
+
+    Without the policy knob, _compute_output_grid silently clamps
+    geographic bounds and falls back to 2/98 percentile bounds when the
+    projected extent blows up. These tests pin the four policy options:
+    auto (default, current behaviour with warnings), raw (no heuristic),
+    clamp (geographic clamp only), and percentile (force 2/98 fallback).
+    """
+
+    @staticmethod
+    def _global_geographic():
+        """Global lat/lon raster that triggers the polar / antimeridian
+        blow-up when projected to Web Mercator."""
+        data = np.random.RandomState(0).rand(50, 100).astype(np.float32)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(90, -90, 50),
+                    'x': np.linspace(-180, 180, 100)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+
+    @staticmethod
+    def _benign_geographic():
+        """Mid-latitude raster well away from any singularity."""
+        data = np.random.RandomState(0).rand(32, 32).astype(np.float32)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 32),
+                    'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+
+    def test_raw_skips_clamp_and_percentile(self):
+        """bounds_policy='raw' returns un-cropped bounds for a blow-up case.
+
+        A global geographic raster projected to Web Mercator hits the
+        polar singularity. Under 'auto' the percentile fallback fires
+        and crops the output extent. Under 'raw' the caller gets the
+        true projected extent of the corners/edges.
+        """
+        from xrspatial.reproject import reproject
+
+        r = self._global_geographic()
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            auto_result = reproject(r, 'EPSG:3857', bounds_policy='auto')
+            raw_result = reproject(r, 'EPSG:3857', bounds_policy='raw')
+
+        auto_x = auto_result.coords['x'].values
+        raw_x = raw_result.coords['x'].values
+        auto_y = auto_result.coords['y'].values
+        raw_y = raw_result.coords['y'].values
+
+        auto_x_span = auto_x.max() - auto_x.min()
+        raw_x_span = raw_x.max() - raw_x.min()
+        auto_y_span = auto_y.max() - auto_y.min()
+        raw_y_span = raw_y.max() - raw_y.min()
+
+        # Raw should be at least as wide as auto on x, and meaningfully
+        # taller on y (the polar blow-up is the y axis under EPSG:3857).
+        assert raw_x_span >= auto_x_span - 1.0
+        assert raw_y_span > auto_y_span * 1.1, (
+            f"raw y span {raw_y_span} should exceed auto {auto_y_span}"
+        )
+
+    def test_percentile_reproduces_98_2_behaviour(self):
+        """bounds_policy='percentile' matches the previous 2/98 fallback
+        even on inputs that wouldn't trigger the blow-up heuristic."""
+        from xrspatial.reproject import reproject
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._crs_utils import _resolve_crs
+
+        r = self._benign_geographic()
+        src_crs = _resolve_crs('EPSG:4326')
+        tgt_crs = _resolve_crs('EPSG:3857')
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            grid_percentile = _compute_output_grid(
+                (-5.0, 45.0, 5.0, 55.0), (32, 32),
+                src_crs, tgt_crs, bounds_policy='percentile',
+            )
+            grid_raw = _compute_output_grid(
+                (-5.0, 45.0, 5.0, 55.0), (32, 32),
+                src_crs, tgt_crs, bounds_policy='raw',
+            )
+
+        # Percentile bounds should be strictly inside raw bounds (or
+        # equal to floating-point precision) for a benign input.
+        pl, pb, pr, pt = grid_percentile['bounds']
+        rl, rb, rr, rt = grid_raw['bounds']
+        assert pl >= rl - 1.0
+        assert pr <= rr + 1.0
+        assert pb >= rb - 1.0
+        assert pt <= rt + 1.0
+
+    def test_warns_when_percentile_fires_under_auto(self):
+        """auto policy emits UserWarning when the 2/98 fallback triggers."""
+        from xrspatial.reproject import reproject
+
+        r = self._global_geographic()
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            reproject(r, 'EPSG:3857', bounds_policy='auto')
+
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        assert matched, "expected a bounds_policy warning under auto"
+        assert any('blow-up' in str(wi.message) or 'percentile' in str(wi.message)
+                   for wi in matched)
+
+    def test_warns_when_clamp_actually_trims(self):
+        """clamp policy emits UserWarning when source bounds get trimmed."""
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._crs_utils import _resolve_crs
+
+        src_crs = _resolve_crs('EPSG:4326')
+        tgt_crs = _resolve_crs('EPSG:3857')
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            _compute_output_grid(
+                (-180.0, -90.0, 180.0, 90.0), (50, 100),
+                src_crs, tgt_crs, bounds_policy='clamp',
+            )
+
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'clamp' in str(wi.message)
+        ]
+        assert matched, "expected a clamp warning on full-globe input"
+
+    def test_no_warning_on_benign_input(self):
+        """auto policy stays silent on inputs that don't trigger heuristics.
+
+        Same-units projections (UTM->UTM) have comparable spans so the
+        blow-up ratio stays below the 50x threshold and the geographic
+        clamp doesn't apply. No warning should fire.
+        """
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(32, 32).astype(np.float32)
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(5000000, 4000000, 32),
+                    'x': np.linspace(400000, 600000, 32)},
+            attrs={'crs': 'EPSG:32633'},
+        )
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            reproject(r, 'EPSG:32632', bounds_policy='auto')
+
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        assert not matched, (
+            f"unexpected bounds_policy warning(s): {[str(m.message) for m in matched]}"
+        )
+
+    def test_invalid_policy_rejected(self):
+        """Unknown bounds_policy tokens raise ValueError at the API boundary."""
+        from xrspatial.reproject import reproject
+
+        r = self._benign_geographic()
+        with pytest.raises(ValueError, match=r"bounds_policy"):
+            reproject(r, 'EPSG:3857', bounds_policy='bogus')
+
+    def test_invalid_policy_rejected_in_merge(self):
+        from xrspatial.reproject import merge
+
+        r = self._benign_geographic()
+        with pytest.raises(ValueError, match=r"bounds_policy"):
+            merge([r], target_crs='EPSG:3857', bounds_policy='bogus')
+
+    def test_explicit_bounds_skips_policy_logic(self):
+        """When the caller passes bounds, the policy heuristics don't run."""
+        from xrspatial.reproject import reproject
+
+        r = self._global_geographic()
+        # Mercator-y bounds chosen well inside the projection envelope.
+        explicit = (-2.0e7, -2.0e7, 2.0e7, 2.0e7)
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            out = reproject(
+                r, 'EPSG:3857',
+                bounds=explicit,
+                resolution=2e5,
+                bounds_policy='auto',
+            )
+
+        # No bounds_policy warning fires when bounds are explicit.
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        assert not matched
+        # Output extent reflects the explicit bounds (within one pixel).
+        out_x = out.coords['x'].values
+        out_y = out.coords['y'].values
+        assert abs(out_x.min() - explicit[0]) < 2.5e5
+        assert abs(out_x.max() - explicit[2]) < 2.5e5
+        assert abs(out_y.min() - explicit[1]) < 2.5e5
+        assert abs(out_y.max() - explicit[3]) < 2.5e5
+
+    def test_merge_passes_policy_through(self):
+        """merge() plumbs bounds_policy to _compute_output_grid."""
+        from xrspatial.reproject import merge
+
+        r = self._global_geographic()
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            merge([r], target_crs='EPSG:3857', bounds_policy='auto')
+
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        # merge() on a single global geographic raster should also
+        # trigger the percentile fallback warning under auto.
+        assert matched
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_raw_policy_dask_backend(self):
+        """bounds_policy='raw' works with a dask-backed input."""
+        from xrspatial.reproject import reproject
+
+        r = self._benign_geographic()
+        r = r.chunk({'y': 16, 'x': 16})
+        out = reproject(r, 'EPSG:3857', bounds_policy='raw')
+        # Result is also dask-backed (lazy).
+        assert hasattr(out.data, 'dask')
+        # Compute and confirm we got finite output.
+        arr = out.compute()
+        assert np.isfinite(arr.data).any()
