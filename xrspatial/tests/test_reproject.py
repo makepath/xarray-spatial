@@ -718,6 +718,147 @@ class TestMerge:
         assert computed.shape[0] > 0
 
 
+class TestMergeSameCrsYOrientation:
+    """``merge()`` same-CRS fast path must honor input y orientation (#2186).
+
+    The output of ``merge()`` is always north-up. When the source CRS
+    equals the target CRS, ``_place_same_crs`` does a direct pixel copy
+    of the source window into the output. A y-ascending source must be
+    flipped along y during placement so the result matches what
+    ``reproject(r, target_crs=r.crs)`` would emit.
+    """
+
+    @staticmethod
+    def _y_ascending_raster(values=None, shape=(16, 16),
+                            x_range=(-5, 5), y_range=(-5, 5),
+                            crs='EPSG:4326'):
+        h, w = shape
+        if values is None:
+            values = np.arange(h * w, dtype=np.float64).reshape(h, w)
+        y = np.linspace(y_range[0], y_range[1], h)  # ascending
+        x = np.linspace(x_range[0], x_range[1], w)
+        return xr.DataArray(
+            values, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': crs, 'nodata': np.nan},
+        )
+
+    def test_y_ascending_single_raster_matches_reproject(self):
+        from xrspatial.reproject import merge, reproject
+        r = self._y_ascending_raster()
+        merged = merge([r], target_crs='EPSG:4326')
+        reprojected = reproject(r, target_crs='EPSG:4326',
+                                width=merged.shape[1],
+                                height=merged.shape[0])
+        np.testing.assert_allclose(
+            merged.values, reprojected.values,
+            atol=1e-10, equal_nan=True,
+        )
+
+    def test_y_ascending_preserves_north_south_gradient(self):
+        """Encode latitude in the data and verify the row order is north-up."""
+        from xrspatial.reproject import merge
+        h, w = 16, 16
+        y_asc = np.linspace(-5.0, 5.0, h)
+        # data[i, j] = y[i] -- so y-ascending input has small values in
+        # row 0 (south) and large values in row -1 (north).
+        data = np.broadcast_to(y_asc[:, None], (h, w)).astype(np.float64)
+        r = self._y_ascending_raster(values=data)
+        merged = merge([r])
+        # Output is always north-up: row 0 (top) should hold the
+        # largest y values, row -1 (bottom) the smallest.
+        assert merged.values[0, 0] > merged.values[-1, 0]
+        np.testing.assert_allclose(merged.values[0], y_asc[-1])
+        np.testing.assert_allclose(merged.values[-1], y_asc[0])
+
+    def test_y_descending_single_raster_unchanged(self):
+        """Regression guard: north-up inputs must keep working."""
+        from xrspatial.reproject import merge, reproject
+        data = np.arange(16 * 16, dtype=np.float64).reshape(16, 16)
+        r = _make_raster(data, x_range=(-5, 5), y_range=(-5, 5))
+        merged = merge([r], target_crs='EPSG:4326')
+        reprojected = reproject(r, target_crs='EPSG:4326',
+                                width=merged.shape[1],
+                                height=merged.shape[0])
+        np.testing.assert_allclose(
+            merged.values, reprojected.values,
+            atol=1e-10, equal_nan=True,
+        )
+
+    def test_mixed_orientation_multi_raster_merge(self):
+        """Two tiles with different y orientations should merge cleanly."""
+        from xrspatial.reproject import merge
+        h, w = 16, 16
+        left_vals = np.full((h, w), 1.0)
+        right_vals = np.full((h, w), 2.0)
+        # Left tile is y-descending (north-up); right tile is y-ascending.
+        left = _make_raster(left_vals, x_range=(-10, 0), y_range=(-5, 5))
+        right = xr.DataArray(
+            right_vals, dims=['y', 'x'],
+            coords={'y': np.linspace(-5, 5, h),  # ascending
+                    'x': np.linspace(0, 10, w)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        merged = merge([left, right], resolution=1.0)
+        vals = merged.values
+        x = merged.coords['x'].values
+        left_col = vals[:, x < -2]
+        right_col = vals[:, x > 2]
+        valid_l = ~np.isnan(left_col)
+        valid_r = ~np.isnan(right_col)
+        # Up-front asserts so the test can't quietly degenerate into a
+        # no-op if the output grid shape ever shifts.
+        assert valid_l.any(), "left tile produced no valid output pixels"
+        assert valid_r.any(), "right tile produced no valid output pixels"
+        np.testing.assert_allclose(left_col[valid_l], 1.0, atol=1e-9)
+        np.testing.assert_allclose(right_col[valid_r], 2.0, atol=1e-9)
+
+    def test_mixed_orientation_gradient_alignment(self):
+        """Per-cell parity for a gradient that pins the orientation."""
+        from xrspatial.reproject import merge, reproject
+        h, w = 16, 16
+        y_asc = np.linspace(-5, 5, h)
+        x = np.linspace(-5, 5, w)
+        # values depend on y so any vertical flip is visible.
+        vals = np.broadcast_to(y_asc[:, None], (h, w)).astype(np.float64)
+        r = xr.DataArray(
+            vals, dims=['y', 'x'],
+            coords={'y': y_asc, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        merged = merge([r], target_crs='EPSG:4326')
+        # Compare row-by-row vs reproject() with the same output grid.
+        reprojected = reproject(r, target_crs='EPSG:4326',
+                                width=merged.shape[1],
+                                height=merged.shape[0])
+        np.testing.assert_allclose(
+            merged.values, reprojected.values,
+            atol=1e-10, equal_nan=True,
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_y_ascending_matches_numpy(self):
+        from xrspatial.reproject import merge
+        h, w = 32, 32
+        y_asc = np.linspace(-5, 5, h)
+        vals = np.broadcast_to(y_asc[:, None], (h, w)).astype(np.float64)
+        np_raster = xr.DataArray(
+            vals, dims=['y', 'x'],
+            coords={'y': y_asc, 'x': np.linspace(-5, 5, w)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        dask_raster = np_raster.copy()
+        dask_raster.data = da.from_array(vals, chunks=(16, 16))
+
+        numpy_result = merge([np_raster], chunk_size=16)
+        dask_result = merge([dask_raster], chunk_size=16)
+        assert isinstance(dask_result.data, da.Array)
+        np.testing.assert_allclose(
+            numpy_result.values, dask_result.compute().values,
+            atol=1e-10, equal_nan=True,
+        )
+
+
 class TestMergeMixedNodata:
     """merge() must honor each raster's own nodata sentinel."""
 
