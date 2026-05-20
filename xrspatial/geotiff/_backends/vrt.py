@@ -459,9 +459,20 @@ def read_vrt(source: str, *,
         arr = arr.astype(target)
         dtype_cast_attr = target.name
 
+    # ``masked_nodata`` must reflect whether the read path actually
+    # replaced sentinel pixels with NaN, not just whether the buffer
+    # happens to be float. With ``mask_nodata=False`` on a float-source
+    # VRT, the inline NaN-masking inside ``_vrt._read_data`` and the
+    # integer-promotion helper are both skipped, but the buffer dtype is
+    # still float -- gating on ``pre_cast_dtype.kind == 'f'`` alone would
+    # falsely claim the sentinels had been masked. Mirror the dask, GPU,
+    # and dask+GPU backends and gate on both ``mask_nodata`` and the
+    # pre-cast dtype. See issue #2159 and the contract at
+    # ``_attrs._set_nodata_attrs`` (``mask_nodata and final_dtype.kind ==
+    # 'f'``).
     _set_nodata_attrs(
         attrs, nodata,
-        masked=(pre_cast_dtype.kind == 'f'),
+        masked=(mask_nodata and pre_cast_dtype.kind == 'f'),
         pixels_present=nodata_pixels_present,
         dtype_cast=dtype_cast_attr,
     )
@@ -880,9 +891,18 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # #2135). ``dtype_cast`` records the caller-supplied ``dtype=``
     # kwarg when present so downstream can tell float-by-cast apart
     # from float-by-masking even on the lazy output.
+    # ``masked_nodata`` must reflect whether per-chunk masking actually
+    # runs in the lazy graph, not just whether the graph dtype is float.
+    # With ``mask_nodata=False`` each chunk skips the sentinel-to-NaN
+    # step, so even on a float source the in-memory buffers hold literal
+    # sentinel values. Gate on both ``mask_nodata`` and the pre-cast
+    # ``declared_dtype`` (the user ``dtype=`` cast is recorded separately
+    # via ``dtype_cast`` so we use ``declared_dtype`` here, mirroring the
+    # eager path). See issue #2159 and the contract at
+    # ``_attrs._set_nodata_attrs``.
     _set_nodata_attrs(
         attrs, nodata_meta,
-        masked=(declared_dtype.kind == 'f'),
+        masked=(mask_nodata and declared_dtype.kind == 'f'),
         pixels_present=None,
         dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
     )
