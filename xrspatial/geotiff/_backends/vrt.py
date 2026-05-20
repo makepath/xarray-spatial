@@ -15,6 +15,7 @@ import xarray as xr
 
 from .._attrs import (
     GeoTIFFMetadata,
+    _compute_georef_status_from_parts,
     _set_nodata_attrs,
     metadata_to_attrs,
 )
@@ -319,6 +320,17 @@ def read_vrt(source: str, *,
     # ``vrt.crs_wkt`` carries an empty string when the VRT XML has a
     # ``<SRS>`` element but no recognised CRS body; treat empty as
     # absent so ``metadata_to_attrs`` does not emit ``attrs['crs_wkt']=''``.
+    #
+    # ``georef_status`` (issue #2136) is computed from raw booleans and
+    # carried on the record so the VRT path stamps the same five-valued
+    # classifier the non-VRT read paths emit. ``has_crs`` mirrors
+    # ``_compute_georef_status`` by gating on ``is not None`` rather than
+    # truthiness, so a future parser change that returns ``""`` instead
+    # of ``None`` for a missing ``<SRS>`` would still route to ``none``
+    # via the empty-string check above. ``rotated_dropped=_vrt_is_rotated``
+    # matches the rotated arm on the non-VRT path: a VRT ``geo_transform``
+    # with non-zero rotation/skew lands the array in the same
+    # ``rotated_dropped`` bucket as a rotated ``ModelTransformationTag``.
     _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
     _vrt_md = GeoTIFFMetadata(
@@ -330,6 +342,11 @@ def read_vrt(source: str, *,
         # callers can detect a partial mosaic by attribute lookup. See
         # issue #1734.
         vrt_holes=list(vrt.holes) if vrt.holes else None,
+        georef_status=_compute_georef_status_from_parts(
+            has_transform=gt is not None and not _vrt_is_rotated,
+            has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
+            rotated_dropped=_vrt_is_rotated,
+        ),
     )
     attrs = metadata_to_attrs(_vrt_md)
     # When a specific band is selected, source its nodata from that
@@ -819,12 +836,20 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # Rotated VRTs drop CRS attrs alongside the transform (#2122).
     _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
+    # ``georef_status`` (issue #2136). See the eager VRT branch above
+    # for the rationale; the rotated VRT path lands the array in the
+    # ``rotated_dropped`` bucket so consumers can branch on it.
     _vrt_md = GeoTIFFMetadata(
         transform=_vrt_transform,
         crs_epsg=_vrt_epsg,
         crs_wkt=vrt.crs_wkt if _vrt_keep_crs else None,
         raster_type='point' if vrt.raster_type == 'point' else 'area',
         has_georef=gt is not None and not _vrt_is_rotated,
+        georef_status=_compute_georef_status_from_parts(
+            has_transform=gt is not None and not _vrt_is_rotated,
+            has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
+            rotated_dropped=_vrt_is_rotated,
+        ),
     )
     attrs = metadata_to_attrs(_vrt_md)
 

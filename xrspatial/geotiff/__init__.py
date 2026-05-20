@@ -74,6 +74,12 @@ from ._reader import UnsafeURLError
 # and internal callers that genuinely need it can import directly from
 # ``xrspatial.geotiff._reader``. See issue #1708.
 from ._attrs import (
+    GEOREF_STATUS_CRS_ONLY,
+    GEOREF_STATUS_FULL,
+    GEOREF_STATUS_NONE,
+    GEOREF_STATUS_ROTATED_DROPPED,
+    GEOREF_STATUS_TRANSFORM_ONLY,
+    GEOREF_STATUS_VALUES,
     _LEVEL_RANGES,
     _VALID_COMPRESSIONS,
     _extent_to_window,
@@ -128,6 +134,12 @@ __all__ = [
     'ConflictingNodataError',
     'GeoTIFFAmbiguousMetadataError',
     'GeoTIFFFallbackWarning',
+    'GEOREF_STATUS_CRS_ONLY',
+    'GEOREF_STATUS_FULL',
+    'GEOREF_STATUS_NONE',
+    'GEOREF_STATUS_ROTATED_DROPPED',
+    'GEOREF_STATUS_TRANSFORM_ONLY',
+    'GEOREF_STATUS_VALUES',
     'InvalidCRSCodeError',
     'MixedBandMetadataError',
     'NonUniformCoordsError',

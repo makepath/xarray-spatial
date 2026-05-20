@@ -25,7 +25,7 @@ is present, and pass-through keys are kept when the writer can
 reconstruct them from canonical state.
 
 The contract version is recorded in ``attrs['_xrspatial_geotiff_contract']``
-(currently ``2``). Consumers can branch on this integer if the tier
+(currently ``3``). Consumers can branch on this integer if the tier
 split changes in a future release.
 
 Canonical (xrspatial owns these; round-trip stable):
@@ -65,6 +65,13 @@ Canonical (xrspatial owns these; round-trip stable):
   float-because-promoted.
 - ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
   (explicit / RasterPixelIsPoint).
+- ``georef_status``: one of ``'full'``, ``'transform_only'``, ``'crs_only'``,
+  ``'none'``, ``'rotated_dropped'``. Single attr that encodes the five
+  distinct states the reader can land in when CRS / transform tags are
+  combined. See :func:`_compute_georef_status` for the decision table and
+  issue #2136 for the rationale. The attr is additive: ``crs`` / ``crs_wkt``
+  / ``transform`` / ``_xrspatial_no_georef`` remain present with unchanged
+  semantics so existing consumers keep working.
 - ``extra_tags``: list of ``(tag_id, type_id, count, value)`` tuples for
   TIFF tags outside the structured set. Omitted when no out-of-band
   tags are present.
@@ -244,7 +251,37 @@ _TIFF_SHORT = 3
 # matplotlib-colormap attrs that v1 still emitted under a
 # ``DeprecationWarning``. Downstream code that read those keys via
 # ``attrs[key]`` now sees ``KeyError`` rather than the deprecated value.
-_ATTRS_CONTRACT_VERSION = 2
+#
+# Version 3 (issue #2136) adds ``attrs['georef_status']`` to the canonical
+# tier. Existing keys (``crs``, ``crs_wkt``, ``transform``, the
+# ``_xrspatial_no_georef`` marker) keep their pre-v3 shape so downstream
+# code that branches on them still works; the new attr is additive and
+# disambiguates ``crs_only`` from ``none`` and ``rotated_dropped`` from
+# the truly-no-transform case.
+_ATTRS_CONTRACT_VERSION = 3
+
+
+# Canonical ``attrs['georef_status']`` values (issue #2136). One attr
+# encodes the five distinct states the reader can land in when CRS and
+# transform tags are combined; downstream code can branch on this rather
+# than reconstructing the state from the union of ``crs``, ``crs_wkt``,
+# ``transform``, and ``_xrspatial_no_georef``.
+GEOREF_STATUS_FULL = 'full'
+GEOREF_STATUS_TRANSFORM_ONLY = 'transform_only'
+GEOREF_STATUS_CRS_ONLY = 'crs_only'
+GEOREF_STATUS_NONE = 'none'
+GEOREF_STATUS_ROTATED_DROPPED = 'rotated_dropped'
+
+# Public frozenset of every valid ``georef_status`` value. Exposed so
+# downstream code can validate user-set values without hard-coding the
+# five-string list (e.g. ``status in GEOREF_STATUS_VALUES``).
+GEOREF_STATUS_VALUES = frozenset({
+    GEOREF_STATUS_FULL,
+    GEOREF_STATUS_TRANSFORM_ONLY,
+    GEOREF_STATUS_CRS_ONLY,
+    GEOREF_STATUS_NONE,
+    GEOREF_STATUS_ROTATED_DROPPED,
+})
 
 
 # String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
@@ -303,6 +340,12 @@ class GeoTIFFMetadata:
 
     # VRT-only
     vrt_holes: list | None = None
+
+    # Canonical reader-state classifier (issue #2136). Carried on the
+    # record so the eager / dask / GPU / VRT read paths all stamp it via
+    # the same :func:`metadata_to_attrs` marshalling step instead of
+    # branching on attrs after the dict has been built.
+    georef_status: str | None = None
 
     # Contract version stamped on read
     contract_version: int = _ATTRS_CONTRACT_VERSION
@@ -386,6 +429,13 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
         x_resolution=geo_info.x_resolution,
         y_resolution=geo_info.y_resolution,
         resolution_unit=resolution_unit,
+        # ``georef_status`` (#2136) is computed off the unmodified
+        # ``geo_info`` rather than the post-branch metadata fields so a
+        # future change to which fields the record carries cannot
+        # accidentally shift the status value. The VRT inline path uses
+        # ``_compute_georef_status_from_parts`` to fill this field
+        # without synthesising a ``GeoInfo``.
+        georef_status=_compute_georef_status(geo_info),
         contract_version=_ATTRS_CONTRACT_VERSION,
     )
 
@@ -399,6 +449,13 @@ def metadata_to_attrs(md: GeoTIFFMetadata) -> dict:
     :func:`geo_info_to_metadata`.
     """
     attrs: dict = {'_xrspatial_geotiff_contract': md.contract_version}
+
+    # ``georef_status`` (#2136) is stamped before the optional CRS /
+    # transform branches so the value reflects the reader's state
+    # decision (computed off ``geo_info``) rather than which fields
+    # happened to land in the emitted dict.
+    if md.georef_status is not None:
+        attrs['georef_status'] = md.georef_status
 
     if md.crs_epsg is not None:
         attrs['crs'] = md.crs_epsg
@@ -535,6 +592,7 @@ def attrs_to_metadata(attrs) -> GeoTIFFMetadata:
         y_resolution=attrs.get('y_resolution'),
         resolution_unit=attrs.get('resolution_unit'),
         vrt_holes=attrs.get('vrt_holes'),
+        georef_status=attrs.get('georef_status'),
         contract_version=contract_version,
     )
 
@@ -725,6 +783,89 @@ def _validate_read_geo_info(
     })
 
 
+def _compute_georef_status(geo_info) -> str:
+    """Classify ``geo_info`` into one of the five ``georef_status`` values.
+
+    See the module docstring and issue #2136 for the full rationale. The
+    decision table:
+
+    ============================  =================  ===============
+    transform tags                CRS present        georef_status
+    ============================  =================  ===============
+    axis-aligned                  yes                ``full``
+    axis-aligned                  no                 ``transform_only``
+    absent                        yes                ``crs_only``
+    absent                        no                 ``none``
+    rotated, dropped              either             ``rotated_dropped``
+    ============================  =================  ===============
+
+    "CRS present" is signalled by either ``geo_info.crs_epsg`` or
+    ``geo_info.crs_wkt`` being non-None. The rotated-dropped branch
+    fires when the upstream reader saw a rotated
+    ``ModelTransformationTag`` and was opened with ``allow_rotated=True``;
+    that path returns ``has_georef=False`` with the rotated 6-tuple on
+    ``geo_info.transform.rotated_affine``. The check is on
+    ``rotated_affine`` rather than the surrounding state so a future
+    reader change cannot accidentally re-route a real "no transform"
+    file into the rotated bucket.
+
+    The eager numpy, dask, and three GPU read sites (chunked / eager /
+    tile in ``_backends/gpu.py``) all call this through
+    :func:`_populate_attrs_from_geo_info`. The two VRT inline branches
+    (eager + chunked in ``_backends/vrt.py``) call
+    :func:`_compute_georef_status_from_parts` directly because they
+    build their attrs dict from a different dataclass and would have to
+    synthesise a fake ``GeoInfo`` to reuse this helper. Keep all the
+    call sites in lockstep through one of the two helpers.
+    """
+    transform = getattr(geo_info, 'transform', None)
+    rotated_affine = (
+        getattr(transform, 'rotated_affine', None)
+        if transform is not None else None
+    )
+    if rotated_affine is not None:
+        return GEOREF_STATUS_ROTATED_DROPPED
+    has_georef = bool(getattr(geo_info, 'has_georef', False))
+    has_crs = (
+        getattr(geo_info, 'crs_epsg', None) is not None
+        or getattr(geo_info, 'crs_wkt', None) is not None
+    )
+    if has_georef and has_crs:
+        return GEOREF_STATUS_FULL
+    if has_georef:
+        return GEOREF_STATUS_TRANSFORM_ONLY
+    if has_crs:
+        return GEOREF_STATUS_CRS_ONLY
+    return GEOREF_STATUS_NONE
+
+
+def _compute_georef_status_from_parts(
+    *,
+    has_transform: bool,
+    has_crs: bool,
+    rotated_dropped: bool = False,
+) -> str:
+    """Compute ``georef_status`` from raw booleans rather than a ``GeoInfo``.
+
+    The VRT inline branches do not build a ``GeoInfo`` instance: they
+    parse the VRT XML straight into ``geo_transform`` / ``crs_wkt``
+    fields on a different dataclass. Calling :func:`_compute_georef_status`
+    from those sites would require synthesising a fake ``GeoInfo`` for
+    each branch. This helper takes the underlying booleans directly so
+    the VRT paths and the ``_populate_attrs_from_geo_info`` path share
+    the same decision rule without the intermediate object.
+    """
+    if rotated_dropped:
+        return GEOREF_STATUS_ROTATED_DROPPED
+    if has_transform and has_crs:
+        return GEOREF_STATUS_FULL
+    if has_transform:
+        return GEOREF_STATUS_TRANSFORM_ONLY
+    if has_crs:
+        return GEOREF_STATUS_CRS_ONLY
+    return GEOREF_STATUS_NONE
+
+
 def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None:
     """Populate ``attrs`` with all GeoTIFF metadata from ``geo_info``.
 
@@ -757,7 +898,9 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     # produce the same attrs surface; centralising on the record lets
     # the VRT path emit the same field set without copying this block.
     # The ``allow_rotated=True`` opt-in CRS-drop (#2126) is handled
-    # inside ``geo_info_to_metadata``. See issue #2139 / ``metadata_to_attrs``.
+    # inside ``geo_info_to_metadata``. ``georef_status`` (#2136) rides
+    # on the record so the VRT path can stamp it via the same
+    # marshalling step. See issue #2139 / ``metadata_to_attrs``.
     md = geo_info_to_metadata(geo_info, window=window)
     attrs.update(metadata_to_attrs(md))
 

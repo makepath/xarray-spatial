@@ -2783,6 +2783,15 @@ class TestPublicAPI:
             'UnparseableCRSError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
+            # Canonical georef_status constants (issue #2136). Exposed
+            # so downstream code can branch on the five reader states
+            # via constants rather than string literals.
+            'GEOREF_STATUS_CRS_ONLY',
+            'GEOREF_STATUS_FULL',
+            'GEOREF_STATUS_NONE',
+            'GEOREF_STATUS_ROTATED_DROPPED',
+            'GEOREF_STATUS_TRANSFORM_ONLY',
+            'GEOREF_STATUS_VALUES',
             # Issue #2137: tiered feature inventory exposed alongside
             # the writer's ``allow_experimental_codecs`` opt-in.
             'SUPPORTED_FEATURES',
