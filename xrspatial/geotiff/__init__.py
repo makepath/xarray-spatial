@@ -46,10 +46,8 @@ if TYPE_CHECKING:
 
 from ._coords import (
     _BAND_DIM_NAMES,
-    coords_from_geo_info as _coords_from_geo_info,
     coords_from_pixel_geometry as _coords_from_pixel_geometry,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
-    geo_to_coords as _geo_to_coords,
     transform_tuple as _transform_tuple,
     transform_from_attr as _transform_from_attr,
     coords_to_transform as _coords_to_transform,
@@ -84,10 +82,8 @@ from ._attrs import (
     _VALID_COMPRESSIONS,
     _extent_to_window,
     _extract_rich_tags,
-    _populate_attrs_from_geo_info,
-    _validate_read_geo_info,
+    _finalize_eager_read,
     _resolve_nodata_attr,
-    _set_nodata_attrs,
 )
 from ._backends._gpu_helpers import _is_gpu_data
 # Re-export only; called by xrspatial/geotiff/tests/test_nodata_*.py.
@@ -112,7 +108,6 @@ from ._runtime import (
 from ._validation import (
     _validate_3d_writer_dims,
     _validate_chunks_arg,
-    _validate_dtype_cast,
     _validate_tile_size_arg,
 )
 # ``_writer.write`` (alias for ``_writer._write``) is module-private;
@@ -630,20 +625,6 @@ def open_geotiff(source: str | BinaryIO, *,
         **kwargs,
     )
 
-    height, width = arr.shape[:2]
-    coords = _geo_to_coords(geo_info, height, width)
-
-    if window is not None:
-        # Adjust coordinates for windowed read. ``read_to_array`` rejected
-        # out-of-bounds windows above, so ``r0/c0/r1/c1`` are guaranteed
-        # in-range here (no clamp needed). For files with no GeoTIFF
-        # tags (``has_georef=False``), the default unit transform is
-        # not real, so fall back to integer pixel coords matching the
-        # ``_geo_to_coords`` shortcut taken on full reads. See #1710.
-        coords = _coords_from_geo_info(
-            geo_info, height, width, window=window,
-        )
-
     if name is None:
         # Derive from source path. File-like buffers don't have a path,
         # so leave name unset rather than fabricating one.
@@ -651,166 +632,30 @@ def open_geotiff(source: str | BinaryIO, *,
             import os
             name = os.path.splitext(os.path.basename(source))[0]
 
-    # Issue #1987 ambiguous-metadata checks. Run before attrs population
-    # so a rejected file does not leak a partly-populated attrs dict.
-    _validate_read_geo_info(
-        geo_info, window=window,
+    # Hand the post-decode buffer to the shared eager finalizer
+    # (issue #2179). The helper runs the same validate -> populate attrs
+    # -> mask -> cast -> set_nodata_attrs -> build DataArray pipeline
+    # the inline block used to do. ``mask_sentinel`` honours the
+    # post-MinIsWhite inversion stashed on ``geo_info._mask_nodata`` by
+    # ``read_to_array`` / ``_read_cog_http`` (#1809); on non-MinIsWhite
+    # files it falls back to the raw declared sentinel.
+    nodata = geo_info.nodata
+    mask_sentinel = (
+        getattr(geo_info, '_mask_nodata', nodata)
+        if nodata is not None else None
+    )
+    return _finalize_eager_read(
+        arr,
+        geo_info=geo_info,
+        nodata=nodata,
+        mask_sentinel=mask_sentinel,
+        mask_nodata=mask_nodata,
+        dtype=dtype,
+        window=window,
+        name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-
-    # Apply nodata mask: replace nodata sentinel values with NaN.
-    # ``arr`` came from ``read_to_array``, which returns a freshly
-    # allocated buffer from ``_read_tiles`` / ``_read_strips`` (and is
-    # ``np.ascontiguousarray``-wrapped if the orientation tag triggered
-    # a remap). Nothing else holds a reference here, so the in-place
-    # write is safe; an extra ``arr.copy()`` would just double peak
-    # memory for a multi-MB raster.
-    nodata = geo_info.nodata
-    # Track whether any sentinel pixel was present in the read window.
-    # Only meaningful when a declared sentinel exists; reported via
-    # ``attrs['nodata_pixels_present']`` (issue #2135) so consumers can
-    # answer "any nodata in this tile" without rescanning. ``None``
-    # keeps the attr out when no scan happened: that includes the no
-    # sentinel declared case (early-return in ``_set_nodata_attrs``) and
-    # any exotic dtype branch (e.g. complex source) that neither the
-    # float nor integer mask gates handle. Do not "fix" the asymmetry by
-    # forcing a False default -- the absence-means-unknown contract is
-    # deliberate so downstream can distinguish "scanned and saw nothing"
-    # from "did not scan."
-    nodata_pixels_present: bool | None = None
-    if nodata is not None and mask_nodata:
-        # When the reader applied MinIsWhite, the sentinel-equality mask
-        # must compare against the inverted sentinel value (issue #1809).
-        # ``read_to_array`` / ``_read_cog_http`` stash that value on
-        # ``geo_info._mask_nodata``; fall back to the original sentinel
-        # on non-MinIsWhite files. Renamed from ``mask_nodata`` to
-        # ``nodata_sentinel`` so the local does not shadow the
-        # ``mask_nodata`` opt-out kwarg (#2052).
-        nodata_sentinel = getattr(geo_info, '_mask_nodata', nodata)
-        if arr.dtype.kind == 'f':
-            if nodata_sentinel is not None and not np.isnan(nodata_sentinel):
-                mask_f = arr == arr.dtype.type(nodata_sentinel)
-                nodata_pixels_present = bool(mask_f.any())
-                if nodata_pixels_present:
-                    arr[mask_f] = np.nan
-            else:
-                # NaN-only sentinel on a float buffer: ``mask_nodata`` is
-                # a no-op, but downstream may want to know if any NaN
-                # pixels already exist in the source so the attr stays
-                # informative.
-                nodata_pixels_present = (
-                    bool(np.isnan(arr).any())
-                    if nodata_sentinel is not None
-                    else False
-                )
-        elif arr.dtype.kind in ('u', 'i'):
-            # Integer arrays: convert to float to represent NaN.
-            # An out-of-range sentinel (e.g. uint16 file with
-            # GDAL_NODATA="-9999") cannot match any decoded pixel, so the
-            # mask would be all-False -- skip the cast that would otherwise
-            # raise OverflowError and leave the array unchanged. A
-            # non-finite sentinel ("NaN" / "Inf" GDAL_NODATA strings) also
-            # cannot match an integer pixel, so the ``int(nodata)`` cast
-            # below would raise ValueError; gate on ``np.isfinite`` first
-            # to mirror ``_resolve_masked_fill`` / ``_sparse_fill_value``
-            # in ``_reader.py`` (#1774). A fractional sentinel (e.g.
-            # ``GDAL_NODATA="3.5"`` on a ``uint16`` file) also cannot match
-            # an integer pixel; ``int(3.5)`` would truncate to 3 and
-            # silently mask a real pixel value, so gate on
-            # ``float(nodata).is_integer()`` as well (mirrors the
-            # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
-            # attrs['nodata'] still carries the raw sentinel so a write
-            # round-trip preserves the tag.
-            if (nodata_sentinel is not None
-                    and np.isfinite(nodata_sentinel)
-                    and float(nodata_sentinel).is_integer()):
-                nodata_int = int(nodata_sentinel)
-                info = np.iinfo(arr.dtype)
-                if info.min <= nodata_int <= info.max:
-                    mask = arr == arr.dtype.type(nodata_int)
-                    nodata_pixels_present = bool(mask.any())
-                    if nodata_pixels_present:
-                        arr = arr.astype(np.float64)
-                        arr[mask] = np.nan
-                else:
-                    # Sentinel cannot match any pixel in this dtype's
-                    # range. No mask was run; no pixels were present.
-                    nodata_pixels_present = False
-            else:
-                nodata_pixels_present = False
-    elif nodata is not None and not mask_nodata:
-        # ``mask_nodata=False``: the masking branch above is skipped,
-        # but ``attrs['nodata_pixels_present']`` should still surface so
-        # callers know whether literal sentinel pixels survive in the
-        # buffer (issue #2135). Mirror the same dtype / range / integer
-        # gates as the masking branch so an out-of-range or non-integer
-        # sentinel cleanly resolves to ``False`` rather than crashing in
-        # the equality check.
-        nodata_sentinel = getattr(geo_info, '_mask_nodata', nodata)
-        if nodata_sentinel is not None:
-            if arr.dtype.kind == 'f':
-                if np.isnan(nodata_sentinel):
-                    nodata_pixels_present = bool(np.isnan(arr).any())
-                else:
-                    nodata_pixels_present = bool(
-                        (arr == arr.dtype.type(nodata_sentinel)).any()
-                    )
-            elif arr.dtype.kind in ('u', 'i'):
-                if (np.isfinite(nodata_sentinel)
-                        and float(nodata_sentinel).is_integer()):
-                    nodata_int = int(nodata_sentinel)
-                    info = np.iinfo(arr.dtype)
-                    if info.min <= nodata_int <= info.max:
-                        nodata_pixels_present = bool(
-                            (arr == arr.dtype.type(nodata_int)).any()
-                        )
-                    else:
-                        nodata_pixels_present = False
-                else:
-                    nodata_pixels_present = False
-
-    dtype_cast_attr: str | None = None
-    if dtype is not None:
-        target = np.dtype(dtype)
-        _validate_dtype_cast(arr.dtype, target)
-        arr = arr.astype(target)
-        # Record the post-mask cast so downstream can tell
-        # float-because-masked from float-because-promoted (issue #2135).
-        dtype_cast_attr = target.name
-
-    # ``attrs['masked_nodata']`` reflects whether the function
-    # actually replaced sentinel pixels with NaN (#2092). The pre-fix
-    # implementation inferred it from final dtype, which lied when
-    # ``mask_nodata=False`` left literal sentinel values in a float
-    # buffer. True iff the caller opted into masking and the result
-    # is a float-dtype buffer (the mask block above either ran the
-    # float-replacement step or promoted an int input to float64;
-    # either way the buffer holds NaN where the sentinel used to be).
-    _set_nodata_attrs(
-        attrs, nodata,
-        masked=(mask_nodata and arr.dtype.kind == 'f'),
-        pixels_present=nodata_pixels_present,
-        dtype_cast=dtype_cast_attr,
-    )
-
-    if arr.ndim == 3:
-        dims = ['y', 'x', 'band']
-        coords['band'] = np.arange(arr.shape[2])
-    else:
-        dims = ['y', 'x']
-
-    da = xr.DataArray(
-        arr,
-        dims=dims,
-        coords=coords,
-        name=name,
-        attrs=attrs,
-    )
-    return da
 
 
 def plot_geotiff(da: xr.DataArray, **kwargs):
