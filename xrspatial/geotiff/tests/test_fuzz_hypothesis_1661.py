@@ -47,7 +47,18 @@ ALLOWED_PARSE_EXCEPTIONS = (ValueError, TypeError)
 # explicitly rejected on write (see _VALID_COMPRESSIONS docstring); 'lerc' and
 # 'jpeg2000' are lossy or dtype-restricted and would need their own narrower
 # strategies, so they're omitted here.
-LOSSLESS_CODECS = ['none', 'deflate', 'lzw', 'packbits', 'zstd', 'lz4']
+#
+# ``zstd`` and ``lz4`` depend on optional third-party packages that are
+# not in the [tests] extras. Drop them from the strategy when those
+# packages are missing so the fuzz run does not flake the moment
+# Hypothesis happens to draw a codec the runner can't actually write.
+from xrspatial.geotiff._compression import LZ4_AVAILABLE, ZSTD_AVAILABLE
+
+LOSSLESS_CODECS = ['none', 'deflate', 'lzw', 'packbits']
+if ZSTD_AVAILABLE:
+    LOSSLESS_CODECS.append('zstd')
+if LZ4_AVAILABLE:
+    LOSSLESS_CODECS.append('lz4')
 
 # Dtype set kept small to keep CI fast. Float and int, signed and unsigned.
 ROUND_TRIP_DTYPES = ['uint8', 'uint16', 'int16', 'int32', 'float32', 'float64']
