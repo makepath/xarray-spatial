@@ -438,33 +438,38 @@ class TestInfPins:
 
     @dask_array_available
     def test_dask_inf_currently_undercounts(self):
-        # Dask mirrors numpy bug: no Inf polygons.
+        # Dask mirrors the numpy bug: no Inf polygons, and Inf cells get
+        # absorbed into surrounding finite (value=1.0) regions so the total
+        # polygon area still equals the raster area.
         v, p = polygonize(_to_dask(_INF_DATA, chunks=(3, 3)),
                           connectivity=4)
+        finite_vals = [val for val in v if np.isfinite(val)]
         inf_vals = [val for val in v if np.isinf(val)]
         assert inf_vals == [], (
             "dask backend started emitting Inf polygons; update the "
-            "Inf source-fix pins.")
+            "Inf source-fix pins (see test_polygonize_coverage_2026_05_19)."
+        )
+        total = sum(_polygon_area(rings) for rings in p)
+        assert_allclose(total, float(_INF_DATA.size))
+        assert all(val == 1.0 for val in finite_vals)
 
     @cuda_and_cupy_available
     @dask_array_available
-    def test_dask_cupy_inf_emits_polygons(self):
+    def test_dask_cupy_inf_currently_undercounts(self):
         # Dask+CuPy goes through _polygonize_chunk which calls the numpy
         # backend per chunk on numpy-converted data, so it follows the
-        # numpy bug, NOT the cupy behaviour.  Pin that.
+        # numpy bug (Inf cells absorbed into adjacent value=1.0 polygons),
+        # NOT the eager-cupy behaviour.  Pin the current under-counting so
+        # the source fix for #2155 is visible as a test diff.
         v, p = polygonize(_to_dask_cupy(_INF_DATA, chunks=(3, 3)),
                           connectivity=4)
         inf_vals = [val for val in v if np.isinf(val)]
-        # Whatever the dask+cupy backend produces today, lock it.
-        # Source fix should make this consistent across backends.
-        if inf_vals:
-            # Already-correct path: keep total area sane.
-            total = sum(_polygon_area(rings) for rings in p)
-            assert_allclose(total, float(_INF_DATA.size))
-        else:
-            # Buggy path consistent with dask.
-            total = sum(_polygon_area(rings) for rings in p)
-            assert_allclose(total, float(_INF_DATA.size))
+        assert inf_vals == [], (
+            "dask+cupy backend started emitting Inf polygons; update the "
+            "Inf source-fix pins (see test_polygonize_coverage_2026_05_19)."
+        )
+        total = sum(_polygon_area(rings) for rings in p)
+        assert_allclose(total, float(_INF_DATA.size))
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +502,7 @@ class TestSimplifyDaskCupy:
                                 simplify_method=method)
         a_np = _areas_by_value(v_np, p_np)
         a_dc = _areas_by_value(v_dc, p_dc)
+        assert set(a_np) == set(a_dc)
         for k in a_np:
             assert_allclose(a_dc[k], a_np[k], atol=1e-10)
 
@@ -542,7 +548,7 @@ def test_column_name_geopandas_non_default():
                     return_type="geopandas", column_name="value")
     assert "value" in df.columns
     assert "DN" not in df.columns
-    assert_allclose(df["value"], [0, 1, 4])
+    assert sorted(int(x) for x in df["value"]) == [0, 1, 4]
 
 
 @pytest.mark.skipif(sp is None, reason="spatialpandas not installed")
