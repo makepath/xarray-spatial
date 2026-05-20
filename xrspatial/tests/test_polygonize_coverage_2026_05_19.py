@@ -399,6 +399,8 @@ def _check_mixed_inf_output(v, p, total_size):
     finite_vals = [val for val in v if np.isfinite(val)]
     plus_inf = [val for val in v if np.isposinf(val)]
     minus_inf = [val for val in v if np.isneginf(val)]
+    # Four 1.0 corners + 1.0 center, each isolated under 4-connectivity.
+    assert len(finite_vals) == 5, f"finite polygon count wrong: {v}"
     assert all(val == 1.0 for val in finite_vals)
     assert len(plus_inf) == 2, f"+inf polygon count wrong: {v}"
     assert len(minus_inf) == 2, f"-inf polygon count wrong: {v}"
