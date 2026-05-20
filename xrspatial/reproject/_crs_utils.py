@@ -112,11 +112,56 @@ def _detect_source_crs(raster):
     return None
 
 
-def _detect_nodata(raster, nodata=None):
+def _default_integer_nodata(dtype):
+    """Return the default nodata sentinel for an integer dtype.
+
+    Follows the rasterio/GDAL convention: signed integers use the dtype
+    minimum (e.g. int16 -> -32768) and unsigned integers use the dtype
+    maximum (e.g. uint16 -> 65535, uint8 -> 255). Returning a value that
+    actually fits the dtype avoids the silent NaN -> 0 corruption that
+    happens when NaN is cast back to an integer array.
+    """
+    info = np.iinfo(dtype)
+    if np.issubdtype(dtype, np.signedinteger):
+        return float(info.min)
+    return float(info.max)
+
+
+def _detect_nodata(raster, nodata=None, dtype=None):
     """Determine nodata value from explicit arg, rioxarray, or attrs.
 
-    NaN is the canonical sentinel for missing data and is allowed.
-    +/-Inf would break downstream `np.isnan` masks, so it is rejected.
+    NaN is the canonical sentinel for floating-point missing data and
+    is allowed. +/-Inf would break downstream ``np.isnan`` masks, so it
+    is rejected.
+
+    Integer dtypes can't carry NaN. When *dtype* is integer the
+    resolved nodata is checked against the dtype: a NaN coming from
+    upstream (or the absent-upstream default) is swapped for a
+    dtype-appropriate sentinel via :func:`_default_integer_nodata`
+    (signed -> ``dtype.min``, unsigned -> ``dtype.max``). Without that
+    swap, the worker's cast-back step silently turned every
+    out-of-bounds pixel into ``0`` while ``attrs['nodata']`` still
+    advertised NaN (#2185).
+    """
+    nd = _detect_nodata_raw(raster, nodata)
+
+    # For integer outputs, swap any resolved NaN for a sentinel that
+    # actually fits the dtype. Finite values (including the
+    # user-supplied ones) pass through untouched so explicit nodata
+    # always wins.
+    if dtype is not None and np.isnan(nd):
+        dt = np.dtype(dtype)
+        if np.issubdtype(dt, np.integer):
+            return _default_integer_nodata(dt)
+
+    return nd
+
+
+def _detect_nodata_raw(raster, nodata):
+    """Resolve nodata from explicit arg, rioxarray, or attrs (raw).
+
+    Returns the resolved value with no dtype adjustment -- the
+    dtype-aware swap is layered on top by :func:`_detect_nodata`.
     """
     if nodata is not None:
         nd = float(nodata)

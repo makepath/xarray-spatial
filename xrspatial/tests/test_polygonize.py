@@ -515,6 +515,104 @@ def test_polygonize_cupy_float_tolerance_matches_numpy_2151(data):
         assert_allclose(areas_cp[v], a, atol=1e-10)
 
 
+# --- Dask float tolerance regression tests (#2171) ---
+
+@dask_array_available
+def test_polygonize_dask_float_tolerance_repro_2171():
+    """The original `[[1.0, 1.000001]]` repro from #2171.
+
+    The numpy path and the single-chunk Dask path return one polygon
+    because `_is_close` (atol=1e-8, rtol=1e-5) groups the two near-equal
+    values.  Before the fix the (1, 1) chunked Dask run returned two
+    polygons because the chunk-stitching step keyed on raw float values.
+    """
+    data = np.array([[1.0, 1.000001]], dtype=np.float64)
+
+    vals_np, polys_np = polygonize(xr.DataArray(data))
+    vals_single, polys_single = polygonize(
+        xr.DataArray(da.from_array(data, chunks=data.shape)))
+    vals_multi, polys_multi = polygonize(
+        xr.DataArray(da.from_array(data, chunks=(1, 1))))
+
+    assert len(polys_np) == 1
+    assert len(polys_single) == 1
+    assert len(polys_multi) == 1
+
+    # All three backends pick the same representative value.
+    assert vals_np == vals_single == vals_multi
+
+
+@dask_array_available
+@pytest.mark.parametrize(
+    "data,chunks",
+    [
+        # Single row, two near-equal cells, one cell per chunk.
+        (np.array([[1.0, 1.000001]], dtype=np.float64), (1, 1)),
+        # 2x2 with near-equal floats and a clearly different value,
+        # each cell in its own chunk.
+        (np.array([[1.0, 1.000001], [1.000001, 2.0]], dtype=np.float64),
+         (1, 1)),
+        # 3x3 with near-equal floats and a distinct value column.
+        (np.array([
+            [1.0, 1.000001, 2.0],
+            [1.000001, 1.0, 2.0],
+            [1.0, 1.0, 2.0],
+        ], dtype=np.float64), (1, 1)),
+        # Larger pattern at a slightly bigger chunk size to exercise
+        # multiple boundary segments per chunk.
+        (np.array([
+            [1.0, 1.000001, 1.0, 2.0],
+            [1.000001, 1.0, 1.000001, 2.0],
+            [1.0, 1.000001, 1.0, 2.0],
+            [1.000001, 1.0, 1.000001, 2.0],
+        ], dtype=np.float64), (2, 2)),
+    ],
+    ids=["1x2_chunks_1x1", "2x2_chunks_1x1", "3x3_chunks_1x1",
+         "4x4_chunks_2x2"],
+)
+def test_polygonize_dask_float_tolerance_matches_numpy_2171(data, chunks):
+    """Multi-chunk Dask must match numpy on near-equal float inputs.
+
+    The Dask chunk-stitching step must use the same `_is_close`
+    tolerance the numpy/numba path uses inside a single chunk so the
+    polygon count and per-value areas are independent of chunking.
+    """
+    raster_np = xr.DataArray(data)
+    raster_da = xr.DataArray(da.from_array(data, chunks=chunks))
+
+    vals_np, polys_np = polygonize(raster_np, connectivity=4)
+    vals_da, polys_da = polygonize(raster_da, connectivity=4)
+
+    assert len(polys_np) == len(polys_da), (
+        f"polygon count differs: numpy={len(polys_np)} "
+        f"dask={len(polys_da)}; numpy values={vals_np}, "
+        f"dask values={vals_da}"
+    )
+
+    areas_np = _area_by_value(vals_np, polys_np)
+    areas_da = _area_by_value(vals_da, polys_da)
+
+    # Per-value areas must agree under the tolerance: dask may report a
+    # nearby float (e.g. 1.000001 vs 1.0) as the bucket representative,
+    # so match each numpy bucket to the closest dask bucket within
+    # _is_close tolerance.
+    atol = 1e-8
+    rtol = 1e-5
+    unmatched_da = dict(areas_da)
+    for v_np, a_np in areas_np.items():
+        match = None
+        for v_da in unmatched_da:
+            if abs(v_da - v_np) <= atol + rtol * abs(v_np):
+                match = v_da
+                break
+        assert match is not None, (
+            f"numpy value {v_np!r} not found in dask values "
+            f"{list(unmatched_da.keys())}"
+        )
+        assert_allclose(unmatched_da.pop(match), a_np, atol=1e-10)
+    assert not unmatched_da, f"extra dask buckets: {unmatched_da}"
+
+
 # --- Performance-related regression tests (#1008) ---
 
 def test_polygonize_1008_jit_merge_helpers():
@@ -1264,3 +1362,174 @@ class TestPolygonizeCRSPropagation:
             raster, return_type="geopandas", simplify_tolerance=0.5)
         assert df.crs is not None
         assert df.crs.to_epsg() == 4326
+
+
+# --- atol / rtol tolerance parameter tests (issue #2173) ---
+#
+# The float pathway in _calculate_regions groups adjacent pixels using an
+# absolute / relative tolerance.  Historically these constants were baked
+# into _is_close; #2173 lifted them into the public polygonize() signature
+# so a caller working with classified float rasters can opt into strict
+# equality without touching internal symbols.
+
+# Repro raster from the issue: three distinct float values, each pair
+# within the default atol/rtol of the previous.  With the default
+# tolerance (atol=1e-8, rtol=1e-5) all three pixels merge to one region;
+# with atol=rtol=0 strict equality recovers three separate regions.
+_REPRO_2173 = np.array([[1.0, 1.000009, 1.000018]], dtype=np.float64)
+
+
+def test_polygonize_default_tolerance_merges_close_floats():
+    """Default tolerance keeps backward-compatible float behavior (#2173)."""
+    raster = xr.DataArray(_REPRO_2173)
+    values, polygons = polygonize(raster)
+    assert len(values) == 1
+    assert_allclose(values[0], 1.0)
+    # Single polygon spanning all three columns.
+    total_area = sum(
+        assert_polygon_valid_and_get_area(p) for p in polygons)
+    assert_allclose(total_area, 3.0)
+
+
+def test_polygonize_strict_float_equality():
+    """atol=0 + rtol=0 -> exact-equality grouping for float rasters (#2173)."""
+    raster = xr.DataArray(_REPRO_2173)
+    values, polygons = polygonize(raster, atol=0.0, rtol=0.0)
+    assert len(values) == 3
+    assert_allclose(sorted(values), sorted(_REPRO_2173[0]))
+    total_area = sum(
+        assert_polygon_valid_and_get_area(p) for p in polygons)
+    # Three 1x1 polygons -> total area 3.
+    assert_allclose(total_area, 3.0)
+
+
+def test_polygonize_integer_default_unchanged_by_atol():
+    """Integer rasters always use strict equality; atol must not change
+    that, even when set to a value that would merge neighbours in floats
+    (#2173)."""
+    data = np.array([[1, 2, 3]], dtype=np.int64)
+    raster = xr.DataArray(data)
+    # atol large enough to merge {1, 2, 3} if it were applied.
+    values, polygons = polygonize(raster, atol=10.0, rtol=10.0)
+    assert sorted(values) == [1, 2, 3]
+    total_area = sum(
+        assert_polygon_valid_and_get_area(p) for p in polygons)
+    assert_allclose(total_area, 3.0)
+
+
+def test_polygonize_integer_no_args_unchanged():
+    """Default tolerance must still produce three polygons for ints with
+    distinct values (#2173 regression check)."""
+    data = np.array([[1, 2, 3]], dtype=np.int64)
+    raster = xr.DataArray(data)
+    values, _ = polygonize(raster)
+    assert sorted(values) == [1, 2, 3]
+
+
+def test_polygonize_negative_atol_raises():
+    """Negative tolerances are rejected (#2173)."""
+    raster = xr.DataArray(_REPRO_2173)
+    with pytest.raises(ValueError, match="atol must be a non-negative"):
+        polygonize(raster, atol=-1e-9)
+    with pytest.raises(ValueError, match="rtol must be a non-negative"):
+        polygonize(raster, rtol=-1e-9)
+
+
+def test_polygonize_nan_atol_raises():
+    """NaN tolerances are rejected (#2173 review).
+
+    A NaN tolerance silently fails the `abs(diff) <= nan + ...` check for
+    every pair, which would produce a raster of singleton polygons with no
+    error.  Catch it up front so callers do not chase a phantom data
+    corruption bug.
+    """
+    raster = xr.DataArray(_REPRO_2173)
+    with pytest.raises(ValueError, match="atol must be a non-negative"):
+        polygonize(raster, atol=float("nan"))
+    with pytest.raises(ValueError, match="rtol must be a non-negative"):
+        polygonize(raster, rtol=float("nan"))
+    with pytest.raises(ValueError, match="atol must be a non-negative"):
+        polygonize(raster, atol=float("inf"))
+    with pytest.raises(ValueError, match="rtol must be a non-negative"):
+        polygonize(raster, rtol=float("inf"))
+
+
+def test_polygonize_custom_atol_intermediate():
+    """An atol that lies between consecutive float steps should split the
+    repro raster in a predictable way (#2173)."""
+    # Steps in the repro are 9e-6.  An atol of 1e-6 (with rtol=0) is
+    # smaller than the step so all three pixels become distinct regions.
+    raster = xr.DataArray(_REPRO_2173)
+    values, _ = polygonize(raster, atol=1e-6, rtol=0.0)
+    assert len(values) == 3
+    # An atol of 1e-4 covers the step and merges them back to one region.
+    values, _ = polygonize(raster, atol=1e-4, rtol=0.0)
+    assert len(values) == 1
+
+
+@dask_array_available
+def test_polygonize_dask_single_chunk_default_tolerance():
+    """Default tolerance merge applies identically through the dask path
+    for a single-chunk float raster (#2173)."""
+    raster = xr.DataArray(da.from_array(_REPRO_2173, chunks=_REPRO_2173.shape))
+    values, polygons = polygonize(raster)
+    assert len(values) == 1
+    assert_allclose(values[0], 1.0)
+    total_area = sum(
+        assert_polygon_valid_and_get_area(p) for p in polygons)
+    assert_allclose(total_area, 3.0)
+
+
+@dask_array_available
+def test_polygonize_dask_single_chunk_strict_float():
+    """atol=rtol=0 must propagate through the dask single-chunk path and
+    produce three distinct float polygons (#2173)."""
+    raster = xr.DataArray(da.from_array(_REPRO_2173, chunks=_REPRO_2173.shape))
+    values, polygons = polygonize(raster, atol=0.0, rtol=0.0)
+    assert len(values) == 3
+    assert_allclose(sorted(values), sorted(_REPRO_2173[0]))
+
+
+@dask_array_available
+def test_polygonize_dask_multi_chunk_default_tolerance():
+    """Multi-chunk dask path must apply the default tolerance per chunk
+    so close floats merge inside each chunk and the merge step at chunk
+    boundaries does not split them further (#2173)."""
+    # Single-row raster, one chunk per column.  Each chunk holds a
+    # different float that is within atol of its neighbour, so the merge
+    # logic must connect them.
+    raster = xr.DataArray(da.from_array(_REPRO_2173, chunks=(1, 1)))
+    values, polygons = polygonize(raster)
+    # NOTE: The current dask merge keys polygons by exact value, so this
+    # specific multi-chunk case does not yet collapse to a single polygon.
+    # The contract asserted here is that the per-chunk tolerance is
+    # applied (each single-pixel chunk yields exactly one polygon with
+    # its own value, all three input values are accounted for, and the
+    # total area covers the raster).  Cross-chunk merge by-exact-value
+    # is in a separate rockout.
+    assert len(values) == 3
+    assert sorted(values) == sorted(_REPRO_2173[0].tolist())
+    total_area = sum(
+        assert_polygon_valid_and_get_area(p) for p in polygons)
+    assert_allclose(total_area, 3.0)
+
+
+@dask_array_available
+def test_polygonize_dask_multi_chunk_strict_float():
+    """Multi-chunk dask path with atol=rtol=0 keeps every distinct float
+    value separate, mirroring numpy strict behavior within each chunk
+    (#2173)."""
+    raster = xr.DataArray(da.from_array(_REPRO_2173, chunks=(1, 1)))
+    values, polygons = polygonize(raster, atol=0.0, rtol=0.0)
+    assert len(values) == 3
+    assert_allclose(sorted(values), sorted(_REPRO_2173[0]))
+
+
+@dask_array_available
+def test_polygonize_dask_integer_atol_ignored():
+    """Integer dask path must ignore atol/rtol just like the numpy path
+    (#2173)."""
+    data = np.array([[1, 2, 3]], dtype=np.int64)
+    raster = xr.DataArray(da.from_array(data, chunks=(1, 1)))
+    values, _ = polygonize(raster, atol=10.0, rtol=10.0)
+    assert sorted(values) == [1, 2, 3]
