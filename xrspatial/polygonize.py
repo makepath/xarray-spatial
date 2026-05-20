@@ -1668,6 +1668,14 @@ def polygonize(
 
     For Dask+CuPy, each chunk is transferred independently, keeping peak
     CPU memory proportional to chunk size rather than full raster size.
+
+    When ``return_type="geopandas"``, the raster's CRS is propagated to
+    the output ``GeoDataFrame``.  The resolution order is
+    ``raster.attrs['crs']``, then ``raster.attrs['crs_wkt']``, then
+    ``raster.rio.crs`` (if rioxarray is installed).  An unparseable CRS
+    value is dropped rather than raised.  The ``spatialpandas`` and
+    ``geojson`` return types do not carry CRS metadata: spatialpandas
+    has no CRS slot, and GeoJSON (RFC 7946) is WGS84 only.
     """
     _validate_raster(raster, func_name='polygonize', name='raster', ndim=2)
     if raster.shape[0] < 1 or raster.shape[1] < 1:

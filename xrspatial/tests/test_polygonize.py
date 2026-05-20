@@ -1175,10 +1175,10 @@ class TestPolygonizeCRSPropagation:
         """When both attrs['crs'] and rio.crs exist, attrs wins."""
         pytest.importorskip("rioxarray")
         raster = self._raster_with_attrs(crs="EPSG:4326")
-        # Write a different CRS via rioxarray.
+        # rio.write_crs stores the CRS on a spatial_ref coord, not in
+        # attrs['crs'], so re-setting attrs['crs'] below is what makes
+        # the precedence assertion meaningful.
         raster = raster.rio.write_crs("EPSG:3857")
-        # rioxarray writes its CRS into attrs['crs'] when not present,
-        # but we set it explicitly above, so attrs['crs'] should win.
         raster.attrs['crs'] = "EPSG:4326"
         df = polygonize(raster, return_type="geopandas")
         assert df.crs.to_epsg() == 4326
