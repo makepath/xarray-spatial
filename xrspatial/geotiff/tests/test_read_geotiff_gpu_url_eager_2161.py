@@ -242,6 +242,22 @@ def test_unreachable_http_url_does_not_raise_filenotfound(monkeypatch):
         f"URL surfaces as a bare FileNotFoundError again: {err!r}"
     )
 
+    # And the error type should be networking-flavoured. ``urllib3``'s
+    # MaxRetryError is the typical surface for a refused connect; bare
+    # ``ConnectionError`` / ``OSError`` cover stdlib fallbacks. A
+    # ``ValueError`` or ``RuntimeError`` here would mean the URL
+    # branch is failing for the wrong reason (e.g. validation refused
+    # the URL before the network was tried), which the loose check
+    # above would not catch.
+    import urllib3.exceptions as _u3
+    assert isinstance(
+        err,
+        (_u3.MaxRetryError, _u3.HTTPError, ConnectionError, OSError),
+    ), (
+        f"Unreachable URL surfaced as {type(err).__name__} ({err!r}); "
+        f"expected a networking exception."
+    )
+
 
 # ---------------------------------------------------------------------------
 # 5. Helper is wired into the chunked-vs-eager dispatch correctly

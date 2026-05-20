@@ -917,13 +917,14 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
                                     mask_nodata: bool = True):
     """Eager CPU decode + GPU upload for HTTP / fsspec sources (issue #2161).
 
-    The eager GPU pipeline assumes the source is a local file: it opens
-    ``_FileSource(source)``, calls ``gpu_decode_tiles_from_file`` (which
-    KvikIO-DMAs the on-disk tiles), and falls back to a local ``mmap``
-    slice in the CPU re-decode stage. None of those work for a URL or
-    ``s3://`` string, and before this helper the call raised a bare
-    ``FileNotFoundError`` from ``open(real, 'rb')`` deep in the mmap
-    cache.
+    Reached via ``open_geotiff(url, gpu=True)`` and the direct
+    ``read_geotiff_gpu(url)`` entry point. The eager GPU pipeline
+    assumes the source is a local file: it opens ``_FileSource(source)``,
+    calls ``gpu_decode_tiles_from_file`` (which KvikIO-DMAs the on-disk
+    tiles), and falls back to a local ``mmap`` slice in the CPU
+    re-decode stage. None of those work for a URL or ``s3://`` string,
+    and before this helper the call raised a bare ``FileNotFoundError``
+    from ``open(real, 'rb')`` deep in the mmap cache.
 
     ``_read_to_array`` already speaks the full source contract (local
     files, HTTP, fsspec, file-like buffers). Running it and then
@@ -934,6 +935,14 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
     around line 1106): take the CPU dask graph, ``map_blocks(cupy.asarray)``
     each block, return. This helper is the eager analogue: read the
     whole array on CPU, push it to the device in one shot.
+
+    The user-facing ``on_gpu_failure`` / ``gpu='strict'`` kwarg is a
+    no-op on this path. There is no GPU decode stage to be strict
+    about: the only GPU operation is the ``cupy.asarray`` upload, and
+    upload failures (e.g. device OOM) already propagate unconditionally.
+    Callers who set ``on_gpu_failure='strict'`` specifically to detect
+    GPU decode regressions should run a local-file repro before
+    concluding the GPU pipeline is intact.
 
     Trade-off: peak GPU memory is the whole image (same as the local
     eager path), and the decode itself runs on the CPU. Callers who
@@ -954,7 +963,11 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
         # (``basename('https://host/path/foo.tif') == 'foo.tif'``); for
         # ``s3://bucket/foo.tif`` it returns ``'foo.tif'``. Match the
         # local-path naming convention so the resulting DataArray's
-        # ``name`` is the bare stem either way.
+        # ``name`` is the bare stem either way. URLs with a query
+        # string ride along: ``basename('host/x.tif?token=abc')`` is
+        # ``'x.tif?token=abc'`` and ``splitext`` finds the last dot,
+        # so the name resolves to ``'x'`` -- a slightly lossy but
+        # stable label, which is fine for a default.
         name = os.path.splitext(os.path.basename(source))[0]
 
     _validate_read_geo_info(
@@ -965,14 +978,14 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``_read_to_array`` already applied nodata masking when its CPU
-    # ``mask_nodata`` default fires, but the GPU entry-point exposes
-    # ``mask_nodata`` as a user knob. Honour the kwarg here by running
-    # the mask on the device buffer (mirrors the existing stripped /
-    # planar=2 / sparse-tile CPU-fallback branches in the local path).
-    # The post-MinIsWhite sentinel, when applicable, is stashed on
-    # ``geo_info._mask_nodata`` by ``_read_to_array``; fall back to the
-    # raw sentinel otherwise.
+    # ``_read_to_array`` does NOT apply the nodata-to-NaN mask itself;
+    # it returns the raw decoded array and stashes the (possibly
+    # MinIsWhite-inverted) sentinel on ``geo_info._mask_nodata`` for
+    # the caller to use. This is the canonical place to apply the
+    # mask on the GPU buffer, mirroring the existing stripped /
+    # planar=2 / sparse-tile CPU-fallback branches in the local path.
+    # The post-MinIsWhite sentinel takes precedence when present
+    # (issue #1809); otherwise fall back to the raw sentinel.
     nodata = geo_info.nodata
     nodata_pixels_present_attr: bool | None = None
     if nodata is not None and mask_nodata:
