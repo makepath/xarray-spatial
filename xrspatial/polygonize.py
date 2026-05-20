@@ -853,11 +853,17 @@ def _pick_next_edge(adj, prev_vertex, current_vertex,
     polygons that touch only at a corner as separate rings, matching
     NumPy 4-connectivity semantics.
 
-    For ``connectivity_8=True``, pick the largest CCW turn (smallest
-    CW turn) at degree-4 vertices.  This pairs up the crossing edges
-    diagonally, producing a single figure-8 ring across the shared
-    vertex — exactly what NumPy 8-connectivity produces when two
-    diagonally adjacent cells share a value.
+    For ``connectivity_8=True``, prefer "straight through" (rel == 0)
+    when available, otherwise pick the largest CCW turn (smallest CW
+    turn) at degree-4 vertices.  Within a single ring, ``rel == 0``
+    cannot occur on a grid because the simplify pass folds consecutive
+    same-direction edges; but ``_merge_polygon_rings`` operates on
+    multiple rings sharing a vertex, where one ring can pass straight
+    through V while another corners at V.  Preferring "straight
+    through" keeps such rings continuous; falling back to the largest
+    turn pairs up the diagonal crossings into a single figure-8 ring,
+    matching the NumPy 8-connectivity output for two diagonally
+    adjacent same-value cells.
     """
     targets = adj[current_vertex]
     if len(targets) == 1:
@@ -869,22 +875,24 @@ def _pick_next_edge(adj, prev_vertex, current_vertex,
 
     best = None
     if connectivity_8:
-        # Prefer the LARGEST forward-going CCW turn so that crossings
-        # produced by diagonal-only adjacency stay merged into figure-8
-        # rings.  ``rel == 0`` (straight ahead) is impossible on a grid
-        # because consecutive ring edges never go in the same direction
-        # without the trace having already turned, but we still avoid
-        # 180° u-turns when other options exist.
+        # Priority order at a degree-4 vertex:
+        #   1. ``rel == 0`` (continue straight) -- keeps a ring that
+        #      passes through V on the same trajectory.
+        #   2. ``rel == 3`` (90 deg CW) -- pairs the diagonal-only
+        #      crossing into a figure-8 ring.
+        #   3. ``rel == 1`` (90 deg CCW) -- the 4-connectivity choice,
+        #      used only if 0 and 3 are unavailable.
+        #   4. ``rel == 2`` (180 deg u-turn) -- last resort.
+        priority = {0: 4, 3: 3, 1: 2, 2: 1}
         best_rel = -1
         for target in targets:
             dx = target[0] - current_vertex[0]
             dy = target[1] - current_vertex[1]
             out_angle = _DIR_ANGLE[(dx, dy)]
             rel = (out_angle - incoming_angle) % 4
-            if rel == 2:
-                rel = -1  # 180° u-turn -> last resort
-            if rel > best_rel:
-                best_rel = rel
+            score = priority[rel]
+            if score > best_rel:
+                best_rel = score
                 best = target
     else:
         best_rel = 5
@@ -1515,8 +1523,12 @@ def _merge_polygon_rings(polys_list, connectivity_8=False):
     return _group_rings_into_polygons(simplified)
 
 
-def _merge_chunk_polygons(chunk_results, transform):
-    """Merge polygons from all chunks and return final output."""
+def _merge_chunk_polygons(chunk_results, transform, connectivity_8=False):
+    """Merge polygons from all chunks and return final output.
+
+    ``connectivity_8`` is forwarded to :func:`_merge_polygon_rings` to
+    select the degree-4-vertex pairing rule used by the trace step.
+    """
     all_interior = []
     boundary_by_value = {}
 
@@ -1529,10 +1541,11 @@ def _merge_chunk_polygons(chunk_results, transform):
     merged = []
     for val, polys_list in boundary_by_value.items():
         if len(polys_list) == 1:
-            # Single polygon set for this value — nothing to merge.
+            # Single polygon set for this value -- nothing to merge.
             merged.append((val, polys_list[0]))
         else:
-            merged_polys = _merge_polygon_rings(polys_list)
+            merged_polys = _merge_polygon_rings(
+                polys_list, connectivity_8=connectivity_8)
             for rings in merged_polys:
                 merged.append((val, rings))
 

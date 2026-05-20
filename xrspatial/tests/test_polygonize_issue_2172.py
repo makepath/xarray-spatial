@@ -18,7 +18,11 @@ try:
 except ImportError:
     da = None
 
-from ..polygonize import polygonize, _signed_ring_area
+from ..polygonize import (
+    _merge_polygon_rings,
+    _signed_ring_area,
+    polygonize,
+)
 
 dask_required = pytest.mark.skipif(da is None, reason="dask not installed")
 
@@ -61,7 +65,10 @@ def _assert_parity(arr, chunks, connectivity, name=""):
         f"{name}: value-set mismatch"
     )
     for val in area_np:
-        assert area_np[val] == pytest.approx(area_dk[val], abs=1e-9), (
+        # Polygonize areas come back exact for integer inputs and exact
+        # within float ULP for float inputs.  Use a very small tolerance
+        # to avoid being thrown off by add-order drift in float sums.
+        assert area_np[val] == pytest.approx(area_dk[val], abs=1e-12), (
             f"{name}: per-value area mismatch for {val}: "
             f"numpy={area_np[val]}, dask={area_dk[val]}"
         )
@@ -178,10 +185,70 @@ class TestDask8ConnFloatAndMaskedInputs:
         _assert_parity(arr, (2, 2), connectivity=8,
                        name="float NaN (2,2)")
 
-    def test_random_int_20x20(self):
+    @pytest.mark.parametrize("chunks", [(5, 5), (3, 7), (1, 1), (4, 4)])
+    def test_random_int_20x20(self, chunks):
         rng = np.random.default_rng(42)
         arr = rng.integers(0, 3, (20, 20), dtype=np.int32)
-        # Multiple chunk shapes to exercise different corner geometries.
-        for chunks in [(5, 5), (3, 7), (1, 1), (4, 4)]:
-            _assert_parity(arr, chunks, connectivity=8,
-                           name=f"random 20x20 chunks={chunks}")
+        _assert_parity(arr, chunks, connectivity=8,
+                       name=f"random 20x20 chunks={chunks}")
+
+
+class TestMergePolygonRingsDirect:
+    """Direct unit tests on ``_merge_polygon_rings`` covering the
+    8-conn vertex-pairing rule.  These pin the trace priority order
+    (straight-through > right-turn > left-turn > u-turn) so a future
+    refactor cannot reintroduce the chunk-corner bug by accident.
+    """
+
+    def test_two_diagonally_adjacent_squares_merge_into_figure_8(self):
+        # Two 1x1 squares sharing only a corner vertex.  Under
+        # 8-conn the merge must produce a single self-touching ring
+        # (a figure-8), not two separate squares.
+        sq_a = [np.array([
+            [0.0, 0.0], [1.0, 0.0],
+            [1.0, 1.0], [0.0, 1.0], [0.0, 0.0],
+        ])]
+        sq_b = [np.array([
+            [1.0, 1.0], [2.0, 1.0],
+            [2.0, 2.0], [1.0, 2.0], [1.0, 1.0],
+        ])]
+        merged = _merge_polygon_rings([sq_a, sq_b], connectivity_8=True)
+        assert len(merged) == 1
+        # Combined area = 1 + 1 = 2.
+        assert abs(_signed_ring_area(merged[0][0])) == pytest.approx(2.0)
+        # The ring revisits the shared corner (1, 1).  Count occurrences.
+        ext = merged[0][0]
+        revisits = sum(
+            1 for k in range(len(ext) - 1)
+            if ext[k, 0] == 1.0 and ext[k, 1] == 1.0
+        )
+        assert revisits == 2, f"expected figure-8 ring through (1,1), got {revisits} visits"
+
+    def test_4conn_keeps_diagonal_squares_separate(self):
+        # Same input, but 4-conn must keep them as two rings.
+        sq_a = [np.array([
+            [0.0, 0.0], [1.0, 0.0],
+            [1.0, 1.0], [0.0, 1.0], [0.0, 0.0],
+        ])]
+        sq_b = [np.array([
+            [1.0, 1.0], [2.0, 1.0],
+            [2.0, 2.0], [1.0, 2.0], [1.0, 1.0],
+        ])]
+        merged = _merge_polygon_rings([sq_a, sq_b], connectivity_8=False)
+        assert len(merged) == 2
+
+    def test_edge_cancellation_still_merges_under_8conn(self):
+        # Two 1x1 squares sharing an EDGE.  Edge cancellation must
+        # produce one 1x2 rectangle regardless of the rel==0 priority
+        # rule.
+        sq_a = [np.array([
+            [0.0, 0.0], [1.0, 0.0],
+            [1.0, 1.0], [0.0, 1.0], [0.0, 0.0],
+        ])]
+        sq_b = [np.array([
+            [1.0, 0.0], [2.0, 0.0],
+            [2.0, 1.0], [1.0, 1.0], [1.0, 0.0],
+        ])]
+        merged = _merge_polygon_rings([sq_a, sq_b], connectivity_8=True)
+        assert len(merged) == 1
+        assert abs(_signed_ring_area(merged[0][0])) == pytest.approx(2.0)
