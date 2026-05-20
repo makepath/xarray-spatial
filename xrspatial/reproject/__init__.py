@@ -662,8 +662,12 @@ def reproject(
         )
     tgt_crs = _resolve_crs(target_crs)
 
-    # Detect nodata
-    nd = _detect_nodata(raster, nodata)
+    # Detect nodata. Pass the raster dtype so integer rasters get an
+    # integer-compatible sentinel (dtype min for signed, dtype max for
+    # unsigned) instead of NaN. Without this hint, the worker's
+    # cast-back step would collapse NaN to 0 and `attrs['nodata']`
+    # would contradict the array contents (#2185).
+    nd = _detect_nodata(raster, nodata, dtype=raster.dtype)
 
     # Source geometry
     src_bounds = _source_bounds(raster)
@@ -1769,7 +1773,11 @@ def merge(
             "Could not detect target CRS. Pass target_crs explicitly."
         )
 
-    # Detect output nodata (the sentinel the user asked for)
+    # Detect output nodata (the sentinel the user asked for). The merge
+    # output is always float64, so NaN is fine as the output sentinel
+    # when the user didn't supply one -- the integer-cast hazard from
+    # #2185 only applies to the per-input ``r_nd`` values that flow into
+    # the per-raster reproject worker.
     nd = nodata if nodata is not None else _detect_nodata(rasters[0], nodata)
 
     # Gather source info for each raster
@@ -1787,8 +1795,10 @@ def merge(
         yd = _is_y_descending(r)
         # Per-raster input nodata sentinel. Detected independently of the
         # user-supplied output nodata so that mixed-sentinel inputs are
-        # canonicalized correctly during merge.
-        r_nd = _detect_nodata(r, None)
+        # canonicalized correctly during merge. Pass the raster dtype so
+        # integer sources get an integer-compatible sentinel rather than
+        # NaN -- the same fix as the reproject() path for #2185.
+        r_nd = _detect_nodata(r, None, dtype=r.dtype)
         raster_infos.append({
             'raster': r,
             'src_crs': src_crs,
