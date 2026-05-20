@@ -109,7 +109,11 @@ from ._validation import (
     _validate_dtype_cast,
     _validate_tile_size_arg,
 )
-from ._writer import write
+# ``_writer.write`` (alias for ``_writer._write``) is module-private;
+# see ``_writer.py`` docstring and issue #2138. The public eager write
+# surface is :func:`to_geotiff`; do not re-export the array-level
+# entry point here. The dotted path ``xrspatial.geotiff._writer._write``
+# still works for the handful of internal call sites that need it.
 from ._writers.eager import to_geotiff
 # Re-export only; called by xrspatial/geotiff/tests/test_nodata_no_extra_copy_1553.py.
 from ._writers.eager import _write_single_tile  # noqa: F401
