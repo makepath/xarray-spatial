@@ -334,8 +334,11 @@ def test_eager_raises_on_unparseable_crs_without_partial_attrs():
             attrs_in=seed,
         )
     # Seed dict was never written to; the validation failure raised
-    # before any ``attrs[...]`` step ran.
+    # before any ``attrs[...]`` step ran. Check both the exact contents
+    # AND the length so a future partial-leak that adds new keys is
+    # caught even if the existing key still matches.
     assert seed == {'sentinel_marker': True}
+    assert len(seed) == 1
 
 
 def test_eager_allow_unparseable_crs_bypasses_check():
@@ -424,6 +427,12 @@ def test_lazy_int_graph_dtype_keeps_masked_false():
     # Integer graph -> the per-chunk mask cannot have run, so masked=False
     # mirrors the #2092 contract even though the caller asked for masking.
     assert attrs['masked_nodata'] is False
+    # Wave 1 contract: whatever ``dtype`` the caller passes lands as
+    # ``nodata_dtype_cast``. The lazy helper does not distinguish "caller
+    # explicitly passed dtype=int16" from "graph dtype is int16 by
+    # default"; that split is wave 2's call to make per the helper
+    # docstring. Pinning the int16 value here locks in the conflated
+    # semantics so wave 2 catches any drift.
     assert attrs['nodata_dtype_cast'] == 'int16'
 
 
@@ -497,6 +506,7 @@ def test_lazy_raises_on_unparseable_crs_without_partial_attrs():
             attrs_in=seed,
         )
     assert seed == {'sentinel_marker': True}
+    assert len(seed) == 1
 
 
 def test_lazy_allow_unparseable_crs_bypasses_check():

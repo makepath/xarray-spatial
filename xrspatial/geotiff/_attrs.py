@@ -160,6 +160,8 @@ from typing import Any
 
 import numpy as np
 
+import xarray as xr
+
 from ._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
@@ -1250,18 +1252,30 @@ def _finalize_eager_read(
     sources). Read paths that don't need MinIsWhite inversion can pass
     ``mask_sentinel=nodata``.
 
-    Numpy buffers only; the GPU eager call sites pass cupy ndarrays and
-    rely on cupy's numpy-equivalent operators (``arr.dtype.kind``,
-    ``arr.astype``, boolean fancy indexing, ``arr == scalar``) so the
-    same helper covers both backends. The GPU eager path also passes a
-    masking function that runs on the device; this helper handles the
-    host-side path. (Wave 2 will migrate eager numpy / VRT eager; wave 3
-    will migrate the three GPU eager sites with the mask step factored
-    out.)
+    Wave migration plan:
+
+    * Wave 2 (#2178 dask, #2179 eager numpy) migrates the eager numpy
+      paths. The mask block inside this helper matches the inline block
+      in ``open_geotiff`` field-for-field; the migration is a straight
+      swap.
+    * Wave 3 (#2180 VRT, GPU) migrates the VRT eager + three GPU eager
+      sites. The VRT eager path is host-side and works with the helper
+      as-is. The GPU sites apply masking through a CUDA kernel
+      (``_apply_nodata_mask_gpu_with_presence``); they can either
+      pre-mask and call the helper with ``nodata=None`` to skip the
+      helper's host-side mask block, or wave 3 can extend this
+      helper's signature with a ``mask_fn`` injection. Either choice
+      lives in #2180; the wave 1 contract here is the host-side path.
 
     Returns a :class:`xarray.DataArray` ready for the caller to return
     from the read function. The caller assembles the dask graph
     separately when a lazy backend is in play; this helper is eager-only.
+
+    ``attrs_in`` is shallow-copied via ``dict(attrs_in)``. Nested values
+    (e.g. ``extra_tags`` list, ``gdal_metadata`` dict) are shared between
+    the caller's seed dict and the returned DataArray's attrs; mutating
+    a nested value after the call propagates both ways. Callers that
+    care about isolation can ``copy.deepcopy(attrs_in)`` first.
     """
     # Step 1: validate first so partial attrs never leak.
     _validate_read_geo_info(
@@ -1322,10 +1336,6 @@ def _finalize_eager_read(
     else:
         dims = ['y', 'x']
 
-    # Local import to avoid a top-level ``import xarray`` -- ``_attrs``
-    # is imported from ``__init__`` and the lazy import keeps the module
-    # load graph the same shape it already has.
-    import xarray as xr
     return xr.DataArray(arr, dims=dims, coords=coords, name=name, attrs=attrs)
 
 
@@ -1365,13 +1375,27 @@ def _finalize_lazy_read_attrs(
     deliberately does not touch arrays or coords.
 
     The ``dtype`` parameter accepts a numpy dtype, a string ('float64'),
-    or ``None`` (no explicit cast). When ``None`` the masked-flag still
-    has to know the graph dtype; the caller passes whatever ``dtype=``
-    they resolved onto the graph (e.g. ``target_dtype`` in the dask
-    backend) so the helper can derive ``masked``. The integer-to-float
-    promotion that an eager path applies when sentinel pixels are
-    present is handled by the dask backend before it calls this helper;
-    ``dtype`` here is the resolved graph dtype, not the file dtype.
+    or ``None``. It is the **resolved graph dtype** the dask backend
+    settled on (e.g. ``target_dtype`` after the int->float64 promotion
+    that ``mask_nodata=True`` triggers on int files): the helper uses
+    it to derive ``masked`` and writes it as ``nodata_dtype_cast`` when
+    non-None.
+
+    Wave 2 migration note: the current pre-helper dask backend
+    distinguishes "caller explicitly passed ``dtype=``" from
+    "graph dtype was auto-promoted by masking" so that
+    ``nodata_dtype_cast`` surfaces only on the explicit-cast case.
+    This helper conflates the two -- whatever ``dtype`` value the
+    caller passes here becomes the ``nodata_dtype_cast`` attr. The
+    migration PR (#2178) can either accept that change, or split the
+    helper's ``dtype`` into two parameters at that point. Frozen
+    signature here per #2177 means we ship the one-``dtype`` shape
+    and leave the split for wave 2 if it turns out to matter.
+
+    ``attrs_in`` is shallow-copied via ``dict(attrs_in)``. Nested values
+    are shared between the caller's seed dict and the returned attrs;
+    callers that care about isolation can ``copy.deepcopy(attrs_in)``
+    first.
     """
     _validate_read_geo_info(
         geo_info, window=window,
