@@ -200,8 +200,10 @@ def read_vrt(source: str, *,
     # references its own source files; overview selection would need to
     # apply to each one). ``overview_level=0`` matches the documented
     # "full resolution" default, so treat it as a no-op. Mirrors the
-    # existing rejection inside ``open_geotiff``'s VRT branch
-    # (issue #1685).
+    # existing rejection inside ``open_geotiff``'s VRT branch at
+    # ``__init__.py:551-555`` (issue #1685). Keep both sites in sync; a
+    # future refactor that moves this into ``_validate_dispatch_kwargs``
+    # should drop both at once.
     if overview_level not in (None, 0):
         raise ValueError(
             "overview_level is not supported for VRT sources. "

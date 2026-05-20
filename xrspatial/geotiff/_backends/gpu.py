@@ -201,6 +201,16 @@ def read_geotiff_gpu(source: str, *,
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
+    # Coerce ``pathlib.Path`` and other ``os.PathLike`` inputs to ``str``
+    # before the validator so the file-like guard inside
+    # ``_validate_dispatch_kwargs`` does not misclassify a Path as a
+    # file-like buffer (review feedback on #2175). The downstream
+    # ``_coerce_path`` call near the eager-path setup below is now
+    # redundant for the same object but kept as a no-op for paths that
+    # arrive on the chunked branch via a different route.
+    from .._reader import _coerce_path as _coerce_path_dispatch
+    source = _coerce_path_dispatch(source)
+
     # Shared dispatcher-kwarg validator so direct callers see the same
     # rejections as ``open_geotiff`` (issue #2175 / parent #2162). Runs
     # ``_validate_overview_level_arg`` first to match ``open_geotiff``'s

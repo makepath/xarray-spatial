@@ -548,6 +548,11 @@ def open_geotiff(source: str | BinaryIO, *,
         # ``overview_level=0`` is documented as "full resolution" (the
         # default), so treat it as a no-op the same as ``None`` rather
         # than rejecting a kwarg value the caller could have omitted.
+        # Mirrored at ``_backends/vrt.py`` (the direct-call entry point)
+        # so callers see the same rejection through both paths. The
+        # value-level rejection stays here rather than in
+        # ``_validate_dispatch_kwargs`` so the helper does not need a
+        # special-case for ``overview_level=0`` vs ``overview_level=N``.
         if overview_level not in (None, 0):
             raise ValueError(
                 "overview_level is not supported for VRT sources. "

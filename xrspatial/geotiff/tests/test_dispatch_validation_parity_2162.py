@@ -374,6 +374,73 @@ def test_gpu_rejects_file_like(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Path-object sources survive the helper's file-like guard
+# --------------------------------------------------------------------------
+#
+# ``pathlib.Path`` is an ``os.PathLike`` instance, not a string. Each
+# entry point coerces ``Path`` to ``str`` via ``_coerce_path`` before the
+# dispatch validator runs so the file-like guard
+# (``not isinstance(source, str)``) does not misclassify a Path as a
+# file-like buffer. Regression for the review feedback on the original
+# #2175 PR (the GPU entry point was coercing AFTER the validator).
+
+
+def test_open_geotiff_accepts_path_object(tmp_path):
+    from pathlib import Path
+    path = _build_local_tif(tmp_path)
+    out = open_geotiff(Path(path))
+    assert out.shape == (8, 8)
+
+
+def test_dask_accepts_path_object(tmp_path):
+    from pathlib import Path
+    path = _build_local_tif(tmp_path)
+    out = read_geotiff_dask(Path(path), chunks=4)
+    assert out.shape == (8, 8)
+
+
+def test_vrt_accepts_path_object(tmp_path):
+    from pathlib import Path
+    vrt, _src = _build_vrt(tmp_path)
+    out = read_vrt(Path(vrt))
+    assert out.shape == (8, 8)
+
+
+@_gpu_only
+def test_gpu_accepts_path_object(tmp_path):
+    from pathlib import Path
+    path = _build_local_tif(tmp_path)
+    out = read_geotiff_gpu(Path(path))
+    assert out.shape == (8, 8)
+
+
+def test_gpu_path_object_does_not_raise_file_like_error(tmp_path):
+    """Even on a CPU-only host the validator must accept a Path object.
+
+    The dispatch validator runs before any cupy import, so the bad
+    behaviour on `main` (treating Path as file-like) raises before any
+    GPU code executes. With the fix the validator coerces Path to str
+    first and the error only surfaces (if at all) from the GPU stack.
+    """
+    from pathlib import Path
+    path = _build_local_tif(tmp_path)
+    # Either the call succeeds (GPU available) or it fails for a real
+    # GPU reason. The one thing it must NOT raise is the file-like
+    # ValueError introduced by the validator misclassifying Path.
+    try:
+        read_geotiff_gpu(Path(path))
+    except ValueError as e:
+        assert "file-like" not in str(e), (
+            f"validator misclassified Path as file-like: {e}"
+        )
+    except Exception:
+        # Any non-ValueError failure (ImportError, RuntimeError from
+        # the CUDA preflight, etc.) is acceptable -- it is not the
+        # regression we are pinning.
+        pass
+
+
+# --------------------------------------------------------------------------
 # Default sentinel pins (no regressions on the happy path)
 # --------------------------------------------------------------------------
 #
@@ -408,91 +475,95 @@ def test_vrt_defaults_round_trip(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def _get_error_message(callable_, *args, **kwargs) -> str:
-    """Invoke ``callable_`` and return the exception message it raises."""
+def _get_error(callable_, *args, **kwargs):
+    """Invoke ``callable_`` and return the (type_name, message) of the
+    exception it raises. Asserting on the type and message separately
+    catches a regression where the exception type changes silently
+    while the message stays the same.
+    """
     try:
         callable_(*args, **kwargs)
     except Exception as e:
-        return f"{type(e).__name__}: {e}"
+        return type(e).__name__, str(e)
     raise AssertionError("expected an exception, none raised")
 
 
 def test_max_cloud_bytes_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
     vrt, _ = _build_vrt(tmp_path)
-    open_dask_msg = _get_error_message(
-        open_geotiff, path, chunks=4, max_cloud_bytes=8)
-    direct_dask_msg = _get_error_message(
-        read_geotiff_dask, path, max_cloud_bytes=8)
-    # Both messages mention max_cloud_bytes and the dask incompatibility.
-    assert "max_cloud_bytes" in open_dask_msg
-    assert "max_cloud_bytes" in direct_dask_msg
-    assert "dask" in open_dask_msg
-    assert "dask" in direct_dask_msg
+    open_dask = _get_error(open_geotiff, path, chunks=4, max_cloud_bytes=8)
+    direct_dask = _get_error(read_geotiff_dask, path, max_cloud_bytes=8)
+    # Both raise ValueError with the same dask-incompatibility message.
+    assert open_dask[0] == "ValueError"
+    assert direct_dask[0] == "ValueError"
+    for _, msg in (open_dask, direct_dask):
+        assert "max_cloud_bytes" in msg
+        assert "dask" in msg
 
-    open_gpu_msg = _get_error_message(
-        open_geotiff, path, gpu=True, max_cloud_bytes=8)
-    direct_gpu_msg = _get_error_message(
-        read_geotiff_gpu, path, max_cloud_bytes=8)
-    assert "max_cloud_bytes" in open_gpu_msg
-    assert "max_cloud_bytes" in direct_gpu_msg
-    assert "gpu" in open_gpu_msg.lower()
-    assert "gpu" in direct_gpu_msg.lower()
+    open_gpu = _get_error(open_geotiff, path, gpu=True, max_cloud_bytes=8)
+    direct_gpu = _get_error(read_geotiff_gpu, path, max_cloud_bytes=8)
+    assert open_gpu[0] == "ValueError"
+    assert direct_gpu[0] == "ValueError"
+    for _, msg in (open_gpu, direct_gpu):
+        assert "max_cloud_bytes" in msg
+        assert "gpu" in msg.lower()
 
-    open_vrt_msg = _get_error_message(
-        open_geotiff, vrt, max_cloud_bytes=8)
-    direct_vrt_msg = _get_error_message(
-        read_vrt, vrt, max_cloud_bytes=8)
-    assert "max_cloud_bytes" in open_vrt_msg
-    assert "max_cloud_bytes" in direct_vrt_msg
-    assert "vrt" in open_vrt_msg.lower()
-    assert "vrt" in direct_vrt_msg.lower()
+    open_vrt = _get_error(open_geotiff, vrt, max_cloud_bytes=8)
+    direct_vrt = _get_error(read_vrt, vrt, max_cloud_bytes=8)
+    assert open_vrt[0] == "ValueError"
+    assert direct_vrt[0] == "ValueError"
+    for _, msg in (open_vrt, direct_vrt):
+        assert "max_cloud_bytes" in msg
+        assert "vrt" in msg.lower()
 
 
 def test_band_nodata_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
-    open_msg = _get_error_message(
-        open_geotiff, path, band_nodata='first')
-    dask_msg = _get_error_message(
-        read_geotiff_dask, path, band_nodata='first')
-    gpu_msg = _get_error_message(
-        read_geotiff_gpu, path, band_nodata='first')
-    for msg in (open_msg, dask_msg, gpu_msg):
+    results = [
+        _get_error(open_geotiff, path, band_nodata='first'),
+        _get_error(read_geotiff_dask, path, band_nodata='first'),
+        _get_error(read_geotiff_gpu, path, band_nodata='first'),
+    ]
+    for kind, msg in results:
+        assert kind == "ValueError"
         assert "band_nodata only applies" in msg
 
 
 def test_missing_sources_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
-    open_msg = _get_error_message(
-        open_geotiff, path, missing_sources='raise')
-    dask_msg = _get_error_message(
-        read_geotiff_dask, path, missing_sources='raise')
-    gpu_msg = _get_error_message(
-        read_geotiff_gpu, path, missing_sources='raise')
-    for msg in (open_msg, dask_msg, gpu_msg):
+    results = [
+        _get_error(open_geotiff, path, missing_sources='raise'),
+        _get_error(read_geotiff_dask, path, missing_sources='raise'),
+        _get_error(read_geotiff_gpu, path, missing_sources='raise'),
+    ]
+    for kind, msg in results:
+        assert kind == "ValueError"
         assert "missing_sources only applies" in msg
 
 
 def test_on_gpu_failure_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
     vrt, _ = _build_vrt(tmp_path)
-    open_msg = _get_error_message(
-        open_geotiff, path, on_gpu_failure='strict')
-    dask_msg = _get_error_message(
-        read_geotiff_dask, path, on_gpu_failure='strict')
-    vrt_msg = _get_error_message(
-        read_vrt, vrt, on_gpu_failure='strict')
-    for msg in (open_msg, dask_msg, vrt_msg):
+    results = [
+        _get_error(open_geotiff, path, on_gpu_failure='strict'),
+        _get_error(read_geotiff_dask, path, on_gpu_failure='strict'),
+        _get_error(read_vrt, vrt, on_gpu_failure='strict'),
+    ]
+    for kind, msg in results:
+        assert kind == "ValueError"
         assert "on_gpu_failure only applies" in msg
 
 
 def test_overview_level_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
     vrt, _ = _build_vrt(tmp_path)
-    open_msg = _get_error_message(open_geotiff, path, overview_level="bad")
-    dask_msg = _get_error_message(read_geotiff_dask, path, overview_level="bad")
-    gpu_msg = _get_error_message(read_geotiff_gpu, path, overview_level="bad")
-    vrt_msg = _get_error_message(read_vrt, vrt, overview_level="bad")
-    for msg in (open_msg, dask_msg, gpu_msg, vrt_msg):
+    results = [
+        _get_error(open_geotiff, path, overview_level="bad"),
+        _get_error(read_geotiff_dask, path, overview_level="bad"),
+        _get_error(read_geotiff_gpu, path, overview_level="bad"),
+        _get_error(read_vrt, vrt, overview_level="bad"),
+    ]
+    for kind, msg in results:
+        assert kind == "TypeError"
         assert "overview_level must be an int or None" in msg
         assert "str" in msg

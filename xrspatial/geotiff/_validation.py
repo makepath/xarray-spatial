@@ -428,6 +428,9 @@ def _validate_dispatch_kwargs(
     # Local import avoids a circular dependency with ``_reader`` when
     # ``_validation`` is imported at module load time of the geotiff
     # subpackage. The sentinel binding is cheap to look up.
+    # TODO(#2162 follow-up): move ``_MAX_CLOUD_BYTES_SENTINEL`` to
+    # ``_runtime`` alongside the other dispatch sentinels so this local
+    # import can hoist to module scope.
     from ._reader import _MAX_CLOUD_BYTES_SENTINEL
 
     _validate_overview_level_arg(overview_level)
@@ -437,6 +440,25 @@ def _validate_dispatch_kwargs(
             "on_gpu_failure only applies when gpu=True. "
             "Pass gpu=True to enable the GPU pipeline, or drop "
             "on_gpu_failure to keep the default CPU path.")
+
+    # File-like buffers do not support the GPU or dask code paths
+    # because those re-open the source by path from worker tasks or
+    # device-side readers. Reject early with a clear message that names
+    # the actual blocker (gpu=True or chunks=...), ahead of the
+    # VRT-dependent kwarg checks below. A file-like source cannot be a
+    # VRT either, so the later VRT-only rejections would fire on
+    # ``missing_sources`` / ``band_nodata`` with a less specific
+    # diagnostic. Surfacing the file-like restriction first gives the
+    # caller the direct fix (pass a path string).
+    if not isinstance(source, str):
+        if gpu:
+            raise ValueError(
+                "gpu=True is not supported for file-like sources. "
+                "Pass a path string instead.")
+        if chunks is not None:
+            raise ValueError(
+                "chunks=... (dask) is not supported for file-like sources. "
+                "Pass a path string instead.")
 
     missing_sources_passed = (
         missing_sources is not _MISSING_SOURCES_SENTINEL)
@@ -475,19 +497,6 @@ def _validate_dispatch_kwargs(
                 "max_cloud_bytes is not supported when chunks=... (dask). "
                 "The dask reader does not apply the cloud-byte budget; "
                 "drop the kwarg, or drop chunks to use the eager path.")
-
-    # File-like buffers do not support the GPU or dask code paths
-    # because those re-open the source by path from worker tasks or
-    # device-side readers. Reject early with a clear message.
-    if not isinstance(source, str):
-        if gpu:
-            raise ValueError(
-                "gpu=True is not supported for file-like sources. "
-                "Pass a path string instead.")
-        if chunks is not None:
-            raise ValueError(
-                "chunks=... (dask) is not supported for file-like sources. "
-                "Pass a path string instead.")
 
 
 def _validate_predictor_sample_format(predictor, sample_format) -> None:
