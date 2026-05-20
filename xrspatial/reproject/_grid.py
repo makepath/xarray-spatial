@@ -196,6 +196,10 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
             )
             src_left, src_right = new_left, new_right
             src_bottom, src_top = new_bottom, new_top
+            # Defensive: if the input was so narrow that the 0.02 deg
+            # clamp inverted the range, restore the originals. Upstream
+            # _validate_grid_params already rejects degenerate bounds,
+            # so this branch should be unreachable in practice.
             if src_left >= src_right:
                 src_left, src_right = source_bounds[0], source_bounds[2]
                 clamp_applied = False
@@ -227,15 +231,9 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         ixx, iyy = np.meshgrid(ix, iy)
         xs = np.concatenate([edge_xs, ixx.ravel()])
         ys = np.concatenate([edge_ys, iyy.ravel()])
-        # For policy='raw', include the unclamped corners explicitly so
-        # the raw bounds reflect the user's original extent verbatim.
-        if bounds_policy == "raw":
-            xs = np.concatenate([xs, np.array([
-                src_left_raw, src_right_raw, src_left_raw, src_right_raw
-            ])])
-            ys = np.concatenate([ys, np.array([
-                src_bottom_raw, src_bottom_raw, src_top_raw, src_top_raw
-            ])])
+        # Under policy='raw' the clamp branch above is skipped, so the
+        # edge samples already start from the original src_*_raw values.
+        # No extra corner injection needed.
         tx, ty = _transform_boundary(source_crs, target_crs, xs, ys)
         tx = np.asarray(tx)
         ty = np.asarray(ty)

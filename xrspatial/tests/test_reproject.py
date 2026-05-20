@@ -4144,3 +4144,86 @@ class TestBoundsPolicy:
         # Compute and confirm we got finite output.
         arr = out.compute()
         assert np.isfinite(arr.data).any()
+
+    def test_clamp_policy_noop_on_benign_geographic(self):
+        """bounds_policy='clamp' is silent on a mid-latitude geographic
+        input whose extent does not touch +/-180 or +/-90.
+
+        The clamp branch runs but trims nothing, so no warning should
+        fire. This pins the behaviour so a future change that always
+        emits a clamp warning shows up here.
+        """
+        from xrspatial.reproject import reproject
+
+        r = self._benign_geographic()
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            reproject(r, 'EPSG:3857', bounds_policy='clamp')
+
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        assert not matched, (
+            f"clamp on benign geographic input should not warn; got "
+            f"{[str(m.message) for m in matched]}"
+        )
+
+    def test_clamp_policy_noop_on_projected_source(self):
+        """bounds_policy='clamp' is a no-op when source CRS is projected.
+
+        The clamp condition is gated on `source_crs.is_geographic`, so
+        a UTM input under 'clamp' should run without trimming or
+        warning regardless of how close to a singularity the extent is.
+        """
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(32, 32).astype(np.float32)
+        # UTM-style coords, mid-latitudes.
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(5000000, 4000000, 32),
+                    'x': np.linspace(400000, 600000, 32)},
+            attrs={'crs': 'EPSG:32633'},
+        )
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            reproject(r, 'EPSG:4326', bounds_policy='clamp')
+
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        assert not matched
+
+    def test_merge_dedupes_per_input_warnings(self):
+        """merge() collapses per-input bounds_policy warnings into one.
+
+        When several inputs all trigger the percentile fallback, the
+        caller should see a single summary warning rather than N
+        near-identical messages.
+        """
+        from xrspatial.reproject import merge
+
+        r = self._global_geographic()
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            merge([r, r, r], target_crs='EPSG:3857', bounds_policy='auto')
+
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        # Three identical inputs should yield exactly one summary
+        # warning from merge(), not three.
+        summary = [m for m in matched if 'merge:' in str(m.message)]
+        assert len(summary) == 1, (
+            f"expected one merge summary warning, got "
+            f"{[str(m.message) for m in matched]}"
+        )

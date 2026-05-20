@@ -600,6 +600,8 @@ def reproject(
         - ``"clamp"``: trim geographic source bounds inward by 0.01 deg
           from +/-180 longitude and +/-90 latitude before projecting.
           Avoids infinities at singularities. No percentile fallback.
+          No-op on projected source CRSes (UTM, Mercator, etc.) since
+          the clamp only applies in degrees.
         - ``"percentile"``: project a dense interior grid of the source
           extent and use the 2nd/98th percentiles of the result as the
           output bounds. Rejects projection outliers at the cost of
@@ -1840,16 +1842,43 @@ def merge(
 
     # Compute unified output grid
     if bounds is None:
-        # Union of all raster bounds in target CRS
+        # Union of all raster bounds in target CRS.
+        # Capture bounds_policy warnings during the per-input gather and
+        # emit a single deduplicated message afterwards. Otherwise a
+        # mosaic of N near-antimeridian rasters yields N identical
+        # warnings, which is noise the caller cannot act on individually.
+        import warnings as _warnings
         all_bounds = []
-        for info in raster_infos:
-            grid = _compute_output_grid(
-                info['src_bounds'], info['src_shape'],
-                info['src_crs'], tgt_crs,
-                resolution=resolution,
-                bounds_policy=bounds_policy,
+        with _warnings.catch_warnings(record=True) as _caught:
+            _warnings.simplefilter('always', UserWarning)
+            for info in raster_infos:
+                grid = _compute_output_grid(
+                    info['src_bounds'], info['src_shape'],
+                    info['src_crs'], tgt_crs,
+                    resolution=resolution,
+                    bounds_policy=bounds_policy,
+                )
+                all_bounds.append(grid['bounds'])
+        _policy_msgs = [
+            str(w.message) for w in _caught
+            if issubclass(w.category, UserWarning)
+            and 'bounds_policy' in str(w.message)
+        ]
+        if _policy_msgs:
+            _unique = list(dict.fromkeys(_policy_msgs))
+            _summary = (
+                f"merge: bounds_policy={bounds_policy!r} altered the "
+                f"projected extent for {len(_policy_msgs)} input "
+                f"raster(s); {len(_unique)} unique trigger(s). "
+                f"First trigger: {_unique[0]}"
             )
-            all_bounds.append(grid['bounds'])
+            _warnings.warn(_summary, UserWarning, stacklevel=2)
+        # Re-emit non-bounds_policy warnings that we captured.
+        for _w in _caught:
+            if 'bounds_policy' not in str(_w.message):
+                _warnings.warn_explicit(
+                    _w.message, _w.category, _w.filename, _w.lineno,
+                )
         left = min(b[0] for b in all_bounds)
         bottom = min(b[1] for b in all_bounds)
         right = max(b[2] for b in all_bounds)
