@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 try:
-    from shapely.geometry import LineString, Point
+    from shapely.geometry import LineString, Point, box
     has_shapely = True
 except ImportError:
     has_shapely = False
@@ -59,10 +59,11 @@ def _as_numpy(arr):
     return np.asarray(data)
 
 
-def _run(geom_list, merge, use_cuda):
+def _run(geom_list, merge, use_cuda, all_touched=False):
     return rasterize(
         geom_list, width=WIDTH, height=HEIGHT, bounds=BOUNDS,
         merge=merge, use_cuda=use_cuda, fill=np.nan,
+        all_touched=all_touched,
     )
 
 
@@ -182,3 +183,49 @@ def test_count_of_coincident_points_equals_three():
     assert 3.0 in finite, (
         f"expected the three-point pixel to count 3; got {finite}"
     )
+
+
+# ---------------------------------------------------------------------------
+# all_touched=True polygon boundaries are the polygon analogue of the
+# line-overlap case: two polygons sharing a boundary write the same
+# pixels twice via the Bresenham boundary pass, on top of the scanline
+# fill.  Confirm cupy still matches numpy across all six aggregators.
+# ---------------------------------------------------------------------------
+
+def _shared_boundary_polygons():
+    """Two rectangles that share an edge."""
+    return [
+        (box(1.0, 1.0, 5.0, 5.0), 1.0),
+        (box(5.0, 1.0, 9.0, 5.0), 2.0),
+    ]
+
+
+@pytest.mark.parametrize('merge', MERGES)
+def test_cupy_matches_numpy_all_touched_shared_boundary(merge):
+    geoms = _shared_boundary_polygons()
+    expected = _as_numpy(_run(geoms, merge, use_cuda=False, all_touched=True))
+    actual = _as_numpy(_run(geoms, merge, use_cuda=True, all_touched=True))
+    np.testing.assert_allclose(
+        actual, expected, rtol=0, atol=0, equal_nan=True,
+        err_msg=(
+            f"cupy backend disagrees with numpy for shared-boundary "
+            f"polygons with all_touched=True and merge {merge!r}.\n"
+            f"cupy:\n{actual}\nnumpy:\n{expected}"
+        ),
+    )
+
+
+@pytest.mark.parametrize('merge', MERGES)
+def test_cupy_deterministic_all_touched_shared_boundary(merge):
+    geoms = _shared_boundary_polygons()
+    first = _as_numpy(_run(geoms, merge, use_cuda=True, all_touched=True))
+    for _ in range(5):
+        again = _as_numpy(_run(geoms, merge, use_cuda=True, all_touched=True))
+        np.testing.assert_allclose(
+            again, first, rtol=0, atol=0, equal_nan=True,
+            err_msg=(
+                f"cupy backend produced different results across runs "
+                f"for shared-boundary polygons with all_touched=True and "
+                f"merge {merge!r}."
+            ),
+        )

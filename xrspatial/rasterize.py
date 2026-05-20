@@ -1076,8 +1076,10 @@ def _ensure_gpu_kernels(merge_fn, should_write, merge_name=None):
     #
     # For first/last, the kernel is two-pass: pass 1 resolves the
     # winning input index atomically into ``order``; pass 2 stamps the
-    # winner's ``props[0]`` value into ``out``.  ``pass_id`` selects
-    # which branch executes (kernels are compiled once per pass).
+    # winner's ``props[0]`` value into ``out``.  Pass 1 and pass 2 are
+    # separate compiled kernels (``_..._gpu`` and ``_..._gpu_pass2``);
+    # ``_run_cupy`` / ``_rasterize_tile_cupy`` skip the pass-2 launch
+    # for all other modes.
 
     @cuda.jit(device=True)
     def _apply_merge_gpu(out, written, order, r, c, props, new_idx):
@@ -1472,8 +1474,16 @@ def _gpu_init_buffers(height, width, fill, merge_name):
     values for the selected atomic merge.  Returns the trio plus the
     sentinel value used in ``order`` so the caller can blend ``fill``
     back in afterwards.
+
+    The atomic kernels never consult ``written`` (the legacy
+    user-callable path is the only consumer), so atomic modes get a
+    placeholder ``(1, 1)`` buffer to satisfy the kernel signature
+    without spending ``H*W`` bytes on dead storage.
     """
-    written = cupy.zeros((height, width), dtype=cupy.int8)
+    if merge_name in _GPU_ATOMIC_MERGES:
+        written = cupy.zeros((1, 1), dtype=cupy.int8)
+    else:
+        written = cupy.zeros((height, width), dtype=cupy.int8)
     if merge_name in ('sum', 'count'):
         out = cupy.zeros((height, width), dtype=cupy.float64)
         order = cupy.full((height, width), _GPU_ORDER_SENTINEL_MIN,
@@ -1568,6 +1578,10 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
             cupy.asarray(poly_props), cupy.asarray(poly_global),
             cupy.asarray(row_ptr), cupy.asarray(col_idx))
 
+    # all_touched boundaries.  ``poly_geoms`` and ``poly_ids`` come
+    # from ``_classify_geometries`` above and are always defined here,
+    # so this block does not depend on the polygon scanline path
+    # having allocated ``poly_launch``.
     boundary_launch = None
     if all_touched and poly_geoms:
         br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
@@ -2004,8 +2018,12 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
         tile_h, tile_w, fill, atomic_mode)
 
     # Stage launches (same pattern as _run_cupy).  Stage once so the
-    # first/last pass-2 sweep reuses the device buffers.
+    # first/last pass-2 sweep reuses the device buffers.  ``poly_geoms``
+    # and ``poly_ids`` are bound inside the ``if poly_wkb:`` block, so
+    # ``boundary_launch`` is staged inside the same block to keep the
+    # dependency local.
     poly_launch = None
+    boundary_launch = None
     if poly_wkb:
         poly_geoms = _polys_from_wkb(poly_wkb)
         poly_ids = np.arange(len(poly_geoms), dtype=np.int32)
@@ -2025,16 +2043,15 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                 cupy.asarray(poly_props_2d), cupy.asarray(poly_global_2d),
                 cupy.asarray(row_ptr), cupy.asarray(col_idx))
 
-    boundary_launch = None
-    if poly_wkb and all_touched:
-        br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
-            poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
-        if len(br0) > 0:
-            boundary_launch = (
-                cupy.asarray(br0), cupy.asarray(bc0),
-                cupy.asarray(br1), cupy.asarray(bc1),
-                cupy.asarray(bidx), cupy.asarray(poly_props_2d),
-                cupy.asarray(poly_global_2d), len(br0))
+        if all_touched:
+            br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
+                poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
+            if len(br0) > 0:
+                boundary_launch = (
+                    cupy.asarray(br0), cupy.asarray(bc0),
+                    cupy.asarray(br1), cupy.asarray(bc1),
+                    cupy.asarray(bidx), cupy.asarray(poly_props_2d),
+                    cupy.asarray(poly_global_2d), len(br0))
 
     line_launch = None
     if len(seg_r0) > 0:
