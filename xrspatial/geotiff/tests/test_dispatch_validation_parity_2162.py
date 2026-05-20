@@ -433,10 +433,10 @@ def test_gpu_path_object_does_not_raise_file_like_error(tmp_path):
         assert "file-like" not in str(e), (
             f"validator misclassified Path as file-like: {e}"
         )
-    except Exception:
-        # Any non-ValueError failure (ImportError, RuntimeError from
-        # the CUDA preflight, etc.) is acceptable -- it is not the
-        # regression we are pinning.
+    except (ImportError, RuntimeError):
+        # ImportError: cupy not installed.
+        # RuntimeError: CUDA preflight failed.
+        # Both are unrelated to the Path-coercion regression.
         pass
 
 
