@@ -116,7 +116,11 @@ def read_geotiff_gpu(source: str, *,
     Parameters
     ----------
     source : str
-        File path.
+        Local file path, ``http://`` / ``https://`` URL, or fsspec URI
+        (``s3://``, ``gs://``, ``memory://``, ...). URL and fsspec sources
+        use a CPU decode + GPU upload internally (matching the chunked
+        path's HTTP/fsspec fallback); the result is still a CuPy-backed
+        DataArray.
     dtype : str, numpy.dtype, or None
         Cast the result to this dtype after reading. None keeps the
         file's native dtype. Float-to-int casts raise ValueError, mirroring
@@ -268,7 +272,7 @@ def read_geotiff_gpu(source: str, *,
 
     from .._reader import (
         _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
-        _max_tile_bytes_from_env, _resolve_masked_fill,
+        _is_fsspec_uri, _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
     from .._header import (
@@ -295,6 +299,27 @@ def read_geotiff_gpu(source: str, *,
         if w_r0 >= w_r1 or w_c0 >= w_c1 or w_r0 < 0 or w_c0 < 0:
             raise ValueError(
                 f"window={window} has non-positive size or negative origin.")
+
+    # HTTP / HTTPS / fsspec sources can't drive the disk-based GPU decode
+    # pipeline: every internal step (``_FileSource``, KvikIO GDS,
+    # ``gpu_decode_tiles_from_file``) opens the path as a local file and
+    # would raise a raw ``FileNotFoundError`` on a URL string (issue #2161).
+    # Route them through the CPU decode + GPU upload fallback, matching
+    # what ``_read_geotiff_gpu_chunked`` already does for the same sources
+    # (around line 1106-1150 in this file). The peak GPU memory is the
+    # whole image either way for the eager path; the trade-off is a CPU
+    # decode instead of nvCOMP-on-GPU. Callers who want bounded GPU
+    # memory should pass ``chunks=...``.
+    if isinstance(source, str) and (
+            source.startswith(('http://', 'https://'))
+            or _is_fsspec_uri(source)):
+        return _read_geotiff_gpu_eager_via_cpu(
+            source, dtype=dtype, window=window,
+            overview_level=overview_level, band=band, name=name,
+            max_pixels=max_pixels, allow_rotated=allow_rotated,
+            allow_unparseable_crs=allow_unparseable_crs,
+            mask_nodata=mask_nodata,
+        )
 
     # Parse metadata on CPU (fast, <1ms)
     src = _FileSource(source)
@@ -890,6 +915,120 @@ def read_geotiff_gpu(source: str, *,
         src.close()
         if sidecar is not None:
             close_sidecar(sidecar)
+
+
+def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
+                                    band, name, max_pixels,
+                                    allow_rotated: bool = False,
+                                    allow_unparseable_crs: bool = False,
+                                    mask_nodata: bool = True):
+    """Eager CPU decode + GPU upload for HTTP / fsspec sources (issue #2161).
+
+    Reached via ``open_geotiff(url, gpu=True)`` and the direct
+    ``read_geotiff_gpu(url)`` entry point. The eager GPU pipeline
+    assumes the source is a local file: it opens ``_FileSource(source)``,
+    calls ``gpu_decode_tiles_from_file`` (which KvikIO-DMAs the on-disk
+    tiles), and falls back to a local ``mmap`` slice in the CPU
+    re-decode stage. None of those work for a URL or ``s3://`` string,
+    and before this helper the call raised a bare ``FileNotFoundError``
+    from ``open(real, 'rb')`` deep in the mmap cache.
+
+    ``_read_to_array`` already speaks the full source contract (local
+    files, HTTP, fsspec, file-like buffers). Running it and then
+    uploading to the device via ``cupy.asarray`` produces a CuPy-backed
+    DataArray with the same ``attrs`` / ``coords`` / ``dims`` the eager
+    GPU path would have built. The chunked GPU path makes the same
+    choice for HTTP/fsspec sources (see ``_read_geotiff_gpu_chunked``
+    around line 1106): take the CPU dask graph, ``map_blocks(cupy.asarray)``
+    each block, return. This helper is the eager analogue: read the
+    whole array on CPU, push it to the device in one shot.
+
+    The user-facing ``on_gpu_failure`` / ``gpu='strict'`` kwarg is a
+    no-op on this path. There is no GPU decode stage to be strict
+    about: the only GPU operation is the ``cupy.asarray`` upload, and
+    upload failures (e.g. device OOM) already propagate unconditionally.
+    Callers who set ``on_gpu_failure='strict'`` specifically to detect
+    GPU decode regressions should run a local-file repro before
+    concluding the GPU pipeline is intact.
+
+    Trade-off: peak GPU memory is the whole image (same as the local
+    eager path), and the decode itself runs on the CPU. Callers who
+    want bounded GPU memory or per-chunk parallelism should pass
+    ``chunks=...`` to opt into ``_read_geotiff_gpu_chunked`` instead.
+    """
+    import cupy
+
+    arr_cpu, geo_info = _read_to_array(
+        source, window=window, overview_level=overview_level,
+        band=band, max_pixels=max_pixels, allow_rotated=allow_rotated,
+    )
+    arr_gpu = cupy.asarray(arr_cpu)
+
+    if name is None:
+        import os
+        # ``os.path.basename`` strips the scheme and host from a URL
+        # (``basename('https://host/path/foo.tif') == 'foo.tif'``); for
+        # ``s3://bucket/foo.tif`` it returns ``'foo.tif'``. Match the
+        # local-path naming convention so the resulting DataArray's
+        # ``name`` is the bare stem either way. URLs with a query
+        # string ride along: ``basename('host/x.tif?token=abc')`` is
+        # ``'x.tif?token=abc'`` and ``splitext`` finds the last dot,
+        # so the name resolves to ``'x'`` -- a slightly lossy but
+        # stable label, which is fine for a default.
+        name = os.path.splitext(os.path.basename(source))[0]
+
+    _validate_read_geo_info(
+        geo_info, window=window,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+    )
+
+    attrs = {}
+    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
+    # ``_read_to_array`` does NOT apply the nodata-to-NaN mask itself;
+    # it returns the raw decoded array and stashes the (possibly
+    # MinIsWhite-inverted) sentinel on ``geo_info._mask_nodata`` for
+    # the caller to use. This is the canonical place to apply the
+    # mask on the GPU buffer, mirroring the existing stripped /
+    # planar=2 / sparse-tile CPU-fallback branches in the local path.
+    # The post-MinIsWhite sentinel takes precedence when present
+    # (issue #1809); otherwise fall back to the raw sentinel.
+    nodata = geo_info.nodata
+    nodata_pixels_present_attr: bool | None = None
+    if nodata is not None and mask_nodata:
+        mask_value = getattr(geo_info, '_mask_nodata', nodata)
+        arr_gpu, nodata_pixels_present_attr = (
+            _apply_nodata_mask_gpu_with_presence(arr_gpu, mask_value)
+        )
+
+    dtype_cast_attr: str | None = None
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
+        arr_gpu = arr_gpu.astype(target)
+        dtype_cast_attr = target.name
+
+    _set_nodata_attrs(
+        attrs, nodata,
+        masked=(mask_nodata and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
+        pixels_present=nodata_pixels_present_attr,
+        dtype_cast=dtype_cast_attr,
+    )
+
+    # ``_read_to_array`` returns an array already sliced to ``window`` /
+    # ``band``, so derive coords from the post-slice shape (mirrors the
+    # stripped CPU-fallback branch in the local path).
+    coords = _coords_from_geo_info(
+        geo_info, arr_gpu.shape[0], arr_gpu.shape[1], window=window,
+    )
+    if arr_gpu.ndim == 3:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(arr_gpu.shape[2])
+    else:
+        dims = ['y', 'x']
+
+    return xr.DataArray(arr_gpu, dims=dims, coords=coords,
+                        name=name, attrs=attrs)
 
 
 def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):

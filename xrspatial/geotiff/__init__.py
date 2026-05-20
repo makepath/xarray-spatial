@@ -577,9 +577,11 @@ def open_geotiff(source: str | BinaryIO, *,
         if gpu:
             raise ValueError(
                 "max_cloud_bytes is not supported when gpu=True. "
-                "The GPU reader does not apply the cloud-byte budget; "
-                "drop the kwarg, or pass gpu=False to use the eager "
-                "CPU path.")
+                "The GPU reader does not accept the kwarg directly; "
+                "for URL/fsspec sources the budget is honoured via "
+                "the XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES env var "
+                "(see issue #2161). Drop the kwarg, set the env var, "
+                "or pass gpu=False to use the eager CPU path.")
         if chunks is not None:
             raise ValueError(
                 "max_cloud_bytes is not supported when chunks=... (dask). "
