@@ -193,15 +193,10 @@ def read_geotiff_gpu(source: str, *,
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
-    # Reject bool and non-int ``overview_level`` up front (issue #2160).
-    # ``open_geotiff`` runs the same check at its entry point; without
-    # this guard a caller who passes a bad ``overview_level`` together
-    # with a bad ``on_gpu_failure``, bad ``chunks=``, or bad source gets
-    # the unrelated kwarg / source error first, so the real defect in
-    # the call is masked. ``select_overview_ifd`` does still validate
-    # later as defense in depth, but the user-facing error is supposed
-    # to match ``open_geotiff`` regardless of which public entry point
-    # is hit.
+    # Match ``open_geotiff``'s ordering so a bad ``overview_level`` is
+    # reported before unrelated ``on_gpu_failure`` / ``chunks=`` / source
+    # errors mask it (issue #2160). ``select_overview_ifd`` revalidates
+    # as defense in depth.
     _validate_overview_level_arg(overview_level)
 
     new_passed = on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL

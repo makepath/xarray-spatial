@@ -229,3 +229,18 @@ def test_gpu_overview_level_check_runs_before_on_gpu_failure_validation(
     path, _ = cog_with_overview
     with pytest.raises(TypeError, match="bool"):
         read_geotiff_gpu(path, on_gpu_failure="bogus", overview_level=True)
+
+
+def test_gpu_overview_level_check_runs_before_chunked_dispatch(
+        cog_with_overview):
+    """``chunks=`` routes through ``_read_geotiff_gpu_chunked``; the
+    validator at the top of ``read_geotiff_gpu`` must fire before that
+    branch, otherwise a bad ``overview_level`` would only surface via
+    the inner ``read_geotiff_dask`` call (which now also validates,
+    but the contract is that the outer entry point reports it first).
+    """
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    path, _ = cog_with_overview
+    with pytest.raises(TypeError, match="bool"):
+        read_geotiff_gpu(path, chunks=32, overview_level=True)
