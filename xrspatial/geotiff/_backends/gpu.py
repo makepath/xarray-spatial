@@ -21,6 +21,8 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import (
+    _apply_caller_dtype_cast,
+    _finalize_lazy_read_attrs,
     _populate_attrs_from_geo_info,
     _set_nodata_attrs,
     _validate_read_geo_info,
@@ -28,16 +30,21 @@ from .._attrs import (
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
 )
-from .._reader import read_to_array as _read_to_array
+from .._reader import (
+    _MAX_CLOUD_BYTES_SENTINEL,
+    _coerce_path,
+    read_to_array as _read_to_array,
+)
 from .._runtime import (
     _GPU_DEPRECATED_SENTINEL,
+    _MISSING_SOURCES_SENTINEL,
     _ON_GPU_FAILURE_SENTINEL,
     _geotiff_strict_mode,
 )
 from .._validation import (
     _validate_chunks_arg,
+    _validate_dispatch_kwargs,
     _validate_dtype_cast,
-    _validate_overview_level_arg,
     _validate_predictor_sample_format,
 )
 from ._gpu_helpers import (
@@ -85,9 +92,12 @@ def read_geotiff_gpu(source: str, *,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
+                     max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                     missing_sources: str = _MISSING_SOURCES_SENTINEL,
                      allow_rotated: bool = False,
                      allow_unparseable_crs: bool = False,
+                     band_nodata: str | None = None,
                      mask_nodata: bool = True,
                      gpu: str = _GPU_DEPRECATED_SENTINEL,
                      ) -> xr.DataArray:
@@ -197,11 +207,35 @@ def read_geotiff_gpu(source: str, *,
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
-    # Match ``open_geotiff``'s ordering so a bad ``overview_level`` is
-    # reported before unrelated ``on_gpu_failure`` / ``chunks=`` / source
-    # errors mask it (issue #2160). ``select_overview_ifd`` revalidates
-    # as defense in depth.
-    _validate_overview_level_arg(overview_level)
+    # Coerce ``pathlib.Path`` and other ``os.PathLike`` inputs to ``str``
+    # before the validator so the file-like guard inside
+    # ``_validate_dispatch_kwargs`` does not misclassify a Path as a
+    # file-like buffer (review feedback on #2175). The downstream
+    # ``_coerce_path`` call near the eager-path setup below is now a
+    # no-op for the same object but kept for the chunked branch's
+    # reuse of the same imported binding.
+    source = _coerce_path(source)
+
+    # Shared dispatcher-kwarg validator so direct callers see the same
+    # rejections as ``open_geotiff`` (issue #2175 / parent #2162). Runs
+    # ``_validate_overview_level_arg`` first to match ``open_geotiff``'s
+    # ordering -- a bad ``overview_level`` is reported before unrelated
+    # ``on_gpu_failure`` / ``chunks=`` / source errors mask it (issue
+    # #2160). The helper also rejects ``missing_sources`` on non-VRT,
+    # ``band_nodata`` on non-VRT (issue #1987), ``max_cloud_bytes`` (the
+    # GPU reader does not consume the cloud-byte budget, issue #1974),
+    # and the file-like-source guard. ``gpu=True`` because this entry
+    # point is always GPU.
+    _validate_dispatch_kwargs(
+        source=source,
+        gpu=True,
+        chunks=chunks,
+        overview_level=overview_level,
+        on_gpu_failure=on_gpu_failure,
+        missing_sources=missing_sources,
+        band_nodata=band_nodata,
+        max_cloud_bytes=max_cloud_bytes,
+    )
 
     new_passed = on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL
     old_passed = gpu is not _GPU_DEPRECATED_SENTINEL
@@ -271,7 +305,7 @@ def read_geotiff_gpu(source: str, *,
         )
 
     from .._reader import (
-        _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
+        _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT,
         _is_fsspec_uri, _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
@@ -282,7 +316,8 @@ def read_geotiff_gpu(source: str, *,
     from .._geotags import extract_geo_info_with_overview_inheritance
     from .._gpu_decode import gpu_decode_tiles
 
-    source = _coerce_path(source)
+    # ``source`` is already coerced above (before the dispatch
+    # validator); no need to re-coerce here.
 
     if max_pixels is None:
         max_pixels = MAX_PIXELS_DEFAULT
@@ -1527,29 +1562,30 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     else:
         dims = ['y', 'x']
 
-    _validate_read_geo_info(
-        geo_info, window=window,
+    # Wave 2 of #2162: share the validate-then-populate-then-stamp
+    # block with the dask+numpy backend via ``_finalize_lazy_read_attrs``.
+    #
+    # The helper takes ``dtype`` as the resolved graph dtype so
+    # ``masked_nodata`` reflects whether per-chunk masking actually
+    # runs in the lazy graph (#2092). ``nodata_pixels_present`` stays
+    # unset on this path for the same reason as the dask+numpy path:
+    # a strict per-chunk reduction would force an eager ``.compute()``
+    # (#2135). The helper's ``dtype`` argument is conflated with the
+    # caller-supplied cast attr; fix the attr up here so
+    # ``nodata_dtype_cast`` surfaces only when the caller explicitly
+    # asked for a cast, not when masking auto-promoted the graph
+    # dtype to float64.
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=geo_info,
+        nodata=nodata,
+        mask_nodata=mask_nodata,
+        dtype=declared_dtype,
+        window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``masked_nodata`` reflects whether per-chunk masking actually
-    # runs in the lazy graph (#2092); mirrors the dask+numpy backend
-    # contract. With ``mask_nodata=False`` ``declared_dtype`` stays
-    # equal to ``file_dtype`` (see the float-promotion gate earlier
-    # in this function), so the rule below is equivalent to "graph
-    # dtype is float AND the caller opted into masking."
-    # ``nodata_pixels_present`` stays unset on the dask+GPU path for the
-    # same reason as the dask+numpy path: a strict per-chunk reduction
-    # would force an eager ``.compute()`` (issue #2135). ``dtype_cast``
-    # records the caller-supplied ``dtype=`` kwarg when present.
-    _set_nodata_attrs(
-        attrs, nodata,
-        masked=(mask_nodata and declared_dtype.kind == 'f'),
-        pixels_present=None,
-        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
+    _apply_caller_dtype_cast(
+        attrs, caller_dtype=dtype, has_nodata=nodata is not None,
     )
 
     if name is None:

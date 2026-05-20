@@ -509,84 +509,33 @@ def open_geotiff(source: str | BinaryIO, *,
 
     source = _coerce_path(source)
 
-    # Reject bool and non-int ``overview_level`` up front (issue #2074).
-    # Without this guard, ``overview_level=True`` is coerced to ``1`` and
-    # silently returns the first overview level, and non-int types leak
-    # raw ``TypeError`` messages from the internal numeric comparison or
-    # list indexing.
-    from ._validation import _validate_overview_level_arg
-    _validate_overview_level_arg(overview_level)
+    # All dispatcher-level kwarg rejection lives in
+    # ``_validate_dispatch_kwargs`` so the three direct backends
+    # (``read_geotiff_dask``, ``read_geotiff_gpu``, ``read_vrt``)
+    # surface the same errors when called directly (issue #2175,
+    # parent #2162). The previous inline block at this line is now
+    # a single call that runs ``_validate_overview_level_arg`` (issue
+    # #2074), the ``on_gpu_failure`` GPU-only guard (issue #1615),
+    # the ``missing_sources`` VRT-only guard (issue #1810), the
+    # ``band_nodata`` VRT-only guard (issue #1987), the
+    # ``max_cloud_bytes`` non-VRT non-GPU non-dask guard (issue #1974),
+    # and the file-like source restrictions for gpu/chunks.
+    from ._validation import _validate_dispatch_kwargs
+    _validate_dispatch_kwargs(
+        source=source,
+        gpu=gpu,
+        chunks=chunks,
+        overview_level=overview_level,
+        on_gpu_failure=on_gpu_failure,
+        missing_sources=missing_sources,
+        band_nodata=band_nodata,
+        max_cloud_bytes=max_cloud_bytes,
+    )
 
-    # ``on_gpu_failure`` is GPU-only. Reject it up front for CPU/dask paths
-    # rather than silently dropping it once dispatch is decided -- callers
-    # otherwise have no way to learn that the policy is being ignored.
-    # ``gpu=False`` (the default) on a ``.vrt`` source still routes through
-    # ``read_vrt`` below which has no GPU-failure concept, so the same
-    # rejection rule applies there.
-    if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL and not gpu:
-        raise ValueError(
-            "on_gpu_failure only applies when gpu=True. "
-            "Pass gpu=True to enable the GPU pipeline, or drop "
-            "on_gpu_failure to keep the default CPU path.")
-
-    # ``missing_sources`` is VRT-only. Reject it up front when the source
-    # is not a ``.vrt`` file so callers learn the policy is being ignored
-    # instead of getting a silent drop -- same pattern ``on_gpu_failure``
-    # uses above for the GPU-only kwarg, and the same class of dispatcher
-    # silently-drops-backend-kwarg bug #1561 / #1605 / #1685 / #1795 fixed
-    # for the other VRT/GPU kwargs. See issue #1810.
     missing_sources_passed = (
         missing_sources is not _MISSING_SOURCES_SENTINEL)
     _is_vrt_source = (
         isinstance(source, str) and source.lower().endswith('.vrt'))
-    if missing_sources_passed and not _is_vrt_source:
-        raise ValueError(
-            "missing_sources only applies to VRT sources. "
-            "Pass a .vrt path to enable the VRT pipeline, or drop "
-            "missing_sources to keep the default GeoTIFF path.")
-
-    # ``band_nodata`` is the #1987 PR 5 opt-out for the mixed-band
-    # metadata fail-closed check. It only has meaning on the VRT pipeline
-    # (a plain GeoTIFF has one nodata sentinel per file, not per band),
-    # so reject the kwarg up front on non-VRT sources rather than letting
-    # it leak into ``read_vrt`` and confuse the caller about what the
-    # opt-out actually controls.
-    if band_nodata is not None and not _is_vrt_source:
-        raise ValueError(
-            "band_nodata only applies to VRT sources. "
-            "Pass a .vrt path to enable the VRT pipeline, or drop "
-            "band_nodata to keep the default GeoTIFF path. "
-            "See issue #1987.")
-
-    # ``max_cloud_bytes`` is the eager fsspec-read budget. Only
-    # ``_read_to_array`` on the eager non-VRT, non-GPU, non-dask branch
-    # consumes it; the GPU (``read_geotiff_gpu``), dask
-    # (``read_geotiff_dask``), and VRT (``read_vrt``) branches all ignore
-    # the kwarg silently. Reject it up front on those paths so callers
-    # learn the budget is being dropped, matching the
-    # ``on_gpu_failure`` / ``missing_sources`` guards above and the
-    # silently-drops-backend-kwarg fixes in #1561 / #1605 / #1685 / #1810.
-    # See issue #1974.
-    if max_cloud_bytes is not _MAX_CLOUD_BYTES_SENTINEL:
-        if _is_vrt_source:
-            raise ValueError(
-                "max_cloud_bytes is not supported for VRT sources. "
-                "The VRT reader does not apply the cloud-byte budget; "
-                "drop the kwarg, or call open_geotiff on the underlying "
-                ".tif source.")
-        if gpu:
-            raise ValueError(
-                "max_cloud_bytes is not supported when gpu=True. "
-                "The GPU reader does not accept the kwarg directly; "
-                "for URL/fsspec sources the budget is honoured via "
-                "the XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES env var "
-                "(see issue #2161). Drop the kwarg, set the env var, "
-                "or pass gpu=False to use the eager CPU path.")
-        if chunks is not None:
-            raise ValueError(
-                "max_cloud_bytes is not supported when chunks=... (dask). "
-                "The dask reader does not apply the cloud-byte budget; "
-                "drop the kwarg, or drop chunks to use the eager path.")
 
     # VRT files (string paths only -- VRT XML references other files on disk)
     if _is_vrt_source:
@@ -599,6 +548,11 @@ def open_geotiff(source: str | BinaryIO, *,
         # ``overview_level=0`` is documented as "full resolution" (the
         # default), so treat it as a no-op the same as ``None`` rather
         # than rejecting a kwarg value the caller could have omitted.
+        # Mirrored at ``_backends/vrt.py`` (the direct-call entry point)
+        # so callers see the same rejection through both paths. The
+        # value-level rejection stays here rather than in
+        # ``_validate_dispatch_kwargs`` so the helper does not need a
+        # special-case for ``overview_level=0`` vs ``overview_level=N``.
         if overview_level not in (None, 0):
             raise ValueError(
                 "overview_level is not supported for VRT sources. "
@@ -628,18 +582,9 @@ def open_geotiff(source: str | BinaryIO, *,
                         mask_nodata=mask_nodata,
                         **vrt_kwargs)
 
-    # File-like buffers don't support the GPU or dask code paths because
-    # those re-open the source by path from worker tasks or device-side
-    # readers. Reject early with a clear message.
-    if not isinstance(source, str):
-        if gpu:
-            raise ValueError(
-                "gpu=True is not supported for file-like sources. "
-                "Pass a path string instead.")
-        if chunks is not None:
-            raise ValueError(
-                "chunks=... (dask) is not supported for file-like sources. "
-                "Pass a path string instead.")
+    # File-like buffer rejections for ``gpu=True`` / ``chunks=...`` already
+    # fired inside ``_validate_dispatch_kwargs`` above; the non-VRT branches
+    # below run with a string source or an eager file-like.
 
     # GPU path
     if gpu:
