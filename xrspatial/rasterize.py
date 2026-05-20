@@ -1924,6 +1924,42 @@ def _parse_input(geometries, column=None, columns=None):
     return geom_list, props_array, None
 
 
+def _check_uniform_axis(axis_name, coords, expected_step):
+    """Raise ``ValueError`` if ``coords`` is not uniformly spaced.
+
+    ``coords`` is a 1-D float64 array of dim-coord values for the named
+    axis (``'x'`` or ``'y'``).  ``expected_step`` is the magnitude of the
+    first interval (already computed by the caller).  Axes with fewer
+    than three points cannot be non-uniform in a way this check would
+    catch, so they pass trivially.
+
+    The comparison is on ``abs(diff)`` so the validation does not care
+    whether the axis is ascending or descending -- a sibling change is
+    expected to allow ascending-y ``like`` inputs, and gating on the
+    sign here would block that work.  ``np.allclose`` is used (rather
+    than strict equality) because affine-transform-derived coords drift
+    by a few ulps in practice.
+    """
+    if coords.size < 3:
+        return
+
+    diffs = np.abs(np.diff(coords))
+    if expected_step == 0 or not np.isfinite(expected_step):
+        # Degenerate step: defer to downstream code so the error path
+        # here doesn't mask a different underlying problem.
+        return
+
+    if not np.allclose(diffs, expected_step, rtol=1e-5, atol=1e-8):
+        max_dev = float(np.max(np.abs(diffs - expected_step)))
+        raise ValueError(
+            "'like' DataArray has non-uniform spacing along the "
+            f"{axis_name!r} axis (expected step {expected_step}, "
+            f"largest deviation {max_dev}). rasterize() requires a "
+            "regular grid; resample 'like' to a uniform grid before "
+            "passing it."
+        )
+
+
 def _extract_grid_from_like(like):
     """Extract width, height, bounds, dtype from a template DataArray.
 
@@ -1953,6 +1989,21 @@ def _extract_grid_from_like(like):
         py = abs(float(y[0] - y[1]))
     else:
         py = 1.0
+
+    # The rasterizer assumes a uniform grid.  If ``like`` has non-uniform
+    # spacing on either axis, ``px``/``py`` (taken from the first interval)
+    # will not describe the rest of the grid, and reusing ``like.coords``
+    # on the output (see ``rasterize`` below) would mislabel where each
+    # pixel lives.  Validate uniform spacing here so the rasterizer never
+    # produces a DataArray whose coords disagree with its data layout.
+    #
+    # Compare ``abs(diff)`` against the first interval so the check stays
+    # agnostic to axis direction -- ascending or descending y both pass as
+    # long as the spacing is uniform.  Use ``np.allclose`` rather than
+    # strict equality because affine-transform-derived coords drift by a
+    # few ulps.
+    _check_uniform_axis('x', x, px)
+    _check_uniform_axis('y', y, py)
 
     xmin = float(np.min(x)) - px / 2
     xmax = float(np.max(x)) + px / 2
@@ -2051,6 +2102,10 @@ def rasterize(
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
         from this array (any can still be overridden explicitly).
+        Must have uniformly spaced ``x`` and ``y`` dim coords -- the
+        rasterizer only writes to a regular grid, so a non-uniform
+        ``like`` is rejected with ``ValueError`` rather than silently
+        producing pixel labels that don't match the data.
     merge : str or callable, default 'last'
         How to combine values when geometries overlap.
 
