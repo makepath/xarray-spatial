@@ -2085,3 +2085,166 @@ class TestPolysToWkb:
         assert len(restored) == len(geoms)
         for original, copy in zip(geoms, restored):
             assert original.equals(copy)
+
+
+# ---------------------------------------------------------------------------
+# Issue #2170 -- rasterize(like=...) y-axis orientation
+#
+# The rasterizer always burns with row 0 = ymax (top-down image
+# convention).  When the template's y axis is ascending, the burned
+# array has to be flipped so result.sel(y=...) lines up with the
+# geometry in world coordinates, and result.y still equals like.y.
+# ---------------------------------------------------------------------------
+
+
+def _like_2170(y_ascending, width=4, height=4):
+    """Build a 4x4 like-grid with the requested y orientation."""
+    x = np.linspace(0.5, width - 0.5, width)
+    if y_ascending:
+        y = np.linspace(0.5, height - 0.5, height)
+    else:
+        y = np.linspace(height - 0.5, 0.5, height)
+    return xr.DataArray(
+        np.zeros((height, width), dtype=np.float64),
+        dims=['y', 'x'],
+        coords={'y': y, 'x': x},
+    )
+
+
+class TestLikeYOrientation2170:
+    """Burning into an ascending-y like must agree with descending-y by
+    world coordinate, and output.y must round-trip like.y exactly."""
+
+    def test_numpy_ascending_matches_descending_by_world_y(self):
+        # Box in lower-left corner of the world grid -- with descending y
+        # this lands in the bottom row, with ascending y it lands in the
+        # top row, but result.sel(y=0.5) must return 1.0 in both cases.
+        geom = [(box(0, 0, 1, 1), 1.0)]
+        r_desc = rasterize(geom, like=_like_2170(False), fill=0)
+        r_asc = rasterize(geom, like=_like_2170(True), fill=0)
+
+        # like.y is preserved verbatim
+        np.testing.assert_array_equal(r_desc.y.values, [3.5, 2.5, 1.5, 0.5])
+        np.testing.assert_array_equal(r_asc.y.values, [0.5, 1.5, 2.5, 3.5])
+
+        # World-coord selection agrees
+        for yw in [0.5, 1.5, 2.5, 3.5]:
+            for xw in [0.5, 1.5, 2.5, 3.5]:
+                a = float(r_desc.sel(y=yw, x=xw).item())
+                b = float(r_asc.sel(y=yw, x=xw).item())
+                assert a == b, f"mismatch at world (y={yw}, x={xw}): " \
+                    f"desc={a}, asc={b}"
+
+        # The burned cell is at the lower-left corner of the world grid
+        assert float(r_desc.sel(y=0.5, x=0.5).item()) == 1.0
+        assert float(r_asc.sel(y=0.5, x=0.5).item()) == 1.0
+        # And nowhere near the top row
+        assert float(r_desc.sel(y=3.5, x=0.5).item()) == 0.0
+        assert float(r_asc.sel(y=3.5, x=0.5).item()) == 0.0
+
+    def test_numpy_output_array_matches_like_orientation(self):
+        """Row 0 of the output must correspond to like.y[0] in world
+        coords, no matter which way y points."""
+        geom = [(box(0, 0, 1, 1), 1.0)]
+        r_desc = rasterize(geom, like=_like_2170(False), fill=0)
+        r_asc = rasterize(geom, like=_like_2170(True), fill=0)
+        # Descending: row 0 is the top row (y=3.5), so all zeros there.
+        # Last row is y=0.5 with the burned 1.
+        assert r_desc.values[-1, 0] == 1.0
+        assert r_desc.values[0, 0] == 0.0
+        # Ascending: row 0 is the bottom row (y=0.5), so the burned 1
+        # has to be there.
+        assert r_asc.values[0, 0] == 1.0
+        assert r_asc.values[-1, 0] == 0.0
+
+    def test_numpy_round_trip_with_xr_align(self):
+        """output.y must equal like.y exactly so xr.align still works."""
+        geom = [(box(0, 0, 1, 1), 1.0)]
+        for ascending in (True, False):
+            like = _like_2170(ascending)
+            result = rasterize(geom, like=like, fill=0)
+            np.testing.assert_array_equal(result.y.values, like.y.values)
+            np.testing.assert_array_equal(result.x.values, like.x.values)
+            # xr.align is the actual downstream operation this protects
+            aligned_result, aligned_like = xr.align(result, like)
+            assert aligned_result.sizes == result.sizes
+
+    def test_numpy_points_respect_orientation(self):
+        """Same check with a point geometry rather than a polygon."""
+        from shapely.geometry import Point
+        geom = [(Point(0.5, 0.5), 7.0)]
+        r_desc = rasterize(geom, like=_like_2170(False), fill=0)
+        r_asc = rasterize(geom, like=_like_2170(True), fill=0)
+        assert float(r_desc.sel(y=0.5, x=0.5).item()) == 7.0
+        assert float(r_asc.sel(y=0.5, x=0.5).item()) == 7.0
+
+    def test_numpy_lines_respect_orientation(self):
+        """Same check with a line geometry along the bottom edge."""
+        from shapely.geometry import LineString
+        geom = [(LineString([(0.5, 0.5), (3.5, 0.5)]), 5.0)]
+        r_desc = rasterize(geom, like=_like_2170(False), fill=0)
+        r_asc = rasterize(geom, like=_like_2170(True), fill=0)
+        for xw in [0.5, 1.5, 2.5, 3.5]:
+            assert float(r_desc.sel(y=0.5, x=xw).item()) == 5.0
+            assert float(r_asc.sel(y=0.5, x=xw).item()) == 5.0
+
+    @skip_no_dask
+    def test_dask_numpy_ascending_matches_descending(self):
+        geom = [(box(0, 0, 1, 1), 1.0)]
+        r_desc = rasterize(
+            geom, like=_like_2170(False), fill=0, chunks=2).compute()
+        r_asc = rasterize(
+            geom, like=_like_2170(True), fill=0, chunks=2).compute()
+        np.testing.assert_array_equal(r_desc.y.values, [3.5, 2.5, 1.5, 0.5])
+        np.testing.assert_array_equal(r_asc.y.values, [0.5, 1.5, 2.5, 3.5])
+        for yw in [0.5, 1.5, 2.5, 3.5]:
+            a = float(r_desc.sel(y=yw, x=0.5).item())
+            b = float(r_asc.sel(y=yw, x=0.5).item())
+            assert a == b
+        assert float(r_desc.sel(y=0.5, x=0.5).item()) == 1.0
+        assert float(r_asc.sel(y=0.5, x=0.5).item()) == 1.0
+
+    @skip_no_cuda
+    def test_cupy_ascending_matches_descending(self):
+        geom = [(box(0, 0, 1, 1), 1.0)]
+        r_desc = rasterize(geom, like=_like_2170(False), fill=0, use_cuda=True)
+        r_asc = rasterize(geom, like=_like_2170(True), fill=0, use_cuda=True)
+        # CuPy DataArrays expose .data.get() per project notes
+        desc_vals = r_desc.data.get() if hasattr(r_desc.data, 'get') \
+            else r_desc.values
+        asc_vals = r_asc.data.get() if hasattr(r_asc.data, 'get') \
+            else r_asc.values
+        np.testing.assert_array_equal(r_desc.y.values, [3.5, 2.5, 1.5, 0.5])
+        np.testing.assert_array_equal(r_asc.y.values, [0.5, 1.5, 2.5, 3.5])
+        # descending: burned row is last; ascending: burned row is first
+        assert desc_vals[-1, 0] == 1.0
+        assert asc_vals[0, 0] == 1.0
+
+    @skip_no_cuda
+    @skip_no_dask
+    def test_dask_cupy_ascending_matches_descending(self):
+        geom = [(box(0, 0, 1, 1), 1.0)]
+        r_desc = rasterize(
+            geom, like=_like_2170(False), fill=0,
+            use_cuda=True, chunks=2).compute()
+        r_asc = rasterize(
+            geom, like=_like_2170(True), fill=0,
+            use_cuda=True, chunks=2).compute()
+        desc_vals = r_desc.data.get() if hasattr(r_desc.data, 'get') \
+            else r_desc.values
+        asc_vals = r_asc.data.get() if hasattr(r_asc.data, 'get') \
+            else r_asc.values
+        assert desc_vals[-1, 0] == 1.0
+        assert asc_vals[0, 0] == 1.0
+
+    def test_numpy_explicit_bounds_skips_flip(self):
+        """When bounds are passed explicitly, the orientation flip path
+        is bypassed (caller has full control of the output grid)."""
+        like = _like_2170(True)
+        geom = [(box(0, 0, 1, 1), 1.0)]
+        result = rasterize(geom, like=like, bounds=(0, 0, 4, 4), fill=0)
+        # With explicit bounds, output coords are rebuilt descending,
+        # which is the documented behaviour for any resized output.
+        assert result.y.values[0] > result.y.values[-1]
+        # And world-coord selection still works correctly.
+        assert float(result.sel(y=0.5, x=0.5, method='nearest').item()) == 1.0

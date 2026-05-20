@@ -1959,6 +1959,14 @@ def _extract_grid_from_like(like):
     ymin = float(np.min(y)) - py / 2
     ymax = float(np.max(y)) + py / 2
 
+    # Detect y-axis orientation.  The rasterizer always burns with row 0
+    # at ymax (standard image convention), so if the template's y is
+    # ascending (low-to-high), the burned rows have to be flipped before
+    # we hand back the coords or downstream coord-aware ops line up
+    # against the wrong rows.  Only look at the first/last sample; the
+    # irregular-spacing case is handled separately.
+    y_ascending = height > 1 and float(y[-1]) > float(y[0])
+
     # Carry through any non-dim coords (e.g. rioxarray's ``spatial_ref``
     # CRS coord).  The y/x dim coords are returned separately because the
     # caller decides whether to reuse them (bit-identical grid) or build
@@ -1969,7 +1977,7 @@ def _extract_grid_from_like(like):
 
     return (width, height, (xmin, ymin, xmax, ymax), dt,
             like.coords['x'], like.coords['y'],
-            extra_coords, dict(like.attrs))
+            extra_coords, dict(like.attrs), y_ascending)
 
 
 # ---------------------------------------------------------------------------
@@ -2050,7 +2058,12 @@ def rasterize(
         A single float uses the same resolution for both axes.
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
-        from this array (any can still be overridden explicitly).
+        from this array (any can still be overridden explicitly).  Both
+        descending (top-down, ymax first) and ascending (bottom-up, ymin
+        first) y coords are supported -- the burned rows are flipped to
+        match so ``result.sel(y=...)`` lines up with the geometry in
+        world coordinates either way, and ``result.y`` always equals
+        ``like.y`` exactly.
     merge : str or callable, default 'last'
         How to combine values when geometries overlap.
 
@@ -2142,10 +2155,12 @@ def rasterize(
     like_x_coord = like_y_coord = None
     like_extra_coords = {}
     like_attrs = None
+    like_y_ascending = False
     bounds_explicit = bounds is not None
     if like is not None:
         (like_width, like_height, like_bounds, like_dtype,
-         like_x_coord, like_y_coord, like_extra_coords, like_attrs) = \
+         like_x_coord, like_y_coord, like_extra_coords, like_attrs,
+         like_y_ascending) = \
             _extract_grid_from_like(like)
 
     # Parse input geometries
@@ -2283,6 +2298,14 @@ def rasterize(
     if reuse_like_coords:
         x_coords = like_x_coord
         y_coords = like_y_coord
+        # The rasterizer always burns with row 0 = ymax (top-down image
+        # convention).  If the template's y axis is ascending, the rows
+        # have to be flipped along axis 0 before assigning the template's
+        # coords so world-y selection still lines up with the geometry.
+        # Works for numpy, cupy, dask+numpy, and dask+cupy alike -- they
+        # all expose the same slicing semantics on axis 0.
+        if like_y_ascending:
+            out = out[::-1, :]
     else:
         px = (xmax - xmin) / final_width
         py = (ymax - ymin) / final_height
