@@ -2150,6 +2150,8 @@ class TestLikeUniformGridValidation:
             result.coords['y'].values, y_2168)
 
     def test_error_message_names_axis_and_deviation(self):
+        import re
+
         x_2168 = np.array([0.0, 1.0, 2.5, 3.5])
         y_2168 = np.array([3.0, 2.0, 1.0, 0.0])
         like_2168 = xr.DataArray(
@@ -2165,9 +2167,29 @@ class TestLikeUniformGridValidation:
         msg = str(excinfo.value)
         assert "'x'" in msg
         assert "non-uniform" in msg.lower()
-        # The largest deviation should be reported numerically; the
-        # diffs are [1.0, 1.5, 1.0], so deviation from expected 1.0 is 0.5.
-        assert "0.5" in msg
+        # The largest deviation should be reported numerically.  Match
+        # any reasonable float formatting (0.5, 5e-1, 0.5000...) rather
+        # than coupling to ``repr(0.5)``.
+        m = re.search(r"largest deviation\s+([\d.eE+-]+)", msg)
+        assert m is not None, msg
+        assert float(m.group(1)) == pytest.approx(0.5, rel=1e-6)
+
+    def test_zero_step_like_raises(self):
+        # All-equal x coords are a degenerate "grid".  The validator
+        # should reject this up front rather than letting a zero-width
+        # pixel reach the rasterizer.
+        x_2168 = np.array([1.0, 1.0, 1.0, 1.0])  # zero-width pixels
+        y_2168 = np.linspace(3.0, 0.0, 4)
+        like_2168 = xr.DataArray(
+            np.zeros((4, 4)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        with pytest.raises(ValueError, match=r"'x'"):
+            rasterize(
+                [(box(0, 0, 3.5, 3.0), 1.0)],
+                like=like_2168, fill=0,
+            )
 
     def test_tiny_float_drift_is_tolerated(self):
         # Affine-transform-derived coords drift by a few ulps; ensure

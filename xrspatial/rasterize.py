@@ -1943,20 +1943,35 @@ def _check_uniform_axis(axis_name, coords, expected_step):
     if coords.size < 3:
         return
 
-    diffs = np.abs(np.diff(coords))
-    if expected_step == 0 or not np.isfinite(expected_step):
-        # Degenerate step: defer to downstream code so the error path
-        # here doesn't mask a different underlying problem.
+    # A non-finite ``expected_step`` (NaN / inf) is a separate kind of
+    # broken; let the downstream rasterizer surface that rather than
+    # masking it with a misleading "non-uniform spacing" message here.
+    if not np.isfinite(expected_step):
         return
 
+    # An all-equal coord vector gives expected_step==0 and diffs all
+    # zero; allclose would pass and the rasterizer would later trip on
+    # a zero-sized pixel.  Reject up front with the same "non-uniform"
+    # framing so users get one diagnostic, not two.
+    if expected_step == 0:
+        raise ValueError(
+            f"'like' DataArray has zero-width pixels along the "
+            f"{axis_name!r} axis (consecutive coords are equal). "
+            "rasterize() requires a regular grid with non-zero "
+            "spacing; resample 'like' to a uniform grid (e.g. with "
+            "xarray's ``interp`` or ``reindex``) before passing it."
+        )
+
+    diffs = np.abs(np.diff(coords))
     if not np.allclose(diffs, expected_step, rtol=1e-5, atol=1e-8):
         max_dev = float(np.max(np.abs(diffs - expected_step)))
         raise ValueError(
             "'like' DataArray has non-uniform spacing along the "
             f"{axis_name!r} axis (expected step {expected_step}, "
             f"largest deviation {max_dev}). rasterize() requires a "
-            "regular grid; resample 'like' to a uniform grid before "
-            "passing it."
+            "regular grid; resample 'like' to a uniform grid (e.g. "
+            "with xarray's ``interp`` or ``reindex``) before passing "
+            "it."
         )
 
 
