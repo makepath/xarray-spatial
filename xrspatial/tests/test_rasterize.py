@@ -2085,3 +2085,143 @@ class TestPolysToWkb:
         assert len(restored) == len(geoms)
         for original, copy in zip(geoms, restored):
             assert original.equals(copy)
+
+
+# ---------------------------------------------------------------------------
+# Issue #2168: reject non-uniformly spaced `like` grids
+# ---------------------------------------------------------------------------
+
+class TestLikeUniformGridValidation:
+    """The rasterizer only supports uniform grids.  If ``like`` has
+    non-uniform x or y spacing the previous code silently produced an
+    output whose coords disagreed with where pixels actually landed.
+    The fix raises a clear ValueError naming the offending axis.
+    """
+
+    def test_non_uniform_x_raises(self):
+        # Deliberately non-uniform x spacing: 0->1->2.5->3.5
+        x_2168 = np.array([0.0, 1.0, 2.5, 3.5])
+        y_2168 = np.array([3.0, 2.0, 1.0, 0.0])
+        like_2168 = xr.DataArray(
+            np.zeros((4, 4)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        with pytest.raises(ValueError, match=r"'x'"):
+            rasterize(
+                [(box(0, 0, 3.5, 3.0), 1.0)],
+                like=like_2168, fill=0,
+            )
+
+    def test_non_uniform_y_raises(self):
+        # Uniform x, non-uniform y
+        x_2168 = np.array([0.5, 1.5, 2.5, 3.5])
+        y_2168 = np.array([3.0, 2.0, 0.5, 0.0])  # not evenly spaced
+        like_2168 = xr.DataArray(
+            np.zeros((4, 4)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        with pytest.raises(ValueError, match=r"'y'"):
+            rasterize(
+                [(box(0, 0, 3.5, 3.0), 1.0)],
+                like=like_2168, fill=0,
+            )
+
+    def test_uniform_like_still_works(self):
+        # The existing happy path: a uniformly-spaced like still passes
+        # and burns the geometry in.
+        x_2168 = np.linspace(0.5, 9.5, 10)
+        y_2168 = np.linspace(9.5, 0.5, 10)
+        like_2168 = xr.DataArray(
+            np.zeros((10, 10)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like_2168, fill=0,
+        )
+        assert np.any(result.values == 1.0)
+        # Coords are reused bit-identically on the happy path.
+        np.testing.assert_array_equal(
+            result.coords['x'].values, x_2168)
+        np.testing.assert_array_equal(
+            result.coords['y'].values, y_2168)
+
+    def test_error_message_names_axis_and_deviation(self):
+        import re
+
+        x_2168 = np.array([0.0, 1.0, 2.5, 3.5])
+        y_2168 = np.array([3.0, 2.0, 1.0, 0.0])
+        like_2168 = xr.DataArray(
+            np.zeros((4, 4)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        with pytest.raises(ValueError) as excinfo:
+            rasterize(
+                [(box(0, 0, 3.5, 3.0), 1.0)],
+                like=like_2168, fill=0,
+            )
+        msg = str(excinfo.value)
+        assert "'x'" in msg
+        assert "non-uniform" in msg.lower()
+        # The largest deviation should be reported numerically.  Match
+        # any reasonable float formatting (0.5, 5e-1, 0.5000...) rather
+        # than coupling to ``repr(0.5)``.
+        m = re.search(r"largest deviation\s+([\d.eE+-]+)", msg)
+        assert m is not None, msg
+        assert float(m.group(1)) == pytest.approx(0.5, rel=1e-6)
+
+    def test_zero_step_like_raises(self):
+        # All-equal x coords are a degenerate "grid".  The validator
+        # should reject this up front rather than letting a zero-width
+        # pixel reach the rasterizer.
+        x_2168 = np.array([1.0, 1.0, 1.0, 1.0])  # zero-width pixels
+        y_2168 = np.linspace(3.0, 0.0, 4)
+        like_2168 = xr.DataArray(
+            np.zeros((4, 4)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        with pytest.raises(ValueError, match=r"'x'"):
+            rasterize(
+                [(box(0, 0, 3.5, 3.0), 1.0)],
+                like=like_2168, fill=0,
+            )
+
+    def test_tiny_float_drift_is_tolerated(self):
+        # Affine-transform-derived coords drift by a few ulps; ensure
+        # the check uses a tolerance rather than strict equality.
+        base = np.linspace(0.5, 9.5, 10)
+        x_2168 = base.copy()
+        x_2168[5] += 1e-12  # well below np.allclose's rtol
+        y_2168 = np.linspace(9.5, 0.5, 10)
+        like_2168 = xr.DataArray(
+            np.zeros((10, 10)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        # Should not raise.
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like_2168, fill=0,
+        )
+        assert result.shape == (10, 10)
+
+    def test_single_row_or_column_like_passes(self):
+        # Width == 1: only one x cell, cannot be non-uniform.  The
+        # validation needs to short-circuit rather than divide by zero.
+        x_2168 = np.array([0.5])
+        y_2168 = np.linspace(9.5, 0.5, 10)
+        like_2168 = xr.DataArray(
+            np.zeros((10, 1)),
+            dims=('y', 'x'),
+            coords={'y': y_2168, 'x': x_2168},
+        )
+        # Should not raise on x; y is uniform.
+        rasterize(
+            [(box(0, 0, 1, 10), 1.0)],
+            like=like_2168, fill=0,
+        )
