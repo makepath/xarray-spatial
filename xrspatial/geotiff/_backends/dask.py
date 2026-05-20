@@ -17,11 +17,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from .._attrs import (
-    _populate_attrs_from_geo_info,
-    _set_nodata_attrs,
-    _validate_read_geo_info,
-)
+from .._attrs import _finalize_lazy_read_attrs
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
@@ -368,35 +364,41 @@ def read_geotiff_dask(source: str, *,
         import os
         name = os.path.splitext(os.path.basename(source))[0]
 
-    # Issue #1987 ambiguous-metadata checks.
-    _validate_read_geo_info(
-        geo_info, window=window,
+    # Wave 2 of #2162: share the validate-then-populate-then-stamp
+    # block with the dask+GPU backend via ``_finalize_lazy_read_attrs``.
+    #
+    # The helper conflates two ``dtype`` concepts (see the helper
+    # docstring): the **graph dtype** used to compute ``masked_nodata``
+    # and the **caller cast** recorded as ``nodata_dtype_cast``. The
+    # dask path distinguishes the two because masking on an integer
+    # source auto-promotes the graph dtype to ``float64`` without the
+    # caller asking for a cast, and we do not want that auto-promotion
+    # to surface as ``nodata_dtype_cast``.
+    #
+    # Pass ``target_dtype`` so ``masked_nodata`` reflects the resolved
+    # graph dtype, then overwrite ``nodata_dtype_cast`` to match the
+    # caller-supplied ``dtype=`` kwarg: omitted when ``dtype is None``,
+    # set to ``np.dtype(dtype).name`` otherwise. This preserves the
+    # pre-helper attr contract on the dask path.
+    #
+    # ``nodata_attr`` (not the MinIsWhite-inverted ``nodata``) is what
+    # ``attrs['nodata']`` must carry; the helper threads it through
+    # ``_set_nodata_attrs``. ``nodata_pixels_present`` stays unset on
+    # this path so the lazy contract from #2135 holds (a strict
+    # per-chunk reduction would force eager compute).
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=geo_info,
+        nodata=nodata_attr,
+        mask_nodata=mask_nodata,
+        dtype=target_dtype,
+        window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``masked_nodata`` reflects whether per-chunk masking actually
-    # runs in the lazy graph (#2092). With ``mask_nodata=False`` each
-    # chunk skips the sentinel-to-NaN step, so even if the graph
-    # dtype happens to be float (e.g. caller-supplied ``dtype=float64``
-    # on an int file), the in-memory buffers hold literal sentinel
-    # values. True iff the caller opted into masking and the graph
-    # dtype is float.
-    # ``nodata_pixels_present`` is intentionally left unset on the
-    # dask path (issue #2135). A strict per-chunk reduction would force
-    # an eager ``.compute()`` here, defeating the lazy contract; callers
-    # that need the answer can fall back to scanning the materialised
-    # array. ``nodata_dtype_cast`` is recorded when the caller passed an
-    # explicit ``dtype=`` kwarg so downstream can tell float-by-cast
-    # apart from float-by-masking on the lazy output.
-    _set_nodata_attrs(
-        attrs, nodata_attr,
-        masked=(mask_nodata and target_dtype.kind == 'f'),
-        pixels_present=None,
-        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
-    )
+    if dtype is None:
+        attrs.pop('nodata_dtype_cast', None)
+    elif nodata_attr is not None:
+        attrs['nodata_dtype_cast'] = np.dtype(dtype).name
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks
