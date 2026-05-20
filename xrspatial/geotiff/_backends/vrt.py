@@ -496,7 +496,7 @@ def read_vrt(source: str, *,
     # arm fix from #2158 leaves float source buffers untouched, so
     # ``pre_cast_dtype.kind == 'f'`` alone would now stamp
     # ``masked_nodata=True`` on a buffer that still carries literal
-    # sentinel values. AND-ing the kwarg in keeps the attr honest.
+    # sentinel values. AND-ing the kwarg in keeps the attr honest (#2159).
     _set_nodata_attrs(
         attrs, nodata,
         masked=(mask_nodata and pre_cast_dtype.kind == 'f'),
@@ -915,16 +915,13 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata_meta = vrt.bands[band_idx_for_nodata].nodata
-    # VRT chunked path: the per-task VRT reader NaN-masks float source
-    # arrays inline, and ``declared_dtype`` is promoted to float64 only
+    # VRT chunked path: ``declared_dtype`` is promoted to float64 only
     # when ``mask_nodata`` is on and an integer band has a representable
     # sentinel (see the ``declared_dtype`` block earlier in this
-    # function). Either way, ``declared_dtype.kind == 'f'`` is the
-    # correct gate for "buffer is NaN-aware." A user-supplied
-    # ``dtype=`` cast happens on top of the lazy graph above (see
-    # ``final_dtype`` block) and must not flip this attr, so we read
-    # the pre-cast ``declared_dtype`` here rather than ``final_dtype``
-    # (#2092 follow-up).
+    # function). A user-supplied ``dtype=`` cast happens on top of the
+    # lazy graph above (see ``final_dtype`` block) and must not flip
+    # this attr, so we read the pre-cast ``declared_dtype`` here rather
+    # than ``final_dtype`` (#2092 follow-up).
     # ``nodata_pixels_present`` is intentionally left unset on the
     # chunked VRT path: a per-chunk reduction would force eager
     # ``.compute()`` (matches the dask backend's policy for issue
@@ -936,7 +933,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # a float source is still float in ``declared_dtype``, but the
     # per-chunk reader leaves the literal sentinel in place (#2158), so
     # the buffer is not actually NaN-aware. AND-ing the kwarg in keeps
-    # the chunked attr in lockstep with the eager attr.
+    # the chunked attr in lockstep with the eager attr (#2159).
     _set_nodata_attrs(
         attrs, nodata_meta,
         masked=(mask_nodata and declared_dtype.kind == 'f'),
