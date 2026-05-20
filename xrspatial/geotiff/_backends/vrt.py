@@ -248,9 +248,20 @@ def read_vrt(source: str, *,
         ),
     })
 
+    # Thread ``mask_nodata`` into the internal reader so the float
+    # source NaN masking inside ``_read_data`` honors the opt-out
+    # alongside the integer ``_vrt_mask_with_presence`` helper called
+    # further down. Without this the eager path silently rewrote
+    # literal float sentinels (e.g. ``-9999.0``) to NaN regardless of
+    # the kwarg, which violates the documented opt-out and can drop
+    # legitimate sentinel pixels from downstream consumers. The
+    # ``nodata_pixels_present`` proxy below still reports correctly
+    # because it falls back to a float-buffer scan when the helper
+    # short-circuits. See issue #2158.
     arr, vrt = _read_vrt_internal(
         source, window=window, band=band, max_pixels=max_pixels,
         missing_sources=missing_sources, parsed=_parsed_vrt,
+        mask_nodata=mask_nodata,
     )
 
     if name is None:
@@ -459,9 +470,15 @@ def read_vrt(source: str, *,
         arr = arr.astype(target)
         dtype_cast_attr = target.name
 
+    # ``masked`` follows the contract documented on ``_set_nodata_attrs``:
+    # ``mask_nodata and final_dtype.kind == 'f'``. The ``mask_nodata=False``
+    # arm fix from #2158 leaves float source buffers untouched, so
+    # ``pre_cast_dtype.kind == 'f'`` alone would now stamp
+    # ``masked_nodata=True`` on a buffer that still carries literal
+    # sentinel values. AND-ing the kwarg in keeps the attr honest.
     _set_nodata_attrs(
         attrs, nodata,
-        masked=(pre_cast_dtype.kind == 'f'),
+        masked=(mask_nodata and pre_cast_dtype.kind == 'f'),
         pixels_present=nodata_pixels_present,
         dtype_cast=dtype_cast_attr,
     )
@@ -508,16 +525,22 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
         _apply_integer_sentinel_mask,
     )
 
+    # Forward ``mask_nodata`` to the internal reader so the float
+    # source NaN masking inside ``_read_data`` honors the opt-out too,
+    # not just the integer post-decode helper below. Without this the
+    # chunked path would silently rewrite literal float sentinels to
+    # NaN even when the caller asked to keep them. See issue #2158.
     arr, vrt = _read_vrt_internal(
         source, window=(r0, c0, r1, c1), band=band,
         max_pixels=max_pixels, missing_sources=missing_sources,
-        parsed=parsed_vrt,
+        parsed=parsed_vrt, mask_nodata=mask_nodata,
     )
 
     # Mirror the eager post-decode integer-sentinel masking via the
     # shared helper. The internal reader NaN-masks float source arrays
-    # inline but leaves integer sentinels untouched, so the eager path
-    # promotes to float64 when sentinels hit. The surrounding dask graph
+    # inline (gated on the same ``mask_nodata`` kwarg via #2158) but
+    # leaves integer sentinels untouched, so the eager path promotes
+    # to float64 when sentinels hit. The surrounding dask graph
     # already declared float64 when any band has a representable integer
     # sentinel, so any chunk that actually fires the mask returns a
     # buffer whose dtype matches the declared one. Skip the helper when
@@ -880,9 +903,15 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # #2135). ``dtype_cast`` records the caller-supplied ``dtype=``
     # kwarg when present so downstream can tell float-by-cast apart
     # from float-by-masking even on the lazy output.
+    # ``masked`` mirrors ``_set_nodata_attrs``'s contract:
+    # ``mask_nodata and final_dtype.kind == 'f'``. With ``mask_nodata=False``
+    # a float source is still float in ``declared_dtype``, but the
+    # per-chunk reader leaves the literal sentinel in place (#2158), so
+    # the buffer is not actually NaN-aware. AND-ing the kwarg in keeps
+    # the chunked attr in lockstep with the eager attr.
     _set_nodata_attrs(
         attrs, nodata_meta,
-        masked=(declared_dtype.kind == 'f'),
+        masked=(mask_nodata and declared_dtype.kind == 'f'),
         pixels_present=None,
         dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
     )
