@@ -68,6 +68,8 @@ _VERTICAL_DATUM_EPSG = {
     'ellipsoidal': 4979,  # WGS 84 (3D, ellipsoidal height)
 }
 
+_SPATIAL_COORD_RTOL = 1e-6
+
 
 def _find_spatial_dims(raster):
     """Find the y and x dimension names, handling multi-band rasters.
@@ -86,6 +88,41 @@ def _find_spatial_dims(raster):
         return ydim, xdim
     # Fallback: last two dims
     return dims[-2], dims[-1]
+
+
+def _validate_regular_spatial_coords(raster, context):
+    """Validate that spatial coordinates describe a rectilinear grid."""
+    ydim, xdim = _find_spatial_dims(raster)
+    _validate_regular_axis(raster.coords[ydim].values, 'y', context)
+    _validate_regular_axis(raster.coords[xdim].values, 'x', context)
+
+
+def _validate_regular_axis(values, axis_name, context):
+    values = np.asarray(values, dtype=np.float64)
+    if values.size < 2:
+        return
+
+    diffs = np.diff(values)
+    if not np.all(np.isfinite(diffs)):
+        raise ValueError(
+            f"{context}: {axis_name} coordinates must contain finite values"
+        )
+
+    if not (np.all(diffs > 0) or np.all(diffs < 0)):
+        raise ValueError(
+            f"{context}: {axis_name} coordinates must be strictly monotonic "
+            "(all ascending or all descending)"
+        )
+
+    median_step = float(np.median(diffs))
+    worst_step_deviation = float(np.max(np.abs(diffs - median_step)))
+    tolerance = _SPATIAL_COORD_RTOL * abs(median_step)
+    if worst_step_deviation > tolerance:
+        raise ValueError(
+            f"{context}: {axis_name} coordinates must be regularly spaced; "
+            f"worst step deviation is {worst_step_deviation:g} "
+            f"(median step {median_step:g}, rtol {_SPATIAL_COORD_RTOL:g})"
+        )
 
 
 def _source_bounds(raster):
@@ -641,6 +678,8 @@ def reproject(
     )
 
     _validate_resampling(resampling)
+
+    _validate_regular_spatial_coords(raster, "reproject()")
 
     # Reject unknown vertical-datum tokens at the API boundary so we never
     # write None into attrs['vertical_crs'] for typos / unsupported values.
@@ -1751,6 +1790,7 @@ def merge(
         # (#2027). Reject 3-D up front so callers get a clear error.
         _validate_raster(r, func_name='merge', name=f'rasters[{i}]',
                          ndim=(2,))
+        _validate_regular_spatial_coords(r, f"merge(): rasters[{i}]")
 
     _validate_grid_params(
         resolution=resolution,

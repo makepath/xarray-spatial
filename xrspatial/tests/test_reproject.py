@@ -505,6 +505,33 @@ class TestReproject:
         with pytest.raises(ValueError, match="source CRS"):
             reproject(raster, 'EPSG:3857')
 
+    def test_reproject_rejects_irregular_x_before_crs_resolution(self):
+        from xrspatial.reproject import reproject
+        raster = xr.DataArray(
+            np.zeros((4, 4)), dims=['y', 'x'],
+            coords={'y': [3.0, 2.0, 1.0, 0.0],
+                    'x': [0.0, 1.0, 2.3, 3.0]},
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"reproject\(\): x coordinates.*regular.*worst step deviation",
+        ):
+            reproject(raster, 'EPSG:4326')
+
+    def test_reproject_rejects_non_monotonic_y(self):
+        from xrspatial.reproject import reproject
+        raster = xr.DataArray(
+            np.zeros((4, 4)), dims=['y', 'x'],
+            coords={'y': [3.0, 2.0, 2.5, 0.0],
+                    'x': [0.0, 1.0, 2.0, 3.0]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"reproject\(\): y coordinates must be strictly monotonic",
+        ):
+            reproject(raster, 'EPSG:4326')
+
     def test_non_dataarray_raises(self):
         from xrspatial.reproject import reproject
         with pytest.raises(TypeError, match="xarray.DataArray"):
@@ -652,6 +679,20 @@ class TestMerge:
         raster = _gradient_raster(h=8, w=8)
         with pytest.raises(ValueError, match="strategy"):
             merge([raster], strategy='median')
+
+    def test_merge_rejects_irregular_input_coords(self):
+        from xrspatial.reproject import merge
+        raster = xr.DataArray(
+            np.zeros((4, 4)), dims=['y', 'x'],
+            coords={'y': [3.0, 2.0, 1.0, 0.0],
+                    'x': [0.0, 1.0, 2.3, 3.0]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"merge\(\): rasters\[0\].*x coordinates.*regular.*worst step deviation",
+        ):
+            merge([raster], target_crs='EPSG:4326')
 
     def test_merge_strategy_last(self):
         """merge() with strategy='last' uses the last valid value."""
