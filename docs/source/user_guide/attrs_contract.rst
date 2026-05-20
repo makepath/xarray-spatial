@@ -44,6 +44,9 @@ write.
    * - ``crs``
      - int
      - EPSG code of the horizontal CRS, when one can be resolved.
+       Dropped on rotated reads opened with ``allow_rotated=True``
+       (issue #2122); the in-memory array is a pixel grid with integer
+       coords and is not georeferenced.
    * - ``crs_wkt``
      - str
      - WKT string of the horizontal CRS. Present on read when any CRS
@@ -52,7 +55,8 @@ write.
        dialect depends on the source: paths that synthesise a WKT from
        an EPSG code via pyproj emit WKT2; paths that read a WKT
        verbatim from the file (e.g. a VRT ``SRS`` tag) carry whatever
-       dialect was stored.
+       dialect was stored. Dropped on rotated reads opened with
+       ``allow_rotated=True`` (issue #2122), in lockstep with ``crs``.
    * - ``transform``
      - tuple
      - ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``
@@ -75,6 +79,23 @@ write.
        because the caller passed ``mask_nodata=False`` together with
        ``dtype=float...``. Only set when ``nodata`` is set; absence
        means no declared sentinel. See issue #2092.
+   * - ``nodata_pixels_present``
+     - bool
+     - Paired with ``nodata``. ``True`` iff the read window contained
+       at least one pixel matching the declared sentinel before
+       masking. Lets QA and writer code answer "any nodata in this
+       tile" without rescanning the buffer. Only emitted by the
+       eager-numpy, GPU, and VRT paths; the dask path leaves the attr
+       unset because a strict per-chunk reduction would force eager
+       ``.compute()``. See issue #2135.
+   * - ``nodata_dtype_cast``
+     - str
+     - Paired with ``nodata``. Set to the resolved target dtype name
+       (e.g. ``"float64"``) when the caller passed an explicit
+       ``dtype=`` kwarg, otherwise absent. Distinguishes
+       float-because-masked from float-because-promoted, which a
+       ``masked_nodata`` lookup alone cannot disambiguate. See issue
+       #2135.
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;
@@ -113,7 +134,12 @@ write.
        fake unit transform. Absence of the marker means the array
        has spatial coords the writer can interpret as georef. A
        caller can opt into no-georef writes on a hand-built array
-       by setting this attr explicitly. See issue #2120.
+       by setting this attr explicitly. The writer uses an identity
+       check (``attrs[_xrspatial_no_georef] is True``), so only the
+       exact boolean ``True`` flips the no-georef path; truthy
+       strings like ``'yes'`` or ``1`` are ignored and the writer
+       proceeds with normal transform synthesis. See issues #2120
+       and #2133.
 
 
 Compatibility aliases

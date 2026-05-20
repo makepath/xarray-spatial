@@ -128,12 +128,18 @@ def test_round_trip_property(tmp_path_factory, inputs):
     tmp_dir = tmp_path_factory.mktemp("fuzz_1661_rt")
     path = str(tmp_dir / "rt.tif")
 
+    # ``lz4`` is in the fuzz codec list and is a Tier 3 experimental
+    # codec gated behind ``allow_experimental_codecs`` (issue #2137).
+    # The other codecs in ``LOSSLESS_CODECS`` are Tier 1 and accept the
+    # default ``False``, so passing ``True`` unconditionally lets the
+    # fuzz harness exercise every codec uniformly.
     to_geotiff(
         da,
         path,
         compression=compression,
         tiled=tiled,
         predictor=predictor,
+        allow_experimental_codecs=True,
     )
 
     got = open_geotiff(path, dtype=str(da.dtype))

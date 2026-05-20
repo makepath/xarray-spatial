@@ -80,7 +80,9 @@ class TestStreamingLerc:
                                   tmp_path):
         """Dask + LERC (max_z_error=0) round-trips exactly."""
         path = str(tmp_path / 'stream_lerc_lossless.tif')
-        to_geotiff(dask_float_raster, path, compression='lerc')
+        # Tier 3 codec (issue #2137); opt in to exercise the encode path.
+        to_geotiff(dask_float_raster, path, compression='lerc',
+                   allow_experimental_codecs=True)
         result = open_geotiff(path)
         # LERC with max_z_error=0 is lossless for float32 sources.
         np.testing.assert_array_equal(result.values, float_raster.values)
@@ -91,7 +93,8 @@ class TestStreamingLerc:
         max_z = 0.1
         path = str(tmp_path / 'stream_lerc_lossy.tif')
         to_geotiff(dask_float_raster, path,
-                   compression='lerc', max_z_error=max_z)
+                   compression='lerc', max_z_error=max_z,
+                   allow_experimental_codecs=True)
         result = open_geotiff(path)
         max_diff = float(np.abs(result.values - float_raster.values).max())
         assert max_diff <= max_z + 1e-7, (
@@ -109,9 +112,11 @@ class TestStreamingLerc:
         eager_path = str(tmp_path / 'eager_lerc.tif')
         stream_path = str(tmp_path / 'stream_lerc.tif')
         to_geotiff(float_raster, eager_path,
-                   compression='lerc', max_z_error=0.05)
+                   compression='lerc', max_z_error=0.05,
+                   allow_experimental_codecs=True)
         to_geotiff(dask_float_raster, stream_path,
-                   compression='lerc', max_z_error=0.05)
+                   compression='lerc', max_z_error=0.05,
+                   allow_experimental_codecs=True)
         eager = open_geotiff(eager_path).values
         stream = open_geotiff(stream_path).values
         np.testing.assert_array_equal(eager, stream)
@@ -125,7 +130,9 @@ class TestStreamingLerc:
 class TestStreamingLz4:
     def test_round_trip(self, float_raster, dask_float_raster, tmp_path):
         path = str(tmp_path / 'stream_lz4.tif')
-        to_geotiff(dask_float_raster, path, compression='lz4')
+        # Tier 3 codec (issue #2137); opt in to exercise the encode path.
+        to_geotiff(dask_float_raster, path, compression='lz4',
+                   allow_experimental_codecs=True)
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, float_raster.values)
 
@@ -133,8 +140,10 @@ class TestStreamingLz4:
                                       tmp_path):
         eager_path = str(tmp_path / 'eager_lz4.tif')
         stream_path = str(tmp_path / 'stream_lz4.tif')
-        to_geotiff(float_raster, eager_path, compression='lz4')
-        to_geotiff(dask_float_raster, stream_path, compression='lz4')
+        to_geotiff(float_raster, eager_path, compression='lz4',
+                   allow_experimental_codecs=True)
+        to_geotiff(dask_float_raster, stream_path, compression='lz4',
+                   allow_experimental_codecs=True)
         eager = open_geotiff(eager_path).values
         stream = open_geotiff(stream_path).values
         np.testing.assert_array_equal(eager, stream)

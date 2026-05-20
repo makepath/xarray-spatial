@@ -23,6 +23,9 @@ windowed vs full reads.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import numpy as np
 import xarray as xr
 
@@ -36,7 +39,7 @@ from ._geotags import _NO_GEOREF_KEY, GeoTransform, RASTER_PIXEL_IS_POINT
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 
-def _has_no_georef_marker(da: xr.DataArray) -> bool:
+def _has_no_georef_marker(da: Any) -> bool:
     """True iff ``da`` was stamped by the reader as carrying no georef.
 
     The reader sets ``attrs[_NO_GEOREF_KEY] = True`` whenever it emits
@@ -50,40 +53,16 @@ def _has_no_georef_marker(da: xr.DataArray) -> bool:
     boolean ``True`` flips the writer into no-georef mode. A stray
     third-party stamp like ``attrs['_xrspatial_no_georef'] = 'yes'``
     should not be treated as truthy and silently drop a transform.
+
+    Inputs that are not xarray DataArrays (e.g. a raw ``numpy.ndarray``
+    or ``cupy.ndarray`` passed directly to ``write_geotiff_gpu``) carry
+    no attrs and therefore no marker; return ``False`` rather than
+    raise so callers can use this as a plain predicate.
     """
-    return da.attrs.get(_NO_GEOREF_KEY) is True
-
-
-# Kept for diagnostic / test pinning only. The writer no longer
-# calls this helper -- it checks ``attrs[_NO_GEOREF_KEY]`` instead
-# (see :func:`_has_no_georef_marker` / issue #2120). Only the tests
-# in ``test_int_coord_sentinel_2087.py`` reference it now.
-def _is_no_georef_sentinel(coord: np.ndarray) -> bool:
-    """True iff ``coord`` matches the read-side no-georef placeholder shape.
-
-    ``coords_from_pixel_geometry`` emits ``np.arange(start, stop,
-    dtype=np.int64)`` for the y/x coords whenever the source file
-    carries no GeoTIFF transform tags -- both for full reads
-    (``start=0``) and windowed reads (``start=window_offset``). See
-    issues #1710, #1753, #1949.
-
-    The writer no longer treats coord shape alone as the no-georef
-    signal: it checks ``attrs[_NO_GEOREF_KEY]`` instead. See
-    :func:`_has_no_georef_marker` and issue #2120. This helper remains
-    available as a diagnostic for the placeholder shape, and the
-    existing tests in ``test_int_coord_sentinel_2087.py`` still pin
-    the predicate. It is no longer called from the writer path, so
-    user-authored int64 step-1 grids that match this pattern but lack
-    the marker keep their georef on round-trip.
-    """
-    if coord.dtype != np.int64:
+    attrs = getattr(da, 'attrs', None)
+    if not isinstance(attrs, Mapping):
         return False
-    n = len(coord)
-    if n < 1:
-        return False
-    return bool(np.array_equal(
-        coord, np.arange(coord[0], coord[0] + n, dtype=np.int64)
-    ))
+    return attrs.get(_NO_GEOREF_KEY) is True
 
 
 def coords_from_pixel_geometry(

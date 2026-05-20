@@ -27,6 +27,13 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
               nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
+    Tier: Advanced (issue #2137). VRT mosaic output is supported but
+    the caller should know the failure modes on the read side: a
+    consumer reading the resulting ``.vrt`` may hit cross-source
+    nodata mismatch, missing backing files, or per-band metadata
+    disagreement. See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for
+    the full tier map.
+
     Parameters
     ----------
     path : str

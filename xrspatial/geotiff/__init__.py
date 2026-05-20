@@ -128,6 +128,7 @@ __all__ = [
     'MixedBandMetadataError',
     'NonUniformCoordsError',
     'RotatedTransformError',
+    'SUPPORTED_FEATURES',
     'UnparseableCRSError',
     'UnsafeURLError',
     'open_geotiff',
@@ -138,6 +139,44 @@ __all__ = [
     'write_geotiff_gpu',
     'write_vrt',
 ]
+
+
+# ``SUPPORTED_FEATURES`` and its derived ``_EXPERIMENTAL_CODECS`` set
+# live in ``_attrs.py`` so the writers can import them at module scope
+# without a circular dependency (this ``__init__`` already imports the
+# writers, so the writers cannot import from ``..`` at module scope).
+# The names are re-exported below to keep the public API at
+# ``xrspatial.geotiff.SUPPORTED_FEATURES``.
+#
+# Tier semantics
+# --------------
+# - ``"stable"`` -- the path a new user should be on. Local file in,
+#   local file out, lossless codec, axis-aligned grid. Covered by the
+#   cross-backend parity matrix.
+# - ``"advanced"`` -- works and is tested, but the caller should know
+#   what they are signing up for (cloud cost, partial VRT mosaics,
+#   rotated transforms dropping on write, BigTIFF promotion, etc.). No
+#   kwarg gate; the docstring carries an ``Advanced:`` marker.
+# - ``"experimental"`` -- works in our tests, no claim about external
+#   interop or numerical parity across backends. Tier 3 codecs
+#   (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``) require
+#   ``allow_experimental_codecs=True`` on the writers; the GPU paths
+#   use ``gpu=True`` as the explicit opt-in.
+# - ``"internal_only"`` -- the strictest tier. Already gated behind
+#   its own dedicated flag because the output does not round-trip
+#   through libtiff / GDAL / rasterio. ``codec.jpeg`` requires
+#   ``allow_internal_only_jpeg=True`` (issue #1845);
+#   ``allow_experimental_codecs`` does NOT cover it.
+#
+# Tests in ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``
+# walk the mapping and assert that every Tier 3 codec rejects without
+# the opt-in flag and every Tier 4 codec rejects without its own
+# dedicated flag. The user-guide notebook
+# (``examples/user_guide/39_GeoTIFF_IO.ipynb``) renders the same
+# mapping as a table so the documentation cannot drift from the code.
+#
+# See issue #2137.
+from ._attrs import SUPPORTED_FEATURES  # noqa: E402
 
 
 def _read_geo_info(source, *, overview_level: int | None = None,
@@ -287,6 +326,15 @@ def open_geotiff(source: str | BinaryIO, *,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
+    Tier: Stable for local-file reads on axis-aligned grids with an
+    EPSG CRS in ``attrs['crs']``. Cloud / fsspec URIs, HTTP range
+    reads, ``.vrt`` mosaics, external ``.tif.ovr`` sidecars,
+    ``allow_rotated=True``, and ``allow_unparseable_crs=True`` are
+    Advanced (work, but each carries a specific failure mode named on
+    the parameter doc). ``gpu=True`` is Experimental. See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
+    map (issue #2137).
+
     Automatically dispatches to the best backend:
     - ``gpu=True``: GPU-accelerated read via nvCOMP (returns CuPy)
     - ``chunks=N``: Dask lazy read via windowed chunks
@@ -319,12 +367,18 @@ def open_geotiff(source: str | BinaryIO, *,
     chunks : int, tuple, or None
         Chunk size for Dask lazy reading.
     gpu : bool
-        Use GPU-accelerated decompression (requires cupy + nvCOMP).
+        Experimental: requires cupy + nvCOMP for the codec the file
+        carries; the reader falls back to CPU when the optional
+        libraries are unavailable unless ``on_gpu_failure='strict'`` is
+        also set. Use GPU-accelerated decompression.
     max_pixels : int or None
         Maximum allowed pixel count (width * height * samples). None
         uses the default (~1 billion). Raise to read legitimately
         large files.
     max_cloud_bytes : int or None, optional
+        Advanced: fsspec cloud reads can run up cost on large objects;
+        the budget defends against accidental large downloads but the
+        eager path still pulls the full object once the budget allows.
         Byte ceiling for eager reads from fsspec sources (``s3://``,
         ``gs://``, ``az://``, ``abfs://``, ``memory://``, ...). The
         compressed object size is checked against this budget before
@@ -345,6 +399,10 @@ def open_geotiff(source: str | BinaryIO, *,
         because the policy only applies to the GPU pipeline. See
         ``read_geotiff_gpu`` for the full description.
     missing_sources : {'raise', 'warn'}, optional
+        Advanced: VRT mosaics can return partial output under
+        ``missing_sources='warn'`` when a backing source is unreadable;
+        the ``attrs['vrt_holes']`` entry records which sources were
+        skipped so downstream code can detect the partial mosaic.
         Forwarded to ``read_vrt`` when the source is a ``.vrt`` file.
         When the caller does not pass this kwarg, the public
         ``read_vrt`` default applies (``'raise'`` since #1860).
@@ -377,6 +435,9 @@ def open_geotiff(source: str | BinaryIO, *,
         pixel, and ``dtype=<integer>`` then raises ``ValueError`` on the
         float-to-int cast.
     allow_rotated : bool, default False
+        Advanced: read-only opt-in; ``to_geotiff`` does not currently
+        emit ``rotated_affine`` so a read-then-write round-trip writes
+        an identity-affine output and silently drops the rotation.
         Read-side opt-in for rotated / sheared ``ModelTransformationTag``
         files. By default the reader raises ``NotImplementedError``
         because the rest of xrspatial assumes an axis-aligned grid.
@@ -642,6 +703,18 @@ def open_geotiff(source: str | BinaryIO, *,
     # write is safe; an extra ``arr.copy()`` would just double peak
     # memory for a multi-MB raster.
     nodata = geo_info.nodata
+    # Track whether any sentinel pixel was present in the read window.
+    # Only meaningful when a declared sentinel exists; reported via
+    # ``attrs['nodata_pixels_present']`` (issue #2135) so consumers can
+    # answer "any nodata in this tile" without rescanning. ``None``
+    # keeps the attr out when no scan happened: that includes the no
+    # sentinel declared case (early-return in ``_set_nodata_attrs``) and
+    # any exotic dtype branch (e.g. complex source) that neither the
+    # float nor integer mask gates handle. Do not "fix" the asymmetry by
+    # forcing a False default -- the absence-means-unknown contract is
+    # deliberate so downstream can distinguish "scanned and saw nothing"
+    # from "did not scan."
+    nodata_pixels_present: bool | None = None
     if nodata is not None and mask_nodata:
         # When the reader applied MinIsWhite, the sentinel-equality mask
         # must compare against the inverted sentinel value (issue #1809).
@@ -653,7 +726,20 @@ def open_geotiff(source: str | BinaryIO, *,
         nodata_sentinel = getattr(geo_info, '_mask_nodata', nodata)
         if arr.dtype.kind == 'f':
             if nodata_sentinel is not None and not np.isnan(nodata_sentinel):
-                arr[arr == arr.dtype.type(nodata_sentinel)] = np.nan
+                mask_f = arr == arr.dtype.type(nodata_sentinel)
+                nodata_pixels_present = bool(mask_f.any())
+                if nodata_pixels_present:
+                    arr[mask_f] = np.nan
+            else:
+                # NaN-only sentinel on a float buffer: ``mask_nodata`` is
+                # a no-op, but downstream may want to know if any NaN
+                # pixels already exist in the source so the attr stays
+                # informative.
+                nodata_pixels_present = (
+                    bool(np.isnan(arr).any())
+                    if nodata_sentinel is not None
+                    else False
+                )
         elif arr.dtype.kind in ('u', 'i'):
             # Integer arrays: convert to float to represent NaN.
             # An out-of-range sentinel (e.g. uint16 file with
@@ -679,14 +765,55 @@ def open_geotiff(source: str | BinaryIO, *,
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
                     mask = arr == arr.dtype.type(nodata_int)
-                    if mask.any():
+                    nodata_pixels_present = bool(mask.any())
+                    if nodata_pixels_present:
                         arr = arr.astype(np.float64)
                         arr[mask] = np.nan
+                else:
+                    # Sentinel cannot match any pixel in this dtype's
+                    # range. No mask was run; no pixels were present.
+                    nodata_pixels_present = False
+            else:
+                nodata_pixels_present = False
+    elif nodata is not None and not mask_nodata:
+        # ``mask_nodata=False``: the masking branch above is skipped,
+        # but ``attrs['nodata_pixels_present']`` should still surface so
+        # callers know whether literal sentinel pixels survive in the
+        # buffer (issue #2135). Mirror the same dtype / range / integer
+        # gates as the masking branch so an out-of-range or non-integer
+        # sentinel cleanly resolves to ``False`` rather than crashing in
+        # the equality check.
+        nodata_sentinel = getattr(geo_info, '_mask_nodata', nodata)
+        if nodata_sentinel is not None:
+            if arr.dtype.kind == 'f':
+                if np.isnan(nodata_sentinel):
+                    nodata_pixels_present = bool(np.isnan(arr).any())
+                else:
+                    nodata_pixels_present = bool(
+                        (arr == arr.dtype.type(nodata_sentinel)).any()
+                    )
+            elif arr.dtype.kind in ('u', 'i'):
+                if (np.isfinite(nodata_sentinel)
+                        and float(nodata_sentinel).is_integer()):
+                    nodata_int = int(nodata_sentinel)
+                    info = np.iinfo(arr.dtype)
+                    if info.min <= nodata_int <= info.max:
+                        nodata_pixels_present = bool(
+                            (arr == arr.dtype.type(nodata_int)).any()
+                        )
+                    else:
+                        nodata_pixels_present = False
+                else:
+                    nodata_pixels_present = False
 
+    dtype_cast_attr: str | None = None
     if dtype is not None:
         target = np.dtype(dtype)
         _validate_dtype_cast(arr.dtype, target)
         arr = arr.astype(target)
+        # Record the post-mask cast so downstream can tell
+        # float-because-masked from float-because-promoted (issue #2135).
+        dtype_cast_attr = target.name
 
     # ``attrs['masked_nodata']`` reflects whether the function
     # actually replaced sentinel pixels with NaN (#2092). The pre-fix
@@ -699,6 +826,8 @@ def open_geotiff(source: str | BinaryIO, *,
     _set_nodata_attrs(
         attrs, nodata,
         masked=(mask_nodata and arr.dtype.kind == 'f'),
+        pixels_present=nodata_pixels_present,
+        dtype_cast=dtype_cast_attr,
     )
 
     if arr.ndim == 3:

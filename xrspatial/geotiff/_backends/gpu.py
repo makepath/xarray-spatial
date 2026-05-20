@@ -41,6 +41,7 @@ from .._validation import (
 )
 from ._gpu_helpers import (
     _apply_nodata_mask_gpu,
+    _apply_nodata_mask_gpu_with_presence,
     _apply_orientation_geo_info,
     _apply_orientation_gpu,
     _gpu_apply_window_band,
@@ -90,6 +91,12 @@ def read_geotiff_gpu(source: str, *,
                      gpu: str = _GPU_DEPRECATED_SENTINEL,
                      ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
+
+    Tier: Experimental (issue #2137). Requires cupy + numba CUDA plus
+    optional nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
+    acceleration; cross-backend numerical parity with the CPU reader
+    is tested for the Tier 1 codec set only. See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
 
     Decompresses all tiles in parallel on the GPU and returns a
     CuPy-backed DataArray that stays on device memory. No CPU->GPU
@@ -443,13 +450,18 @@ def read_geotiff_gpu(source: str, *,
             # ``_mask_nodata`` when applicable; fall back to the original
             # sentinel otherwise (#1809).
             nodata = geo_info.nodata
+            nodata_pixels_present_attr: bool | None = None
             if nodata is not None and mask_nodata:
                 mask_value = getattr(_stripped_geo, '_mask_nodata', nodata)
-                arr_gpu = _apply_nodata_mask_gpu(arr_gpu, mask_value)
+                arr_gpu, nodata_pixels_present_attr = (
+                    _apply_nodata_mask_gpu_with_presence(arr_gpu, mask_value)
+                )
+            dtype_cast_attr: str | None = None
             if dtype is not None:
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
                 arr_gpu = arr_gpu.astype(target)
+                dtype_cast_attr = target.name
             # ``attrs['masked_nodata']`` reflects whether the function
             # actually replaced sentinel pixels with NaN (#2092). With
             # ``mask_nodata=False`` the GPU mask kernel above is
@@ -459,6 +471,8 @@ def read_geotiff_gpu(source: str, *,
                 attrs, nodata,
                 masked=(mask_nodata
                         and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
+                pixels_present=nodata_pixels_present_attr,
+                dtype_cast=dtype_cast_attr,
             )
             # ``read_to_array`` already applied window + band slicing, so
             # ``arr_gpu`` is at output shape. Compute coords for that
@@ -780,6 +794,7 @@ def read_geotiff_gpu(source: str, *,
         # dtype cast so the float promotion for masked integer rasters doesn't
         # surprise a user-supplied dtype.
         nodata = geo_info.nodata
+        nodata_pixels_present_attr: bool | None = None
         if nodata is not None and mask_nodata:
             # When MinIsWhite was applied, the mask must use the inverted
             # sentinel; otherwise the original sentinel. The pure GPU path
@@ -794,12 +809,17 @@ def read_geotiff_gpu(source: str, *,
                     _cpu_fallback_geo, '_mask_nodata', nodata)
             else:
                 _gpu_mask_value = nodata
-            arr_gpu = _apply_nodata_mask_gpu(arr_gpu, _gpu_mask_value)
+            arr_gpu, nodata_pixels_present_attr = (
+                _apply_nodata_mask_gpu_with_presence(
+                    arr_gpu, _gpu_mask_value)
+            )
 
+        dtype_cast_attr: str | None = None
         if dtype is not None:
             target = np.dtype(dtype)
             _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
             arr_gpu = arr_gpu.astype(target)
+            dtype_cast_attr = target.name
 
         # Build DataArray
         if name is None:
@@ -823,6 +843,8 @@ def read_geotiff_gpu(source: str, *,
             attrs, nodata,
             masked=(mask_nodata
                     and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
+            pixels_present=nodata_pixels_present_attr,
+            dtype_cast=dtype_cast_attr,
         )
 
         # Apply window/band slicing post-decode. Coords are derived from the
@@ -1373,9 +1395,15 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     # equal to ``file_dtype`` (see the float-promotion gate earlier
     # in this function), so the rule below is equivalent to "graph
     # dtype is float AND the caller opted into masking."
+    # ``nodata_pixels_present`` stays unset on the dask+GPU path for the
+    # same reason as the dask+numpy path: a strict per-chunk reduction
+    # would force an eager ``.compute()`` (issue #2135). ``dtype_cast``
+    # records the caller-supplied ``dtype=`` kwarg when present.
     _set_nodata_attrs(
         attrs, nodata,
         masked=(mask_nodata and declared_dtype.kind == 'f'),
+        pixels_present=None,
+        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
     )
 
     if name is None:

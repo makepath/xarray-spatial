@@ -45,6 +45,13 @@ def read_geotiff_dask(source: str, *,
                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
+    Tier: Stable for local-file reads on axis-aligned grids with the
+    Tier 1 codec set. ``allow_rotated`` / ``allow_unparseable_crs``
+    are Advanced (read-only opt-ins; round-trip semantics are listed
+    on the parameter docs). See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map
+    (issue #2137).
+
     Each chunk is loaded lazily via windowed reads.
 
     Parameters
@@ -354,9 +361,18 @@ def read_geotiff_dask(source: str, *,
     # on an int file), the in-memory buffers hold literal sentinel
     # values. True iff the caller opted into masking and the graph
     # dtype is float.
+    # ``nodata_pixels_present`` is intentionally left unset on the
+    # dask path (issue #2135). A strict per-chunk reduction would force
+    # an eager ``.compute()`` here, defeating the lazy contract; callers
+    # that need the answer can fall back to scanning the materialised
+    # array. ``nodata_dtype_cast`` is recorded when the caller passed an
+    # explicit ``dtype=`` kwarg so downstream can tell float-by-cast
+    # apart from float-by-masking on the lazy output.
     _set_nodata_attrs(
         attrs, nodata_attr,
         masked=(mask_nodata and target_dtype.kind == 'f'),
+        pixels_present=None,
+        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
     )
 
     if isinstance(chunks, int):

@@ -30,13 +30,18 @@ split changes in a future release.
 
 Canonical (xrspatial owns these; round-trip stable):
 
-- ``crs``: EPSG integer code for the horizontal CRS.
+- ``crs``: EPSG integer code for the horizontal CRS. Dropped on rotated
+  reads opened with ``allow_rotated=True`` (issue #2122) -- the array is
+  treated as a no-georef pixel grid in that case.
 - ``crs_wkt``: WKT string for the horizontal CRS. Present on read whenever
-  any CRS information is available.
+  any CRS information is available. Dropped on rotated reads opened with
+  ``allow_rotated=True`` (issue #2122), in lockstep with ``crs``.
 - ``transform``: rasterio-style 6-tuple
   ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``. Omitted
   for files with no GeoTIFF transform tags (ModelTransformation,
-  ModelPixelScale, or ModelTiepoint).
+  ModelPixelScale, or ModelTiepoint), and for rotated reads opened with
+  ``allow_rotated=True`` (axis-aligned 6-tuple would silently drop the
+  rotation terms).
 - ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag.
   Set whenever the source declares one, as a scalar of the source
   dtype, regardless of whether the in-memory array is float-with-NaN
@@ -46,6 +51,18 @@ Canonical (xrspatial owns these; round-trip stable):
   step ran; ``False`` iff the array still carries the literal integer
   sentinel. Only emitted when ``nodata`` is set; absence is the
   "no declared sentinel" signal. See ``_set_nodata_attrs``.
+- ``nodata_pixels_present`` (#2135): bool, only emitted when
+  ``nodata`` is set and the backend computed the answer cheaply.
+  True iff the read window contained at least one pixel matching the
+  declared sentinel before masking. Lets QA and writer code answer
+  "are any sentinel pixels in this tile" without scanning the buffer.
+  The dask path leaves this unset because a strict per-chunk
+  reduction would force an eager ``.compute()``.
+- ``nodata_dtype_cast`` (#2135): string dtype name (e.g.
+  ``"float64"``), only emitted when ``nodata`` is set and the caller
+  passed an explicit ``dtype=`` kwarg. Records that a post-mask cast
+  happened so consumers can tell float-because-masked from
+  float-because-promoted.
 - ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
   (explicit / RasterPixelIsPoint).
 - ``extra_tags``: list of ``(tag_id, type_id, count, value)`` tuples for
@@ -154,6 +171,61 @@ _LEVEL_RANGES = {
 _VALID_COMPRESSIONS = (
     'none', 'deflate', 'lzw', 'jpeg', 'packbits', 'zstd', 'lz4',
     'jpeg2000', 'j2k', 'lerc',
+)
+
+
+# Tiered feature inventory for the public geotiff surface (issue #2137).
+# Defined in ``_attrs.py`` (not the package ``__init__.py``) so the writers
+# can import it at module scope without a circular dependency: the package
+# ``__init__`` already imports the writers. The package re-exports
+# ``SUPPORTED_FEATURES`` so the public API stays
+# ``xrspatial.geotiff.SUPPORTED_FEATURES``.
+#
+# See ``xrspatial/geotiff/__init__.py`` for the per-tier semantics; the
+# inline comments here track the codec/reader/writer split used by the
+# user-guide notebook table.
+SUPPORTED_FEATURES = {
+    # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
+    'codec.none': 'stable',
+    'codec.deflate': 'stable',
+    'codec.lzw': 'stable',
+    'codec.packbits': 'stable',
+    'codec.zstd': 'stable',
+    # Tier 3 codecs: require ``allow_experimental_codecs=True``.
+    'codec.lerc': 'experimental',
+    'codec.jpeg2000': 'experimental',
+    'codec.j2k': 'experimental',
+    'codec.lz4': 'experimental',
+    # Tier 4 codec: requires the dedicated ``allow_internal_only_jpeg``
+    # opt-in (issue #1845). Not covered by ``allow_experimental_codecs``.
+    'codec.jpeg': 'internal_only',
+    # Read paths.
+    'reader.local_file': 'stable',
+    'reader.fsspec': 'advanced',
+    'reader.http': 'advanced',
+    'reader.vrt': 'advanced',
+    'reader.sidecar_ovr': 'advanced',
+    'reader.allow_rotated': 'advanced',
+    'reader.allow_unparseable_crs': 'advanced',
+    'reader.gpu': 'experimental',
+    # Write paths.
+    'writer.local_file': 'stable',
+    'writer.cog': 'advanced',
+    'writer.overviews': 'advanced',
+    'writer.bigtiff': 'advanced',
+    'writer.gpu': 'experimental',
+    'writer.gdal_metadata_xml': 'experimental',
+    'writer.extra_tags': 'experimental',
+}
+
+
+# Tier 3 codec names (lower-cased) gated behind
+# ``allow_experimental_codecs`` on the writers. Derived from
+# ``SUPPORTED_FEATURES`` so the gate cannot drift from the docs.
+_EXPERIMENTAL_CODECS = frozenset(
+    name.split('.', 1)[1].lower()
+    for name, tier in SUPPORTED_FEATURES.items()
+    if name.startswith('codec.') and tier == 'experimental'
 )
 
 
@@ -535,8 +607,15 @@ def _should_restore_nan_sentinel(attrs) -> bool:
     return value is not False
 
 
-def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
-    """Set ``attrs['nodata']`` and ``attrs['masked_nodata']`` on a read.
+def _set_nodata_attrs(
+    attrs: dict,
+    nodata,
+    *,
+    masked: bool,
+    pixels_present: bool | None = None,
+    dtype_cast: str | None = None,
+) -> None:
+    """Set the nodata lifecycle attrs on a read.
 
     ``masked`` is the actual mask-decision the read path made: True iff
     sentinel pixels in the in-memory buffer have been replaced with NaN
@@ -544,8 +623,24 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     step). False iff the literal sentinel values are still present in
     the buffer.
 
+    ``pixels_present`` is the lifecycle signal added in issue #2135. If
+    not ``None``, the read path computed whether the read window
+    contained at least one pixel matching the declared sentinel before
+    masking; the value is forwarded to ``attrs['nodata_pixels_present']``
+    so consumers can answer "any nodata in this tile" without scanning
+    the buffer. Pass ``None`` when the backend cannot cheaply produce
+    the value (e.g. dask, where a strict per-chunk reduction would
+    force eager compute).
+
+    ``dtype_cast`` is the second lifecycle signal added in issue #2135.
+    If the caller passed an explicit ``dtype=`` kwarg, the backend
+    forwards the resolved target dtype string (e.g. ``"float64"``) so
+    consumers can distinguish "float because masking promoted it" from
+    "float because the caller cast it". ``None`` means no caller cast
+    happened; the attr is omitted in that case.
+
     Contract (splits the two meanings previously fused into
-    ``attrs['nodata']`` per issue #1988):
+    ``attrs['nodata']`` per issue #1988, extended for #2135):
 
     * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
       source dtype. Set whenever the source declared one, regardless of
@@ -553,6 +648,14 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
     * ``attrs['masked_nodata']`` -- the ``masked`` value the caller
       passed, coerced to bool. Only emitted when ``nodata is not
       None``; absence of the flag means there is no declared sentinel.
+    * ``attrs['nodata_pixels_present']`` (additive, #2135) -- bool,
+      only emitted when ``nodata is not None`` and ``pixels_present``
+      is not ``None``. Tracks whether the read window contained any
+      sentinel pixel before masking.
+    * ``attrs['nodata_dtype_cast']`` (additive, #2135) -- string dtype
+      name (e.g. ``"float64"``), only emitted when ``nodata is not
+      None`` and ``dtype_cast`` is not ``None``. Records that a
+      caller-requested cast happened after masking.
 
     Pre-#2092 the helper inferred ``masked`` from the final array
     dtype, which lied when ``mask_nodata=False`` left literal sentinel
@@ -565,6 +668,10 @@ def _set_nodata_attrs(attrs: dict, nodata, *, masked: bool) -> None:
         return
     attrs['nodata'] = nodata
     attrs['masked_nodata'] = bool(masked)
+    if pixels_present is not None:
+        attrs['nodata_pixels_present'] = bool(pixels_present)
+    if dtype_cast is not None:
+        attrs['nodata_dtype_cast'] = str(dtype_cast)
 
 
 def _validate_read_geo_info(
