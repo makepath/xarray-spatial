@@ -160,7 +160,10 @@ from typing import Any
 
 import numpy as np
 
+import xarray as xr
+
 from ._coords import (
+    coords_from_geo_info as _coords_from_geo_info,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
 from ._geotags import (
@@ -1128,3 +1131,306 @@ def _extract_rich_tags(attrs: dict) -> dict:
         'y_resolution': attrs.get('y_resolution'),
         'resolution_unit': res_unit,
     }
+
+
+def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
+    """Apply the nodata-to-NaN mask on an eager (host-side) numpy buffer.
+
+    Mirrors the inline block in ``open_geotiff`` so the eager helper can
+    share one implementation. Returns ``(arr, nodata_pixels_present)``
+    where ``arr`` may have been promoted from an integer dtype to float64
+    when the sentinel matched at least one pixel, and
+    ``nodata_pixels_present`` is the bool used to populate
+    ``attrs['nodata_pixels_present']``. ``None`` means "no scan was
+    appropriate for this dtype / sentinel combination."
+
+    The sentinel is taken as the ``mask_sentinel`` parameter rather than
+    being read from ``geo_info``. Three GPU eager sites derive it three
+    different ways (``_mw_mask_nodata`` local, the CPU-fallback
+    ``_cpu_fallback_geo._mask_nodata``, raw ``nodata``), so the helper
+    accepts the sentinel value directly.
+    """
+    nodata_pixels_present: bool | None = None
+    if mask_sentinel is None:
+        return arr, nodata_pixels_present
+    if mask_nodata:
+        if arr.dtype.kind == 'f':
+            if not np.isnan(mask_sentinel):
+                mask_f = arr == arr.dtype.type(mask_sentinel)
+                nodata_pixels_present = bool(mask_f.any())
+                if nodata_pixels_present:
+                    arr[mask_f] = np.nan
+            else:
+                # NaN-only sentinel on a float buffer: ``mask_nodata`` is
+                # a no-op, but downstream may want to know if any NaN
+                # pixels already exist in the source so the attr stays
+                # informative.
+                nodata_pixels_present = bool(np.isnan(arr).any())
+        elif arr.dtype.kind in ('u', 'i'):
+            # Integer arrays: convert to float to represent NaN. Gate on
+            # finite + integer + in-range so a sentinel that cannot match
+            # an integer pixel resolves to ``False`` rather than crashing
+            # in the equality cast (mirrors the eager block in
+            # ``open_geotiff`` for #1774 / #1564 / #1616).
+            if (np.isfinite(mask_sentinel)
+                    and float(mask_sentinel).is_integer()):
+                nodata_int = int(mask_sentinel)
+                info = np.iinfo(arr.dtype)
+                if info.min <= nodata_int <= info.max:
+                    mask = arr == arr.dtype.type(nodata_int)
+                    nodata_pixels_present = bool(mask.any())
+                    if nodata_pixels_present:
+                        arr = arr.astype(np.float64)
+                        arr[mask] = np.nan
+                else:
+                    nodata_pixels_present = False
+            else:
+                nodata_pixels_present = False
+    else:
+        # ``mask_nodata=False``: do not rewrite pixels, but still surface
+        # ``attrs['nodata_pixels_present']`` so callers know whether
+        # literal sentinel pixels survive in the buffer (issue #2135).
+        if arr.dtype.kind == 'f':
+            if np.isnan(mask_sentinel):
+                nodata_pixels_present = bool(np.isnan(arr).any())
+            else:
+                nodata_pixels_present = bool(
+                    (arr == arr.dtype.type(mask_sentinel)).any()
+                )
+        elif arr.dtype.kind in ('u', 'i'):
+            if (np.isfinite(mask_sentinel)
+                    and float(mask_sentinel).is_integer()):
+                nodata_int = int(mask_sentinel)
+                info = np.iinfo(arr.dtype)
+                if info.min <= nodata_int <= info.max:
+                    nodata_pixels_present = bool(
+                        (arr == arr.dtype.type(nodata_int)).any()
+                    )
+                else:
+                    nodata_pixels_present = False
+            else:
+                nodata_pixels_present = False
+    return arr, nodata_pixels_present
+
+
+def _finalize_eager_read(
+    arr,
+    *,
+    geo_info,
+    nodata,
+    mask_sentinel,
+    mask_nodata,
+    dtype,
+    window,
+    name,
+    allow_rotated: bool = False,
+    allow_unparseable_crs: bool = False,
+    attrs_in: dict | None = None,
+):
+    """Validate, populate attrs, mask, cast, and build an eager DataArray.
+
+    Wave 1 of #2162 -- ties together the four steps every eager read path
+    runs after the bytes land in a host (or cupy) buffer:
+
+    1. :func:`_validate_read_geo_info` -- runs first so a rejected file
+       does not leak a partially-populated attrs dict.
+    2. :func:`_populate_attrs_from_geo_info` -- writes the canonical attrs
+       (transform / crs / georef_status / etc.) onto a fresh dict.
+    3. Mask nodata pixels to NaN using ``mask_sentinel`` when
+       ``mask_nodata=True`` and the source declared one. Records the
+       ``nodata_pixels_present`` bool either way.
+    4. Cast to ``dtype`` when explicit; record ``nodata_dtype_cast``.
+    5. :func:`_set_nodata_attrs` -- stamps the nodata lifecycle attrs.
+    6. Build an :class:`xarray.DataArray` with coords from
+       :func:`_coords_from_geo_info`.
+
+    The ``mask_sentinel`` parameter is intentionally separate from
+    ``geo_info.nodata`` because the three GPU eager sites derive it three
+    different ways (``_mw_mask_nodata`` local on the stripped path, the
+    CPU-fallback ``_cpu_fallback_geo._mask_nodata`` on the tiled path,
+    raw ``nodata`` on the CPU-decode-then-upload path for URL / fsspec
+    sources). Read paths that don't need MinIsWhite inversion can pass
+    ``mask_sentinel=nodata``.
+
+    Wave migration plan:
+
+    * Wave 2 (#2178 dask, #2179 eager numpy) migrates the eager numpy
+      paths. The mask block inside this helper matches the inline block
+      in ``open_geotiff`` field-for-field; the migration is a straight
+      swap.
+    * Wave 3 (#2180 VRT, GPU) migrates the VRT eager + three GPU eager
+      sites. The VRT eager path is host-side and works with the helper
+      as-is. The GPU sites apply masking through a CUDA kernel
+      (``_apply_nodata_mask_gpu_with_presence``); they can either
+      pre-mask and call the helper with ``nodata=None`` to skip the
+      helper's host-side mask block, or wave 3 can extend this
+      helper's signature with a ``mask_fn`` injection. Either choice
+      lives in #2180; the wave 1 contract here is the host-side path.
+
+    Returns a :class:`xarray.DataArray` ready for the caller to return
+    from the read function. The caller assembles the dask graph
+    separately when a lazy backend is in play; this helper is eager-only.
+
+    ``attrs_in`` is shallow-copied via ``dict(attrs_in)``. Nested values
+    (e.g. ``extra_tags`` list, ``gdal_metadata`` dict) are shared between
+    the caller's seed dict and the returned DataArray's attrs; mutating
+    a nested value after the call propagates both ways. Callers that
+    care about isolation can ``copy.deepcopy(attrs_in)`` first.
+    """
+    # Step 1: validate first so partial attrs never leak.
+    _validate_read_geo_info(
+        geo_info, window=window,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+    )
+
+    # Step 2: populate attrs from geo_info onto a fresh dict (or onto a
+    # caller-supplied seed dict, which lets the GPU/VRT migration carry
+    # backend-specific keys through without bypassing the helper).
+    attrs: dict = dict(attrs_in) if attrs_in else {}
+    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
+
+    # Step 3: apply the nodata-to-NaN mask (or compute pixels_present
+    # without rewriting if ``mask_nodata=False``). Skipped entirely when
+    # the source declared no sentinel.
+    nodata_pixels_present: bool | None = None
+    if nodata is not None:
+        arr, nodata_pixels_present = _apply_eager_nodata_mask(
+            arr, mask_sentinel=mask_sentinel, mask_nodata=mask_nodata,
+        )
+
+    # Step 4: caller-requested dtype cast (post-mask so the integer
+    # promotion above runs first). ``_validate_dtype_cast`` lives in
+    # ``_validation``; local import keeps ``_attrs`` free of a top-level
+    # validation dependency for parity with ``_validate_read_geo_info``.
+    dtype_cast_attr: str | None = None
+    if dtype is not None:
+        from ._validation import _validate_dtype_cast
+        target = np.dtype(dtype)
+        _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
+        arr = arr.astype(target)
+        dtype_cast_attr = target.name
+
+    # Step 5: stamp the nodata lifecycle attrs. ``masked`` is True iff
+    # the caller opted into masking AND the final buffer dtype is float,
+    # mirroring the existing call sites (the integer promotion above
+    # only runs when the sentinel matched at least one pixel, so an
+    # ``int`` buffer + ``mask_nodata=True`` here means "no pixels were
+    # masked" rather than "masking was disabled").
+    _set_nodata_attrs(
+        attrs, nodata,
+        masked=(mask_nodata and np.dtype(str(arr.dtype)).kind == 'f'),
+        pixels_present=nodata_pixels_present,
+        dtype_cast=dtype_cast_attr,
+    )
+
+    # Step 6: build the DataArray. ``_coords_from_geo_info`` honours the
+    # windowed-read contract (origin shifted to the window's top-left).
+    height, width = arr.shape[:2]
+    coords = _coords_from_geo_info(
+        geo_info, height, width, window=window,
+    )
+    if arr.ndim == 3:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(arr.shape[2])
+    else:
+        dims = ['y', 'x']
+
+    return xr.DataArray(arr, dims=dims, coords=coords, name=name, attrs=attrs)
+
+
+def _finalize_lazy_read_attrs(
+    *,
+    geo_info,
+    nodata,
+    mask_nodata,
+    dtype,
+    window,
+    allow_rotated: bool = False,
+    allow_unparseable_crs: bool = False,
+    attrs_in: dict | None = None,
+):
+    """Validate and populate attrs for dask-style lazy reads.
+
+    Wave 1 of #2162 -- the lazy counterpart of
+    :func:`_finalize_eager_read`. The dask + dask-GPU backends cannot
+    fold the nodata mask into a single eager step because masking runs
+    per-chunk inside the graph; they only need the attrs side of the
+    pipeline. This helper:
+
+    1. :func:`_validate_read_geo_info` -- runs first so partial attrs
+       never leak on validation failure.
+    2. :func:`_populate_attrs_from_geo_info` -- writes the canonical
+       attrs onto a fresh dict.
+    3. :func:`_set_nodata_attrs` -- ``masked`` is True iff the caller
+       opted into masking AND the graph dtype is float. ``dtype_cast``
+       is recorded when the caller passed an explicit ``dtype=`` kwarg.
+       ``pixels_present=None`` is the documented dask contract from
+       issue #2135: a strict per-chunk reduction would force an eager
+       ``.compute()`` and break the lazy contract, so the attr is left
+       absent on lazy outputs.
+
+    Returns the attrs ``dict`` only; the caller assembles the dask graph
+    and builds the :class:`xarray.DataArray` itself, so this helper
+    deliberately does not touch arrays or coords.
+
+    The ``dtype`` parameter accepts a numpy dtype, a string ('float64'),
+    or ``None``. It is the **resolved graph dtype** the dask backend
+    settled on (e.g. ``target_dtype`` after the int->float64 promotion
+    that ``mask_nodata=True`` triggers on int files): the helper uses
+    it to derive ``masked`` and writes it as ``nodata_dtype_cast`` when
+    non-None.
+
+    Wave 2 migration note: the current pre-helper dask backend
+    distinguishes "caller explicitly passed ``dtype=``" from
+    "graph dtype was auto-promoted by masking" so that
+    ``nodata_dtype_cast`` surfaces only on the explicit-cast case.
+    This helper conflates the two -- whatever ``dtype`` value the
+    caller passes here becomes the ``nodata_dtype_cast`` attr. The
+    migration PR (#2178) can either accept that change, or split the
+    helper's ``dtype`` into two parameters at that point. Frozen
+    signature here per #2177 means we ship the one-``dtype`` shape
+    and leave the split for wave 2 if it turns out to matter.
+
+    ``attrs_in`` is shallow-copied via ``dict(attrs_in)``. Nested values
+    are shared between the caller's seed dict and the returned attrs;
+    callers that care about isolation can ``copy.deepcopy(attrs_in)``
+    first.
+    """
+    _validate_read_geo_info(
+        geo_info, window=window,
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+    )
+
+    attrs: dict = dict(attrs_in) if attrs_in else {}
+    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
+
+    # ``masked`` mirrors the eager helper's rule and the existing dask
+    # call site contract: the graph applies masking per-chunk only when
+    # ``mask_nodata=True`` AND the graph dtype is float, so an int graph
+    # with ``mask_nodata=True`` still carries literal sentinel values.
+    # ``dtype`` here is the resolved graph dtype; the dask backend
+    # promotes int -> float64 before calling this helper when the
+    # caller wants masking on an int source.
+    if dtype is None:
+        masked = False
+    else:
+        masked = bool(mask_nodata and np.dtype(dtype).kind == 'f')
+
+    # ``dtype_cast`` records the caller-supplied ``dtype=`` kwarg so
+    # consumers can tell float-because-masked from float-because-cast.
+    # The dask backend resolves ``dtype`` for the graph internally; the
+    # helper exposes it via ``attrs['nodata_dtype_cast']`` when set.
+    dtype_cast_attr = (
+        np.dtype(dtype).name if dtype is not None else None
+    )
+
+    _set_nodata_attrs(
+        attrs, nodata,
+        masked=masked,
+        pixels_present=None,
+        dtype_cast=dtype_cast_attr,
+    )
+
+    return attrs
