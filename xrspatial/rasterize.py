@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Optional, Tuple, Union
+from typing import NamedTuple, Optional, Tuple, Union
 
 import numpy as np
 import shapely
@@ -2254,6 +2254,75 @@ def _parse_input(geometries, column=None, columns=None):
     return geom_list, props_array, None
 
 
+def _check_uniform_axis(axis_name, coords, expected_step):
+    """Raise ``ValueError`` if ``coords`` is not uniformly spaced.
+
+    ``coords`` is a 1-D float64 array of dim-coord values for the named
+    axis (``'x'`` or ``'y'``).  ``expected_step`` is the magnitude of the
+    first interval (already computed by the caller).  Axes with fewer
+    than three points cannot be non-uniform in a way this check would
+    catch, so they pass trivially.
+
+    The comparison is on ``abs(diff)`` so the validation does not care
+    whether the axis is ascending or descending -- ascending-y ``like``
+    inputs are supported by the orientation flip in ``rasterize``, and
+    gating on the sign here would block that.  ``np.allclose`` is used
+    (rather than strict equality) because affine-transform-derived
+    coords drift by a few ulps in practice.
+    """
+    if coords.size < 3:
+        return
+
+    # A non-finite ``expected_step`` (NaN / inf) is a separate kind of
+    # broken; let the downstream rasterizer surface that rather than
+    # masking it with a misleading "non-uniform spacing" message here.
+    if not np.isfinite(expected_step):
+        return
+
+    # An all-equal coord vector gives expected_step==0 and diffs all
+    # zero; allclose would pass and the rasterizer would later trip on
+    # a zero-sized pixel.  Reject up front with the same "non-uniform"
+    # framing so users get one diagnostic, not two.
+    if expected_step == 0:
+        raise ValueError(
+            f"'like' DataArray has zero-width pixels along the "
+            f"{axis_name!r} axis (consecutive coords are equal). "
+            "rasterize() requires a regular grid with non-zero "
+            "spacing; resample 'like' to a uniform grid (e.g. with "
+            "xarray's ``interp`` or ``reindex``) before passing it."
+        )
+
+    diffs = np.abs(np.diff(coords))
+    if not np.allclose(diffs, expected_step, rtol=1e-5, atol=1e-8):
+        max_dev = float(np.max(np.abs(diffs - expected_step)))
+        raise ValueError(
+            "'like' DataArray has non-uniform spacing along the "
+            f"{axis_name!r} axis (expected step {expected_step}, "
+            f"largest deviation {max_dev}). rasterize() requires a "
+            "regular grid; resample 'like' to a uniform grid (e.g. "
+            "with xarray's ``interp`` or ``reindex``) before passing "
+            "it."
+        )
+
+
+class _LikeGrid(NamedTuple):
+    """Grid attributes extracted from a template DataArray.
+
+    Returned by :func:`_extract_grid_from_like`.  Using a named tuple
+    instead of a bare tuple keeps the call site readable as more
+    template-derived attributes accrete over time.
+    """
+    width: int
+    height: int
+    bounds: Tuple[float, float, float, float]
+    dtype: np.dtype
+    x_coord: xr.DataArray
+    y_coord: xr.DataArray
+    extra_coords: dict
+    attrs: dict
+    y_ascending: bool
+
+
 def _extract_grid_from_like(like):
     """Extract width, height, bounds, dtype from a template DataArray.
 
@@ -2284,10 +2353,36 @@ def _extract_grid_from_like(like):
     else:
         py = 1.0
 
+    # The rasterizer assumes a uniform grid.  If ``like`` has non-uniform
+    # spacing on either axis, ``px``/``py`` (taken from the first interval)
+    # will not describe the rest of the grid, and reusing ``like.coords``
+    # on the output (see ``rasterize`` below) would mislabel where each
+    # pixel lives.  Validate uniform spacing here so the rasterizer never
+    # produces a DataArray whose coords disagree with its data layout.
+    #
+    # Compare ``abs(diff)`` against the first interval so the check stays
+    # agnostic to axis direction -- ascending or descending y both pass as
+    # long as the spacing is uniform.  Use ``np.allclose`` rather than
+    # strict equality because affine-transform-derived coords drift by a
+    # few ulps.
+    _check_uniform_axis('x', x, px)
+    _check_uniform_axis('y', y, py)
+
     xmin = float(np.min(x)) - px / 2
     xmax = float(np.max(x)) + px / 2
     ymin = float(np.min(y)) - py / 2
     ymax = float(np.max(y)) + py / 2
+
+    # Detect y-axis orientation.  The rasterizer always burns with row 0
+    # at ymax (standard image convention), so if the template's y is
+    # ascending (low-to-high), the burned rows have to be flipped before
+    # we hand back the coords or downstream coord-aware ops line up
+    # against the wrong rows.  Only the first and last samples are
+    # inspected; the ``_check_uniform_axis`` call above has already
+    # rejected non-monotonic or duplicate-valued y coords, so this is
+    # safe.  The x-axis is assumed ascending; descending-x templates
+    # would hit the same bug class and are not supported here.
+    y_ascending = height > 1 and float(y[-1]) > float(y[0])
 
     # Carry through any non-dim coords (e.g. rioxarray's ``spatial_ref``
     # CRS coord).  The y/x dim coords are returned separately because the
@@ -2297,9 +2392,17 @@ def _extract_grid_from_like(like):
         k: v for k, v in like.coords.items() if k not in ('x', 'y')
     }
 
-    return (width, height, (xmin, ymin, xmax, ymax), dt,
-            like.coords['x'], like.coords['y'],
-            extra_coords, dict(like.attrs))
+    return _LikeGrid(
+        width=width,
+        height=height,
+        bounds=(xmin, ymin, xmax, ymax),
+        dtype=dt,
+        x_coord=like.coords['x'],
+        y_coord=like.coords['y'],
+        extra_coords=extra_coords,
+        attrs=dict(like.attrs),
+        y_ascending=y_ascending,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2386,6 +2489,15 @@ def rasterize(
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
         from this array (any can still be overridden explicitly).
+        Must have uniformly spaced ``x`` and ``y`` dim coords -- the
+        rasterizer only writes to a regular grid, so a non-uniform
+        ``like`` is rejected with ``ValueError`` rather than silently
+        producing pixel labels that don't match the data.  Both
+        descending (top-down, ymax first) and ascending (bottom-up,
+        ymin first) y coords are supported -- the burned rows are
+        flipped to match so ``result.sel(y=...)`` lines up with the
+        geometry in world coordinates either way, and ``result.y``
+        always equals ``like.y`` exactly.
     merge : str or callable, default 'last'
         How to combine values when geometries overlap.
 
@@ -2477,11 +2589,19 @@ def rasterize(
     like_x_coord = like_y_coord = None
     like_extra_coords = {}
     like_attrs = None
+    like_y_ascending = False
     bounds_explicit = bounds is not None
     if like is not None:
-        (like_width, like_height, like_bounds, like_dtype,
-         like_x_coord, like_y_coord, like_extra_coords, like_attrs) = \
-            _extract_grid_from_like(like)
+        grid = _extract_grid_from_like(like)
+        like_width = grid.width
+        like_height = grid.height
+        like_bounds = grid.bounds
+        like_dtype = grid.dtype
+        like_x_coord = grid.x_coord
+        like_y_coord = grid.y_coord
+        like_extra_coords = grid.extra_coords
+        like_attrs = grid.attrs
+        like_y_ascending = grid.y_ascending
 
     # Parse input geometries
     geom_list, props_array, inferred_bounds = _parse_input(
@@ -2618,6 +2738,14 @@ def rasterize(
     if reuse_like_coords:
         x_coords = like_x_coord
         y_coords = like_y_coord
+        # The rasterizer always burns with row 0 = ymax (top-down image
+        # convention).  If the template's y axis is ascending, the rows
+        # have to be flipped along axis 0 before assigning the template's
+        # coords so world-y selection still lines up with the geometry.
+        # Works for numpy, cupy, dask+numpy, and dask+cupy alike -- they
+        # all expose the same slicing semantics on axis 0.
+        if like_y_ascending:
+            out = out[::-1, :]
     else:
         px = (xmax - xmin) / final_width
         py = (ymax - ymin) / final_height

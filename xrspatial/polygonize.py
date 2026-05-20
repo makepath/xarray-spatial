@@ -1,6 +1,8 @@
 # Polygonize algorithm creates vector polygons for connected regions of pixels
-# that share the same pixel value in a raster.  It is a raster to vector
-# converter.
+# in a raster that group together by pixel value.  It is a raster to vector
+# converter.  Integer rasters group by strict equality; float rasters group
+# by an absolute / relative tolerance (see _DEFAULT_ATOL and _DEFAULT_RTOL,
+# and the public polygonize() docstring for the atol / rtol parameters).
 #
 # Algorithm here uses compass directions for clarity, so +x direction is East
 # and +y direction is North.  2D arrays are flattened to 1D to make maths of
@@ -229,22 +231,73 @@ def _follow(
     return region, points
 
 
+# Default absolute and relative tolerances used by the float pathway of the
+# value-equality predicate.  These values mirror numpy.isclose's defaults
+# and have been the historical defaults of polygonize since the float path
+# was introduced.  A user can override them via the polygonize() public
+# atol / rtol parameters, including passing atol=0.0 and rtol=0.0 to get
+# strict equality for float rasters.
+_DEFAULT_ATOL = 1e-8
+_DEFAULT_RTOL = 1e-5
+
+
 # Generator of numba-compatible comparison functions for values.
 # If both values are integers use a fast equality operator, otherwise use a
-# slower floating-point comparison like numpy.isclose.
+# slower floating-point comparison like numpy.isclose with caller-supplied
+# tolerances.  Passing atol=0.0 and rtol=0.0 reduces the float branch to
+# strict equality.
 @generated_jit(nogil=True, nopython=True)
 def _is_close(
     reference: Union[int, float],
     value: Union[int, float],
+    atol: float,
+    rtol: float,
 ) -> bool:
     if (isinstance(reference, nb.types.Integer) and
             isinstance(value, nb.types.Integer)):
-        return lambda reference, value: value == reference
+        # Integer raster: tolerance does not apply, use strict equality.
+        return lambda reference, value, atol, rtol: value == reference
     else:
-        atol = 1e-8
-        rtol = 1e-5
-        return lambda reference, value: \
+        return lambda reference, value, atol, rtol: \
             abs(value - reference) <= (atol + rtol*abs(reference))
+
+
+# Pure-Python tolerance check that mirrors ``_is_close`` for use at the
+# orchestration layer (outside numba kernels).  Integer values fall back
+# to exact equality; floats use the same atol=1e-8, rtol=1e-5 tolerance
+# the CPU CCL uses to merge adjacent pixels.  See issue #2171.
+def _values_close(reference, value):
+    if isinstance(reference, (int, np.integer)) and \
+            isinstance(value, (int, np.integer)):
+        return value == reference
+    return abs(value - reference) <= (1e-8 + 1e-5 * abs(reference))
+
+
+def _bucket_key_for_value(boundary_by_value, val):
+    """Return the dict key that ``val`` should bucket into.
+
+    If an existing key in ``boundary_by_value`` is close to ``val`` under
+    ``_values_close``, return that key so close float values from adjacent
+    chunks land in the same bucket.  Otherwise return ``val`` unchanged.
+
+    This keeps Dask chunk-stitching consistent with the tolerance-based
+    grouping the NumPy / numba path uses inside a single chunk (#2171).
+
+    Performance note: the float branch is a linear scan over existing
+    keys, so total cost is O(B^2) in the number of distinct float
+    buckets B.  Polygonize inputs in practice have a small B (a handful
+    of categorical values), so the scan is cheap.  If a workload with
+    many thousand distinct float buckets shows up, swap the scan for a
+    sorted-keys structure (e.g. bisect over a sorted list).
+    """
+    # Integer-valued rasters use exact equality, so the existing dict
+    # lookup is already correct -- skip the linear scan.
+    if isinstance(val, (int, np.integer)):
+        return val
+    for existing in boundary_by_value:
+        if _values_close(existing, val):
+            return existing
+    return val
 
 
 # Calculate region connectivity for the specified values raster and optional
@@ -273,6 +326,8 @@ def _calculate_regions(
     connectivity_8: bool,
     nx: int,
     ny: int,
+    atol: float,
+    rtol: float,
 ) -> np.ndarray:  # _regions_dtype, shape (nx*ny,)
     # Array of regions to return, integers starting at zero.
     regions = np.zeros_like(values, dtype=_regions_dtype)
@@ -293,7 +348,7 @@ def _calculate_regions(
             matches_W = \
                 (ij % nx > 0 and                         # i > 0
                     (mask is None or mask[ij-1]) and     # W pixel in mask
-                    _is_close(values[ij], values[ij-1]))
+                    _is_close(values[ij], values[ij-1], atol, rtol))
 
             if matches_W:
                 region_W = regions[ij-1]
@@ -302,7 +357,7 @@ def _calculate_regions(
             matches_S = \
                 (ij >= nx and                             # j > 0
                     (mask is None or mask[ij-nx]) and     # S pixel in mask
-                    _is_close(values[ij], values[ij-nx]))
+                    _is_close(values[ij], values[ij-nx], atol, rtol))
 
             if matches_S:
                 region_S = regions[ij-nx]
@@ -313,13 +368,15 @@ def _calculate_regions(
             if connectivity_8 and ij >= nx:
                 if (not matches_W and ij % nx > 0 and
                         (mask is None or mask[ij-nx-1]) and
-                        _is_close(values[ij], values[ij-nx-1])):
+                        _is_close(values[ij], values[ij-nx-1],
+                                  atol, rtol)):
                     matches_W = True
                     region_W = regions[ij-nx-1]
 
                 if (not matches_S and ij % nx < nx-1 and
                         (mask is None or mask[ij-nx+1]) and
-                        _is_close(values[ij], values[ij-nx+1])):
+                        _is_close(values[ij], values[ij-nx+1],
+                                  atol, rtol)):
                     matches_S = True
                     region_S = regions[ij-nx+1]
 
@@ -601,6 +658,8 @@ def _polygonize_numpy(
     mask: Optional[np.ndarray],
     connectivity_8: bool,
     transform: Optional[np.ndarray],
+    atol: float = _DEFAULT_ATOL,
+    rtol: float = _DEFAULT_RTOL,
 ) -> Tuple[List[Union[int, float]], List[List[np.ndarray]]]:
 
     ny, nx = values.shape
@@ -628,7 +687,8 @@ def _polygonize_numpy(
     values_flat = values.ravel()
     mask_flat = mask.ravel() if mask is not None else None
 
-    regions = _calculate_regions(values_flat, mask_flat, connectivity_8, nx, ny)
+    regions = _calculate_regions(
+        values_flat, mask_flat, connectivity_8, nx, ny, atol, rtol)
     column, polygon_points = _scan(
         regions, values_flat, mask_flat, connectivity_8, transform, nx, ny)
 
@@ -716,24 +776,29 @@ def _renumber_regions(regions, nx, ny):
     return regions
 
 
-def _polygonize_cupy(data, mask_data, connectivity_8, transform):
+def _polygonize_cupy(data, mask_data, connectivity_8, transform,
+                     atol=_DEFAULT_ATOL, rtol=_DEFAULT_RTOL):
     """Hybrid GPU/CPU: GPU CCL for integer data, CPU CCL for float data,
     CPU boundary tracing in either case.
 
     Float dtypes route through ``_polygonize_numpy`` so that connected
-    components honour the numba ``_is_close`` tolerance (``atol=1e-8``,
-    ``rtol=1e-5``) for spatially adjacent pixels (#2151).  GPU CCL is a
-    per-value labeling, which cannot reproduce spatial tolerance-aware
-    CCL when transitively-close values are not spatially adjacent.
+    components honour the numba ``_is_close`` tolerance (defaults
+    ``atol=1e-8``, ``rtol=1e-5``) for spatially adjacent pixels (#2151).
+    GPU CCL is a per-value labeling, which cannot reproduce spatial
+    tolerance-aware CCL when transitively-close values are not spatially
+    adjacent.  The integer GPU path uses strict value equality, so the
+    ``atol`` / ``rtol`` arguments do not apply to it.
     """
     np_data = cupy.asnumpy(data)
     np_mask = cupy.asnumpy(mask_data) if mask_data is not None else None
     if np.issubdtype(np_data.dtype, np.floating):
-        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform)
+        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform,
+                                 atol=atol, rtol=rtol)
     ny, nx = np_data.shape
     if nx == 1:
         # Edge case: fall back to full numpy path (pads array).
-        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform)
+        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform,
+                                 atol=atol, rtol=rtol)
     regions_gpu = _calculate_regions_cupy(data, mask_data, connectivity_8)
     regions = cupy.asnumpy(regions_gpu).ravel()
     # Renumber into raster-scan order for _scan compatibility.
@@ -753,7 +818,8 @@ def _to_numpy(arr):
 
 
 def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
-                      ny_total, nx_total):
+                      ny_total, nx_total,
+                      atol=_DEFAULT_ATOL, rtol=_DEFAULT_RTOL):
     """Run _polygonize_numpy on a single chunk, offset coords to global space.
 
     Polygons are classified as "interior" (no vertex on an inter-chunk
@@ -766,7 +832,8 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
         mask_block = _to_numpy(mask_block)
     ny, nx = block.shape
     column, polygon_points = _polygonize_numpy(
-        block, mask_block, connectivity_8, transform=None)
+        block, mask_block, connectivity_8, transform=None,
+        atol=atol, rtol=rtol)
 
     interior = []  # (value, [ring, ...])
     boundary = []  # (value, [ring, ...])
@@ -1486,7 +1553,8 @@ def _merge_chunk_polygons(chunk_results, transform):
     for interior, boundary in chunk_results:
         all_interior.extend(interior)
         for val, rings in boundary:
-            boundary_by_value.setdefault(val, []).append(rings)
+            key = _bucket_key_for_value(boundary_by_value, val)
+            boundary_by_value.setdefault(key, []).append(rings)
 
     # Merge boundary polygons per value using edge cancellation.
     merged = []
@@ -1563,7 +1631,8 @@ def _merge_from_separated(all_interior, boundary_by_value, transform):
     return column, polygon_points
 
 
-def _polygonize_dask(dask_data, mask_data, connectivity_8, transform):
+def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
+                     atol=_DEFAULT_ATOL, rtol=_DEFAULT_RTOL):
     """Dask backend for polygonize: per-chunk polygonize + edge merge."""
     # Ensure mask chunks match raster chunks.
     if mask_data is not None and mask_data.chunks != dask_data.chunks:
@@ -1596,10 +1665,12 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform):
                     block, mask_block, connectivity_8,
                     int(row_offsets[iy]), int(col_offsets[ix]),
                     ny_total, nx_total,
+                    atol, rtol,
                 ))[0]
             all_interior.extend(interior)
             for val, rings in boundary:
-                boundary_by_value.setdefault(val, []).append(rings)
+                key = _bucket_key_for_value(boundary_by_value, val)
+                boundary_by_value.setdefault(key, []).append(rings)
 
     return _merge_from_separated(all_interior, boundary_by_value, transform)
 
@@ -1613,6 +1684,8 @@ def polygonize(
     return_type: str = "numpy",
     simplify_tolerance: Optional[float] = None,
     simplify_method: str = "douglas-peucker",
+    atol: float = _DEFAULT_ATOL,
+    rtol: float = _DEFAULT_RTOL,
 ) -> Union[
     Tuple[List[Union[int, float]], List[List[np.ndarray]]],
     Tuple[List[Union[int, float]], "ak.Array"],
@@ -1622,8 +1695,15 @@ def polygonize(
 ]:
     """
     Polygonize creates vector polygons for connected regions of pixels in a
-    raster that share the same pixel value.  It is a raster to vector
+    raster that group together by pixel value.  It is a raster to vector
     converter.
+
+    For integer rasters, "same value" means strict equality.  For float
+    rasters, adjacent pixels are grouped when their values agree within a
+    small numerical tolerance (controlled by ``atol`` and ``rtol``), so
+    floating-point noise from upstream arithmetic does not split otherwise
+    identical regions.  See the ``atol`` / ``rtol`` parameters below for
+    the formula and for how to opt into strict float equality.
 
     Parameters
     ----------
@@ -1675,6 +1755,23 @@ def polygonize(
         Simplification algorithm. Options are ``"douglas-peucker"``
         (distance-based, good for general use) and ``"visvalingam-whyatt"``
         (area-based, tends to produce better cartographic results).
+
+    atol: float, default=1e-8
+        Absolute tolerance used when grouping adjacent **float** pixels.
+        Two adjacent float values ``a`` and ``b`` are considered the same
+        value (and merged into one polygon) when
+        ``abs(a - b) <= atol + rtol * abs(a)``.  Has no effect on integer
+        rasters, which always use strict equality.  Pass ``atol=0.0``
+        together with ``rtol=0.0`` to opt into strict equality for float
+        rasters as well (useful when float values encode discrete category
+        labels).  The default matches ``numpy.isclose``'s default ``atol``
+        and is exported as ``xrspatial.polygonize._DEFAULT_ATOL``.
+
+    rtol: float, default=1e-5
+        Relative tolerance used together with ``atol`` (see ``atol``).
+        Has no effect on integer rasters.  The default matches
+        ``numpy.isclose``'s default ``rtol`` and is exported as
+        ``xrspatial.polygonize._DEFAULT_RTOL``.
 
     Returns
     -------
@@ -1753,6 +1850,26 @@ def polygonize(
             f"simplify_method must be 'douglas-peucker' or "
             f"'visvalingam-whyatt', got '{simplify_method}'")
 
+    # Validate tolerance parameters.  Negative tolerances would silently
+    # turn every comparison false (or true for a perfectly equal pair),
+    # which is never what a caller wants.  NaN tolerances would also
+    # silently fail closed (abs(x) <= nan + ... is always False), so reject
+    # them up front rather than producing a raster of singletons.
+    if not np.isfinite(atol) or atol < 0:
+        raise ValueError(
+            f"atol must be a non-negative finite number, got {atol}")
+    if not np.isfinite(rtol) or rtol < 0:
+        raise ValueError(
+            f"rtol must be a non-negative finite number, got {rtol}")
+    # Cast to float so a Python int literal like ``0`` doesn't get inferred
+    # as int by Numba and pick the int-typed lambda specialization in
+    # _is_close (which would ignore tolerance entirely for float rasters).
+    # _is_close still dispatches on the dtype of ``reference`` / ``value``,
+    # not on these tolerances, so the cast only fixes the type of the
+    # tolerance arguments themselves.
+    atol = float(atol)
+    rtol = float(rtol)
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_polygonize_numpy,
         cupy_func=_polygonize_cupy,
@@ -1760,7 +1877,8 @@ def polygonize(
         dask_cupy_func=_polygonize_dask,
     )
     column, polygon_points = mapper(raster)(
-        raster.data, mask_data, connectivity_8, transform)
+        raster.data, mask_data, connectivity_8, transform,
+        atol=atol, rtol=rtol)
 
     # Apply simplification if requested.
     if simplify_tolerance is not None and simplify_tolerance > 0:
