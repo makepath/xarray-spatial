@@ -3888,3 +3888,235 @@ class TestMerge3DRejection:
         )
         with pytest.raises(ValueError, match=r"must be 2D"):
             merge([a, b], resolution=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Integer dtype nodata handling (#2185)
+# ---------------------------------------------------------------------------
+
+class TestIntegerNodataDefaults:
+    """Default nodata picks for integer dtypes follow rasterio/GDAL.
+
+    Signed integers get dtype.min (e.g. int16 -> -32768). Unsigned integers
+    get dtype.max (e.g. uint16 -> 65535). Without this, the worker casts
+    NaN back to the integer dtype and silently produces 0 for every
+    out-of-bounds pixel while attrs['nodata'] still advertises NaN.
+    """
+
+    def test_default_integer_nodata_signed(self):
+        from xrspatial.reproject._crs_utils import _default_integer_nodata
+        assert _default_integer_nodata(np.int8) == -128.0
+        assert _default_integer_nodata(np.int16) == -32768.0
+        assert _default_integer_nodata(np.int32) == float(np.iinfo(np.int32).min)
+        assert _default_integer_nodata(np.int64) == float(np.iinfo(np.int64).min)
+
+    def test_default_integer_nodata_unsigned(self):
+        from xrspatial.reproject._crs_utils import _default_integer_nodata
+        assert _default_integer_nodata(np.uint8) == 255.0
+        assert _default_integer_nodata(np.uint16) == 65535.0
+        assert _default_integer_nodata(np.uint32) == float(np.iinfo(np.uint32).max)
+
+    def test_detect_nodata_int_dtype_hint_returns_sentinel(self):
+        """When dtype is integer and no nodata is set anywhere, use a sentinel."""
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(np.zeros((4, 4), dtype=np.int16), dims=('y', 'x'))
+        assert _detect_nodata(r, dtype=np.int16) == -32768.0
+
+    def test_detect_nodata_float_dtype_hint_still_nan(self):
+        """Float dtype keeps the historical NaN default."""
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(np.zeros((4, 4), dtype=np.float32), dims=('y', 'x'))
+        nd = _detect_nodata(r, dtype=np.float32)
+        assert np.isnan(nd)
+
+    def test_detect_nodata_dtype_hint_does_not_override_explicit(self):
+        """Explicit nodata wins over the dtype-based default."""
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(np.zeros((4, 4), dtype=np.int16), dims=('y', 'x'))
+        assert _detect_nodata(r, nodata=-1, dtype=np.int16) == -1.0
+
+    def test_detect_nodata_dtype_hint_does_not_override_attrs(self):
+        """attrs['_FillValue'] etc. still win over the dtype-based default."""
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(
+            np.zeros((4, 4), dtype=np.int16),
+            dims=('y', 'x'),
+            attrs={'_FillValue': -1},
+        )
+        assert _detect_nodata(r, dtype=np.int16) == -1.0
+
+
+def _int_raster_with_oob(dtype, fill_value=100):
+    """Build an int raster that produces out-of-bounds pixels in EPSG:32633.
+
+    Source is high-latitude WGS84 so reprojecting to UTM zone 33N leaves
+    rotated corners outside the source footprint. Those corners are the
+    pixels the bug surfaces on.
+    """
+    h, w = 64, 64
+    data = np.full((h, w), fill_value, dtype=dtype)
+    y = np.linspace(60.0, 50.0, h)
+    x = np.linspace(-10.0, 10.0, w)
+    return xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': y, 'x': x},
+        attrs={'crs': 'EPSG:4326'},
+    )
+
+
+@pytest.mark.parametrize("dtype, expected_sentinel", [
+    (np.int8, -128),
+    (np.int16, -32768),
+    (np.int32, np.iinfo(np.int32).min),
+    (np.uint8, 255),
+    (np.uint16, 65535),
+])
+class TestReprojectIntegerNodataNumpy:
+    """End-to-end: numpy backend, int dtypes, no user-supplied nodata.
+
+    The OOB pixels in the output must equal attrs['nodata'] exactly, and
+    they must not silently become 0 (the pre-#2185 behaviour).
+    """
+
+    def test_oob_pixels_match_attrs_nodata(self, dtype, expected_sentinel):
+        from xrspatial.reproject import reproject
+
+        # Pick a fill value that isn't equal to the sentinel.
+        fill = 100 if expected_sentinel != 100 else 50
+        raster = _int_raster_with_oob(dtype, fill_value=fill)
+        result = reproject(raster, 'EPSG:32633')
+
+        assert result.dtype == np.dtype(dtype)
+        assert result.attrs['nodata'] == float(expected_sentinel)
+
+        # There must actually be some OOB pixels in this test setup --
+        # otherwise the assertion below would pass trivially.
+        oob_mask = result.values == expected_sentinel
+        assert oob_mask.any(), (
+            f"test setup produced no OOB pixels for dtype={dtype}; "
+            f"adjust the raster bounds"
+        )
+
+        # The pre-fix behaviour collapsed OOB pixels to 0 for signed
+        # ints. Make sure that didn't happen here.
+        if expected_sentinel != 0:
+            assert not ((result.values == 0) & oob_mask).any()
+
+        # Everything that isn't OOB should be the fill value.
+        valid = ~oob_mask
+        assert (result.values[valid] == fill).all()
+
+
+class TestReprojectIntegerNodataExplicit:
+    """User-supplied nodata still wins for integer rasters."""
+
+    def test_explicit_nodata_used(self):
+        from xrspatial.reproject import reproject
+
+        raster = _int_raster_with_oob(np.int16, fill_value=100)
+        result = reproject(raster, 'EPSG:32633', nodata=-1)
+        assert result.attrs['nodata'] == -1.0
+        assert (result.values == -1).any()
+        # Default sentinel should not appear in the output now.
+        assert not (result.values == -32768).any()
+
+
+class TestReprojectIntegerNodataDask:
+    """Same guarantee on the dask+numpy backend."""
+
+    def test_dask_oob_pixels_match_attrs_nodata(self):
+        if not HAS_DASK:
+            pytest.skip("dask required")
+        from xrspatial.reproject import reproject
+
+        raster = _int_raster_with_oob(np.int16, fill_value=100)
+        # Wrap in dask.
+        dask_data = da.from_array(raster.values, chunks=(32, 32))
+        dask_raster = xr.DataArray(
+            dask_data, dims=raster.dims, coords=raster.coords,
+            attrs=raster.attrs,
+        )
+
+        result = reproject(dask_raster, 'EPSG:32633')
+        computed = result.compute() if hasattr(result, 'compute') else result
+        assert computed.dtype == np.int16
+        assert computed.attrs['nodata'] == -32768.0
+        assert (computed.values == -32768).any()
+        assert not (computed.values == 0).any()
+
+
+class TestReprojectIntegerNodataCupy:
+    """Same guarantee on the cupy backend."""
+
+    def test_cupy_oob_pixels_match_attrs_nodata(self):
+        if not HAS_CUPY:
+            pytest.skip("cupy required")
+        from xrspatial.reproject import reproject
+
+        raster = _int_raster_with_oob(np.int16, fill_value=100)
+        cupy_data = cp.asarray(raster.values)
+        cupy_raster = xr.DataArray(
+            cupy_data, dims=raster.dims, coords=raster.coords,
+            attrs=raster.attrs,
+        )
+
+        result = reproject(cupy_raster, 'EPSG:32633')
+        host = cp.asnumpy(result.data) if isinstance(result.data, cp.ndarray) else result.values
+        assert result.dtype == np.int16
+        assert result.attrs['nodata'] == -32768.0
+        assert (host == -32768).any()
+        assert not (host == 0).any()
+
+
+class TestReprojectIntegerNodataDaskCupy:
+    """Same guarantee on the dask+cupy backend."""
+
+    def test_dask_cupy_oob_pixels_match_attrs_nodata(self):
+        if not (HAS_DASK and HAS_CUPY):
+            pytest.skip("dask and cupy required")
+        from xrspatial.reproject import reproject
+
+        raster = _int_raster_with_oob(np.int16, fill_value=100)
+        cupy_data = cp.asarray(raster.values)
+        dask_cupy_data = da.from_array(cupy_data, chunks=(32, 32))
+        dask_cupy_raster = xr.DataArray(
+            dask_cupy_data, dims=raster.dims, coords=raster.coords,
+            attrs=raster.attrs,
+        )
+
+        result = reproject(dask_cupy_raster, 'EPSG:32633')
+        computed = result.compute() if hasattr(result, 'compute') else result
+        host = (
+            cp.asnumpy(computed.data)
+            if isinstance(computed.data, cp.ndarray)
+            else np.asarray(computed.values)
+        )
+        assert computed.attrs['nodata'] == -32768.0
+        assert (host == -32768).any()
+        assert not (host == 0).any()
+
+
+class TestReprojectIntegerNodataRegression:
+    """The exact #2185 reproduction case must not regress."""
+
+    def test_no_runtime_warning_and_no_zero_corruption(self):
+        import warnings
+        from xrspatial.reproject import reproject
+
+        data = np.full((64, 64), 100, dtype=np.int16)
+        y = np.linspace(60.0, 50.0, 64)
+        x = np.linspace(-10.0, 10.0, 64)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'], coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', RuntimeWarning)
+            result = reproject(raster, 'EPSG:32633')
+
+        assert result.attrs['nodata'] == -32768.0
+        # Pre-fix output had 435 stealth 0-pixels marked as real data.
+        # After the fix, every non-fill pixel must be the sentinel.
+        unique = set(np.unique(result.values).tolist())
+        assert unique == {100, -32768}

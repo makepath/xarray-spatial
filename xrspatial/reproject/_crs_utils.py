@@ -112,11 +112,34 @@ def _detect_source_crs(raster):
     return None
 
 
-def _detect_nodata(raster, nodata=None):
+def _default_integer_nodata(dtype):
+    """Return the default nodata sentinel for an integer dtype.
+
+    Follows the rasterio/GDAL convention: signed integers use the dtype
+    minimum (e.g. int16 -> -32768) and unsigned integers use the dtype
+    maximum (e.g. uint16 -> 65535, uint8 -> 255). Returning a value that
+    actually fits the dtype avoids the silent NaN -> 0 corruption that
+    happens when NaN is cast back to an integer array.
+    """
+    info = np.iinfo(dtype)
+    if np.issubdtype(dtype, np.signedinteger):
+        return float(info.min)
+    return float(info.max)
+
+
+def _detect_nodata(raster, nodata=None, dtype=None):
     """Determine nodata value from explicit arg, rioxarray, or attrs.
 
-    NaN is the canonical sentinel for missing data and is allowed.
-    +/-Inf would break downstream `np.isnan` masks, so it is rejected.
+    NaN is the canonical sentinel for floating-point missing data and
+    is allowed. +/-Inf would break downstream ``np.isnan`` masks, so it
+    is rejected.
+
+    Integer dtypes can't carry NaN. When *dtype* is integer and no
+    upstream nodata is found, fall back to a dtype-appropriate sentinel
+    (see :func:`_default_integer_nodata`) instead of returning NaN.
+    Without this, the worker's cast-back step silently turned every
+    out-of-bounds pixel into ``0`` while ``attrs['nodata']`` still
+    advertised NaN.
     """
     if nodata is not None:
         nd = float(nodata)
@@ -153,5 +176,12 @@ def _detect_nodata(raster, nodata=None):
             first = nv
         if first is not None:
             return float(first)
+
+    # No upstream nodata. For integer dtypes, NaN would round to 0 on
+    # cast-back so use a sentinel that fits the dtype instead.
+    if dtype is not None:
+        dt = np.dtype(dtype)
+        if np.issubdtype(dt, np.integer):
+            return _default_integer_nodata(dt)
 
     return float('nan')
