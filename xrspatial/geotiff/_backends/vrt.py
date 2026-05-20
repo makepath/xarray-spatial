@@ -459,17 +459,23 @@ def read_vrt(source: str, *,
         arr = arr.astype(target)
         dtype_cast_attr = target.name
 
-    # ``masked_nodata`` must reflect whether the read path actually
-    # replaced sentinel pixels with NaN, not just whether the buffer
-    # happens to be float. With ``mask_nodata=False`` on a float-source
-    # VRT, the inline NaN-masking inside ``_vrt._read_data`` and the
-    # integer-promotion helper are both skipped, but the buffer dtype is
-    # still float -- gating on ``pre_cast_dtype.kind == 'f'`` alone would
-    # falsely claim the sentinels had been masked. Mirror the dask, GPU,
-    # and dask+GPU backends and gate on both ``mask_nodata`` and the
-    # pre-cast dtype. See issue #2159 and the contract at
-    # ``_attrs._set_nodata_attrs`` (``mask_nodata and final_dtype.kind ==
-    # 'f'``).
+    # ``masked_nodata`` must reflect whether the caller asked for
+    # masking, not just whether the buffer happens to be float. With
+    # ``mask_nodata=False`` the integer-promotion helper at
+    # ``_vrt_mask_with_presence`` is skipped (``vrt.py:389``), but on
+    # a float-source VRT the buffer dtype is still float -- gating on
+    # ``pre_cast_dtype.kind == 'f'`` alone would falsely claim the
+    # sentinels had been masked. Mirror the dask, GPU, and dask+GPU
+    # backends and gate on both ``mask_nodata`` and the pre-cast
+    # dtype. See issue #2159 and the contract at
+    # ``_attrs._set_nodata_attrs`` (``mask_nodata and final_dtype.kind
+    # == 'f'``).
+    #
+    # Note: sibling issue #2158 tracks the orthogonal problem where
+    # the inline float NaN-masking inside ``_vrt.read_vrt`` (at
+    # ``_vrt.py:1339``) still runs under ``mask_nodata=False``. Once
+    # that lands, the buffer state will match what this attr already
+    # reports today.
     _set_nodata_attrs(
         attrs, nodata,
         masked=(mask_nodata and pre_cast_dtype.kind == 'f'),
@@ -875,31 +881,30 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata_meta = vrt.bands[band_idx_for_nodata].nodata
-    # VRT chunked path: the per-task VRT reader NaN-masks float source
-    # arrays inline, and ``declared_dtype`` is promoted to float64 only
+    # VRT chunked path: ``declared_dtype`` is promoted to float64 only
     # when ``mask_nodata`` is on and an integer band has a representable
     # sentinel (see the ``declared_dtype`` block earlier in this
-    # function). Either way, ``declared_dtype.kind == 'f'`` is the
-    # correct gate for "buffer is NaN-aware." A user-supplied
-    # ``dtype=`` cast happens on top of the lazy graph above (see
-    # ``final_dtype`` block) and must not flip this attr, so we read
-    # the pre-cast ``declared_dtype`` here rather than ``final_dtype``
-    # (#2092 follow-up).
+    # function). A user-supplied ``dtype=`` cast happens on top of the
+    # lazy graph above (see ``final_dtype`` block) and must not flip
+    # this attr, so we read the pre-cast ``declared_dtype`` here rather
+    # than ``final_dtype`` (#2092 follow-up).
     # ``nodata_pixels_present`` is intentionally left unset on the
     # chunked VRT path: a per-chunk reduction would force eager
     # ``.compute()`` (matches the dask backend's policy for issue
     # #2135). ``dtype_cast`` records the caller-supplied ``dtype=``
     # kwarg when present so downstream can tell float-by-cast apart
     # from float-by-masking even on the lazy output.
-    # ``masked_nodata`` must reflect whether per-chunk masking actually
-    # runs in the lazy graph, not just whether the graph dtype is float.
-    # With ``mask_nodata=False`` each chunk skips the sentinel-to-NaN
-    # step, so even on a float source the in-memory buffers hold literal
-    # sentinel values. Gate on both ``mask_nodata`` and the pre-cast
-    # ``declared_dtype`` (the user ``dtype=`` cast is recorded separately
-    # via ``dtype_cast`` so we use ``declared_dtype`` here, mirroring the
-    # eager path). See issue #2159 and the contract at
-    # ``_attrs._set_nodata_attrs``.
+    # ``masked_nodata`` (#2159) must reflect whether the caller asked
+    # for masking, not just whether the graph dtype is float. With
+    # ``mask_nodata=False`` each chunk skips the sentinel-to-NaN step,
+    # so the in-memory buffers hold literal sentinel values even on a
+    # float-typed graph. Gate on both ``mask_nodata`` and the pre-cast
+    # ``declared_dtype`` to mirror the dask, GPU, and dask+GPU
+    # backends. See the contract at ``_attrs._set_nodata_attrs``.
+    # Sibling issue #2158 tracks the orthogonal case where the
+    # per-task VRT reader still NaN-masks float sources inline today;
+    # once that lands, the in-memory state will match what this attr
+    # already reports.
     _set_nodata_attrs(
         attrs, nodata_meta,
         masked=(mask_nodata and declared_dtype.kind == 'f'),
