@@ -26,11 +26,12 @@ from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
 )
-from .._reader import read_to_array as _read_to_array
+from .._reader import _MAX_CLOUD_BYTES_SENTINEL, read_to_array as _read_to_array
+from .._runtime import _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL
 from .._validation import (
     _validate_chunks_arg,
+    _validate_dispatch_kwargs,
     _validate_dtype_cast,
-    _validate_overview_level_arg,
 )
 from .vrt import read_vrt
 
@@ -43,6 +44,9 @@ def read_geotiff_dask(source: str, *,
                       name: str | None = None,
                       chunks: int | tuple = 512,
                       max_pixels: int | None = None,
+                      max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
+                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                      missing_sources: str = _MISSING_SOURCES_SENTINEL,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
                       band_nodata: str | None = None,
@@ -109,13 +113,28 @@ def read_geotiff_dask(source: str, *,
 
     from .._reader import _coerce_path
 
-    # Match ``open_geotiff``'s ordering so a bad ``overview_level`` is
-    # reported before unrelated source / ``chunks=`` errors mask it
-    # (issue #2160). ``select_overview_ifd`` revalidates as defense in
-    # depth.
-    _validate_overview_level_arg(overview_level)
-
     source = _coerce_path(source)
+
+    # Shared dispatcher-kwarg validator so direct callers see the same
+    # rejections as ``open_geotiff`` (issue #2175 / parent #2162).
+    # Runs ``_validate_overview_level_arg`` first to match ``open_geotiff``'s
+    # ordering -- a bad ``overview_level`` is reported before unrelated
+    # source / ``chunks=`` errors mask it (issue #2160). The helper also
+    # rejects ``on_gpu_failure`` (CPU dask has no GPU policy),
+    # ``missing_sources`` on non-VRT, ``band_nodata`` on non-VRT (issue
+    # #1987), ``max_cloud_bytes`` (dask reader does not apply the
+    # cloud-byte budget, issue #1974), and the file-like-source guard.
+    # ``gpu=False`` because this entry point is always CPU dask.
+    _validate_dispatch_kwargs(
+        source=source,
+        gpu=False,
+        chunks=chunks,
+        overview_level=overview_level,
+        on_gpu_failure=on_gpu_failure,
+        missing_sources=missing_sources,
+        band_nodata=band_nodata,
+        max_cloud_bytes=max_cloud_bytes,
+    )
 
     # Reject non-positive chunk sizes up front. ``chunks=0`` and negative
     # values otherwise propagate into dask chunk math (``range(0, N, 0)``
@@ -134,6 +153,9 @@ def read_geotiff_dask(source: str, *,
     # rather than letting the windowed-read path try to parse VRT XML as
     # TIFF bytes. ``read_vrt`` is the single source of truth for VRT.
     if isinstance(source, str) and source.lower().endswith('.vrt'):
+        vrt_kwargs = {}
+        if missing_sources is not _MISSING_SOURCES_SENTINEL:
+            vrt_kwargs['missing_sources'] = missing_sources
         return read_vrt(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
@@ -141,17 +163,8 @@ def read_geotiff_dask(source: str, *,
             allow_unparseable_crs=allow_unparseable_crs,
             band_nodata=band_nodata,
             mask_nodata=mask_nodata,
+            **vrt_kwargs,
         )
-    # ``band_nodata`` only has meaning for the VRT path (per-band sentinel
-    # ambiguity). Reject the kwarg up front on non-VRT GeoTIFF inputs so
-    # callers learn the opt-out is being dropped, matching the
-    # ``open_geotiff`` guard. See issue #1987 PR 5.
-    if band_nodata is not None:
-        raise ValueError(
-            "band_nodata only applies to VRT sources. "
-            "Pass a .vrt path to enable the VRT pipeline, or drop "
-            "band_nodata to keep the default GeoTIFF path. "
-            "See issue #1987.")
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
