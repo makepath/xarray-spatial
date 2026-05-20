@@ -247,6 +247,37 @@ def _is_close(
             abs(value - reference) <= (atol + rtol*abs(reference))
 
 
+# Pure-Python tolerance check that mirrors ``_is_close`` for use at the
+# orchestration layer (outside numba kernels).  Integer values fall back
+# to exact equality; floats use the same atol=1e-8, rtol=1e-5 tolerance
+# the CPU CCL uses to merge adjacent pixels.  See issue #2171.
+def _values_close(reference, value):
+    if isinstance(reference, (int, np.integer)) and \
+            isinstance(value, (int, np.integer)):
+        return value == reference
+    return abs(value - reference) <= (1e-8 + 1e-5 * abs(reference))
+
+
+def _bucket_key_for_value(boundary_by_value, val):
+    """Return the dict key that ``val`` should bucket into.
+
+    If an existing key in ``boundary_by_value`` is close to ``val`` under
+    ``_values_close``, return that key so close float values from adjacent
+    chunks land in the same bucket.  Otherwise return ``val`` unchanged.
+
+    This keeps Dask chunk-stitching consistent with the tolerance-based
+    grouping the NumPy / numba path uses inside a single chunk (#2171).
+    """
+    # Integer-valued rasters use exact equality, so the existing dict
+    # lookup is already correct -- skip the linear scan.
+    if isinstance(val, (int, np.integer)):
+        return val
+    for existing in boundary_by_value:
+        if _values_close(existing, val):
+            return existing
+    return val
+
+
 # Calculate region connectivity for the specified values raster and optional
 # mask raster.  Each region is labelled with a unique integer ID starting at
 # 1.  Regions corresponding to masked out pixels are all given the same region
@@ -1486,7 +1517,8 @@ def _merge_chunk_polygons(chunk_results, transform):
     for interior, boundary in chunk_results:
         all_interior.extend(interior)
         for val, rings in boundary:
-            boundary_by_value.setdefault(val, []).append(rings)
+            key = _bucket_key_for_value(boundary_by_value, val)
+            boundary_by_value.setdefault(key, []).append(rings)
 
     # Merge boundary polygons per value using edge cancellation.
     merged = []
@@ -1599,7 +1631,8 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform):
                 ))[0]
             all_interior.extend(interior)
             for val, rings in boundary:
-                boundary_by_value.setdefault(val, []).append(rings)
+                key = _bucket_key_for_value(boundary_by_value, val)
+                boundary_by_value.setdefault(key, []).append(rings)
 
     return _merge_from_separated(all_interior, boundary_by_value, transform)
 
