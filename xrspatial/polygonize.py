@@ -27,7 +27,12 @@
 # x and y coordinates are monotonically increasing or decreasing.
 
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    import awkward as ak
+    import geopandas as gpd
+    import spatialpandas
 
 import numba as nb
 import numpy as np
@@ -1550,7 +1555,13 @@ def polygonize(
     return_type: str = "numpy",
     simplify_tolerance: Optional[float] = None,
     simplify_method: str = "douglas-peucker",
-):
+) -> Union[
+    Tuple[List[Union[int, float]], List[List[np.ndarray]]],
+    Tuple[List[Union[int, float]], "ak.Array"],
+    "gpd.GeoDataFrame",
+    "spatialpandas.GeoDataFrame",
+    Dict[str, Any],
+]:
     """
     Polygonize creates vector polygons for connected regions of pixels in a
     raster that share the same pixel value.  It is a raster to vector
@@ -1610,7 +1621,17 @@ def polygonize(
     Returns
     -------
     Polygons and their corresponding values in a format determined by
-    return_type.
+    ``return_type``:
+
+    - ``"numpy"`` (default): ``(column, polygon_points)`` where ``column``
+      is a list of pixel values and ``polygon_points`` is a list of polygons,
+      each polygon a list of ``Nx2`` ``np.ndarray`` rings (exterior first,
+      then holes).
+    - ``"awkward"``: ``(column, ak.Array)`` of polygon coordinates.
+    - ``"geopandas"``: ``geopandas.GeoDataFrame`` with ``column_name`` and
+      ``geometry`` columns.
+    - ``"spatialpandas"``: ``spatialpandas.GeoDataFrame``.
+    - ``"geojson"``: ``dict`` representing a GeoJSON ``FeatureCollection``.
 
     Notes
     -----
