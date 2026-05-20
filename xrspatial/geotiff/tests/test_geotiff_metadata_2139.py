@@ -244,6 +244,14 @@ def _representative_attrs_dicts():
     * no-georef file
     * user-defined CRS (WKT only, no EPSG)
     * VRT with holes
+
+    The ``rotated_affine`` attr (issue #2129) is deliberately excluded:
+    it is emitted on read but :func:`attrs_to_metadata` does NOT parse
+    it back (the writer drops the rotation until #2115 ships
+    ``ModelTransformationTag`` support). Adding it here would assert a
+    symmetry the contract intentionally breaks. See
+    ``test_rotated_affine_attr_2129.py::test_attrs_to_metadata_drops_rotated_affine``
+    for the pin on the read-only direction.
     """
     yield {
         '_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION,

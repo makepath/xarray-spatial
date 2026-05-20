@@ -221,6 +221,99 @@ def test_open_geotiff_plain_no_georef_omits_rotated_affine(tmp_path):
     assert 'rotated_affine' not in da.attrs
 
 
+# ---------------------------------------------------------------------------
+# VRT path: rotated VRTs must surface the same attr (review follow-up).
+# ---------------------------------------------------------------------------
+
+
+def _write_rotated_vrt(tmp_path, src_path, *, gt_str, size=4):
+    """Build a VRT pointing at ``src_path`` with a custom ``<GeoTransform>``.
+
+    GDAL ``geo_transform`` ordering is
+    ``(origin_x, pixel_width, rot_x, origin_y, rot_y, pixel_height)``;
+    non-zero ``rot_x`` / ``rot_y`` is what the reader treats as a
+    rotated VRT (see ``_vrt_is_rotated`` in ``_backends/vrt.py``).
+    """
+    vrt_xml = (
+        f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n'
+        f'  <GeoTransform>{gt_str}</GeoTransform>\n'
+        f'  <VRTRasterBand dataType="UInt16" band="1">\n'
+        f'    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n'
+        f'      <SourceBand>1</SourceBand>\n'
+        f'      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n'
+        f'      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n'
+        f'    </SimpleSource>\n'
+        f'  </VRTRasterBand>\n'
+        f'</VRTDataset>\n'
+    )
+    vrt = tmp_path / "tmp_2129_rotated.vrt"
+    vrt.write_text(vrt_xml)
+    return str(vrt)
+
+
+def test_open_geotiff_rotated_vrt_emits_rotated_affine(tmp_path):
+    """A VRT with a rotated ``<GeoTransform>`` opened with
+    ``allow_rotated=True`` lands in ``georef_status='rotated_dropped'``
+    and must surface ``rotated_affine`` so callers can recover the
+    mapping. Mirrors the non-VRT ``ModelTransformationTag`` path."""
+    tifffile = pytest.importorskip("tifffile")
+    arr = np.arange(16, dtype='<u2').reshape(4, 4)
+    src = tmp_path / "tmp_2129_rotated_vrt_src.tif"
+    tifffile.imwrite(str(src), arr, photometric='minisblack',
+                     planarconfig='contig')
+
+    # GDAL geo_transform: origin_x, res_x, rot_x, origin_y, rot_y, res_y.
+    # Non-zero rotation terms (positions 2 and 4) trigger the rotated
+    # path. rasterio Affine ordering: (a, b, c, d, e, f)
+    # = (res_x, rot_x, origin_x, rot_y, res_y, origin_y).
+    gt_str = "100.0, 10.0, 5.0, 200.0, -5.0, -10.0"
+    expected = (10.0, 5.0, 100.0, -5.0, -10.0, 200.0)
+
+    vrt_path = _write_rotated_vrt(tmp_path, str(src), gt_str=gt_str)
+    da = open_geotiff(vrt_path, allow_rotated=True)
+
+    assert da.attrs.get('rotated_affine') == expected
+    assert isinstance(da.attrs['rotated_affine'], tuple)
+    # Same drops as the non-VRT path (#2126).
+    assert 'crs' not in da.attrs
+    assert 'transform' not in da.attrs
+
+
+def test_open_geotiff_rotated_vrt_emits_rotated_affine_dask(tmp_path):
+    """Chunked VRT read path mirrors the eager path: ``rotated_affine``
+    rides on the metadata record at the chunked build site too."""
+    tifffile = pytest.importorskip("tifffile")
+    arr = np.arange(16, dtype='<u2').reshape(4, 4)
+    src = tmp_path / "tmp_2129_rotated_vrt_src_dask.tif"
+    tifffile.imwrite(str(src), arr, photometric='minisblack',
+                     planarconfig='contig')
+
+    gt_str = "100.0, 10.0, 5.0, 200.0, -5.0, -10.0"
+    expected = (10.0, 5.0, 100.0, -5.0, -10.0, 200.0)
+
+    vrt_path = _write_rotated_vrt(tmp_path, str(src), gt_str=gt_str)
+    da = open_geotiff(vrt_path, allow_rotated=True, chunks=2)
+
+    assert da.attrs.get('rotated_affine') == expected
+
+
+def test_open_geotiff_axis_aligned_vrt_omits_rotated_affine(tmp_path):
+    """An axis-aligned VRT (zero rotation terms) round-trips via
+    ``attrs['transform']`` and must NOT grow a ``rotated_affine``."""
+    tifffile = pytest.importorskip("tifffile")
+    arr = np.arange(16, dtype='<u2').reshape(4, 4)
+    src = tmp_path / "tmp_2129_axis_vrt_src.tif"
+    tifffile.imwrite(str(src), arr, photometric='minisblack',
+                     planarconfig='contig')
+
+    gt_str = "100.0, 10.0, 0.0, 200.0, 0.0, -10.0"
+    vrt_path = _write_rotated_vrt(tmp_path, str(src), gt_str=gt_str)
+
+    da = open_geotiff(vrt_path, allow_rotated=True)
+    assert 'rotated_affine' not in da.attrs
+
+
 def test_open_geotiff_axis_aligned_omits_rotated_affine(tmp_path):
     """An axis-aligned ``ModelTransformationTag`` round-trips via
     ``attrs['transform']``; the rotated attr must stay absent so
