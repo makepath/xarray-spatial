@@ -82,10 +82,12 @@ def test_attrs_contract_version_constant_is_current():
     """Pin the integer value so a careless bump shows up here first.
 
     Contract v3 (issue #2136) added ``attrs['georef_status']`` to the
-    canonical tier. Bumping past 3 should be paired with a docs update
-    and a sibling test for the new key.
+    canonical tier. Contract v4 (issue #2129) added
+    ``attrs['rotated_affine']`` for the ``allow_rotated=True`` opt-in
+    path. Bumping past 4 should be paired with a docs update and a
+    sibling test for the new key.
     """
-    assert _ATTRS_CONTRACT_VERSION == 3
+    assert _ATTRS_CONTRACT_VERSION == 4
 
 
 def test_eager_numpy_stamps_contract_version(tmp_path):

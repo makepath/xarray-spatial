@@ -333,6 +333,16 @@ def read_vrt(source: str, *,
     # ``rotated_dropped`` bucket as a rotated ``ModelTransformationTag``.
     _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
+    # Surface the rotated 6-tuple alongside ``georef_status='rotated_dropped'``
+    # so the VRT path matches the non-VRT ``ModelTransformationTag`` path
+    # introduced by issue #2129. Without this the rotated VRT would land
+    # in the same bucket as the rotated TIFF but offer no way to recover
+    # the mapping. The GDAL geo_transform is already 6-tuple ordered;
+    # ``_gdal_geotransform_to_affine_tuple`` converts to rasterio
+    # ``Affine`` ordering (a, b, c, d, e, f).
+    _vrt_rotated_affine = (
+        _gdal_geotransform_to_affine_tuple(gt) if _vrt_is_rotated else None
+    )
     _vrt_md = GeoTIFFMetadata(
         crs_epsg=_vrt_epsg,
         crs_wkt=vrt.crs_wkt if _vrt_keep_crs else None,
@@ -347,6 +357,7 @@ def read_vrt(source: str, *,
             has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
             rotated_dropped=_vrt_is_rotated,
         ),
+        rotated_affine=_vrt_rotated_affine,
     )
     attrs = metadata_to_attrs(_vrt_md)
     # When a specific band is selected, source its nodata from that
@@ -836,6 +847,12 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # Rotated VRTs drop CRS attrs alongside the transform (#2122).
     _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
+    # See the eager VRT branch for the rationale; issue #2129 carries
+    # the rotated 6-tuple onto the chunked VRT path too so dask reads
+    # of rotated VRTs match the eager-VRT and non-VRT TIFF surface.
+    _vrt_rotated_affine = (
+        _gdal_geotransform_to_affine_tuple(gt) if _vrt_is_rotated else None
+    )
     # ``georef_status`` (issue #2136). See the eager VRT branch above
     # for the rationale; the rotated VRT path lands the array in the
     # ``rotated_dropped`` bucket so consumers can branch on it.
@@ -850,6 +867,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
             has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
             rotated_dropped=_vrt_is_rotated,
         ),
+        rotated_affine=_vrt_rotated_affine,
     )
     attrs = metadata_to_attrs(_vrt_md)
 
