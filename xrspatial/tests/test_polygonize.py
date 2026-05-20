@@ -459,6 +459,62 @@ def test_polygonize_dask_cupy_matches_numpy(chunks):
                         err_msg=f"Area mismatch for value {val}")
 
 
+@cuda_and_cupy_available
+@pytest.mark.parametrize(
+    "data",
+    [
+        # Adjacent near-equal values, the originally reported pattern.
+        np.array([
+            [1.0, 1.000001, 2.0],
+            [1.000001, 1.0, 2.0],
+            [3.0, 3.0, 2.0],
+        ], dtype=np.float64),
+        # Transitivity edge case: three values 1.0, 1.000009, 1.000018 where
+        # 1.0 and 1.000018 are NOT pairwise close by ``_is_close`` but a
+        # value-only grouping heuristic would chain them transitively.  The
+        # CPU spatial CCL keeps them in separate regions when they are not
+        # bridged by an adjacent intermediate pixel; the cupy backend must
+        # match.
+        np.array([
+            [1.0, 1.000018],
+            [1.000009, 3.0],
+        ], dtype=np.float64),
+    ],
+    ids=["adjacent_near_equal", "transitive_non_adjacent"],
+)
+def test_polygonize_cupy_float_tolerance_matches_numpy_2151(data):
+    """CuPy backend must use the same float tolerance as the numpy/numba
+    path for grouping pixels into regions (#2151).
+
+    Before the fix, the cupy backend binned pixels by exact value while
+    the numpy/numba backend used ``_is_close`` (atol=1e-8, rtol=1e-5),
+    yielding different polygon counts on float rasters with near-equal
+    values.
+    """
+    import cupy
+
+    raster_np = xr.DataArray(data)
+    vals_np, polys_np = polygonize(raster_np, connectivity=4)
+
+    raster_cp = xr.DataArray(cupy.asarray(data))
+    vals_cp, polys_cp = polygonize(raster_cp, connectivity=4)
+
+    # Both backends should return the same number of polygons.
+    assert len(polys_np) == len(polys_cp), (
+        f"polygon count differs: numpy={len(polys_np)} cupy={len(polys_cp)}; "
+        f"numpy values={vals_np}, cupy values={vals_cp}"
+    )
+    # Per-value total area must agree across backends.
+    areas_np = _area_by_value(vals_np, polys_np)
+    areas_cp = _area_by_value(vals_cp, polys_cp)
+    assert set(areas_np.keys()) == set(areas_cp.keys()), (
+        f"value sets differ: numpy={set(areas_np.keys())} "
+        f"cupy={set(areas_cp.keys())}"
+    )
+    for v, a in areas_np.items():
+        assert_allclose(areas_cp[v], a, atol=1e-10)
+
+
 # --- Performance-related regression tests (#1008) ---
 
 def test_polygonize_1008_jit_merge_helpers():
@@ -1114,3 +1170,97 @@ class TestPolygonizeInputValidation:
         from xrspatial.polygonize import polygonize
         with pytest.raises(TypeError, match="xarray.DataArray"):
             polygonize(self._good_raster(), mask=np.ones((4, 4), dtype=bool))
+
+
+# =====================================================================
+# Issue #2149: GeoDataFrame output drops input CRS
+# =====================================================================
+
+
+@pytest.mark.skipif(gpd is None, reason="geopandas not installed")
+class TestPolygonizeCRSPropagation:
+    """polygonize(return_type='geopandas') preserves the raster CRS (#2149)."""
+
+    @staticmethod
+    def _raster_with_attrs(**attrs):
+        data = np.array([[0, 0, 1], [0, 4, 0], [0, 0, 0]], dtype=np.int32)
+        return xr.DataArray(
+            data,
+            dims=('y', 'x'),
+            coords={'y': np.arange(3), 'x': np.arange(3)},
+            attrs=attrs,
+        )
+
+    def test_crs_attr_epsg_string(self):
+        raster = self._raster_with_attrs(crs="EPSG:4326")
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 4326
+
+    def test_crs_attr_epsg_int(self):
+        raster = self._raster_with_attrs(crs=3857)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 3857
+
+    def test_crs_wkt_attr(self):
+        # Use pyproj if available to get a canonical WKT.
+        pyproj = pytest.importorskip("pyproj")
+        wkt = pyproj.CRS.from_epsg(4326).to_wkt()
+        raster = self._raster_with_attrs(crs_wkt=wkt)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 4326
+
+    def test_no_crs_attr_yields_none(self):
+        """A raster without CRS info should still produce a GeoDataFrame
+        (with crs=None), not crash."""
+        data = np.array([[0, 0, 1], [0, 4, 0], [0, 0, 0]], dtype=np.int32)
+        raster = xr.DataArray(data, dims=('y', 'x'))
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is None
+
+    def test_unparseable_crs_does_not_crash(self):
+        """An invalid CRS attr should not break the polygonize call."""
+        raster = self._raster_with_attrs(crs="not a real crs at all")
+        # Should not raise; just yields no CRS on the GeoDataFrame.
+        df = polygonize(raster, return_type="geopandas")
+        assert isinstance(df, gpd.GeoDataFrame)
+
+    def test_crs_prefers_attrs_over_rio(self):
+        """When both attrs['crs'] and rio.crs exist, attrs wins."""
+        pytest.importorskip("rioxarray")
+        raster = self._raster_with_attrs(crs="EPSG:4326")
+        # rio.write_crs stores the CRS on a spatial_ref coord, not in
+        # attrs['crs'], so re-setting attrs['crs'] below is what makes
+        # the precedence assertion meaningful.
+        raster = raster.rio.write_crs("EPSG:3857")
+        raster.attrs['crs'] = "EPSG:4326"
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs.to_epsg() == 4326
+
+    def test_crs_from_rioxarray_only(self):
+        """rioxarray's CRS should be picked up when no attrs are set."""
+        pytest.importorskip("rioxarray")
+        data = np.array([[0, 0, 1], [0, 4, 0], [0, 0, 0]], dtype=np.int32)
+        raster = xr.DataArray(
+            data,
+            dims=('y', 'x'),
+            coords={'y': np.arange(3), 'x': np.arange(3)},
+        )
+        raster = raster.rio.write_crs("EPSG:3857")
+        # rioxarray adds a spatial_ref coord but typically does not write
+        # ``attrs['crs']`` on the DataArray itself.  Force-clear in case.
+        raster.attrs.pop('crs', None)
+        raster.attrs.pop('crs_wkt', None)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 3857
+
+    def test_no_crs_attr_simplify_still_works(self):
+        """CRS propagation must not interact badly with simplify."""
+        raster = self._raster_with_attrs(crs="EPSG:4326")
+        df = polygonize(
+            raster, return_type="geopandas", simplify_tolerance=0.5)
+        assert df.crs is not None
+        assert df.crs.to_epsg() == 4326

@@ -23,7 +23,7 @@ multispectral,2026-03-30T14:00:00Z,1094,,,
 normalize,2026-05-01,,,,rescale and standardize across all 4 backends. NaN/inf filtered via isfinite mask before min/max/mean/std. Constant input handled (range=0 -> new_min; std=0 -> 0.0). Output dtype float64 consistently. Backend parity covered by test_matches_numpy. No accuracy issues found.
 perlin,2026-04-10T12:00:00Z,,,,Improved Perlin noise implementation correct. Fade/gradient functions verified. Backend-consistent. Continuous at cell boundaries.
 polygon_clip,2026-04-13T12:00:00Z,1197,,,crop=True + all_touched=True drops boundary pixels. Fix in PR #1200.
-polygonize,2026-04-13T12:00:00Z,1190,,,NaN pixels not masked in numpy/dask backends. Fix in PR #1194.
+polygonize,2026-05-19,2151,HIGH,5,cupy backend used exact-equality vs numba _is_close tolerance for float dtypes; fixed via tolerance-aware value grouping
 proximity,2026-03-30T15:00:00Z,,,,Direction >= boundary fragile but works due to truncated constant. Float32 truncation is design choice. No wrong-results bugs found.
 reproject,2026-05-17,2025,HIGH,5,"HIGH: _apply_vertical_shift crashed on dask (no fancy-index setitem), cupy (Numba JIT can't take cupy), and 3D multi-band (broadcast mismatch). Fixed by routing dask through map_blocks, round-tripping cupy via host, and looping per band. Previously documented MEDIUM (GPU dispatcher missing NAD27/Helmert wrapper) and MEDIUM (legacy _resample_cupy cubic NaN threshold 1e-6 diverges from CPU bilinear-fallback) still stand. Identity-CRS cupy reproject returns zeros - separate pre-existing bug, not in scope."
 resample,2026-04-14T12:00:00Z,1202,,,Interpolation used edge-aligned coords instead of block-centered. Fix in PR #1204.

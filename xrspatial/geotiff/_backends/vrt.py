@@ -248,9 +248,20 @@ def read_vrt(source: str, *,
         ),
     })
 
+    # Thread ``mask_nodata`` into the internal reader so the float
+    # source NaN masking inside ``_read_data`` honors the opt-out
+    # alongside the integer ``_vrt_mask_with_presence`` helper called
+    # further down. Without this the eager path silently rewrote
+    # literal float sentinels (e.g. ``-9999.0``) to NaN regardless of
+    # the kwarg, which violates the documented opt-out and can drop
+    # legitimate sentinel pixels from downstream consumers. The
+    # ``nodata_pixels_present`` proxy below still reports correctly
+    # because it falls back to a float-buffer scan when the helper
+    # short-circuits. See issue #2158.
     arr, vrt = _read_vrt_internal(
         source, window=window, band=band, max_pixels=max_pixels,
         missing_sources=missing_sources, parsed=_parsed_vrt,
+        mask_nodata=mask_nodata,
     )
 
     if name is None:
@@ -333,6 +344,16 @@ def read_vrt(source: str, *,
     # ``rotated_dropped`` bucket as a rotated ``ModelTransformationTag``.
     _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
+    # Surface the rotated 6-tuple alongside ``georef_status='rotated_dropped'``
+    # so the VRT path matches the non-VRT ``ModelTransformationTag`` path
+    # introduced by issue #2129. Without this the rotated VRT would land
+    # in the same bucket as the rotated TIFF but offer no way to recover
+    # the mapping. The GDAL geo_transform is already 6-tuple ordered;
+    # ``_gdal_geotransform_to_affine_tuple`` converts to rasterio
+    # ``Affine`` ordering (a, b, c, d, e, f).
+    _vrt_rotated_affine = (
+        _gdal_geotransform_to_affine_tuple(gt) if _vrt_is_rotated else None
+    )
     _vrt_md = GeoTIFFMetadata(
         crs_epsg=_vrt_epsg,
         crs_wkt=vrt.crs_wkt if _vrt_keep_crs else None,
@@ -347,6 +368,7 @@ def read_vrt(source: str, *,
             has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
             rotated_dropped=_vrt_is_rotated,
         ),
+        rotated_affine=_vrt_rotated_affine,
     )
     attrs = metadata_to_attrs(_vrt_md)
     # When a specific band is selected, source its nodata from that
@@ -404,20 +426,30 @@ def read_vrt(source: str, *,
     # follow-up).
     pre_cast_dtype = np.dtype(str(arr.dtype))
 
-    # When the inline float-NaN masking inside ``_vrt._read_data`` already
-    # ran (float source + float VRT dataType + declared sentinel), the
-    # integer helper above is a no-op but the resulting float buffer may
-    # already carry NaNs at the sentinel locations. Promote
-    # ``nodata_pixels_present`` to reflect that, since a downstream "any
-    # nodata?" check should answer yes for those tiles too.
+    # Float-NaN proxy for ``nodata_pixels_present``. The signal for a
+    # float buffer can come from any of three places, only one of which
+    # actually fires per call:
+    #
+    # * ``mask_nodata=True`` + float source + declared sentinel: the
+    #   inline NaN masking in ``_vrt._read_data`` rewrote sentinels to
+    #   NaN, so ``np.isnan(arr).any()`` is the presence answer.
+    # * ``mask_nodata=False`` + declared sentinel: ``_vrt_scan_for_sentinel``
+    #   above already set ``nodata_pixels_present`` from a literal-value
+    #   scan, so this block short-circuits via ``not present``.
+    # * ``mask_nodata=True`` + float source with no inline masking (e.g.
+    #   source's natural NaN values, sentinel absent from window): the
+    #   NaN proxy catches the in-buffer NaNs.
     #
     # Invariant: at most one branch sets ``nodata_pixels_present`` to True
     # before this block runs. ``_vrt_mask_with_presence`` only sets True
     # on integer buffers (it short-circuits on float dtype), and
     # ``_vrt_scan_for_sentinel`` is gated on the ``mask_nodata=False``
     # branch above. Either way, the float-NaN proxy below is the only
-    # presence signal for float buffers, so the ``not present`` guard
-    # is sufficient -- we will not double-scan the same buffer.
+    # remaining presence signal for float buffers, so the ``not present``
+    # guard is sufficient -- we will not double-scan the same buffer.
+    # The ``mask_nodata=False`` arm fix from #2158 means the inline NaN
+    # masking no longer runs under the opt-out; the ``_vrt_scan_for_sentinel``
+    # short-circuit above is what keeps the presence attr honest there.
     if (nodata is not None
             and pre_cast_dtype.kind == 'f'
             and not nodata_pixels_present):
@@ -459,23 +491,12 @@ def read_vrt(source: str, *,
         arr = arr.astype(target)
         dtype_cast_attr = target.name
 
-    # ``masked_nodata`` must reflect whether the caller asked for
-    # masking, not just whether the buffer happens to be float. With
-    # ``mask_nodata=False`` the integer-promotion helper at
-    # ``_vrt_mask_with_presence`` is skipped (``vrt.py:389``), but on
-    # a float-source VRT the buffer dtype is still float -- gating on
-    # ``pre_cast_dtype.kind == 'f'`` alone would falsely claim the
-    # sentinels had been masked. Mirror the dask, GPU, and dask+GPU
-    # backends and gate on both ``mask_nodata`` and the pre-cast
-    # dtype. See issue #2159 and the contract at
-    # ``_attrs._set_nodata_attrs`` (``mask_nodata and final_dtype.kind
-    # == 'f'``).
-    #
-    # Note: sibling issue #2158 tracks the orthogonal problem where
-    # the inline float NaN-masking inside ``_vrt.read_vrt`` (at
-    # ``_vrt.py:1339``) still runs under ``mask_nodata=False``. Once
-    # that lands, the buffer state will match what this attr already
-    # reports today.
+    # ``masked`` follows the contract documented on ``_set_nodata_attrs``:
+    # ``mask_nodata and final_dtype.kind == 'f'``. The ``mask_nodata=False``
+    # arm fix from #2158 leaves float source buffers untouched, so
+    # ``pre_cast_dtype.kind == 'f'`` alone would now stamp
+    # ``masked_nodata=True`` on a buffer that still carries literal
+    # sentinel values. AND-ing the kwarg in keeps the attr honest (#2159).
     _set_nodata_attrs(
         attrs, nodata,
         masked=(mask_nodata and pre_cast_dtype.kind == 'f'),
@@ -525,16 +546,22 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
         _apply_integer_sentinel_mask,
     )
 
+    # Forward ``mask_nodata`` to the internal reader so the float
+    # source NaN masking inside ``_read_data`` honors the opt-out too,
+    # not just the integer post-decode helper below. Without this the
+    # chunked path would silently rewrite literal float sentinels to
+    # NaN even when the caller asked to keep them. See issue #2158.
     arr, vrt = _read_vrt_internal(
         source, window=(r0, c0, r1, c1), band=band,
         max_pixels=max_pixels, missing_sources=missing_sources,
-        parsed=parsed_vrt,
+        parsed=parsed_vrt, mask_nodata=mask_nodata,
     )
 
     # Mirror the eager post-decode integer-sentinel masking via the
     # shared helper. The internal reader NaN-masks float source arrays
-    # inline but leaves integer sentinels untouched, so the eager path
-    # promotes to float64 when sentinels hit. The surrounding dask graph
+    # inline (gated on the same ``mask_nodata`` kwarg via #2158) but
+    # leaves integer sentinels untouched, so the eager path promotes
+    # to float64 when sentinels hit. The surrounding dask graph
     # already declared float64 when any band has a representable integer
     # sentinel, so any chunk that actually fires the mask returns a
     # buffer whose dtype matches the declared one. Skip the helper when
@@ -853,6 +880,12 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # Rotated VRTs drop CRS attrs alongside the transform (#2122).
     _vrt_keep_crs = bool(vrt.crs_wkt) and not _vrt_is_rotated
     _vrt_epsg = _wkt_to_epsg(vrt.crs_wkt) if _vrt_keep_crs else None
+    # See the eager VRT branch for the rationale; issue #2129 carries
+    # the rotated 6-tuple onto the chunked VRT path too so dask reads
+    # of rotated VRTs match the eager-VRT and non-VRT TIFF surface.
+    _vrt_rotated_affine = (
+        _gdal_geotransform_to_affine_tuple(gt) if _vrt_is_rotated else None
+    )
     # ``georef_status`` (issue #2136). See the eager VRT branch above
     # for the rationale; the rotated VRT path lands the array in the
     # ``rotated_dropped`` bucket so consumers can branch on it.
@@ -867,6 +900,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
             has_crs=vrt.crs_wkt is not None and not _vrt_is_rotated,
             rotated_dropped=_vrt_is_rotated,
         ),
+        rotated_affine=_vrt_rotated_affine,
     )
     attrs = metadata_to_attrs(_vrt_md)
 
@@ -894,17 +928,12 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # #2135). ``dtype_cast`` records the caller-supplied ``dtype=``
     # kwarg when present so downstream can tell float-by-cast apart
     # from float-by-masking even on the lazy output.
-    # ``masked_nodata`` (#2159) must reflect whether the caller asked
-    # for masking, not just whether the graph dtype is float. With
-    # ``mask_nodata=False`` each chunk skips the sentinel-to-NaN step,
-    # so the in-memory buffers hold literal sentinel values even on a
-    # float-typed graph. Gate on both ``mask_nodata`` and the pre-cast
-    # ``declared_dtype`` to mirror the dask, GPU, and dask+GPU
-    # backends. See the contract at ``_attrs._set_nodata_attrs``.
-    # Sibling issue #2158 tracks the orthogonal case where the
-    # per-task VRT reader still NaN-masks float sources inline today;
-    # once that lands, the in-memory state will match what this attr
-    # already reports.
+    # ``masked`` mirrors ``_set_nodata_attrs``'s contract:
+    # ``mask_nodata and final_dtype.kind == 'f'``. With ``mask_nodata=False``
+    # a float source is still float in ``declared_dtype``, but the
+    # per-chunk reader leaves the literal sentinel in place (#2158), so
+    # the buffer is not actually NaN-aware. AND-ing the kwarg in keeps
+    # the chunked attr in lockstep with the eager attr (#2159).
     _set_nodata_attrs(
         attrs, nodata_meta,
         masked=(mask_nodata and declared_dtype.kind == 'f'),

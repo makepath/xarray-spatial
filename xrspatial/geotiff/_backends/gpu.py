@@ -37,6 +37,7 @@ from .._runtime import (
 from .._validation import (
     _validate_chunks_arg,
     _validate_dtype_cast,
+    _validate_overview_level_arg,
     _validate_predictor_sample_format,
 )
 from ._gpu_helpers import (
@@ -192,6 +193,12 @@ def read_geotiff_gpu(source: str, *,
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
+    # Match ``open_geotiff``'s ordering so a bad ``overview_level`` is
+    # reported before unrelated ``on_gpu_failure`` / ``chunks=`` / source
+    # errors mask it (issue #2160). ``select_overview_ifd`` revalidates
+    # as defense in depth.
+    _validate_overview_level_arg(overview_level)
+
     new_passed = on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL
     old_passed = gpu is not _GPU_DEPRECATED_SENTINEL
     if new_passed and old_passed:

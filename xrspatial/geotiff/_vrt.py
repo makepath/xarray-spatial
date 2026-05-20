@@ -956,6 +956,7 @@ def read_vrt(vrt_path: str, *, window=None,
              max_pixels: int | None = None,
              missing_sources: str = 'raise',
              parsed: VRTDataset | None = None,
+             mask_nodata: bool = True,
              ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
@@ -993,6 +994,16 @@ def read_vrt(vrt_path: str, *, window=None,
         produced by :func:`parse_vrt` already, which performs the check).
         Used by the chunked dask path (issue #1825) so each per-chunk
         task can skip the redundant XML parse and allowlist validation.
+    mask_nodata : bool, default True
+        If True (the default), float source bands have their declared
+        nodata sentinel rewritten to NaN inline during assembly, and
+        integer sources feeding a float-dataType VRT have their
+        sentinel rewritten to NaN as part of the int->float
+        placement. If False, both inline masking branches are skipped
+        so the literal sentinel value survives to the public backend
+        layer, which can then honor a caller's ``mask_nodata=False``
+        opt-out symmetrically for float and integer source dtypes.
+        See issue #2158.
 
     Returns
     -------
@@ -1332,12 +1343,21 @@ def read_vrt(vrt_path: str, *, window=None,
             # the resampled-shape buffer before discovering the mask,
             # which is a waste when the source rect is much larger than
             # the destination rect.
+            # ``mask_nodata=False`` skips every inline sentinel rewrite
+            # below so the public backend's opt-out is honored
+            # symmetrically across float and integer source dtypes.
+            # Without this gate the float branch at the ``kind == 'f'``
+            # arm masked unconditionally, and the integer-feeding-float
+            # branch below promoted to NaN unconditionally, so a caller
+            # passing ``mask_nodata=False`` to ``read_vrt`` still lost
+            # the literal sentinel pixels. See issue #2158.
             src_nodata = src.nodata if src.nodata is not None else nodata
-            if src_nodata is not None and src_arr.dtype.kind == 'f':
+            if mask_nodata and src_nodata is not None and src_arr.dtype.kind == 'f':
                 src_arr = src_arr.copy()
                 sentinel = src_arr.dtype.type(src_nodata)
                 src_arr[src_arr == sentinel] = np.nan
-            elif (src_nodata is not None
+            elif (mask_nodata
+                    and src_nodata is not None
                     and src_arr.dtype.kind in ('u', 'i')
                     and result.dtype.kind == 'f'):
                 # Integer source feeding a float-dataType VRT.  Without

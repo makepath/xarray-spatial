@@ -63,6 +63,19 @@ write.
        affine transform tuple matching the rasterio ``Affine`` ordering.
        Omitted for files with no ``ModelTransformation`` /
        ``ModelPixelScale`` / ``ModelTiepoint`` tags.
+   * - ``rotated_affine``
+     - tuple
+     - Full ``(a, b, c, d, e, f)`` rasterio-style 6-tuple for files
+       opened with ``allow_rotated=True`` whose source carried a
+       rotated / sheared ``ModelTransformationTag``. The axis-aligned
+       ``transform`` cannot express the rotation terms; this attr
+       surfaces the rotated mapping so downstream code (custom warps,
+       visualisation) can recover it. Only emitted on the rotated
+       opt-in path; absent on axis-aligned reads and on plain
+       no-georef files. Read-only -- ``to_geotiff`` drops the rotation
+       on the way out until the writer learns to emit
+       ``ModelTransformationTag`` (issue #2115 follow-up). See issue
+       #2129.
    * - ``nodata``
      - scalar
      - Numeric NoData sentinel. Emitted by readers when the file
@@ -124,7 +137,7 @@ write.
        ``ResolutionUnit`` ids 1, 2, 3).
    * - ``_xrspatial_geotiff_contract``
      - int
-     - Contract version. Currently ``2``. See `Versioning`_.
+     - Contract version. Currently ``4``. See `Versioning`_.
    * - ``_xrspatial_no_georef``
      - bool
      - Stamped ``True`` on reads of files with no GeoTIFF transform
@@ -328,7 +341,7 @@ Versioning
 ==========
 
 The contract is versioned through ``attrs['_xrspatial_geotiff_contract']``.
-The current value is ``2``. Future revisions that add canonical keys,
+The current value is ``4``. Future revisions that add canonical keys,
 move keys between tiers, or change a key's semantics will bump the
 integer. Callers that depend on a specific layout can branch on the
 version, and writers will emit the version they were built against.
@@ -344,3 +357,17 @@ and matplotlib-colormap attrs that v1 emitted on read under a
 ``attrs[key]`` will now see ``KeyError``; switch to ``attrs.get(key)``
 or migrate to the canonical ``crs`` / ``crs_wkt`` plus :mod:`pyproj`
 recipe documented in `Removed in contract v2`_.
+
+Contract v3 (issue #2136) added the ``georef_status`` attr to the
+canonical tier, encoding the five distinct states the reader can
+land in (``full``, ``transform_only``, ``crs_only``, ``none``,
+``rotated_dropped``) so downstream code can branch on a single
+value instead of reconstructing the state from the union of ``crs``,
+``crs_wkt``, ``transform``, and ``_xrspatial_no_georef``.
+
+Contract v4 (issue #2129) added the ``rotated_affine`` attr to the
+canonical tier. The attr surfaces the rotated 6-tuple from
+``ModelTransformationTag`` on the ``allow_rotated=True`` opt-in path
+so callers can recover the rotated mapping. The writer drops it on
+round-trip until ``to_geotiff`` learns to emit
+``ModelTransformationTag`` (issue #2115 follow-up).

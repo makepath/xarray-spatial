@@ -478,10 +478,46 @@ def _to_awkward(
     return column, ak_array
 
 
+def _detect_raster_crs(raster: xr.DataArray):
+    """Detect the CRS of an input raster for output georeferencing.
+
+    Mirrors the resolution order in
+    ``xrspatial.reproject._crs_utils._detect_source_crs`` without
+    pulling pyproj as a hard dependency: returns the raw attribute
+    value (string / int / pyproj.CRS / rioxarray CRS) so the caller can
+    hand it straight to ``GeoDataFrame.set_crs``, which performs its own
+    parsing.
+
+    Resolution order:
+
+    1. ``raster.attrs['crs']`` (xrspatial.geotiff convention)
+    2. ``raster.attrs['crs_wkt']``
+    3. ``raster.rio.crs`` (rioxarray, if installed)
+    4. ``None``
+    """
+    crs_attr = raster.attrs.get('crs')
+    if crs_attr is not None:
+        return crs_attr
+
+    crs_wkt = raster.attrs.get('crs_wkt')
+    if crs_wkt is not None:
+        return crs_wkt
+
+    try:
+        rio_crs = raster.rio.crs
+        if rio_crs is not None:
+            return rio_crs
+    except Exception:
+        pass
+
+    return None
+
+
 def _to_geopandas(
     column: List[Union[int, float]],
     polygon_points: List[np.ndarray],
     column_name: str,
+    crs=None,
 ):
     import geopandas as gpd
     import shapely
@@ -512,6 +548,16 @@ def _to_geopandas(
                 polygons[i] = Polygon(pts[0], pts[1:])
 
     df = gpd.GeoDataFrame({column_name: column, "geometry": polygons})
+    if crs is not None:
+        # GeoPandas accepts pyproj.CRS, EPSG ints, "EPSG:XXXX" strings,
+        # WKT strings, and the CRS objects rioxarray exposes; let it
+        # parse whatever the raster carried.
+        try:
+            df = df.set_crs(crs)
+        except Exception:
+            # Don't fail the whole call if the CRS value is unparseable;
+            # GeoDataFrame is still functional, just without CRS.
+            pass
     return df
 
 
@@ -594,10 +640,16 @@ _DIR_ANGLE = {(1, 0): 0, (0, 1): 1, (-1, 0): 2, (0, -1): 3}
 
 
 def _calculate_regions_cupy(data, mask_data, connectivity_8):
-    """CuPy GPU backend for connected-component labeling.
+    """CuPy GPU backend for connected-component labeling on integer data.
 
     Uses cupyx.scipy.ndimage.label per unique value to produce a regions
     array compatible with _scan.  Returns a cupy uint32 2D array.
+
+    Only used for integer dtypes; float dtypes route through the CPU
+    ``_calculate_regions`` so that connected components honour the numba
+    ``_is_close`` predicate (``atol=1e-8``, ``rtol=1e-5``) exactly.
+    A purely value-based grouping on the GPU cannot reproduce CPU spatial
+    CCL when transitively-close values are not spatially adjacent.
     """
     import cupy as cp
     from cupyx.scipy.ndimage import label as cp_label
@@ -609,14 +661,10 @@ def _calculate_regions_cupy(data, mask_data, connectivity_8):
 
     regions = cp.zeros(data.shape, dtype=cp.uint32)
 
-    # Build valid mask (unmask + handle float NaN).
-    is_float = cp.issubdtype(data.dtype, cp.floating)
     if mask_data is not None:
         valid = cp.asarray(mask_data, dtype=bool)
-        if is_float:
-            valid &= ~cp.isnan(data)
     else:
-        valid = ~cp.isnan(data) if is_float else None
+        valid = None
 
     unique_vals = data[valid] if valid is not None else data.ravel()
     unique_vals = cp.unique(unique_vals)
@@ -669,9 +717,19 @@ def _renumber_regions(regions, nx, ny):
 
 
 def _polygonize_cupy(data, mask_data, connectivity_8, transform):
-    """Hybrid GPU/CPU: GPU CCL, CPU boundary tracing."""
+    """Hybrid GPU/CPU: GPU CCL for integer data, CPU CCL for float data,
+    CPU boundary tracing in either case.
+
+    Float dtypes route through ``_polygonize_numpy`` so that connected
+    components honour the numba ``_is_close`` tolerance (``atol=1e-8``,
+    ``rtol=1e-5``) for spatially adjacent pixels (#2151).  GPU CCL is a
+    per-value labeling, which cannot reproduce spatial tolerance-aware
+    CCL when transitively-close values are not spatially adjacent.
+    """
     np_data = cupy.asnumpy(data)
     np_mask = cupy.asnumpy(mask_data) if mask_data is not None else None
+    if np.issubdtype(np_data.dtype, np.floating):
+        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform)
     ny, nx = np_data.shape
     if nx == 1:
         # Edge case: fall back to full numpy path (pads array).
@@ -1643,6 +1701,14 @@ def polygonize(
 
     For Dask+CuPy, each chunk is transferred independently, keeping peak
     CPU memory proportional to chunk size rather than full raster size.
+
+    When ``return_type="geopandas"``, the raster's CRS is propagated to
+    the output ``GeoDataFrame``.  The resolution order is
+    ``raster.attrs['crs']``, then ``raster.attrs['crs_wkt']``, then
+    ``raster.rio.crs`` (if rioxarray is installed).  An unparseable CRS
+    value is dropped rather than raised.  The ``spatialpandas`` and
+    ``geojson`` return types do not carry CRS metadata: spatialpandas
+    has no CRS slot, and GeoJSON (RFC 7946) is WGS84 only.
     """
     _validate_raster(raster, func_name='polygonize', name='raster', ndim=2)
     if raster.shape[0] < 1 or raster.shape[1] < 1:
@@ -1708,7 +1774,12 @@ def polygonize(
     elif return_type == "awkward":
         return _to_awkward(column, polygon_points)
     elif return_type == "geopandas":
-        return _to_geopandas(column, polygon_points, column_name)
+        # Propagate the raster's CRS to the GeoDataFrame so downstream
+        # spatial joins / reprojections / file writes keep their
+        # georeferencing.  spatialpandas has no CRS slot and GeoJSON
+        # RFC 7946 is WGS84-only, so the propagation lives only here.
+        crs = _detect_raster_crs(raster)
+        return _to_geopandas(column, polygon_points, column_name, crs=crs)
     elif return_type == "spatialpandas":
         return _to_spatialpandas(column, polygon_points, column_name)
     elif return_type == "geojson":
