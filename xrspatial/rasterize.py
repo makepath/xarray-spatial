@@ -1464,31 +1464,29 @@ def _ensure_gpu_kernels(merge_fn, should_write):
         else:
             step_y = 0
 
-        INF = 1.0e308
-
         if dx != 0.0:
             t_delta_x = 1.0 / (dx if dx > 0.0 else -dx)
         else:
-            t_delta_x = INF
+            t_delta_x = math.inf
 
         if dy != 0.0:
             t_delta_y = 1.0 / (dy if dy > 0.0 else -dy)
         else:
-            t_delta_y = INF
+            t_delta_y = math.inf
 
         if dx > 0.0:
             t_max_x = (float(cx + 1) - x0) / dx
         elif dx < 0.0:
             t_max_x = (float(cx) - x0) / dx
         else:
-            t_max_x = INF
+            t_max_x = math.inf
 
         if dy > 0.0:
             t_max_y = (float(cy + 1) - y0) / dy
         elif dy < 0.0:
             t_max_y = (float(cy) - y0) / dy
         else:
-            t_max_y = INF
+            t_max_y = math.inf
 
         max_steps = abs(end_cx - cx) + abs(end_cy - cy) + 2
         for _ in range(max_steps):
