@@ -42,6 +42,14 @@ Canonical (xrspatial owns these; round-trip stable):
   ModelPixelScale, or ModelTiepoint), and for rotated reads opened with
   ``allow_rotated=True`` (axis-aligned 6-tuple would silently drop the
   rotation terms).
+- ``rotated_affine`` (#2129): rasterio-style 6-tuple
+  ``(a, b, c, d, e, f)`` capturing the full ``ModelTransformationTag``
+  on the ``allow_rotated=True`` opt-in path. Only emitted when the
+  source carried a rotated / sheared transform; absent on plain
+  no-georef reads and on axis-aligned reads (which already round-trip
+  via ``transform``). Read-only -- the writer drops it on the way out
+  until ``to_geotiff`` learns to emit ``ModelTransformationTag``
+  (issue #2115 follow-up).
 - ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag.
   Set whenever the source declares one, as a scalar of the source
   dtype, regardless of whether the in-memory array is float-with-NaN
@@ -258,7 +266,13 @@ _TIFF_SHORT = 3
 # code that branches on them still works; the new attr is additive and
 # disambiguates ``crs_only`` from ``none`` and ``rotated_dropped`` from
 # the truly-no-transform case.
-_ATTRS_CONTRACT_VERSION = 3
+#
+# Version 4 (issue #2129) adds ``attrs['rotated_affine']`` for the
+# ``allow_rotated=True`` opt-in path. The 6-tuple is read-only -- the
+# writer drops it on round-trip until ``to_geotiff`` grows a
+# ``ModelTransformationTag`` emit path (#2115 follow-up). Existing keys
+# keep their pre-v4 shape.
+_ATTRS_CONTRACT_VERSION = 4
 
 
 # Canonical ``attrs['georef_status']`` values (issue #2136). One attr
@@ -347,6 +361,16 @@ class GeoTIFFMetadata:
     # branching on attrs after the dict has been built.
     georef_status: str | None = None
 
+    # Rotated 6-tuple from ``ModelTransformationTag`` on the
+    # ``allow_rotated=True`` opt-in path (issue #2129). Carried on the
+    # record so the eager / dask / GPU / VRT read paths emit
+    # ``attrs['rotated_affine']`` through the same marshalling step.
+    # Read-only: :func:`attrs_to_metadata` intentionally does NOT
+    # populate this field from incoming attrs so the writer keeps
+    # dropping the rotation on round-trip until ``to_geotiff`` learns to
+    # emit ``ModelTransformationTag`` (#2115 follow-up).
+    rotated_affine: tuple | None = None
+
     # Contract version stamped on read
     contract_version: int = _ATTRS_CONTRACT_VERSION
 
@@ -399,6 +423,15 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
     crs_epsg = None if rotated_optin else geo_info.crs_epsg
     crs_wkt = None if rotated_optin else geo_info.crs_wkt
 
+    # Surface the rotated 6-tuple on the public attrs (issue #2129) so
+    # downstream code that knows how to handle rotated rasters can read
+    # it without diving into the internal ``GeoInfo`` / ``GeoTransform``
+    # objects. Tuple cast normalises lists or numpy sequences coming
+    # from the parser into the documented ``tuple`` shape.
+    rotated_affine_tuple = (
+        tuple(src_t.rotated_affine) if rotated_optin else None
+    )
+
     raster_type = (
         'point' if geo_info.raster_type == RASTER_PIXEL_IS_POINT else 'area')
 
@@ -436,6 +469,7 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
         # ``_compute_georef_status_from_parts`` to fill this field
         # without synthesising a ``GeoInfo``.
         georef_status=_compute_georef_status(geo_info),
+        rotated_affine=rotated_affine_tuple,
         contract_version=_ATTRS_CONTRACT_VERSION,
     )
 
@@ -481,6 +515,15 @@ def metadata_to_attrs(md: GeoTIFFMetadata) -> dict:
         attrs['transform'] = md.transform
     elif not md.has_georef:
         attrs[_NO_GEOREF_KEY] = True
+
+    # ``rotated_affine`` (issue #2129) rides alongside the
+    # ``_xrspatial_no_georef`` marker on the ``allow_rotated=True`` path
+    # so callers can recover the rotated mapping. Only set on read; the
+    # writer-side :func:`attrs_to_metadata` deliberately does not parse
+    # it back, so a read-then-write round-trip drops the rotation until
+    # the writer grows ``ModelTransformationTag`` emit support (#2115).
+    if md.rotated_affine is not None:
+        attrs['rotated_affine'] = md.rotated_affine
 
     if md.nodata is not None:
         attrs['nodata'] = md.nodata

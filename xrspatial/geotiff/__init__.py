@@ -464,10 +464,14 @@ def open_geotiff(source: str | BinaryIO, *,
         transform because keeping them while the axis-aligned transform
         is gone misleads downstream code that gates on
         ``"crs" in da.attrs`` to mean the array is spatially usable
-        (issue #2126). The contract is read-only -- ``to_geotiff`` does
-        not currently emit rotated transforms, so a read-then-write
-        round-trip writes an identity-affine output and silently drops
-        the rotation (issue #2115).
+        (issue #2126). The rotated 6-tuple itself is surfaced on
+        ``attrs['rotated_affine']`` as ``(a, b, c, d, e, f)`` (rasterio
+        ``Affine`` ordering) so consumers that know how to handle
+        rotated rasters can recover the mapping (issue #2129). The
+        contract is read-only -- ``to_geotiff`` does not currently
+        emit rotated transforms, so a read-then-write round-trip
+        writes an identity-affine output and silently drops the
+        rotation (issue #2115).
 
     Returns
     -------

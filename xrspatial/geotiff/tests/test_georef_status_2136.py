@@ -75,9 +75,11 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 # ---------------------------------------------------------------------------
 
 
-def test_contract_version_is_three():
-    """The new attr lands in v3; pin the bump alongside the new key."""
-    assert _ATTRS_CONTRACT_VERSION == 3
+def test_contract_version_is_at_least_three():
+    """The ``georef_status`` attr lands in v3; pin a lower bound so future
+    contract bumps that keep the attr (e.g. ``rotated_affine`` in v4 /
+    issue #2129) do not regress this test."""
+    assert _ATTRS_CONTRACT_VERSION >= 3
 
 
 def test_public_constants_reexported():
