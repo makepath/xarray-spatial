@@ -276,3 +276,122 @@ def test_dtype_kwarg_records_post_mask_cast(tmp_path):
     assert gpu.attrs.get('nodata_dtype_cast') == 'float32'
 
     _assert_lifecycle_attrs_match(cpu, gpu)
+
+
+# ---------------------------------------------------------------------------
+# Windowed reads
+# ---------------------------------------------------------------------------
+
+
+@_gpu_only
+def test_windowed_read_presence_matches_window_contents(tmp_path):
+    """Windowed read: nodata_pixels_present reflects the window, not the IFD.
+
+    Pins the slice-before-mask behaviour the GPU local-eager path
+    picked up in #2179. Pre-PR the GPU path masked the full IFD then
+    sliced, so ``nodata_pixels_present`` reported sentinel presence
+    anywhere in the file; post-PR it reports presence within the
+    requested window. The CPU path has always behaved this way, so
+    the two now agree.
+    """
+    # 4x4 raster with the sentinel only in the bottom half so the two
+    # windows below land on opposite sides of the presence bool.
+    arr = np.array(
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, -9999.0, 12.0],
+            [13.0, 14.0, 15.0, 16.0],
+        ],
+        dtype=np.float32,
+    )
+    path = str(tmp_path / 'eager_parity_2179_windowed.tif')
+    _write_with_nodata(arr, path, nodata=-9999.0)
+
+    # Top-left 2x2 window: no sentinel in scope.
+    cpu, gpu = _read_both(path, window=(0, 0, 2, 2))
+    _assert_lifecycle_attrs_match(cpu, gpu)
+    assert cpu.attrs.get('nodata_pixels_present') is False
+    assert gpu.attrs.get('nodata_pixels_present') is False
+
+    # Bottom 2x4 window: covers the sentinel.
+    cpu, gpu = _read_both(path, window=(2, 0, 4, 4))
+    _assert_lifecycle_attrs_match(cpu, gpu)
+    assert cpu.attrs.get('nodata_pixels_present') is True
+    assert gpu.attrs.get('nodata_pixels_present') is True
+
+
+# ---------------------------------------------------------------------------
+# MinIsWhite + nodata
+# ---------------------------------------------------------------------------
+
+
+@_gpu_only
+def test_miniswhite_post_inversion_sentinel_parity(tmp_path):
+    """MinIsWhite raster: post-inversion sentinel resolves identically on both backends.
+
+    Exercises the ``_mw_mask_nodata`` branch in the GPU local-eager
+    path. The reader inverts the buffer and the post-MinIsWhite
+    sentinel is what the helper's mask block compares against on the
+    GPU side; the eager numpy path takes the same sentinel off
+    ``geo_info._mask_nodata`` through ``read_to_array``. Both should
+    land on the same NaN positions and the same lifecycle attrs.
+    """
+    import tifffile
+    # uint8 + nodata=0; MinIsWhite inverts the stored value to 255
+    # before masking, and 255 is the post-inversion sentinel.
+    stored = np.array([[0, 100, 200], [50, 0, 255]], dtype=np.uint8)
+    path = str(tmp_path / 'eager_parity_2179_miniswhite.tif')
+    extratags = [("GDAL_NODATA", "s", 0, "0\0", True)]
+    tifffile.imwrite(
+        path, stored, photometric="miniswhite",
+        extratags=extratags, tile=(16, 16),
+    )
+
+    cpu, gpu = _read_both(path)
+
+    _assert_lifecycle_attrs_match(cpu, gpu)
+    cpu_arr = cpu.values
+    gpu_arr = gpu.data.get()
+    # NaN positions must agree pixel-for-pixel; the MinIsWhite
+    # sentinel resolution drives this.
+    np.testing.assert_array_equal(np.isnan(cpu_arr), np.isnan(gpu_arr))
+
+
+# ---------------------------------------------------------------------------
+# Multi-band (3D)
+# ---------------------------------------------------------------------------
+
+
+@_gpu_only
+def test_multiband_stripped_parity(tmp_path):
+    """3-band stripped read: helper builds (y, x, band) DataArray on both backends.
+
+    The GPU CPU-fallback path lands on stripped files. Multi-band
+    output goes through the helper's ``arr.ndim == 3`` branch on
+    both backends; the parity assertion covers ``georef_status`` and
+    sentinel-related attrs for the multi-band shape so a future
+    change to the 3-D coord build cannot silently diverge.
+    """
+    import xarray as xr
+    rng = np.random.RandomState(20260520)
+    data = rng.randint(0, 200, size=(32, 48, 3)).astype(np.uint8)
+    da_in = xr.DataArray(data, dims=['y', 'x', 'band'])
+
+    path = str(tmp_path / 'eager_parity_2179_multiband.tif')
+    from xrspatial.geotiff import to_geotiff
+    # Stripped (tiled=False) routes the GPU read through the
+    # CPU-fallback eager site, which is one of the three sites this
+    # PR migrated.
+    to_geotiff(da_in, path, tiled=False)
+
+    cpu, gpu = _read_both(path)
+
+    # Shape and dims line up across backends.
+    assert cpu.dims == gpu.dims
+    assert cpu.shape == gpu.shape == (32, 48, 3)
+
+    _assert_lifecycle_attrs_match(cpu, gpu)
+    cpu_arr = cpu.values
+    gpu_arr = gpu.data.get()
+    np.testing.assert_array_equal(cpu_arr, gpu_arr)

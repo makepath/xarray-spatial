@@ -828,8 +828,10 @@ def read_geotiff_gpu(source: str, *,
         # backends (the attr now reports presence within the read
         # window, not the whole IFD). The MinIsWhite inversion above
         # already mutated the buffer in stored order, so slicing here
-        # carries through the inverted values.
-        arr_gpu, _coords_unused = _gpu_apply_window_band(
+        # carries through the inverted values. ``_gpu_apply_window_band``
+        # also returns coords, but the helper rebuilds them from
+        # ``geo_info`` / ``window`` so the local copy is discarded.
+        arr_gpu, _ = _gpu_apply_window_band(
             arr_gpu, geo_info, window=window, band=band)
 
         # Hand the windowed+banded GPU buffer to the shared eager
@@ -842,6 +844,11 @@ def read_geotiff_gpu(source: str, *,
         # CuPy arrays via numpy duck-typing and produces the same
         # lifecycle attrs that ``_apply_nodata_mask_gpu_with_presence``
         # did inline.
+        #
+        # The sentinel is resolved even when ``mask_nodata=False``
+        # because the helper still needs it for the
+        # ``nodata_pixels_present`` scan in that branch (#2135); only
+        # ``nodata is None`` short-circuits the resolution.
         nodata = geo_info.nodata
         if nodata is None:
             mask_sentinel = None
