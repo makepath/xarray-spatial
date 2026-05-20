@@ -694,8 +694,12 @@ def reproject(
         )
     tgt_crs = _resolve_crs(target_crs)
 
-    # Detect nodata
-    nd = _detect_nodata(raster, nodata)
+    # Detect nodata. Pass the raster dtype so integer rasters get an
+    # integer-compatible sentinel (dtype min for signed, dtype max for
+    # unsigned) instead of NaN. Without this hint, the worker's
+    # cast-back step would collapse NaN to 0 and `attrs['nodata']`
+    # would contradict the array contents (#2185).
+    nd = _detect_nodata(raster, nodata, dtype=raster.dtype)
 
     # Source geometry
     src_bounds = _source_bounds(raster)
@@ -1810,7 +1814,11 @@ def merge(
             "Could not detect target CRS. Pass target_crs explicitly."
         )
 
-    # Detect output nodata (the sentinel the user asked for)
+    # Detect output nodata (the sentinel the user asked for). The merge
+    # output is always float64, so NaN is fine as the output sentinel
+    # when the user didn't supply one -- the integer-cast hazard from
+    # #2185 only applies to the per-input ``r_nd`` values that flow into
+    # the per-raster reproject worker.
     nd = nodata if nodata is not None else _detect_nodata(rasters[0], nodata)
 
     # Gather source info for each raster
@@ -1828,8 +1836,10 @@ def merge(
         yd = _is_y_descending(r)
         # Per-raster input nodata sentinel. Detected independently of the
         # user-supplied output nodata so that mixed-sentinel inputs are
-        # canonicalized correctly during merge.
-        r_nd = _detect_nodata(r, None)
+        # canonicalized correctly during merge. Pass the raster dtype so
+        # integer sources get an integer-compatible sentinel rather than
+        # NaN -- the same fix as the reproject() path for #2185.
+        r_nd = _detect_nodata(r, None, dtype=r.dtype)
         raster_infos.append({
             'raster': r,
             'src_crs': src_crs,
@@ -1983,6 +1993,14 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
 
     No reprojection needed -- just index the output rows/columns that
     overlap with the source tile and copy the data.
+
+    The output grid is always north-up (row 0 is the top of
+    ``out_bounds``). When ``y_desc`` is ``False`` the source is
+    y-ascending (row 0 is the bottom of ``src_bounds``); in that case
+    the source window is flipped along y before being written so the
+    placed data has the same north-up orientation as the rest of the
+    output. Without this, ``merge([r])`` of a y-ascending raster
+    silently differs from ``reproject(r, target_crs=r.crs)`` (#2186).
     """
     out_h, out_w = out_shape
     src_h, src_w = src_shape
@@ -1994,7 +2012,8 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
     s_res_x = (s_right - s_left) / src_w
     s_res_y = (s_top - s_bottom) / src_h
 
-    # Output pixel range that this tile covers
+    # Output pixel range that this tile covers. The output is always
+    # north-up so ``row_start`` is measured from ``o_top`` downward.
     col_start = int(round((s_left - o_left) / o_res_x))
     col_end = int(round((s_right - o_left) / o_res_x))
     row_start = int(round((o_top - s_top) / o_res_y))
@@ -2009,33 +2028,64 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
     if col_start_clip >= col_end_clip or row_start_clip >= row_end_clip:
         return np.full(out_shape, nodata, dtype=np.float64)
 
-    # Source pixel range (handle offset if tile extends beyond output)
-    src_col_start = col_start_clip - col_start
-    src_row_start = row_start_clip - row_start
-
     # Resolutions may differ slightly; if close enough, do direct copy
     res_ratio_x = s_res_x / o_res_x
     res_ratio_y = s_res_y / o_res_y
     if abs(res_ratio_x - 1.0) > 0.01 or abs(res_ratio_y - 1.0) > 0.01:
         return None  # resolutions too different, fall back to reproject
 
-    out_data = np.full(out_shape, nodata, dtype=np.float64)
-    n_rows = row_end_clip - row_start_clip
-    n_cols = col_end_clip - col_start_clip
-
-    # Clamp source window
-    src_r_end = min(src_row_start + n_rows, src_h)
-    src_c_end = min(src_col_start + n_cols, src_w)
-    actual_rows = src_r_end - src_row_start
+    # Source column offset (columns always run left-to-right).
+    src_col_start = col_start_clip - col_start
+    src_c_end = min(src_col_start + (col_end_clip - col_start_clip), src_w)
     actual_cols = src_c_end - src_col_start
 
-    if actual_rows <= 0 or actual_cols <= 0:
+    out_data = np.full(out_shape, nodata, dtype=np.float64)
+
+    if actual_cols <= 0:
         return out_data
 
-    src_window = np.asarray(src_data[src_row_start:src_r_end,
-                                     src_col_start:src_c_end],
-                            dtype=np.float64)
-    out_data[row_start_clip:row_start_clip + actual_rows,
+    if y_desc:
+        # Source is north-up: rows go top-to-bottom, same as output.
+        # Output row R corresponds to source row ``R - row_start``.
+        src_row_start = row_start_clip - row_start
+        src_r_end = min(src_row_start + (row_end_clip - row_start_clip),
+                        src_h)
+        actual_rows = src_r_end - src_row_start
+        if actual_rows <= 0:
+            return out_data
+        src_window = np.asarray(
+            src_data[src_row_start:src_r_end,
+                     src_col_start:src_c_end],
+            dtype=np.float64,
+        )
+        out_row_start = row_start_clip
+    else:
+        # Source is south-up: source row 0 sits at the bottom of
+        # ``src_bounds``. Output row R corresponds to source row
+        # ``row_end - 1 - R`` (with R and row_end both measured from
+        # ``o_top`` downward, so larger R means lower latitude and
+        # smaller source row index). Concretely, if src_h=4 and
+        # row_end=4, output row 0 maps to source row 3, output row 3
+        # maps to source row 0 -- a vertical flip. Read a contiguous
+        # ascending slice of source rows and reverse it so the
+        # placed window comes out north-up.
+        src_lo = max(0, row_end - row_end_clip)
+        src_hi = min(src_h, row_end - row_start_clip)
+        actual_rows = src_hi - src_lo
+        if actual_rows <= 0:
+            return out_data
+        src_window = np.asarray(
+            src_data[src_lo:src_hi, src_col_start:src_c_end],
+            dtype=np.float64,
+        )[::-1, :]
+        # The reversed slice's first row corresponds to source row
+        # ``src_hi - 1``, which maps to output row ``row_end - src_hi``.
+        # When the source is not clipped at the top, this equals
+        # ``row_start_clip``; clipping at the source top shifts the
+        # placement downward by the clipped row count.
+        out_row_start = row_end - src_hi
+
+    out_data[out_row_start:out_row_start + actual_rows,
              col_start_clip:col_start_clip + actual_cols] = src_window
     return out_data
 
