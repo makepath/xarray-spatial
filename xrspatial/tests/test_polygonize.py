@@ -1331,10 +1331,29 @@ def test_polygonize_integer_no_args_unchanged():
 def test_polygonize_negative_atol_raises():
     """Negative tolerances are rejected (#2173)."""
     raster = xr.DataArray(_REPRO_2173)
-    with pytest.raises(ValueError, match="atol must be non-negative"):
+    with pytest.raises(ValueError, match="atol must be a non-negative"):
         polygonize(raster, atol=-1e-9)
-    with pytest.raises(ValueError, match="rtol must be non-negative"):
+    with pytest.raises(ValueError, match="rtol must be a non-negative"):
         polygonize(raster, rtol=-1e-9)
+
+
+def test_polygonize_nan_atol_raises():
+    """NaN tolerances are rejected (#2173 review).
+
+    A NaN tolerance silently fails the `abs(diff) <= nan + ...` check for
+    every pair, which would produce a raster of singleton polygons with no
+    error.  Catch it up front so callers do not chase a phantom data
+    corruption bug.
+    """
+    raster = xr.DataArray(_REPRO_2173)
+    with pytest.raises(ValueError, match="atol must be a non-negative"):
+        polygonize(raster, atol=float("nan"))
+    with pytest.raises(ValueError, match="rtol must be a non-negative"):
+        polygonize(raster, rtol=float("nan"))
+    with pytest.raises(ValueError, match="atol must be a non-negative"):
+        polygonize(raster, atol=float("inf"))
+    with pytest.raises(ValueError, match="rtol must be a non-negative"):
+        polygonize(raster, rtol=float("inf"))
 
 
 def test_polygonize_custom_atol_intermediate():
@@ -1384,12 +1403,14 @@ def test_polygonize_dask_multi_chunk_default_tolerance():
     raster = xr.DataArray(da.from_array(_REPRO_2173, chunks=(1, 1)))
     values, polygons = polygonize(raster)
     # NOTE: The current dask merge keys polygons by exact value, so this
-    # specific multi-chunk case may not yet collapse to a single polygon.
-    # The contract we assert here is only that the per-chunk tolerance
-    # is applied (each single-pixel chunk yields exactly one polygon
-    # with the chunk's value), and the cross-chunk merge is not in scope
-    # of issue #2173.
-    assert all(np.isclose(v, _REPRO_2173[0]).any() for v in values)
+    # specific multi-chunk case does not yet collapse to a single polygon.
+    # The contract asserted here is that the per-chunk tolerance is
+    # applied (each single-pixel chunk yields exactly one polygon with
+    # its own value, all three input values are accounted for, and the
+    # total area covers the raster).  Cross-chunk merge by-exact-value
+    # is in a separate rockout.
+    assert len(values) == 3
+    assert sorted(values) == sorted(_REPRO_2173[0].tolist())
     total_area = sum(
         assert_polygon_valid_and_get_area(p) for p in polygons)
     assert_allclose(total_area, 3.0)

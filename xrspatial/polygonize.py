@@ -1812,13 +1812,21 @@ def polygonize(
 
     # Validate tolerance parameters.  Negative tolerances would silently
     # turn every comparison false (or true for a perfectly equal pair),
-    # which is never what a caller wants.
-    if atol < 0:
-        raise ValueError(f"atol must be non-negative, got {atol}")
-    if rtol < 0:
-        raise ValueError(f"rtol must be non-negative, got {rtol}")
-    # Numba's type inference for _is_close needs floats here, not ints,
-    # so the lambda specialization is selected consistently.
+    # which is never what a caller wants.  NaN tolerances would also
+    # silently fail closed (abs(x) <= nan + ... is always False), so reject
+    # them up front rather than producing a raster of singletons.
+    if not np.isfinite(atol) or atol < 0:
+        raise ValueError(
+            f"atol must be a non-negative finite number, got {atol}")
+    if not np.isfinite(rtol) or rtol < 0:
+        raise ValueError(
+            f"rtol must be a non-negative finite number, got {rtol}")
+    # Cast to float so a Python int literal like ``0`` doesn't get inferred
+    # as int by Numba and pick the int-typed lambda specialization in
+    # _is_close (which would ignore tolerance entirely for float rasters).
+    # _is_close still dispatches on the dtype of ``reference`` / ``value``,
+    # not on these tolerances, so the cast only fixes the type of the
+    # tolerance arguments themselves.
     atol = float(atol)
     rtol = float(rtol)
 
