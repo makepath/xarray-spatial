@@ -956,6 +956,181 @@ class TestEdgeCases:
         np.testing.assert_allclose(
             r_south.values, r_north.values, atol=1e-10, equal_nan=True)
 
+
+class TestXDescendingReproject:
+    """Regression tests for #2183: x-descending input handling."""
+
+    def test_x_descending_same_crs_nearest(self):
+        """X-descending raster reprojected to same CRS+grid must mirror cols.
+
+        Regression test for #2183: before the fix, an x-descending input
+        was silently treated as x-ascending and the output columns were
+        not mirrored.
+        """
+        from xrspatial.reproject import reproject
+        data = np.arange(9, dtype=np.float64).reshape(3, 3)
+        # x = [2.5, 1.5, 0.5] -> column 0 is at max x
+        x_desc = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': [2.5, 1.5, 0.5], 'x': [2.5, 1.5, 0.5]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        out = reproject(x_desc, 'EPSG:4326', resampling='nearest',
+                        width=3, height=3, bounds=(0, 0, 3, 3))
+        # Output x is always ascending, so each row should be reversed
+        expected = data[:, ::-1]
+        np.testing.assert_array_equal(out.values, expected)
+        # And the output x coord is ascending
+        np.testing.assert_array_less(0, np.diff(out.coords['x'].values))
+
+    def test_x_descending_matches_x_ascending(self):
+        """X-descending input should produce the same output as the
+        equivalent x-ascending input (data mirrored, coords reversed)."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y = np.linspace(10, -10, 8)  # descending y (north-up)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        asc = xr.DataArray(data, dims=['y', 'x'],
+                           coords={'y': y, 'x': x_asc},
+                           attrs={'crs': 'EPSG:4326'})
+        desc = xr.DataArray(data[:, ::-1], dims=['y', 'x'],
+                            coords={'y': y, 'x': x_desc},
+                            attrs={'crs': 'EPSG:4326'})
+        r_asc = reproject(asc, 'EPSG:3857', width=16, height=16)
+        r_desc = reproject(desc, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            r_asc.values, r_desc.values, atol=1e-10, equal_nan=True)
+
+    def test_x_descending_y_descending(self):
+        """X-descending + Y-descending should match the canonical layout."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y_desc = np.linspace(10, -10, 8)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        canonical = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y_desc, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        both_desc = xr.DataArray(
+            data[:, ::-1], dims=['y', 'x'],
+            coords={'y': y_desc, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_canon = reproject(canonical, 'EPSG:3857', width=16, height=16)
+        r_both = reproject(both_desc, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            r_canon.values, r_both.values, atol=1e-10, equal_nan=True)
+
+    def test_x_descending_y_ascending(self):
+        """X-descending + Y-ascending should also match the canonical layout."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y_desc = np.linspace(10, -10, 8)
+        y_asc = y_desc[::-1]
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        canonical = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y_desc, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        # Flip both axes vs canonical -- data needs the same flipping.
+        mixed = xr.DataArray(
+            data[::-1, ::-1], dims=['y', 'x'],
+            coords={'y': y_asc, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_canon = reproject(canonical, 'EPSG:3857', width=16, height=16)
+        r_mixed = reproject(mixed, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            r_canon.values, r_mixed.values, atol=1e-10, equal_nan=True)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_x_descending_dask_backend(self):
+        """Dask+numpy backend should honor x_desc the same as the numpy path."""
+        import dask.array as da
+        from xrspatial.reproject import reproject
+
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y = np.linspace(10, -10, 8)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        asc = xr.DataArray(
+            da.from_array(data, chunks=4),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        desc = xr.DataArray(
+            da.from_array(data[:, ::-1], chunks=4),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_asc = reproject(asc, 'EPSG:3857', width=16, height=16).compute()
+        r_desc = reproject(desc, 'EPSG:3857', width=16, height=16).compute()
+        np.testing.assert_allclose(
+            r_asc.values, r_desc.values, atol=1e-10, equal_nan=True)
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+    def test_x_descending_cupy_backend(self):
+        """CuPy backend should honor x_desc the same as the numpy path."""
+        import cupy as cp
+        from xrspatial.reproject import reproject
+
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y = np.linspace(10, -10, 8)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        asc = xr.DataArray(
+            cp.asarray(data),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        desc = xr.DataArray(
+            cp.asarray(data[:, ::-1]),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_asc = reproject(asc, 'EPSG:3857', width=16, height=16)
+        r_desc = reproject(desc, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            cp.asnumpy(r_asc.data), cp.asnumpy(r_desc.data),
+            atol=1e-10, equal_nan=True)
+
+    def test_merge_x_descending_same_crs(self):
+        """Same-CRS merge of x-descending tiles should place values correctly."""
+        from xrspatial.reproject import merge
+        # x-descending tile: column 0 is at the max x value
+        data_a = np.full((8, 8), 1.0)
+        data_b = np.full((8, 8), 2.0)
+        y = np.linspace(5, -5, 8)
+        # tile A covers x in [-5, 0], tile B covers x in [0, 5] -- both
+        # expressed in descending x order to exercise the x_desc path.
+        x_a = np.linspace(0, -5, 8)
+        x_b = np.linspace(5, 0, 8)
+        tile_a = xr.DataArray(
+            data_a, dims=['y', 'x'],
+            coords={'y': y, 'x': x_a},
+            attrs={'crs': 'EPSG:4326'})
+        tile_b = xr.DataArray(
+            data_b, dims=['y', 'x'],
+            coords={'y': y, 'x': x_b},
+            attrs={'crs': 'EPSG:4326'})
+        result = merge([tile_a, tile_b], resolution=0.5)
+        # Output x is always ascending. The leftmost x should have value 1
+        # (from tile A), the rightmost x should have value 2 (from tile B).
+        vals = result.values
+        x_out = result.coords['x'].values
+        assert x_out[0] < x_out[-1]
+        # Sample a few interior rows away from edges
+        left_col = vals[2:6, 1]
+        right_col = vals[2:6, -2]
+        assert np.all(left_col == 1.0), f"left edge: {left_col}"
+        assert np.all(right_col == 2.0), f"right edge: {right_col}"
+
     def test_utm_roundtrip(self):
         """4326 -> UTM -> 4326 should recover original values."""
         from xrspatial.reproject import reproject
