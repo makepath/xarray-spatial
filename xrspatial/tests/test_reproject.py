@@ -806,10 +806,12 @@ class TestMergeSameCrsYOrientation:
         right_col = vals[:, x > 2]
         valid_l = ~np.isnan(left_col)
         valid_r = ~np.isnan(right_col)
-        if valid_l.any():
-            np.testing.assert_allclose(left_col[valid_l], 1.0, atol=1e-9)
-        if valid_r.any():
-            np.testing.assert_allclose(right_col[valid_r], 2.0, atol=1e-9)
+        # Up-front asserts so the test can't quietly degenerate into a
+        # no-op if the output grid shape ever shifts.
+        assert valid_l.any(), "left tile produced no valid output pixels"
+        assert valid_r.any(), "right tile produced no valid output pixels"
+        np.testing.assert_allclose(left_col[valid_l], 1.0, atol=1e-9)
+        np.testing.assert_allclose(right_col[valid_r], 2.0, atol=1e-9)
 
     def test_mixed_orientation_gradient_alignment(self):
         """Per-cell parity for a gradient that pins the orientation."""

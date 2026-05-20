@@ -1956,9 +1956,7 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
 
     # Source column offset (columns always run left-to-right).
     src_col_start = col_start_clip - col_start
-
-    n_cols = col_end_clip - col_start_clip
-    src_c_end = min(src_col_start + n_cols, src_w)
+    src_c_end = min(src_col_start + (col_end_clip - col_start_clip), src_w)
     actual_cols = src_c_end - src_col_start
 
     out_data = np.full(out_shape, nodata, dtype=np.float64)
@@ -1985,8 +1983,12 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
         # Source is south-up: source row 0 sits at the bottom of
         # ``src_bounds``. Output row R corresponds to source row
         # ``row_end - 1 - R`` (with R and row_end both measured from
-        # ``o_top`` downward). Read a contiguous ascending slice of
-        # source rows and reverse it so the result is north-up.
+        # ``o_top`` downward, so larger R means lower latitude and
+        # smaller source row index). Concretely, if src_h=4 and
+        # row_end=4, output row 0 maps to source row 3, output row 3
+        # maps to source row 0 -- a vertical flip. Read a contiguous
+        # ascending slice of source rows and reverse it so the
+        # placed window comes out north-up.
         src_lo = max(0, row_end - row_end_clip)
         src_hi = min(src_h, row_end - row_start_clip)
         actual_rows = src_hi - src_lo
