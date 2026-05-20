@@ -665,9 +665,10 @@ def reproject(
         _band_dims_in = [d for d in _input_dims
                          if d not in (_ydim_in, _xdim_in)]
         _band_dim_in = _band_dims_in[0] if _band_dims_in else None
-        _canonical = (_ydim_in, _xdim_in, _band_dim_in)
-        if _band_dim_in is not None and _input_dims != _canonical:
-            raster = raster.transpose(*_canonical)
+        if _band_dim_in is not None:
+            _canonical = (_ydim_in, _xdim_in, _band_dim_in)
+            if _input_dims != _canonical:
+                raster = raster.transpose(*_canonical)
 
     # Resolve CRS
     src_crs = _resolve_crs(source_crs)

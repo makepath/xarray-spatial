@@ -4002,11 +4002,10 @@ class TestReproject3DBandFirst:
     def test_band_first_dask_matches_numpy(self):
         """Dask (band, y, x) output must match eager numpy output."""
         from xrspatial.reproject import reproject
-        eager = reproject(self._make_band_first_raster(), 'EPSG:32633')
-        lazy_src = self._make_band_first_raster().copy(
-            data=da.from_array(
-                self._make_band_first_raster().values, chunks=(3, 16, 16)
-            )
+        host = self._make_band_first_raster()
+        eager = reproject(host, 'EPSG:32633')
+        lazy_src = host.copy(
+            data=da.from_array(host.values, chunks=(3, 16, 16))
         )
         lazy = reproject(lazy_src, 'EPSG:32633').compute()
         np.testing.assert_allclose(
