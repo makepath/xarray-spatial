@@ -814,10 +814,14 @@ def _validate_read_geo_info(
     (``b == 0`` / ``d == 0``) because ``_transform_tuple_from_pixel_geometry``
     only carries origin + pixel size, and the upstream TIFF reader
     rejects rotated ``ModelTransformationTag`` entries with
-    ``NotImplementedError`` in ``_geotags._extract_transform_and_georef``
-    before we reach this helper. The rotated-transform check therefore
-    fires only on the VRT path, which builds its context from the GDAL
-    ``geo_transform`` via ``_gdal_geotransform_to_affine_tuple``.
+    ``RotatedTransformError`` in ``_geotags._extract_transform_and_georef``
+    before we reach this helper (issue #2267; previously
+    ``NotImplementedError``). Both the GeoTIFF and VRT entry points
+    therefore raise the same typed error -- the rotated-transform check
+    in this helper still fires only on the VRT path (which builds its
+    context from the GDAL ``geo_transform`` via
+    ``_gdal_geotransform_to_affine_tuple``), but the contract a caller
+    sees is identical across both.
     """
     from ._validation import validate_read_metadata
     transform_for_check = (

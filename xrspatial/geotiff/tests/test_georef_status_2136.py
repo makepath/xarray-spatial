@@ -30,6 +30,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff
+from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._attrs import (
     GEOREF_STATUS_CRS_ONLY,
     GEOREF_STATUS_FULL,
@@ -287,7 +288,7 @@ def test_rotated_default_still_raises(tmp_path):
     path = str(tmp_path / "georef_status_2136_rotated_default.tif")
     arr = np.arange(20, dtype='<u2').reshape(4, 5)
     _write_rotated_tiff(path, arr)
-    with pytest.raises(NotImplementedError, match="rotation"):
+    with pytest.raises(RotatedTransformError, match="rotation"):
         open_geotiff(path)
 
 

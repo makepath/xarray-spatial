@@ -204,7 +204,8 @@ def read_geotiff_dask(source: str, *,
             # rotated opt-in the same way as the eager HTTP path and the
             # local chunked path (#2130). Without this, rotated remote
             # GeoTIFFs raised ``NotImplementedError`` from
-            # ``_parse_cog_http_meta`` even when the caller had passed
+            # ``_parse_cog_http_meta`` (now ``RotatedTransformError``
+            # after #2267) even when the caller had passed
             # ``allow_rotated=True``.
             #
             # ``source_path=source`` and ``return_sidecar=True`` opt the

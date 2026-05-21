@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff
+from xrspatial.geotiff._errors import RotatedTransformError
 
 tifffile = pytest.importorskip("tifffile")
 
@@ -101,7 +102,7 @@ def test_http_dask_rotated_default_raises(tmp_path, monkeypatch):
     httpd, port = _serve(payload)
     try:
         url = f'http://127.0.0.1:{port}/{src.name}'
-        with pytest.raises(NotImplementedError, match="rotation"):
+        with pytest.raises(RotatedTransformError, match="rotation"):
             open_geotiff(url, chunks=4)
     finally:
         httpd.shutdown()

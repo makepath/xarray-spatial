@@ -34,6 +34,7 @@ from ._header import (
     TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
 )
 from ._dtypes import resolve_bits_per_sample
+from ._errors import RotatedTransformError
 
 # ImageDescription tag (270). Captured for round-trip but not managed
 # by the writer -- it flows through extra_tags pass-through.
@@ -630,7 +631,8 @@ def _extract_transform(ifd: IFD,
         ``Affine`` ordering: ``(pixel_width, b, origin_x, d,
         pixel_height, origin_y)``); read it directly when the rotated
         mapping is needed. Default ``False`` -- existing behaviour,
-        raise ``NotImplementedError``.
+        raise ``RotatedTransformError`` (issue #2267; previously
+        ``NotImplementedError``).
 
         This contract is read-only. ``rotated_affine`` is not currently
         emitted by the writer. As of issue #2216 the writer refuses
@@ -660,10 +662,13 @@ def _extract_transform(ifd: IFD,
     #   y = M[4]*col + M[5]*row + M[6]*z + M[7]
     #
     # GeoTransform only carries the axis-aligned case.  For rotated, sheared,
-    # or z-coupled transforms we raise NotImplementedError unless the caller
-    # opts out via ``allow_rotated`` (issue #2115). The opt-out drops the
-    # georef so downstream coord generation uses pixel indices and any
-    # spatial op that runs on the array sees no geo assumption to violate.
+    # or z-coupled transforms we raise ``RotatedTransformError`` unless the
+    # caller opts out via ``allow_rotated`` (issues #2115, #2267). The opt-out
+    # drops the georef so downstream coord generation uses pixel indices and
+    # any spatial op that runs on the array sees no geo assumption to violate.
+    # ``RotatedTransformError`` is the same typed error the VRT path raises
+    # via ``_check_read_rotated_transform`` in ``_validation.py``, so both
+    # entry points share one ``except`` contract.
     transform_tag = ifd.get_value(TAG_MODEL_TRANSFORMATION)
     if transform_tag is not None:
         if isinstance(transform_tag, tuple) and len(transform_tag) >= 12:
@@ -676,7 +681,7 @@ def _extract_transform(ifd: IFD,
             z_terms = (m[2], m[6]) if len(m) >= 8 else (0.0, 0.0)
             if any(abs(t) > tol for t in rotation_terms + z_terms):
                 if not allow_rotated:
-                    raise NotImplementedError(
+                    raise RotatedTransformError(
                         "ModelTransformationTag (34264) contains rotation, "
                         "skew, or z-coupling terms "
                         f"(M[1]={m[1]!r}, M[4]={m[4]!r}, "
@@ -837,7 +842,8 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     allow_rotated : bool, optional
         Forwarded to :func:`_extract_transform`. When True, a rotated
         ``ModelTransformationTag`` is read as an ungeoreferenced pixel
-        grid instead of raising ``NotImplementedError`` (issue #2115).
+        grid instead of raising ``RotatedTransformError`` (issue #2115,
+        #2267).
 
     Returns
     -------
