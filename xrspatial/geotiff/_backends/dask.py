@@ -187,8 +187,12 @@ def read_geotiff_dask(source: str, *,
     effective_source = source
     if is_http or is_fsspec:
         import dask
-        from .._reader import _parse_cog_http_meta
+        from .._cog_http import _parse_cog_http_meta
         if is_http:
+            # ``_HTTPSource`` is resolved through ``_reader`` so existing
+            # tests that ``monkeypatch.setattr(_reader, '_HTTPSource', ...)``
+            # keep intercepting the construction after the COG-HTTP
+            # helpers moved to ``_cog_http`` (PR-J / #2258).
             from .._reader import _HTTPSource
             _src = _HTTPSource(source)
         else:
@@ -548,13 +552,15 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             from .._reader import _is_fsspec_uri as _ifs
             _is_fsspec_src = _ifs(source)
         if http_meta is not None and (_is_http_src or _is_fsspec_src):
-            from .._reader import (
-                _fetch_decode_cog_http_tiles,
-                MAX_PIXELS_DEFAULT,
-                _apply_photometric_miniswhite,
-            )
+            from .._cog_http import _fetch_decode_cog_http_tiles
+            from .._decode import _apply_photometric_miniswhite
+            from .._layout import MAX_PIXELS_DEFAULT
             header, ifd = http_meta
             if _is_http_src:
+                # See PR-J / #2258: keep the per-chunk ``_HTTPSource`` /
+                # ``_CloudSource`` construction routed through ``_reader``
+                # so monkeypatches against ``_reader._HTTPSource`` (used
+                # by the dask-HTTP coalesce tests) still take effect.
                 from .._reader import _HTTPSource
                 src = _HTTPSource(source)
             else:

@@ -213,9 +213,9 @@ def _read_geo_info(source, *, overview_level: int | None = None,
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info_with_overview_inheritance
     from ._header import parse_all_ifds, parse_header, select_overview_ifd
-    from ._reader import (
+    from ._cog_http import _parse_cog_http_meta
+    from ._sources import (
         _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri,
-        _parse_cog_http_meta,
     )
     from ._validation import _validate_predictor_sample_format
 
