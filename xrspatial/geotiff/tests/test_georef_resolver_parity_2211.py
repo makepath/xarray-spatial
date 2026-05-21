@@ -314,16 +314,18 @@ def test_resolve_georef_writer_no_georef_marker():
 
 
 def test_resolve_georef_writer_transform_only_attr():
-    """``attrs['transform']`` resolves to a transform with no CRS bucket.
+    """``attrs['transform']`` resolves to ``transform_only`` (no CRS).
 
     Writer side: the only georef signal is the attr, so the resolver
-    lands on ``coords`` (writer's equivalent of "transform present,
-    no CRS"). The transform is the rasterio 6-tuple ``(a, b, c, d, e,
-    f)`` reconstructed back into a ``GeoTransform``.
+    lands on ``transform_only`` to distinguish it from the
+    ``coords``-derived bucket (which fires when the transform was
+    inferred from coord arrays). The transform is the rasterio
+    6-tuple ``(a, b, c, d, e, f)`` reconstructed into a
+    ``GeoTransform``.
     """
     da = _make_transform_only_da()
     result = resolve_georef(da)
-    assert result.georef_status == GEOREF_STATUS_COORDS
+    assert result.georef_status == GEOREF_STATUS_TRANSFORM_ONLY
     assert result.transform is not None
     assert result.transform.pixel_width == pytest.approx(1.0)
     assert result.transform.pixel_height == pytest.approx(-1.0)

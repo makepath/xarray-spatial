@@ -706,14 +706,21 @@ def resolve_georef(
         a_crs_epsg = crs_epsg
         a_crs_wkt = crs_wkt
         if attrs is not None:
-            if a_crs_epsg is None:
-                crs_val = attrs.get('crs')
-                if (crs_val is not None
-                        and not isinstance(crs_val, (bool, str))):
-                    try:
-                        a_crs_epsg = int(crs_val)
-                    except (TypeError, ValueError):
-                        a_crs_epsg = None
+            # Mirror ``attrs_to_metadata`` precedence: string ``crs``
+            # values fold into ``crs_wkt`` (some pipelines stash the
+            # WKT string under ``attrs['crs']``), bool values are
+            # ignored at the boundary so the resolver does not flag a
+            # bogus ``has_crs`` signal on ``crs=True`` (issue #1971).
+            crs_val = attrs.get('crs')
+            if a_crs_wkt is None and isinstance(crs_val, str) and crs_val:
+                a_crs_wkt = crs_val
+            if (a_crs_epsg is None
+                    and crs_val is not None
+                    and not isinstance(crs_val, (bool, str))):
+                try:
+                    a_crs_epsg = int(crs_val)
+                except (TypeError, ValueError):
+                    a_crs_epsg = None
             if a_crs_wkt is None:
                 wkt_val = attrs.get('crs_wkt')
                 if isinstance(wkt_val, str) and wkt_val:
@@ -724,8 +731,11 @@ def resolve_georef(
         # so the resolver propagates the same diagnostic. A ``None``
         # return means the attr was absent or unparseable.
         transform = transform_from_attr(attr_transform)
+        transform_source = 'attr' if transform is not None else None
         if transform is None:
             transform = coords_to_transform(source)
+            if transform is not None:
+                transform_source = 'coords'
 
         no_georef_marker = _has_no_georef_marker(source)
 
@@ -743,9 +753,16 @@ def resolve_georef(
             )
 
         if transform is not None:
-            status = (
-                GEOREF_STATUS_FULL if has_crs else GEOREF_STATUS_COORDS
-            )
+            # ``coords`` bucket signals "transform derived from coord
+            # arrays"; ``transform_only`` signals "transform supplied
+            # via attrs['transform']". Either bucket with a CRS
+            # rolls up to ``full``.
+            if has_crs:
+                status = GEOREF_STATUS_FULL
+            elif transform_source == 'attr':
+                status = GEOREF_STATUS_TRANSFORM_ONLY
+            else:
+                status = GEOREF_STATUS_COORDS
             return GeorefResolution(
                 transform=transform,
                 georef_status=status,
