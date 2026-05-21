@@ -213,12 +213,15 @@ def test_read_cog_http_perf_with_mock_rtt(small_cog_bytes, monkeypatch):
     coalesced = time.perf_counter() - t0
     np.testing.assert_array_equal(arr2, expected)
 
-    # Coalesced has to be at least 2x faster on a 50 ms RTT 64-tile read.
-    # Baseline = ceil(64/8) * 50 ms = 400 ms; coalesced = ~50 ms for the
-    # single merged GET plus ~50 ms for the IFD read = ~100 ms.
-    assert coalesced * 2 < baseline, (
-        f'coalesced wall time {coalesced:.3f}s should be much less than '
-        f'baseline {baseline:.3f}s'
+    # Assert on RTTs saved, not on a wall-time ratio. The baseline pays
+    # ceil(64/8) = 8 RTTs; the coalesced path pays 1 merged GET plus the
+    # IFD read = ~2 RTTs. The other ~6 RTTs of saved wall time are what
+    # the assertion checks. A ratio assertion would couple this to per-tile
+    # decode cost, which varies a lot across CI runners.
+    rtts_saved = (baseline - coalesced) / rtt
+    assert rtts_saved >= 5, (
+        f'coalesced wall time {coalesced:.3f}s should save at least 5 RTTs '
+        f'vs baseline {baseline:.3f}s (saved {rtts_saved:.1f} RTTs of {rtt:.3f}s)'
     )
 
 
