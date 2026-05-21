@@ -210,11 +210,18 @@ class TestInfBurnValues:
         The eager NaN-bound rejection was tested by
         test_explicit_nan_bounds_rejected; this pin extends that to ``inf``
         so a future refactor that switches the check from ``isfinite`` to
-        ``not isnan`` (which would accept inf) surfaces in CI."""
-        with pytest.raises(ValueError, match="must be finite"):
+        ``not isnan`` (which would accept inf) surfaces in CI.
+
+        Match is anchored on the bounds error prefix ``Invalid bounds:``
+        so a future refactor that adds a different "must be finite" check
+        (e.g. on resolution) earlier in the call cannot accidentally
+        satisfy this assertion via the wrong code path."""
+        with pytest.raises(ValueError,
+                           match=r"Invalid bounds:.*must be finite"):
             rasterize([(box(0, 0, 1, 1), 1.0)], width=2, height=2,
                       bounds=(0, 0, float('inf'), 1))
-        with pytest.raises(ValueError, match="must be finite"):
+        with pytest.raises(ValueError,
+                           match=r"Invalid bounds:.*must be finite"):
             rasterize([(box(0, 0, 1, 1), 1.0)], width=2, height=2,
                       bounds=(0, 0, 1, -float('inf')))
 
@@ -231,6 +238,15 @@ class TestNaNBurnValues:
     that drops NaN writes (e.g. ``if isnan(val) continue``) would silently
     leave the fill value in covered cells, which is a different
     observable than emitting NaN there.
+
+    NOTE: the GPU ``max`` / ``min`` merges currently suppress NaN burn
+    values, asymmetric with the CPU IEEE-propagating behaviour pinned
+    here.  See issue #2255.  The
+    ``test_nan_burn_overlaps_max_gpu_suppresses_nan`` and
+    ``test_nan_burn_single_geom_max_gpu_returns_neg_inf`` tests below
+    pin the current (asymmetric) GPU observable so the divergence is
+    visible in CI; both will need to be inverted once the GPU kernels
+    are aligned with CPU semantics.
     """
 
     @pytest.mark.parametrize('backend_name,kw', ALL_BACKENDS)
@@ -395,19 +411,29 @@ class TestNestedGeometryCollection:
             _materialise(nested_r), _materialise(flat_r),
             err_msg=f"backend {backend_name}: nested GC did not match flat")
 
-    def test_deeply_nested_gc_eager(self):
-        """Three levels deep: GC(GC(GC([poly])))."""
+    @pytest.mark.parametrize('backend_name,kw', [
+        ALL_BACKENDS[0],  # numpy
+        ALL_BACKENDS[2],  # dask_numpy
+    ])
+    def test_deeply_nested_gc(self, backend_name, kw):
+        """Three levels deep: GC(GC(GC([poly]))).
+
+        Exercised on numpy and dask+numpy.  The dask run additionally
+        checks that the recursive GC pre-classification survives the
+        per-tile graph builder, not just the eager path.
+        """
         l3 = GeometryCollection([box(2, 2, 8, 8)])
         l2 = GeometryCollection([l3])
         l1 = GeometryCollection([l2])
         r = rasterize([(l1, 5.0)], width=10, height=10,
-                      bounds=(0, 0, 10, 10), fill=0)
+                      bounds=(0, 0, 10, 10), fill=0, **kw)
         # The inner polygon (box 2..8 in a 10x10 raster) writes 36 pixels
         # of 5.0 -- pin the count rather than a per-pixel mask so the
         # test is robust to scanline tie-breaks.
         burned = (_materialise(r) == 5.0)
         assert burned.sum() == 36, (
-            f"deeply nested GC: expected 36 burned pixels, got {burned.sum()}"
+            f"{backend_name} deeply nested GC: expected 36 burned pixels, "
+            f"got {burned.sum()}"
         )
 
     @skip_no_geopandas
