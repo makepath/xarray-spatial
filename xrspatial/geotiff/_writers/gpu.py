@@ -609,7 +609,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # Overview generation -- mirrors the CPU writer's 8-level cap.
     if cog:
         if overview_levels is None:
-            from .._writer import _MAX_OVERVIEW_LEVELS
+            from .._overview import _MAX_OVERVIEW_LEVELS
             # Auto-generated lists hold actual decimation factors (2,
             # 4, 8, ...) so the loop below treats auto-generated and
             # user-supplied lists identically (issue #1766).
@@ -628,7 +628,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             # strictly increasing, feasible for the input shape.
             # Previously the values were ignored and only the list
             # length mattered (issue #1766).
-            from .._writer import _validate_overview_levels
+            from .._overview import _validate_overview_levels
             overview_levels = _validate_overview_levels(
                 overview_levels, height=height, width=width)
 

@@ -3151,7 +3151,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
     Odd inputs are NaN-padded along the trailing edge (float-promoted for
     integer dtypes) so the 2x2 block reshape works and the residual block
     is reduced via the same nan-aware aggregations (issue #2105). Mirrors
-    the CPU helper :func:`xrspatial.geotiff._writer._block_reduce_2d` so
+    the CPU helper :func:`xrspatial.geotiff._overview._block_reduce_2d` so
     the two backends produce identical overviews.
 
     When ``nodata`` is supplied and ``arr2d`` is a float dtype, cells that
@@ -3178,7 +3178,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
         # Mode is expensive on GPU; fall back to CPU. The CPU helper
         # now handles odd-sized inputs natively.
         cpu_arr = arr2d.get()
-        from ._writer import _block_reduce_2d
+        from ._overview import _block_reduce_2d
         cpu_result = _block_reduce_2d(cpu_arr, 'mode', nodata=nodata)
         return cupy.asarray(cpu_result)
 
@@ -3190,7 +3190,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
         # CPU writer and so the sentinel handling matches. The CPU
         # helper handles odd-sized inputs via edge-replicate padding.
         cpu_arr = arr2d.get()
-        from ._writer import _block_reduce_2d
+        from ._overview import _block_reduce_2d
         cpu_result = _block_reduce_2d(cpu_arr, 'cubic', nodata=nodata)
         return cupy.asarray(cpu_result)
 
