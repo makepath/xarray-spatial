@@ -213,8 +213,9 @@ def read_geotiff_gpu(source: str, *,
     band_nodata : {'first', None}, optional
         VRT-only. Accepted at the signature level for parity with
         ``open_geotiff``; passing it to ``read_geotiff_gpu`` raises
-        ``ValueError`` because GPU reads do not go through the VRT
-        pipeline. See ``read_vrt`` for the kwarg's meaning.
+        ``ValueError`` because the GPU dispatcher rejects ``.vrt``
+        sources up front and the kwarg only applies to VRT. See
+        ``read_vrt`` for the kwarg's meaning.
     missing_sources : {'raise', 'warn'}, optional
         VRT-only. Same shape as ``band_nodata`` above: accepted for
         signature parity, rejected at dispatch with ``ValueError`` for
