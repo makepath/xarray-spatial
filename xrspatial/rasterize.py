@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import NamedTuple, Optional, Tuple, Union
+from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import shapely
@@ -2853,12 +2853,12 @@ def _extract_grid_from_like(like):
 # ---------------------------------------------------------------------------
 
 def rasterize(
-    geometries,
+    geometries: Any,
     width: Optional[int] = None,
     height: Optional[int] = None,
     bounds: Optional[Tuple[float, float, float, float]] = None,
     column: Optional[str] = None,
-    columns=None,
+    columns: Optional[Sequence[str]] = None,
     fill: float = np.nan,
     dtype: Optional[np.dtype] = None,
     all_touched: bool = False,
@@ -2866,7 +2866,7 @@ def rasterize(
     name: str = 'rasterize',
     resolution: Optional[Union[float, Tuple[float, float]]] = None,
     like: Optional[xr.DataArray] = None,
-    merge='last',
+    merge: Union[str, Callable] = 'last',
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
     max_pixels: int = MAX_PIXELS_DEFAULT,
 ) -> xr.DataArray:
