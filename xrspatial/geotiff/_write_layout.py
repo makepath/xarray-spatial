@@ -1,14 +1,31 @@
 """GeoTIFF IFD assembly and BigTIFF/COG layout helpers (private).
 
 This module is private to :mod:`xrspatial.geotiff`. It owns the
-TIFF/BigTIFF IFD-encoding primitives and the layout-planning helpers
-used by the eager and streaming writers. The pixel encoding kernels
-(strip/tile compression, photometric/predictor encode) and the
-top-level write entry points live in :mod:`xrspatial.geotiff._writer`.
+TIFF/BigTIFF IFD-encoding primitives and the layout-planning helpers.
+The pixel encoding kernels (strip/tile compression, photometric and
+predictor encode) and the top-level write entry points live in
+:mod:`xrspatial.geotiff._writer`.
 
-Functions exported from here are still re-exported from
+The eager writer (``_write`` -> ``_assemble_tiff``) drives the high-
+level entry point :func:`_assemble_tiff`. The streaming writer
+(``_write_streaming``) composes the lower-level helpers directly
+(``_build_ifd``, ``_compute_classic_ifd_overhead``,
+``_should_use_bigtiff_streaming``, ``_promote_offsets_to_long8``) and
+never calls ``_assemble_tiff``.
+
+Functions exported from here are also re-exported from
 ``xrspatial.geotiff._writer`` so existing internal call sites and
-tests that import them from the original module continue to work.
+tests that import them from the original module keep working.
+
+Internal contract: ``_assemble_tiff`` resolves
+``_resolve_photometric``, ``_OVERRIDABLE_AUTO_TAG_IDS``,
+``_DANGEROUS_EXTRA_TAG_IDS``, and the four layout helpers it dispatches
+to (``_compute_classic_ifd_overhead``, ``_promote_offsets_to_long8``,
+``_assemble_cog_layout``, ``_assemble_standard_layout``) through the
+``_writer`` module at call time. That preserves the pre-extraction
+monkeypatch semantics for tests that patch ``_writer._compute_classic_ifd_overhead``
+and friends. Do not inline those calls back to the module-local names
+without also updating the affected tests.
 """
 from __future__ import annotations
 
@@ -467,6 +484,14 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    force_bigtiff: bool | None = None,
                    photometric='auto') -> bytearray:
     """Assemble a complete TIFF file.
+
+    This function is owned by ``_writer.py`` semantically; it lives in
+    ``_write_layout.py`` only to keep the IFD-encoding helpers
+    co-located. It resolves ``_resolve_photometric``,
+    ``_OVERRIDABLE_AUTO_TAG_IDS``, ``_DANGEROUS_EXTRA_TAG_IDS``, and
+    the four layout helpers it dispatches to through the ``_writer``
+    module at call time, so existing test monkeypatches against
+    ``_writer.*`` keep working unchanged.
 
     Parameters
     ----------

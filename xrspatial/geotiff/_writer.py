@@ -46,7 +46,6 @@ from ._dtypes import (
     LONG,
     ASCII,
     numpy_to_tiff_dtype,
-    TIFF_TYPE_SIZES,
 )
 from ._geotags import (
     GeoTransform,
@@ -89,7 +88,6 @@ from ._header import (
 # ``xrspatial.geotiff._writer`` import path.
 from ._write_layout import (  # noqa: F401
     BO,
-    _BIGTIFF_OFFSET_TAGS,
     _assemble_cog_layout,
     _assemble_standard_layout,
     _assemble_tiff,
