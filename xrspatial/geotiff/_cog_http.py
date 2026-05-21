@@ -46,7 +46,6 @@ from __future__ import annotations
 import math
 import os as _os_module
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -91,17 +90,20 @@ from ._layout import (
 )
 from ._sources import (
     COALESCE_GAP_THRESHOLD_DEFAULT,
+    # ``_HTTPSource`` is imported as a real module-level binding (rather
+    # than guarded by TYPE_CHECKING) because it appears in the public
+    # signature of three helpers and ``typing.get_type_hints(...)``
+    # resolves annotations against the function's ``__globals__``.
+    # Hiding the name behind TYPE_CHECKING would break runtime hint
+    # introspection on this module *and* on the re-exports in
+    # ``_reader`` (which share the same function objects). At runtime
+    # every construction call still goes through ``_reader._HTTPSource``
+    # so monkeypatches against the ``_reader`` namespace continue to
+    # intercept the source. PR-J / #2258.
+    _HTTPSource,
     _max_tile_bytes_from_env,
 )
 from ._validation import _validate_predictor_sample_format
-
-if TYPE_CHECKING:
-    # ``_HTTPSource`` is only referenced as a type annotation in this
-    # module. Every runtime use goes through ``_reader._HTTPSource`` so
-    # monkeypatches against the ``_reader`` namespace keep intercepting
-    # the construction (PR-J / #2258). Keeping the import under
-    # TYPE_CHECKING removes the misleading appearance of a live binding.
-    from ._sources import _HTTPSource
 
 #: Initial prefetch size for ``_parse_cog_http_meta``. Sized for the common
 #: case (a single-IFD COG with modest GeoTIFF tags) so the fast path is a
