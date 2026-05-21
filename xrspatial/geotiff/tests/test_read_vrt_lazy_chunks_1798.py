@@ -41,12 +41,27 @@ def test_read_vrt_chunks_matches_eager_values(tmp_path):
 
 
 def test_read_vrt_chunks_does_not_read_sources_during_construction(tmp_path):
+    """The chunked path must not eagerly decode sources at build.
+
+    Construction does run a cheap ``os.path.exists`` sweep over each
+    source (to populate ``vrt_holes`` and to fail-fast under the
+    default ``missing_sources='raise'``), but it must not open or
+    decode any source file. This test pairs the missing source with
+    the lenient ``missing_sources='warn'`` opt-in so the build
+    succeeds; the assertion is that no decode-time warnings (which
+    would only fire if the source were actually read) leak out
+    during construction.
+    """
     vrt = tmp_path / "tmp_1798_missing_source.vrt"
     _write_vrt(vrt, "missing.tif")
 
     with warnings.catch_warnings(record=True) as caught:
-        lazy = read_vrt(str(vrt), chunks=2)
+        lazy = read_vrt(str(vrt), chunks=2, missing_sources="warn")
 
+    # Build-time warnings from the decode codecs should be absent.
+    # ``missing_sources='warn'`` does not warn at build time either; the
+    # per-task ``GeoTIFFFallbackWarning`` only fires when a chunk
+    # actually decodes the missing tile during ``compute()``.
     assert caught == []
     assert hasattr(lazy.data, 'compute')
 

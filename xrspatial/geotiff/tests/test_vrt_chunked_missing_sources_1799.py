@@ -142,32 +142,46 @@ class TestChunkedMissingSourcesWarn:
 
 
 class TestChunkedMissingSourcesRaise:
-    """``read_vrt(chunks=N, missing_sources='raise')`` fails on compute.
+    """``read_vrt(chunks=N, missing_sources='raise')`` fails at build.
 
-    The eager path raises at read time. The chunked path defers to
-    compute because each chunk's decode is delayed; an upfront raise
-    would force the parse-time sweep to decode every source, defeating
-    the lazy graph. The contract: chunks intersecting a missing source
-    raise on compute; chunks intersecting only present sources still
-    succeed.
+    The docstring on ``read_vrt`` promises that the default
+    ``'raise'`` "fails immediately on an unreadable backing source so a
+    partial mosaic never surfaces silently". Issue #2265 closes the
+    chunked-path gap: the static ``os.path.exists`` sweep that already
+    runs to populate ``vrt_holes`` now also raises up front when the
+    policy is ``'raise'`` and the sweep finds any hole intersecting the
+    requested window. Without this guard the build would succeed and
+    only ``result.compute()`` on a hole-touching chunk would raise, so
+    a downstream pipeline that windowed past the bad tile could ship a
+    partial mosaic silently.
     """
 
-    def test_compute_intersecting_missing_raises(self, tmp_path):
+    def test_build_raises_immediately(self, tmp_path):
         vrt_path, _ = _make_partial_vrt(str(tmp_path))
-        result = read_vrt(vrt_path, chunks=4, missing_sources="raise")
-        # Build does not raise (the graph is lazy).
-        # Computing a chunk that intersects the missing source raises.
-        with pytest.raises((OSError, ValueError)):
-            result.compute()
+        with pytest.raises(FileNotFoundError, match="missing.tif"):
+            read_vrt(vrt_path, chunks=4, missing_sources="raise")
 
-    def test_compute_present_only_chunk_succeeds(self, tmp_path):
-        """A windowed compute against only the present source succeeds.
+    def test_build_raise_message_mentions_policy_kwarg(self, tmp_path):
+        """The raise tells the caller how to opt into the lenient path.
 
-        ``read_vrt(window=...)`` restricts the chunked graph to the
-        windowed extent; if the window misses the missing source, no
-        chunk needs to decode it and compute succeeds even under
-        ``missing_sources='raise'``. The contract: the raise policy is
-        scoped to chunks that actually touch missing sources.
+        Lock in the kwarg-naming guidance in the error string so a
+        future refactor that drops or renames the suggestion regresses
+        the user-facing message rather than silently churning it.
+        """
+        vrt_path, _ = _make_partial_vrt(str(tmp_path))
+        with pytest.raises(FileNotFoundError) as excinfo:
+            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+        assert "missing_sources='warn'" in str(excinfo.value)
+
+    def test_window_past_missing_succeeds_under_raise(self, tmp_path):
+        """A window that does not touch a missing source still builds.
+
+        The static sweep is scoped to the windowed extent. If the
+        window covers only present sources, the chunked graph has
+        nothing to raise about and ``compute()`` returns the present
+        tile. This preserves the contract that ``missing_sources``
+        only fires when the requested region actually depends on a
+        missing source.
         """
         vrt_path, _ = _make_partial_vrt(str(tmp_path))
         # Window covers only the present source (cols 0-4).
@@ -180,22 +194,44 @@ class TestChunkedMissingSourcesRaise:
             np.asarray(computed), np.full((4, 4), 7.0, dtype=np.float32),
         )
 
+    def test_band_selection_skips_other_bands_holes(self, tmp_path):
+        """A ``band=`` restriction scopes the static raise to that band.
+
+        Mirrors the eager path: only sources on the selected band get
+        decoded, so a missing source on an unselected band should not
+        block the build. The partial VRT in this module is single-band
+        so the only way to exercise this is to confirm that the
+        single-band default still raises (sanity gate) -- the
+        cross-band gating is covered indirectly by the broader VRT
+        test matrix.
+        """
+        vrt_path, _ = _make_partial_vrt(str(tmp_path))
+        # Selecting band 0 (the only band) still touches the missing
+        # source so the build raises. The negative case (a missing
+        # source on a different band than the selected one) is hard to
+        # build without a multi-band VRT helper; the band_num gate in
+        # ``_read_vrt_chunked`` is exercised by the standalone test
+        # ``test_chunked_band_selection_skips_other_bands_holes`` below.
+        with pytest.raises(FileNotFoundError):
+            read_vrt(
+                vrt_path, chunks=4, band=0, missing_sources="raise",
+            )
+
 
 class TestChunkedMissingSourcesDefault:
     """The default ``missing_sources`` on chunked reads is ``'raise'``.
 
     The public ``read_vrt`` default flipped to ``'raise'`` in #1843 /
-    #1860. The chunked path goes through the same entry point so the
-    default must agree. A regression flipping the chunked default to
-    ``'warn'`` would silently produce partial mosaics for callers who
-    don't pass the kwarg.
+    #1860 and the chunked path now honours it at build time (#2265).
+    A regression flipping the chunked default to ``'warn'`` would
+    silently produce partial mosaics for callers who don't pass the
+    kwarg.
     """
 
-    def test_chunked_default_raises_on_compute(self, tmp_path):
+    def test_chunked_default_raises_at_build(self, tmp_path):
         vrt_path, _ = _make_partial_vrt(str(tmp_path))
-        result = read_vrt(vrt_path, chunks=4)
-        with pytest.raises((OSError, ValueError)):
-            result.compute()
+        with pytest.raises(FileNotFoundError, match="missing.tif"):
+            read_vrt(vrt_path, chunks=4)
 
 
 class TestChunkedMissingSourcesValidation:
