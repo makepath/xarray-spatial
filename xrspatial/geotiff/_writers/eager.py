@@ -33,9 +33,8 @@ from .._backends._gpu_helpers import _is_gpu_data
 from .._coords import (
     _BAND_DIM_NAMES,
     _has_no_georef_marker,
-    coords_to_transform as _coords_to_transform,
     require_transform_for_georeferenced as _require_transform_for_georeferenced,
-    transform_from_attr as _transform_from_attr,
+    resolve_georef as _resolve_georef,
 )
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
 from .._geotags import GeoTransform, RASTER_PIXEL_IS_AREA
@@ -696,14 +695,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         raw = data.data
 
         # Extract metadata from DataArray attrs (no materialisation needed).
-        # Prefer attrs['transform'] (from open_geotiff) over the coord-derived
-        # transform: that path is bit-stable across round-trips, while
-        # _coords_to_transform can drift on fractional pixel sizes because
-        # x[1] - x[0] is computed in float64 from already-rounded coords.
+        # Resolve the affine through the centralised resolver (#2225) so
+        # this writer, the GPU writer, and the per-tile VRT path share
+        # the same precedence rule: prefer ``attrs['transform']`` (which
+        # round-trips bit-exactly) over a coord-derived transform (which
+        # drifts on fractional pixel sizes because ``x[1] - x[0]`` is
+        # computed in float64 from already-rounded coords).
         if geo_transform is None:
-            geo_transform = _transform_from_attr(data.attrs.get('transform'))
-        if geo_transform is None:
-            geo_transform = _coords_to_transform(data)
+            geo_transform = _resolve_georef(data).transform
         # Fail closed when coords are present but no transform could be
         # derived (e.g. 1x1 without ``attrs['transform']``) instead of
         # silently writing a non-georeferenced TIFF that round-trips back
@@ -1115,9 +1114,9 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         # sentinel. See ``_should_restore_nan_sentinel`` for the
         # semantics; default True keeps existing behaviour.
         restore_sentinel = _should_restore_nan_sentinel(data.attrs)
-        geo_transform = _transform_from_attr(data.attrs.get('transform'))
-        if geo_transform is None:
-            geo_transform = _coords_to_transform(data)
+        # Resolve via the centralised resolver (#2225). Same precedence
+        # as ``to_geotiff``: attrs['transform'] wins over coord-derived.
+        geo_transform = _resolve_georef(data).transform
         # Match the to_geotiff fail-closed guard so VRT writes don't
         # silently produce non-georeferenced tiles either (#1945).
         _require_transform_for_georeferenced(data, geo_transform)

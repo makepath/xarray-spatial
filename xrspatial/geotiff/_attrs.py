@@ -164,6 +164,7 @@ import xarray as xr
 
 from ._coords import (
     coords_from_geo_info as _coords_from_geo_info,
+    resolve_georef as _resolve_georef,
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
 )
 from ._geotags import (
@@ -875,26 +876,13 @@ def _compute_georef_status(geo_info) -> str:
     build their attrs dict from a different dataclass and would have to
     synthesise a fake ``GeoInfo`` to reuse this helper. Keep all the
     call sites in lockstep through one of the two helpers.
+
+    Implementation note (#2225): routes through
+    :func:`xrspatial.geotiff._coords.resolve_georef` so the read-side
+    bucket decision lives in one place. The resolver's status strings
+    are the same canonical values exported here (``GEOREF_STATUS_*``).
     """
-    transform = getattr(geo_info, 'transform', None)
-    rotated_affine = (
-        getattr(transform, 'rotated_affine', None)
-        if transform is not None else None
-    )
-    if rotated_affine is not None:
-        return GEOREF_STATUS_ROTATED_DROPPED
-    has_georef = bool(getattr(geo_info, 'has_georef', False))
-    has_crs = (
-        getattr(geo_info, 'crs_epsg', None) is not None
-        or getattr(geo_info, 'crs_wkt', None) is not None
-    )
-    if has_georef and has_crs:
-        return GEOREF_STATUS_FULL
-    if has_georef:
-        return GEOREF_STATUS_TRANSFORM_ONLY
-    if has_crs:
-        return GEOREF_STATUS_CRS_ONLY
-    return GEOREF_STATUS_NONE
+    return _resolve_georef(geo_info=geo_info).georef_status
 
 
 def _compute_georef_status_from_parts(
@@ -912,6 +900,11 @@ def _compute_georef_status_from_parts(
     each branch. This helper takes the underlying booleans directly so
     the VRT paths and the ``_populate_attrs_from_geo_info`` path share
     the same decision rule without the intermediate object.
+
+    Implementation note (#2225): kept as a thin boolean shim so VRT
+    inline branches do not have to build a fake ``GeoInfo`` to feed
+    :func:`resolve_georef`. The decision table here mirrors the
+    reader-path branch in :func:`resolve_georef`.
     """
     if rotated_dropped:
         return GEOREF_STATUS_ROTATED_DROPPED
