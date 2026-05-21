@@ -13,6 +13,16 @@ Public import surface from :mod:`xrspatial.geotiff._reader` is preserved
 by re-importing the names defined here back at the call sites that the
 test suite and downstream backends depend on. See the import block at
 the top of ``_reader.py``.
+
+This module deliberately has *no* module-level import of
+:mod:`xrspatial.geotiff._reader` so the two files can sit on either side
+of a circular relationship: ``_reader.py`` imports the decode functions
+back at module load, and the few things ``_decode`` still needs from
+``_reader`` (``MAX_PIXELS_DEFAULT``, ``_check_dimensions``,
+``_check_source_dimensions``, ``_sparse_fill_value``, ``_has_sparse``)
+are imported lazily inside ``_read_strips`` / ``_read_tiles`` at call
+time. Those names move with ``_layout.py`` in PR-H (issue #2247), at
+which point the lazy imports can collapse back into top-level ones.
 """
 from __future__ import annotations
 
@@ -287,7 +297,7 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
 
 def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
                  dtype: np.dtype, window=None,
-                 max_pixels=_MAX_PIXELS_UNSET) -> np.ndarray:
+                 max_pixels: int = _MAX_PIXELS_UNSET) -> np.ndarray:  # type: ignore[assignment]
     """Read a strip-organized TIFF image.
 
     Parameters
@@ -486,7 +496,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     if use_parallel:
         # Function-local import (rather than the module-level binding)
         # so tests that monkey-patch ``concurrent.futures.ThreadPoolExecutor``
-        # see the spy class here. The tile path uses the same pattern.
+        # see the spy class here. The tile path uses the same pattern;
+        # both gates share ``_PARALLEL_DECODE_PIXEL_THRESHOLD`` (#1551).
         from concurrent.futures import ThreadPoolExecutor
         n_workers = min(n_strips, _os_module.cpu_count() or 4)
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -518,7 +529,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
 
 def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
                 dtype: np.dtype, window=None,
-                max_pixels=_MAX_PIXELS_UNSET) -> np.ndarray:
+                max_pixels: int = _MAX_PIXELS_UNSET) -> np.ndarray:  # type: ignore[assignment]
     """Read a tile-organized TIFF image.
 
     Parameters

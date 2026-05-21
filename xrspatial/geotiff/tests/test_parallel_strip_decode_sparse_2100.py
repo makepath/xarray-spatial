@@ -53,6 +53,7 @@ rasterio = pytest.importorskip("rasterio")
 
 from xrspatial.geotiff._reader import read_to_array  # noqa: E402
 from xrspatial.geotiff import _reader as _reader_mod  # noqa: E402
+from xrspatial.geotiff import _decode as _decode_mod  # noqa: E402
 
 
 # Local-strip helpers -------------------------------------------------------
@@ -164,8 +165,12 @@ class TestReadStripsSparseParallel:
         _write_sparse_stripped_large(path)
 
         par, _ = read_to_array(path)
+        # Patch the threshold in ``_decode`` (PR-G #2246 home of
+        # ``_read_strips``), not in ``_reader``: the back-imported name in
+        # ``_reader`` is a separate reference and patching it would leave
+        # the live binding in ``_decode`` unchanged.
         with patch.object(
-                _reader_mod,
+                _decode_mod,
                 "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10 ** 12):
             ser, _ = read_to_array(path)
 
@@ -213,7 +218,7 @@ class TestReadStripsSparseParallel:
         win = (128, 0, 384, 1024)  # row range [128, 384), col range [0, 1024)
         par, _ = read_to_array(path, window=win)
         with patch.object(
-                _reader_mod,
+                _decode_mod,
                 "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10 ** 12):
             ser, _ = read_to_array(path, window=win)
 
@@ -272,7 +277,7 @@ class TestReadStripsSparsePlanar2:
 
         par, _ = read_to_array(path)
         with patch.object(
-                _reader_mod,
+                _decode_mod,
                 "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10 ** 12):
             ser, _ = read_to_array(path)
 
