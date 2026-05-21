@@ -213,6 +213,15 @@ def _read_geo_info(source, *, overview_level: int | None = None,
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info_with_overview_inheritance
     from ._header import parse_all_ifds, parse_header, select_overview_ifd
+    # ``_parse_cog_http_meta`` is imported from ``_cog_http`` directly
+    # rather than re-routed through ``_reader`` because the
+    # ``open_geotiff(..., chunks=...)`` fsspec metadata path is not part
+    # of the ``_reader.*`` monkeypatch surface (no test patches
+    # ``_reader._parse_cog_http_meta`` and then exercises this branch).
+    # The eager / dask HTTP paths that ARE patched route through
+    # ``_cog_http._read_cog_http`` and ``_backends/dask.py``'s
+    # ``_HTTPSource`` construction, both of which still go through
+    # ``_reader`` for the patchable names. See PR-J / #2258.
     from ._cog_http import _parse_cog_http_meta
     from ._sources import (
         _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri,

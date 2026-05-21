@@ -20,21 +20,49 @@ imported attributes at module-load time. ``_reader`` re-exports both
 names from ``_sources`` / this module, so the indirection has the same
 runtime cost as a single attribute lookup but keeps the existing
 patches working unchanged.
+
+Every ``from . import _reader`` in this module is lazy (inside a
+function body) for the same reason: ``_reader.py`` already imports
+the helpers defined here at module load, so a top-of-file
+``from . import _reader`` would race the circular load and resolve
+``_reader`` to a half-built module. By the time any of these
+functions are *called*, both modules have fully loaded and the
+attribute lookup succeeds.
+
+The full list of names looked up via ``_reader`` (so that the
+corresponding ``monkeypatch.setattr(_reader, '<name>', ...)`` in the
+test suite keeps intercepting the call):
+
+* ``_HTTPSource``
+* ``_parse_cog_http_meta``
+* ``_fetch_decode_cog_http_tiles``
+* ``_decode_strip_or_tile``
+* ``_apply_photometric_miniswhite``
+* ``INITIAL_HTTP_HEADER_BYTES``
+* ``MAX_HTTP_HEADER_BYTES``
 """
 from __future__ import annotations
 
 import math
 import os as _os_module
 from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ._compression import COMPRESSION_LERC
+# ``_apply_photometric_miniswhite`` and ``_decode_strip_or_tile`` are
+# resolved through ``_reader`` at call time (see ``_read_cog_http`` and
+# the per-function notes below), so the names imported here are only
+# used by helpers that the test fleet does not patch
+# (``_apply_orientation_with_geo``, ``_miniswhite_inverted_nodata``,
+# ``_read_strips``, ``_resolve_masked_fill``). The patched two are
+# pulled back through ``_reader`` so monkeypatches against
+# ``_reader._apply_photometric_miniswhite`` / ``_reader._decode_strip_or_tile``
+# keep working after the helper move (PR-J / #2258).
 from ._decode import (
     _PARALLEL_DECODE_PIXEL_THRESHOLD,
     _apply_orientation_with_geo,
-    _apply_photometric_miniswhite,
-    _decode_strip_or_tile,
     _miniswhite_inverted_nodata,
     _read_strips,
     _resolve_masked_fill,
@@ -63,10 +91,17 @@ from ._layout import (
 )
 from ._sources import (
     COALESCE_GAP_THRESHOLD_DEFAULT,
-    _HTTPSource,
     _max_tile_bytes_from_env,
 )
 from ._validation import _validate_predictor_sample_format
+
+if TYPE_CHECKING:
+    # ``_HTTPSource`` is only referenced as a type annotation in this
+    # module. Every runtime use goes through ``_reader._HTTPSource`` so
+    # monkeypatches against the ``_reader`` namespace keep intercepting
+    # the construction (PR-J / #2258). Keeping the import under
+    # TYPE_CHECKING removes the misleading appearance of a live binding.
+    from ._sources import _HTTPSource
 
 #: Initial prefetch size for ``_parse_cog_http_meta``. Sized for the common
 #: case (a single-IFD COG with modest GeoTIFF tags) so the fast path is a
@@ -147,6 +182,12 @@ def _parse_cog_http_meta(
     # that ``monkeypatch.setattr(_reader, 'MAX_HTTP_HEADER_BYTES', ...)``
     # (the pattern used by ``test_http_meta_buffer_1718``) keeps shrinking
     # the cap after the helper moved into ``_cog_http`` (PR-J / #2258).
+    # The capture is one-shot at function entry rather than per-iteration:
+    # the original ``_reader._parse_cog_http_meta`` referenced the module
+    # globals each loop pass, but the constants are not mutated mid-call
+    # anywhere in the codebase or test suite, so a single read at the top
+    # is behaviourally equivalent and avoids a per-iteration attribute
+    # lookup on the ``_reader`` module.
     from . import _reader
     initial_bytes = _reader.INITIAL_HTTP_HEADER_BYTES
     max_bytes = _reader.MAX_HTTP_HEADER_BYTES
