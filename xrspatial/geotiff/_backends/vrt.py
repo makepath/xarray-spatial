@@ -362,6 +362,10 @@ def read_vrt(source: str, *,
     _xml_str = _read_vrt_xml(source)
     _vrt_dir = _os.path.dirname(_os.path.abspath(source))
     _parsed_vrt = _parse_vrt(_xml_str, _vrt_dir)
+    _band_nodata_values = (
+        [b.nodata for b in _parsed_vrt.bands]
+        if _parsed_vrt.bands else None
+    )
     validate_read_metadata({
         'allow_rotated': allow_rotated,
         'allow_unparseable_crs': allow_unparseable_crs,
@@ -370,10 +374,7 @@ def read_vrt(source: str, *,
         ),
         'crs_wkt': _parsed_vrt.crs_wkt,
         'band_nodata': band_nodata,
-        'band_nodata_values': (
-            [b.nodata for b in _parsed_vrt.bands]
-            if _parsed_vrt.bands else None
-        ),
+        'band_nodata_values': _band_nodata_values,
     })
 
     # Thread ``mask_nodata`` into the internal reader so the float
@@ -573,9 +574,7 @@ def read_vrt(source: str, *,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
         band_nodata=band_nodata,
-        band_nodata_values=(
-            [b.nodata for b in vrt.bands] if vrt.bands else None
-        ),
+        band_nodata_values=_band_nodata_values,
         attrs_in=attrs_seed,
     )
     _apply_caller_dtype_cast(
@@ -717,15 +716,16 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # the ``band`` / window / ``max_pixels`` validators below so the
     # error ordering matches the eager path.
     from .._validation import validate_read_metadata
+    band_nodata_values = (
+        [b.nodata for b in vrt.bands] if vrt.bands else None
+    )
     validate_read_metadata({
         'allow_rotated': allow_rotated,
         'allow_unparseable_crs': allow_unparseable_crs,
         'transform': _gdal_geotransform_to_affine_tuple(vrt.geo_transform),
         'crs_wkt': vrt.crs_wkt,
         'band_nodata': band_nodata,
-        'band_nodata_values': (
-            [b.nodata for b in vrt.bands] if vrt.bands else None
-        ),
+        'band_nodata_values': band_nodata_values,
     })
 
     # Validate ``band`` against the parsed band count, matching the
@@ -1007,9 +1007,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
         band_nodata=band_nodata,
-        band_nodata_values=(
-            [b.nodata for b in vrt.bands] if vrt.bands else None
-        ),
+        band_nodata_values=band_nodata_values,
         attrs_in=attrs_seed,
     )
     _apply_caller_dtype_cast(

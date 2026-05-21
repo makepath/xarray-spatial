@@ -785,7 +785,7 @@ def _validate_read_geo_info(
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
     band_nodata: str | None = None,
-    band_nodata_values=None,
+    band_nodata_values: list | None = None,
 ) -> None:
     """Run issue #1987 read-side ambiguous-metadata checks against ``geo_info``.
 
@@ -1361,7 +1361,7 @@ def _finalize_lazy_read_attrs(
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
     band_nodata: str | None = None,
-    band_nodata_values=None,
+    band_nodata_values: list | None = None,
     attrs_in: dict | None = None,
 ):
     """Validate and populate attrs for dask-style lazy reads.
