@@ -633,10 +633,12 @@ def _extract_transform(ifd: IFD,
         raise ``NotImplementedError``.
 
         This contract is read-only. ``rotated_affine`` is not currently
-        emitted by the writer, so a read-with-``allow_rotated``
-        followed by ``to_geotiff`` round-trip silently writes an
-        identity-affine output and drops the original rotation. If
-        round-trip preservation matters, the writer needs a separate
+        emitted by the writer. As of issue #2216 the writer refuses
+        such inputs with a ``ValueError`` naming the attr unless the
+        caller passes ``drop_rotation=True`` to accept the loss
+        explicitly; the silent identity-affine round-trip the previous
+        wording warned about is no longer reachable. If round-trip
+        preservation matters, the writer needs a separate
         ``ModelTransformationTag`` emit path that consumes
         ``rotated_affine`` (see issue #2115 follow-up).
 

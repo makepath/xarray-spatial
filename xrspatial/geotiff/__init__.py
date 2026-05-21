@@ -446,9 +446,10 @@ def open_geotiff(source: str | BinaryIO, *,
         pixel, and ``dtype=<integer>`` then raises ``ValueError`` on the
         float-to-int cast.
     allow_rotated : bool, default False
-        Advanced: read-only opt-in; ``to_geotiff`` does not currently
-        emit ``rotated_affine`` so a read-then-write round-trip writes
-        an identity-affine output and silently drops the rotation.
+        Advanced: read-only opt-in. ``to_geotiff`` does not currently
+        emit ``rotated_affine``; it rejects DataArrays that carry the
+        attr (``ValueError`` naming the attr) unless the caller passes
+        ``drop_rotation=True`` to accept the loss explicitly (#2216).
         Read-side opt-in for rotated / sheared ``ModelTransformationTag``
         files. By default the reader raises ``NotImplementedError``
         because the rest of xrspatial assumes an axis-aligned grid.
@@ -463,10 +464,11 @@ def open_geotiff(source: str | BinaryIO, *,
         ``attrs['rotated_affine']`` as ``(a, b, c, d, e, f)`` (rasterio
         ``Affine`` ordering) so consumers that know how to handle
         rotated rasters can recover the mapping (issue #2129). The
-        contract is read-only -- ``to_geotiff`` does not currently
-        emit rotated transforms, so a read-then-write round-trip
-        writes an identity-affine output and silently drops the
-        rotation (issue #2115).
+        contract is read-only -- writes must either reproject onto an
+        axis-aligned grid first, or pass ``drop_rotation=True`` to
+        ``to_geotiff`` / ``write_geotiff_gpu`` to accept the loss; the
+        ``ModelTransformationTag`` emit path is tracked separately
+        (issue #2115).
 
     Returns
     -------

@@ -34,6 +34,7 @@ from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
 from .._runtime import GeoTIFFFallbackWarning, _resolve_spatial_coords
 from .._validation import (
     _validate_3d_writer_dims,
+    _validate_no_rotated_affine,
     _validate_nodata_arg,
     _validate_tile_size_arg,
     _validate_writer_spatial_shape,
@@ -85,7 +86,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       photometric: str | int = 'auto',
                       allow_internal_only_jpeg: bool = False,
                       allow_experimental_codecs: bool = False,
-                      allow_unparseable_crs: bool = False
+                      allow_unparseable_crs: bool = False,
+                      drop_rotation: bool = False,
                       ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
@@ -241,6 +243,14 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         ``GTCitationGeoKey`` (default ``False``). See
         :func:`to_geotiff` for the full description; the GPU writer
         applies the same fail-closed default. See issue #1929.
+    drop_rotation : bool, default False
+        Opt in to writing a DataArray that carries
+        ``attrs['rotated_affine']``. Mirrors the same kwarg on
+        ``to_geotiff`` so the two writers share one gate. Default
+        ``False`` refuses the write with ``ValueError``; the GPU
+        writer does not emit a ``ModelTransformationTag`` either
+        (tracked in #2115), so the silent-loss surface is identical
+        on both backends. See issue #2216.
 
     Returns
     -------
@@ -350,6 +360,16 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # keep parity with the public to_geotiff entry point.
     _validate_tile_size_arg(tile_size)
     _validate_nodata_arg(nodata)
+
+    # Issue #2216: refuse to silently drop ``attrs['rotated_affine']``.
+    # Mirror the gate ``to_geotiff`` runs upstream so direct callers of
+    # ``write_geotiff_gpu`` get the same rejection.
+    _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
+    _validate_no_rotated_affine(
+        _drop_rotation_attrs,
+        drop_rotation=drop_rotation,
+        entry_point="write_geotiff_gpu",
+    )
 
     # Issue #2075: reject empty spatial shapes. ``write_geotiff_gpu`` is
     # a public entry point and direct callers (with cupy.ndarray or raw
