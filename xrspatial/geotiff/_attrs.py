@@ -25,7 +25,7 @@ is present, and pass-through keys are kept when the writer can
 reconstruct them from canonical state.
 
 The contract version is recorded in ``attrs['_xrspatial_geotiff_contract']``
-(currently ``3``). Consumers can branch on this integer if the tier
+(currently ``4``). Consumers can branch on this integer if the tier
 split changes in a future release.
 
 Canonical (xrspatial owns these; round-trip stable):
