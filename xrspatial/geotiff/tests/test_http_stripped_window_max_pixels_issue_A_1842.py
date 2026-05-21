@@ -28,6 +28,22 @@ from xrspatial.geotiff._reader import (
 from xrspatial.geotiff._writer import write
 
 
+@pytest.fixture(autouse=True)
+def _no_sidecar_probe(monkeypatch):
+    """Pin the byte-range assertions against the no-sidecar path.
+
+    Issue #2239 added a sidecar-discovery probe to ``_read_cog_http``
+    (an extra ``(0, 1)`` range fetch for ``<url>.ovr``) that shows up
+    in ``_RecordingHTTPSource.calls`` and breaks the strip-fetch
+    counts this file asserts. Disable discovery here so the
+    assertions continue to measure exactly the strip GETs the issue
+    is about. Sidecar behaviour for the chunked HTTP path is covered
+    by ``test_remote_sidecar_chunked_2239.py``.
+    """
+    from xrspatial.geotiff import _sidecar as _sidecar_mod
+    monkeypatch.setattr(_sidecar_mod, 'find_sidecar', lambda _src: None)
+
+
 class _RecordingHTTPSource(_HTTPSource):
     """In-memory ``_HTTPSource`` that records every range fetch.
 
@@ -263,8 +279,12 @@ def test_windowed_strip_byte_cap_skips_unrelated_oversized_strip(
     poison_target = {'idx': None, 'cap': max_tile_bytes}
 
     def fake_meta(source, *args, **kwargs):
-        header, ifd, geo_info, header_bytes = real_meta(
-            source, *args, **kwargs)
+        # ``_parse_cog_http_meta`` returns a 5-tuple when
+        # ``return_sidecar=True`` (the path ``_read_cog_http`` uses
+        # post-#2239) and a 4-tuple otherwise. Forward whatever the
+        # real function produced; only the IFD needs poisoning here.
+        result = real_meta(source, *args, **kwargs)
+        ifd = result[1]
         n_strips = len(ifd.strip_offsets)
         assert n_strips >= 3, "test needs >=3 strips"
         # Poison the *last* strip with a count larger than the cap. The
@@ -273,7 +293,7 @@ def test_windowed_strip_byte_cap_skips_unrelated_oversized_strip(
         poison_idx = n_strips - 1
         _poison_strip_byte_count(ifd, poison_idx, max_tile_bytes * 4)
         poison_target['idx'] = poison_idx
-        return header, ifd, geo_info, header_bytes
+        return result
 
     monkeypatch.setattr(_r, '_parse_cog_http_meta', fake_meta)
     src = _RecordingHTTPSource(buf)
@@ -322,14 +342,16 @@ def test_windowed_strip_decoded_dim_guard_rejects_oversized_strip(
     real_meta = _r._parse_cog_http_meta
 
     def fake_meta(source, *args, **kwargs):
-        header, ifd, geo_info, header_bytes = real_meta(
-            source, *args, **kwargs)
+        # ``_parse_cog_http_meta`` returns a 5-tuple when
+        # ``return_sidecar=True`` (post-#2239) and a 4-tuple otherwise.
+        result = real_meta(source, *args, **kwargs)
+        ifd = result[1]
         # Claim a width that, multiplied by rows-per-strip and samples,
         # blows past ``MAX_PIXELS_DEFAULT`` (1e9). 1024x1024 sample TIFF
         # with 256 rps -> set width to 5_000_000 so each strip would
         # decode 5_000_000 * 256 = 1.28e9 pixels, above the cap.
         ifd.entries[TAG_IMAGE_WIDTH].value = 5_000_000
-        return header, ifd, geo_info, header_bytes
+        return result
 
     monkeypatch.setattr(_r, '_parse_cog_http_meta', fake_meta)
     src = _RecordingHTTPSource(buf)

@@ -229,11 +229,22 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # (capped by ``MAX_HTTP_HEADER_BYTES``). Avoids the
         # whole-file fetch that would otherwise happen on every
         # ``open_geotiff(..., chunks=...)`` graph build for a large COG.
+        #
+        # ``source_path=source`` opts the parser into external
+        # ``.tif.ovr`` sidecar discovery (issue #2239). Without it,
+        # ``open_geotiff(uri, chunks=..., overview_level=1)`` on a
+        # GDAL external-overview file raised out-of-range or picked a
+        # different overview than the eager read of the same URI.
+        # ``return_sidecar=False`` (the default) makes the helper
+        # close the sidecar buffer for us before returning -- the
+        # metadata-only path here only needs ``geo_info`` and the
+        # IFD's dimensions, both populated before the buffer is freed.
         _src = _CloudSource(source)
         try:
             _header, _ifd, geo_info, _ = _parse_cog_http_meta(
                 _src, overview_level=overview_level,
-                allow_rotated=allow_rotated)
+                allow_rotated=allow_rotated,
+                source_path=source)
         finally:
             _src.close()
         bps = resolve_bits_per_sample(_ifd.bits_per_sample)
