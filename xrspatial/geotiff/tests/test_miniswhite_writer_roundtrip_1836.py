@@ -19,12 +19,19 @@ from xrspatial.geotiff import open_geotiff, to_geotiff
 
 def _da(arr: np.ndarray) -> xr.DataArray:
     h, w = arr.shape
+    attrs = {'res': (1.0, 1.0)}
+    # The miniswhite round-trip cases use 1xN strips. Issue #2214 made
+    # the degenerate-axis borrow opt-in; these tests document a square
+    # 1x1-pixel source, so set the flag rather than supply an explicit
+    # transform.
+    if h == 1 or w == 1:
+        attrs['assume_square_pixels_for_degenerate_axis'] = True
     return xr.DataArray(
         arr,
         dims=('y', 'x'),
         coords={'y': np.arange(h, dtype=np.float64),
                 'x': np.arange(w, dtype=np.float64)},
-        attrs={'res': (1.0, 1.0)},
+        attrs=attrs,
     )
 
 
@@ -95,7 +102,11 @@ def test_uint16_miniswhite_with_in_range_nodata_round_trip(tmp_path):
         dims=('y', 'x'),
         coords={'y': np.arange(1, dtype=np.float64),
                 'x': np.arange(4, dtype=np.float64)},
-        attrs={'res': (1.0, 1.0), 'nodata': 9999},
+        # 1xN strip: opt in to the borrow-from-other-axis fallback
+        # (#2214); the test pins miniswhite semantics on a square 1-pixel
+        # source.
+        attrs={'res': (1.0, 1.0), 'nodata': 9999,
+               'assume_square_pixels_for_degenerate_axis': True},
     )
     to_geotiff(da_in, str(path), photometric='miniswhite', nodata=9999)
     r = open_geotiff(str(path))
