@@ -22,12 +22,28 @@ other backends share via ``_coords_to_transform``.
 """
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff, write_geotiff_gpu
 from xrspatial.geotiff._coords import coords_to_transform
+
+
+def _gpu_available() -> bool:
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 
 # Source raster the bug reporter described: 30 m x pixels, 10 m y pixels.
@@ -189,10 +205,8 @@ class TestDegenerateWritesWithOptIn:
         to_geotiff(da, p)
 
         r = open_geotiff(p)
-        # Borrow runs the other direction: x picks up |y step|.
+        # Borrow path takes abs(y step) = 10 and copies it onto pixel_width.
         tx = r.attrs["transform"]
-        # True y step is -10 (top-down), so |pixel_height| = 10 is what
-        # gets copied to pixel_width.
         assert tx[0] == pytest.approx(PIXEL_Y_TRUE)
         assert tx[4] == pytest.approx(-PIXEL_Y_TRUE)
 
@@ -302,3 +316,77 @@ class TestCoordsToTransformHelperContract:
         t = coords_to_transform(da)
         assert t.pixel_width == pytest.approx(PIXEL_X_TRUE)
         assert t.pixel_height == pytest.approx(-PIXEL_Y_TRUE)
+
+
+# ---------------------------------------------------------------------------
+# Cross-backend fail-closed coverage (review follow-up)
+#
+# Every writer routes through ``_require_transform_for_georeferenced``, so
+# the fail-closed branch is correct by construction. These smoke tests
+# pin that contract per backend so a future refactor (e.g. an inlined
+# transform-resolution path added for performance) can't bypass the
+# guard on one specific writer without an obvious red test.
+# ---------------------------------------------------------------------------
+
+
+class TestDegenerateFailClosedAcrossBackends:
+    """Every writer raises on a 1xN / Nx1 input without opt-in or transform."""
+
+    def test_dask_numpy_1xN_raises(self, tmp_path):
+        da = _strip_1xN_nonsquare().chunk({"x": 4, "y": 1})
+        p = str(tmp_path / "dask_np_fail_1xN_2214.tif")
+        with pytest.raises(ValueError) as excinfo:
+            to_geotiff(da, p)
+        msg = str(excinfo.value)
+        assert "transform" in msg
+        assert "assume_square_pixels_for_degenerate_axis" in msg
+
+    def test_dask_numpy_Nx1_raises(self, tmp_path):
+        da = _strip_Nx1_nonsquare().chunk({"x": 1, "y": 4})
+        p = str(tmp_path / "dask_np_fail_Nx1_2214.tif")
+        with pytest.raises(ValueError, match="(?i)pixel size|transform"):
+            to_geotiff(da, p)
+
+    def test_vrt_1xN_raises(self, tmp_path):
+        """``to_geotiff(da, '*.vrt')`` dispatches through the VRT writer."""
+        da = _strip_1xN_nonsquare()
+        p = str(tmp_path / "vrt_fail_1xN_2214.vrt")
+        with pytest.raises(ValueError, match="(?i)pixel size|transform"):
+            to_geotiff(da, p)
+
+    def test_vrt_Nx1_raises(self, tmp_path):
+        da = _strip_Nx1_nonsquare()
+        p = str(tmp_path / "vrt_fail_Nx1_2214.vrt")
+        with pytest.raises(ValueError, match="(?i)pixel size|transform"):
+            to_geotiff(da, p)
+
+    @_gpu_only
+    def test_gpu_1xN_raises(self, tmp_path):
+        import cupy
+        da_cpu = _strip_1xN_nonsquare()
+        da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
+        da_gpu.attrs = dict(da_cpu.attrs)
+        p = str(tmp_path / "gpu_fail_1xN_2214.tif")
+        with pytest.raises(ValueError, match="(?i)pixel size|transform"):
+            write_geotiff_gpu(da_gpu, p)
+
+    @_gpu_only
+    def test_gpu_Nx1_raises(self, tmp_path):
+        import cupy
+        da_cpu = _strip_Nx1_nonsquare()
+        da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
+        da_gpu.attrs = dict(da_cpu.attrs)
+        p = str(tmp_path / "gpu_fail_Nx1_2214.tif")
+        with pytest.raises(ValueError, match="(?i)pixel size|transform"):
+            write_geotiff_gpu(da_gpu, p)
+
+    @_gpu_only
+    def test_dask_cupy_1xN_raises(self, tmp_path):
+        import cupy
+        da_cpu = _strip_1xN_nonsquare()
+        da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
+        da_gpu.attrs = dict(da_cpu.attrs)
+        da_gpu = da_gpu.chunk({"x": 4, "y": 1})
+        p = str(tmp_path / "dask_cupy_fail_1xN_2214.tif")
+        with pytest.raises(ValueError, match="(?i)pixel size|transform"):
+            to_geotiff(da_gpu, p)
