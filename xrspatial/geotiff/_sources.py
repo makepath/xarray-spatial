@@ -4,9 +4,18 @@ This module is private to :mod:`xrspatial.geotiff`. It owns the
 read-side I/O layer: mmap-backed local files, urllib3-backed HTTP with
 SSRF defences and DNS-rebind pinning, fsspec cloud paths, and an
 in-memory BytesIO adapter. The decode pipeline in ``_reader`` consumes
-these source objects through a small interface (``read_range``,
-``read_all``, ``size``, ``close`` plus optional ``read_ranges`` and
-``read_ranges_coalesced`` for HTTP/cloud).
+these source objects through a small interface:
+
+* ``read_range(start, length) -> bytes`` -- implemented by every source.
+* ``read_all() -> bytes | mmap`` -- implemented by every source.
+* ``size`` property -- implemented by every source.
+* ``close()`` -- implemented by every source.
+* ``read_ranges(ranges, max_workers=...) -> list[bytes]`` -- HTTP and
+  cloud only. ``_FileSource`` and ``_BytesIOSource`` do not implement
+  this; callers that want parallel range fetches must dispatch on the
+  source type or fall back to looping ``read_range``.
+* ``read_ranges_coalesced(ranges, max_workers=..., gap_threshold=...)
+  -> list[bytes]`` -- HTTP and cloud only, same caveat.
 
 The module also contains the byte-range coalescing helpers
 (:func:`coalesce_ranges`, :func:`split_coalesced_bytes`) used by the
@@ -276,7 +285,15 @@ class _MmapCache:
                 self._close_entry_locked(entry)
 
 
-# Module-level cache shared across all reads
+# Module-level cache shared across all reads. This is a *singleton*: there
+# is one shared mmap cache per Python process so concurrent ``_FileSource``
+# instances for the same path share a single mmap and a single refcount.
+# ``_reader.py`` re-exports this exact name so legacy access via
+# ``xrspatial.geotiff._reader._mmap_cache.clear()`` (e.g. in
+# test_vrt_lazy_chunks_1814) still reaches the same instance. A future
+# refactor that adds another ``_MmapCache()`` here, or moves this object
+# to a third module, must keep the single-instance contract or
+# ``_FileSource`` will leak mmaps between cache instances.
 _mmap_cache = _MmapCache()
 
 
@@ -1164,9 +1181,10 @@ class _HTTPSource:
         as soon as the first extra byte lands.
 
         Without a cap, a tiny TIFF header (e.g. 100x100) that survives
-        :func:`_check_dimensions` can still be served as a multi-gigabyte
-        HTTP body and the whole body is allocated before TIFF parsing
-        gets a chance to reject it. Issue #2051.
+        :func:`xrspatial.geotiff._reader._check_dimensions` can still be
+        served as a multi-gigabyte HTTP body and the whole body is
+        allocated before TIFF parsing gets a chance to reject it.
+        Issue #2051.
 
         ``max_bytes=None`` preserves the legacy unbounded behaviour for
         callers that already gate the read upstream (e.g. cloud reads

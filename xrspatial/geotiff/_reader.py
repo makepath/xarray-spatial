@@ -115,23 +115,32 @@ def _check_source_dimensions(width, height, samples):
 #     preserved without churn.
 # Source: PR-E of the GeoTIFF refactor epic, issue #2228.
 from ._sources import (  # noqa: F401
+    # Public module-level constants.
     COALESCE_GAP_THRESHOLD_DEFAULT,
     MAX_CLOUD_BYTES_DEFAULT,
     MAX_TILE_BYTES_DEFAULT,
-    CloudSizeLimitError,
-    UnsafeURLError,
-    _BytesIOSource,
-    _CloudSource,
+    # Private module-level constants and sentinels.
     _CLOUD_SCHEMES,
-    _FileSource,
-    _HTTPSource,
+    _DEFAULT_MMAP_CACHE_SIZE,
     _HTTP_ALLOWED_SCHEMES,
     _HTTP_CONNECT_TIMEOUT_DEFAULT,
     _HTTP_MAX_REDIRECTS,
     _HTTP_READ_TIMEOUT_DEFAULT,
     _MAX_CLOUD_BYTES_SENTINEL,
+    # Exceptions.
+    CloudSizeLimitError,
+    UnsafeURLError,
+    # Source classes and the shared mmap cache singleton.
+    _BytesIOSource,
+    _CloudSource,
+    _FileSource,
+    _HTTPSource,
     _MmapCache,
-    _DEFAULT_MMAP_CACHE_SIZE,
+    _mmap_cache,
+    # Public byte-range helpers.
+    coalesce_ranges,
+    split_coalesced_bytes,
+    # Private helpers and dispatch.
     _build_pinned_connection_classes,
     _coerce_path,
     _get_http_pool,
@@ -145,13 +154,10 @@ from ._sources import (  # noqa: F401
     _is_fsspec_uri,
     _make_pinned_pool,
     _max_tile_bytes_from_env,
-    _mmap_cache,
     _mmap_cache_size_from_env,
     _open_source,
     _resolve_max_cloud_bytes,
     _validate_http_url,
-    coalesce_ranges,
-    split_coalesced_bytes,
 )
 
 #: Per-tile pixel count at and above which the local and HTTP tile-read paths
