@@ -943,7 +943,10 @@ def _parse_cog_http_meta(
     overview_level: int | None = None,
     *,
     allow_rotated: bool = False,
-) -> tuple[TIFFHeader, IFD, GeoInfo, bytes]:
+    source_path: str | None = None,
+    max_cloud_bytes: int | None = None,
+    return_sidecar: bool = False,
+):
     """Fetch + parse the leading IFDs of an HTTP COG once.
 
     The fast path is a single 16 KiB range GET. When the IFD chain or its
@@ -957,7 +960,47 @@ def _parse_cog_http_meta(
     Pulled out of :func:`_read_cog_http` so :func:`read_geotiff_dask`
     can parse metadata once per graph rather than once per chunk task
     (P5: each delayed task used to fire its own 16 KB header GET).
+
+    ``source_path`` is the original URL or fsspec URI used to construct
+    ``source``. When provided, the parser probes for a sibling ``.ovr``
+    sidecar and merges its IFDs onto the pyramid list so an
+    ``overview_level`` that lives in the sidecar resolves the same way
+    the eager local/fsspec reader resolves it (issue #2239). Without
+    it, the function preserves the prior base-only behaviour.
+
+    When ``return_sidecar=True`` and the source has been probed, the
+    return tuple grows an extra slot carrying ``(sidecar, route_path,
+    used_sidecar)`` so callers (the dask backend, the eager HTTP path)
+    can route per-chunk reads at the sidecar URL when the selected IFD
+    came from the sidecar. ``route_path`` is the sidecar URL when
+    ``used_sidecar`` is True, else the original ``source_path``.
+    ``sidecar`` is the :class:`SidecarOverviews` instance the caller
+    must close (or ``None`` when no sidecar was found).
+    ``return_sidecar=True`` requires ``source_path``; the function
+    asserts the precondition so a future caller cannot end up with
+    ``route_path=None`` and then construct ``_HTTPSource(None)`` for
+    per-chunk reads.
+
+    Returns
+    -------
+    tuple
+        ``(header, ifd, geo_info, header_bytes)`` for the default
+        ``return_sidecar=False`` path. When ``return_sidecar=True``,
+        the return is the same 4-tuple with a fifth element appended:
+        ``(sidecar, route_path, used_sidecar)``. The caller owns
+        ``sidecar`` and must close it; ``route_path`` is the URL/URI
+        that per-chunk fetches should target; ``used_sidecar`` is
+        ``True`` iff the selected IFD came from the sidecar.
     """
+    if return_sidecar and source_path is None:
+        # The 5-tuple contract guarantees ``route_path`` is a usable
+        # path. Callers thread it straight into ``_HTTPSource`` /
+        # ``_CloudSource``; ``None`` would crash later with a less
+        # diagnosable error than this precondition does up front.
+        raise TypeError(
+            "_parse_cog_http_meta(return_sidecar=True) requires "
+            "source_path; got source_path=None."
+        )
     fetch_size = INITIAL_HTTP_HEADER_BYTES
     header_bytes = source.read_range(0, fetch_size)
     header = parse_header(header_bytes)
@@ -1002,15 +1045,44 @@ def _parse_cog_http_meta(
     if len(ifds) == 0:
         raise ValueError("No IFDs found in COG")
 
+    # Discover an external `.tif.ovr` sidecar and merge its IFDs onto the
+    # pyramid list before ``select_overview_ifd`` runs. The eager
+    # local/fsspec reader already does this at ``_reader.py``'s
+    # ``read_to_array`` site; without the equivalent step here the dask
+    # metadata path and the eager HTTP path picked a stale (too-shallow)
+    # pyramid for remote GDAL external-overview files and diverged from
+    # the eager local read. Issue #2239.
+    sidecar = None
+    sidecar_ifd_ids: set[int] = set()
+    if source_path is not None:
+        from ._sidecar import discover_remote_sidecar
+        ifds, sidecar, sidecar_ifd_ids = discover_remote_sidecar(
+            source_path, ifds, max_cloud_bytes=max_cloud_bytes,
+        )
+
     ifd = select_overview_ifd(ifds, overview_level)
+    used_sidecar = id(ifd) in sidecar_ifd_ids
     # When the requested IFD is an overview that lacks its own geokeys
     # (the common case for COG writers, including this package's
     # ``to_geotiff``), inherit and rescale the georef from the level-0
     # IFD so overview reads do not silently lose CRS / transform.
-    # See issue #1640.
+    # See issue #1640. We pass ``header_bytes`` even when the selected
+    # IFD lives in the sidecar; that mirrors the eager local reader,
+    # whose sidecar IFDs typically carry no out-of-line geokeys and
+    # inherit from level-0 (which sits in the base buffer). #2239.
     geo_info = extract_geo_info_with_overview_inheritance(
         ifd, ifds, header_bytes, header.byte_order,
         allow_rotated=allow_rotated)
+    if return_sidecar:
+        route_path = sidecar.path if used_sidecar else source_path
+        return (header, ifd, geo_info, header_bytes,
+                (sidecar, route_path, used_sidecar))
+    # Caller did not opt into sidecar metadata. Close the sidecar (if
+    # any was loaded) before returning so the buffer does not leak --
+    # the legacy return tuple has no slot to hand it back through.
+    if sidecar is not None:
+        from ._sidecar import close_sidecar
+        close_sidecar(sidecar)
     return header, ifd, geo_info, header_bytes
 
 
@@ -1055,10 +1127,29 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # resource-holding source would leak on the error path without this.
     # ``close()`` is idempotent, so the explicit pre-raise ``source.close()``
     # calls in the validation blocks below stay as-is.
+    sidecar = None
     try:
-        header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
+        # Issue #2239: discover the sibling ``.tif.ovr`` sidecar so HTTP
+        # COG reads honour external overview pyramids the same way the
+        # eager local/fsspec path does. ``source_path=url`` opts into
+        # the discovery; ``return_sidecar=True`` hands back the loaded
+        # sidecar so we can switch the byte-fetch source when the
+        # requested overview lives there.
+        (header, ifd, geo_info, header_bytes, sidecar_meta
+         ) = _parse_cog_http_meta(
             source, overview_level=overview_level,
-            allow_rotated=allow_rotated)
+            allow_rotated=allow_rotated,
+            source_path=url,
+            return_sidecar=True,
+        )
+        sidecar, route_path, used_sidecar = sidecar_meta
+        # When the chosen IFD lives in the sidecar, tile/strip byte
+        # offsets resolve against the sidecar URL, not the base URL.
+        # Swap the ``_HTTPSource`` to the sidecar before any pixel
+        # fetch goes out, so the range GETs land on the right object.
+        if used_sidecar:
+            source.close()
+            source = _HTTPSource(route_path)
 
         # Mirror the local-path orientation guard in ``read_to_array``: a
         # windowed read against a non-default Orientation tag (274) has
@@ -1165,6 +1256,13 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         arr = _apply_photometric_miniswhite(arr, ifd)
     finally:
         source.close()
+        # Issue #2239: free the sidecar buffer when one was loaded.
+        # ``close_sidecar`` is a no-op for ``None`` and for the HTTP
+        # ``bytes`` buffer, but keeps the contract consistent with the
+        # local/fsspec eager path that also routes through it.
+        if sidecar is not None:
+            from ._sidecar import close_sidecar
+            close_sidecar(sidecar)
 
     return arr, geo_info
 

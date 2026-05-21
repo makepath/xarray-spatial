@@ -84,6 +84,23 @@ def _allow_loopback(monkeypatch):
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
 
 
+@pytest.fixture(autouse=True)
+def _no_sidecar_probe(monkeypatch):
+    """Pin the close-count assertions against the no-sidecar code path.
+
+    Issue #2239 added a sidecar-discovery probe to ``_read_cog_http``
+    (one extra ``_HTTPSource`` construction for ``<url>.ovr``). The
+    fixtures in this file use a server that returns 200 for every
+    path, so the probe sees a "sidecar" that does not actually exist.
+    Disable discovery here so the test continues to count exactly the
+    construction the close-on-error contract is supposed to cover.
+    Sidecar-probe behaviour is exercised separately in
+    ``test_remote_sidecar_chunked_2239.py``.
+    """
+    from xrspatial.geotiff import _sidecar as _sidecar_mod
+    monkeypatch.setattr(_sidecar_mod, 'find_sidecar', lambda _src: None)
+
+
 # ---------------------------------------------------------------------------
 # Close-tracking wrapper installed via monkeypatch on the _HTTPSource
 # constructor used inside _read_cog_http.

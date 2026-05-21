@@ -178,6 +178,13 @@ def read_geotiff_dask(source: str, *,
     is_fsspec = isinstance(source, str) and _is_fsspec_uri(source)
     http_meta = None
     http_meta_key = None
+    # ``effective_source`` is the path each per-chunk task should
+    # construct its ``_HTTPSource`` / ``_CloudSource`` against. It
+    # matches ``source`` unless the requested ``overview_level``
+    # resolves into an external ``.tif.ovr`` sidecar (issue #2239), in
+    # which case it is swapped to the sidecar URL so the per-chunk
+    # range GETs land on the right object.
+    effective_source = source
     if is_http or is_fsspec:
         import dask
         from .._reader import _parse_cog_http_meta
@@ -187,6 +194,7 @@ def read_geotiff_dask(source: str, *,
         else:
             from .._reader import _CloudSource
             _src = _CloudSource(source)
+        sidecar = None
         try:
             # Forward ``allow_rotated`` so the HTTP dask path honours the
             # rotated opt-in the same way as the eager HTTP path and the
@@ -194,11 +202,35 @@ def read_geotiff_dask(source: str, *,
             # GeoTIFFs raised ``NotImplementedError`` from
             # ``_parse_cog_http_meta`` even when the caller had passed
             # ``allow_rotated=True``.
-            http_header, http_ifd, http_geo, _ = _parse_cog_http_meta(
+            #
+            # ``source_path=source`` and ``return_sidecar=True`` opt the
+            # parser into external ``.tif.ovr`` discovery so chunked
+            # remote reads honour the same overview pyramid the eager
+            # reader resolves (issue #2239). When the selected overview
+            # lives in the sidecar, ``route_path`` points at the
+            # sidecar URL and we swap ``effective_source`` so every
+            # per-chunk task reads from the sidecar instead of the base
+            # URL.
+            (http_header, http_ifd, http_geo, _, sidecar_meta
+             ) = _parse_cog_http_meta(
                 _src, overview_level=overview_level,
-                allow_rotated=allow_rotated)
+                allow_rotated=allow_rotated,
+                source_path=source,
+                return_sidecar=True,
+            )
+            sidecar, route_path, used_sidecar = sidecar_meta
+            if used_sidecar:
+                effective_source = route_path
         finally:
             _src.close()
+            # Sidecar bytes (HTTP / fsspec) live in memory; the
+            # per-chunk task does not reuse them, so the metadata-only
+            # graph build releases them here. The local-file mmap path
+            # is owned by this function's frame; ``close_sidecar`` is
+            # a no-op for ``bytes`` and idempotent for ``mmap``.
+            if sidecar is not None:
+                from .._sidecar import close_sidecar
+                close_sidecar(sidecar)
         http_meta = (http_header, http_ifd)
         if http_ifd.orientation != 1:
             raise ValueError(
@@ -451,8 +483,16 @@ def read_geotiff_dask(source: str, *,
             # ``nodata_attr`` so write round-trips preserve the tag. See
             # issue #2052.
             chunk_nodata = nodata if mask_nodata else None
+            # ``effective_source`` swaps in the sidecar URL when the
+            # requested overview lives in an external ``.tif.ovr``
+            # (issue #2239). For local files and non-sidecar remote
+            # reads it is identical to ``source``. The per-chunk task
+            # uses ``effective_source`` for byte fetches; combined
+            # with ``http_meta_key`` (which already carries the
+            # sidecar's ``(header, ifd)`` pair), this routes every
+            # range GET at the sidecar object instead of the base URL.
             block = da.from_delayed(
-                _delayed_read_window(source,
+                _delayed_read_window(effective_source,
                                      r0 + win_r0, c0 + win_c0,
                                      r1 + win_r0, c1 + win_c0,
                                      overview_level, chunk_nodata,

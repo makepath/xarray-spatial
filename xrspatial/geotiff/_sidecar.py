@@ -282,3 +282,80 @@ def attach_sidecar_origin(
     surrounding ``read_to_array`` call frame.
     """
     return {id(ifd): (data, header) for ifd in ifds}
+
+
+def discover_remote_sidecar(
+    source,
+    base_ifds: list[IFD],
+    *,
+    max_cloud_bytes: int | None = None,
+) -> tuple[list[IFD], 'SidecarOverviews | None', set[int]]:
+    """Probe for a sibling ``.ovr`` and return a merged IFD list.
+
+    Wraps :func:`find_sidecar` and :func:`load_sidecar` so the HTTP /
+    fsspec dask metadata path, the eager HTTP path, and
+    ``_read_geo_info``'s fsspec branch can resolve ``overview_level``
+    against the same merged pyramid the eager local/fsspec reader
+    already does (issue #2239).
+
+    Returns:
+
+    * ``merged_ifds`` -- the base IFD list with sidecar IFDs appended
+      (or unchanged when no sidecar is present).
+    * ``sidecar`` -- the :class:`SidecarOverviews` instance the caller
+      must close, or ``None``.
+    * ``sidecar_ifd_ids`` -- a set of ``id()`` values for the sidecar
+      IFDs. Callers route per-chunk reads to ``sidecar.path`` when the
+      selected IFD's ``id()`` is in this set; non-sidecar IFDs fall
+      through to the original source.
+
+    Discovery is silent: probes that fail (404, missing fsspec,
+    timeout, etc.) return ``([...base_ifds], None, set())``. A
+    successful probe whose download or parse subsequently fails -- for
+    example a hostile server that returns 200 to every URL but the
+    bytes are not a valid TIFF, or a transient network error during
+    download -- also falls back to base-only behaviour with the
+    exception swallowed, so a misbehaving server cannot poison an
+    otherwise valid base read.
+
+    Raises
+    ------
+    CloudSizeLimitError
+        Re-raised verbatim when the sidecar download breaches
+        ``max_cloud_bytes`` (the one exception that survives the
+        otherwise silent fall-back). The budget is a caller-set
+        contract; surfacing the breach lets the caller distinguish "no
+        sidecar" from "sidecar too big" rather than silently dropping
+        the level and reading a stale base-only pyramid. Set
+        ``max_cloud_bytes=None`` to disable the budget. Other failures
+        are converted to a base-only return so callers debugging a
+        surprise sidecar miss should reach for this carve-out first.
+
+    Local file paths are accepted too; the helper is shape-agnostic.
+    """
+    sidecar_path = find_sidecar(source)
+    if sidecar_path is None:
+        return list(base_ifds), None, set()
+    # Local-import to avoid a top-level cycle with ``_reader``. Same
+    # rationale as the ``_HTTPSource`` import inside ``_probe_http``.
+    from ._reader import CloudSizeLimitError
+    try:
+        sidecar = load_sidecar(sidecar_path, max_cloud_bytes=max_cloud_bytes)
+    except CloudSizeLimitError:
+        # Budget breach is a deliberate caller-visible failure mode --
+        # propagate so the caller learns about it rather than silently
+        # dropping the sidecar level and reading a stale base-only
+        # pyramid. See ``load_sidecar`` for the error contract.
+        raise
+    except Exception:
+        # Probe succeeded but the download / parse failed. Either the
+        # probe URL was a false positive (a server returning 200 for
+        # every path), the bytes are malformed, or a transient network
+        # error happened during the download. Fall back to base-only
+        # behaviour -- the caller still gets a working read of the in-
+        # file IFD chain. Mirrors the silent-fail-to-base contract
+        # ``find_sidecar`` uses for the probe itself.
+        return list(base_ifds), None, set()
+    merged = list(base_ifds) + list(sidecar.ifds)
+    sidecar_ifd_ids = {id(ifd) for ifd in sidecar.ifds}
+    return merged, sidecar, sidecar_ifd_ids
