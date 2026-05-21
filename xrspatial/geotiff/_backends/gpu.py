@@ -21,7 +21,6 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import (
-    _apply_caller_dtype_cast,
     _finalize_eager_read,
     _finalize_lazy_read_attrs,
     _populate_attrs_from_geo_info,
@@ -1474,27 +1473,23 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     # Wave 2 of #2162: share the validate-then-populate-then-stamp
     # block with the dask+numpy backend via ``_finalize_lazy_read_attrs``.
     #
-    # The helper takes ``dtype`` as the resolved graph dtype so
-    # ``masked_nodata`` reflects whether per-chunk masking actually
-    # runs in the lazy graph (#2092). ``nodata_pixels_present`` stays
-    # unset on this path for the same reason as the dask+numpy path:
-    # a strict per-chunk reduction would force an eager ``.compute()``
-    # (#2135). The helper's ``dtype`` argument is conflated with the
-    # caller-supplied cast attr; fix the attr up here so
-    # ``nodata_dtype_cast`` surfaces only when the caller explicitly
-    # asked for a cast, not when masking auto-promoted the graph
-    # dtype to float64.
+    # ``graph_dtype`` is the resolved graph dtype so ``masked_nodata``
+    # reflects whether per-chunk masking actually runs in the lazy
+    # graph (#2092). ``caller_dtype`` is the user's ``dtype=`` kwarg so
+    # ``nodata_dtype_cast`` surfaces caller intent, not the
+    # masking-induced int->float64 auto-promotion.
+    # ``nodata_pixels_present`` stays unset on this path for the same
+    # reason as the dask+numpy path: a strict per-chunk reduction
+    # would force an eager ``.compute()`` (#2135).
     attrs = _finalize_lazy_read_attrs(
         geo_info=geo_info,
         nodata=nodata,
         mask_nodata=mask_nodata,
-        dtype=declared_dtype,
+        graph_dtype=declared_dtype,
+        caller_dtype=dtype,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
-    )
-    _apply_caller_dtype_cast(
-        attrs, caller_dtype=dtype, has_nodata=nodata is not None,
     )
 
     if name is None:

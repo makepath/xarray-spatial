@@ -401,7 +401,8 @@ def test_lazy_float_dtype_sets_masked_true_no_pixels_present_attr():
         geo_info=gi,
         nodata=-9999,
         mask_nodata=True,
-        dtype='float64',
+        graph_dtype='float64',
+        caller_dtype='float64',
         window=None,
     )
 
@@ -420,20 +421,76 @@ def test_lazy_int_graph_dtype_keeps_masked_false():
         geo_info=gi,
         nodata=0,
         mask_nodata=True,
-        dtype='int16',
+        graph_dtype='int16',
+        caller_dtype=None,
         window=None,
     )
 
     # Integer graph -> the per-chunk mask cannot have run, so masked=False
     # mirrors the #2092 contract even though the caller asked for masking.
     assert attrs['masked_nodata'] is False
-    # Wave 1 contract: whatever ``dtype`` the caller passes lands as
-    # ``nodata_dtype_cast``. The lazy helper does not distinguish "caller
-    # explicitly passed dtype=int16" from "graph dtype is int16 by
-    # default"; that split is wave 2's call to make per the helper
-    # docstring. Pinning the int16 value here locks in the conflated
-    # semantics so wave 2 catches any drift.
+    # Post-#2206 split: no caller cast -> ``nodata_dtype_cast`` stays
+    # absent. The auto-promoted graph dtype never leaks into the attr.
+    assert 'nodata_dtype_cast' not in attrs
+
+
+def test_lazy_int_caller_cast_records_dtype():
+    # Companion to the test above: when the caller explicitly passes
+    # ``dtype='int16'`` (an actual cast request), the attr surfaces.
+    gi = _default_geo_info(nodata=0)
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=0,
+        mask_nodata=True,
+        graph_dtype='int16',
+        caller_dtype='int16',
+        window=None,
+    )
+
+    assert attrs['masked_nodata'] is False
     assert attrs['nodata_dtype_cast'] == 'int16'
+
+
+def test_lazy_graph_and_caller_dtype_differ():
+    # Pins which parameter drives which attr when they actually differ:
+    # ``graph_dtype`` drives ``masked_nodata`` (float graph -> per-chunk
+    # mask runs), ``caller_dtype`` drives ``nodata_dtype_cast`` (records
+    # the user's cast request, not the graph dtype). An accidental swap
+    # of the two arguments would flip both attrs at once.
+    gi = _default_geo_info(nodata=0)
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=0,
+        mask_nodata=True,
+        graph_dtype='float64',
+        caller_dtype='int16',
+        window=None,
+    )
+
+    assert attrs['masked_nodata'] is True
+    assert attrs['nodata_dtype_cast'] == 'int16'
+
+
+def test_lazy_mask_promoted_graph_no_caller_cast():
+    # Mirrors the dask backend's int->float64 auto-promotion case: graph
+    # dtype is float64 because masking forces it, but the caller did not
+    # ask for any cast. ``masked_nodata`` follows the graph dtype;
+    # ``nodata_dtype_cast`` follows caller intent (absent here).
+    gi = _default_geo_info(nodata=0)
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=0,
+        mask_nodata=True,
+        graph_dtype='float64',
+        caller_dtype=None,
+        window=None,
+    )
+
+    assert attrs['masked_nodata'] is True
+    assert 'nodata_dtype_cast' not in attrs
 
 
 def test_lazy_mask_nodata_false_sets_masked_false():
@@ -443,7 +500,8 @@ def test_lazy_mask_nodata_false_sets_masked_false():
         geo_info=gi,
         nodata=-9999,
         mask_nodata=False,
-        dtype='float64',
+        graph_dtype='float64',
+        caller_dtype=None,
         window=None,
     )
 
@@ -451,16 +509,17 @@ def test_lazy_mask_nodata_false_sets_masked_false():
     assert 'nodata_pixels_present' not in attrs
 
 
-def test_lazy_no_dtype_resolves_to_masked_false():
-    # ``dtype=None`` means the caller didn't resolve a graph dtype to
-    # compare against (matches the pre-#2135 dask paths in tests).
+def test_lazy_no_graph_dtype_resolves_to_masked_false():
+    # ``graph_dtype=None`` means the caller didn't resolve a graph dtype
+    # to compare against (matches the pre-#2135 dask paths in tests).
     gi = _default_geo_info()
 
     attrs = _finalize_lazy_read_attrs(
         geo_info=gi,
         nodata=-9999,
         mask_nodata=True,
-        dtype=None,
+        graph_dtype=None,
+        caller_dtype=None,
         window=None,
     )
 
@@ -475,7 +534,8 @@ def test_lazy_no_nodata_omits_nodata_attrs():
         geo_info=gi,
         nodata=None,
         mask_nodata=True,
-        dtype='float64',
+        graph_dtype='float64',
+        caller_dtype='float64',
         window=None,
     )
 
@@ -501,7 +561,8 @@ def test_lazy_raises_on_unparseable_crs_without_partial_attrs():
             geo_info=gi,
             nodata=-9999,
             mask_nodata=True,
-            dtype='float64',
+            graph_dtype='float64',
+            caller_dtype='float64',
             window=None,
             attrs_in=seed,
         )
@@ -518,7 +579,8 @@ def test_lazy_allow_unparseable_crs_bypasses_check():
         geo_info=gi,
         nodata=-9999,
         mask_nodata=True,
-        dtype='float64',
+        graph_dtype='float64',
+        caller_dtype='float64',
         window=None,
         allow_unparseable_crs=True,
     )
@@ -550,7 +612,8 @@ def test_lazy_and_eager_produce_same_georef_and_nodata_attrs():
         geo_info=gi,
         nodata=-9999,
         mask_nodata=True,
-        dtype='float64',
+        graph_dtype='float64',
+        caller_dtype='float64',
         window=None,
     )
 

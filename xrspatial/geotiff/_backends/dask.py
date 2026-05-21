@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from .._attrs import _apply_caller_dtype_cast, _finalize_lazy_read_attrs
+from .._attrs import _finalize_lazy_read_attrs
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
@@ -367,19 +367,13 @@ def read_geotiff_dask(source: str, *,
     # Wave 2 of #2162: share the validate-then-populate-then-stamp
     # block with the dask+GPU backend via ``_finalize_lazy_read_attrs``.
     #
-    # The helper conflates two ``dtype`` concepts (see the helper
-    # docstring): the **graph dtype** used to compute ``masked_nodata``
-    # and the **caller cast** recorded as ``nodata_dtype_cast``. The
-    # dask path distinguishes the two because masking on an integer
-    # source auto-promotes the graph dtype to ``float64`` without the
-    # caller asking for a cast, and we do not want that auto-promotion
-    # to surface as ``nodata_dtype_cast``.
-    #
-    # Pass ``target_dtype`` so ``masked_nodata`` reflects the resolved
-    # graph dtype, then overwrite ``nodata_dtype_cast`` to match the
-    # caller-supplied ``dtype=`` kwarg: omitted when ``dtype is None``,
-    # set to ``np.dtype(dtype).name`` otherwise. This preserves the
-    # pre-helper attr contract on the dask path.
+    # ``graph_dtype`` is the resolved dask graph dtype so
+    # ``masked_nodata`` reflects whether the per-chunk mask actually
+    # ran (masking on an int source auto-promotes to float64; an
+    # un-promoted int graph means masking didn't run -- #2092).
+    # ``caller_dtype`` is the caller's ``dtype=`` kwarg verbatim so
+    # ``nodata_dtype_cast`` records caller intent rather than the
+    # masking-induced auto-promotion.
     #
     # ``nodata_attr`` (not the MinIsWhite-inverted ``nodata``) is what
     # ``attrs['nodata']`` must carry; the helper threads it through
@@ -390,13 +384,11 @@ def read_geotiff_dask(source: str, *,
         geo_info=geo_info,
         nodata=nodata_attr,
         mask_nodata=mask_nodata,
-        dtype=target_dtype,
+        graph_dtype=target_dtype,
+        caller_dtype=dtype,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
-    )
-    _apply_caller_dtype_cast(
-        attrs, caller_dtype=dtype, has_nodata=nodata_attr is not None,
     )
 
     if isinstance(chunks, int):
