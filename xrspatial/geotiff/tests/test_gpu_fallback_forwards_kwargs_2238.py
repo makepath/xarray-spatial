@@ -436,7 +436,6 @@ def test_decode_failure_fallback_applies_window_band(tmp_path, monkeypatch):
 
     from xrspatial.geotiff import read_geotiff_gpu
     from xrspatial.geotiff import _gpu_decode
-    from xrspatial.geotiff._backends import gpu as gpu_backend
 
     src = tmp_path / "2238_windowed_fallback.tif"
     bands, h, w = 3, 64, 64
