@@ -17,8 +17,12 @@ update to this test.
 Design notes
 ------------
 
+* The ``eager_numpy`` read of each fixture is the reference every
+  other backend is compared against. The reference is read once per
+  fixture and cached for the module's lifetime so a 6-backend
+  matrix does not multiply IO by 6x.
 * Backends covered (per #2229):
-    - ``eager_numpy``  -- ``open_geotiff(path)``
+    - ``eager_numpy``  -- ``open_geotiff(path)`` (also the reference)
     - ``dask_numpy``   -- ``open_geotiff(path, chunks=...)``
     - ``gpu``          -- ``open_geotiff(path, gpu=True, on_gpu_failure='strict')``
     - ``dask_gpu``     -- ``open_geotiff(path, gpu=True, chunks=..., on_gpu_failure='strict')``
@@ -292,13 +296,30 @@ def _read_http_fsspec(path: pathlib.Path, fixture_id: str) -> xr.DataArray:
     credentials. Matches how
     ``test_golden_corpus_fsspec_1930.py`` exercises the cloud-eager
     read path in restricted-sandbox CI.
+
+    The fsspec memory filesystem is a process-global singleton, so the
+    fixture's bytes are written under a unique key and the key is
+    deleted before returning. The cloud-eager read path materialises
+    pixels inline (``_CloudSource`` downloads under the
+    ``max_cloud_bytes`` budget; see #1928), so the DataArray no longer
+    needs the memory entry once ``open_geotiff`` returns.
     """
     import fsspec
     fs = fsspec.filesystem("memory")
     key = f"/corpus_full_parity_2211/{fixture_id}.tif"
     with open(path, "rb") as f:
         fs.pipe(key, f.read())
-    return open_geotiff(f"memory://{key}")
+    try:
+        da = open_geotiff(f"memory://{key}")
+    finally:
+        # Best-effort cleanup; fsspec memory store deletions are
+        # idempotent. The cloud-eager path has already pulled the
+        # bytes into the DataArray by this point.
+        try:
+            fs.rm(key)
+        except FileNotFoundError:
+            pass
+    return da
 
 
 def _vrt_cache_dir(fixtures_dir: pathlib.Path) -> pathlib.Path:
@@ -310,12 +331,19 @@ def _vrt_cache_dir(fixtures_dir: pathlib.Path) -> pathlib.Path:
     under the system tmp keeps the VRTs around for the duration of the
     pytest process and lets every backend cell hit the same .vrt.
     """
+    import hashlib
     import tempfile
     base = pathlib.Path(tempfile.gettempdir()) / "xrspatial_2229_vrt_cache"
     base.mkdir(parents=True, exist_ok=True)
-    # Pin the cache to the fixtures directory hash so a corpus
-    # regeneration between runs invalidates the cache automatically.
-    sub = base / f"fix_{abs(hash(str(fixtures_dir)))}"
+    # Pin the cache directory name to a stable digest of the
+    # fixtures path. ``hashlib.sha1`` is deterministic across
+    # processes (unlike ``hash()`` which uses ``PYTHONHASHSEED``
+    # salting), so two pytest runs against the same fixtures dir
+    # reuse the same cache. The digest is truncated to 12 hex chars
+    # for path readability; collisions are not security-relevant
+    # because the cache directory is per-user-tmp.
+    digest = hashlib.sha1(str(fixtures_dir).encode()).hexdigest()[:12]
+    sub = base / f"fix_{digest}"
     sub.mkdir(parents=True, exist_ok=True)
     return sub
 
@@ -444,6 +472,22 @@ _BACKEND_PARAMS = _build_backend_params()
 # Pixel + attrs assertions
 # ---------------------------------------------------------------------------
 
+def _is_nan_sentinel(value: Any) -> bool:
+    """True when ``value`` is a NaN sentinel, regardless of scalar type.
+
+    Accepts Python floats, numpy scalars, and any object castable to
+    ``float``. Non-numeric values (including ``None``) return False so
+    the caller can fall through to a strict ``==`` comparison and get
+    a useful diff message.
+    """
+    if value is None:
+        return False
+    try:
+        return bool(np.isnan(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
 def _materialise(da: xr.DataArray) -> np.ndarray:
     """Return a host-side numpy view regardless of backend.
 
@@ -478,13 +522,17 @@ def _assert_pixels_close(
         f"{label}: dtype mismatch ref={ref.dtype} cand={cand.dtype}"
     )
     if ref.dtype.kind == "f":
-        # ``allclose`` with ``equal_nan=True`` and tight tolerances:
-        # the four eager/dask/gpu/dask+gpu backends share decode
-        # primitives so the results are bit-identical, but the VRT
-        # path goes through rasterio and can round-trip floats with a
-        # ULP-level perturbation on some platforms. ``rtol=0`` plus a
-        # tiny ``atol`` covers both.
-        ok = np.allclose(ref, cand, rtol=0.0, atol=1e-7, equal_nan=True)
+        # ``allclose`` with ``equal_nan=True`` and a relative tolerance:
+        # every shipped fixture compares bit-exact today (the four
+        # eager/dask/gpu/dask+gpu backends share decode primitives and
+        # the VRT path leaves pixel bytes alone). The relative
+        # tolerance is here to absorb a hypothetical future codec /
+        # predictor that does a real floating-point op rather than as
+        # documented headroom for an existing drift. ``rtol=1e-12``
+        # tracks data magnitude so a small-magnitude fixture is not
+        # secretly held to a slacker bar than a large-magnitude one;
+        # ``atol=0`` keeps zero values strict.
+        ok = np.allclose(ref, cand, rtol=1e-12, atol=0.0, equal_nan=True)
         if not ok:
             # Report the worst offender so a regression is debuggable.
             diff = np.abs(np.where(
@@ -594,9 +642,13 @@ def _assert_nodata_attrs(
         pass
     else:
         # NaN sentinel equality: float('nan') != float('nan'), but the
-        # two are the same nodata for our purposes.
-        ref_is_nan = isinstance(ref_nd, float) and np.isnan(ref_nd)
-        cand_is_nan = isinstance(cand_nd, float) and np.isnan(cand_nd)
+        # two are the same nodata for our purposes. The float cast
+        # below accepts numpy scalars (``numpy.float32(nan)``) and
+        # python floats alike; a non-numeric sentinel (e.g. None on
+        # one side only) falls through to the ``==`` branch which
+        # surfaces the mismatch with a useful message.
+        ref_is_nan = _is_nan_sentinel(ref_nd)
+        cand_is_nan = _is_nan_sentinel(cand_nd)
         if not (ref_is_nan and cand_is_nan):
             assert ref_nd == cand_nd, (
                 f"{label}: nodata differs ref={ref_nd!r} cand={cand_nd!r}"
@@ -785,3 +837,100 @@ def test_gpu_skip_reason_is_loud() -> None:
             f"{backend_id} unavailable_reason does not cite the contract "
             f"or the missing dep: {reason!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Storage-type sanity checks (the parity battery alone cannot see them)
+# ---------------------------------------------------------------------------
+
+def _first_eligible_fixture() -> dict[str, Any] | None:
+    """Pick a fast, on-disk fixture none of the intentional-skip
+    tables flag, so the storage-type sanity checks run against a
+    fixture every backend reads cleanly.
+    """
+    for entry in _FIXTURES:
+        if entry["id"] in _INTENTIONAL_SKIPS:
+            continue
+        if not _fixture_path(entry).exists():
+            continue
+        # Prefer a fast fixture; the sanity check just needs *any*
+        # eligible fixture so falling back to slow is fine.
+        if "fast" in (entry.get("tags") or []):
+            return entry
+    for entry in _FIXTURES:
+        if entry["id"] not in _INTENTIONAL_SKIPS and _fixture_path(entry).exists():
+            return entry
+    return None
+
+
+@pytest.mark.skipif(not _HAS_GPU, reason=_GPU_UNAVAILABLE_REASON)
+def test_gpu_backend_returns_cupy_array() -> None:
+    """Sanity check: the gpu row returns a cupy-backed DataArray.
+
+    Catches the failure mode the parity battery cannot see: a silent
+    fallback that returns a numpy array when the caller asked for
+    ``gpu=True``. The pixels would still compare equal to the eager
+    reference and the test would pass without exercising the GPU
+    decode path at all.
+    """
+    import cupy
+    entry = _first_eligible_fixture()
+    if entry is None:
+        pytest.skip("no eligible fixture on disk")
+    da = _read_gpu(_fixture_path(entry), entry["id"])
+    assert isinstance(da.data, cupy.ndarray), (
+        f"gpu backend on fixture {entry['id']!r} returned "
+        f"{type(da.data).__name__}, expected cupy.ndarray. "
+        "A silent CPU fallback under gpu=True would let the parity "
+        "matrix pass while exercising the wrong code path."
+    )
+
+
+@pytest.mark.skipif(not _HAS_DASK, reason=_DASK_UNAVAILABLE_REASON)
+def test_dask_backend_returns_dask_array() -> None:
+    """Sanity check: the dask_numpy row returns a dask-backed
+    DataArray. Catches a regression where ``chunks=`` is silently
+    dropped and the read goes through the eager path.
+    """
+    entry = _first_eligible_fixture()
+    if entry is None:
+        pytest.skip("no eligible fixture on disk")
+    da = _read_dask_numpy(_fixture_path(entry), entry["id"])
+    assert hasattr(da.data, "dask"), (
+        f"dask_numpy backend on fixture {entry['id']!r} returned "
+        f"data of type {type(da.data).__name__}, expected a "
+        "dask-backed array."
+    )
+
+
+@pytest.mark.skipif(
+    not (_HAS_GPU and _HAS_DASK),
+    reason=(
+        f"{_GPU_UNAVAILABLE_REASON} (or dask missing -- "
+        f"{_DASK_UNAVAILABLE_REASON})"
+    ),
+)
+def test_dask_gpu_backend_returns_dask_of_cupy() -> None:
+    """Sanity check: the dask_gpu row returns a dask-graph-of-cupy
+    DataArray. Both layers must be present; a regression that strips
+    one would compute the right pixels via a different storage type.
+    """
+    import cupy
+    entry = _first_eligible_fixture()
+    if entry is None:
+        pytest.skip("no eligible fixture on disk")
+    da = _read_dask_gpu(_fixture_path(entry), entry["id"])
+    assert hasattr(da.data, "dask"), (
+        f"dask_gpu backend on fixture {entry['id']!r} dropped the "
+        f"dask wrapping: data is {type(da.data).__name__}"
+    )
+    # Compute one chunk to peek at the device-side type without
+    # materialising the whole array; ``_meta`` carries the chunk
+    # prototype that dask uses for shape/dtype introspection.
+    meta = getattr(da.data, "_meta", None)
+    assert isinstance(meta, cupy.ndarray), (
+        f"dask_gpu backend on fixture {entry['id']!r} carries a "
+        f"non-cupy chunk prototype: {type(meta).__name__}. A "
+        "dask-of-numpy graph would compute the right pixels but "
+        "skip the GPU decode path."
+    )
