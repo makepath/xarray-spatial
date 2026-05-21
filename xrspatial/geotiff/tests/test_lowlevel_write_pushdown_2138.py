@@ -266,16 +266,18 @@ class TestDtypePromotionPushdown:
 
 # JPEG omitted from the byte-parity sweep on purpose: it requires the
 # opt-in, which the wrapper emits a runtime warning for, and JPEG is
-# lossy so trivial seed changes can shift bytes. ``_write`` is exercised
-# elsewhere; the parity sweep covers the lossless codec set that direct
-# callers reach for first.
+# lossy so trivial seed changes can shift bytes. The experimental codecs
+# (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``) are gated behind
+# ``allow_experimental_codecs=True`` (issue #2137) and are likewise
+# excluded from this sweep. ``_write`` is exercised elsewhere; the
+# parity sweep covers the stable lossless codec set that direct callers
+# reach for first.
 _PARITY_CODECS = (
     "none",
     "deflate",
     "lzw",
     "packbits",
     "zstd",
-    "lz4",
 )
 
 
