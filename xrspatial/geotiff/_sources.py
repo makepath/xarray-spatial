@@ -644,19 +644,20 @@ def coalesce_ranges(
 
     for off, length, orig_idx in indexed[1:]:
         gap = off - cur_end
+        # Gaps may be negative if a later-listed range overlaps an
+        # earlier one; clamp ``new_end`` so the merged length covers
+        # both. ``candidate_length`` is the length the merged range
+        # would have if we extended it to include this input. We use
+        # it both to decide whether the merge is allowed under the
+        # size cap and (when it is) to update ``cur_length``.
         new_end = max(cur_end, off + length)
-        # Length the merged range would have if we extended it to include
-        # this input. Used both to decide whether the merge is allowed
-        # and (when it is) to update cur_length.
         candidate_length = new_end - cur_start
         size_ok = (
             max_coalesced_range_bytes <= 0
             or candidate_length <= max_coalesced_range_bytes
         )
         if gap_threshold >= 0 and gap <= gap_threshold and size_ok:
-            # Extend current merged range. Gaps may be negative if a
-            # later-listed range overlaps an earlier one; clamp so the
-            # merged length covers both.
+            # Extend current merged range.
             cur_length = candidate_length
             cur_end = new_end
             members.append((orig_idx, off, length))

@@ -101,6 +101,7 @@ from ._sources import (
     # so monkeypatches against the ``_reader`` namespace continue to
     # intercept the source. PR-J / #2258.
     _HTTPSource,
+    _max_coalesced_range_bytes_from_env,
     _max_tile_bytes_from_env,
 )
 from ._validation import _validate_predictor_sample_format
@@ -901,6 +902,13 @@ def _fetch_decode_cog_http_tiles(
     # tolerates small interleaved metadata between tiles without dragging
     # in unrelated overview data. Set XRSPATIAL_COG_COALESCE_GAP=-1 to
     # disable merging (one GET per tile, the legacy behaviour).
+    #
+    # The merged-range size cap (issue #2266) is resolved here too so
+    # the call below is self-documenting: a reader can see at the call
+    # site that both ``gap_threshold`` and ``max_coalesced_range_bytes``
+    # are governed by env vars. Without the explicit lookup the cap
+    # would still apply -- ``coalesce_ranges`` resolves a ``None`` cap
+    # against the same env var -- but the asymmetry would hide that.
     try:
         workers = max(1, int(_os_module.environ.get('XRSPATIAL_COG_HTTP_WORKERS', '8')))
     except ValueError:
@@ -911,8 +919,12 @@ def _fetch_decode_cog_http_tiles(
             str(COALESCE_GAP_THRESHOLD_DEFAULT)))
     except ValueError:
         gap = COALESCE_GAP_THRESHOLD_DEFAULT
+    max_coalesced = _max_coalesced_range_bytes_from_env()
     tile_bytes_list = source.read_ranges_coalesced(
-        fetch_ranges, max_workers=workers, gap_threshold=gap)
+        fetch_ranges,
+        max_workers=workers,
+        gap_threshold=gap,
+        max_coalesced_range_bytes=max_coalesced)
 
     # Pass 3: decode each tile and place it (clipped to the window).
     #
