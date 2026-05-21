@@ -11,6 +11,7 @@ Supports numpy, cupy, dask+numpy, and dask+cupy backends.
 """
 from __future__ import annotations
 
+import math
 import warnings
 from typing import NamedTuple, Optional, Tuple, Union
 
@@ -490,6 +491,13 @@ _EMPTY_LINES = (np.empty(0, np.int32), np.empty(0, np.int32),
                 np.empty(0, np.int32), np.empty(0, np.int32),
                 np.empty(0, np.int32))
 
+# Float-coordinate variant used by the supercover boundary burn.
+# Endpoints are kept in subpixel space so grid traversal can pick up
+# every cell a segment crosses, not just the dominant-axis steps.
+_EMPTY_LINES_FLOAT = (np.empty(0, np.float64), np.empty(0, np.float64),
+                      np.empty(0, np.float64), np.empty(0, np.float64),
+                      np.empty(0, np.int32))
+
 
 def _extract_line_segments(geometries, bounds, height, width):
     """Parse LineString/MultiLineString geometries into pixel-space segments.
@@ -705,6 +713,106 @@ def _extract_polygon_boundary_segments(geometries, geom_ids, bounds,
     return (r0[v], c0[v], r1[v], c1[v], seg_ids[v])
 
 
+def _extract_polygon_boundary_segments_float(geometries, geom_ids, bounds,
+                                             height, width):
+    """Polygon ring edges as float pixel-space segments.
+
+    Variant of :func:`_extract_polygon_boundary_segments` that keeps
+    sub-pixel precision so a supercover line walker can pick up every
+    cell crossed by the segment. World-space clipping uses Liang-Barsky
+    against the raster bounds; the result is converted to pixel
+    coordinates (col = x in pixels, row = y in pixels) without rounding.
+
+    Returns
+    -------
+    (cx0, cy0, cx1, cy1, seg_ids) as float64 arrays (and int32 ids).
+    ``cy`` increases downward (matches the raster row axis); the y-flip
+    against world coordinates is applied here so the grid traversal
+    kernel does not need to know about it.
+    """
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    all_coords = []
+    all_ids = []
+    for geom, gid in zip(geometries, geom_ids):
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == 'Polygon':
+            parts = [geom]
+        elif geom.geom_type == 'MultiPolygon':
+            parts = list(geom.geoms)
+        else:
+            continue
+        for poly in parts:
+            coords = np.asarray(poly.exterior.coords)
+            n = len(coords) - 1
+            if n > 0:
+                all_coords.append(coords)
+                all_ids.append(np.full(n, gid, dtype=np.int32))
+            for interior in poly.interiors:
+                coords = np.asarray(interior.coords)
+                n = len(coords) - 1
+                if n > 0:
+                    all_coords.append(coords)
+                    all_ids.append(np.full(n, gid, dtype=np.int32))
+
+    if not all_coords:
+        return _EMPTY_LINES_FLOAT
+
+    seg_x0, seg_y0, seg_x1, seg_y1 = [], [], [], []
+    for coords in all_coords:
+        seg_x0.append(coords[:-1, 0])
+        seg_y0.append(coords[:-1, 1])
+        seg_x1.append(coords[1:, 0])
+        seg_y1.append(coords[1:, 1])
+
+    x0 = np.concatenate(seg_x0).astype(np.float64)
+    y0 = np.concatenate(seg_y0).astype(np.float64)
+    x1 = np.concatenate(seg_x1).astype(np.float64)
+    y1 = np.concatenate(seg_y1).astype(np.float64)
+    seg_ids = np.concatenate(all_ids)
+
+    # Vectorized Liang-Barsky clip to raster world-space bounds.
+    dx = x1 - x0
+    dy = y1 - y0
+    p = np.array([-dx, dx, -dy, dy])
+    q = np.array([x0 - xmin, xmax - x0, y0 - ymin, ymax - y0])
+
+    t0 = np.zeros(len(x0))
+    t1 = np.ones(len(x0))
+    valid = np.ones(len(x0), dtype=bool)
+
+    for i in range(4):
+        parallel = p[i] == 0.0
+        valid &= ~(parallel & (q[i] < 0.0))
+        neg = (~parallel) & (p[i] < 0.0)
+        pos = (~parallel) & (p[i] > 0.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t_neg = np.where(neg, q[i] / p[i], 0.0)
+            t_pos = np.where(pos, q[i] / p[i], 1.0)
+        t0 = np.where(neg, np.maximum(t0, t_neg), t0)
+        t1 = np.where(pos, np.minimum(t1, t_pos), t1)
+
+    valid &= (t0 <= t1)
+
+    cx0_w = x0 + t0 * dx
+    cy0_w = y0 + t0 * dy
+    cx1_w = x0 + t1 * dx
+    cy1_w = y0 + t1 * dy
+
+    # World -> float pixel coordinates. ymax is the top of the raster,
+    # row 0 is at the top, so y increases downward in pixel space.
+    cx0 = (cx0_w - xmin) / px
+    cy0 = (ymax - cy0_w) / py
+    cx1 = (cx1_w - xmin) / px
+    cy1 = (ymax - cy1_w) / py
+
+    v = valid
+    return (cx0[v], cy0[v], cx1[v], cy1[v], seg_ids[v])
+
+
 # ---------------------------------------------------------------------------
 # CPU burn kernels (numba)
 # ---------------------------------------------------------------------------
@@ -765,6 +873,124 @@ def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, geom_idx,
                     err -= dc
                 c += sc
                 err += dr
+
+
+# ---------------------------------------------------------------------------
+# CPU supercover line burn (numba) -- used by all_touched polygon
+# boundaries to match rasterio.features.rasterize(all_touched=True).
+#
+# Amanatides & Woo grid traversal: walks the segment cell-by-cell in
+# pixel space, advancing along whichever axis hits the next cell
+# boundary first. Every cell the mathematical segment crosses is
+# visited, including the off-axis cells Bresenham would skip on a
+# shallow diagonal.
+# ---------------------------------------------------------------------------
+
+@ngjit
+def _burn_lines_supercover_cpu(out, written, x0_arr, y0_arr, x1_arr, y1_arr,
+                               geom_idx, geom_props, height, width,
+                               geom_global_idx, merge_fn, should_write,
+                               order):
+    n = len(x0_arr)
+    for i in range(n):
+        x0 = x0_arr[i]
+        y0 = y0_arr[i]
+        x1 = x1_arr[i]
+        y1 = y1_arr[i]
+        gi = geom_idx[i]
+        props = geom_props[gi]
+        new_idx = geom_global_idx[gi]
+
+        # Starting cell. floor() gives the cell index containing the
+        # endpoint; integer endpoints land on cell boundaries and we
+        # break ties by stepping into the cell in the segment direction.
+        cx = int(np.floor(x0))
+        cy = int(np.floor(y0))
+
+        end_cx = int(np.floor(x1))
+        end_cy = int(np.floor(y1))
+
+        dx = x1 - x0
+        dy = y1 - y0
+
+        # Step direction along each axis. 0 dx/dy -> step is irrelevant
+        # because we will never advance that axis (t_delta is +inf).
+        if dx > 0.0:
+            step_x = 1
+        elif dx < 0.0:
+            step_x = -1
+        else:
+            step_x = 0
+
+        if dy > 0.0:
+            step_y = 1
+        elif dy < 0.0:
+            step_y = -1
+        else:
+            step_y = 0
+
+        # t to traverse one full cell along each axis (parametric t in
+        # [0, 1] along the segment).
+        if dx != 0.0:
+            t_delta_x = 1.0 / (dx if dx > 0.0 else -dx)
+        else:
+            t_delta_x = np.inf
+
+        if dy != 0.0:
+            t_delta_y = 1.0 / (dy if dy > 0.0 else -dy)
+        else:
+            t_delta_y = np.inf
+
+        # t at which the segment first crosses the next x / y cell
+        # boundary in its direction of travel.
+        if dx > 0.0:
+            next_x_boundary = float(cx + 1)
+            t_max_x = (next_x_boundary - x0) / dx
+        elif dx < 0.0:
+            next_x_boundary = float(cx)
+            t_max_x = (next_x_boundary - x0) / dx
+        else:
+            t_max_x = np.inf
+
+        if dy > 0.0:
+            next_y_boundary = float(cy + 1)
+            t_max_y = (next_y_boundary - y0) / dy
+        elif dy < 0.0:
+            next_y_boundary = float(cy)
+            t_max_y = (next_y_boundary - y0) / dy
+        else:
+            t_max_y = np.inf
+
+        # Walk cells until we have stepped through the cell containing
+        # the segment endpoint. A small step cap guards against any
+        # pathological floating point case where t_max never crosses 1.
+        max_steps = (abs(end_cx - cx) + abs(end_cy - cy) + 2)
+        for _ in range(max_steps):
+            if 0 <= cy < height and 0 <= cx < width:
+                _apply_merge(out, written, order, cy, cx, props,
+                             new_idx, merge_fn, should_write)
+
+            if cx == end_cx and cy == end_cy:
+                break
+
+            if t_max_x < t_max_y:
+                t_max_x += t_delta_x
+                cx += step_x
+            elif t_max_y < t_max_x:
+                t_max_y += t_delta_y
+                cy += step_y
+            else:
+                # Exact corner crossing. Stepping just one axis at a
+                # time misses the diagonal-neighbour cells the segment
+                # technically only grazes; matching rasterio's
+                # all_touched semantics here means advancing both
+                # axes in a single tick so we land in the next cell
+                # along the diagonal without burning the two off-axis
+                # neighbours.
+                t_max_x += t_delta_x
+                t_max_y += t_delta_y
+                cx += step_x
+                cy += step_y
 
 
 # ---------------------------------------------------------------------------
@@ -888,16 +1114,18 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
                            poly_props, height, width, poly_global,
                            merge_fn, should_write, order)
 
-    # 1b. all_touched: draw polygon boundaries via Bresenham so every
-    #     pixel the boundary passes through is burned.  This guarantees
-    #     all_touched is a superset of the normal fill.
+    # 1b. all_touched: draw polygon boundaries with a supercover
+    #     grid traversal so every pixel a ring segment crosses is
+    #     burned (matches rasterio.features.rasterize all_touched).
     if all_touched and poly_geoms:
-        br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
-            poly_geoms, poly_ids, bounds, height, width)
-        if len(br0) > 0:
-            _burn_lines_cpu(out, written, br0, bc0, br1, bc1, bidx,
-                            poly_props, height, width, poly_global,
-                            merge_fn, should_write, order)
+        bx0, by0, bx1, by1, bidx = (
+            _extract_polygon_boundary_segments_float(
+                poly_geoms, poly_ids, bounds, height, width))
+        if len(bx0) > 0:
+            _burn_lines_supercover_cpu(
+                out, written, bx0, by0, bx1, by1, bidx,
+                poly_props, height, width, poly_global,
+                merge_fn, should_write, order)
 
     # 2. Lines
     r0, c0, r1, c1, line_idx = _extract_line_segments(
@@ -1187,10 +1415,103 @@ def _ensure_gpu_kernels(merge_fn, should_write):
                 c += sc
                 err += dr
 
+    @cuda.jit
+    def _burn_lines_supercover_gpu(
+            out, written, order,
+            x0_arr, y0_arr, x1_arr, y1_arr,
+            geom_idx, geom_props, geom_global_idx,
+            n_segs, height, width):
+        """Amanatides & Woo grid traversal on the GPU.
+
+        One thread per segment; walks cells along the float-pixel
+        segment so every cell crossed is burned. Used only by the
+        all_touched polygon-boundary path; the regular line and
+        point kernels still call ``_burn_lines_gpu`` so their
+        behaviour is unchanged.
+        """
+        i = cuda.grid(1)
+        if i >= n_segs:
+            return
+        x0 = x0_arr[i]
+        y0 = y0_arr[i]
+        x1 = x1_arr[i]
+        y1 = y1_arr[i]
+        gi = geom_idx[i]
+        props = geom_props[gi]
+        new_idx = geom_global_idx[gi]
+
+        # math.floor via int() works for the float64 range we have
+        # here (segments are already clipped to raster bounds).
+        cx = int(math.floor(x0))
+        cy = int(math.floor(y0))
+        end_cx = int(math.floor(x1))
+        end_cy = int(math.floor(y1))
+
+        dx = x1 - x0
+        dy = y1 - y0
+
+        if dx > 0.0:
+            step_x = 1
+        elif dx < 0.0:
+            step_x = -1
+        else:
+            step_x = 0
+
+        if dy > 0.0:
+            step_y = 1
+        elif dy < 0.0:
+            step_y = -1
+        else:
+            step_y = 0
+
+        if dx != 0.0:
+            t_delta_x = 1.0 / (dx if dx > 0.0 else -dx)
+        else:
+            t_delta_x = math.inf
+
+        if dy != 0.0:
+            t_delta_y = 1.0 / (dy if dy > 0.0 else -dy)
+        else:
+            t_delta_y = math.inf
+
+        if dx > 0.0:
+            t_max_x = (float(cx + 1) - x0) / dx
+        elif dx < 0.0:
+            t_max_x = (float(cx) - x0) / dx
+        else:
+            t_max_x = math.inf
+
+        if dy > 0.0:
+            t_max_y = (float(cy + 1) - y0) / dy
+        elif dy < 0.0:
+            t_max_y = (float(cy) - y0) / dy
+        else:
+            t_max_y = math.inf
+
+        max_steps = abs(end_cx - cx) + abs(end_cy - cy) + 2
+        for _ in range(max_steps):
+            if 0 <= cy < height and 0 <= cx < width:
+                _apply_merge_gpu(out, written, order, cy, cx,
+                                 props, new_idx)
+            if cx == end_cx and cy == end_cy:
+                break
+            if t_max_x < t_max_y:
+                t_max_x += t_delta_x
+                cx += step_x
+            elif t_max_y < t_max_x:
+                t_max_y += t_delta_y
+                cy += step_y
+            else:
+                t_max_x += t_delta_x
+                t_max_y += t_delta_y
+                cx += step_x
+                cy += step_y
+
     kernels = {
         'scanline_fill': _scanline_fill_gpu,
         'burn_points': _burn_points_gpu,
         'burn_lines': _burn_lines_gpu,
+        'burn_lines_supercover': _burn_lines_supercover_gpu,
     }
     _gpu_kernel_cache[key] = kernels
     return kernels
@@ -1300,18 +1621,21 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
             d_geom_id, d_geom_props, d_poly_global,
             d_row_ptr, d_col_idx, width)
 
-    # 1b. all_touched: draw polygon boundaries via Bresenham (GPU)
+    # 1b. all_touched: draw polygon boundaries with the supercover
+    # grid traversal on the GPU. Float pixel endpoints so every
+    # cell a ring segment crosses gets burned.
     if all_touched and poly_geoms:
-        br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
-            poly_geoms, poly_ids, bounds, height, width)
-        if len(br0) > 0:
-            n_bsegs = len(br0)
+        bx0, by0, bx1, by1, bidx = (
+            _extract_polygon_boundary_segments_float(
+                poly_geoms, poly_ids, bounds, height, width))
+        if len(bx0) > 0:
+            n_bsegs = len(bx0)
             tpb = 256
             bpg = (n_bsegs + tpb - 1) // tpb
-            kernels['burn_lines'][bpg, tpb](
+            kernels['burn_lines_supercover'][bpg, tpb](
                 out, written, order,
-                cupy.asarray(br0), cupy.asarray(bc0),
-                cupy.asarray(br1), cupy.asarray(bc1),
+                cupy.asarray(bx0), cupy.asarray(by0),
+                cupy.asarray(bx1), cupy.asarray(by1),
                 cupy.asarray(bidx), cupy.asarray(poly_props),
                 cupy.asarray(poly_global),
                 n_bsegs, height, width)
@@ -1565,15 +1889,18 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                                poly_props_2d, tile_h, tile_w,
                                poly_global_2d, merge_fn, should_write, order)
 
-        # 1b. all_touched: draw polygon boundaries via Bresenham
+        # 1b. all_touched: draw polygon boundaries with the
+        # supercover grid traversal so the dask path matches the
+        # eager numpy path pixel-for-pixel under all_touched=True.
         if all_touched:
-            br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
-                poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
-            if len(br0) > 0:
-                _burn_lines_cpu(out, written, br0, bc0, br1, bc1, bidx,
-                                poly_props_2d, tile_h, tile_w,
-                                poly_global_2d, merge_fn, should_write,
-                                order)
+            bx0, by0, bx1, by1, bidx = (
+                _extract_polygon_boundary_segments_float(
+                    poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
+            if len(bx0) > 0:
+                _burn_lines_supercover_cpu(
+                    out, written, bx0, by0, bx1, by1, bidx,
+                    poly_props_2d, tile_h, tile_w,
+                    poly_global_2d, merge_fn, should_write, order)
 
     # 2. Lines (tile-local segments, Bresenham with bounds check)
     if len(seg_r0) > 0:
@@ -1721,18 +2048,21 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                 cupy.asarray(poly_props_2d), cupy.asarray(poly_global_2d),
                 cupy.asarray(row_ptr), cupy.asarray(col_idx), tile_w)
 
-        # 1b. all_touched: draw polygon boundaries via Bresenham (GPU)
+        # 1b. all_touched: draw polygon boundaries with the
+        # supercover grid traversal kernel so the dask+cupy path
+        # matches numpy/cupy pixel-for-pixel.
         if all_touched:
-            br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
-                poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
-            if len(br0) > 0:
-                n_bsegs = len(br0)
+            bx0, by0, bx1, by1, bidx = (
+                _extract_polygon_boundary_segments_float(
+                    poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
+            if len(bx0) > 0:
+                n_bsegs = len(bx0)
                 tpb_b = 256
                 bpg_b = (n_bsegs + tpb_b - 1) // tpb_b
-                kernels['burn_lines'][bpg_b, tpb_b](
+                kernels['burn_lines_supercover'][bpg_b, tpb_b](
                     out, written, order,
-                    cupy.asarray(br0), cupy.asarray(bc0),
-                    cupy.asarray(br1), cupy.asarray(bc1),
+                    cupy.asarray(bx0), cupy.asarray(by0),
+                    cupy.asarray(bx1), cupy.asarray(by1),
                     cupy.asarray(bidx), cupy.asarray(poly_props_2d),
                     cupy.asarray(poly_global_2d),
                     n_bsegs, tile_h, tile_w)
@@ -2141,8 +2471,13 @@ def rasterize(
         Data type of the output array.  Defaults to np.float64, or
         to the dtype of ``like`` if provided.
     all_touched : bool, default False
-        If True, all pixels touched by a geometry are burned, not just
-        those whose center falls inside a polygon.
+        If True, every pixel a polygon boundary passes through is
+        burned in addition to the normal center-fill, using a
+        supercover (Amanatides & Woo) grid traversal. Output matches
+        ``rasterio.features.rasterize(..., all_touched=True)``
+        pixel-for-pixel up to rasterization tie-breaking on shared
+        edges. If False, only pixels whose centers fall inside a
+        polygon are burned.
     use_cuda : bool, default False
         If True, use the CuPy/CUDA backend.
     name : str, default 'rasterize'
