@@ -2046,6 +2046,142 @@ class TestMetadataPropagation:
         assert float(nodata) == -9999.0
 
 
+class TestLikeStaleGridAttrs2251:
+    """Issue #2251 -- ``like.attrs['res']`` and ``attrs['transform']`` describe
+    the template's grid.  When the caller overrides ``bounds``,
+    ``width``/``height``, or ``resolution`` so the output grid is no longer
+    identical to ``like``, those keys have to be dropped so downstream
+    consumers (``get_dataarray_resolution`` prefers ``attrs['res']`` over
+    coords) don't see a stale cellsize.
+    """
+
+    @staticmethod
+    def _template():
+        x = np.linspace(0.5, 9.5, 10)
+        y = np.linspace(9.5, 0.5, 10)
+        return xr.DataArray(
+            np.zeros((10, 10), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={
+                'crs': 'EPSG:32610',
+                'res': (1.0, 1.0),
+                'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+            },
+        )
+
+    def test_bounds_override_strips_stale_grid_attrs(self):
+        like = self._template()
+        result = rasterize(
+            [(box(20, 20, 80, 80), 1.0)],
+            like=like, bounds=(0, 0, 100, 100),
+            width=10, height=10, fill=0,
+        )
+        # Grid shape moved from 1.0/pixel to 10.0/pixel; stale attrs gone.
+        assert 'res' not in result.attrs
+        assert 'transform' not in result.attrs
+        # Non-grid-shape attrs (crs) still propagate.
+        assert result.attrs.get('crs') == 'EPSG:32610'
+
+    def test_width_height_override_strips_stale_grid_attrs(self):
+        like = self._template()
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like, width=5, height=5, fill=0,
+        )
+        assert 'res' not in result.attrs
+        assert 'transform' not in result.attrs
+        assert result.attrs.get('crs') == 'EPSG:32610'
+
+    def test_resolution_override_strips_stale_grid_attrs(self):
+        like = self._template()
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like, resolution=0.5, fill=0,
+        )
+        assert 'res' not in result.attrs
+        assert 'transform' not in result.attrs
+        assert result.attrs.get('crs') == 'EPSG:32610'
+
+    def test_identical_grid_preserves_grid_attrs(self):
+        """No override -> output grid == template grid -> keep res/transform."""
+        like = self._template()
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0,
+        )
+        assert result.attrs.get('res') == (1.0, 1.0)
+        assert result.attrs.get('transform') == \
+            (1.0, 0.0, 0.0, 0.0, -1.0, 10.0)
+
+    def test_matching_width_height_preserves_grid_attrs(self):
+        """Passing width/height that match the template's size still
+        reuses ``like.coords`` (so the grid is identical), so the
+        template's grid-shape attrs are still correct.
+        """
+        like = self._template()
+        result = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like, width=10, height=10, fill=0,
+        )
+        assert result.attrs.get('res') == (1.0, 1.0)
+        assert result.attrs.get('transform') == \
+            (1.0, 0.0, 0.0, 0.0, -1.0, 10.0)
+
+    def test_get_dataarray_resolution_consistent_after_override(self):
+        """The user-visible symptom: ``get_dataarray_resolution`` must
+        report the actual cellsize, not the stale template value.
+        """
+        from xrspatial.utils import get_dataarray_resolution
+        like = self._template()
+        result = rasterize(
+            [(box(20, 20, 80, 80), 1.0)],
+            like=like, bounds=(0, 0, 100, 100),
+            width=10, height=10, fill=0,
+        )
+        # With res stripped, get_dataarray_resolution falls back to
+        # computing from coords; both axes should be 10.0.
+        cx, cy = get_dataarray_resolution(result)
+        assert abs(cx - 10.0) < 1e-9
+        assert abs(cy - 10.0) < 1e-9
+
+    @skip_no_dask
+    def test_bounds_override_strips_stale_grid_attrs_dask(self):
+        like = self._template()
+        result = rasterize(
+            [(box(20, 20, 80, 80), 1.0)],
+            like=like, bounds=(0, 0, 100, 100),
+            width=10, height=10, fill=0, chunks=5,
+        )
+        assert 'res' not in result.attrs
+        assert 'transform' not in result.attrs
+        assert result.attrs.get('crs') == 'EPSG:32610'
+
+    @skip_no_cuda
+    def test_bounds_override_strips_stale_grid_attrs_cupy(self):
+        like = self._template()
+        result = rasterize(
+            [(box(20, 20, 80, 80), 1.0)],
+            like=like, bounds=(0, 0, 100, 100),
+            width=10, height=10, fill=0, use_cuda=True,
+        )
+        assert 'res' not in result.attrs
+        assert 'transform' not in result.attrs
+        assert result.attrs.get('crs') == 'EPSG:32610'
+
+    @skip_no_cuda
+    @skip_no_dask
+    def test_bounds_override_strips_stale_grid_attrs_dask_cupy(self):
+        like = self._template()
+        result = rasterize(
+            [(box(20, 20, 80, 80), 1.0)],
+            like=like, bounds=(0, 0, 100, 100),
+            width=10, height=10, fill=0, use_cuda=True, chunks=5,
+        )
+        assert 'res' not in result.attrs
+        assert 'transform' not in result.attrs
+        assert result.attrs.get('crs') == 'EPSG:32610'
+
+
 class TestPolysToWkb:
     """Tests for the _polys_to_wkb helper (issue #2059)."""
 

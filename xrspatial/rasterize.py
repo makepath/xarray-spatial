@@ -3213,6 +3213,18 @@ def rasterize(
     out_attrs = like_attrs if like_attrs is not None else {}
     for k in ('nodata', '_FillValue', 'nodatavals'):
         out_attrs.pop(k, None)
+    # Grid-shape attrs (res, transform) describe the template's grid.
+    # When the caller overrides bounds/width/height/resolution so the
+    # output grid no longer matches ``like``, leaving the inherited
+    # values in place lies to downstream consumers: get_dataarray_
+    # resolution() prefers ``attrs['res']`` over computing from coords,
+    # so a stale res silently poisons slope/aspect/proximity callers
+    # with the template's cellsize instead of the actual one.  Drop them
+    # when the grid was reshaped; keep them when the output reuses the
+    # template's coords bit-identically.
+    if like_attrs is not None and not reuse_like_coords:
+        for k in ('res', 'transform'):
+            out_attrs.pop(k, None)
     try:
         fill_as_float = float(fill)
         fill_is_nan = np.isnan(fill_as_float)
