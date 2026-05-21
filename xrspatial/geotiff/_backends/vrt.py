@@ -978,15 +978,19 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # actually present. Each entry mirrors the eager schema:
     # ``{'source', 'band', 'dst_rect', 'error'}``.
     chunked_holes: list[dict] = []
-    for vrt_band in vrt.bands:
+    for band_idx, vrt_band in enumerate(vrt.bands):
         # When ``band`` is restricted, the per-chunk decode never touches
         # bands outside the selection, so a missing source on an
         # unrelated band does not affect the mosaic and should not
         # populate ``vrt_holes`` (mirrors the eager path, which only
-        # decodes the selected band's sources). ``band`` indexes
-        # ``vrt.bands`` 0-based; ``vrt_band.band_num`` is the 1-based
-        # GDAL band number.
-        if band is not None and vrt_band.band_num != band + 1:
+        # decodes the selected band's sources). ``band`` is a 0-based
+        # index into ``vrt.bands``, same convention as the
+        # ``selected_bands = [vrt.bands[band]]`` slice above. We compare
+        # against ``band_idx`` rather than ``vrt_band.band_num``
+        # (the XML's 1-based ``band=`` attribute) because the XML
+        # attribute does not have to match list position on hand-rolled
+        # VRTs.
+        if band is not None and band_idx != band:
             continue
         for src in vrt_band.sources:
             if not _os.path.exists(src.filename):
