@@ -134,23 +134,21 @@ def test_rotated_error_is_geotiff_ambiguous_subclass():
         _extract_transform(ifd)
 
 
-def test_extract_transform_rotated_does_not_raise_notimplemented():
-    """Regression guard: the parser must NOT raise the bare
-    ``NotImplementedError`` it used to. ``RotatedTransformError`` is a
-    ``ValueError``, not a ``NotImplementedError`` (which is
-    ``RuntimeError``), so a caller using ``except NotImplementedError``
-    no longer catches the rotated case. This is the breaking-but-
-    intentional half of #2267.
+def test_rotated_error_not_a_notimplemented_subclass():
+    """Type-hierarchy invariant: ``RotatedTransformError`` must NOT be
+    a subclass of ``NotImplementedError`` (which descends from
+    ``RuntimeError``). This is what makes the #2267 change a real
+    contract change: a caller using ``except NotImplementedError`` no
+    longer catches the rotated case, and that is the intended
+    breaking half of the fix. Pinning the relationship here makes any
+    accidental re-parenting of the typed-error hierarchy fail loudly
+    instead of silently restoring the old contract.
     """
-    ifd = _make_rotated_ifd()
-    with pytest.raises(RotatedTransformError):
-        try:
-            _extract_transform(ifd)
-        except NotImplementedError:  # pragma: no cover - regression guard
-            pytest.fail(
-                "rotated ModelTransformationTag must raise "
-                "RotatedTransformError, not NotImplementedError"
-            )
+    assert not issubclass(RotatedTransformError, NotImplementedError)
+    # And the inverse: NotImplementedError must not become a
+    # GeoTIFFAmbiguousMetadataError either (would let unrelated callers
+    # accidentally catch unrelated errors).
+    assert not issubclass(NotImplementedError, GeoTIFFAmbiguousMetadataError)
 
 
 def test_extract_transform_message_preserved():
