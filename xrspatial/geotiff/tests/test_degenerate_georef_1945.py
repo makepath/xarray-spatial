@@ -55,7 +55,10 @@ Y0 = 45.0
 
 
 def _strip_1xN(raster_type: str = "area") -> xr.DataArray:
-    attrs = {"crs": 4326}
+    # The borrow-from-other-axis fallback (#1945) is now opt-in (#2214).
+    # These tests document the borrow path, so they set the opt-in flag.
+    # Round-trip semantics are unchanged once the flag is set.
+    attrs = {"crs": 4326, "assume_square_pixels_for_degenerate_axis": True}
     if raster_type == "point":
         attrs["raster_type"] = "point"
     return xr.DataArray(
@@ -70,7 +73,7 @@ def _strip_1xN(raster_type: str = "area") -> xr.DataArray:
 
 
 def _strip_Nx1(raster_type: str = "area") -> xr.DataArray:
-    attrs = {"crs": 4326}
+    attrs = {"crs": 4326, "assume_square_pixels_for_degenerate_axis": True}
     if raster_type == "point":
         attrs["raster_type"] = "point"
     return xr.DataArray(
@@ -328,6 +331,8 @@ class TestCoordsToTransformBorrowSignPinning:
                 # y ascending: 38, 39, 40, ... so pixel_height = +1.0
                 "y": 38.0 + np.arange(8, dtype="float64") * PIXEL,
             },
+            # Opt in to the borrow-from-other-axis path (#2214).
+            attrs={"assume_square_pixels_for_degenerate_axis": True},
         )
         t = coords_to_transform(da)
         # Non-degenerate axis (y) keeps its sign.
@@ -347,6 +352,7 @@ class TestCoordsToTransformBorrowSignPinning:
                 "x": -113.0 - np.arange(8, dtype="float64") * PIXEL,
                 "y": np.array([Y0], dtype="float64"),
             },
+            attrs={"assume_square_pixels_for_degenerate_axis": True},
         )
         t = coords_to_transform(da)
         # Non-degenerate axis (x) keeps its sign.

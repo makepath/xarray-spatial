@@ -39,6 +39,29 @@ from ._geotags import _NO_GEOREF_KEY, GeoTransform, RASTER_PIXEL_IS_POINT
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 
+# Attribute key callers set to True to opt in to the borrow-from-other-axis
+# pixel-size fallback for 1xN / Nx1 writes. See ``coords_to_transform`` and
+# ``require_transform_for_georeferenced`` for the contract. Issue #2214
+# replaced the unconditional borrow with this explicit opt-in so callers
+# whose source raster has non-square pixels don't get a silently wrong
+# transform written for a degenerate strip.
+_ASSUME_SQUARE_DEGENERATE_KEY = 'assume_square_pixels_for_degenerate_axis'
+
+
+def _assume_square_for_degenerate(da: Any) -> bool:
+    """True iff ``da.attrs`` opts in to the square-pixel degenerate fallback.
+
+    Identity check on ``True`` (rather than plain truthiness) so a stray
+    string like ``attrs['assume_square_pixels_for_degenerate_axis'] = 'no'``
+    doesn't quietly enable the borrow path. Non-mapping ``attrs`` (raw
+    numpy/cupy arrays) return False.
+    """
+    attrs = getattr(da, 'attrs', None)
+    if not isinstance(attrs, Mapping):
+        return False
+    return attrs.get(_ASSUME_SQUARE_DEGENERATE_KEY) is True
+
+
 def _has_no_georef_marker(da: Any) -> bool:
     """True iff ``da`` was stamped by the reader as carrying no georef.
 
@@ -306,10 +329,14 @@ def require_transform_for_georeferenced(
             f"Cannot infer GeoTIFF transform from a "
             f"{tuple(da.sizes.values())} array with spatial coords on "
             f"both axes: neither coord array could yield a pixel size "
-            f"(1x1 inputs, or coords spaced non-uniformly). Supply the "
-            f"affine transform explicitly via ``attrs['transform']`` "
-            f"(rasterio 6-tuple ``(px, 0, ox, 0, py, oy)``) or drop the "
-            f"coords if a non-georeferenced TIFF is desired."
+            f"(1x1 inputs, 1xN / Nx1 strips, or coords spaced "
+            f"non-uniformly). Supply the affine transform explicitly via "
+            f"``attrs['transform']`` (rasterio 6-tuple "
+            f"``(px, 0, ox, 0, py, oy)``); for 1xN / Nx1 strips known to "
+            f"have square pixels, opt in to the borrow-from-other-axis "
+            f"fallback with "
+            f"``attrs['{_ASSUME_SQUARE_DEGENERATE_KEY}'] = True``. Drop "
+            f"the coords if a non-georeferenced TIFF is desired."
         )
 
 
@@ -414,14 +441,23 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
                 f"GeoTIFF requires an affine transform."
             )
 
-    # Degenerate-axis fallback (#1945). When one axis has length 1, we
-    # can't read a step off it (``coord[1] - coord[0]`` is undefined),
-    # so we recover the per-axis pixel size from the non-degenerate
-    # axis and assume square pixels for the degenerate one. That matches
-    # how every other geospatial reader handles 1xN / Nx1 strips. The
-    # earlier behaviour — bailing out and silently writing a
-    # non-georeferenced TIFF — broke round-trips for legitimate
-    # single-scanline / single-profile rasters.
+    # Degenerate-axis handling (#1945, #2214). When one axis has length
+    # 1, we can't read a step off it (``coord[1] - coord[0]`` is
+    # undefined). #1945 first taught the writer to borrow the pixel size
+    # from the non-degenerate axis on the assumption that the raster was
+    # square. That assumption is unsafe: a 30 m by 10 m source raster
+    # served as a 1xN strip silently wrote out with 30 m by 30 m pixels,
+    # and downstream slope / proximity / zonal math then trusted the
+    # wrong transform (#2214).
+    #
+    # We now return ``None`` for the degenerate case by default, which
+    # routes to ``require_transform_for_georeferenced`` and raises a
+    # ValueError naming both escape hatches. Callers who know their
+    # source is square can opt in explicitly via
+    # ``attrs['assume_square_pixels_for_degenerate_axis'] = True``;
+    # callers who know the true pixel geometry should pass it on
+    # ``attrs['transform']`` (the writer prefers that path anyway because
+    # it round-trips bit-exactly).
     if len(x) >= 2:
         _is_regular(x, "x")
         pixel_width = float(x[1] - x[0])
@@ -433,13 +469,19 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     else:
         pixel_height = None
 
-    if pixel_width is None:
-        # Borrow magnitude from y; x increases left-to-right by convention.
-        pixel_width = abs(pixel_height)
-    if pixel_height is None:
-        # Borrow magnitude from x; y decreases top-to-bottom by convention,
-        # so flip sign.
-        pixel_height = -abs(pixel_width)
+    if pixel_width is None or pixel_height is None:
+        if not _assume_square_for_degenerate(da):
+            # Fail closed; the writer will raise via
+            # require_transform_for_georeferenced.
+            return None
+        if pixel_width is None:
+            # Borrow magnitude from y; x increases left-to-right by
+            # convention.
+            pixel_width = abs(pixel_height)
+        if pixel_height is None:
+            # Borrow magnitude from x; y decreases top-to-bottom by
+            # convention, so flip sign.
+            pixel_height = -abs(pixel_width)
 
     is_point = da.attrs.get('raster_type') == 'point'
     if is_point:

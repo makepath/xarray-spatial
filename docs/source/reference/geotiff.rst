@@ -95,6 +95,36 @@ silently falls back to CPU.
 
 See issue #1662 for the audit and the full list of affected call sites.
 
+Degenerate-axis writes (1xN / Nx1)
+==================================
+
+A DataArray whose spatial coords cover one row or one column has no
+pixel-size signal on the length-1 axis (``coord[1] - coord[0]`` is
+undefined). The writers used to borrow the non-degenerate axis's
+spacing for the degenerate one (issue #1945), which silently invented
+the wrong pixel size whenever the source raster was not square. A 30 m
+by 10 m source written as a 1xN strip wrote out as 30 m by 30 m, and
+downstream slope / proximity / zonal math then trusted a wrong
+transform. See issue #2214.
+
+The writers now fail closed in that case. A 1xN or Nx1 ``DataArray``
+with spatial coords on both axes but no explicit transform raises
+``ValueError``. Two ways to keep the write:
+
+* Supply the affine on ``attrs['transform']`` (rasterio 6-tuple
+  ``(px, 0, ox, 0, py, oy)``). This is the recommended path; it
+  round-trips bit-exactly.
+* Opt in to the borrow-from-other-axis fallback with
+  ``attrs['assume_square_pixels_for_degenerate_axis'] = True``. Only
+  set this when the source raster is known to be square -- the writer
+  will copy the magnitude of the non-degenerate axis onto the
+  degenerate one. The flag must be the boolean ``True`` (not a truthy
+  string) so a stray attrs value can't accidentally re-enable the
+  silent-invent path.
+
+Multi-row / multi-column writes are unaffected. 1x1 inputs still
+require ``attrs['transform']`` because neither axis has a step.
+
 VRT missing sources
 ===================
 
