@@ -16,17 +16,11 @@ import pytest
 from xrspatial.geotiff._backends import _gpu_helpers
 
 
-def test_apply_nodata_mask_gpu_with_presence_is_gone_2208():
-    assert not hasattr(
-        _gpu_helpers, '_apply_nodata_mask_gpu_with_presence'
-    ), (
-        "_apply_nodata_mask_gpu_with_presence was removed in #2208 after "
-        "#2207 routed all GPU eager sites through _finalize_eager_read; "
-        "the helper had zero remaining callers."
-    )
-
-
 def test_apply_nodata_mask_gpu_with_presence_not_importable_2208():
+    # Covers both module-attribute absence and the import-time surface.
+    # _apply_nodata_mask_gpu_with_presence was removed in #2208 after
+    # #2207 routed all GPU eager sites through _finalize_eager_read;
+    # the helper had zero remaining callers.
     with pytest.raises(ImportError):
         from xrspatial.geotiff._backends._gpu_helpers import (  # noqa: F401
             _apply_nodata_mask_gpu_with_presence,
