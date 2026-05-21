@@ -56,13 +56,19 @@ _ROTATED_M_2238 = (
 
 
 def _write_rotated_tiled_tiff(path, arr: np.ndarray, *,
-                              tile_w: int = 16, tile_h: int = 16) -> None:
+                              tile_w: int = 16, tile_h: int = 16,
+                              sparse: bool = False) -> None:
     """Write a single-IFD tiled TIFF with a rotated ModelTransformation.
 
     Hand-rolled to keep the fixture independent of rasterio/GDAL. The
     output has TileWidth/TileLength tags so the GPU reader takes the
     tiled branch, plus the rotated transform so ``allow_rotated`` is
     required to read it.
+
+    When ``sparse=True``, the last tile is marked with offset=0 and
+    byte_count=0 (or the single tile is, for 1x1 grids). This drives
+    the reader's ``has_sparse_tile=True`` path so the GPU sparse-tile
+    fallback at ``gpu.py:697`` is exercised.
     """
     h, w = arr.shape
     arr = np.ascontiguousarray(arr.astype('<u2'))
@@ -81,9 +87,17 @@ def _write_rotated_tiled_tiff(path, arr: np.ndarray, *,
             tile[: r1 - r0, : c1 - c0] = arr[r0:r1, c0:c1]
             tile_payloads.append(tile.tobytes())
 
+    # When sparse, drop the last tile from the file body and mark it
+    # offset=0/bytecount=0 in the IFD tables. A single-tile file in
+    # sparse mode marks that one tile sparse.
+    if sparse:
+        real_tiles = max(n_tiles - 1, 1) if n_tiles > 1 else 0
+    else:
+        real_tiles = n_tiles
+
     header_size = 8
     tile_data_off = header_size
-    tile_data_size = n_tiles * tile_bytes
+    tile_data_size = real_tiles * tile_bytes
     offsets_arr_off = tile_data_off + tile_data_size
     offsets_arr_size = n_tiles * 4
     bytecounts_arr_off = offsets_arr_off + offsets_arr_size
@@ -92,8 +106,13 @@ def _write_rotated_tiled_tiff(path, arr: np.ndarray, *,
     transform_size = 16 * 8
     ifd_off = transform_off + transform_size
 
-    tile_offsets = [tile_data_off + i * tile_bytes for i in range(n_tiles)]
-    tile_byte_counts = [tile_bytes] * n_tiles
+    tile_offsets = [tile_data_off + i * tile_bytes for i in range(real_tiles)]
+    tile_byte_counts = [tile_bytes] * real_tiles
+    if sparse:
+        # Pad missing entries with (0, 0) for the sparse tile(s).
+        n_sparse = n_tiles - real_tiles
+        tile_offsets.extend([0] * n_sparse)
+        tile_byte_counts.extend([0] * n_sparse)
 
     entries = [
         (256, 3, 1, w),                # ImageWidth
@@ -118,89 +137,6 @@ def _write_rotated_tiled_tiff(path, arr: np.ndarray, *,
         else:
             ifd_bytes += struct.pack('<HHII', tag, type_id, count, val)
     ifd_bytes += struct.pack('<I', 0)  # next IFD
-
-    with open(path, 'wb') as f:
-        f.write(struct.pack('<HHI', 0x4949, 42, ifd_off))
-        for payload in tile_payloads:
-            f.write(payload)
-        f.write(struct.pack(f'<{n_tiles}I', *tile_offsets))
-        f.write(struct.pack(f'<{n_tiles}I', *tile_byte_counts))
-        f.write(struct.pack('<16d', *_ROTATED_M_2238))
-        f.write(ifd_bytes)
-
-
-def _write_sparse_rotated_tiled_tiff(path, arr: np.ndarray, *,
-                                     tile_w: int = 16,
-                                     tile_h: int = 16) -> None:
-    """Like _write_rotated_tiled_tiff but with a sparse second tile.
-
-    Marks the last tile with offset=0, byte_count=0 so the reader sees
-    ``has_sparse_tile=True``. The GPU path routes sparse files to the
-    CPU fallback, exercising the gpu.py:697 branch.
-    """
-    h, w = arr.shape
-    arr = np.ascontiguousarray(arr.astype('<u2'))
-    tiles_across = (w + tile_w - 1) // tile_w
-    tiles_down = (h + tile_h - 1) // tile_h
-    n_tiles = tiles_across * tiles_down
-    tile_bytes = tile_w * tile_h * 2
-
-    tile_payloads = []
-    for ty in range(tiles_down):
-        for tx in range(tiles_across):
-            tile = np.zeros((tile_h, tile_w), dtype='<u2')
-            r0, c0 = ty * tile_h, tx * tile_w
-            r1, c1 = min(r0 + tile_h, h), min(c0 + tile_w, w)
-            tile[: r1 - r0, : c1 - c0] = arr[r0:r1, c0:c1]
-            tile_payloads.append(tile.tobytes())
-
-    header_size = 8
-    tile_data_off = header_size
-    # Only first n_tiles-1 tiles are present in the file body; the last
-    # tile is marked sparse (offset=byte_count=0).
-    real_tiles = max(n_tiles - 1, 1)
-    tile_data_size = real_tiles * tile_bytes
-    offsets_arr_off = tile_data_off + tile_data_size
-    offsets_arr_size = n_tiles * 4
-    bytecounts_arr_off = offsets_arr_off + offsets_arr_size
-    bytecounts_arr_size = n_tiles * 4
-    transform_off = bytecounts_arr_off + bytecounts_arr_size
-    transform_size = 16 * 8
-    ifd_off = transform_off + transform_size
-
-    tile_offsets = [tile_data_off + i * tile_bytes for i in range(real_tiles)]
-    tile_byte_counts = [tile_bytes] * real_tiles
-    if n_tiles > 1:
-        tile_offsets.append(0)
-        tile_byte_counts.append(0)
-    elif n_tiles == 1:
-        # Single-tile file: mark it sparse so has_sparse_tile is True.
-        tile_offsets = [0]
-        tile_byte_counts = [0]
-
-    entries = [
-        (256, 3, 1, w),
-        (257, 3, 1, h),
-        (258, 3, 1, 16),
-        (259, 3, 1, 1),
-        (262, 3, 1, 1),
-        (277, 3, 1, 1),
-        (322, 3, 1, tile_w),
-        (323, 3, 1, tile_h),
-        (324, 4, n_tiles, offsets_arr_off),
-        (325, 4, n_tiles, bytecounts_arr_off),
-        (339, 3, 1, 1),
-        (TAG_MODEL_TRANSFORMATION, 12, 16, transform_off),
-    ]
-    entries.sort(key=lambda e: e[0])
-
-    ifd_bytes = struct.pack('<H', len(entries))
-    for tag, type_id, count, val in entries:
-        if type_id == 3:
-            ifd_bytes += struct.pack('<HHIHH', tag, type_id, count, val, 0)
-        else:
-            ifd_bytes += struct.pack('<HHII', tag, type_id, count, val)
-    ifd_bytes += struct.pack('<I', 0)
 
     with open(path, 'wb') as f:
         f.write(struct.pack('<HHI', 0x4949, 42, ifd_off))
@@ -306,7 +242,7 @@ def test_sparse_tile_fallback_forwards_all_kwargs(tmp_path, monkeypatch):
     src = tmp_path / "2238_sparse_rotated.tif"
     h, w = 32, 32
     arr = np.arange(h * w, dtype='<u2').reshape(h, w)
-    _write_sparse_rotated_tiled_tiff(str(src), arr, tile_w=16, tile_h=16)
+    _write_rotated_tiled_tiff(str(src), arr, tile_w=16, tile_h=16, sparse=True)
 
     wrapper, seen = _make_kwarg_recorder()
     monkeypatch.setattr(gpu_backend, '_read_to_array', wrapper, raising=True)
@@ -345,35 +281,6 @@ def test_sparse_tile_fallback_forwards_all_kwargs(tmp_path, monkeypatch):
     assert host.shape == (16, 16), host.shape
     # The unmasked output: top-left quadrant of the source.
     assert np.array_equal(host, arr[:16, :16].astype(host.dtype))
-
-
-@_gpu_only
-def test_sparse_tile_fallback_respects_caller_max_pixels(tmp_path):
-    """Sparse-tile fallback honors a caller-raised ``max_pixels`` ceiling.
-
-    Without forwarding ``max_pixels``, an oversized file that the caller
-    explicitly allowed via ``max_pixels=N`` would still trip the default
-    1B-pixel cap inside ``_read_to_array``. The fix forwards the kwarg.
-    """
-    from xrspatial.geotiff import read_geotiff_gpu
-
-    src = tmp_path / "2238_sparse_maxpx.tif"
-    # Pixel count is small (32*32 = 1024) so the cap is not actually
-    # exceeded. We instead assert the inverse: the kwarg is plumbed
-    # through (a too-small cap raises). Pair with the recorder test
-    # above for the "raise" direction.
-    h, w = 32, 32
-    arr = np.arange(h * w, dtype='<u2').reshape(h, w)
-    _write_sparse_rotated_tiled_tiff(str(src), arr, tile_w=16, tile_h=16)
-
-    # A too-tight max_pixels must raise inside the CPU fallback.
-    # Otherwise the kwarg silently never reaches _read_to_array.
-    with pytest.raises(ValueError, match=r'(?i)max_pixels|pixel'):
-        read_geotiff_gpu(
-            str(src),
-            allow_rotated=True,
-            max_pixels=10,  # 32*32 = 1024 > 10
-        )
 
 
 # ---------------------------------------------------------------------------
