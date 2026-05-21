@@ -23,9 +23,6 @@ import xarray as xr
 from .._attrs import (
     _finalize_eager_read,
     _finalize_lazy_read_attrs,
-    _populate_attrs_from_geo_info,
-    _set_nodata_attrs,
-    _validate_read_geo_info,
 )
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,

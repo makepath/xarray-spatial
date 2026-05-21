@@ -558,8 +558,11 @@ def read_vrt(source: str, *,
     # * Per-band nodata selection happens above this call, not inside
     #   the helper. ``_apply_eager_nodata_mask`` is single-sentinel.
     # * ``nodata_pixels_present`` is computed above (VRT-aware scan)
-    #   and stamped post-helper because ``_finalize_lazy_read_attrs``
-    #   passes ``pixels_present=None`` unconditionally.
+    #   and threaded through the helper's ``pixels_present`` kwarg so
+    #   the attr is stamped by ``_set_nodata_attrs`` rather than
+    #   written ad-hoc post-call (PR-D of #2211). The kwarg defaults
+    #   to ``None`` so the dask backends keep the lazy contract from
+    #   issue #2135 unchanged.
     synth_geo_info = _vrt_to_synthetic_geo_info(vrt)
     attrs_seed: dict = {}
     if vrt.holes:
@@ -576,9 +579,8 @@ def read_vrt(source: str, *,
         band_nodata=band_nodata,
         band_nodata_values=_band_nodata_values,
         attrs_in=attrs_seed,
+        pixels_present=nodata_pixels_present,
     )
-    if nodata is not None and nodata_pixels_present is not None:
-        attrs['nodata_pixels_present'] = bool(nodata_pixels_present)
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
