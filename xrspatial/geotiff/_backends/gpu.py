@@ -487,10 +487,15 @@ def read_geotiff_gpu(source: str, *,
             # Orientation != 1 + window is already rejected at line 2495,
             # so ``window`` is None whenever ``geo_info`` will be remapped
             # below.
+            #
+            # ``allow_rotated`` is forwarded so rotated stripped files do
+            # not trip ``_read_to_array``'s rotation guard on the fallback
+            # path (issue #2238).
             src.close()
             arr_cpu, _stripped_geo = _read_to_array(
                 source, overview_level=overview_level,
-                window=window, band=band, max_pixels=max_pixels)
+                window=window, band=band, max_pixels=max_pixels,
+                allow_rotated=allow_rotated)
             arr_gpu = cupy.asarray(arr_cpu)
             if orientation != 1:
                 geo_info = _apply_orientation_geo_info(
@@ -681,8 +686,18 @@ def read_geotiff_gpu(source: str, *,
                 # 2/3/4 case is covered regardless of #1539's merge state), but
                 # keep it on ``_cpu_fallback_geo`` so the MinIsWhite-aware nodata
                 # mask below sees ``_mask_nodata``.
+                #
+                # Forward ``allow_rotated``, ``window``, ``band``, and
+                # ``max_pixels`` so caller intent reaches the fallback parser
+                # (issue #2238). Without these the CPU parser rejects rotated
+                # ModelTransformation files even with ``allow_rotated=True``,
+                # and a caller-raised ``max_pixels`` still trips the default
+                # 1B-pixel cap inside the fallback. The shape repair in
+                # ``_gpu_apply_window_band`` below cannot un-raise that.
                 arr_cpu, _cpu_fallback_geo = _read_to_array(
-                    source, overview_level=overview_level)
+                    source, overview_level=overview_level,
+                    window=window, band=band, max_pixels=max_pixels,
+                    allow_rotated=allow_rotated)
                 arr_gpu = cupy.asarray(arr_cpu)
                 arr_was_cpu_decoded = True
             else:
@@ -694,8 +709,11 @@ def read_geotiff_gpu(source: str, *,
                         f"({height}, {width}, {samples})"
                     )
         elif has_sparse_tile:
+            # Forward caller kwargs to the CPU fallback (issue #2238).
             arr_cpu, _cpu_fallback_geo = _read_to_array(
-                source, overview_level=overview_level)
+                source, overview_level=overview_level,
+                window=window, band=band, max_pixels=max_pixels,
+                allow_rotated=allow_rotated)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True
         else:
@@ -768,8 +786,11 @@ def read_geotiff_gpu(source: str, *,
                     RuntimeWarning,
                     stacklevel=2,
                 )
+                # Forward caller kwargs to the CPU fallback (issue #2238).
                 arr_cpu, _cpu_fallback_geo = _read_to_array(
-                    source, overview_level=overview_level)
+                    source, overview_level=overview_level,
+                    window=window, band=band, max_pixels=max_pixels,
+                    allow_rotated=allow_rotated)
                 arr_gpu = cupy.asarray(arr_cpu)
                 arr_was_cpu_decoded = True
 
@@ -777,7 +798,14 @@ def read_geotiff_gpu(source: str, *,
         # config -- catch any shape regression in the kernels before we attach
         # dims/coords below. Plain `raise` rather than `assert` so the check
         # survives `python -O`.
-        if samples > 1:
+        #
+        # Skip the check on CPU-fallback paths: ``_read_to_array`` is now
+        # called with ``window``/``band`` (issue #2238), so the returned
+        # buffer is already sliced and will not equal the full IFD shape.
+        # The pure-GPU branches still need the guard because they hand
+        # back a fully-decoded ``(H, W, samples)`` buffer and rely on the
+        # downstream ``_gpu_apply_window_band`` for the slice.
+        if samples > 1 and not arr_was_cpu_decoded:
             if (arr_gpu.shape[:2] != (height, width)
                     or arr_gpu.shape[2] != samples):
                 raise RuntimeError(
@@ -834,8 +862,16 @@ def read_geotiff_gpu(source: str, *,
         # carries through the inverted values. ``_gpu_apply_window_band``
         # also returns coords, but the helper rebuilds them from
         # ``geo_info`` / ``window`` so the local copy is discarded.
-        arr_gpu, _ = _gpu_apply_window_band(
-            arr_gpu, geo_info, window=window, band=band)
+        #
+        # Skip the slice on CPU-fallback paths: ``_read_to_array`` is now
+        # called with ``window``/``band`` (issue #2238), so the buffer is
+        # already windowed and banded. Re-slicing here would double-window
+        # or raise an out-of-range slice. The orientation block above
+        # similarly skips ``_apply_orientation_gpu`` on CPU-decoded paths
+        # because ``_read_to_array`` did the flip.
+        if not arr_was_cpu_decoded:
+            arr_gpu, _ = _gpu_apply_window_band(
+                arr_gpu, geo_info, window=window, band=band)
 
         # Hand the windowed+banded GPU buffer to the shared eager
         # finalizer (issue #2179). ``mask_sentinel`` resolution mirrors

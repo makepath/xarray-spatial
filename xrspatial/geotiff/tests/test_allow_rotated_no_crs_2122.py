@@ -156,22 +156,15 @@ def test_dask_rotated_read_drops_crs(tmp_path):
 
 
 @_gpu_only
-@pytest.mark.xfail(
-    reason="read_geotiff_gpu CPU-fallback _read_to_array calls drop "
-           "allow_rotated; tracked as a sibling finding to #2122. "
-           "Re-enable once the GPU path forwards allow_rotated.",
-    raises=NotImplementedError,
-    strict=True,
-)
 def test_cupy_rotated_read_drops_crs(tmp_path):
     """``allow_rotated=True`` on the GPU eager path drops ``crs`` / ``crs_wkt``.
 
-    Currently xfails because ``read_geotiff_gpu`` falls back to
-    ``_read_to_array`` for stripped TIFFs without forwarding
-    ``allow_rotated``; the CPU re-read then raises
-    ``NotImplementedError``. Tracked separately from #2122. Once the
-    GPU plumbing is fixed, this xfail will flip to a pass and the
-    ``strict=True`` will surface that fact in CI.
+    Previously xfailed because ``read_geotiff_gpu`` fell back to
+    ``_read_to_array`` for the stripped layout (and the three tiled
+    CPU-fallback sites) without forwarding ``allow_rotated``; the CPU
+    re-read then raised ``NotImplementedError``. Fixed in #2238, which
+    forwards ``allow_rotated`` / ``window`` / ``band`` / ``max_pixels``
+    through every CPU-fallback ``_read_to_array`` call in ``gpu.py``.
     """
     src = tmp_path / "rotated_2122_gpu.tif"
     arr = np.arange(20, dtype='<u2').reshape(4, 5)
