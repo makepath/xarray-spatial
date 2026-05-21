@@ -125,7 +125,7 @@ def test_lazy_finalize_routes_band_nodata_through_validator():
             geo_info=gi,
             nodata=None,
             mask_nodata=False,
-            dtype='float64',
+            graph_dtype='float64',
             window=None,
             band_nodata=None,
             band_nodata_values=[-9999.0, 0.0],
@@ -141,7 +141,7 @@ def test_lazy_finalize_band_nodata_first_opts_out():
         geo_info=gi,
         nodata=-9999,
         mask_nodata=True,
-        dtype='float64',
+        graph_dtype='float64',
         window=None,
         band_nodata='first',
         band_nodata_values=[-9999.0, 0.0],
@@ -158,7 +158,7 @@ def test_lazy_finalize_without_band_kwargs_unchanged():
         geo_info=gi,
         nodata=-9999,
         mask_nodata=True,
-        dtype='float64',
+        graph_dtype='float64',
         window=None,
     )
     assert attrs['georef_status'] == 'full'
