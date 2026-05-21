@@ -81,6 +81,7 @@ from ._sources import (  # noqa: F401
     # Public module-level constants.
     COALESCE_GAP_THRESHOLD_DEFAULT,
     MAX_CLOUD_BYTES_DEFAULT,
+    MAX_COALESCED_RANGE_BYTES_DEFAULT,
     MAX_TILE_BYTES_DEFAULT,
     # Private module-level constants and sentinels.
     _CLOUD_SCHEMES,
@@ -116,6 +117,7 @@ from ._sources import (  # noqa: F401
     _is_file_like,
     _is_fsspec_uri,
     _make_pinned_pool,
+    _max_coalesced_range_bytes_from_env,
     _max_tile_bytes_from_env,
     _mmap_cache_size_from_env,
     _open_source,

@@ -307,7 +307,8 @@ class _StaticBytesHTTPSource:
         return self._buf
 
     def read_ranges_coalesced(self, ranges, *, max_workers=8,
-                              gap_threshold=0):
+                              gap_threshold=0,
+                              max_coalesced_range_bytes=None):
         return [self._buf[s:s + le] for (s, le) in ranges]
 
     def close(self):

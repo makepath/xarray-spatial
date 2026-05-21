@@ -612,14 +612,24 @@ class _MockHTTPSource:
     def read_ranges(self, ranges, max_workers=8):
         return [self.read_range(s, le) for s, le in ranges]
 
-    def read_ranges_coalesced(self, ranges, max_workers=8, gap_threshold=None):
+    def read_ranges_coalesced(
+        self,
+        ranges,
+        max_workers=8,
+        gap_threshold=None,
+        max_coalesced_range_bytes=None,
+    ):
         from xrspatial.geotiff._reader import (
             coalesce_ranges, split_coalesced_bytes,
             COALESCE_GAP_THRESHOLD_DEFAULT,
         )
         if gap_threshold is None:
             gap_threshold = COALESCE_GAP_THRESHOLD_DEFAULT
-        merged, mapping = coalesce_ranges(ranges, gap_threshold=gap_threshold)
+        merged, mapping = coalesce_ranges(
+            ranges,
+            gap_threshold=gap_threshold,
+            max_coalesced_range_bytes=max_coalesced_range_bytes,
+        )
         merged_bytes = self.read_ranges(merged, max_workers=max_workers)
         return split_coalesced_bytes(merged_bytes, mapping)
 

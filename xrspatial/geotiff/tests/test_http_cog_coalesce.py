@@ -113,6 +113,122 @@ def test_coalesce_split_recovers_per_tile_bytes():
 
 
 # ---------------------------------------------------------------------------
+# Issue #2266: coalesced-range size cap. Without this cap a tile table
+# with many small valid byte counts and sub-MiB gaps would chain into
+# one merged range whose length is roughly num_tiles * gap_threshold,
+# turning a safe per-tile fetch into a multi-GiB over-fetch.
+# ---------------------------------------------------------------------------
+
+def test_coalesce_caps_merged_range_size_2266():
+    # 8 tiny ranges spaced 1 MiB apart. Every gap is within the default
+    # 1 MiB threshold so without the size cap they would all merge into
+    # one ~7 MiB range. With a 4 MiB cap the coalescer must split. The
+    # next test (``test_coalesce_cap_round_trips_bytes_2266``) covers
+    # byte-level recovery after the split.
+    one_mib = 1 << 20
+    ranges = [(i * one_mib, 1024) for i in range(8)]
+    merged, mapping = coalesce_ranges(
+        ranges, max_coalesced_range_bytes=4 * one_mib)
+    # No merged range exceeds the cap.
+    for _start, length in merged:
+        assert length <= 4 * one_mib, (
+            f'merged range of {length} bytes exceeds 4 MiB cap')
+    # Splitting still happened: more than one merged range.
+    assert len(merged) > 1
+    # Every input is still represented in the mapping.
+    assert len(mapping) == len(ranges)
+
+
+def test_coalesce_cap_round_trips_bytes_2266():
+    # When the cap forces a split, split_coalesced_bytes must still
+    # recover every original byte range correctly.
+    one_mib = 1 << 20
+    payload_len = 8 * one_mib + 1024
+    # Use a deterministic payload we can slice and compare against.
+    payload = bytes((i * 17) & 0xFF for i in range(payload_len))
+    ranges = [(i * one_mib, 1024) for i in range(8)]
+
+    merged, mapping = coalesce_ranges(
+        ranges, max_coalesced_range_bytes=4 * one_mib)
+    merged_bytes = [payload[s:s + le] for (s, le) in merged]
+    out = split_coalesced_bytes(merged_bytes, mapping)
+
+    for (off, length), tile in zip(ranges, out):
+        assert tile == payload[off:off + length]
+
+
+def test_coalesce_default_cap_bounds_adversarial_input_2266():
+    # The motivating scenario from issue #2266: 4096 tiles, each 1 KB,
+    # with offsets spaced 1 MiB apart. Without the cap this collapses
+    # into one ~4 GiB merged range. With the default cap nothing
+    # exceeds MAX_COALESCED_RANGE_BYTES_DEFAULT.
+    from xrspatial.geotiff._sources import (
+        MAX_COALESCED_RANGE_BYTES_DEFAULT,
+    )
+
+    one_mib = 1 << 20
+    ranges = [(i * one_mib, 1024) for i in range(4096)]
+    merged, _ = coalesce_ranges(ranges)
+    for _start, length in merged:
+        assert length <= MAX_COALESCED_RANGE_BYTES_DEFAULT, (
+            f'merged range {length} bytes exceeds default cap '
+            f'{MAX_COALESCED_RANGE_BYTES_DEFAULT} bytes')
+
+
+def test_coalesce_cap_zero_disables_size_check_2266():
+    # A non-positive cap means "no size limit" -- the gap threshold
+    # alone governs merging. Useful as an escape hatch for callers
+    # that have their own bookkeeping.
+    one_mib = 1 << 20
+    ranges = [(i * one_mib, 1024) for i in range(8)]
+    merged, _ = coalesce_ranges(
+        ranges, max_coalesced_range_bytes=0)
+    # All eight merge into one ~7 MiB + 1 KB range.
+    assert len(merged) == 1
+    _, length = merged[0]
+    assert length == 7 * one_mib + 1024
+
+
+def test_coalesce_cap_does_not_split_legitimate_back_to_back_2266():
+    # The cap must not punish well-behaved COGs whose tiles really are
+    # back-to-back. A real COG with 64 tiles of 64 KB each (total 4 MiB)
+    # should still collapse into a single GET under the default cap.
+    tile_bytes = 64 * 1024
+    n_tiles = 64
+    ranges = [(i * tile_bytes, tile_bytes) for i in range(n_tiles)]
+    merged, _ = coalesce_ranges(ranges)
+    assert len(merged) == 1
+    assert merged[0] == (0, n_tiles * tile_bytes)
+
+
+def test_coalesce_cap_respects_env_override_2266(monkeypatch):
+    # When max_coalesced_range_bytes is None (the default), the helper
+    # reads XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES from the environment.
+    one_mib = 1 << 20
+    ranges = [(i * one_mib, 1024) for i in range(8)]
+    # Force a 2 MiB cap via env. The 8 ranges spaced 1 MiB apart must
+    # split into at least 4 merged ranges (2 MiB each + slack).
+    monkeypatch.setenv(
+        'XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES', str(2 * one_mib))
+    merged, _ = coalesce_ranges(ranges)
+    for _start, length in merged:
+        assert length <= 2 * one_mib
+    assert len(merged) >= 4
+
+
+def test_coalesce_cap_preserves_oversized_single_input_2266():
+    # If a single input range already exceeds the cap, the function
+    # still emits it intact. Rejecting oversized individual tiles is
+    # the job of the per-tile cap, not the coalescer.
+    big = 10 * (1 << 20)  # 10 MiB
+    ranges = [(0, big)]
+    merged, mapping = coalesce_ranges(
+        ranges, max_coalesced_range_bytes=1 << 20)  # 1 MiB cap
+    assert merged == [(0, big)]
+    assert mapping == [(0, 0, big)]
+
+
+# ---------------------------------------------------------------------------
 # Mocked HTTP source for perf and call-count assertions
 # ---------------------------------------------------------------------------
 
@@ -146,6 +262,34 @@ class _MockHTTPSource(_HTTPSource):
         if self._rtt > 0:
             time.sleep(self._rtt)
         return self._buf
+
+
+def test_http_source_read_ranges_coalesced_respects_cap_2266():
+    """The HTTP wrapper must propagate the size cap to coalesce_ranges.
+
+    Builds a 16 MiB in-memory buffer, then asks the source to fetch
+    eight 1 KB ranges spaced 1 MiB apart. Without the cap the wrapper
+    would issue a single ~7 MiB merged GET; with a 4 MiB cap it issues
+    at least two smaller GETs.
+    """
+    one_mib = 1 << 20
+    buf = bytes((i * 13) & 0xFF for i in range(16 * one_mib))
+    src = _MockHTTPSource(buf)
+    ranges = [(i * one_mib, 1024) for i in range(8)]
+
+    out = src.read_ranges_coalesced(
+        ranges, max_workers=2,
+        max_coalesced_range_bytes=4 * one_mib)
+    # Bytes must match the original per-range slices.
+    for (off, length), tile in zip(ranges, out):
+        assert tile == buf[off:off + length]
+    # The actual GETs the mock saw must all respect the cap.
+    assert src.calls, 'no GETs were issued'
+    for _start, length in src.calls:
+        assert length <= 4 * one_mib, (
+            f'merged GET of {length} bytes exceeds 4 MiB cap')
+    # And the cap must have caused at least one split.
+    assert len(src.calls) >= 2
 
 
 @pytest.fixture
