@@ -507,9 +507,7 @@ def read_geotiff_gpu(source: str, *,
             # post-MinIsWhite sentinel on ``_stripped_geo._mask_nodata``
             # for the masking step (#1809); fall back to the raw
             # sentinel on non-MinIsWhite files. The helper's host-side
-            # mask block runs on CuPy arrays via numpy duck-typing and
-            # produces the same lifecycle attrs that
-            # ``_apply_nodata_mask_gpu_with_presence`` did inline.
+            # mask block runs on CuPy arrays via numpy duck-typing.
             nodata = geo_info.nodata
             mask_sentinel = (
                 getattr(_stripped_geo, '_mask_nodata', nodata)
@@ -843,9 +841,7 @@ def read_geotiff_gpu(source: str, *,
         # fall back to the CPU-fallback path's stash on
         # ``_cpu_fallback_geo._mask_nodata`` (#1817); otherwise the raw
         # declared sentinel. The helper's host-side mask block runs on
-        # CuPy arrays via numpy duck-typing and produces the same
-        # lifecycle attrs that ``_apply_nodata_mask_gpu_with_presence``
-        # did inline.
+        # CuPy arrays via numpy duck-typing.
         #
         # The sentinel is resolved even when ``mask_nodata=False``
         # because the helper still needs it for the
@@ -959,9 +955,7 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
     # stashed the post-MinIsWhite sentinel on ``geo_info._mask_nodata``
     # for the masking step (#1809); fall back to the raw sentinel on
     # non-MinIsWhite files. The helper's host-side mask block runs on
-    # CuPy arrays via numpy duck-typing and produces the same
-    # lifecycle attrs that ``_apply_nodata_mask_gpu_with_presence``
-    # did inline.
+    # CuPy arrays via numpy duck-typing.
     nodata = geo_info.nodata
     mask_sentinel = (
         getattr(geo_info, '_mask_nodata', nodata)
