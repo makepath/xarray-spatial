@@ -240,6 +240,23 @@ class _MockPoolResponse:
         self.status = status
         self.headers = {'Location': location} if location else {}
         self.data = data
+        self._body = data
+        # ``read_range`` (post #2264) does a Content-Length preflight and
+        # streams the body with ``_read_capped``. Pin Content-Length to
+        # the body size so the preflight passes; the streaming cap then
+        # reads ``data`` via ``stream()`` below.
+        if data:
+            self.headers['Content-Length'] = str(len(data))
+
+    def stream(self, amt=65536, decode_content=True):
+        if self._body:
+            yield self._body
+
+    def release_conn(self):
+        pass
+
+    def drain_conn(self):
+        pass
 
 
 class _MockPool:

@@ -232,6 +232,19 @@ class _MockPoolResponse:
         self.status = status
         self.headers = {'Location': location} if location else {}
         self.data = data
+        self._body = data
+        if data:
+            self.headers['Content-Length'] = str(len(data))
+
+    def stream(self, amt=65536, decode_content=True):
+        if self._body:
+            yield self._body
+
+    def release_conn(self):
+        pass
+
+    def drain_conn(self):
+        pass
 
 
 class _MockPool:

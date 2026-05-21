@@ -115,12 +115,29 @@ def _fake_getaddrinfo(ip: str):
 
 
 class _MockResp:
-    def __init__(self, status, data=b'', content_range=None):
+    def __init__(self, status, data=b'', content_range=None,
+                 content_length=None):
         self.status = status
         self.data = data
+        self._body = data
         self.headers = {}
         if content_range is not None:
             self.headers['Content-Range'] = content_range
+        # ``read_range`` (post #2264) does a Content-Length preflight; let
+        # callers either pin it explicitly or default to len(data).
+        if content_length is None and data:
+            self.headers['Content-Length'] = str(len(data))
+        elif content_length is not None:
+            self.headers['Content-Length'] = str(content_length)
+
+    def stream(self, amt=65536, decode_content=True):
+        # Yield the body in a single chunk; ``_read_capped`` reads
+        # whatever ``stream()`` produces.
+        if self._body:
+            yield self._body
+
+    def release_conn(self):
+        pass
 
 
 class _MockPool:
@@ -150,6 +167,10 @@ def test_read_range_uses_urllib3_pool(monkeypatch):
     assert method == 'GET'
     assert kwargs.get('redirect') is False
     assert kwargs.get('headers', {}).get('Range') == 'bytes=0-99'
+    # Post #2264: the GET must request a streaming body so the cap is
+    # enforced on the wire rather than after urllib3 has already
+    # buffered ``resp.data``.
+    assert kwargs.get('preload_content') is False
 
 
 def test_read_all_uses_urllib3_pool(monkeypatch):

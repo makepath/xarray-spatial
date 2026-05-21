@@ -1049,7 +1049,46 @@ class _HTTPSource:
             return self._pool
         return self._get_pinned_pool(scheme, host, parsed.port, pinned_ip)
 
+    #: Absolute ceiling for a ``read_range(0, length)`` whose server
+    #: ignores ``Range`` and returns a 200 with the full object body. Up
+    #: to this size we tolerate the misbehaviour (the response is sliced
+    #: down to ``length``); beyond it we refuse to buffer. The value is
+    #: large enough to cover a typical sidecar/header prefetch served
+    #: from a Range-blind origin (kilobytes to a few MiB) but well below
+    #: the multi-gigabyte regime the OOM guard exists to prevent.
+    #:
+    #: This is the worst-case *transient* buffer per ``read_range``
+    #: call. :meth:`read_ranges` fans out across up to 8 threads, so a
+    #: full pool against a Range-blind server can hold roughly
+    #: ``8 * _RANGE_IGNORED_FULL_OBJECT_CAP`` (~128 MiB) of body bytes
+    #: in flight at once. That is still bounded -- the pre-#2264 path
+    #: had no per-call bound at all -- but worth keeping in mind if a
+    #: future caller wants to scale ``max_workers`` higher. Issue #2264.
+    _RANGE_IGNORED_FULL_OBJECT_CAP = 16 * 1024 * 1024
+
     def read_range(self, start: int, length: int) -> bytes:
+        """Fetch ``[start, start + length)`` from the remote object.
+
+        Sends ``Range: bytes={start}-{start + length - 1}`` and validates
+        the response on three axes before returning:
+
+        - status is 200 or 206 (anything else raises ``OSError``);
+        - the advertised ``Content-Length`` (or the streamed body, if no
+          header) fits inside the per-call byte budget -- ``length``
+          bytes for a 206 or non-zero start, or
+          :attr:`_RANGE_IGNORED_FULL_OBJECT_CAP` for the ``start=0`` +
+          200-with-no-Content-Range fallback path;
+        - the ``Content-Range`` header (when present) actually starts at
+          ``start``.
+
+        The body is streamed with ``preload_content=False`` so an
+        oversize response cannot land in ``resp.data`` before the cap is
+        applied; :meth:`_read_capped` aborts past the byte budget.
+
+        Raises ``OSError`` when the server's body is past the budget,
+        the status code is wrong, or the ``Content-Range`` does not line
+        up with what was requested. Issue #2264.
+        """
         # Match the ``b''``-for-non-positive-length convention used by
         # other source implementations (e.g. ``_BytesIOSource``).
         # Without this guard, ``Range: bytes=<start>-<start-1>`` goes on
@@ -1060,14 +1099,79 @@ class _HTTPSource:
             return b''
         end = start + length - 1
         headers = {'Range': f'bytes={start}-{end}'}
-        resp = self._request(headers=headers)
-        return self._validate_range_response(
-            status=resp.status,
-            content_range=resp.headers.get('Content-Range'),
-            data=resp.data,
-            start=start,
-            length=length,
-        )
+        # Stream the body so a server that ignores ``Range`` and returns
+        # the full object as 200 cannot drag arbitrarily many bytes into
+        # process memory before the cap is applied. Without
+        # ``preload_content=False`` urllib3 buffers the full response into
+        # ``resp.data`` *before* this method returns, so the slice in
+        # ``_validate_range_response`` only ever ran after the body was
+        # already resident. Mirrors the ``read_all`` streaming path that
+        # #2051 introduced. Issue #2264.
+        resp = self._request(headers=headers, preload_content=False)
+        try:
+            content_range = resp.headers.get('Content-Range')
+            content_length = resp.headers.get('Content-Length')
+            status = resp.status
+            # Choose the byte budget for ``_read_capped``. A 206 with
+            # Content-Range is bounded by ``length`` (the validator
+            # below also re-checks this against the advertised range).
+            # A 200 without Content-Range means the server ignored
+            # ``Range``; allow the full-object slack only when the
+            # caller asked from ``start=0`` (the only case where the
+            # full body offsets line up with what was requested).
+            if content_range is None and start == 0:
+                cap = self._RANGE_IGNORED_FULL_OBJECT_CAP
+            else:
+                cap = length
+            self._check_range_content_length(content_length, cap)
+            data = self._read_capped(resp, cap)
+            # Validate inside the try so we hold the response alive while
+            # status/headers are inspected. ``release_conn`` in the
+            # finally happens after the validator returns its bytes (or
+            # raises).
+            return self._validate_range_response(
+                status=status,
+                content_range=content_range,
+                data=data,
+                start=start,
+                length=length,
+            )
+        finally:
+            try:
+                resp.release_conn()
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _check_range_content_length(raw, cap: int) -> None:
+        """Reject a range response whose advertised ``Content-Length``
+        exceeds the byte budget for the call.
+
+        For a ``Range: bytes=S-E`` request, a well-behaved server returns
+        either a 206 with body length ``E - S + 1`` or a 200 with the
+        full object body. A server that ignores ``Range`` and returns a
+        multi-gigabyte 200 advertises that size up front; rejecting on
+        the header lets us bail before any body bytes are read.
+
+        Missing or unparseable ``Content-Length`` returns silently --
+        the streaming cap in :meth:`_read_capped` is the real defence
+        and will catch an over-sized body whether the header was honest,
+        dishonest, or absent. Issue #2264.
+        """
+        if raw is None:
+            return
+        try:
+            declared = int(raw)
+        except (TypeError, ValueError):
+            return
+        if declared > cap:
+            raise OSError(
+                f"HTTP range response declares Content-Length="
+                f"{declared:,} bytes, which exceeds the byte budget of "
+                f"{cap:,} bytes for this request. The server likely "
+                f"ignored the Range header and returned a multi-MiB "
+                f"body. Issue #2264."
+            )
 
     @staticmethod
     def _validate_range_response(*, status, content_range, data,
@@ -1123,8 +1227,12 @@ class _HTTPSource:
                 raise OSError("HTTP 200 response body is empty.")
             # Server ignored Range and returned the full object as 200.
             # The implicit contract is "at most ``length`` bytes"; slice
-            # so a 16 KiB prefetch against a 2 GiB object doesn't drag
-            # the whole thing into memory.
+            # the buffered body down. ``read_range`` has already capped
+            # the buffer at :attr:`_RANGE_IGNORED_FULL_OBJECT_CAP` (16
+            # MiB) via the streaming preflight, so ``data`` arriving here
+            # is bounded even when the server lied about the body size;
+            # the slice below just enforces the caller's contract.
+            # Issue #2264.
             if len(data) > length:
                 return data[:length]
             return data
@@ -1328,7 +1436,7 @@ class _HTTPSource:
                     f"HTTP response body exceeded the byte budget of "
                     f"{max_bytes:,} bytes (received {received:,} bytes "
                     f"before abort). The server likely ignored or lied "
-                    f"about Content-Length. Issue #2051."
+                    f"about Content-Length. Issues #2051, #2264."
                 )
         return b''.join(chunks)
 
