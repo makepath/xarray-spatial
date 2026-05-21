@@ -8,6 +8,7 @@ codify the gate and verify correctness (parallel vs serial parity).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import http.server
 import os
 import socket
@@ -77,8 +78,13 @@ class TestReadStripsParallelGate:
         p = str(tmp_path / "s.tif")
         with open(p, "wb") as f:
             f.write(blob)
-        with patch.object(_reader_mod, "ThreadPoolExecutor",
-                          wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+        # Patch ``concurrent.futures.ThreadPoolExecutor`` rather than the
+        # reader module binding because the strip decode lives in
+        # ``_decode`` and re-imports the executor function-locally (PR-G,
+        # issue #2246).
+        with patch.object(concurrent.futures, "ThreadPoolExecutor",
+                          wraps=concurrent.futures.ThreadPoolExecutor
+                          ) as mock_pool:
             out, _ = read_to_array(p)
             # n_strips for a 1024-row file with default rps -> at
             # least 4 strips (TIFFs default rps=8KB / row).
@@ -92,8 +98,9 @@ class TestReadStripsParallelGate:
         da = xr.DataArray(arr, dims=["y", "x"])
         p = str(tmp_path / "tiny.tif")
         to_geotiff(da, p, compression="deflate", tiled=False)
-        with patch.object(_reader_mod, "ThreadPoolExecutor",
-                          wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+        with patch.object(concurrent.futures, "ThreadPoolExecutor",
+                          wraps=concurrent.futures.ThreadPoolExecutor
+                          ) as mock_pool:
             out, _ = read_to_array(p)
             # Single-strip file => no pool.
             assert not mock_pool.called

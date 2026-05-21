@@ -34,6 +34,7 @@ on empty input — confirmed before commit.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import http.server
 import os
 import socket
@@ -184,9 +185,12 @@ class TestReadStripsSparseParallel:
         # engages because n_strips = 4 > 1 and strip_pixel_count
         # = 2048 * 64 = 131_072 >= 65_536.
         _write_sparse_stripped_large(path, filled_rows=256)
+        # Patch ``concurrent.futures.ThreadPoolExecutor`` rather than the
+        # reader module binding: strip decode lives in ``_decode`` after
+        # PR-G (issue #2246) and re-imports the executor function-locally.
         with patch.object(
-                _reader_mod, "ThreadPoolExecutor",
-                wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+                concurrent.futures, "ThreadPoolExecutor",
+                wraps=concurrent.futures.ThreadPoolExecutor) as mock_pool:
             out, _ = read_to_array(path)
             assert mock_pool.called, (
                 "parallel-decode pool was not engaged for a multi-strip "
@@ -229,8 +233,8 @@ class TestReadStripsSparseParallel:
         path = str(tmp_path / "all_sparse.tif")
         _write_sparse_stripped_large(path, filled_rows=0)
         with patch.object(
-                _reader_mod, "ThreadPoolExecutor",
-                wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+                concurrent.futures, "ThreadPoolExecutor",
+                wraps=concurrent.futures.ThreadPoolExecutor) as mock_pool:
             out, _ = read_to_array(path)
             # All strips sparse → no jobs → no pool.
             assert not mock_pool.called, (
