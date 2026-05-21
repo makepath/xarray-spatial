@@ -546,10 +546,40 @@ def _validate_http_url(url: str) -> str | None:
 #: O(num_tiles) bytes plus at most one threshold of slack between tiles.
 COALESCE_GAP_THRESHOLD_DEFAULT = 1 << 20  # 1 MB
 
+#: Default upper bound (bytes) on any single coalesced range. The gap
+#: threshold alone does not bound the *total* over-fetch: a tile table
+#: with N entries whose offsets are spaced just under ``gap_threshold``
+#: apart will chain into one merged range of size ~N * gap_threshold,
+#: even when each individual tile is tiny and passes the per-tile cap.
+#: This cap seals the current merged range and starts a new one once
+#: extending it would exceed the limit. Override via the
+#: ``XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES`` environment variable.
+#: Issue #2266.
+MAX_COALESCED_RANGE_BYTES_DEFAULT = MAX_TILE_BYTES_DEFAULT  # 256 MiB
+
+
+def _max_coalesced_range_bytes_from_env() -> int:
+    """Read the coalesced-range cap from the environment, or use the default.
+
+    Non-integer, empty, zero, or negative values all fall back to
+    ``MAX_COALESCED_RANGE_BYTES_DEFAULT``. Mirrors the policy used by
+    :func:`_max_tile_bytes_from_env` so callers can not accidentally set
+    an unreachable 1-byte cap.
+    """
+    raw = _os_module.environ.get('XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES')
+    if raw is None:
+        return MAX_COALESCED_RANGE_BYTES_DEFAULT
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return MAX_COALESCED_RANGE_BYTES_DEFAULT
+    return val if val > 0 else MAX_COALESCED_RANGE_BYTES_DEFAULT
+
 
 def coalesce_ranges(
     ranges: list[tuple[int, int]],
     gap_threshold: int = COALESCE_GAP_THRESHOLD_DEFAULT,
+    max_coalesced_range_bytes: int | None = None,
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int, int]]]:
     """Merge nearby ``(offset, length)`` ranges into fewer larger ones.
 
@@ -562,6 +592,16 @@ def coalesce_ranges(
         Maximum gap, in bytes, between two adjacent ranges before they
         are merged. A gap of zero means perfectly back-to-back; larger
         gaps trade some over-fetch for fewer round-trips.
+    max_coalesced_range_bytes : int or None, optional
+        Upper bound on any single merged range. When extending the
+        current merged range would push its length above this cap, the
+        current range is sealed and a new one is started instead. This
+        bounds the *total* over-fetch even when many small ranges are
+        spaced just under ``gap_threshold`` apart. ``None`` (the
+        default) reads the cap from
+        ``XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES`` (falling back to
+        :data:`MAX_COALESCED_RANGE_BYTES_DEFAULT`, 256 MiB). A
+        non-positive value disables the cap. Issue #2266.
 
     Returns
     -------
@@ -575,10 +615,18 @@ def coalesce_ranges(
     Notes
     -----
     Empty input returns ``([], [])``. Negative gap thresholds disable
-    merging entirely (every input becomes its own merged range).
+    merging entirely (every input becomes its own merged range). When a
+    single input range already exceeds ``max_coalesced_range_bytes`` it
+    is still emitted intact -- the per-tile cap in
+    :func:`_max_tile_bytes_from_env` is the right place to reject
+    oversized individual tiles; this cap only governs how greedily
+    *separate* tiles are stitched together.
     """
     if not ranges:
         return [], []
+
+    if max_coalesced_range_bytes is None:
+        max_coalesced_range_bytes = _max_coalesced_range_bytes_from_env()
 
     # Tag each input with its original index so we can rebuild mapping.
     indexed = sorted(
@@ -596,12 +644,20 @@ def coalesce_ranges(
 
     for off, length, orig_idx in indexed[1:]:
         gap = off - cur_end
-        if gap_threshold >= 0 and gap <= gap_threshold:
+        new_end = max(cur_end, off + length)
+        # Length the merged range would have if we extended it to include
+        # this input. Used both to decide whether the merge is allowed
+        # and (when it is) to update cur_length.
+        candidate_length = new_end - cur_start
+        size_ok = (
+            max_coalesced_range_bytes <= 0
+            or candidate_length <= max_coalesced_range_bytes
+        )
+        if gap_threshold >= 0 and gap <= gap_threshold and size_ok:
             # Extend current merged range. Gaps may be negative if a
             # later-listed range overlaps an earlier one; clamp so the
             # merged length covers both.
-            new_end = max(cur_end, off + length)
-            cur_length = new_end - cur_start
+            cur_length = candidate_length
             cur_end = new_end
             members.append((orig_idx, off, length))
         else:
@@ -1151,6 +1207,7 @@ class _HTTPSource:
         ranges: list[tuple[int, int]],
         max_workers: int = 8,
         gap_threshold: int = COALESCE_GAP_THRESHOLD_DEFAULT,
+        max_coalesced_range_bytes: int | None = None,
     ) -> list[bytes]:
         """Fetch *ranges* using merged GETs where adjacent ranges allow it.
 
@@ -1162,10 +1219,20 @@ class _HTTPSource:
 
         Setting *gap_threshold* to a negative number disables merging
         and falls back to one GET per input range.
+
+        *max_coalesced_range_bytes* caps the size of any single merged
+        GET. ``None`` (the default) reads the cap from
+        ``XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES`` and otherwise uses
+        :data:`MAX_COALESCED_RANGE_BYTES_DEFAULT`. See
+        :func:`coalesce_ranges` for details. Issue #2266.
         """
         if not ranges:
             return []
-        merged, mapping = coalesce_ranges(ranges, gap_threshold=gap_threshold)
+        merged, mapping = coalesce_ranges(
+            ranges,
+            gap_threshold=gap_threshold,
+            max_coalesced_range_bytes=max_coalesced_range_bytes,
+        )
         merged_bytes = self.read_ranges(merged, max_workers=max_workers)
         return split_coalesced_bytes(merged_bytes, mapping)
 
@@ -1423,16 +1490,23 @@ class _CloudSource:
         ranges: list[tuple[int, int]],
         max_workers: int = 8,
         gap_threshold: int = COALESCE_GAP_THRESHOLD_DEFAULT,
+        max_coalesced_range_bytes: int | None = None,
     ) -> list[bytes]:
         """Fetch *ranges* using merged GETs where adjacent ranges allow it.
 
         Mirrors :meth:`_HTTPSource.read_ranges_coalesced` so the tiled
         COG decode path can coalesce neighbouring tiles when reading
-        from object storage.
+        from object storage. ``max_coalesced_range_bytes`` caps the
+        size of any single merged GET; see :func:`coalesce_ranges`.
+        Issue #2266.
         """
         if not ranges:
             return []
-        merged, mapping = coalesce_ranges(ranges, gap_threshold=gap_threshold)
+        merged, mapping = coalesce_ranges(
+            ranges,
+            gap_threshold=gap_threshold,
+            max_coalesced_range_bytes=max_coalesced_range_bytes,
+        )
         merged_bytes = self.read_ranges(merged, max_workers=max_workers)
         return split_coalesced_bytes(merged_bytes, mapping)
 
