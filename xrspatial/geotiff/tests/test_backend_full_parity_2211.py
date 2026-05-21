@@ -531,7 +531,13 @@ def _assert_pixels_close(
         # documented headroom for an existing drift. ``rtol=1e-12``
         # tracks data magnitude so a small-magnitude fixture is not
         # secretly held to a slacker bar than a large-magnitude one;
-        # ``atol=0`` keeps zero values strict.
+        # ``atol=0`` keeps zero values strict. The strict-zero
+        # behaviour is deliberate: a future fixture comparing an
+        # exact 0.0 against a sub-ULP non-zero is a real decode
+        # divergence at the smallest representable value and should
+        # fail rather than slip past under a generous absolute floor.
+        # Do not loosen ``atol`` without confirming the new fixture's
+        # expectations.
         ok = np.allclose(ref, cand, rtol=1e-12, atol=0.0, equal_nan=True)
         if not ok:
             # Report the worst offender so a regression is debuggable.
