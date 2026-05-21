@@ -24,9 +24,12 @@ This module deliberately has *no* module-level import of
 :mod:`xrspatial.geotiff._writer` or :mod:`xrspatial.geotiff._write_layout`
 beyond the small set of constants the encode helpers need (``BO`` for
 on-disk byte order). ``_writer.py`` imports the encode functions back
-at module load, and any heavier helpers are looked up lazily inside
-``_compress_block`` / ``_prepare_strip`` / ``_prepare_tile`` at call
-time to keep the import graph acyclic.
+at module load. The two orchestrators that have to honour an
+existing monkeypatch contract -- ``_write_stripped`` and
+``_write_tiled`` -- look up ``_prepare_strip`` / ``_prepare_tile``
+through ``_writer`` lazily at call time, so the import graph stays
+acyclic and the test-suite monkeypatches on ``_writer.<name>`` flow
+through to the orchestrators unchanged.
 """
 from __future__ import annotations
 
@@ -366,6 +369,8 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
     # monkeypatch ``xrspatial.geotiff._writer._prepare_strip`` still
     # observe the override. ``_writer`` re-exports the name from this
     # module, so the indirection is a no-op outside of patched tests.
+    # See ``test_gil_friendly_kwarg_1830`` for the matching contract
+    # on the tile path (``_prepare_tile``); the same shape applies here.
     from . import _writer as _writer_mod
     _prepare_strip_fn = _writer_mod._prepare_strip
 
@@ -510,7 +515,9 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
     """
     # Look up ``_prepare_tile`` via ``_writer`` so tests that
     # monkeypatch ``xrspatial.geotiff._writer._prepare_tile`` still
-    # observe the override (see ``test_gil_friendly_kwarg_1830``).
+    # observe the override. The pinned contract lives in
+    # ``test_gil_friendly_kwarg_1830::
+    # test_write_tiled_parallel_passes_gil_friendly_positionally``.
     # ``_writer`` re-exports the name from this module, so the
     # indirection is a no-op outside of patched tests.
     from . import _writer as _writer_mod
