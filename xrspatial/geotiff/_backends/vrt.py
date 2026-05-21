@@ -350,13 +350,12 @@ def read_vrt(source: str, *,
     # ``VRTDataset`` is threaded into the internal reader via ``parsed=``
     # so we don't double-parse the XML.
     #
-    # The ``band_nodata`` / ``band_nodata_values`` keys are VRT-specific
-    # documented divergence from the shared helper: the wave-1 frozen
-    # signature of ``_validate_read_geo_info`` does not carry per-band
-    # nodata context, so the mixed-band check would not fire if we
-    # routed validation only through the helper. We run the full check
-    # set here pre-read and let ``_finalize_lazy_read_attrs`` re-run the
-    # ``allow_rotated`` / ``allow_unparseable_crs`` arm later as a no-op.
+    # ``_finalize_lazy_read_attrs`` re-runs the same check set after the
+    # read with the same ``band_nodata`` / ``band_nodata_values`` context
+    # threaded through (issue #2210). Keeping the inline pre-read call
+    # preserves the pre-materialise rejection guard for big mosaics; the
+    # helper-routed post-read call acts as a defensive consistency check
+    # rather than the no-op it was before #2210.
     import os as _os
     from .._validation import validate_read_metadata
     from .._vrt import parse_vrt as _parse_vrt, _read_vrt_xml
@@ -573,6 +572,10 @@ def read_vrt(source: str, *,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        band_nodata=band_nodata,
+        band_nodata_values=(
+            [b.nodata for b in vrt.bands] if vrt.bands else None
+        ),
         attrs_in=attrs_seed,
     )
     _apply_caller_dtype_cast(
@@ -707,7 +710,12 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
 
     # Issue #1987 ambiguous-metadata checks on the chunked VRT path. Run
     # before the band-count validator below so a rejected file does not
-    # produce side effects.
+    # produce side effects. ``_finalize_lazy_read_attrs`` re-runs the
+    # same check set at graph-build time with the same
+    # ``band_nodata`` / ``band_nodata_values`` context threaded through
+    # (issue #2210); this inline call keeps the rejection in front of
+    # the ``band`` / window / ``max_pixels`` validators below so the
+    # error ordering matches the eager path.
     from .._validation import validate_read_metadata
     validate_read_metadata({
         'allow_rotated': allow_rotated,
@@ -998,6 +1006,10 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         window=helper_window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        band_nodata=band_nodata,
+        band_nodata_values=(
+            [b.nodata for b in vrt.bands] if vrt.bands else None
+        ),
         attrs_in=attrs_seed,
     )
     _apply_caller_dtype_cast(

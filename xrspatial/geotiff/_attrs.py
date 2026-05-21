@@ -784,6 +784,8 @@ def _validate_read_geo_info(
     window=None,
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
+    band_nodata: str | None = None,
+    band_nodata_values=None,
 ) -> None:
     """Run issue #1987 read-side ambiguous-metadata checks against ``geo_info``.
 
@@ -793,6 +795,14 @@ def _validate_read_geo_info(
     to the registered checks (``_check_read_rotated_transform`` and
     ``_check_read_unparseable_crs`` today; sibling checks attach via
     the registry).
+
+    ``band_nodata`` and ``band_nodata_values`` are the VRT-specific
+    context for ``_check_read_mixed_band_metadata``. Non-VRT callers
+    omit them and the mixed-band check short-circuits because
+    ``band_nodata_values`` is falsy. VRT callers thread the kwargs
+    through ``_finalize_lazy_read_attrs`` so the helper-routed call
+    runs the same surface as the VRT pre-read inline check, instead
+    of dispatching the mixed-band check as a no-op (issue #2210).
 
     Raises whichever ``GeoTIFFAmbiguousMetadataError`` subclass a
     registered check picks. The hook is a no-op when no check is
@@ -826,6 +836,8 @@ def _validate_read_geo_info(
         'allow_unparseable_crs': allow_unparseable_crs,
         'transform': transform_for_check,
         'crs_wkt': geo_info.crs_wkt,
+        'band_nodata': band_nodata,
+        'band_nodata_values': band_nodata_values,
     })
 
 
@@ -1348,6 +1360,8 @@ def _finalize_lazy_read_attrs(
     window,
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
+    band_nodata: str | None = None,
+    band_nodata_values=None,
     attrs_in: dict | None = None,
 ):
     """Validate and populate attrs for dask-style lazy reads.
@@ -1396,11 +1410,18 @@ def _finalize_lazy_read_attrs(
     are shared between the caller's seed dict and the returned attrs;
     callers that care about isolation can ``copy.deepcopy(attrs_in)``
     first.
+
+    ``band_nodata`` and ``band_nodata_values`` forward through to
+    :func:`_validate_read_geo_info` so VRT callers can hand the
+    mixed-band check the context it needs. Non-VRT callers omit them
+    and the mixed-band check short-circuits. See issue #2210.
     """
     _validate_read_geo_info(
         geo_info, window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        band_nodata=band_nodata,
+        band_nodata_values=band_nodata_values,
     )
 
     attrs: dict = dict(attrs_in) if attrs_in else {}
