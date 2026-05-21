@@ -128,11 +128,16 @@ def _http_with_sidecar(monkeypatch):
 def _fsspec_memory_with_sidecar():
     """Stage the bundled base + sidecar pair into an fsspec memory store."""
     fsspec = pytest.importorskip("fsspec")
+    import os
+    import uuid
     src = _fixture_or_skip()
     fs = fsspec.filesystem("memory")
-    # Use a unique-ish key per test session to avoid collisions when
-    # pytest-xdist runs this test in parallel with other sidecar specs.
-    base_uri = "memory://issue2239/x.tif"
+    # ``memory://`` is process-global -- pytest-xdist workers and other
+    # tests in the same interpreter all share it. Combine pid + uuid in
+    # the key so this fixture cannot collide with a parallel test that
+    # happens to stage a different payload at the same path.
+    key = f"issue2239-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    base_uri = f"memory://{key}/x.tif"
     side_uri = base_uri + ".ovr"
     with open(src, "rb") as f:
         fs.pipe_file(base_uri.replace("memory://", ""), f.read())
@@ -141,8 +146,8 @@ def _fsspec_memory_with_sidecar():
     try:
         yield base_uri
     finally:
-        # Best-effort cleanup so a repeat invocation in the same
-        # interpreter sees a clean store.
+        # Best-effort cleanup so a long test session doesn't accumulate
+        # stale objects in the in-process memory store.
         for p in (base_uri, side_uri):
             try:
                 fs.rm_file(p.replace("memory://", ""))
@@ -155,27 +160,23 @@ def _fsspec_memory_with_sidecar():
 # the chunked open went through ``_read_geo_info``'s fsspec bypass and
 # never saw the sidecar -- so ``overview_level=1`` failed with an
 # "overview_level out of range" error while the eager open succeeded.
+# Level 0 is included so the base-level regression (no sidecar in play)
+# also stays pinned.
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("overview_level", [1, 2])
+@pytest.mark.parametrize("overview_level,expected_shape", [
+    (0, (64, 64)),
+    (1, (32, 32)),
+    (2, (16, 16)),
+])
 def test_fsspec_chunked_open_resolves_sidecar_overview(
-        _fsspec_memory_with_sidecar, overview_level):
+        _fsspec_memory_with_sidecar, overview_level, expected_shape):
     from xrspatial.geotiff import open_geotiff
     uri = _fsspec_memory_with_sidecar
     eager = open_geotiff(uri, overview_level=overview_level)
     chunked = open_geotiff(uri, chunks=16,
                            overview_level=overview_level)
+    assert eager.shape == expected_shape
     assert chunked.shape == eager.shape
-    np.testing.assert_array_equal(chunked.values, eager.values)
-
-
-def test_fsspec_chunked_open_base_level_unchanged(
-        _fsspec_memory_with_sidecar):
-    """Base level (no sidecar in play) keeps its prior dimensions and pixels."""
-    from xrspatial.geotiff import open_geotiff
-    uri = _fsspec_memory_with_sidecar
-    eager = open_geotiff(uri)
-    chunked = open_geotiff(uri, chunks=16)
-    assert chunked.shape == eager.shape == (64, 64)
     np.testing.assert_array_equal(chunked.values, eager.values)
 
 
@@ -264,6 +265,71 @@ def test_http_chunked_open_rejects_overview_past_sidecar(_http_with_sidecar):
     url = _http_with_sidecar
     with pytest.raises(ValueError, match="overview_level"):
         open_geotiff(url, chunks=16, overview_level=3)
+
+
+# ---------------------------------------------------------------------------
+# Defensive: ``discover_remote_sidecar`` swallows ``load_sidecar``
+# failures (parse error, garbage bytes, transient network) and returns
+# the unchanged base IFD list with ``sidecar=None``. The
+# ``CloudSizeLimitError`` budget breach is the one exception that
+# re-raises so a caller-set ceiling stays observable.
+# ---------------------------------------------------------------------------
+def test_discover_remote_sidecar_falls_back_when_load_fails(monkeypatch):
+    """A probe that succeeds but a load that raises returns base-only."""
+    from xrspatial.geotiff import _sidecar
+    from xrspatial.geotiff._sidecar import discover_remote_sidecar
+
+    monkeypatch.setattr(
+        _sidecar, "find_sidecar", lambda _src: "http://example/x.tif.ovr"
+    )
+
+    def _exploding_load(_path, **_kw):
+        raise RuntimeError("sidecar bytes did not parse")
+
+    monkeypatch.setattr(_sidecar, "load_sidecar", _exploding_load)
+
+    sentinel_ifds = [object(), object()]
+    merged, sidecar, sidecar_ifd_ids = discover_remote_sidecar(
+        "http://example/x.tif", sentinel_ifds,
+    )
+    assert merged == list(sentinel_ifds)
+    assert sidecar is None
+    assert sidecar_ifd_ids == set()
+
+
+def test_discover_remote_sidecar_propagates_cloud_size_limit(monkeypatch):
+    """The one exception the helper does NOT swallow is the budget breach."""
+    from xrspatial.geotiff import _sidecar
+    from xrspatial.geotiff._reader import CloudSizeLimitError
+    from xrspatial.geotiff._sidecar import discover_remote_sidecar
+
+    monkeypatch.setattr(
+        _sidecar, "find_sidecar", lambda _src: "http://example/x.tif.ovr"
+    )
+
+    def _budget_breach(_path, **_kw):
+        raise CloudSizeLimitError("sidecar exceeds max_cloud_bytes")
+
+    monkeypatch.setattr(_sidecar, "load_sidecar", _budget_breach)
+
+    with pytest.raises(CloudSizeLimitError):
+        discover_remote_sidecar(
+            "http://example/x.tif", [object()], max_cloud_bytes=1,
+        )
+
+
+def test_parse_cog_http_meta_requires_source_path_when_return_sidecar(
+        monkeypatch):
+    """Future-proof: the 5-tuple contract needs a non-None source_path."""
+    from xrspatial.geotiff._reader import _parse_cog_http_meta
+
+    class _StubSource:
+        def read_range(self, _start, _length):
+            # Should not be called -- the precondition check fires first.
+            raise AssertionError("read_range called despite missing source_path")
+
+    with pytest.raises(TypeError, match="source_path"):
+        _parse_cog_http_meta(_StubSource(), return_sidecar=True)
 
 
 # ---------------------------------------------------------------------------

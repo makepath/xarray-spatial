@@ -2326,7 +2326,31 @@ def _parse_cog_http_meta(
     ``used_sidecar`` is True, else the original ``source_path``.
     ``sidecar`` is the :class:`SidecarOverviews` instance the caller
     must close (or ``None`` when no sidecar was found).
+    ``return_sidecar=True`` requires ``source_path``; the function
+    asserts the precondition so a future caller cannot end up with
+    ``route_path=None`` and then construct ``_HTTPSource(None)`` for
+    per-chunk reads.
+
+    Returns
+    -------
+    tuple
+        ``(header, ifd, geo_info, header_bytes)`` for the default
+        ``return_sidecar=False`` path. When ``return_sidecar=True``,
+        the return is the same 4-tuple with a fifth element appended:
+        ``(sidecar, route_path, used_sidecar)``. The caller owns
+        ``sidecar`` and must close it; ``route_path`` is the URL/URI
+        that per-chunk fetches should target; ``used_sidecar`` is
+        ``True`` iff the selected IFD came from the sidecar.
     """
+    if return_sidecar and source_path is None:
+        # The 5-tuple contract guarantees ``route_path`` is a usable
+        # path. Callers thread it straight into ``_HTTPSource`` /
+        # ``_CloudSource``; ``None`` would crash later with a less
+        # diagnosable error than this precondition does up front.
+        raise TypeError(
+            "_parse_cog_http_meta(return_sidecar=True) requires "
+            "source_path; got source_path=None."
+        )
     fetch_size = INITIAL_HTTP_HEADER_BYTES
     header_bytes = source.read_range(0, fetch_size)
     header = parse_header(header_bytes)

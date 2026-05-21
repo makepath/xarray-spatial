@@ -313,13 +313,25 @@ def discover_remote_sidecar(
     timeout, etc.) return ``([...base_ifds], None, set())``. A
     successful probe whose download or parse subsequently fails -- for
     example a hostile server that returns 200 to every URL but the
-    bytes are not a valid TIFF, or a download that overruns
-    ``max_cloud_bytes`` -- also falls back to base-only behaviour with
-    the exception swallowed, so a misbehaving server cannot poison an
-    otherwise valid base read. The ``CloudSizeLimitError`` budget gate
-    is the one exception we re-raise because the caller explicitly
-    asked for it. Local file paths are accepted too; the helper is
-    shape-agnostic.
+    bytes are not a valid TIFF, or a transient network error during
+    download -- also falls back to base-only behaviour with the
+    exception swallowed, so a misbehaving server cannot poison an
+    otherwise valid base read.
+
+    Raises
+    ------
+    CloudSizeLimitError
+        Re-raised verbatim when the sidecar download breaches
+        ``max_cloud_bytes`` (the one exception that survives the
+        otherwise silent fall-back). The budget is a caller-set
+        contract; surfacing the breach lets the caller distinguish "no
+        sidecar" from "sidecar too big" rather than silently dropping
+        the level and reading a stale base-only pyramid. Set
+        ``max_cloud_bytes=None`` to disable the budget. Other failures
+        are converted to a base-only return so callers debugging a
+        surprise sidecar miss should reach for this carve-out first.
+
+    Local file paths are accepted too; the helper is shape-agnostic.
     """
     sidecar_path = find_sidecar(source)
     if sidecar_path is None:
