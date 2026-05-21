@@ -264,24 +264,33 @@ def _is_close(
 
 # Pure-Python tolerance check that mirrors ``_is_close`` for use at the
 # orchestration layer (outside numba kernels).  Integer values fall back
-# to exact equality; floats use the same atol=1e-8, rtol=1e-5 tolerance
-# the CPU CCL uses to merge adjacent pixels.  See issue #2171.
-def _values_close(reference, value):
+# to exact equality; floats use the caller-supplied atol / rtol so the
+# cross-chunk merge honours ``polygonize(..., atol=, rtol=)`` (passing
+# atol=rtol=0 reduces the float branch to strict equality, matching the
+# CPU CCL behaviour inside a single chunk).  See issues #2171, #2173.
+def _values_close(reference, value,
+                  atol: float = _DEFAULT_ATOL,
+                  rtol: float = _DEFAULT_RTOL):
     if isinstance(reference, (int, np.integer)) and \
             isinstance(value, (int, np.integer)):
         return value == reference
-    return abs(value - reference) <= (1e-8 + 1e-5 * abs(reference))
+    return abs(value - reference) <= (atol + rtol * abs(reference))
 
 
-def _bucket_key_for_value(boundary_by_value, val):
+def _bucket_key_for_value(boundary_by_value, val,
+                          atol: float = _DEFAULT_ATOL,
+                          rtol: float = _DEFAULT_RTOL):
     """Return the dict key that ``val`` should bucket into.
 
     If an existing key in ``boundary_by_value`` is close to ``val`` under
-    ``_values_close``, return that key so close float values from adjacent
-    chunks land in the same bucket.  Otherwise return ``val`` unchanged.
+    ``_values_close`` (using the caller's ``atol`` / ``rtol``), return
+    that key so close float values from adjacent chunks land in the same
+    bucket.  Otherwise return ``val`` unchanged.
 
     This keeps Dask chunk-stitching consistent with the tolerance-based
-    grouping the NumPy / numba path uses inside a single chunk (#2171).
+    grouping the NumPy / numba path uses inside a single chunk (#2171),
+    and lets ``polygonize(atol=0, rtol=0)`` opt into exact-value
+    bucketing across chunks (#2173).
 
     Performance note: the float branch is a linear scan over existing
     keys, so total cost is O(B^2) in the number of distinct float
@@ -295,7 +304,7 @@ def _bucket_key_for_value(boundary_by_value, val):
     if isinstance(val, (int, np.integer)):
         return val
     for existing in boundary_by_value:
-        if _values_close(existing, val):
+        if _values_close(existing, val, atol, rtol):
             return existing
     return val
 
@@ -906,14 +915,31 @@ def _rings_to_unit_edges(polys_list, edge_set):
                         x += step
 
 
-def _pick_next_edge(adj, prev_vertex, current_vertex):
-    """Pick the next outgoing edge using the rightmost-turn rule.
+def _pick_next_edge(adj, prev_vertex, current_vertex,
+                    connectivity_8=False):
+    """Pick the next outgoing edge at a (possibly degree>2) vertex.
 
-    At a vertex with multiple outgoing edges, picks the first edge clockwise
-    from the incoming direction (= smallest right turn).  This correctly
-    traces individual polygon rings even when separate same-value polygons
-    share a vertex, because it follows the ring that keeps the polygon
-    interior to the left.
+    The pixel grid means edges only ever leave a vertex in one of four
+    axis-aligned directions.  At a degree-4 vertex two same-value
+    polygons meet diagonally; the choice of pairing determines whether
+    they trace as two separate squares or as a single figure-8 ring.
+
+    For ``connectivity_8=False`` (4-connectivity), pick the smallest
+    CCW turn from the incoming direction.  This keeps two same-value
+    polygons that touch only at a corner as separate rings, matching
+    NumPy 4-connectivity semantics.
+
+    For ``connectivity_8=True``, prefer "straight through" (rel == 0)
+    when available, otherwise pick the largest CCW turn (smallest CW
+    turn) at degree-4 vertices.  Within a single ring, ``rel == 0``
+    cannot occur on a grid because the simplify pass folds consecutive
+    same-direction edges; but ``_merge_polygon_rings`` operates on
+    multiple rings sharing a vertex, where one ring can pass straight
+    through V while another corners at V.  Preferring "straight
+    through" keeps such rings continuous; falling back to the largest
+    turn pairs up the diagonal crossings into a single figure-8 ring,
+    matching the NumPy 8-connectivity output for two diagonally
+    adjacent same-value cells.
     """
     targets = adj[current_vertex]
     if len(targets) == 1:
@@ -924,17 +950,38 @@ def _pick_next_edge(adj, prev_vertex, current_vertex):
     incoming_angle = _DIR_ANGLE[(dx_in, dy_in)]
 
     best = None
-    best_rel = 5
-    for target in targets:
-        dx = target[0] - current_vertex[0]
-        dy = target[1] - current_vertex[1]
-        out_angle = _DIR_ANGLE[(dx, dy)]
-        rel = (out_angle - incoming_angle) % 4
-        if rel == 0:
-            rel = 4  # straight ahead → last priority (u-turn equivalent)
-        if rel < best_rel:
-            best_rel = rel
-            best = target
+    if connectivity_8:
+        # Priority order at a degree-4 vertex:
+        #   1. ``rel == 0`` (continue straight) -- keeps a ring that
+        #      passes through V on the same trajectory.
+        #   2. ``rel == 3`` (90 deg CW) -- pairs the diagonal-only
+        #      crossing into a figure-8 ring.
+        #   3. ``rel == 1`` (90 deg CCW) -- the 4-connectivity choice,
+        #      used only if 0 and 3 are unavailable.
+        #   4. ``rel == 2`` (180 deg u-turn) -- last resort.
+        priority = {0: 4, 3: 3, 1: 2, 2: 1}
+        best_rel = -1
+        for target in targets:
+            dx = target[0] - current_vertex[0]
+            dy = target[1] - current_vertex[1]
+            out_angle = _DIR_ANGLE[(dx, dy)]
+            rel = (out_angle - incoming_angle) % 4
+            score = priority[rel]
+            if score > best_rel:
+                best_rel = score
+                best = target
+    else:
+        best_rel = 5
+        for target in targets:
+            dx = target[0] - current_vertex[0]
+            dy = target[1] - current_vertex[1]
+            out_angle = _DIR_ANGLE[(dx, dy)]
+            rel = (out_angle - incoming_angle) % 4
+            if rel == 0:
+                rel = 4  # straight ahead → last priority (u-turn equivalent)
+            if rel < best_rel:
+                best_rel = rel
+                best = target
     return best
 
 
@@ -946,11 +993,12 @@ def _remove_directed_edge(adj, from_v, to_v):
         del targets[to_v]
 
 
-def _trace_rings(edge_set):
+def _trace_rings(edge_set, connectivity_8=False):
     """Trace directed unit edges into closed rings.
 
     Uses CW planar face ordering to correctly handle vertices with degree > 2
-    (e.g. where two same-value regions share a corner vertex).
+    (e.g. where two same-value regions share a corner vertex).  See
+    :func:`_pick_next_edge` for the role of ``connectivity_8``.
     """
     # Build adjacency: vertex -> {successor_vertex: count}.
     adj = {}
@@ -972,7 +1020,8 @@ def _trace_rings(edge_set):
 
         while current != start:
             ring.append(current)
-            next_v = _pick_next_edge(adj, prev, current)
+            next_v = _pick_next_edge(adj, prev, current,
+                                     connectivity_8=connectivity_8)
             _remove_directed_edge(adj, current, next_v)
             prev = current
             current = next_v
@@ -1524,12 +1573,17 @@ def _simplify_polygons(column, polygon_points, tolerance,
     return result_column, result
 
 
-def _merge_polygon_rings(polys_list):
+def _merge_polygon_rings(polys_list, connectivity_8=False):
     """Merge polygon ring sets that share chunk-boundary edges.
 
     Uses edge cancellation: splits all rings into unit-length directed edges,
     cancels opposing edges (which occur at chunk boundaries where the same
     value continues across), and traces the remaining edges into closed rings.
+
+    ``connectivity_8`` selects the degree-4 vertex pairing rule used during
+    ring tracing (see :func:`_pick_next_edge`).  Set to ``True`` for
+    8-connectivity to preserve figure-8 rings produced by diagonal-only
+    adjacency at chunk corners.
 
     polys_list: list of [exterior_ring, *hole_rings] lists (same pixel value)
     Returns: list of [exterior_ring, *hole_rings] lists (merged)
@@ -1540,13 +1594,17 @@ def _merge_polygon_rings(polys_list):
     if not edge_set:
         return []
 
-    raw_rings = _trace_rings(edge_set)
+    raw_rings = _trace_rings(edge_set, connectivity_8=connectivity_8)
     simplified = [_simplify_ring(r) for r in raw_rings]
     return _group_rings_into_polygons(simplified)
 
 
-def _merge_chunk_polygons(chunk_results, transform):
-    """Merge polygons from all chunks and return final output."""
+def _merge_chunk_polygons(chunk_results, transform, connectivity_8=False):
+    """Merge polygons from all chunks and return final output.
+
+    ``connectivity_8`` is forwarded to :func:`_merge_polygon_rings` to
+    select the degree-4-vertex pairing rule used by the trace step.
+    """
     all_interior = []
     boundary_by_value = {}
 
@@ -1560,10 +1618,11 @@ def _merge_chunk_polygons(chunk_results, transform):
     merged = []
     for val, polys_list in boundary_by_value.items():
         if len(polys_list) == 1:
-            # Single polygon set for this value — nothing to merge.
+            # Single polygon set for this value -- nothing to merge.
             merged.append((val, polys_list[0]))
         else:
-            merged_polys = _merge_polygon_rings(polys_list)
+            merged_polys = _merge_polygon_rings(
+                polys_list, connectivity_8=connectivity_8)
             for rings in merged_polys:
                 merged.append((val, rings))
 
@@ -1592,12 +1651,17 @@ def _merge_chunk_polygons(chunk_results, transform):
     return column, polygon_points
 
 
-def _merge_from_separated(all_interior, boundary_by_value, transform):
+def _merge_from_separated(all_interior, boundary_by_value, transform,
+                          connectivity_8=False):
     """Merge pre-separated interior/boundary polygons into final output.
 
     Like _merge_chunk_polygons but takes already-separated data so the
     caller can accumulate incrementally (one chunk at a time) instead of
     holding all chunk_results in memory simultaneously.
+
+    ``connectivity_8`` is forwarded to :func:`_merge_polygon_rings` so
+    the trace step uses the right degree-4-vertex pairing rule when
+    stitching boundary polygons across chunks.
     """
     # Merge boundary polygons per value using edge cancellation.
     merged = []
@@ -1605,7 +1669,8 @@ def _merge_from_separated(all_interior, boundary_by_value, transform):
         if len(polys_list) == 1:
             merged.append((val, polys_list[0]))
         else:
-            merged_polys = _merge_polygon_rings(polys_list)
+            merged_polys = _merge_polygon_rings(
+                polys_list, connectivity_8=connectivity_8)
             for rings in merged_polys:
                 merged.append((val, rings))
 
@@ -1669,10 +1734,13 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
                 ))[0]
             all_interior.extend(interior)
             for val, rings in boundary:
-                key = _bucket_key_for_value(boundary_by_value, val)
+                key = _bucket_key_for_value(
+                    boundary_by_value, val, atol, rtol)
                 boundary_by_value.setdefault(key, []).append(rings)
 
-    return _merge_from_separated(all_interior, boundary_by_value, transform)
+    return _merge_from_separated(
+        all_interior, boundary_by_value, transform,
+        connectivity_8=connectivity_8)
 
 
 def polygonize(
@@ -1722,10 +1790,6 @@ def polygonize(
         (by shapely's definition) provided both x and y are monotonically
         increasing or decreasing.  Connectivity of 8 does not necessarily
         return valid polygons.
-
-        Note: when using Dask arrays, 8-connectivity may produce extra polygon
-        splits at chunk corners where diagonal-only adjacency crosses a chunk
-        boundary.  4-connectivity works perfectly with Dask chunking.
 
     transform: ndarray, optional
         Optional affine transform to apply to return polygon coordinates.
