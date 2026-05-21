@@ -22,6 +22,7 @@ from .._coords import (
     geo_to_coords as _geo_to_coords,
 )
 from .._geotags import GeoTransform, RASTER_PIXEL_IS_POINT
+from .._nodata import _sentinel_fits_dtype
 from .._runtime import _geotiff_strict_mode
 
 
@@ -79,8 +80,7 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
         # fractional sentinels short-circuit to a no-op so
         # ``attrs['nodata']`` still records them while masking
         # leaves the integer buffer untouched.
-        from .._nodata import _sentinel_fits_dtype as _fits
-        if not _fits(nodata, arr_dtype):
+        if not _sentinel_fits_dtype(nodata, arr_dtype):
             return arr_gpu
         nodata_int = int(nodata)
         sentinel = arr_dtype.type(nodata_int)

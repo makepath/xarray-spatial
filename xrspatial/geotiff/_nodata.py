@@ -161,6 +161,23 @@ class NodataLifecycle:
         / writer assigns this attribute on the lifecycle instance
         after the per-buffer scan completes; downstream attrs
         propagation reads it back.
+
+    Notes
+    -----
+    The ``pixels_present`` slot is reserved for callers that want a
+    single lifecycle instance to thread the scan result through to the
+    attrs-stamping step. The current backends still read the value off
+    a per-call ``nodata_pixels_present`` local because the helper
+    arrived after the existing scan plumbing was in place; the slot is
+    available for sites that migrate to the lifecycle-owned shape in
+    follow-up work.
+
+    ``masking_occurred`` cannot tell "int promoted to float by masking"
+    from "still int because the sentinel never matched a pixel" --
+    decisions live on the helper, not pixel data. The eager finalizer
+    side-steps this by computing its ``masked_nodata`` attr from the
+    final buffer dtype after masking ran; treat ``masking_occurred`` as
+    a pre-execution policy answer, not a post-execution oracle.
     """
 
     declared: Any
@@ -300,6 +317,7 @@ class NodataLifecycle:
         *,
         buffer_dtype: np.dtype,
         masked_nodata_attr: Optional[bool] = None,
+        restore_sentinel: bool = True,
     ) -> bool:
         """Return True iff the writer should NaN-to-sentinel rewrite.
 
@@ -307,6 +325,11 @@ class NodataLifecycle:
         per-writer dtype/finite gates so the inline check in the
         writer collapses to one helper call:
 
+        * ``restore_sentinel`` False -> False. The caller already
+          resolved the ``attrs['masked_nodata']`` gate upstream and
+          cached the result in a local. Pass it through directly to
+          short-circuit; the writer call sites keep one bool rather
+          than reverse-encoding it back into ``masked_nodata_attr``.
         * No declared sentinel -> False (nothing to restore).
         * Buffer dtype not float -> False (no NaN to convert).
         * Sentinel itself is NaN -> False (NaN -> NaN is a no-op
@@ -323,8 +346,13 @@ class NodataLifecycle:
         ``attrs['masked_nodata']`` by the caller. ``None`` means the
         attr was absent (the pre-#1988 default applies). Pass ``False``
         explicitly only when the attr was literal ``False`` -- truthy
-        values and absence both collapse to the True default.
+        values and absence both collapse to the True default. Callers
+        that already collapsed the attr via
+        ``_should_restore_nan_sentinel`` should use the
+        ``restore_sentinel`` kwarg instead of reconstructing the attr.
         """
+        if not restore_sentinel:
+            return False
         if self.declared is None:
             return False
         if buffer_dtype is None or np.dtype(buffer_dtype).kind != 'f':

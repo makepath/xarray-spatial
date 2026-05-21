@@ -22,6 +22,7 @@ from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
 )
+from .._nodata import NodataLifecycle
 from .._reader import _MAX_CLOUD_BYTES_SENTINEL, read_to_array as _read_to_array
 from .._runtime import _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL
 from .._validation import (
@@ -244,7 +245,15 @@ def read_geotiff_dask(source: str, *,
     # ``sentinel_fits_buffer`` collapses the previous finite/integer/
     # in-range gate so the integer auto-promotion below skips out-of-
     # range / fractional / non-finite sentinels (#1774, #1564, #1616).
-    from .._nodata import NodataLifecycle
+    #
+    # The ``_ifd_photometric`` and ``_ifd_samples_per_pixel`` attrs are
+    # stashed in lockstep by ``_read_geo_info`` (``__init__.py``) and the
+    # HTTP / sidecar branches above. When both are missing (synthesised
+    # geo_info from a non-TIFF source), ``photometric=None`` already
+    # short-circuits ``_applies_miniswhite`` to False inside the helper,
+    # so the ``or 1`` fallback on ``samples_per_pixel`` is harmless --
+    # it never reaches the inversion branch on a real
+    # ``samples_per_pixel=N`` file.
     lifecycle = NodataLifecycle(
         declared=geo_info.nodata,
         photometric=getattr(geo_info, '_ifd_photometric', None),

@@ -281,6 +281,70 @@ class TestWriterRestoreSentinelDecision:
             masked_nodata_attr=None,
         ) is True
 
+    def test_restore_sentinel_false_short_circuits(self):
+        # ``restore_sentinel=False`` caller opt-out (the cached attr
+        # answer from ``_should_restore_nan_sentinel``) must win over
+        # the otherwise-True default path.
+        lc = NodataLifecycle(declared=-9999.0, dtype_in=np.dtype("float32"))
+        assert lc.writer_restore_sentinel(
+            buffer_dtype=np.dtype("float32"),
+            restore_sentinel=False,
+        ) is False
+
+    def test_restore_sentinel_true_is_default(self):
+        lc = NodataLifecycle(declared=-9999.0, dtype_in=np.dtype("float32"))
+        # Explicit True matches the default (kwarg omitted).
+        assert lc.writer_restore_sentinel(
+            buffer_dtype=np.dtype("float32"),
+            restore_sentinel=True,
+        ) is True
+
+
+class TestInvertForMinIsWhiteLockstep:
+    """``_invert_for_miniswhite`` mirrors ``_reader._miniswhite_inverted_nodata``.
+
+    The two functions intentionally duplicate the inversion math so the
+    lifecycle helper does not pull ``_reader`` into its dependency
+    graph. Sweep a wide sentinel / dtype grid here so drift between the
+    two surfaces fast.
+    """
+
+    def test_grid_matches_reader_helper(self):
+        from xrspatial.geotiff._nodata import _invert_for_miniswhite
+        from xrspatial.geotiff._reader import _miniswhite_inverted_nodata
+
+        class _IFDStub:
+            photometric = 0
+            samples_per_pixel = 1
+
+        sentinels = [
+            0, 1, 10, 127, 128, 255,        # uint8 range
+            256, 1000, 32767, 65535,        # uint16 range
+            -1, -9999,                      # out of unsigned range
+            0.0, 1.5, 3.5, -3.5,            # float values
+            float("nan"), float("inf"),     # non-finite
+        ]
+        dtypes = [
+            np.dtype("uint8"),
+            np.dtype("uint16"),
+            np.dtype("uint32"),
+            np.dtype("int16"),
+            np.dtype("float32"),
+            np.dtype("float64"),
+        ]
+        for s in sentinels:
+            for d in dtypes:
+                ref = _miniswhite_inverted_nodata(s, _IFDStub, d)
+                got = _invert_for_miniswhite(s, d)
+                if isinstance(ref, float) and np.isnan(ref):
+                    assert isinstance(got, float) and np.isnan(got), (
+                        f"sentinel={s} dtype={d}: ref=NaN, got={got!r}"
+                    )
+                else:
+                    assert ref == got, (
+                        f"sentinel={s} dtype={d}: ref={ref!r}, got={got!r}"
+                    )
+
 
 class TestPixelsPresentSlot:
     """``pixels_present`` is a settable slot; constructor leaves it None."""
@@ -651,6 +715,7 @@ class TestExplicitDtypeRequestParity:
 @pytest.fixture
 def simple_vrt(tmp_path):
     """A trivial VRT wrapping a single GeoTIFF with a -9999 sentinel."""
+    import os
     import xarray as xr
 
     from xrspatial.geotiff import to_geotiff
@@ -673,7 +738,7 @@ def simple_vrt(tmp_path):
   <VRTRasterBand dataType="Float32" band="1">
     <NoDataValue>-9999</NoDataValue>
     <SimpleSource>
-      <SourceFilename relativeToVRT="1">{src.rsplit("/", 1)[-1]}</SourceFilename>
+      <SourceFilename relativeToVRT="1">{os.path.basename(src)}</SourceFilename>
       <SourceBand>1</SourceBand>
       <SrcRect xOff="0" yOff="0" xSize="3" ySize="2"/>
       <DstRect xOff="0" yOff="0" xSize="3" ySize="2"/>

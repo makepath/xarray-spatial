@@ -30,6 +30,7 @@ from .._attrs import (
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
 )
+from .._nodata import NodataLifecycle as _NL
 from .._reader import (
     _MAX_CLOUD_BYTES_SENTINEL,
     _coerce_path,
@@ -808,7 +809,6 @@ def read_geotiff_gpu(source: str, *,
             # into ``_reader`` for the inversion math. The lifecycle's
             # ``effective_sentinel`` matches ``_miniswhite_inverted_nodata``
             # exactly for the MinIsWhite (photometric==0, spp==1) case.
-            from .._nodata import NodataLifecycle as _NL
             gpu_dtype = np.dtype(str(arr_gpu.dtype))
             _mw_mask_nodata = _NL(
                 declared=geo_info.nodata,

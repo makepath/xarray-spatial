@@ -31,6 +31,7 @@ from .._coords import (
     transform_from_attr as _transform_from_attr,
 )
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
+from .._nodata import NodataLifecycle as _NL
 from .._runtime import GeoTIFFFallbackWarning, _resolve_spatial_coords
 from .._validation import (
     _validate_3d_writer_dims,
@@ -578,10 +579,9 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # path, and it guarantees the CPU writer's defensive-copy semantics
     # in every case.
     # PR-C #2226: shared NodataLifecycle gate for NaN->sentinel restore.
-    from .._nodata import NodataLifecycle as _NL
     if _NL(declared=nodata, dtype_in=np_dtype).writer_restore_sentinel(
             buffer_dtype=np_dtype,
-            masked_nodata_attr=False if not restore_sentinel else None,
+            restore_sentinel=restore_sentinel,
     ):
         nan_mask = cupy.isnan(arr)
         if bool(nan_mask.any()):
@@ -666,7 +666,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             declared=nodata, dtype_in=np_dtype,
         ).writer_restore_sentinel(
             buffer_dtype=np_dtype,
-            masked_nodata_attr=False if not restore_sentinel else None,
+            restore_sentinel=restore_sentinel,
         )
         sentinel_scalar = (
             np_dtype.type(nodata) if rewrite_nodata else None
