@@ -1034,15 +1034,29 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if chunked_holes and (
         missing_sources == 'raise' or _geotiff_strict_mode()
     ):
-        first = chunked_holes[0]
+        # Surface the first few missing paths in the message so the
+        # caller can act on them without having to flip to ``'warn'``
+        # and re-parse the resulting ``attrs['vrt_holes']``. Cap the
+        # preview at 3 entries to keep the error string bounded on
+        # mosaics with many missing tiles -- the total count is
+        # appended so the caller still knows the full magnitude.
+        preview_max = 3
+        preview = chunked_holes[:preview_max]
+        preview_str = ', '.join(
+            f"{h['source']!r} (band {h['band']})" for h in preview
+        )
+        more = len(chunked_holes) - len(preview)
+        if more > 0:
+            preview_str += f" and {more} more"
         raise FileNotFoundError(
-            f"VRT source {first['source']!r} (band {first['band']}) "
-            f"does not exist on disk. The chunked VRT read aborts up "
-            f"front under missing_sources='raise' (the default) so a "
-            f"partial mosaic never surfaces silently. Pass "
-            f"missing_sources='warn' to opt into the lenient path that "
-            f"records holes in attrs['vrt_holes'] and warns at compute "
-            f"time. {len(chunked_holes)} missing source(s) total."
+            f"VRT references missing source file(s) that intersect "
+            f"the requested window: {preview_str}. The chunked VRT "
+            f"read aborts up front under missing_sources='raise' "
+            f"(the default) so a partial mosaic never surfaces "
+            f"silently. Pass missing_sources='warn' to opt into the "
+            f"lenient path that records holes in attrs['vrt_holes'] "
+            f"and warns at compute time. "
+            f"{len(chunked_holes)} missing source(s) total."
         )
 
     # Wave 3 of #2162: route attrs assembly through

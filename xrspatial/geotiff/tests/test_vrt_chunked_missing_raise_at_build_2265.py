@@ -242,6 +242,72 @@ class TestWarnPreserved:
         assert np.all(np.isnan(np.asarray(computed)[:, 4:]))
 
 
+def _make_multi_missing_vrt(tmp_path: str, n_missing: int) -> str:
+    """VRT with ``n_missing`` missing sources tiling the destination.
+
+    Each missing source covers a distinct 4x4 dst block laid out
+    horizontally; the VRT's full extent is sized to hold all of them.
+    Used to pin the multi-source preview behavior of the build-time
+    raise message.
+    """
+    vrt_path = os.path.join(tmp_path, f"partial_2265_multi_{n_missing}.vrt")
+    width = 4 * n_missing
+    src_xml = []
+    for i in range(n_missing):
+        missing = os.path.join(tmp_path, f"missing_2265_multi_{i}.tif")
+        src_xml.append(
+            '<SimpleSource>\n'
+            f'<SourceFilename relativeToVRT="0">{missing}</SourceFilename>\n'
+            '<SourceBand>1</SourceBand>\n'
+            '<SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            f'<DstRect xOff="{i * 4}" yOff="0" xSize="4" ySize="4"/>\n'
+            '</SimpleSource>\n'
+        )
+    with open(vrt_path, "w") as f:
+        f.write(
+            f'<VRTDataset rasterXSize="{width}" rasterYSize="4">\n'
+            '<GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n'
+            '<VRTRasterBand dataType="Float32" band="1">\n'
+            + ''.join(src_xml) +
+            '</VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+    return vrt_path
+
+
+class TestMultipleMissingSources:
+    """The error message previews multiple holes and reports the total."""
+
+    def test_two_missing_sources_listed_with_count(self, tmp_path):
+        """All missing sources fit in the preview (n=2 <= preview cap)."""
+        vrt_path = _make_multi_missing_vrt(str(tmp_path), n_missing=2)
+        with pytest.raises(FileNotFoundError) as excinfo:
+            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+        msg = str(excinfo.value)
+        assert "missing_2265_multi_0" in msg
+        assert "missing_2265_multi_1" in msg
+        assert "2 missing source(s) total" in msg
+        # Preview cap kicks in only above 3 holes; no "and N more" tail
+        # should appear for n_missing=2.
+        assert "more" not in msg.lower() or "and 0 more" not in msg
+
+    def test_many_missing_sources_truncated_with_more_suffix(self, tmp_path):
+        """Above the preview cap, the message says 'and N more'."""
+        n = 5
+        vrt_path = _make_multi_missing_vrt(str(tmp_path), n_missing=n)
+        with pytest.raises(FileNotFoundError) as excinfo:
+            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+        msg = str(excinfo.value)
+        # First few names are listed; the rest collapse into "and N more".
+        assert "missing_2265_multi_0" in msg
+        # The last source should NOT be in the preview (it's past the cap).
+        assert f"missing_2265_multi_{n - 1}" not in msg
+        # Total count is reported regardless of truncation.
+        assert f"{n} missing source(s) total" in msg
+        # The truncation tail names how many more there are.
+        assert "and 2 more" in msg
+
+
 class TestStrictMode:
     """``XRSPATIAL_GEOTIFF_STRICT=1`` forces the raise even with ``'warn'``."""
 
