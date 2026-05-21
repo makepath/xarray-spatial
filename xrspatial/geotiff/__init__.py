@@ -208,7 +208,8 @@ def _read_geo_info(source, *, overview_level: int | None = None,
     allow_rotated : bool, optional
         Forwarded to the geotag parser. When True, a rotated
         ``ModelTransformationTag`` reads as an ungeoreferenced pixel
-        grid instead of raising ``NotImplementedError`` (issue #2115).
+        grid instead of raising ``RotatedTransformError`` (issues #2115,
+        #2267).
     """
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info_with_overview_inheritance
@@ -471,8 +472,10 @@ def open_geotiff(source: str | BinaryIO, *,
         attr (``ValueError`` naming the attr) unless the caller passes
         ``drop_rotation=True`` to accept the loss explicitly (#2216).
         Read-side opt-in for rotated / sheared ``ModelTransformationTag``
-        files. By default the reader raises ``NotImplementedError``
-        because the rest of xrspatial assumes an axis-aligned grid.
+        files. By default the reader raises ``RotatedTransformError``
+        (a ``GeoTIFFAmbiguousMetadataError`` / ``ValueError`` subclass;
+        previously a bare ``NotImplementedError`` -- see #2267) because
+        the rest of xrspatial assumes an axis-aligned grid.
         ``allow_rotated=True`` reads the pixel grid without the
         geospatial assumption: the result has integer pixel coords on
         ``x`` / ``y`` and both ``attrs['crs']`` and ``attrs['crs_wkt']``

@@ -63,6 +63,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff, write_vrt
+from xrspatial.geotiff._errors import RotatedTransformError
 
 
 # ---------------------------------------------------------------------------
@@ -976,7 +977,7 @@ def _build_rotated_no_optin(dir_path: Path, target: Path) -> Path:
 _ERROR_FIXTURES: list[_ErrorFixtureSpec] = [
     _ErrorFixtureSpec(
         fix_id="rotated-no-allow_rotated",
-        exc=NotImplementedError,
+        exc=RotatedTransformError,
         match="rotation",
         source_type=_SRC_LOCAL_TIFF,
         builder=_build_rotated_no_optin,

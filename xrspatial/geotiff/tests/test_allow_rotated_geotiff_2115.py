@@ -6,11 +6,11 @@ because the geotag parser short-circuited before the validator's
 opt-out could be consulted. The VRT path honoured the kwarg; the
 GeoTIFF path did not.
 
-These tests pin the new behaviour:
+These tests pin the current behaviour:
 
-* Default (``allow_rotated=False``) still raises ``NotImplementedError``
-  so an existing caller that does not know about the opt-out keeps the
-  safety net.
+* Default (``allow_rotated=False``) raises ``RotatedTransformError``
+  (issue #2267; previously ``NotImplementedError``) so an existing
+  caller that does not know about the opt-out keeps the safety net.
 * ``allow_rotated=True`` drops the georef and reads the pixel grid
   without raising. The pixel values match what the file actually holds.
 * The rotated 6-tuple is preserved on ``geo_info.transform.rotated_affine``
@@ -25,6 +25,7 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff
+from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._geotags import (
     GeoTransform,
     TAG_MODEL_TRANSFORMATION,
@@ -66,7 +67,7 @@ _ROTATED_M = (
 
 def test_extract_transform_rejects_rotated_by_default():
     ifd = _make_ifd_with_rotated_transform(_ROTATED_M)
-    with pytest.raises(NotImplementedError, match="rotation"):
+    with pytest.raises(RotatedTransformError, match="rotation"):
         _extract_transform(ifd)
 
 
@@ -159,7 +160,7 @@ def test_open_geotiff_rotated_default_raises(tmp_path):
     src = tmp_path / "rotated_2115_default.tif"
     arr = np.arange(20, dtype='<u2').reshape(4, 5)
     _write_rotated_tiff(str(src), arr)
-    with pytest.raises(NotImplementedError, match="rotation"):
+    with pytest.raises(RotatedTransformError, match="rotation"):
         open_geotiff(str(src))
 
 
@@ -185,7 +186,7 @@ def test_open_geotiff_rotated_default_raises_with_dask(tmp_path):
     src = tmp_path / "rotated_2115_dask_default.tif"
     arr = np.arange(20, dtype='<u2').reshape(4, 5)
     _write_rotated_tiff(str(src), arr)
-    with pytest.raises(NotImplementedError, match="rotation"):
+    with pytest.raises(RotatedTransformError, match="rotation"):
         open_geotiff(str(src), chunks=2)
 
 
@@ -227,7 +228,7 @@ def test_open_geotiff_http_rotated_default_raises(tmp_path, monkeypatch):
     httpd = _start_http_server(tmp_path)
     try:
         url = f"http://127.0.0.1:{httpd.server_address[1]}/{src.name}"
-        with pytest.raises(NotImplementedError, match="rotation"):
+        with pytest.raises(RotatedTransformError, match="rotation"):
             open_geotiff(url)
     finally:
         httpd.shutdown()

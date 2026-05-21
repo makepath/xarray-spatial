@@ -21,6 +21,7 @@ from xrspatial.geotiff._geotags import (
     TAG_MODEL_PIXEL_SCALE,
     TAG_MODEL_TIEPOINT,
 )
+from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from .conftest import make_minimal_tiff
 
@@ -233,7 +234,7 @@ class TestModelTransformationTag_1486:
         path.write_bytes(data)
 
         from xrspatial.geotiff._reader import read_to_array
-        with pytest.raises(NotImplementedError) as exc:
+        with pytest.raises(RotatedTransformError) as exc:
             read_to_array(str(path))
         assert 'ModelTransformationTag' in str(exc.value)
         assert 'rotation' in str(exc.value).lower() or 'skew' in str(exc.value).lower()
@@ -251,7 +252,7 @@ class TestModelTransformationTag_1486:
         path.write_bytes(data)
 
         from xrspatial.geotiff._reader import read_to_array
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RotatedTransformError):
             read_to_array(str(path))
 
 
