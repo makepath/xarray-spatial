@@ -15,8 +15,8 @@ path's ``nodata_pixels_present`` stamp now rides through the helper's
 for the same on-disk fixture, every backend that handles a given
 read emits the same canonical attrs.
 
-The test is parametrized over a small fixture matrix (no nodata, float
-sentinel, integer sentinel, MinIsWhite photometric) and over the
+The test is parametrized over a small fixture matrix (no nodata,
+float sentinel, integer sentinel, uint8 no-nodata) and over the
 backends available on the runner (eager numpy is always present;
 dask+numpy ditto; GPU + dask+GPU only when CuPy + CUDA are usable;
 VRT exercised via a tiny wrapper that points at the underlying TIFF).
@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import importlib.util
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import pytest
@@ -54,21 +54,30 @@ tifffile = pytest.importorskip("tifffile")
 
 
 def _coord_array(arr: np.ndarray) -> xr.DataArray:
-    """Wrap ``arr`` in a DataArray with axis-aligned x/y coords + CRS.
+    """Wrap a 2-D ``arr`` in a DataArray with axis-aligned x/y coords + CRS.
 
     ``to_geotiff`` stamps the TIFF GeoKey set when the source DataArray
     has y/x coords and ``attrs['crs']``. Using the writer for the
     fixtures keeps the GeoKey emission identical to a real read/write
     round-trip so the test exercises the same code path users hit.
+
+    Only 2-D arrays are supported because every fixture in this file
+    is single-band. A multi-band fixture would also need a ``band``
+    coord and the VRT helper would need per-band nodata bookkeeping;
+    that is out of scope for the canonical-attrs parity assertion.
     """
-    h, w = arr.shape[:2]
-    y = np.linspace(40.0, 40.0 - 0.001 * (h - 1), h)
-    x = np.linspace(-100.0, -100.0 + 0.001 * (w - 1), w)
-    da = xr.DataArray(
-        arr, dims=['y', 'x'] if arr.ndim == 2 else ['y', 'x', 'band'],
-        coords={'y': y, 'x': x},
+    assert arr.ndim == 2, "test fixtures only use 2-D arrays"
+    h, w = arr.shape
+    assert (h, w) == (_FIX_HEIGHT, _FIX_WIDTH), (
+        "fixture geometry constants are out of sync with array shape; "
+        "update _FIX_HEIGHT / _FIX_WIDTH together with the fixture writers"
     )
-    da.attrs['crs'] = 4326
+    y = np.linspace(_FIX_ORIGIN_Y, _FIX_ORIGIN_Y - _FIX_PIXEL * (h - 1), h)
+    x = np.linspace(_FIX_ORIGIN_X, _FIX_ORIGIN_X + _FIX_PIXEL * (w - 1), w)
+    da = xr.DataArray(
+        arr, dims=['y', 'x'], coords={'y': y, 'x': x},
+    )
+    da.attrs['crs'] = _FIX_CRS_EPSG
     return da
 
 
@@ -84,6 +93,19 @@ def _gpu_available() -> bool:
 
 
 _HAS_GPU = _gpu_available()
+
+
+# Canonical fixture geometry. Both the TIFF writer (via ``_coord_array``)
+# and the VRT wrapper read from these constants so the VRT helper does
+# not have to call ``open_geotiff`` to discover the on-disk transform.
+# A silent drift in the eager read path therefore cannot propagate
+# into the VRT helper.
+_FIX_ORIGIN_X = -100.0
+_FIX_ORIGIN_Y = 40.0
+_FIX_PIXEL = 0.001
+_FIX_CRS_EPSG = 4326
+_FIX_HEIGHT = 32
+_FIX_WIDTH = 32
 
 
 # Keys to drop before comparing attrs across backends. Each key is
@@ -119,15 +141,22 @@ def _attrs_for_parity(attrs) -> dict:
             if k not in _BACKEND_SPECIFIC_KEYS}
 
 
-def _attrs_close(a: dict, b: dict, *, rtol: float = 1e-9) -> bool:
+# Tolerance for the lone numeric key that needs one (``transform``).
+# The VRT writer emits the geo-transform as ``%.6f`` ASCII (GDAL's own
+# convention) while the TIFF writer keeps the original float64 values,
+# so the same logical transform comes back as ``0.001`` vs
+# ``0.0010000000000047748``. The diff sits well below GDAL's own
+# rounding step and below any sane pixel-size tolerance.
+_TRANSFORM_RTOL = 1e-9
+_TRANSFORM_ATOL = 1e-9
+
+
+def _attrs_close(a: dict, b: dict) -> bool:
     """Compare attrs dicts, allowing tiny numeric drift in ``transform``.
 
-    The VRT writer emits the geo-transform as ``%.6f`` ASCII (GDAL's
-    own convention) while the TIFF writer keeps the original float64
-    values, so the same logical transform comes back as
-    ``0.001`` vs ``0.0010000000000047748``. The diff is well below
-    GDAL's own rounding step and below any sane pixel-size tolerance,
-    so the parity check accepts it. All other keys must match exactly.
+    All keys other than ``transform`` must match exactly. Only the
+    ``transform`` 6-tuple is compared with a tolerance (see
+    :data:`_TRANSFORM_RTOL` / :data:`_TRANSFORM_ATOL`).
     """
     if set(a.keys()) != set(b.keys()):
         return False
@@ -137,7 +166,10 @@ def _attrs_close(a: dict, b: dict, *, rtol: float = 1e-9) -> bool:
             if len(va) != len(vb):
                 return False
             for x, y in zip(va, vb):
-                if not np.isclose(float(x), float(y), rtol=rtol, atol=1e-9):
+                if not np.isclose(
+                    float(x), float(y),
+                    rtol=_TRANSFORM_RTOL, atol=_TRANSFORM_ATOL,
+                ):
                     return False
         else:
             if va != vb:
@@ -149,15 +181,37 @@ def _attrs_close(a: dict, b: dict, *, rtol: float = 1e-9) -> bool:
 # Fixture writers
 # ---------------------------------------------------------------------
 
-def _write_plain_float(path):
+@dataclass(frozen=True)
+class _Fixture:
+    """One row in the parity matrix.
+
+    ``writer`` materializes the TIFF on disk and returns a
+    :class:`_FixtureMeta` describing the on-disk layout (dtype,
+    declared nodata sentinel). The VRT helper consumes the meta
+    directly rather than re-deriving it from a TIFF read, which
+    keeps the VRT wrapper independent of the eager read path.
+    """
+    name: str
+    writer: Callable[[str], '_FixtureMeta']
+    vrt_compatible: bool = True
+
+
+@dataclass(frozen=True)
+class _FixtureMeta:
+    """Layout facts the VRT helper needs to wrap the on-disk TIFF."""
+    vrt_dtype: str   # GDAL VRT DataType label ('Float32', 'UInt16', ...)
+    nodata: Any = None
+
+
+def _write_plain_float(path) -> _FixtureMeta:
     """Plain float32 TIFF: no nodata, axis-aligned transform, EPSG:4326."""
     arr = np.random.default_rng(seed=2227).random(
         (32, 32)).astype(np.float32)
     to_geotiff(_coord_array(arr), path)
-    return arr
+    return _FixtureMeta(vrt_dtype='Float32')
 
 
-def _write_float_with_nodata(path):
+def _write_float_with_nodata(path) -> _FixtureMeta:
     """Float32 TIFF with a declared sentinel (-9999.0). Some pixels match."""
     rng = np.random.default_rng(seed=2227)
     arr = rng.random((32, 32)).astype(np.float32)
@@ -165,10 +219,10 @@ def _write_float_with_nodata(path):
     da = _coord_array(arr)
     da.attrs['nodata'] = -9999.0
     to_geotiff(da, path)
-    return arr
+    return _FixtureMeta(vrt_dtype='Float32', nodata=-9999.0)
 
 
-def _write_int_with_nodata(path):
+def _write_int_with_nodata(path) -> _FixtureMeta:
     """uint16 TIFF with a representable sentinel pixel."""
     rng = np.random.default_rng(seed=2227)
     arr = rng.integers(0, 1000, size=(32, 32), dtype=np.uint16)
@@ -176,10 +230,10 @@ def _write_int_with_nodata(path):
     da = _coord_array(arr)
     da.attrs['nodata'] = 65535
     to_geotiff(da, path)
-    return arr
+    return _FixtureMeta(vrt_dtype='UInt16', nodata=65535)
 
 
-def _write_minis_white(path):
+def _write_uint8_no_nodata(path) -> _FixtureMeta:
     """uint8 photometric MinIsBlack baseline (no MinIsWhite via to_geotiff).
 
     ``to_geotiff`` does not currently expose a MinIsWhite kwarg, so the
@@ -191,28 +245,14 @@ def _write_minis_white(path):
     rng = np.random.default_rng(seed=2227)
     arr = rng.integers(0, 256, size=(32, 32), dtype=np.uint8)
     to_geotiff(_coord_array(arr), path)
-    return arr
-
-
-@dataclass(frozen=True)
-class _Fixture:
-    """One row in the parity matrix.
-
-    ``writer`` materializes the TIFF on disk; ``vrt_compatible`` tells
-    the test whether to also exercise the VRT backend (some sentinel
-    layouts need extra VRT bookkeeping that this minimal wrapper does
-    not synthesise).
-    """
-    name: str
-    writer: Callable[[str], np.ndarray]
-    vrt_compatible: bool = True
+    return _FixtureMeta(vrt_dtype='Byte')
 
 
 _FIXTURES = (
     _Fixture('plain_float', _write_plain_float),
     _Fixture('float_with_nodata', _write_float_with_nodata),
     _Fixture('int_with_nodata', _write_int_with_nodata),
-    _Fixture('uint8_no_nodata', _write_minis_white),
+    _Fixture('uint8_no_nodata', _write_uint8_no_nodata),
 )
 
 
@@ -243,57 +283,43 @@ def _open_dask_gpu(path):
     return open_geotiff(path, gpu=True, chunks=16)
 
 
-def _open_vrt(path):
+def _open_vrt(path, meta):
     """Wrap the TIFF in a single-source VRT and read it via ``read_vrt``.
 
     Building a one-liner VRT on the fly lets the test exercise the
     VRT eager backend through the same finalization helper without
-    needing a hand-written VRT fixture per case. The source TIFF's
-    geometry, CRS, and nodata are read back via the public
-    :func:`open_geotiff` so the wrapper does not need to re-parse the
-    TIFF header internals (which keeps it stable across header
-    refactors).
+    needing a hand-written VRT fixture per case. ``meta`` carries the
+    on-disk dtype and nodata sentinel that the fixture writer just
+    used; the geometry, CRS, and pixel size come from the module-level
+    fixture constants. Both inputs are derived from the same source of
+    truth as ``_coord_array`` (via ``to_geotiff``), so a silent drift
+    in :func:`open_geotiff` cannot propagate into this helper.
     """
     import os
+    from pyproj import CRS
 
-    src = open_geotiff(path)
-    height, width = src.shape[:2]
+    height = _FIX_HEIGHT
+    width = _FIX_WIDTH
 
-    transform = src.attrs.get('transform')
-    crs_wkt = src.attrs.get('crs_wkt') or ''
-    nodata = src.attrs.get('nodata')
+    # GDAL GeoTransform XML wants (origin_x, pixel_width, row_skew,
+    # origin_y, col_skew, pixel_height). y axis decreases.
+    #
+    # The TIFF writer follows the RasterPixelIsArea convention and
+    # stamps the upper-left CORNER as the origin, while the fixture
+    # constants name the upper-left CENTER (matching ``_coord_array``,
+    # which uses center-based y/x coords). Shift by half a pixel here
+    # so the VRT-side transform matches the TIFF-side transform
+    # within ``_TRANSFORM_RTOL``.
+    corner_x = _FIX_ORIGIN_X - _FIX_PIXEL / 2.0
+    corner_y = _FIX_ORIGIN_Y + _FIX_PIXEL / 2.0
+    geo_transform = (
+        f"{corner_x:.6f}, {_FIX_PIXEL:.6f}, 0.0, "
+        f"{corner_y:.6f}, 0.0, {-_FIX_PIXEL:.6f}"
+    )
+    crs_wkt = CRS.from_epsg(_FIX_CRS_EPSG).to_wkt()
 
-    # Map numpy dtype to the GDAL VRT DataType label.
-    dtype_map = {
-        np.dtype('uint8'): 'Byte',
-        np.dtype('int8'): 'Int8',
-        np.dtype('uint16'): 'UInt16',
-        np.dtype('int16'): 'Int16',
-        np.dtype('uint32'): 'UInt32',
-        np.dtype('int32'): 'Int32',
-        np.dtype('float32'): 'Float32',
-        np.dtype('float64'): 'Float64',
-    }
-    vrt_dtype = dtype_map.get(src.dtype, 'Float32')
-
-    if transform is not None:
-        # rasterio-style tuple is (pixel_width, 0.0, origin_x, 0.0,
-        # pixel_height, origin_y); GDAL GeoTransform XML wants the
-        # GDAL order (origin_x, pixel_width, row_skew, origin_y,
-        # col_skew, pixel_height).
-        pixel_width, _, origin_x, _, pixel_height, origin_y = transform
-        geo_transform = (
-            f"{origin_x:.6f}, {pixel_width:.6f}, 0.0, "
-            f"{origin_y:.6f}, 0.0, {pixel_height:.6f}"
-        )
-    else:
-        # No georef: use an identity-like transform; ``read_vrt`` still
-        # parses the file but emits ``georef_status='transform_only'``
-        # because the synthesised GeoTransform is axis-aligned.
-        geo_transform = '0.0, 1.0, 0.0, 0.0, 0.0, -1.0'
-
-    nodata_xml = (f"<NoDataValue>{nodata}</NoDataValue>"
-                  if nodata is not None else '')
+    nodata_xml = (f"<NoDataValue>{meta.nodata}</NoDataValue>"
+                  if meta.nodata is not None else '')
 
     vrt_path = path + '.vrt'
     abs_src = os.path.abspath(path)
@@ -301,7 +327,7 @@ def _open_vrt(path):
         f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">'
         f'  <SRS>{crs_wkt}</SRS>'
         f'  <GeoTransform>{geo_transform}</GeoTransform>'
-        f'  <VRTRasterBand dataType="{vrt_dtype}" band="1">'
+        f'  <VRTRasterBand dataType="{meta.vrt_dtype}" band="1">'
         f'    {nodata_xml}'
         f'    <SimpleSource>'
         f'      <SourceFilename relativeToVRT="0">{abs_src}</SourceFilename>'
@@ -320,10 +346,11 @@ def _open_vrt(path):
 
 
 _BACKENDS = (
-    _Backend('eager_numpy', _open_eager),
-    _Backend('dask_numpy', _open_dask),
-    _Backend('gpu', _open_gpu, available=_HAS_GPU),
-    _Backend('dask_gpu', _open_dask_gpu, available=_HAS_GPU),
+    _Backend('eager_numpy', lambda path, meta: _open_eager(path)),
+    _Backend('dask_numpy', lambda path, meta: _open_dask(path)),
+    _Backend('gpu', lambda path, meta: _open_gpu(path), available=_HAS_GPU),
+    _Backend('dask_gpu', lambda path, meta: _open_dask_gpu(path),
+             available=_HAS_GPU),
     _Backend('vrt', _open_vrt),
 )
 
@@ -351,7 +378,7 @@ def test_canonical_attrs_match_across_backends(tmp_path, fixture):
     over the diff with a new entry in :data:`_BACKEND_SPECIFIC_KEYS`.
     """
     path = str(tmp_path / f'parity_2227_{fixture.name}.tif')
-    fixture.writer(path)
+    meta = fixture.writer(path)
 
     baseline = _attrs_for_parity(open_geotiff(path).attrs)
 
@@ -363,7 +390,7 @@ def test_canonical_attrs_match_across_backends(tmp_path, fixture):
             # Already the baseline; comparing it to itself adds noise.
             continue
         try:
-            da = backend.open_fn(path)
+            da = backend.open_fn(path, meta)
         except Exception as exc:  # pragma: no cover - surfaced via the assert
             divergences[backend.name] = f"open failed: {exc!r}"
             continue
@@ -399,7 +426,7 @@ def test_canonical_attrs_keys_match_across_backends(tmp_path, fixture):
     ``crs_wkt`` from one backend surfaces immediately.
     """
     path = str(tmp_path / f'parity_2227_keys_{fixture.name}.tif')
-    fixture.writer(path)
+    meta = fixture.writer(path)
 
     baseline_keys = set(_attrs_for_parity(open_geotiff(path).attrs).keys())
 
@@ -410,7 +437,7 @@ def test_canonical_attrs_keys_match_across_backends(tmp_path, fixture):
         if backend.name == 'eager_numpy':
             continue
         try:
-            da = backend.open_fn(path)
+            da = backend.open_fn(path, meta)
         except Exception as exc:  # pragma: no cover
             diffs[backend.name] = f"open failed: {exc!r}"
             continue
