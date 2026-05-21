@@ -1364,19 +1364,19 @@ def _finalize_lazy_read_attrs(
     2. :func:`_populate_attrs_from_geo_info` -- writes the canonical
        attrs onto a fresh dict.
     3. :func:`_set_nodata_attrs` -- ``masked`` is True iff the caller
-       opted into masking AND the graph dtype is float. ``dtype_cast``
-       is recorded when the caller passed an explicit ``dtype=`` kwarg.
-       ``pixels_present=None`` is the documented dask contract from
-       issue #2135: a strict per-chunk reduction would force an eager
-       ``.compute()`` and break the lazy contract, so the attr is left
-       absent on lazy outputs.
+       opted into masking AND the graph dtype is float.
+       ``dtype_cast`` is recorded when ``caller_dtype`` is not ``None``
+       and ``nodata`` is declared. ``pixels_present=None`` is the
+       documented dask contract from issue #2135: a strict per-chunk
+       reduction would force an eager ``.compute()`` and break the
+       lazy contract, so the attr is left absent on lazy outputs.
 
     Returns the attrs ``dict`` only; the caller assembles the dask graph
     and builds the :class:`xarray.DataArray` itself, so this helper
     deliberately does not touch arrays or coords.
 
-    Two dtype parameters (#2206), split because the dask paths need to
-    distinguish them:
+    Two dtype parameters (#2206), split because every lazy/VRT call
+    site needs to keep them separate:
 
     * ``graph_dtype`` -- the resolved graph dtype the backend settled
       on (e.g. ``target_dtype`` after the int->float64 auto-promotion
@@ -1387,13 +1387,18 @@ def _finalize_lazy_read_attrs(
     * ``caller_dtype`` -- the caller's ``dtype=`` kwarg verbatim, or
       ``None`` when the caller did not request a cast. Drives
       ``nodata_dtype_cast`` so the attr records caller intent, never
-      the masking-induced auto-promotion. When ``nodata is None`` the
-      attr stays absent regardless (no sentinel means
-      ``nodata_dtype_cast`` is meaningless).
+      the masking-induced auto-promotion.
 
-    Eager-style callers that route through this helper (VRT) pass
-    ``graph_dtype=resolved_dtype`` and ``caller_dtype=dtype``
-    symmetrically, because they do not have the auto-promotion mismatch.
+    When ``nodata is None`` both the masking attrs (``masked_nodata``)
+    and the cast attr (``nodata_dtype_cast``) stay absent regardless of
+    the two dtype arguments -- ``_set_nodata_attrs`` short-circuits
+    because the sentinel-lifecycle attrs only make sense when a
+    sentinel is declared.
+
+    The eager VRT call sites and the dask call sites both pass these
+    asymmetrically (``graph_dtype`` is the pre-cast / pre-promotion
+    dtype, ``caller_dtype`` is the user kwarg) so that a caller
+    ``dtype=`` cast never flips ``masked_nodata``.
 
     ``attrs_in`` is shallow-copied via ``dict(attrs_in)``. Nested values
     are shared between the caller's seed dict and the returned attrs;

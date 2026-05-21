@@ -452,6 +452,27 @@ def test_lazy_int_caller_cast_records_dtype():
     assert attrs['nodata_dtype_cast'] == 'int16'
 
 
+def test_lazy_graph_and_caller_dtype_differ():
+    # Pins which parameter drives which attr when they actually differ:
+    # ``graph_dtype`` drives ``masked_nodata`` (float graph -> per-chunk
+    # mask runs), ``caller_dtype`` drives ``nodata_dtype_cast`` (records
+    # the user's cast request, not the graph dtype). An accidental swap
+    # of the two arguments would flip both attrs at once.
+    gi = _default_geo_info(nodata=0)
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=0,
+        mask_nodata=True,
+        graph_dtype='float64',
+        caller_dtype='int16',
+        window=None,
+    )
+
+    assert attrs['masked_nodata'] is True
+    assert attrs['nodata_dtype_cast'] == 'int16'
+
+
 def test_lazy_mask_promoted_graph_no_caller_cast():
     # Mirrors the dask backend's int->float64 auto-promotion case: graph
     # dtype is float64 because masking forces it, but the caller did not
