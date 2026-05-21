@@ -93,11 +93,14 @@ def _validate_3d_writer_dims(dims) -> None:
     if band_layout or yxb_layout:
         return
     # ``(y, x, *)`` with a non-band trailing dim. Temporal names get a
-    # dedicated friendly message (issue #1972); everything else
-    # (``z``, ``level``, ``scenario``, ``foo``, ...) is rejected with
-    # the generic ambiguous-dims wording below. Issue #2240 closes the
-    # escape hatch that previously let unknown trailing names through
-    # the band-position fallback.
+    # dedicated friendly message (issue #1972); every other non-band
+    # trailing name (``z``, ``level``, ``scenario``, ``foo``, ...) is
+    # rejected with the dedicated ``"non-band trailing dim"`` message
+    # immediately below. Issue #2240 closes the escape hatch that
+    # previously let unknown trailing names through the band-position
+    # fallback. The generic ``"ambiguous dims"`` message at the bottom
+    # of the function only fires for layouts that are neither
+    # ``(y, x, *)`` nor ``(_TIME_, y, x)`` (e.g. ``('foo', 'y', 'x')``).
     if d0 in _Y_DIM_NAMES and d1 in _X_DIM_NAMES:
         if _is_temporal_dim_name(d2):
             raise ValueError(
@@ -176,12 +179,13 @@ def _validate_writer_spatial_shape(shape, dims=None,
     collapse of the band axis.
 
     Note that this validator runs before ``_validate_3d_writer_dims``
-    (#1812 / #1972) in ``to_geotiff``. For an ambiguous-dim input like
-    ``(5, 5, 0)`` with dims ``('y', 'x', 'time')``, the band-last branch
-    sees ``bands == 0`` and the "no bands" error wins over the friendlier
-    ambiguous-dim message. Both errors name the right call to fix, so
-    the ordering is acceptable; reorder only if the ambiguous-dim
-    diagnostic becomes more important than the empty-axis one.
+    (#1812 / #1972 / #2240) in ``to_geotiff``. For an ambiguous-dim
+    input like ``(5, 5, 0)`` with dims ``('y', 'x', 'time')``, the
+    band-last branch sees ``bands == 0`` and the "no bands" error wins
+    over the friendlier ambiguous-dim message. Both errors name the
+    right call to fix, so the ordering is acceptable; reorder only if
+    the ambiguous-dim diagnostic becomes more important than the
+    empty-axis one.
     """
     if shape is None:
         return
