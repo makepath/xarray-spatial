@@ -14,7 +14,6 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import (
-    _apply_caller_dtype_cast,
     _finalize_lazy_read_attrs,
 )
 from .._coords import (
@@ -542,11 +541,11 @@ def read_vrt(source: str, *,
     # marker emission via the same ``geo_info_to_metadata`` ->
     # ``metadata_to_attrs`` pipeline.
     #
-    # ``dtype`` is the **pre-cast** dtype so ``masked_nodata`` reflects
-    # whether VRT-side masking actually ran (an int -> float caller
-    # cast must not flip the attr; see #2092 follow-up). The helper's
-    # ``nodata_dtype_cast`` is overwritten via ``_apply_caller_dtype_cast``
-    # so the attr records the caller's ``dtype=`` kwarg, not the
+    # ``graph_dtype`` is the **pre-cast** dtype so ``masked_nodata``
+    # reflects whether VRT-side masking actually ran (an int -> float
+    # caller cast must not flip the attr; see #2092 follow-up).
+    # ``caller_dtype`` is the user's ``dtype=`` kwarg so
+    # ``nodata_dtype_cast`` records caller intent rather than the
     # masking-induced graph dtype.
     #
     # Documented divergence from the eager helper:
@@ -569,14 +568,12 @@ def read_vrt(source: str, *,
         geo_info=synth_geo_info,
         nodata=nodata,
         mask_nodata=mask_nodata,
-        dtype=pre_cast_dtype,
+        graph_dtype=pre_cast_dtype,
+        caller_dtype=dtype,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
         attrs_in=attrs_seed,
-    )
-    _apply_caller_dtype_cast(
-        attrs, caller_dtype=dtype, has_nodata=nodata is not None,
     )
     if nodata is not None and nodata_pixels_present is not None:
         attrs['nodata_pixels_present'] = bool(nodata_pixels_present)
@@ -977,14 +974,14 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # so the helper's ``geo_info_to_metadata`` emits the windowed
     # transform.
     #
-    # ``dtype`` is ``declared_dtype`` (the pre-cast graph dtype), so
-    # ``masked_nodata`` reflects whether the per-chunk reader actually
-    # masked rather than the post-cast ``final_dtype``. The dtype-cast
-    # attr is overwritten via ``_apply_caller_dtype_cast`` so a caller
-    # ``dtype=`` records the user's intent rather than the
-    # masking-induced auto-promotion (#2092 follow-up). ``vrt_holes``
-    # rides through ``attrs_in`` because ``GeoInfo`` has no slot for
-    # it (documented divergence from the helper contract).
+    # ``graph_dtype`` is ``declared_dtype`` (the pre-cast graph dtype)
+    # so ``masked_nodata`` reflects whether the per-chunk reader
+    # actually masked rather than the post-cast ``final_dtype``.
+    # ``caller_dtype`` is the user's ``dtype=`` so ``nodata_dtype_cast``
+    # records the user's intent rather than the masking-induced
+    # auto-promotion (#2092 follow-up). ``vrt_holes`` rides through
+    # ``attrs_in`` because ``GeoInfo`` has no slot for it (documented
+    # divergence from the helper contract).
     synth_geo_info = _vrt_to_synthetic_geo_info(vrt)
     helper_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)
     attrs_seed: dict = {}
@@ -994,14 +991,12 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         geo_info=synth_geo_info,
         nodata=nodata_meta,
         mask_nodata=mask_nodata,
-        dtype=declared_dtype,
+        graph_dtype=declared_dtype,
+        caller_dtype=dtype,
         window=helper_window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
         attrs_in=attrs_seed,
-    )
-    _apply_caller_dtype_cast(
-        attrs, caller_dtype=dtype, has_nodata=nodata_meta is not None,
     )
 
     if out_has_band_axis:

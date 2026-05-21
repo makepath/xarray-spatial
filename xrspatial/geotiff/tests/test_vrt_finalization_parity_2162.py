@@ -464,7 +464,8 @@ def test_band_nodata_chunked_first_band_attrs(tmp_path):
 
 def _make_no_sentinel_vrt(tmp_path, name):
     """A single-band float VRT with no ``<NoDataValue>``. Used to pin the
-    ``dtype=`` + no-sentinel branch of ``_apply_caller_dtype_cast``."""
+    ``dtype=`` + no-sentinel branch of ``_finalize_lazy_read_attrs``
+    (``caller_dtype`` set, ``nodata`` is None -> attr stays absent)."""
     tiff = str(tmp_path / f'{name}_tiff.tif')
     vrt = str(tmp_path / f'{name}.vrt')
     arr = np.arange(16, dtype=np.float32).reshape(4, 4)
@@ -479,9 +480,9 @@ def _make_no_sentinel_vrt(tmp_path, name):
 
 def test_dtype_cast_no_sentinel_omits_attr_eager(tmp_path):
     """Eager VRT with ``dtype=`` and no declared sentinel: the helper
-    writes ``nodata_dtype_cast`` from ``pre_cast_dtype`` and
-    ``_apply_caller_dtype_cast`` pops it because ``has_nodata=False``.
-    Pins the symmetric branch the dask parity test covers for non-VRT."""
+    receives ``caller_dtype=np.float64`` but ``nodata is None``, so
+    ``nodata_dtype_cast`` stays absent. Pins the symmetric branch the
+    dask parity test covers for non-VRT."""
     vrt = _make_no_sentinel_vrt(tmp_path, 'no_sentinel_eager_2180')
     r = read_vrt(vrt, dtype=np.float64)
     assert r.dtype == np.float64
