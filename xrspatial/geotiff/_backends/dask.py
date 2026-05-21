@@ -237,52 +237,33 @@ def read_geotiff_dask(source: str, *,
         geo_info, full_h, full_w, file_dtype, n_bands = _read_geo_info(
             source, overview_level=overview_level,
             allow_rotated=allow_rotated)
-    nodata = geo_info.nodata
-    nodata_attr = nodata  # original sentinel preserved for attrs['nodata']
-    # When the source is MinIsWhite (photometric == 0, samples_per_pixel == 1),
-    # the per-chunk reader inverts pixel values before this closure's nodata
-    # mask runs. Track the inverted sentinel so the mask compares against the
-    # post-inversion value, not the original (#1809).
-    if nodata is not None:
-        _phm = getattr(geo_info, '_ifd_photometric', None)
-        _spp = getattr(geo_info, '_ifd_samples_per_pixel', None)
-        if _phm == 0 and _spp == 1:
-            if file_dtype.kind == 'u' and np.isfinite(nodata) and \
-                    float(nodata).is_integer():
-                vi = int(nodata)
-                info = np.iinfo(file_dtype)
-                if info.min <= vi <= info.max:
-                    nodata = info.max - vi
-            elif file_dtype.kind == 'f' and not np.isnan(nodata):
-                nodata = -float(nodata)
+    # PR-C #2226: centralize the nodata lifecycle in one value object.
+    # ``raw_sentinel`` carries the pre-inversion sentinel that
+    # ``attrs['nodata']`` must preserve; ``effective_sentinel`` is what
+    # the per-chunk reader's mask compares against (post-MinIsWhite).
+    # ``sentinel_fits_buffer`` collapses the previous finite/integer/
+    # in-range gate so the integer auto-promotion below skips out-of-
+    # range / fractional / non-finite sentinels (#1774, #1564, #1616).
+    from .._nodata import NodataLifecycle
+    lifecycle = NodataLifecycle(
+        declared=geo_info.nodata,
+        photometric=getattr(geo_info, '_ifd_photometric', None),
+        dtype_in=file_dtype,
+        dtype_request=dtype,
+        samples_per_pixel=getattr(geo_info, '_ifd_samples_per_pixel', 1) or 1,
+    )
+    nodata_attr = lifecycle.raw_sentinel  # original sentinel for attrs['nodata']
+    nodata = lifecycle.effective_sentinel  # post-MinIsWhite for masking
 
     # Nodata masking promotes integer arrays to float64 (for NaN).
-    # Validate against the effective dtype, not the raw file dtype.
-    # An out-of-range sentinel (e.g. uint16 file + nodata=-9999) is a
-    # no-op for masking and leaves the file dtype unchanged. A
-    # non-finite sentinel ("NaN" / "Inf" GDAL_NODATA strings) cannot
-    # match an integer pixel either and is short-circuited via the
-    # ``np.isfinite`` gate so the ``int(...)`` cast never sees NaN
-    # (#1774). A fractional sentinel (e.g. ``"3.5"`` on a ``uint16``
-    # file) also cannot match an integer pixel and ``int(3.5)`` would
-    # truncate to 3, silently flagging a real pixel value as nodata;
-    # gate on ``float(nodata).is_integer()`` as well so fractional
-    # tags stay on the no-op path. The try/except keeps callers that
-    # pass an exotic ``nodata`` type (e.g. complex) on the no-op path
-    # rather than surfacing an opaque error here.
+    # The lifecycle's ``sentinel_fits_buffer`` already encapsulates the
+    # finite / integer / in-range gates (#1774, #1564, #1616), so the
+    # promotion fires iff the helper says the sentinel is comparable.
     effective_dtype = file_dtype
     if (mask_nodata
-            and nodata is not None
             and file_dtype.kind in ('u', 'i')
-            and np.isfinite(nodata)
-            and float(nodata).is_integer()):
-        try:
-            _nd_int = int(nodata)
-            _info = np.iinfo(file_dtype)
-            if _info.min <= _nd_int <= _info.max:
-                effective_dtype = np.dtype('float64')
-        except (TypeError, ValueError):
-            pass
+            and lifecycle.sentinel_fits_buffer):
+        effective_dtype = np.dtype('float64')
 
     if dtype is not None:
         target_dtype = np.dtype(dtype)

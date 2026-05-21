@@ -803,12 +803,19 @@ def read_geotiff_gpu(source: str, *,
 
         _mw_mask_nodata = None
         if (ifd.photometric == 0 and samples == 1 and not arr_was_cpu_decoded):
-            from .._reader import _miniswhite_inverted_nodata as _miw_inv_nd
+            # PR-C #2226: route the post-MinIsWhite sentinel through the
+            # shared lifecycle helper so the GPU path no longer reaches
+            # into ``_reader`` for the inversion math. The lifecycle's
+            # ``effective_sentinel`` matches ``_miniswhite_inverted_nodata``
+            # exactly for the MinIsWhite (photometric==0, spp==1) case.
+            from .._nodata import NodataLifecycle as _NL
             gpu_dtype = np.dtype(str(arr_gpu.dtype))
-            # Compute the post-MinIsWhite sentinel BEFORE inverting the array,
-            # so the downstream ``_apply_nodata_mask_gpu`` call compares
-            # against the right value (#1809).
-            _mw_mask_nodata = _miw_inv_nd(geo_info.nodata, ifd, gpu_dtype)
+            _mw_mask_nodata = _NL(
+                declared=geo_info.nodata,
+                photometric=ifd.photometric,
+                dtype_in=gpu_dtype,
+                samples_per_pixel=ifd.samples_per_pixel,
+            ).effective_sentinel
             if gpu_dtype.kind == 'u':
                 arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
             elif gpu_dtype.kind == 'f':

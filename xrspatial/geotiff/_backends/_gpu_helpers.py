@@ -73,25 +73,16 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
                          arr_dtype.type('nan'))
         return arr_gpu
     if arr_dtype.kind in ('u', 'i'):
-        # Out-of-range sentinels (e.g. uint16 + GDAL_NODATA="-9999") cannot
-        # match any decoded pixel; skip the cast that would otherwise raise
-        # OverflowError. A non-finite sentinel ("NaN" / "Inf" GDAL_NODATA
-        # strings) also cannot match an integer pixel and would raise
-        # ValueError on ``int(nodata)``; gate on ``np.isfinite`` first to
-        # mirror ``_resolve_masked_fill`` in ``_reader.py`` (#1774). A
-        # fractional sentinel (e.g. ``"3.5"`` on a ``uint16`` file) also
-        # cannot match an integer pixel and ``int(3.5)`` would truncate
-        # to 3, silently masking a real pixel value; gate on
-        # ``float(nodata).is_integer()`` as well (mirrors the
-        # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
-        # attrs['nodata'] is still set by the caller so the original
-        # sentinel survives a write round-trip.
-        if not (np.isfinite(nodata) and float(nodata).is_integer()):
+        # PR-C #2226: lifecycle helper owns the
+        # finite / integer / in-range gate previously inlined here
+        # (#1774, #1564, #1616). Out-of-range, non-finite, or
+        # fractional sentinels short-circuit to a no-op so
+        # ``attrs['nodata']`` still records them while masking
+        # leaves the integer buffer untouched.
+        from .._nodata import _sentinel_fits_dtype as _fits
+        if not _fits(nodata, arr_dtype):
             return arr_gpu
         nodata_int = int(nodata)
-        info = np.iinfo(arr_dtype)
-        if not (info.min <= nodata_int <= info.max):
-            return arr_gpu
         sentinel = arr_dtype.type(nodata_int)
         mask = arr_gpu == sentinel
         if bool(mask.any().item()):
