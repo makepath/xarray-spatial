@@ -34,6 +34,7 @@ on empty input — confirmed before commit.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import http.server
 import os
 import socket
@@ -52,6 +53,7 @@ rasterio = pytest.importorskip("rasterio")
 
 from xrspatial.geotiff._reader import read_to_array  # noqa: E402
 from xrspatial.geotiff import _reader as _reader_mod  # noqa: E402
+from xrspatial.geotiff import _decode as _decode_mod  # noqa: E402
 
 
 # Local-strip helpers -------------------------------------------------------
@@ -163,8 +165,12 @@ class TestReadStripsSparseParallel:
         _write_sparse_stripped_large(path)
 
         par, _ = read_to_array(path)
+        # Patch the threshold in ``_decode`` (PR-G #2246 home of
+        # ``_read_strips``), not in ``_reader``: the back-imported name in
+        # ``_reader`` is a separate reference and patching it would leave
+        # the live binding in ``_decode`` unchanged.
         with patch.object(
-                _reader_mod,
+                _decode_mod,
                 "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10 ** 12):
             ser, _ = read_to_array(path)
 
@@ -184,9 +190,12 @@ class TestReadStripsSparseParallel:
         # engages because n_strips = 4 > 1 and strip_pixel_count
         # = 2048 * 64 = 131_072 >= 65_536.
         _write_sparse_stripped_large(path, filled_rows=256)
+        # Patch ``concurrent.futures.ThreadPoolExecutor`` rather than the
+        # reader module binding: strip decode lives in ``_decode`` after
+        # PR-G (issue #2246) and re-imports the executor function-locally.
         with patch.object(
-                _reader_mod, "ThreadPoolExecutor",
-                wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+                concurrent.futures, "ThreadPoolExecutor",
+                wraps=concurrent.futures.ThreadPoolExecutor) as mock_pool:
             out, _ = read_to_array(path)
             assert mock_pool.called, (
                 "parallel-decode pool was not engaged for a multi-strip "
@@ -209,7 +218,7 @@ class TestReadStripsSparseParallel:
         win = (128, 0, 384, 1024)  # row range [128, 384), col range [0, 1024)
         par, _ = read_to_array(path, window=win)
         with patch.object(
-                _reader_mod,
+                _decode_mod,
                 "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10 ** 12):
             ser, _ = read_to_array(path, window=win)
 
@@ -229,8 +238,8 @@ class TestReadStripsSparseParallel:
         path = str(tmp_path / "all_sparse.tif")
         _write_sparse_stripped_large(path, filled_rows=0)
         with patch.object(
-                _reader_mod, "ThreadPoolExecutor",
-                wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+                concurrent.futures, "ThreadPoolExecutor",
+                wraps=concurrent.futures.ThreadPoolExecutor) as mock_pool:
             out, _ = read_to_array(path)
             # All strips sparse → no jobs → no pool.
             assert not mock_pool.called, (
@@ -268,7 +277,7 @@ class TestReadStripsSparsePlanar2:
 
         par, _ = read_to_array(path)
         with patch.object(
-                _reader_mod,
+                _decode_mod,
                 "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10 ** 12):
             ser, _ = read_to_array(path)
 
