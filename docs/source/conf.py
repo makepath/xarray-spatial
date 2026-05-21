@@ -53,12 +53,22 @@ extensions = [
 # ``reference/`` (e.g. ``geotiff_internals.md``). myst-parser is an
 # optional docs dependency declared in ``setup.cfg``'s ``[doc]`` extra;
 # when it is not installed the rest of the docs still build and the
-# Markdown page is skipped with a Sphinx warning.
+# Markdown page is skipped. The explicit warning below tells a
+# contributor on a partial-deps env why the ``geotiff_internals.md``
+# page produces a "no source file" warning later in the build.
 try:
     import myst_parser  # noqa: F401
     extensions.append('myst_parser')
 except ImportError:
-    pass
+    import warnings
+    warnings.warn(
+        "myst-parser is not installed; Markdown developer docs under "
+        "docs/source/reference/ (e.g. geotiff_internals.md) will be "
+        "skipped. Install via ``pip install xarray-spatial[doc]`` or "
+        "``pip install myst-parser`` to include them.",
+        UserWarning,
+        stacklevel=1,
+    )
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

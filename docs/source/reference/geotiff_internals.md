@@ -78,6 +78,7 @@ backend onto. Cells in the per-backend tables below cite these names.
 | `_read_geo_info`                    | `__init__.py`         | step 2 (metadata-only mmap parse) |
 | `_parse_cog_http_meta`              | `_reader.py`          | step 2 (HTTP / fsspec range parse) |
 | `extract_geo_info_with_overview_inheritance` | `_geotags.py` | step 2 + step 3 (overview-aware georef) |
+| `select_overview_ifd`               | `_header.py`          | step 2 (overview-level IFD selection) |
 | `read_to_array`                     | `_reader.py`          | steps 4 + 5 (CPU decode + orientation + MinIsWhite) |
 | `_apply_orientation_gpu` / `_apply_orientation_geo_info` | `_backends/_gpu_helpers.py` | step 5 (GPU side) |
 | `_apply_eager_nodata_mask`          | `_attrs.py`           | step 6 (single-sentinel mask) |
@@ -85,8 +86,8 @@ backend onto. Cells in the per-backend tables below cite these names.
 | `_set_nodata_attrs`                 | `_attrs.py`           | step 7 (nodata lifecycle attrs) |
 | `_populate_attrs_from_geo_info`     | `_attrs.py`           | step 7 (transform / crs / georef_status) |
 | `_validate_read_geo_info`           | `_attrs.py`           | step 7 (pre-attrs validation) |
-| `_finalize_eager_read`              | `_attrs.py`           | wraps steps 1c + 6 + 7 + 8 for eager backends |
-| `_finalize_lazy_read_attrs`         | `_attrs.py`           | wraps steps 1c + 7 for lazy backends |
+| `_finalize_eager_read`              | `_attrs.py`           | wraps post-decode validation (`_validate_read_geo_info`) + steps 6 + 7 + 8 for eager backends |
+| `_finalize_lazy_read_attrs`         | `_attrs.py`           | wraps post-decode validation (`_validate_read_geo_info`) + step 7 for lazy backends |
 | `geo_to_coords` / `coords_from_geo_info` / `coords_from_pixel_geometry` | `_coords.py` | step 8 (coord build) |
 
 ### Write helpers
@@ -124,7 +125,7 @@ now and that the call-site comments justify.
 | ---- | ---------------------- | ------------------- | -------------------------- | ---------------------------- | ------------------ | -------------------- |
 | 1. source / kwarg validation | shared (`_validate_dispatch_kwargs` then dispatches) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`); duplicated inline overview-level / `missing_sources` / `band_nodata` value rejections | shared (`_validate_dispatch_kwargs`); duplicated inline overview-level / `missing_sources` / `band_nodata` value rejections |
 | 2. metadata parse | shared (`read_to_array` -> `_parse_cog_http_meta` for cloud, `parse_header` + `parse_all_ifds` + sidecar otherwise) | shared (`_read_geo_info` for local, `_parse_cog_http_meta` for HTTP/fsspec) | shared (`extract_geo_info_with_overview_inheritance`, `select_overview_ifd`); duplicated inline IFD + sidecar load lifted from `_read_geo_info` | shared (`extract_geo_info_with_overview_inheritance`); duplicated inline IFD + sidecar handling | duplicated (`_parse_vrt` + `_read_vrt_internal` -- VRT-specific, no shared metadata parser) | duplicated (`_parse_vrt` + per-chunk `_vrt_chunk_read`) |
-| 3. transform / georef classification | shared (`_populate_attrs_from_geo_info` via `_finalize_eager_read`) | shared (`_populate_attrs_from_geo_info` via `_finalize_lazy_read_attrs`) | shared (`_populate_attrs_from_geo_info` via `_finalize_eager_read`) | shared (`_populate_attrs_from_geo_info` via `_finalize_lazy_read_attrs`) | shared (`_vrt_to_synthetic_geo_info` -> `_finalize_lazy_read_attrs`); documented divergence: rotated VRT promotes to `has_georef=False` + `rotated_affine` instead of the GeoTIFF rotated-drop policy | shared (`_vrt_to_synthetic_geo_info` -> `_finalize_lazy_read_attrs`); same documented divergence |
+| 3. transform / georef classification | shared (`_populate_attrs_from_geo_info` via `_finalize_eager_read`) | shared (`_populate_attrs_from_geo_info` via `_finalize_lazy_read_attrs`) | shared (`_populate_attrs_from_geo_info` via `_finalize_eager_read`) | shared (`_populate_attrs_from_geo_info` via `_finalize_lazy_read_attrs`) | shared (`_vrt_to_synthetic_geo_info` -> `_finalize_lazy_read_attrs`); documented divergence: per-band nodata sentinel selection runs before the helper, and `vrt_holes` is injected through `attrs_in` because `GeoInfo` has no slot for it | shared (`_vrt_to_synthetic_geo_info` -> `_finalize_lazy_read_attrs`); same documented divergence |
 | 4. pixel decode | shared (`read_to_array`) | shared (per-chunk `read_to_array` / `_fetch_decode_cog_http_tiles`) | duplicated (inline GDS / KvikIO / nvCOMP path with CPU fallback via `read_to_array`) | duplicated (inline GDS + per-chunk delayed; HTTP / fsspec / stripped layouts fall back to `read_geotiff_dask`) | duplicated (`_read_vrt_internal._read_data` per source) | duplicated (per-chunk `_vrt_chunk_read` decodes only sources intersecting the window) |
 | 5. orientation / photometric | shared (`read_to_array` applies both) | shared (per chunk via `read_to_array`); rejects non-default orientation on HTTP COG dask path | shared on CPU-fallback (`read_to_array`); duplicated on pure GPU path (`_apply_orientation_gpu`, `_apply_orientation_geo_info`, inline MinIsWhite inversion) | shared on CPU-fallback; duplicated on disk-to-GPU per-chunk path (`_decode_window_gpu_direct`); rejects orientation != 1 in `_gds_chunk_path_available` | duplicated (inline NaN masking in `_vrt._read_data` for float sources; VRT does not carry an orientation tag) | duplicated (per chunk same as eager VRT) |
 | 6. nodata mask + dtype cast | shared (`_apply_eager_nodata_mask` + `_validate_dtype_cast` via `_finalize_eager_read`) | duplicated (per-chunk mask inline in `_delayed_read_window`); shared `_validate_dtype_cast` on graph dtype | shared (`_apply_eager_nodata_mask` via `_finalize_eager_read`) on both stripped and tiled paths | duplicated (per-chunk mask inline in `_chunk_task`); shared `_validate_dtype_cast` | duplicated (`_apply_integer_sentinel_mask_with_presence` for per-band integer sentinels, plus inline float-NaN proxy and pre-cast dtype tracking); shared `_validate_dtype_cast` | duplicated (per-chunk integer sentinel mask via `_apply_integer_sentinel_mask_with_presence`); shared `_validate_dtype_cast` |
@@ -162,8 +163,8 @@ directly rather than re-inlining the logic.
 
 ```
 source kwarg
-  -> _validate_dispatch_kwargs   (step 1)
-  -> _validate_chunks_arg / _validate_overview_level_arg as needed
+  -> _validate_dispatch_kwargs   (step 1; bundles _validate_overview_level_arg)
+  -> _validate_chunks_arg as needed
   -> _read_geo_info / _parse_cog_http_meta  (step 2)
   -> extract_geo_info_with_overview_inheritance
   -> validate_read_metadata     (step 3 -- rotated / unparseable / mixed-band)
@@ -177,7 +178,7 @@ Canonical helper per step:
 
 | Step                        | Canonical helper |
 | --------------------------- | ---------------- |
-| 1. kwarg validation         | `_validate_dispatch_kwargs` (dispatcher) + `_validate_chunks_arg` / `_validate_overview_level_arg` (per-backend) |
+| 1. kwarg validation         | `_validate_dispatch_kwargs` (which bundles `_validate_overview_level_arg`); `_validate_chunks_arg` per-backend |
 | 2. metadata parse           | `_read_geo_info` (local mmap) / `_parse_cog_http_meta` (cloud) |
 | 3. transform classification | `_populate_attrs_from_geo_info` (driven by `geo_info.has_georef` / `rotated_affine` / CRS-only fields) |
 | 4. pixel decode             | `read_to_array` (CPU); GPU decoders remain backend-specific but must converge on a single `decode_window` entry point in Phase 5 |
