@@ -24,11 +24,13 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 
 import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff, read_vrt
+from xrspatial.geotiff import _attrs as _attrs_module
 from xrspatial.geotiff._attrs import _ATTRS_CONTRACT_VERSION
 
 tifffile = pytest.importorskip("tifffile")
@@ -88,6 +90,50 @@ def test_attrs_contract_version_constant_is_current():
     sibling test for the new key.
     """
     assert _ATTRS_CONTRACT_VERSION == 4
+
+
+def test_attrs_module_docstring_version_matches_constant():
+    """Guard against the docstring and the constant drifting apart (#2237).
+
+    The ``_attrs.py`` module docstring spells out the current contract
+    version inline (``The contract version is recorded in
+    ``attrs['_xrspatial_geotiff_contract']`` (currently ``<N>``)``).
+    A previous bump (v3 -> v4 for issue #2129's ``rotated_affine`` attr)
+    updated the constant but left the docstring at ``3``. This test
+    parses the documented number out of the docstring and asserts it
+    equals ``_ATTRS_CONTRACT_VERSION`` so the next drift gets caught
+    in CI rather than in code review.
+    """
+    docstring = _attrs_module.__doc__
+    assert docstring is not None, (
+        "xrspatial.geotiff._attrs lost its module docstring; the contract "
+        "documentation lives in that docstring and must be restored."
+    )
+
+    # Match the canonical phrasing
+    # ``... ``attrs['_xrspatial_geotiff_contract']`` (currently ``<N>``)``
+    # while staying tolerant of trivial whitespace changes around the
+    # parenthetical.
+    match = re.search(
+        r"attrs\['_xrspatial_geotiff_contract'\]``\s*\(currently\s*``(\d+)``\)",
+        docstring,
+    )
+    assert match is not None, (
+        "Could not find the documented contract version in the "
+        "_attrs.py module docstring. Expected a phrase of the form "
+        "``attrs['_xrspatial_geotiff_contract']`` (currently ``<N>``). "
+        "Update the docstring or this test if the phrasing changed."
+    )
+
+    documented_version = int(match.group(1))
+    assert documented_version == _ATTRS_CONTRACT_VERSION, (
+        f"_attrs.py module docstring says the contract version is "
+        f"{documented_version}, but _ATTRS_CONTRACT_VERSION is "
+        f"{_ATTRS_CONTRACT_VERSION}. Update the docstring "
+        f"'(currently ``{documented_version}``)' to "
+        f"'(currently ``{_ATTRS_CONTRACT_VERSION}``)' so the two stay in "
+        f"lockstep."
+    )
 
 
 def test_eager_numpy_stamps_contract_version(tmp_path):
