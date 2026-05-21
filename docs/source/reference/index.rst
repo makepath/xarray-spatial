@@ -15,6 +15,7 @@ Reference
    flood
    focal
    geotiff
+   geotiff_internals
    hydrology
    interpolation
    kde

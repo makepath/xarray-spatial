@@ -49,14 +49,36 @@ extensions = [
     'matplotlib.sphinxext.plot_directive',
 ]
 
+# Enable Markdown for the internal developer docs under
+# ``reference/`` (e.g. ``geotiff_internals.md``). myst-parser is an
+# optional docs dependency declared in ``setup.cfg``'s ``[doc]`` extra;
+# when it is not installed the rest of the docs still build and the
+# Markdown page is skipped. The explicit warning below tells a
+# contributor on a partial-deps env why the ``geotiff_internals.md``
+# page produces a "no source file" warning later in the build.
+try:
+    import myst_parser  # noqa: F401
+    extensions.append('myst_parser')
+except ImportError:
+    import warnings
+    warnings.warn(
+        "myst-parser is not installed; Markdown developer docs under "
+        "docs/source/reference/ (e.g. geotiff_internals.md) will be "
+        "skipped. Install via ``pip install xarray-spatial[doc]`` or "
+        "``pip install myst-parser`` to include them.",
+        UserWarning,
+        stacklevel=1,
+    )
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
-# The suffix(es) of source filenames.
-# You can specify multiple suffix as a list of string:
-#
-# source_suffix = ['.rst', '.md']
-source_suffix = '.rst'
+# The suffix(es) of source filenames. ``.md`` is registered when
+# myst-parser is available so the Markdown developer docs under
+# ``reference/`` are picked up alongside the .rst pages.
+source_suffix = {'.rst': 'restructuredtext'}
+if 'myst_parser' in extensions:
+    source_suffix['.md'] = 'markdown'
 
 # The root toctree document.
 root_doc = 'index'
