@@ -31,7 +31,7 @@ from .._coords import (
     transform_from_attr as _transform_from_attr,
 )
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
-from .._runtime import GeoTIFFFallbackWarning
+from .._runtime import GeoTIFFFallbackWarning, _resolve_spatial_coords
 from .._validation import (
     _validate_3d_writer_dims,
     _validate_nodata_arg,
@@ -362,15 +362,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     )
 
     # Issue #1987 ambiguous-metadata checks; mirrors ``to_geotiff`` so the
-    # GPU writer enforces the same crs/crs_wkt consistency rule.
+    # GPU writer enforces the same crs/crs_wkt consistency rule. Alias
+    # resolution (issue #2215) keeps the validator consistent across
+    # alias-named coord arrays (lat/lon, latitude/longitude, row/col).
     _attrs = getattr(data, 'attrs', None) or {}
-    _coords = getattr(data, 'coords', None)
-    _coord_y = _coords['y'].values if (
-        _coords is not None and 'y' in _coords
-    ) else None
-    _coord_x = _coords['x'].values if (
-        _coords is not None and 'x' in _coords
-    ) else None
+    _coord_y, _coord_x = _resolve_spatial_coords(data)
     validate_write_metadata({
         'crs_kwarg': crs,
         'attrs_crs': _attrs.get('crs'),

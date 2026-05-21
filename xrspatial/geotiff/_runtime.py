@@ -62,6 +62,38 @@ _VRT_PATH_MISSING_SENTINEL = object()
 _Y_DIM_NAMES = ('y', 'lat', 'latitude', 'row')
 _X_DIM_NAMES = ('x', 'lon', 'longitude', 'col')
 
+
+def _resolve_spatial_coords(data):
+    """Return ``(coord_y, coord_x)`` arrays for a DataArray, honoring aliases.
+
+    ``to_geotiff`` documents that spatial dims may be named with any of
+    the aliases in ``_Y_DIM_NAMES`` / ``_X_DIM_NAMES`` (``lat``/``lon``,
+    ``latitude``/``longitude``, ``row``/``col``), not just the canonical
+    ``y``/``x``. The ambiguous-metadata validator at the writer entry
+    points needs to see the alias-named coord arrays so its
+    ``NonUniformCoordsError`` check fires consistently. Without this
+    helper, only literal ``coords['y']`` / ``coords['x']`` are passed
+    in, and a DataArray with ``lat``/``lon`` coords slips past the
+    validator entirely (issue #2215).
+
+    Returns a tuple of ``numpy.ndarray`` (or ``None`` per axis if no
+    matching coord is present). Resolution picks the first alias from
+    ``_Y_DIM_NAMES`` / ``_X_DIM_NAMES`` that appears in ``data.coords``;
+    the canonical ``y``/``x`` names come first so existing arrays keep
+    matching exactly the same coord as before.
+    """
+    coords = getattr(data, 'coords', None)
+    if coords is None:
+        return None, None
+
+    def _first_match(names):
+        for name in names:
+            if name in coords:
+                return coords[name].values
+        return None
+
+    return _first_match(_Y_DIM_NAMES), _first_match(_X_DIM_NAMES)
+
 # Temporal dim names. Used by the 3D writer validator (#1972) to refuse
 # ``(y, x, <temporal>)`` inputs that would otherwise be silently treated
 # as multiband rasters. CF / xarray conventions cover ``time`` and ``t``;

@@ -29,6 +29,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from ._errors import NonUniformCoordsError
 from ._geotags import _NO_GEOREF_KEY, GeoTransform, RASTER_PIXEL_IS_POINT
 
 
@@ -396,6 +397,15 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     # GeoTIFF only supports an affine transform; non-uniform spacing
     # cannot be expressed faithfully. Validate up-front instead of
     # silently writing a transform that only matches the first step.
+    #
+    # Issue #2215: raise NonUniformCoordsError (subclass of ValueError,
+    # so existing ``except ValueError`` callers keep working) rather
+    # than plain ValueError. This keeps the exception type consistent
+    # with the upstream ambiguous-metadata validator, which already
+    # raises NonUniformCoordsError for the same condition. Before this,
+    # the validator caught the y/x case and this path caught the
+    # alias-named case, leaving callers with two different exception
+    # types depending on which dim name they used.
     def _is_regular(coord, name):
         diffs = np.diff(coord)
         # Use median (not mean) so a single bad sample doesn't shift
@@ -403,12 +413,12 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
         # for float artifacts in otherwise-uniform coords.
         step = float(np.median(diffs))
         if step == 0:
-            raise ValueError(
+            raise NonUniformCoordsError(
                 f"{name} coords are constant; cannot infer pixel size"
             )
         rel = float(np.max(np.abs(diffs - step)) / abs(step))
         if rel > 1e-6:
-            raise ValueError(
+            raise NonUniformCoordsError(
                 f"{name} coords are not uniformly spaced "
                 f"(max relative deviation {rel:.3e} exceeds 1e-6); "
                 f"GeoTIFF requires an affine transform."

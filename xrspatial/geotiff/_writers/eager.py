@@ -43,6 +43,7 @@ from .._runtime import (
     GeoTIFFFallbackWarning,
     _geotiff_strict_mode,
     _gpu_fallback_warning_message,
+    _resolve_spatial_coords,
 )
 from .._validation import (
     _validate_3d_writer_dims,
@@ -343,14 +344,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # Issue #1987 ambiguous-metadata checks. The hook is a no-op
     # when no check is registered, so this call is safe even if every
     # check is later unregistered for a specific entry point.
+    #
+    # Issue #2215: resolve documented spatial-dim aliases (lat/lon,
+    # latitude/longitude, row/col) here so the NonUniformCoordsError
+    # check fires consistently regardless of which alias the caller
+    # picked. Before this, only literal coords['y'] / coords['x']
+    # were passed in, and alias-named coords slipped past the
+    # validator entirely; the later transform-synthesis path caught
+    # them only as plain ValueError.
     _attrs = getattr(data, 'attrs', None) or {}
-    _coords = getattr(data, 'coords', None)
-    _coord_y = _coords['y'].values if (
-        _coords is not None and 'y' in _coords
-    ) else None
-    _coord_x = _coords['x'].values if (
-        _coords is not None and 'x' in _coords
-    ) else None
+    _coord_y, _coord_x = _resolve_spatial_coords(data)
     validate_write_metadata({
         'crs_kwarg': crs,
         'attrs_crs': _attrs.get('crs'),
@@ -961,15 +964,10 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
 
     # Issue #1987 ambiguous-metadata checks; mirrors the call in
     # ``to_geotiff`` so the dask-VRT write path enforces the same
-    # crs/crs_wkt / nodata / coord rules.
+    # crs/crs_wkt / nodata / coord rules. Alias resolution (issue
+    # #2215) keeps the validator consistent across both entry points.
     _attrs = getattr(data, 'attrs', None) or {}
-    _coords = getattr(data, 'coords', None)
-    _coord_y = _coords['y'].values if (
-        _coords is not None and 'y' in _coords
-    ) else None
-    _coord_x = _coords['x'].values if (
-        _coords is not None and 'x' in _coords
-    ) else None
+    _coord_y, _coord_x = _resolve_spatial_coords(data)
     validate_write_metadata({
         'crs_kwarg': crs,
         'attrs_crs': _attrs.get('crs'),
