@@ -583,6 +583,48 @@ def _validate_nodata_arg(nodata) -> None:
         ) from e
 
 
+def _validate_no_rotated_affine(attrs, *, drop_rotation: bool,
+                                entry_point: str = "to_geotiff") -> None:
+    """Refuse writes that would silently drop ``attrs['rotated_affine']``.
+
+    The reader exposes the rotated 6-tuple on ``attrs['rotated_affine']``
+    when called with ``allow_rotated=True`` (issue #2129). The writer
+    does not emit a ``ModelTransformationTag`` (tracked in #2115), so a
+    read-then-write round-trip used to silently drop the rotation and
+    write an identity-affine output (issue #2216). Refuse the write by
+    default so the loss is impossible without an explicit opt-in.
+
+    Parameters
+    ----------
+    attrs : Mapping or None
+        The DataArray's ``attrs``. Bare ``numpy.ndarray`` / ``cupy``
+        inputs have no attrs and skip the check.
+    drop_rotation : bool
+        When True, the caller has explicitly accepted that the rotated
+        mapping will be lost on write; the check returns silently.
+    entry_point : str
+        Name of the calling writer for the error message (``to_geotiff``,
+        ``write_geotiff_gpu``). Lets the two writers surface the same
+        wording while still naming the opt-in correctly for either entry
+        point.
+    """
+    if not attrs:
+        return
+    if attrs.get('rotated_affine') is None:
+        return
+    if drop_rotation:
+        return
+    raise ValueError(
+        f"{entry_point}: refusing to write a DataArray carrying "
+        f"attrs['rotated_affine']. The writer does not emit a "
+        f"ModelTransformationTag (issue #2115), so writing this input "
+        f"would silently drop the rotated mapping and produce an "
+        f"identity-affine GeoTIFF. Either reproject onto an axis-aligned "
+        f"grid first, or pass drop_rotation=True to accept the loss "
+        f"explicitly (issue #2216)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Ambiguous-metadata hooks (issue #1987 PR 0)
 #

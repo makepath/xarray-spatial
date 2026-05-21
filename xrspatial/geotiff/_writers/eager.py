@@ -46,6 +46,7 @@ from .._runtime import (
 )
 from .._validation import (
     _validate_3d_writer_dims,
+    _validate_no_rotated_affine,
     _validate_nodata_arg,
     _validate_tile_size_arg,
     _validate_writer_spatial_shape,
@@ -74,7 +75,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                photometric: str | int = 'auto',
                allow_internal_only_jpeg: bool = False,
                allow_experimental_codecs: bool = False,
-               allow_unparseable_crs: bool = False) -> str | BinaryIO:
+               allow_unparseable_crs: bool = False,
+               drop_rotation: bool = False) -> str | BinaryIO:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Tier: Stable for local-file output with ``compression`` in
@@ -278,6 +280,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         protects against files where a typo'd PROJ string or an
         ``"EPSG:4326"`` token on a host without pyproj produces a
         citation that most readers cannot interpret. See issue #1929.
+    drop_rotation : bool, default False
+        Opt in to writing a DataArray that carries
+        ``attrs['rotated_affine']`` (issue #2216). The reader sets that
+        attr when called with ``allow_rotated=True`` on a file whose
+        ``ModelTransformationTag`` contains rotation, shear, or
+        z-coupling terms (issue #2129). The writer does not emit a
+        ``ModelTransformationTag`` (tracked in #2115), so passing such
+        a DataArray through ``to_geotiff`` produces an identity-affine
+        output and loses the rotated mapping; a subsequent
+        ``open_geotiff`` round-trip cannot recover it. Default
+        ``False`` refuses the write with ``ValueError`` so the loss is
+        impossible without an explicit signal. ``drop_rotation=True``
+        accepts the loss and lets the write proceed; consumers reading
+        the output will see an axis-aligned, non-rotated TIFF.
 
     Returns
     -------
@@ -296,6 +312,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (``b != 0`` or ``d != 0`` in rasterio ``Affine`` ordering). The
         on-disk GeoTIFF is axis-aligned; reproject onto an axis-aligned
         grid first.
+    ValueError
+        If ``data.attrs['rotated_affine']`` is set and ``drop_rotation``
+        is False. The reader sets that attr on the ``allow_rotated=True``
+        path; the writer cannot emit a ``ModelTransformationTag``
+        (#2115) so writing would silently lose the rotation. Pass
+        ``drop_rotation=True`` to accept the loss explicitly
+        (issue #2216).
     ValueError
         If ``data`` is a 3D DataArray whose ``dims`` is not
         ``(band, y, x)`` or ``(y, x, band)`` (accepting the band-name
@@ -329,6 +352,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         _validate_tile_size_arg(tile_size)
 
     _validate_nodata_arg(nodata)
+
+    # Issue #2216: refuse to silently drop the rotated 6-tuple that the
+    # reader surfaces on ``attrs['rotated_affine']`` when called with
+    # ``allow_rotated=True``. The writer has no ``ModelTransformationTag``
+    # emit path (#2115), so writing a rotated input produces an
+    # identity-affine file with no signal to the caller. Run the check
+    # at the entry point so the GPU dispatch path, the VRT path, and the
+    # eager path all hit the same gate.
+    _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
+    _validate_no_rotated_affine(
+        _drop_rotation_attrs,
+        drop_rotation=drop_rotation,
+        entry_point="to_geotiff",
+    )
 
     # Issue #2075: reject zero-height / zero-width inputs before any
     # dispatch decision. Clip / window pipelines naturally produce empty
@@ -534,7 +571,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          max_z_error=max_z_error,
                          photometric=photometric,
                          allow_unparseable_crs=allow_unparseable_crs,
-                         allow_internal_only_jpeg=allow_internal_only_jpeg)
+                         allow_internal_only_jpeg=allow_internal_only_jpeg,
+                         drop_rotation=drop_rotation)
         return path
 
     # Dispatch to write_geotiff_gpu when GPU was selected (explicit
@@ -581,6 +619,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
                 allow_experimental_codecs=allow_experimental_codecs,
                 allow_unparseable_crs=allow_unparseable_crs,
+                drop_rotation=drop_rotation,
             )
             return path
         except ImportError as e:
@@ -951,13 +990,26 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                      bigtiff=None, max_z_error: float = 0.0,
                      photometric: str | int = 'auto',
                      allow_unparseable_crs: bool = False,
-                     allow_internal_only_jpeg: bool = False):
+                     allow_internal_only_jpeg: bool = False,
+                     drop_rotation: bool = False):
     """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
 
     This enables streaming dask arrays to disk without materializing the
     full array in RAM.
     """
     _validate_nodata_arg(nodata)
+
+    # Mirror to_geotiff's rotated_affine gate (#2216) so the VRT path
+    # rejects rotated inputs at the same boundary. ``to_geotiff`` already
+    # ran the check upstream when the caller reached this branch through
+    # the dispatcher, but a direct call to ``_write_vrt_tiled`` would
+    # otherwise bypass the gate.
+    _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
+    _validate_no_rotated_affine(
+        _drop_rotation_attrs,
+        drop_rotation=drop_rotation,
+        entry_point="to_geotiff",
+    )
 
     # Issue #1987 ambiguous-metadata checks; mirrors the call in
     # ``to_geotiff`` so the dask-VRT write path enforces the same
