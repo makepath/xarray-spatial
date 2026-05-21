@@ -246,6 +246,15 @@ _DEFAULT_RTOL = 1e-5
 # slower floating-point comparison like numpy.isclose with caller-supplied
 # tolerances.  Passing atol=0.0 and rtol=0.0 reduces the float branch to
 # strict equality.
+#
+# Inf handling (issue #2174): the plain tolerance check misbehaves on
+# infinities.  ``abs(1.0 - inf) = inf`` and ``atol + rtol*abs(inf) = inf``
+# so ``inf <= inf`` is True, which would merge a finite cell into an
+# adjacent Inf region.  ``abs(inf - inf) = nan`` and ``nan <= x = False``
+# would also split two same-sign Inf cells.  Branch on whether either
+# operand is infinite and fall back to exact equality there: +inf == +inf,
+# -inf == -inf, +inf != -inf, finite != inf.  NaN semantics are unchanged
+# (any comparison with NaN is False).
 @generated_jit(nogil=True, nopython=True)
 def _is_close(
     reference: Union[int, float],
@@ -258,8 +267,13 @@ def _is_close(
         # Integer raster: tolerance does not apply, use strict equality.
         return lambda reference, value, atol, rtol: value == reference
     else:
-        return lambda reference, value, atol, rtol: \
-            abs(value - reference) <= (atol + rtol*abs(reference))
+        def impl(reference, value, atol, rtol):
+            # Exact equality short-circuit handles ±inf == ±inf correctly
+            # and finite-vs-inf falls through as not close.
+            if np.isinf(reference) or np.isinf(value):
+                return value == reference
+            return abs(value - reference) <= (atol + rtol*abs(reference))
+        return impl
 
 
 # Pure-Python tolerance check that mirrors ``_is_close`` for use at the
@@ -268,11 +282,17 @@ def _is_close(
 # cross-chunk merge honours ``polygonize(..., atol=, rtol=)`` (passing
 # atol=rtol=0 reduces the float branch to strict equality, matching the
 # CPU CCL behaviour inside a single chunk).  See issues #2171, #2173.
+#
+# Inf handling (issue #2174): match the numba ``_is_close`` semantics --
+# short-circuit on ±inf to exact equality so chunk-boundary bucket
+# matching never groups finite with Inf, or +inf with -inf.
 def _values_close(reference, value,
                   atol: float = _DEFAULT_ATOL,
                   rtol: float = _DEFAULT_RTOL):
     if isinstance(reference, (int, np.integer)) and \
             isinstance(value, (int, np.integer)):
+        return value == reference
+    if np.isinf(reference) or np.isinf(value):
         return value == reference
     return abs(value - reference) <= (atol + rtol * abs(reference))
 
