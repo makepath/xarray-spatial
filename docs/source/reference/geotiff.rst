@@ -129,9 +129,18 @@ VRT missing sources
 ===================
 
 ``read_vrt`` accepts ``missing_sources='warn'`` or ``'raise'``. The default
-``'warn'`` preserves the historical behavior: unreadable source files emit
-:class:`xrspatial.geotiff.GeoTIFFFallbackWarning`, the returned DataArray
-contains ``attrs['vrt_holes']``, and the mosaic is returned with holes.
-Use ``missing_sources='raise'`` when a partial mosaic should fail the
-pipeline immediately. ``XRSPATIAL_GEOTIFF_STRICT=1`` still raises in
-``'warn'`` mode so CI environments can enforce fail-fast behavior globally.
+``'raise'`` (since #1860) fails the read immediately if any source file
+referenced by the VRT does not exist on disk. Both the eager and chunked
+dispatchers honour this at construction time -- chunked callers do not
+have to wait until ``compute()`` to learn the VRT is broken (#2265).
+The static missing-source sweep is scoped to the requested ``window=``
+and ``band=`` so a windowed or band-restricted read that does not depend
+on a missing source still succeeds.
+
+Pass ``missing_sources='warn'`` to opt into the lenient path: unreadable
+source files emit :class:`xrspatial.geotiff.GeoTIFFFallbackWarning`, the
+returned DataArray carries ``attrs['vrt_holes']``, and the mosaic is
+returned with holes left as the band's nodata sentinel (or zero on
+integer bands without a sentinel). ``XRSPATIAL_GEOTIFF_STRICT=1``
+forces the raise in ``'warn'`` mode too, so CI environments can enforce
+fail-fast behavior globally.

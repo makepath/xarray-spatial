@@ -277,11 +277,15 @@ def test_multiband_plus_chunks_preserves_band_dim(multiband_vrt):
 # ---------------------------------------------------------------------------
 
 def test_chunked_propagates_vrt_holes_when_source_missing(two_by_two_vrt):
-    """When a source referenced by the VRT does not exist on disk the
-    chunked reader must populate ``attrs['vrt_holes']`` with the same
-    schema the eager reader uses, so callers can branch on
+    """When a source referenced by the VRT does not exist on disk and
+    the caller opts into the lenient ``missing_sources='warn'`` path,
+    the chunked reader must populate ``attrs['vrt_holes']`` with the
+    same schema the eager reader uses, so callers can branch on
     ``"vrt_holes" in da.attrs`` regardless of which code path produced
     the DataArray.
+
+    Note: the default ``missing_sources='raise'`` raises at build time
+    under #2265, so this test exercises the explicit ``'warn'`` opt-in.
     """
     import warnings
     from xrspatial.geotiff import GeoTIFFFallbackWarning
@@ -306,7 +310,9 @@ def test_chunked_propagates_vrt_holes_when_source_missing(two_by_two_vrt):
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', GeoTIFFFallbackWarning)
-        result = read_vrt(vrt_path, chunks=(64, 64))
+        result = read_vrt(
+            vrt_path, chunks=(64, 64), missing_sources='warn',
+        )
 
     assert 'vrt_holes' in result.attrs, (
         "chunked path dropped vrt_holes contract from #1734"

@@ -185,8 +185,13 @@ def read_vrt(source: str, *,
         unreadable backing source so a partial mosaic never surfaces
         silently. This matches the internal ``_vrt.read_vrt`` default
         and the rest of the geotiff module's up-front rejection of
-        malformed input. Prior to #1860 the public default was
-        ``'warn'``; callers that relied on the lenient behaviour pass
+        malformed input. Both the eager and chunked dispatchers raise
+        at construction time when the static missing-source sweep
+        finds any source file that does not exist on disk and
+        intersects the requested window (#2265); chunked callers no
+        longer have to wait until ``compute()`` to learn the VRT is
+        broken. Prior to #1860 the public default was ``'warn'``;
+        callers that relied on the lenient behaviour pass
         ``missing_sources='warn'`` explicitly.
         ``'warn'`` is the opt-in escape hatch for partial mosaics: it
         emits ``GeoTIFFFallbackWarning``, records ``attrs['vrt_holes']``,
@@ -695,6 +700,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     import dask.array as da
 
     from .._reader import MAX_PIXELS_DEFAULT
+    from .._runtime import _geotiff_strict_mode
     from .._vrt import (
         parse_vrt,
         _read_vrt_xml,
@@ -972,16 +978,86 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # actually present. Each entry mirrors the eager schema:
     # ``{'source', 'band', 'dst_rect', 'error'}``.
     chunked_holes: list[dict] = []
-    for vrt_band in vrt.bands:
+    for band_idx, vrt_band in enumerate(vrt.bands):
+        # When ``band`` is restricted, the per-chunk decode never touches
+        # bands outside the selection, so a missing source on an
+        # unrelated band does not affect the mosaic and should not
+        # populate ``vrt_holes`` (mirrors the eager path, which only
+        # decodes the selected band's sources). ``band`` is a 0-based
+        # index into ``vrt.bands``, same convention as the
+        # ``selected_bands = [vrt.bands[band]]`` slice above. We compare
+        # against ``band_idx`` rather than ``vrt_band.band_num``
+        # (the XML's 1-based ``band=`` attribute) because the XML
+        # attribute does not have to match list position on hand-rolled
+        # VRTs.
+        if band is not None and band_idx != band:
+            continue
         for src in vrt_band.sources:
             if not _os.path.exists(src.filename):
+                # Skip holes that fall entirely outside the requested
+                # window. Each chunk task only decodes sources that
+                # intersect its destination rect, so a missing source
+                # outside the window never gets touched and the eager
+                # path with the same window would also not raise.
+                # ``win_r0/win_c0`` are the row/col origin of the
+                # requested window in the VRT's destination coordinate
+                # space and ``full_h/full_w`` are its size.
+                dst = src.dst_rect
+                if not (
+                    dst.x_off + dst.x_size > win_c0
+                    and dst.x_off < win_c0 + full_w
+                    and dst.y_off + dst.y_size > win_r0
+                    and dst.y_off < win_r0 + full_h
+                ):
+                    continue
                 chunked_holes.append({
                     'source': src.filename,
                     'band': vrt_band.band_num,
-                    'dst_rect': (src.dst_rect.x_off, src.dst_rect.y_off,
-                                 src.dst_rect.x_size, src.dst_rect.y_size),
+                    'dst_rect': (dst.x_off, dst.y_off,
+                                 dst.x_size, dst.y_size),
                     'error': 'FileNotFoundError: source file not found',
                 })
+
+    # Fail-fast for ``missing_sources='raise'`` (the public default since
+    # #1860). The docstring at the top of ``read_vrt`` promises that
+    # ``'raise'`` "fails immediately on an unreadable backing source so a
+    # partial mosaic never surfaces silently". Without this guard the
+    # chunked path constructs a delayed graph whose tasks each raise
+    # individually at compute time; if the caller never computes a chunk
+    # that touches a missing source (e.g. windowed downstream slicing
+    # past the hole), the raise never fires and the partial mosaic ships
+    # silently. The static ``os.path.exists`` sweep above already has the
+    # information needed to raise up front -- no extra source decoding
+    # required. ``XRSPATIAL_GEOTIFF_STRICT=1`` also forces the raise
+    # regardless of the kwarg, matching the eager path's strict-mode
+    # contract. See issue #2265.
+    if chunked_holes and (
+        missing_sources == 'raise' or _geotiff_strict_mode()
+    ):
+        # Surface the first few missing paths in the message so the
+        # caller can act on them without having to flip to ``'warn'``
+        # and re-parse the resulting ``attrs['vrt_holes']``. Cap the
+        # preview at 3 entries to keep the error string bounded on
+        # mosaics with many missing tiles -- the total count is
+        # appended so the caller still knows the full magnitude.
+        preview_max = 3
+        preview = chunked_holes[:preview_max]
+        preview_str = ', '.join(
+            f"{h['source']!r} (band {h['band']})" for h in preview
+        )
+        more = len(chunked_holes) - len(preview)
+        if more > 0:
+            preview_str += f" and {more} more"
+        raise FileNotFoundError(
+            f"VRT references missing source file(s) that intersect "
+            f"the requested window: {preview_str}. The chunked VRT "
+            f"read aborts up front under missing_sources='raise' "
+            f"(the default) so a partial mosaic never surfaces "
+            f"silently. Pass missing_sources='warn' to opt into the "
+            f"lenient path that records holes in attrs['vrt_holes'] "
+            f"and warns at compute time. "
+            f"{len(chunked_holes)} missing source(s) total."
+        )
 
     # Wave 3 of #2162: route attrs assembly through
     # ``_finalize_lazy_read_attrs`` so the VRT chunked path shares the
