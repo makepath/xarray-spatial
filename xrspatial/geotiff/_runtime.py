@@ -63,6 +63,10 @@ _Y_DIM_NAMES = ('y', 'lat', 'latitude', 'row')
 _X_DIM_NAMES = ('x', 'lon', 'longitude', 'col')
 
 
+# Used by the writer ambiguous-metadata validators in
+# ``_writers/eager.py`` and ``_writers/gpu.py`` so the
+# ``NonUniformCoordsError`` check fires for alias-named coords too
+# (issue #2215).
 def _resolve_spatial_coords(data):
     """Return ``(coord_y, coord_x)`` arrays for a DataArray, honoring aliases.
 
@@ -93,6 +97,7 @@ def _resolve_spatial_coords(data):
         return None
 
     return _first_match(_Y_DIM_NAMES), _first_match(_X_DIM_NAMES)
+
 
 # Temporal dim names. Used by the 3D writer validator (#1972) to refuse
 # ``(y, x, <temporal>)`` inputs that would otherwise be silently treated
