@@ -364,22 +364,23 @@ class TestAllNanRaster:
 
 
 # ---------------------------------------------------------------------------
-# Cat 2 HIGH: Inf inputs
+# Cat 2 HIGH: Inf inputs (issue #2174 fixed)
 #
-# !!! Source-bug pin (issue #2155) !!!
-# The numpy/dask boundary-tracing backend silently absorbs +Inf and -Inf
-# pixels into adjacent regions instead of emitting them as their own
-# polygons.  This is because _is_close (polygonize.py:240) reduces
-# ``abs(inf - inf)`` to ``nan`` so two inf pixels are considered NOT
-# close, but later _scan() never starts a polygon at an inf cell either.
-# The cupy backend correctly emits inf polygons.
+# Before the #2174 fix, _is_close treated finite vs Inf as "close" because
+# ``abs(1.0 - inf) <= rtol*abs(inf)`` collapses to ``inf <= inf`` (True),
+# and the dask path inherited the same bug via _polygonize_chunk.  The fix
+# in polygonize.py:_is_close short-circuits Inf comparisons to exact
+# equality so +inf == +inf, -inf == -inf, +inf != -inf, finite != inf.
 #
-# These tests PIN the current asymmetric behaviour so the gap is
-# visible.  When #2155 is fixed, these pins must be updated together.
+# These tests assert the corrected behaviour: every Inf cell forms its
+# own Inf polygon (with same-sign adjacent Inf cells merging), distinct
+# from the surrounding finite regions.  cupy was already correct.
 # ---------------------------------------------------------------------------
 
 
 # Mixed 1.0 / +inf / -inf 3x3 raster; +inf and -inf both appear twice each.
+# In 4-connectivity none of the Inf cells touch each other, so they each
+# form a 1-cell polygon.
 _INF_DATA = np.array([
     [1.0, np.inf, 1.0],
     [-np.inf, 1.0, -np.inf],
@@ -387,89 +388,191 @@ _INF_DATA = np.array([
 ], dtype=np.float64)
 
 
-class TestInfPins:
-    """Pins on +Inf / -Inf behaviour across backends.
+def _check_mixed_inf_output(v, p, total_size):
+    """Assert correct polygon output for ``_INF_DATA``.
 
-    The numpy / dask backends currently MERGE Inf cells with surrounding
-    polygons (under-count).  cupy / dask+cupy correctly emit them as
-    distinct polygons.  Tests pin both behaviours.  When the source
-    bug is fixed, the numpy/dask pins must flip and these tests must
-    be updated together.
+    Five 1.0 polygons (the four corners + center, each isolated under
+    4-connectivity), two +inf polygons (top and bottom edge midpoints),
+    and two -inf polygons (left and right edge midpoints).  Total area
+    equals the cell count.
+    """
+    finite_vals = [val for val in v if np.isfinite(val)]
+    plus_inf = [val for val in v if np.isposinf(val)]
+    minus_inf = [val for val in v if np.isneginf(val)]
+    # Four 1.0 corners + 1.0 center, each isolated under 4-connectivity.
+    assert len(finite_vals) == 5, f"finite polygon count wrong: {v}"
+    assert all(val == 1.0 for val in finite_vals)
+    assert len(plus_inf) == 2, f"+inf polygon count wrong: {v}"
+    assert len(minus_inf) == 2, f"-inf polygon count wrong: {v}"
+    areas = _areas_by_value(v, p)
+    plus_total = sum(a for k, a in areas.items() if np.isposinf(k))
+    minus_total = sum(a for k, a in areas.items() if np.isneginf(k))
+    assert_allclose(plus_total, 2.0)
+    assert_allclose(minus_total, 2.0)
+    total = sum(_polygon_area(rings) for rings in p)
+    assert_allclose(total, float(total_size))
+
+
+class TestInfPolygons:
+    """+Inf / -Inf are treated as distinct polygon values on every backend.
+
+    Issue #2174: prior to the fix, the numpy and dask paths merged Inf
+    cells into adjacent finite regions because the floating-point
+    ``_is_close`` returned True for ``(inf, 1.0)``.  These tests assert
+    the corrected behaviour.
     """
 
-    def test_numpy_inf_currently_undercounts(self):
-        # Pin current (buggy) behaviour: numpy reports a single value-1.0
-        # polygon covering the full raster area, with no inf polygons.
+    def test_numpy_mixed_inf(self):
         v, p = polygonize(xr.DataArray(_INF_DATA), connectivity=4)
-        finite_vals = [val for val in v if np.isfinite(val)]
-        inf_vals = [val for val in v if np.isinf(val)]
-        # Currently no Inf polygons are reported by the numpy backend.
-        assert inf_vals == [], (
-            "numpy backend started emitting Inf polygons; update the "
-            "Inf source-fix pins (see test_polygonize_coverage_2026_05_19)."
-        )
-        # The finite polygons cover the full raster size (Inf cells got
-        # silently merged into a value=1.0 region).
-        total = sum(_polygon_area(rings) for rings in p)
-        assert_allclose(total, float(_INF_DATA.size))
-        assert all(val == 1.0 for val in finite_vals)
+        _check_mixed_inf_output(v, p, _INF_DATA.size)
 
     @cuda_and_cupy_available
-    def test_cupy_inf_correctly_emits_polygons(self):
-        # cupy emits +inf and -inf polygons distinctly.
+    def test_cupy_mixed_inf(self):
         v, p = polygonize(_to_cupy(_INF_DATA), connectivity=4)
-        # +inf appears at 2 cells (4-connectivity -> 2 polygons each 1).
-        # -inf appears at 2 cells (4-connectivity -> 2 polygons each 1).
-        plus_inf = [val for val in v if np.isposinf(val)]
-        minus_inf = [val for val in v if np.isneginf(val)]
-        assert len(plus_inf) == 2, (
-            f"cupy +inf polygon count regressed: {v}")
-        assert len(minus_inf) == 2, (
-            f"cupy -inf polygon count regressed: {v}")
-        # Inf-polygon areas total to the cell count.
-        areas = _areas_by_value(v, p)
-        plus_total = sum(a for k, a in areas.items() if np.isposinf(k))
-        minus_total = sum(a for k, a in areas.items() if np.isneginf(k))
-        assert_allclose(plus_total, 2.0)
-        assert_allclose(minus_total, 2.0)
-        # Total area preserved.
-        total = sum(_polygon_area(rings) for rings in p)
-        assert_allclose(total, float(_INF_DATA.size))
+        _check_mixed_inf_output(v, p, _INF_DATA.size)
 
     @dask_array_available
-    def test_dask_inf_currently_undercounts(self):
-        # Dask mirrors the numpy bug: no Inf polygons, and Inf cells get
-        # absorbed into surrounding finite (value=1.0) regions so the total
-        # polygon area still equals the raster area.
+    def test_dask_mixed_inf_single_chunk(self):
         v, p = polygonize(_to_dask(_INF_DATA, chunks=(3, 3)),
                           connectivity=4)
-        finite_vals = [val for val in v if np.isfinite(val)]
-        inf_vals = [val for val in v if np.isinf(val)]
-        assert inf_vals == [], (
-            "dask backend started emitting Inf polygons; update the "
-            "Inf source-fix pins (see test_polygonize_coverage_2026_05_19)."
-        )
-        total = sum(_polygon_area(rings) for rings in p)
-        assert_allclose(total, float(_INF_DATA.size))
-        assert all(val == 1.0 for val in finite_vals)
+        _check_mixed_inf_output(v, p, _INF_DATA.size)
+
+    @dask_array_available
+    def test_dask_mixed_inf_multi_chunk(self):
+        # 2x2 chunking splits the raster into four chunks; Inf cells now
+        # land on chunk boundaries and the merge logic must still
+        # preserve the +inf / -inf / finite distinction.
+        v, p = polygonize(_to_dask(_INF_DATA, chunks=(2, 2)),
+                          connectivity=4)
+        _check_mixed_inf_output(v, p, _INF_DATA.size)
 
     @cuda_and_cupy_available
     @dask_array_available
-    def test_dask_cupy_inf_currently_undercounts(self):
-        # Dask+CuPy goes through _polygonize_chunk which calls the numpy
-        # backend per chunk on numpy-converted data, so it follows the
-        # numpy bug (Inf cells absorbed into adjacent value=1.0 polygons),
-        # NOT the eager-cupy behaviour.  Pin the current under-counting so
-        # the source fix for #2155 is visible as a test diff.
+    def test_dask_cupy_mixed_inf(self):
         v, p = polygonize(_to_dask_cupy(_INF_DATA, chunks=(3, 3)),
                           connectivity=4)
-        inf_vals = [val for val in v if np.isinf(val)]
-        assert inf_vals == [], (
-            "dask+cupy backend started emitting Inf polygons; update the "
-            "Inf source-fix pins (see test_polygonize_coverage_2026_05_19)."
-        )
-        total = sum(_polygon_area(rings) for rings in p)
-        assert_allclose(total, float(_INF_DATA.size))
+        _check_mixed_inf_output(v, p, _INF_DATA.size)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_mixed_inf_multi_chunk(self):
+        v, p = polygonize(_to_dask_cupy(_INF_DATA, chunks=(2, 2)),
+                          connectivity=4)
+        _check_mixed_inf_output(v, p, _INF_DATA.size)
+
+
+class TestPureInfRaster:
+    """All-Inf rasters collapse to a single polygon of the right sign."""
+
+    PLUS = np.full((3, 3), np.inf, dtype=np.float64)
+    MINUS = np.full((3, 3), -np.inf, dtype=np.float64)
+
+    @staticmethod
+    def _assert_single_inf_polygon(v, p, sign):
+        assert len(v) == 1
+        assert len(p) == 1
+        if sign > 0:
+            assert np.isposinf(v[0])
+        else:
+            assert np.isneginf(v[0])
+        assert_allclose(_polygon_area(p[0]), 9.0)
+
+    def test_numpy_plus_inf(self):
+        v, p = polygonize(xr.DataArray(self.PLUS), connectivity=4)
+        self._assert_single_inf_polygon(v, p, +1)
+
+    def test_numpy_minus_inf(self):
+        v, p = polygonize(xr.DataArray(self.MINUS), connectivity=4)
+        self._assert_single_inf_polygon(v, p, -1)
+
+    @cuda_and_cupy_available
+    def test_cupy_plus_inf(self):
+        v, p = polygonize(_to_cupy(self.PLUS), connectivity=4)
+        self._assert_single_inf_polygon(v, p, +1)
+
+    @cuda_and_cupy_available
+    def test_cupy_minus_inf(self):
+        v, p = polygonize(_to_cupy(self.MINUS), connectivity=4)
+        self._assert_single_inf_polygon(v, p, -1)
+
+    @dask_array_available
+    def test_dask_plus_inf_multi_chunk(self):
+        v, p = polygonize(_to_dask(self.PLUS, chunks=(2, 2)),
+                          connectivity=4)
+        self._assert_single_inf_polygon(v, p, +1)
+
+    @dask_array_available
+    def test_dask_minus_inf_multi_chunk(self):
+        v, p = polygonize(_to_dask(self.MINUS, chunks=(2, 2)),
+                          connectivity=4)
+        self._assert_single_inf_polygon(v, p, -1)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_plus_inf(self):
+        v, p = polygonize(_to_dask_cupy(self.PLUS, chunks=(2, 2)),
+                          connectivity=4)
+        self._assert_single_inf_polygon(v, p, +1)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_minus_inf(self):
+        v, p = polygonize(_to_dask_cupy(self.MINUS, chunks=(2, 2)),
+                          connectivity=4)
+        self._assert_single_inf_polygon(v, p, -1)
+
+
+# +Inf block adjacent to -Inf block with a finite stripe between them.
+# In 4-connectivity the +inf cells form one polygon, the -inf cells form
+# another, and the 1.0 column forms a third.
+_INF_BLOCKS = np.array([
+    [np.inf, np.inf, 1.0, -np.inf, -np.inf],
+    [np.inf, np.inf, 1.0, -np.inf, -np.inf],
+    [np.inf, np.inf, 1.0, -np.inf, -np.inf],
+], dtype=np.float64)
+
+
+class TestInfBlocks:
+    """Same-sign Inf cells merge; opposite signs stay separate."""
+
+    @staticmethod
+    def _assert_three_blocks(v, p):
+        # Three polygons total: +inf area 6, 1.0 area 3, -inf area 6.
+        plus = [(val, _polygon_area(rings))
+                for val, rings in zip(v, p) if np.isposinf(val)]
+        minus = [(val, _polygon_area(rings))
+                 for val, rings in zip(v, p) if np.isneginf(val)]
+        finite = [(val, _polygon_area(rings))
+                  for val, rings in zip(v, p) if np.isfinite(val)]
+        assert len(plus) == 1, f"+inf merge failed: {v}"
+        assert len(minus) == 1, f"-inf merge failed: {v}"
+        assert len(finite) == 1, f"finite split unexpectedly: {v}"
+        assert_allclose(plus[0][1], 6.0)
+        assert_allclose(minus[0][1], 6.0)
+        assert_allclose(finite[0][1], 3.0)
+
+    def test_numpy(self):
+        v, p = polygonize(xr.DataArray(_INF_BLOCKS), connectivity=4)
+        self._assert_three_blocks(v, p)
+
+    @cuda_and_cupy_available
+    def test_cupy(self):
+        v, p = polygonize(_to_cupy(_INF_BLOCKS), connectivity=4)
+        self._assert_three_blocks(v, p)
+
+    @dask_array_available
+    def test_dask_multi_chunk(self):
+        # 3x2 chunks slice each Inf block, exercising the boundary merge.
+        v, p = polygonize(_to_dask(_INF_BLOCKS, chunks=(3, 2)),
+                          connectivity=4)
+        self._assert_three_blocks(v, p)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_multi_chunk(self):
+        v, p = polygonize(_to_dask_cupy(_INF_BLOCKS, chunks=(3, 2)),
+                          connectivity=4)
+        self._assert_three_blocks(v, p)
 
 
 # ---------------------------------------------------------------------------
