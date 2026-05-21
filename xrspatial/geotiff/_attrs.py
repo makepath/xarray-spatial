@@ -1252,20 +1252,9 @@ def _finalize_eager_read(
     sources). Read paths that don't need MinIsWhite inversion can pass
     ``mask_sentinel=nodata``.
 
-    Wave migration plan:
-
-    * Wave 2 (#2178 dask, #2179 eager numpy) migrates the eager numpy
-      paths. The mask block inside this helper matches the inline block
-      in ``open_geotiff`` field-for-field; the migration is a straight
-      swap.
-    * Wave 3 (#2180 VRT, GPU) migrates the VRT eager + three GPU eager
-      sites. The VRT eager path is host-side and works with the helper
-      as-is. The GPU sites apply masking through a CUDA kernel
-      (``_apply_nodata_mask_gpu_with_presence``); they can either
-      pre-mask and call the helper with ``nodata=None`` to skip the
-      helper's host-side mask block, or wave 3 can extend this
-      helper's signature with a ``mask_fn`` injection. Either choice
-      lives in #2180; the wave 1 contract here is the host-side path.
+    The host-side mask block also runs on CuPy arrays via numpy
+    duck-typing, so the GPU eager backends (#2207, #2209) route through
+    this helper without a separate GPU mask kernel.
 
     Returns a :class:`xarray.DataArray` ready for the caller to return
     from the read function. The caller assembles the dask graph
