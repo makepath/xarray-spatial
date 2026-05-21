@@ -527,6 +527,93 @@ def test_lazy_no_graph_dtype_resolves_to_masked_false():
     assert 'nodata_dtype_cast' not in attrs
 
 
+def test_lazy_pixels_present_true_lands_when_caller_forwards(
+):
+    """PR-D of #2211: callers that already scanned for sentinel pixels
+    (e.g. the eager VRT path's VRT-aware mask) can pass the result
+    through the lazy helper's ``pixels_present`` kwarg so the attr is
+    stamped via the same finalization helper rather than written
+    ad-hoc by the backend.
+    """
+    gi = _default_geo_info()
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=-9999,
+        mask_nodata=True,
+        graph_dtype='float64',
+        caller_dtype=None,
+        window=None,
+        pixels_present=True,
+    )
+
+    assert attrs['nodata_pixels_present'] is True
+
+
+def test_lazy_pixels_present_false_lands_when_caller_forwards():
+    """Companion to the True case: a forwarded ``False`` lands as
+    ``attrs['nodata_pixels_present'] is False`` rather than being
+    treated as "absent". The presence-vs-absence distinction is what
+    issue #2135 added the attr for.
+    """
+    gi = _default_geo_info()
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=-9999,
+        mask_nodata=True,
+        graph_dtype='float64',
+        caller_dtype=None,
+        window=None,
+        pixels_present=False,
+    )
+
+    assert attrs['nodata_pixels_present'] is False
+
+
+def test_lazy_pixels_present_default_keeps_dask_contract():
+    """Default ``pixels_present=None`` keeps the issue #2135 dask
+    contract intact: the attr stays absent on lazy outputs because the
+    dask backends cannot afford the eager ``.compute()`` a strict
+    per-chunk scan would force.
+    """
+    gi = _default_geo_info()
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=-9999,
+        mask_nodata=True,
+        graph_dtype='float64',
+        caller_dtype=None,
+        window=None,
+    )
+
+    assert 'nodata_pixels_present' not in attrs
+
+
+def test_lazy_pixels_present_ignored_when_no_nodata():
+    """When ``nodata is None`` the helper short-circuits all
+    sentinel-lifecycle attrs (``masked_nodata``,
+    ``nodata_dtype_cast``, and ``nodata_pixels_present``), regardless
+    of whether the caller forwarded a ``pixels_present`` value. The
+    sentinel-lifecycle attrs only make sense when a sentinel is
+    declared, so a stray forward must not invent the attr.
+    """
+    gi = _default_geo_info(nodata=None)
+
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=gi,
+        nodata=None,
+        mask_nodata=True,
+        graph_dtype='float64',
+        caller_dtype=None,
+        window=None,
+        pixels_present=True,
+    )
+
+    assert 'nodata_pixels_present' not in attrs
+
+
 def test_lazy_no_nodata_omits_nodata_attrs():
     gi = _default_geo_info(nodata=None)
 

@@ -1346,6 +1346,7 @@ def _finalize_lazy_read_attrs(
     band_nodata: str | None = None,
     band_nodata_values: list | None = None,
     attrs_in: dict | None = None,
+    pixels_present: bool | None = None,
 ):
     """Validate and populate attrs for dask-style lazy reads.
 
@@ -1362,10 +1363,14 @@ def _finalize_lazy_read_attrs(
     3. :func:`_set_nodata_attrs` -- ``masked`` is True iff the caller
        opted into masking AND the graph dtype is float.
        ``dtype_cast`` is recorded when ``caller_dtype`` is not ``None``
-       and ``nodata`` is declared. ``pixels_present=None`` is the
-       documented dask contract from issue #2135: a strict per-chunk
-       reduction would force an eager ``.compute()`` and break the
-       lazy contract, so the attr is left absent on lazy outputs.
+       and ``nodata`` is declared. ``pixels_present`` defaults to
+       ``None`` per the documented dask contract from issue #2135 (a
+       strict per-chunk reduction would force eager ``.compute()`` and
+       break the lazy contract, so the attr stays absent on lazy
+       outputs). Eager-VRT callers that already computed the presence
+       bool via a single decode pass can pass it through this kwarg so
+       the attr is stamped via the same finalization helper rather
+       than written ad-hoc post-call (PR-D of #2211).
 
     Returns the attrs ``dict`` only; the caller assembles the dask graph
     and builds the :class:`xarray.DataArray` itself, so this helper
@@ -1441,7 +1446,7 @@ def _finalize_lazy_read_attrs(
     _set_nodata_attrs(
         attrs, nodata,
         masked=masked,
-        pixels_present=None,
+        pixels_present=pixels_present,
         dtype_cast=dtype_cast_attr,
     )
 
