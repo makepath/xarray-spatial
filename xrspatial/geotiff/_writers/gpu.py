@@ -30,6 +30,7 @@ from .._coords import (
     resolve_georef as _resolve_georef,
 )
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
+from .._nodata import NodataLifecycle as _NL
 from .._runtime import GeoTIFFFallbackWarning, _resolve_spatial_coords
 from .._validation import (
     _validate_3d_writer_dims,
@@ -574,10 +575,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # the cost is one GPU array allocation, only on the NaN-present
     # path, and it guarantees the CPU writer's defensive-copy semantics
     # in every case.
-    if (nodata is not None
-            and np_dtype.kind == 'f'
-            and not np.isnan(float(nodata))
-            and restore_sentinel):
+    # PR-C #2226: shared NodataLifecycle gate for NaN->sentinel restore.
+    if _NL(declared=nodata, dtype_in=np_dtype).writer_restore_sentinel(
+            buffer_dtype=np_dtype,
+            restore_sentinel=restore_sentinel,
+    ):
         nan_mask = cupy.isnan(arr)
         if bool(nan_mask.any()):
             arr = arr.copy()
@@ -654,11 +656,14 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # ``make_overview_gpu`` preserves dtype, so the sentinel cast is
         # loop-invariant. Hoist it (and the float/finite gate) out of the
         # inner ``while`` to skip redundant per-level scalar work.
-        rewrite_nodata = (
-            nodata is not None
-            and np_dtype.kind == 'f'
-            and not np.isnan(float(nodata))
-            and restore_sentinel
+        # PR-C #2226: lifecycle's writer_restore_sentinel mirrors the
+        # gate used for the full-resolution rewrite above so the
+        # overview loop stays in sync with the base rewrite.
+        rewrite_nodata = _NL(
+            declared=nodata, dtype_in=np_dtype,
+        ).writer_restore_sentinel(
+            buffer_dtype=np_dtype,
+            restore_sentinel=restore_sentinel,
         )
         sentinel_scalar = (
             np_dtype.type(nodata) if rewrite_nodata else None

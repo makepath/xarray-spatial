@@ -38,6 +38,7 @@ from .._coords import (
 )
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
 from .._geotags import GeoTransform, RASTER_PIXEL_IS_AREA
+from .._nodata import NodataLifecycle as _NL
 from .._runtime import (
     GeoTIFFFallbackWarning,
     _geotiff_strict_mode,
@@ -855,8 +856,17 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # ``np.asarray(raw)`` of a caller-owned numpy DataArray (a view,
     # not a copy) or ``np.moveaxis(arr, 0, -1)`` of one (also a view).
     # Mutating without a copy would corrupt the user's input buffer.
-    if (nodata is not None and arr.dtype.kind == 'f'
-            and not np.isnan(nodata) and restore_sentinel):
+    #
+    # PR-C #2226: ``NodataLifecycle.writer_restore_sentinel`` owns the
+    # "should we restore?" decision (no declared sentinel, non-float
+    # buffer, NaN sentinel all collapse to False there). The
+    # ``restore_sentinel`` local was resolved upstream from
+    # ``attrs['masked_nodata']`` (issue #1988) and is passed through
+    # the helper's ``restore_sentinel=`` kwarg as a single bool.
+    if _NL(declared=nodata, dtype_in=arr.dtype).writer_restore_sentinel(
+            buffer_dtype=arr.dtype,
+            restore_sentinel=restore_sentinel,
+    ):
         nan_mask = np.isnan(arr)
         if nan_mask.any():
             arr = arr.copy()
@@ -952,8 +962,13 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
     # from ``np.asarray(chunk_data)`` where ``chunk_data`` may be a
     # caller-owned numpy buffer. Mutating without a copy would corrupt
     # the user's input.
-    if (nodata is not None and arr.dtype.kind == 'f'
-            and not np.isnan(nodata) and restore_sentinel):
+    #
+    # PR-C #2226: ``NodataLifecycle.writer_restore_sentinel`` owns the
+    # gate; see the matching block in ``to_geotiff`` above.
+    if _NL(declared=nodata, dtype_in=arr.dtype).writer_restore_sentinel(
+            buffer_dtype=arr.dtype,
+            restore_sentinel=restore_sentinel,
+    ):
         nan_mask = np.isnan(arr)
         if nan_mask.any():
             arr = arr.copy()
