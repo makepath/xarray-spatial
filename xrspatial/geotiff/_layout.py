@@ -20,7 +20,10 @@ import math
 
 import numpy as np
 
-from ._header import IFD, TIFFHeader
+from ._decode import _int_nodata_in_range
+from ._geotags import _parse_nodata_str as _parse_nd
+from ._header import IFD
+from ._sources import _max_tile_bytes_from_env
 
 # ---------------------------------------------------------------------------
 # Allocation guard: reject TIFF dimensions that would exhaust memory
@@ -83,18 +86,11 @@ def _sparse_fill_value(ifd: IFD, dtype: np.dtype):
     The reader is expected to materialise such blocks as nodata, or
     zero when nodata is unset (the default per the GDAL convention).
     """
-    # ``_int_nodata_in_range`` lives in ``_decode`` and is shared by the
-    # decode helpers; import lazily here so this module stays a pure
-    # layout / validation surface without picking up a decode import
-    # at module load time.
-    from ._decode import _int_nodata_in_range
-
     nodata_str = ifd.nodata_str
     if nodata_str is not None:
         # Try ``int`` first so 64-bit sentinels survive without the
         # float64 round-trip; fall back to ``float`` for NaN / Inf /
         # scientific notation / fractional values.  See issue #1847.
-        from ._geotags import _parse_nodata_str as _parse_nd
         parsed = _parse_nd(nodata_str)
         if parsed is not None:
             if dtype.kind == 'f':
@@ -151,12 +147,6 @@ def _compute_full_image_byte_budget(offsets, byte_counts) -> int:
     fall back to the per-strip safety cap so the read is still bounded.
     Issue #2051.
     """
-    # Lazy import: ``_max_tile_bytes_from_env`` lives in ``_sources`` and
-    # reads the ``XRSPATIAL_COG_MAX_TILE_BYTES`` env var. Importing it at
-    # module load time would pull the whole transport layer in for any
-    # layout-only consumer.
-    from ._sources import _max_tile_bytes_from_env
-
     fallback = _max_tile_bytes_from_env() + _FULL_IMAGE_BUDGET_HEADER_SLACK
     if not offsets or not byte_counts:
         return fallback
@@ -178,9 +168,7 @@ def _compute_full_image_byte_budget(offsets, byte_counts) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _ifd_required_extent(
-    ifds: list[IFD], header: TIFFHeader, data_len: int,
-) -> int:
+def _ifd_required_extent(ifds: list[IFD]) -> int:
     """Return the highest byte offset the parsed IFDs reference.
 
     Used to decide whether the prefetch buffer is large enough to hold the
@@ -191,7 +179,7 @@ def _ifd_required_extent(
     The walk re-derives each tag's value-area placement directly from the
     IFD layout (entry table base + entry slot) rather than re-parsing the
     raw bytes. For out-of-line tags ``parse_ifd`` already resolved the
-    pointer and validated ``ptr + size <= data_len``; the *interesting*
+    pointer and validated ``ptr + size <= len(data)``; the *interesting*
     extent for the grow loop is the next-IFD pointer of the chain tail,
     plus an "is there a next IFD we have not yet seen" probe.
     """

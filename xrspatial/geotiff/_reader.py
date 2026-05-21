@@ -238,7 +238,7 @@ def _parse_cog_http_meta(
     while True:
         try:
             ifds = parse_all_ifds(header_bytes, header)
-            required = _ifd_required_extent(ifds, header, len(header_bytes))
+            required = _ifd_required_extent(ifds)
             # Chain is fully resolved when every IFD parsed cleanly and
             # the tail next_ifd_offset is reachable within the buffer
             # (required == 0 means end-of-chain).
