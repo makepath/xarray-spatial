@@ -26,9 +26,8 @@ from .._attrs import (
 from .._coords import (
     _BAND_DIM_NAMES,
     _has_no_georef_marker,
-    coords_to_transform as _coords_to_transform,
     require_transform_for_georeferenced as _require_transform_for_georeferenced,
-    transform_from_attr as _transform_from_attr,
+    resolve_georef as _resolve_georef,
 )
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
 from .._runtime import GeoTIFFFallbackWarning, _resolve_spatial_coords
@@ -491,13 +490,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         if arr.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
             arr = cupy.ascontiguousarray(cupy.moveaxis(arr, 0, -1))
 
-        # Prefer attrs['transform'] over the coord-derived transform: it
-        # is bit-stable across round-trips, while _coords_to_transform
-        # can drift on fractional pixel sizes (the same reasoning the
-        # CPU to_geotiff path applies for issue #1484).
-        geo_transform = _transform_from_attr(data.attrs.get('transform'))
-        if geo_transform is None:
-            geo_transform = _coords_to_transform(data)
+        # Resolve via the centralised resolver (#2225). Same precedence
+        # as the CPU writer: prefer attrs['transform'] (bit-stable on
+        # round-trip) over the coord-derived transform (drifts on
+        # fractional pixel sizes -- the same reasoning behind #1484).
+        geo_transform = _resolve_georef(data).transform
         # Match the CPU writer's fail-closed guard: an array with spatial
         # coords but no derivable transform (e.g. 1x1 without
         # ``attrs['transform']``) must not silently round-trip as a

@@ -78,6 +78,14 @@ def _vrt_to_synthetic_geo_info(vrt) -> GeoInfo:
     ``geo_info_to_metadata`` does not synthesise attrs the VRT branch
     never emitted. ``vrt_holes`` is documented divergence: ``GeoInfo``
     has no slot for it, so the call site stamps the attr post-helper.
+
+    Issue #2225: the resolved ``georef_status`` for this synthesised
+    ``GeoInfo`` flows through the shared
+    :func:`xrspatial.geotiff._coords.resolve_georef` resolver via
+    :func:`_compute_georef_status`, so the VRT branch lands on the
+    same bucket as the eager / dask / GPU read paths for matching
+    input shapes (full / transform_only / crs_only / none /
+    rotated_dropped).
     """
     gt = vrt.geo_transform
     is_rotated = gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)

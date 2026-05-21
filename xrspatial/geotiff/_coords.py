@@ -24,13 +24,74 @@ windowed vs full reads.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import numpy as np
 import xarray as xr
 
 from ._errors import NonUniformCoordsError
 from ._geotags import _NO_GEOREF_KEY, GeoTransform, RASTER_PIXEL_IS_POINT
+
+
+# Canonical georef_status string values (mirrored in ``_attrs.py`` as
+# ``GEOREF_STATUS_*`` constants). Issue #2225 centralises the
+# transform/georef contract here; ``_attrs.py`` aliases these names so
+# the public attrs surface keeps its existing identifiers.
+GEOREF_STATUS_NONE = 'none'
+GEOREF_STATUS_COORDS = 'coords'
+GEOREF_STATUS_TRANSFORM_ONLY = 'transform_only'
+GEOREF_STATUS_CRS_ONLY = 'crs_only'
+GEOREF_STATUS_ROTATED_DROPPED = 'rotated_dropped'
+GEOREF_STATUS_FULL = 'full'
+
+GeorefStatus = Literal[
+    'none',
+    'coords',
+    'transform_only',
+    'crs_only',
+    'rotated_dropped',
+    'full',
+]
+
+
+@dataclass(frozen=True)
+class GeorefResolution:
+    """Typed result returned by :func:`resolve_georef` (issue #2225).
+
+    Centralises the three georef decisions every backend used to make
+    inline: how to derive the affine transform, which of the canonical
+    ``georef_status`` buckets the input falls into, and whether the
+    no-georef marker was applied.
+
+    Fields:
+
+    * ``transform`` -- the resolved :class:`GeoTransform`, or ``None``
+      when no transform could be derived (no coords, no
+      ``attrs['transform']``, no inbound ``GeoInfo`` transform). Rotated
+      / sheared affines surface here as ``None`` because the on-disk
+      GeoTIFF representation is axis-aligned; the ``dropped_reason``
+      field records the original reason for callers that care.
+    * ``georef_status`` -- one of ``GeorefStatus``. The bucket the
+      resolver landed in; mirrors the canonical attr emitted by
+      :mod:`xrspatial.geotiff._attrs`. ``'coords'`` is the writer-side
+      bucket for inputs whose only georef signal is the coord arrays
+      themselves (no CRS, no inbound transform). Reader-side callers
+      that distinguish ``transform_only`` and ``crs_only`` use those.
+    * ``dropped_reason`` -- short string explaining why ``transform``
+      is ``None`` (e.g. ``'rotated_affine_dropped'``,
+      ``'degenerate_axis'``, ``'no_coords'``), or ``None`` when the
+      resolver did derive a transform.
+    * ``applied_no_georef_marker`` -- True iff the resolver routed the
+      input through the no-georef placeholder path. Mirrors the
+      reader's ``attrs[_NO_GEOREF_KEY] = True`` marker so writer call
+      sites can branch the same way.
+    """
+
+    transform: 'GeoTransform | None' = None
+    georef_status: GeorefStatus = GEOREF_STATUS_NONE
+    dropped_reason: str | None = None
+    applied_no_georef_marker: bool = False
 
 
 # Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
@@ -508,4 +569,238 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
         origin_y=origin_y,
         pixel_width=pixel_width,
         pixel_height=pixel_height,
+    )
+
+
+def _has_crs_signal(crs_epsg, crs_wkt) -> bool:
+    """True iff at least one CRS field is populated.
+
+    Lifted out so the read-side (``GeoInfo``) and write-side
+    (``attrs['crs']`` / ``attrs['crs_wkt']``) call sites of
+    :func:`resolve_georef` share the same decision rule. An empty
+    string ``crs_wkt`` (which the VRT parser emits when the XML has
+    a ``<SRS>`` element with no recognised body) is treated as
+    absent so the resolver does not bucket those into ``crs_only``.
+    """
+    if crs_epsg is not None:
+        return True
+    if isinstance(crs_wkt, str) and crs_wkt:
+        return True
+    return False
+
+
+def resolve_georef(
+    source: Any = None,
+    *,
+    geo_info: Any = None,
+    crs_epsg: int | None = None,
+    crs_wkt: str | None = None,
+    transform_hint: Any = None,
+) -> GeorefResolution:
+    """Centralised transform/georef resolver shared across backends.
+
+    Issue #2225. One function owns the four decisions every backend
+    used to make inline:
+
+    1. Coord-to-transform inference (via :func:`coords_to_transform`).
+    2. The no-georef marker behaviour
+       (``attrs[_NO_GEOREF_KEY] = True`` -> placeholder coords).
+    3. Degenerate-axis policy (1xN / Nx1 / 1x1 inputs).
+    4. Rotated-affine drop policy (rotated transforms are not
+       expressible as axis-aligned 6-tuples and are dropped).
+
+    Inputs:
+
+    * ``source`` -- either an :class:`xarray.DataArray` (writer entry
+      points) or ``None``. When a DataArray is supplied, the resolver
+      reads ``attrs['transform']``, ``attrs['crs']`` / ``attrs['crs_wkt']``,
+      and the ``_NO_GEOREF_KEY`` marker off the array's attrs.
+    * ``geo_info`` -- a reader-side :class:`GeoInfo`-like object (the
+      eager / dask / GPU read paths feed this). When supplied, the
+      resolver derives the transform from ``geo_info.transform`` and
+      bucketises the status from ``geo_info.has_georef`` /
+      ``geo_info.crs_epsg`` / ``geo_info.crs_wkt`` /
+      ``geo_info.transform.rotated_affine``. ``crs_epsg`` and
+      ``crs_wkt`` overrides take precedence over the ``GeoInfo`` values
+      when both are passed (used by the VRT inline path which holds CRS
+      state outside the synthesised ``GeoInfo``).
+    * ``crs_epsg`` / ``crs_wkt`` -- direct CRS signals for callers that
+      do not have a DataArray or a ``GeoInfo`` (the VRT path threads
+      these from the parsed XML).
+    * ``transform_hint`` -- a :class:`GeoTransform` or rasterio-style
+      6-tuple to use when neither ``source`` nor ``geo_info`` is given.
+
+    The returned :class:`GeorefResolution` contract is documented on
+    the dataclass.
+    """
+    # Reader path: a GeoInfo (or VRT-synthesised stand-in) carries
+    # has_georef + transform + (optional) rotated_affine. The resolver
+    # mirrors the decision table from ``_compute_georef_status`` so the
+    # eager / dask / GPU / VRT read sites all land on the same bucket.
+    if geo_info is not None:
+        gi_transform = getattr(geo_info, 'transform', None)
+        rotated_affine = (
+            getattr(gi_transform, 'rotated_affine', None)
+            if gi_transform is not None else None
+        )
+        has_georef = bool(getattr(geo_info, 'has_georef', False))
+        # CRS overrides win so VRT call sites can pass the parsed
+        # ``vrt.crs_wkt`` without rebuilding the GeoInfo. When the
+        # override is left at ``None`` we read from the GeoInfo.
+        resolved_crs_epsg = (
+            crs_epsg if crs_epsg is not None
+            else getattr(geo_info, 'crs_epsg', None)
+        )
+        resolved_crs_wkt = (
+            crs_wkt if crs_wkt is not None
+            else getattr(geo_info, 'crs_wkt', None)
+        )
+        has_crs = _has_crs_signal(resolved_crs_epsg, resolved_crs_wkt)
+
+        if rotated_affine is not None:
+            # ``allow_rotated=True`` path: the reader stamped the
+            # rotated 6-tuple onto the transform but reported
+            # ``has_georef=False``. The axis-aligned transform we would
+            # surface here cannot represent the rotation, so drop it.
+            return GeorefResolution(
+                transform=None,
+                georef_status=GEOREF_STATUS_ROTATED_DROPPED,
+                dropped_reason='rotated_affine_dropped',
+                applied_no_georef_marker=True,
+            )
+
+        if has_georef and gi_transform is not None:
+            status: GeorefStatus = (
+                GEOREF_STATUS_FULL if has_crs else GEOREF_STATUS_TRANSFORM_ONLY
+            )
+            return GeorefResolution(
+                transform=gi_transform,
+                georef_status=status,
+                dropped_reason=None,
+                applied_no_georef_marker=False,
+            )
+
+        # No transform on the reader path -> placeholder coords + marker.
+        if has_crs:
+            return GeorefResolution(
+                transform=None,
+                georef_status=GEOREF_STATUS_CRS_ONLY,
+                dropped_reason='no_transform_tags',
+                applied_no_georef_marker=True,
+            )
+        return GeorefResolution(
+            transform=None,
+            georef_status=GEOREF_STATUS_NONE,
+            dropped_reason='no_transform_tags',
+            applied_no_georef_marker=True,
+        )
+
+    # Writer path: ``source`` is a DataArray. Prefer attrs['transform']
+    # over coord-derived transforms (the same precedence the inline
+    # writer code applied for issue #1484 -- attrs['transform']
+    # round-trips bit-exactly while coord subtraction can drift on
+    # fractional pixel sizes).
+    if isinstance(source, xr.DataArray):
+        attrs = source.attrs
+        attr_transform = attrs.get('transform') if attrs is not None else None
+        a_crs_epsg = crs_epsg
+        a_crs_wkt = crs_wkt
+        if attrs is not None:
+            # Mirror ``attrs_to_metadata`` precedence: string ``crs``
+            # values fold into ``crs_wkt`` (some pipelines stash the
+            # WKT string under ``attrs['crs']``), bool values are
+            # ignored at the boundary so the resolver does not flag a
+            # bogus ``has_crs`` signal on ``crs=True`` (issue #1971).
+            crs_val = attrs.get('crs')
+            if a_crs_wkt is None and isinstance(crs_val, str) and crs_val:
+                a_crs_wkt = crs_val
+            if (a_crs_epsg is None
+                    and crs_val is not None
+                    and not isinstance(crs_val, (bool, str))):
+                try:
+                    a_crs_epsg = int(crs_val)
+                except (TypeError, ValueError):
+                    a_crs_epsg = None
+            if a_crs_wkt is None:
+                wkt_val = attrs.get('crs_wkt')
+                if isinstance(wkt_val, str) and wkt_val:
+                    a_crs_wkt = wkt_val
+        has_crs = _has_crs_signal(a_crs_epsg, a_crs_wkt)
+
+        # ``transform_from_attr`` raises on rotated 6-tuples (b/d != 0)
+        # so the resolver propagates the same diagnostic. A ``None``
+        # return means the attr was absent or unparseable.
+        transform = transform_from_attr(attr_transform)
+        transform_source = 'attr' if transform is not None else None
+        if transform is None:
+            transform = coords_to_transform(source)
+            if transform is not None:
+                transform_source = 'coords'
+
+        no_georef_marker = _has_no_georef_marker(source)
+
+        if transform is None and no_georef_marker:
+            # ``attrs[_NO_GEOREF_KEY] = True`` -> reader-stamped
+            # placeholder. Treat as no-georef regardless of coords.
+            status = (
+                GEOREF_STATUS_CRS_ONLY if has_crs else GEOREF_STATUS_NONE
+            )
+            return GeorefResolution(
+                transform=None,
+                georef_status=status,
+                dropped_reason='no_georef_marker',
+                applied_no_georef_marker=True,
+            )
+
+        if transform is not None:
+            # ``coords`` bucket signals "transform derived from coord
+            # arrays"; ``transform_only`` signals "transform supplied
+            # via attrs['transform']". Either bucket with a CRS
+            # rolls up to ``full``.
+            if has_crs:
+                status = GEOREF_STATUS_FULL
+            elif transform_source == 'attr':
+                status = GEOREF_STATUS_TRANSFORM_ONLY
+            else:
+                status = GEOREF_STATUS_COORDS
+            return GeorefResolution(
+                transform=transform,
+                georef_status=status,
+                dropped_reason=None,
+                applied_no_georef_marker=False,
+            )
+
+        # No transform and no marker. The writer entry points run
+        # :func:`require_transform_for_georeferenced` after the
+        # resolver and raise when spatial coords are present but no
+        # transform could be inferred (#1945). We return ``None`` /
+        # ``GEOREF_STATUS_NONE`` here and let that guard handle the
+        # failure path.
+        status = GEOREF_STATUS_CRS_ONLY if has_crs else GEOREF_STATUS_NONE
+        return GeorefResolution(
+            transform=None,
+            georef_status=status,
+            dropped_reason='no_transform_inferred',
+            applied_no_georef_marker=False,
+        )
+
+    # Bare-input path (no DataArray, no GeoInfo). Used by callers that
+    # only have CRS and an optional transform hint (e.g. test fixtures
+    # exercising the resolver shape).
+    transform = transform_from_attr(transform_hint)
+    has_crs = _has_crs_signal(crs_epsg, crs_wkt)
+    if transform is not None:
+        status = GEOREF_STATUS_FULL if has_crs else GEOREF_STATUS_TRANSFORM_ONLY
+        return GeorefResolution(
+            transform=transform,
+            georef_status=status,
+            dropped_reason=None,
+            applied_no_georef_marker=False,
+        )
+    status = GEOREF_STATUS_CRS_ONLY if has_crs else GEOREF_STATUS_NONE
+    return GeorefResolution(
+        transform=None,
+        georef_status=status,
+        dropped_reason='no_inputs' if not has_crs else 'no_transform_inferred',
+        applied_no_georef_marker=False,
     )
