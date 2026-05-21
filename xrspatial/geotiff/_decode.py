@@ -15,14 +15,15 @@ test suite and downstream backends depend on. See the import block at
 the top of ``_reader.py``.
 
 This module deliberately has *no* module-level import of
-:mod:`xrspatial.geotiff._reader` so the two files can sit on either side
-of a circular relationship: ``_reader.py`` imports the decode functions
-back at module load, and the few things ``_decode`` still needs from
-``_reader`` (``MAX_PIXELS_DEFAULT``, ``_check_dimensions``,
+:mod:`xrspatial.geotiff._reader` or :mod:`xrspatial.geotiff._layout`.
+``_reader.py`` imports the decode functions back at module load, and
+the layout helpers (``MAX_PIXELS_DEFAULT``, ``_check_dimensions``,
 ``_check_source_dimensions``, ``_sparse_fill_value``, ``_has_sparse``)
-are imported lazily inside ``_read_strips`` / ``_read_tiles`` at call
-time. Those names move with ``_layout.py`` in PR-H (issue #2247), at
-which point the lazy imports can collapse back into top-level ones.
+that PR-H moved into :mod:`._layout` are imported lazily inside
+``_read_strips`` / ``_read_tiles`` at call time so that
+``_layout._sparse_fill_value``'s own lazy import of
+``_int_nodata_in_range`` from this module cannot turn into a
+module-load cycle.
 """
 from __future__ import annotations
 
@@ -57,14 +58,20 @@ from ._validation import _validate_predictor_sample_format
 _NATIVE_ORDER = '<' if _sys.byteorder == 'little' else '>'
 
 #: Sentinel used as the default value of ``max_pixels`` so the actual
-#: ``MAX_PIXELS_DEFAULT`` can stay in :mod:`._reader` without making this
+#: ``MAX_PIXELS_DEFAULT`` can stay in :mod:`._layout` without making this
 #: module import-time dependent on it. ``_resolve_max_pixels`` does the
 #: lazy lookup at call time.
 _MAX_PIXELS_UNSET = object()
 
 
 def _resolve_max_pixels(value):
-    """Return ``MAX_PIXELS_DEFAULT`` when *value* is the unset sentinel."""
+    """Return ``MAX_PIXELS_DEFAULT`` when *value* is the unset sentinel.
+
+    The lookup hits :mod:`._reader` rather than :mod:`._layout` so test
+    monkeypatches of ``_reader.MAX_PIXELS_DEFAULT`` keep taking effect
+    -- the layout extraction (issue #2247) introduced the alias on
+    ``_reader`` precisely so the long-standing patch contract survives.
+    """
     if value is _MAX_PIXELS_UNSET:
         from ._reader import MAX_PIXELS_DEFAULT
         return MAX_PIXELS_DEFAULT
@@ -319,13 +326,10 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     -------
     np.ndarray with shape (height, width) or windowed subset.
     """
-    # Imported lazily so this module does not have an import-time
-    # dependency on ``_reader``. The pixel-safety guards
-    # (``_check_dimensions``/``_check_source_dimensions``) and the
-    # sparse-layout helpers (``_sparse_fill_value``/``_has_sparse``)
-    # both stay in ``_reader.py`` until PR-H (issue #2247); rebinding
-    # them here keeps PR-G mechanical.
-    from ._reader import (
+    # Layout / validation helpers live in ``_layout`` (issue #2247).
+    # Imported lazily so the decode module stays cycle-free against the
+    # layout module's lazy import of ``_int_nodata_in_range`` from here.
+    from ._layout import (
         _check_dimensions,
         _check_source_dimensions,
         _has_sparse,
@@ -551,8 +555,12 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     -------
     np.ndarray with shape (height, width) or windowed subset.
     """
-    from ._reader import (
-        MAX_PIXELS_DEFAULT,
+    # ``MAX_PIXELS_DEFAULT`` is read off ``_reader`` (which re-exports
+    # the layout module's binding) so tests that monkeypatch
+    # ``_reader.MAX_PIXELS_DEFAULT`` keep taking effect on the per-tile
+    # path. The function-level helpers come from ``_layout`` directly.
+    from ._reader import MAX_PIXELS_DEFAULT
+    from ._layout import (
         _check_dimensions,
         _has_sparse,
         _sparse_fill_value,
