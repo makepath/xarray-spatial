@@ -30,6 +30,7 @@ from .._geotags import (
 from .._reader import _MAX_CLOUD_BYTES_SENTINEL
 from .._runtime import _ON_GPU_FAILURE_SENTINEL
 from .._validation import (
+    _gdal_geotransform_to_affine_tuple,
     _validate_chunks_arg,
     _validate_dispatch_kwargs,
     _validate_dtype_cast,
@@ -89,10 +90,6 @@ def _vrt_to_synthetic_geo_info(vrt) -> GeoInfo:
         else RASTER_PIXEL_IS_AREA
     )
     if is_rotated:
-        # ``_gdal_geotransform_to_affine_tuple`` lives in ``_validation``;
-        # local import keeps the module-load surface free of a heavy
-        # transitive dependency.
-        from .._validation import _gdal_geotransform_to_affine_tuple
         rotated_affine = _gdal_geotransform_to_affine_tuple(gt)
         return GeoInfo(
             transform=GeoTransform(rotated_affine=tuple(rotated_affine)),
@@ -361,10 +358,7 @@ def read_vrt(source: str, *,
     # set here pre-read and let ``_finalize_lazy_read_attrs`` re-run the
     # ``allow_rotated`` / ``allow_unparseable_crs`` arm later as a no-op.
     import os as _os
-    from .._validation import (
-        validate_read_metadata,
-        _gdal_geotransform_to_affine_tuple,
-    )
+    from .._validation import validate_read_metadata
     from .._vrt import parse_vrt as _parse_vrt, _read_vrt_xml
     _xml_str = _read_vrt_xml(source)
     _vrt_dir = _os.path.dirname(_os.path.abspath(source))
@@ -714,10 +708,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # Issue #1987 ambiguous-metadata checks on the chunked VRT path. Run
     # before the band-count validator below so a rejected file does not
     # produce side effects.
-    from .._validation import (
-        validate_read_metadata,
-        _gdal_geotransform_to_affine_tuple,
-    )
+    from .._validation import validate_read_metadata
     validate_read_metadata({
         'allow_rotated': allow_rotated,
         'allow_unparseable_crs': allow_unparseable_crs,

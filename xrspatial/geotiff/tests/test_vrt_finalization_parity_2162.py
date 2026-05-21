@@ -462,6 +462,45 @@ def test_band_nodata_chunked_first_band_attrs(tmp_path):
     assert 'nodata_pixels_present' not in r.attrs
 
 
+def _make_no_sentinel_vrt(tmp_path, name):
+    """A single-band float VRT with no ``<NoDataValue>``. Used to pin the
+    ``dtype=`` + no-sentinel branch of ``_apply_caller_dtype_cast``."""
+    tiff = str(tmp_path / f'{name}_tiff.tif')
+    vrt = str(tmp_path / f'{name}.vrt')
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    write(arr, tiff, compression='none', tiled=False)
+    _write_single_source_vrt(
+        tiff, vrt, width=4, height=4,
+        geo_transform='0.0, 1.0, 0.0, 0.0, 0.0, -1.0',
+        nodata=None,
+    )
+    return vrt
+
+
+def test_dtype_cast_no_sentinel_omits_attr_eager(tmp_path):
+    """Eager VRT with ``dtype=`` and no declared sentinel: the helper
+    writes ``nodata_dtype_cast`` from ``pre_cast_dtype`` and
+    ``_apply_caller_dtype_cast`` pops it because ``has_nodata=False``.
+    Pins the symmetric branch the dask parity test covers for non-VRT."""
+    vrt = _make_no_sentinel_vrt(tmp_path, 'no_sentinel_eager_2180')
+    r = read_vrt(vrt, dtype=np.float64)
+    assert r.dtype == np.float64
+    assert 'nodata' not in r.attrs
+    assert 'masked_nodata' not in r.attrs
+    assert 'nodata_dtype_cast' not in r.attrs
+
+
+def test_dtype_cast_no_sentinel_omits_attr_chunked(tmp_path):
+    """Chunked VRT with ``dtype=`` and no declared sentinel: same
+    ``nodata_dtype_cast`` pop as the eager branch."""
+    vrt = _make_no_sentinel_vrt(tmp_path, 'no_sentinel_chunked_2180')
+    r = read_vrt(vrt, dtype=np.float64, chunks=2)
+    assert r.dtype == np.float64
+    assert 'nodata' not in r.attrs
+    assert 'masked_nodata' not in r.attrs
+    assert 'nodata_dtype_cast' not in r.attrs
+
+
 # ---------------------------------------------------------------------------
 # missing_sources paths: ``warn`` surfaces ``vrt_holes`` on the eager
 # path; the chunked parse-time scan also surfaces it.
