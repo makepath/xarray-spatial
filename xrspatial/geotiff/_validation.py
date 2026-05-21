@@ -34,7 +34,13 @@ from ._errors import (
     RotatedTransformError,
     UnparseableCRSError,
 )
-from ._runtime import _TIME_DIM_NAMES, _X_DIM_NAMES, _Y_DIM_NAMES
+from ._runtime import (
+    _MISSING_SOURCES_SENTINEL,
+    _ON_GPU_FAILURE_SENTINEL,
+    _TIME_DIM_NAMES,
+    _X_DIM_NAMES,
+    _Y_DIM_NAMES,
+)
 
 
 def _is_temporal_dim_name(name) -> bool:
@@ -342,6 +348,155 @@ def _validate_overview_level_arg(overview_level) -> None:
             f"overview_level must be an int or None, got "
             f"{type(overview_level).__name__}: {overview_level!r}"
         )
+
+
+def _validate_dispatch_kwargs(
+    *,
+    source,
+    gpu: bool,
+    chunks,
+    overview_level,
+    on_gpu_failure,
+    missing_sources,
+    band_nodata,
+    max_cloud_bytes,
+) -> None:
+    """Validate dispatcher-level kwargs across the GeoTIFF read entry points.
+
+    Holds the kwarg-rejection rules that ``open_geotiff`` used to run
+    inline at ``__init__.py:508-584`` so the three direct backends
+    (``read_geotiff_dask``, ``read_geotiff_gpu``, ``read_vrt``) get the
+    same validation when called directly. Before this helper, a caller
+    who passed ``max_cloud_bytes`` straight to ``read_geotiff_dask`` (or
+    ``band_nodata`` to ``read_geotiff_gpu``) got no error at all because
+    the kwarg either silently dropped or raised an unrelated
+    ``TypeError`` from the signature. See issue #2175 (parent #2162).
+
+    Rules enforced:
+
+    - ``overview_level`` must be ``None`` or a non-bool int. Delegates to
+      :func:`_validate_overview_level_arg` (issue #2074).
+    - ``on_gpu_failure`` requires ``gpu=True`` when explicit. The
+      CPU/dask branches have no GPU failure policy and would otherwise
+      drop the kwarg silently (issue #1615).
+    - ``missing_sources`` requires a ``.vrt`` source when explicit. The
+      non-VRT branches do not run the VRT mosaic loop (issue #1810).
+    - ``band_nodata`` requires a ``.vrt`` source when not ``None``. The
+      fail-closed mixed-band-metadata check is VRT-only (issue #1987).
+    - ``max_cloud_bytes`` is incompatible with ``.vrt``, ``gpu=True``,
+      and ``chunks=...`` when explicit. The eager non-VRT non-GPU
+      non-dask branch is the only consumer (issue #1974).
+    - File-like sources reject ``gpu=True`` and ``chunks=...``. The GPU
+      and dask paths re-open the source by path from worker tasks.
+
+    Sentinel defaults (``_ON_GPU_FAILURE_SENTINEL``,
+    ``_MISSING_SOURCES_SENTINEL``, ``_MAX_CLOUD_BYTES_SENTINEL``) keep
+    "caller did not pass this kwarg" silent so defaults round-trip
+    through every entry point without tripping a rejection.
+
+    Parameters
+    ----------
+    source : str or binary file-like
+        Already coerced by ``_coerce_path`` so the helper can detect
+        a ``.vrt`` extension via ``isinstance(source, str)``.
+    gpu : bool
+        True when the call routes through the GPU pipeline (either
+        ``open_geotiff(gpu=True)`` or a direct ``read_geotiff_gpu``).
+    chunks : int, tuple, or None
+        Caller's ``chunks=`` value. ``None`` means eager.
+    overview_level
+        Forwarded to ``_validate_overview_level_arg`` verbatim.
+    on_gpu_failure
+        ``_ON_GPU_FAILURE_SENTINEL`` when omitted; any other value is
+        treated as caller-set.
+    missing_sources
+        ``_MISSING_SOURCES_SENTINEL`` when omitted; any other value is
+        treated as caller-set.
+    band_nodata
+        ``None`` when omitted; any other value is treated as caller-set.
+    max_cloud_bytes
+        ``_MAX_CLOUD_BYTES_SENTINEL`` when omitted; any other value
+        (including an explicit ``None``) is treated as caller-set.
+
+    Raises
+    ------
+    TypeError
+        If ``overview_level`` has a non-int / bool type.
+    ValueError
+        On any of the rule violations listed above.
+    """
+    # Local import avoids a circular dependency with ``_reader`` when
+    # ``_validation`` is imported at module load time of the geotiff
+    # subpackage. The sentinel binding is cheap to look up.
+    # TODO(#2162 follow-up): move ``_MAX_CLOUD_BYTES_SENTINEL`` to
+    # ``_runtime`` alongside the other dispatch sentinels so this local
+    # import can hoist to module scope.
+    from ._reader import _MAX_CLOUD_BYTES_SENTINEL
+
+    _validate_overview_level_arg(overview_level)
+
+    if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL and not gpu:
+        raise ValueError(
+            "on_gpu_failure only applies when gpu=True. "
+            "Pass gpu=True to enable the GPU pipeline, or drop "
+            "on_gpu_failure to keep the default CPU path.")
+
+    # File-like buffers do not support the GPU or dask code paths
+    # because those re-open the source by path from worker tasks or
+    # device-side readers. Reject early with a clear message that names
+    # the actual blocker (gpu=True or chunks=...), ahead of the
+    # VRT-dependent kwarg checks below. A file-like source cannot be a
+    # VRT either, so the later VRT-only rejections would fire on
+    # ``missing_sources`` / ``band_nodata`` with a less specific
+    # diagnostic. Surfacing the file-like restriction first gives the
+    # caller the direct fix (pass a path string).
+    if not isinstance(source, str):
+        if gpu:
+            raise ValueError(
+                "gpu=True is not supported for file-like sources. "
+                "Pass a path string instead.")
+        if chunks is not None:
+            raise ValueError(
+                "chunks=... (dask) is not supported for file-like sources. "
+                "Pass a path string instead.")
+
+    missing_sources_passed = (
+        missing_sources is not _MISSING_SOURCES_SENTINEL)
+    is_vrt_source = (
+        isinstance(source, str) and source.lower().endswith('.vrt'))
+    if missing_sources_passed and not is_vrt_source:
+        raise ValueError(
+            "missing_sources only applies to VRT sources. "
+            "Pass a .vrt path to enable the VRT pipeline, or drop "
+            "missing_sources to keep the default GeoTIFF path.")
+
+    if band_nodata is not None and not is_vrt_source:
+        raise ValueError(
+            "band_nodata only applies to VRT sources. "
+            "Pass a .vrt path to enable the VRT pipeline, or drop "
+            "band_nodata to keep the default GeoTIFF path. "
+            "See issue #1987.")
+
+    if max_cloud_bytes is not _MAX_CLOUD_BYTES_SENTINEL:
+        if is_vrt_source:
+            raise ValueError(
+                "max_cloud_bytes is not supported for VRT sources. "
+                "The VRT reader does not apply the cloud-byte budget; "
+                "drop the kwarg, or call open_geotiff on the underlying "
+                ".tif source.")
+        if gpu:
+            raise ValueError(
+                "max_cloud_bytes is not supported when gpu=True. "
+                "The GPU reader does not accept the kwarg directly; "
+                "for URL/fsspec sources the budget is honoured via "
+                "the XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES env var "
+                "(see issue #2161). Drop the kwarg, set the env var, "
+                "or pass gpu=False to use the eager CPU path.")
+        if chunks is not None:
+            raise ValueError(
+                "max_cloud_bytes is not supported when chunks=... (dask). "
+                "The dask reader does not apply the cloud-byte budget; "
+                "drop the kwarg, or drop chunks to use the eager path.")
 
 
 def _validate_predictor_sample_format(predictor, sample_format) -> None:
