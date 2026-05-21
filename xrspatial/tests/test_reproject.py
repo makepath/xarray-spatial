@@ -1097,6 +1097,181 @@ class TestEdgeCases:
         np.testing.assert_allclose(
             r_south.values, r_north.values, atol=1e-10, equal_nan=True)
 
+
+class TestXDescendingReproject:
+    """Regression tests for #2183: x-descending input handling."""
+
+    def test_x_descending_same_crs_nearest(self):
+        """X-descending raster reprojected to same CRS+grid must mirror cols.
+
+        Regression test for #2183: before the fix, an x-descending input
+        was silently treated as x-ascending and the output columns were
+        not mirrored.
+        """
+        from xrspatial.reproject import reproject
+        data = np.arange(9, dtype=np.float64).reshape(3, 3)
+        # x = [2.5, 1.5, 0.5] -> column 0 is at max x
+        x_desc = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': [2.5, 1.5, 0.5], 'x': [2.5, 1.5, 0.5]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        out = reproject(x_desc, 'EPSG:4326', resampling='nearest',
+                        width=3, height=3, bounds=(0, 0, 3, 3))
+        # Output x is always ascending, so each row should be reversed
+        expected = data[:, ::-1]
+        np.testing.assert_array_equal(out.values, expected)
+        # And the output x coord is ascending
+        np.testing.assert_array_less(0, np.diff(out.coords['x'].values))
+
+    def test_x_descending_matches_x_ascending(self):
+        """X-descending input should produce the same output as the
+        equivalent x-ascending input (data mirrored, coords reversed)."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y = np.linspace(10, -10, 8)  # descending y (north-up)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        asc = xr.DataArray(data, dims=['y', 'x'],
+                           coords={'y': y, 'x': x_asc},
+                           attrs={'crs': 'EPSG:4326'})
+        desc = xr.DataArray(data[:, ::-1], dims=['y', 'x'],
+                            coords={'y': y, 'x': x_desc},
+                            attrs={'crs': 'EPSG:4326'})
+        r_asc = reproject(asc, 'EPSG:3857', width=16, height=16)
+        r_desc = reproject(desc, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            r_asc.values, r_desc.values, atol=1e-10, equal_nan=True)
+
+    def test_x_descending_y_descending(self):
+        """X-descending + Y-descending should match the canonical layout."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y_desc = np.linspace(10, -10, 8)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        canonical = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y_desc, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        both_desc = xr.DataArray(
+            data[:, ::-1], dims=['y', 'x'],
+            coords={'y': y_desc, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_canon = reproject(canonical, 'EPSG:3857', width=16, height=16)
+        r_both = reproject(both_desc, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            r_canon.values, r_both.values, atol=1e-10, equal_nan=True)
+
+    def test_x_descending_y_ascending(self):
+        """X-descending + Y-ascending should also match the canonical layout."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y_desc = np.linspace(10, -10, 8)
+        y_asc = y_desc[::-1]
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        canonical = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y_desc, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        # Flip both axes vs canonical -- data needs the same flipping.
+        mixed = xr.DataArray(
+            data[::-1, ::-1], dims=['y', 'x'],
+            coords={'y': y_asc, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_canon = reproject(canonical, 'EPSG:3857', width=16, height=16)
+        r_mixed = reproject(mixed, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            r_canon.values, r_mixed.values, atol=1e-10, equal_nan=True)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_x_descending_dask_backend(self):
+        """Dask+numpy backend should honor x_desc the same as the numpy path."""
+        import dask.array as da
+        from xrspatial.reproject import reproject
+
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y = np.linspace(10, -10, 8)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        asc = xr.DataArray(
+            da.from_array(data, chunks=4),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        desc = xr.DataArray(
+            da.from_array(data[:, ::-1], chunks=4),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_asc = reproject(asc, 'EPSG:3857', width=16, height=16).compute()
+        r_desc = reproject(desc, 'EPSG:3857', width=16, height=16).compute()
+        np.testing.assert_allclose(
+            r_asc.values, r_desc.values, atol=1e-10, equal_nan=True)
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+    def test_x_descending_cupy_backend(self):
+        """CuPy backend should honor x_desc the same as the numpy path."""
+        import cupy as cp
+        from xrspatial.reproject import reproject
+
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y = np.linspace(10, -10, 8)
+        x_asc = np.linspace(-10, 10, 8)
+        x_desc = x_asc[::-1]
+
+        asc = xr.DataArray(
+            cp.asarray(data),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_asc},
+            attrs={'crs': 'EPSG:4326'})
+        desc = xr.DataArray(
+            cp.asarray(data[:, ::-1]),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x_desc},
+            attrs={'crs': 'EPSG:4326'})
+        r_asc = reproject(asc, 'EPSG:3857', width=16, height=16)
+        r_desc = reproject(desc, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            cp.asnumpy(r_asc.data), cp.asnumpy(r_desc.data),
+            atol=1e-10, equal_nan=True)
+
+    def test_merge_x_descending_same_crs(self):
+        """Same-CRS merge of x-descending tiles should place values correctly."""
+        from xrspatial.reproject import merge
+        # x-descending tile: column 0 is at the max x value
+        data_a = np.full((8, 8), 1.0)
+        data_b = np.full((8, 8), 2.0)
+        y = np.linspace(5, -5, 8)
+        # tile A covers x in [-5, 0], tile B covers x in [0, 5] -- both
+        # expressed in descending x order to exercise the x_desc path.
+        x_a = np.linspace(0, -5, 8)
+        x_b = np.linspace(5, 0, 8)
+        tile_a = xr.DataArray(
+            data_a, dims=['y', 'x'],
+            coords={'y': y, 'x': x_a},
+            attrs={'crs': 'EPSG:4326'})
+        tile_b = xr.DataArray(
+            data_b, dims=['y', 'x'],
+            coords={'y': y, 'x': x_b},
+            attrs={'crs': 'EPSG:4326'})
+        result = merge([tile_a, tile_b], resolution=0.5)
+        # Output x is always ascending. The leftmost x should have value 1
+        # (from tile A), the rightmost x should have value 2 (from tile B).
+        vals = result.values
+        x_out = result.coords['x'].values
+        assert x_out[0] < x_out[-1]
+        # Sample a few interior rows away from edges
+        left_col = vals[2:6, 1]
+        right_col = vals[2:6, -2]
+        assert np.all(left_col == 1.0), f"left edge: {left_col}"
+        assert np.all(right_col == 2.0), f"right edge: {right_col}"
+
     def test_utm_roundtrip(self):
         """4326 -> UTM -> 4326 should recover original values."""
         from xrspatial.reproject import reproject
@@ -1991,6 +2166,303 @@ class TestValidateMergeGridParams:
         valid = ~np.isnan(v16) & ~np.isnan(v0)
         assert valid.any()
         np.testing.assert_allclose(v0[valid], v16[valid], rtol=1e-10)
+
+
+# =====================================================================
+# Issue #2184: irregular / non-monotonic source coords are rejected
+# =====================================================================
+
+
+def _regular_raster(h=8, w=8):
+    """Strictly regular raster used as the baseline in coord-validation tests."""
+    return _gradient_raster(h=h, w=w)
+
+
+class TestValidateSourceCoords:
+    """reproject() and merge() reject irregular / non-monotonic source coords."""
+
+    # ------------------------------------------------------------------
+    # Positive cases: well-formed inputs pass through.
+    # ------------------------------------------------------------------
+
+    def test_reproject_accepts_regular_descending_y(self):
+        from xrspatial.reproject import reproject
+        # _gradient_raster builds y descending (north-up), x ascending.
+        out = reproject(_regular_raster(), 'EPSG:4326', resolution=1.0)
+        assert out.shape[0] > 0 and out.shape[1] > 0
+
+    def test_reproject_accepts_regular_ascending_y(self):
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(-5, 5, h)   # ascending
+        x = np.linspace(-5, 5, w)
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        out = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert out.shape[0] > 0 and out.shape[1] > 0
+
+    def test_reproject_accepts_tiny_floating_drift(self):
+        """Coords from real-world GeoTIFFs drift a few ULPs; that must pass."""
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        x = np.linspace(-5, 5, w)
+        # Inject sub-ULP-scale drift well below the 1e-6 relative tolerance.
+        rng = np.random.default_rng(0)
+        x = x + rng.uniform(-1e-10, 1e-10, size=w)
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        out = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert out.shape[0] > 0 and out.shape[1] > 0
+
+    def test_reproject_accepts_single_pixel_raster(self):
+        """Single-pixel rasters have no spacing to validate."""
+        from xrspatial.reproject import reproject
+        raster = xr.DataArray(
+            np.zeros((1, 1), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': [0.0], 'x': [0.0]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        # Should not raise; output grid math falls back to res=1.0.
+        out = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert out.size >= 1
+
+    # ------------------------------------------------------------------
+    # Irregular spacing.
+    # ------------------------------------------------------------------
+
+    def test_reproject_rejects_irregular_x(self):
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        x = np.linspace(-5, 5, w)
+        x[4] += 0.1  # perturb one sample
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"coordinate 'x' is not regularly"):
+            reproject(raster, 'EPSG:3857')
+
+    def test_reproject_rejects_irregular_y(self):
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        y[3] += 0.05
+        x = np.linspace(-5, 5, w)
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"coordinate 'y' is not regularly"):
+            reproject(raster, 'EPSG:3857')
+
+    def test_reproject_irregular_error_names_index(self):
+        """The error message points at the offending sample index."""
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        x = np.linspace(-5, 5, w)
+        x[5] += 0.2
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError) as exc:
+            reproject(raster, 'EPSG:3857')
+        msg = str(exc.value)
+        # Step index 4 (x[4]->x[5]) or 5 (x[5]->x[6]) is the worst,
+        # both touch the perturbed sample.
+        assert "at index 4" in msg or "at index 5" in msg
+        assert "Median step" in msg
+
+    # ------------------------------------------------------------------
+    # Non-monotonic coords.
+    # ------------------------------------------------------------------
+
+    def test_reproject_rejects_non_monotonic_x(self):
+        from xrspatial.reproject import reproject
+        h, w = 4, 4
+        y = np.linspace(5, -5, h)
+        x = np.array([0.0, 1.0, 0.5, 2.0])
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"coordinate 'x' must be strictly"):
+            reproject(raster, 'EPSG:3857')
+
+    def test_reproject_rejects_non_monotonic_y(self):
+        from xrspatial.reproject import reproject
+        h, w = 4, 4
+        y = np.array([0.0, 1.0, 0.5, 2.0])
+        x = np.linspace(-5, 5, w)
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"coordinate 'y' must be strictly"):
+            reproject(raster, 'EPSG:3857')
+
+    def test_reproject_rejects_repeated_coord(self):
+        """Repeated values break strict monotonicity (zero step)."""
+        from xrspatial.reproject import reproject
+        h, w = 4, 4
+        y = np.linspace(5, -5, h)
+        x = np.array([0.0, 1.0, 1.0, 2.0])
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError,
+                           match=r"coordinate 'x' must be strictly monotonic"):
+            reproject(raster, 'EPSG:3857')
+
+    def test_reproject_rejects_nan_in_coord(self):
+        from xrspatial.reproject import reproject
+        h, w = 4, 4
+        y = np.linspace(5, -5, h)
+        x = np.array([0.0, 1.0, np.nan, 3.0])
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"non-finite"):
+            reproject(raster, 'EPSG:3857')
+
+    # ------------------------------------------------------------------
+    # Validation runs before expensive work.
+    # ------------------------------------------------------------------
+
+    def test_reproject_rejects_irregular_before_crs_resolution(self):
+        """Bad coords must be caught even when source_crs is unresolvable.
+
+        If validation ran after CRS resolution, an irregular raster with no
+        CRS attribute would raise the "Could not detect source CRS" error
+        first, hiding the real defect.
+        """
+        from xrspatial.reproject import reproject
+        h, w = 4, 4
+        y = np.linspace(5, -5, h)
+        x = np.array([0.0, 1.0, 1.5, 2.0])  # irregular
+        raster = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            # NB: no crs attr -- detection would normally raise here.
+        )
+        with pytest.raises(ValueError, match=r"not regularly"):
+            reproject(raster, 'EPSG:3857')
+
+    # ------------------------------------------------------------------
+    # merge() applies the same checks.
+    # ------------------------------------------------------------------
+
+    def test_merge_rejects_irregular_x(self):
+        from xrspatial.reproject import merge
+        good = _regular_raster()
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        x = np.linspace(-5, 5, w)
+        x[4] += 0.1
+        bad = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"rasters\[1\].*coordinate 'x'"):
+            merge([good, bad], resolution=1.0)
+
+    def test_merge_rejects_non_monotonic_y(self):
+        from xrspatial.reproject import merge
+        h, w = 4, 4
+        y = np.array([0.0, 1.0, 0.5, 2.0])
+        x = np.linspace(-5, 5, w)
+        bad = xr.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"coordinate 'y' must be strictly"):
+            merge([bad], resolution=1.0)
+
+    # ------------------------------------------------------------------
+    # Backends: validation fires identically regardless of array type.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask not installed")
+    def test_reproject_rejects_irregular_dask(self):
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        x = np.linspace(-5, 5, w)
+        x[4] += 0.1
+        raster = xr.DataArray(
+            da.zeros((h, w), dtype=np.float64, chunks=(4, 4)),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"not regularly"):
+            reproject(raster, 'EPSG:3857')
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy not installed")
+    def test_reproject_rejects_irregular_cupy(self):
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        x = np.linspace(-5, 5, w)
+        x[4] += 0.1
+        raster = xr.DataArray(
+            cp.zeros((h, w), dtype=cp.float64),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"not regularly"):
+            reproject(raster, 'EPSG:3857')
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask and cupy required")
+    def test_reproject_rejects_irregular_dask_cupy(self):
+        from xrspatial.reproject import reproject
+        h, w = 8, 8
+        y = np.linspace(5, -5, h)
+        x = np.linspace(-5, 5, w)
+        x[4] += 0.1
+        raster = xr.DataArray(
+            da.from_array(cp.zeros((h, w), dtype=cp.float64), chunks=(4, 4)),
+            dims=('y', 'x'),
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match=r"not regularly"):
+            reproject(raster, 'EPSG:3857')
 
 
 # =====================================================================
@@ -4029,6 +4501,158 @@ class TestMerge3DRejection:
         )
         with pytest.raises(ValueError, match=r"must be 2D"):
             merge([a, b], resolution=1.0)
+
+
+# =====================================================================
+# Issue #2182: 3-D (band, y, x) inputs across all backends
+# =====================================================================
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
+class TestReproject3DBandFirst:
+    """reproject() must accept (band, y, x) inputs (rasterio convention).
+
+    Before the fix, the worker sliced the source as ``source_data[r:, c:]``
+    and read ``window.shape[2]`` for the band count, both of which assume
+    a trailing band axis. A ``(band, y, x)`` source therefore sliced the
+    band/y axes instead of y/x and either crashed with a coord-length
+    mismatch or returned wrong-shape data (#2182).
+    """
+
+    @staticmethod
+    def _make_band_first_raster(rng_seed=2182, h=32, w=32, n_bands=3,
+                                dtype=np.float32):
+        rng = np.random.default_rng(rng_seed)
+        data = rng.random((h, w, n_bands), dtype=np.float32).astype(dtype)
+        # Build (y, x, band) first so we can transpose to (band, y, x) and
+        # keep coords aligned to the same underlying values.
+        yxb = xr.DataArray(
+            data,
+            dims=['y', 'x', 'band'],
+            coords={
+                'y': np.linspace(55, 45, h),
+                'x': np.linspace(-5, 5, w),
+                'band': list(range(n_bands)),
+            },
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        return yxb.transpose('band', 'y', 'x')
+
+    def test_band_first_numpy_dims_preserved(self):
+        """``(band, y, x)`` input must produce ``(band, y, x)`` output."""
+        from xrspatial.reproject import reproject
+        raster = self._make_band_first_raster()
+        result = reproject(raster, 'EPSG:32633')
+        assert result.dims == ('band', 'y', 'x')
+        assert result.shape[0] == 3
+        assert np.any(np.isfinite(result.values))
+
+    def test_band_first_numpy_band_coord_preserved(self):
+        """Band coord values must round-trip through reproject."""
+        from xrspatial.reproject import reproject
+        raster = self._make_band_first_raster(n_bands=3)
+        result = reproject(raster, 'EPSG:32633')
+        assert 'band' in result.coords
+        assert list(result.coords['band'].values) == [0, 1, 2]
+
+    def test_band_first_matches_band_last(self):
+        """The two layouts must produce identical pixel values."""
+        from xrspatial.reproject import reproject
+        bxy = self._make_band_first_raster()
+        yxb = bxy.transpose('y', 'x', 'band')
+        out_bxy = reproject(bxy, 'EPSG:32633').transpose('y', 'x', 'band')
+        out_yxb = reproject(yxb, 'EPSG:32633')
+        np.testing.assert_array_equal(
+            np.asarray(out_bxy.values), np.asarray(out_yxb.values),
+        )
+
+    def test_band_first_uint8_dtype_roundtrip(self):
+        """Integer (band, y, x) inputs round-trip to source dtype."""
+        from xrspatial.reproject import reproject
+        rng = np.random.default_rng(11)
+        data = rng.integers(0, 255, (3, 32, 32), dtype=np.uint8)
+        raster = xr.DataArray(
+            data,
+            dims=['band', 'y', 'x'],
+            coords={
+                'band': [1, 2, 3],
+                'y': np.linspace(55, 45, 32),
+                'x': np.linspace(-5, 5, 32),
+            },
+            attrs={'crs': 'EPSG:4326', 'nodata': 0},
+        )
+        result = reproject(raster, 'EPSG:32633')
+        assert result.dtype == np.uint8
+        assert result.dims == ('band', 'y', 'x')
+        assert result.shape[0] == 3
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_band_first_dask_lazy_shape(self):
+        """Lazy dask (band, y, x) DataArray must advertise 3-D shape."""
+        from xrspatial.reproject import reproject
+        raster = self._make_band_first_raster()
+        raster = raster.copy(
+            data=da.from_array(raster.values, chunks=(3, 16, 16))
+        )
+        result = reproject(raster, 'EPSG:32633')
+        assert result.ndim == 3
+        assert result.dims == ('band', 'y', 'x')
+        assert result.shape[0] == 3
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_band_first_dask_compute(self):
+        """Computed dask result keeps band axis without ValueError."""
+        from xrspatial.reproject import reproject
+        raster = self._make_band_first_raster()
+        raster = raster.copy(
+            data=da.from_array(raster.values, chunks=(3, 16, 16))
+        )
+        result = reproject(raster, 'EPSG:32633').compute()
+        assert result.dims == ('band', 'y', 'x')
+        assert result.shape[0] == 3
+        assert np.any(np.isfinite(result.values))
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_band_first_dask_matches_numpy(self):
+        """Dask (band, y, x) output must match eager numpy output."""
+        from xrspatial.reproject import reproject
+        host = self._make_band_first_raster()
+        eager = reproject(host, 'EPSG:32633')
+        lazy_src = host.copy(
+            data=da.from_array(host.values, chunks=(3, 16, 16))
+        )
+        lazy = reproject(lazy_src, 'EPSG:32633').compute()
+        np.testing.assert_allclose(
+            np.asarray(eager.values), np.asarray(lazy.values),
+            rtol=1e-6, atol=1e-6, equal_nan=True,
+        )
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+    def test_band_first_cupy(self):
+        """CuPy (band, y, x) reproject keeps band dim and dim order."""
+        from xrspatial.reproject import reproject
+        host = self._make_band_first_raster()
+        gpu_data = cp.asarray(host.values)
+        raster = host.copy(data=gpu_data)
+        result = reproject(raster, 'EPSG:32633')
+        assert result.dims == ('band', 'y', 'x')
+        assert result.shape[0] == 3
+        out = (cp.asnumpy(result.data) if isinstance(result.data, cp.ndarray)
+               else np.asarray(result.values))
+        assert np.any(np.isfinite(out))
+
+    @pytest.mark.skipif(
+        not (HAS_CUPY and HAS_DASK), reason="CuPy + dask required",
+    )
+    def test_band_first_dask_cupy(self):
+        """dask+cupy (band, y, x) reproject keeps band dim and dim order."""
+        from xrspatial.reproject import reproject
+        host = self._make_band_first_raster()
+        gpu_data = da.from_array(cp.asarray(host.values), chunks=(3, 16, 16))
+        raster = host.copy(data=gpu_data)
+        result = reproject(raster, 'EPSG:32633')
+        assert result.dims == ('band', 'y', 'x')
+        computed = result.compute()
+        assert computed.shape[0] == 3
 
 
 # ---------------------------------------------------------------------------

@@ -17,20 +17,17 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from .._attrs import (
-    _populate_attrs_from_geo_info,
-    _set_nodata_attrs,
-    _validate_read_geo_info,
-)
+from .._attrs import _apply_caller_dtype_cast, _finalize_lazy_read_attrs
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
     geo_to_coords as _geo_to_coords,
 )
-from .._reader import read_to_array as _read_to_array
+from .._reader import _MAX_CLOUD_BYTES_SENTINEL, read_to_array as _read_to_array
+from .._runtime import _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL
 from .._validation import (
     _validate_chunks_arg,
+    _validate_dispatch_kwargs,
     _validate_dtype_cast,
-    _validate_overview_level_arg,
 )
 from .vrt import read_vrt
 
@@ -43,6 +40,9 @@ def read_geotiff_dask(source: str, *,
                       name: str | None = None,
                       chunks: int | tuple = 512,
                       max_pixels: int | None = None,
+                      max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
+                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                      missing_sources: str = _MISSING_SOURCES_SENTINEL,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
                       band_nodata: str | None = None,
@@ -109,13 +109,28 @@ def read_geotiff_dask(source: str, *,
 
     from .._reader import _coerce_path
 
-    # Match ``open_geotiff``'s ordering so a bad ``overview_level`` is
-    # reported before unrelated source / ``chunks=`` errors mask it
-    # (issue #2160). ``select_overview_ifd`` revalidates as defense in
-    # depth.
-    _validate_overview_level_arg(overview_level)
-
     source = _coerce_path(source)
+
+    # Shared dispatcher-kwarg validator so direct callers see the same
+    # rejections as ``open_geotiff`` (issue #2175 / parent #2162).
+    # Runs ``_validate_overview_level_arg`` first to match ``open_geotiff``'s
+    # ordering -- a bad ``overview_level`` is reported before unrelated
+    # source / ``chunks=`` errors mask it (issue #2160). The helper also
+    # rejects ``on_gpu_failure`` (CPU dask has no GPU policy),
+    # ``missing_sources`` on non-VRT, ``band_nodata`` on non-VRT (issue
+    # #1987), ``max_cloud_bytes`` (dask reader does not apply the
+    # cloud-byte budget, issue #1974), and the file-like-source guard.
+    # ``gpu=False`` because this entry point is always CPU dask.
+    _validate_dispatch_kwargs(
+        source=source,
+        gpu=False,
+        chunks=chunks,
+        overview_level=overview_level,
+        on_gpu_failure=on_gpu_failure,
+        missing_sources=missing_sources,
+        band_nodata=band_nodata,
+        max_cloud_bytes=max_cloud_bytes,
+    )
 
     # Reject non-positive chunk sizes up front. ``chunks=0`` and negative
     # values otherwise propagate into dask chunk math (``range(0, N, 0)``
@@ -134,6 +149,9 @@ def read_geotiff_dask(source: str, *,
     # rather than letting the windowed-read path try to parse VRT XML as
     # TIFF bytes. ``read_vrt`` is the single source of truth for VRT.
     if isinstance(source, str) and source.lower().endswith('.vrt'):
+        vrt_kwargs = {}
+        if missing_sources is not _MISSING_SOURCES_SENTINEL:
+            vrt_kwargs['missing_sources'] = missing_sources
         return read_vrt(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
@@ -141,17 +159,8 @@ def read_geotiff_dask(source: str, *,
             allow_unparseable_crs=allow_unparseable_crs,
             band_nodata=band_nodata,
             mask_nodata=mask_nodata,
+            **vrt_kwargs,
         )
-    # ``band_nodata`` only has meaning for the VRT path (per-band sentinel
-    # ambiguity). Reject the kwarg up front on non-VRT GeoTIFF inputs so
-    # callers learn the opt-out is being dropped, matching the
-    # ``open_geotiff`` guard. See issue #1987 PR 5.
-    if band_nodata is not None:
-        raise ValueError(
-            "band_nodata only applies to VRT sources. "
-            "Pass a .vrt path to enable the VRT pipeline, or drop "
-            "band_nodata to keep the default GeoTIFF path. "
-            "See issue #1987.")
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
@@ -355,34 +364,39 @@ def read_geotiff_dask(source: str, *,
         import os
         name = os.path.splitext(os.path.basename(source))[0]
 
-    # Issue #1987 ambiguous-metadata checks.
-    _validate_read_geo_info(
-        geo_info, window=window,
+    # Wave 2 of #2162: share the validate-then-populate-then-stamp
+    # block with the dask+GPU backend via ``_finalize_lazy_read_attrs``.
+    #
+    # The helper conflates two ``dtype`` concepts (see the helper
+    # docstring): the **graph dtype** used to compute ``masked_nodata``
+    # and the **caller cast** recorded as ``nodata_dtype_cast``. The
+    # dask path distinguishes the two because masking on an integer
+    # source auto-promotes the graph dtype to ``float64`` without the
+    # caller asking for a cast, and we do not want that auto-promotion
+    # to surface as ``nodata_dtype_cast``.
+    #
+    # Pass ``target_dtype`` so ``masked_nodata`` reflects the resolved
+    # graph dtype, then overwrite ``nodata_dtype_cast`` to match the
+    # caller-supplied ``dtype=`` kwarg: omitted when ``dtype is None``,
+    # set to ``np.dtype(dtype).name`` otherwise. This preserves the
+    # pre-helper attr contract on the dask path.
+    #
+    # ``nodata_attr`` (not the MinIsWhite-inverted ``nodata``) is what
+    # ``attrs['nodata']`` must carry; the helper threads it through
+    # ``_set_nodata_attrs``. ``nodata_pixels_present`` stays unset on
+    # this path so the lazy contract from #2135 holds (a strict
+    # per-chunk reduction would force eager compute).
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=geo_info,
+        nodata=nodata_attr,
+        mask_nodata=mask_nodata,
+        dtype=target_dtype,
+        window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``masked_nodata`` reflects whether per-chunk masking actually
-    # runs in the lazy graph (#2092). With ``mask_nodata=False`` each
-    # chunk skips the sentinel-to-NaN step, so even if the graph
-    # dtype happens to be float (e.g. caller-supplied ``dtype=float64``
-    # on an int file), the in-memory buffers hold literal sentinel
-    # values. True iff the caller opted into masking and the graph
-    # dtype is float.
-    # ``nodata_pixels_present`` is intentionally left unset on the
-    # dask path (issue #2135). A strict per-chunk reduction would force
-    # an eager ``.compute()`` here, defeating the lazy contract; callers
-    # that need the answer can fall back to scanning the materialised
-    # array. ``nodata_dtype_cast`` is recorded when the caller passed an
-    # explicit ``dtype=`` kwarg so downstream can tell float-by-cast
-    # apart from float-by-masking on the lazy output.
-    _set_nodata_attrs(
-        attrs, nodata_attr,
-        masked=(mask_nodata and target_dtype.kind == 'f'),
-        pixels_present=None,
-        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
+    _apply_caller_dtype_cast(
+        attrs, caller_dtype=dtype, has_nodata=nodata_attr is not None,
     )
 
     if isinstance(chunks, int):

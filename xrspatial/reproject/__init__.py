@@ -88,6 +88,93 @@ def _find_spatial_dims(raster):
     return dims[-2], dims[-1]
 
 
+# Default tolerance for the regular-spacing check. Coordinates loaded from
+# real GeoTIFFs can drift a few ULPs from perfectly uniform after pixel-to-
+# world transforms, so 1e-6 (relative) is loose enough to accept those while
+# still catching the single-pixel perturbation case in #2184.
+_REGULAR_COORD_RTOL = 1e-6
+
+
+def _validate_regular_axis(coords, axis_name, func_name, rtol=_REGULAR_COORD_RTOL):
+    """Validate that 1-D coordinate array is strictly monotonic and regular.
+
+    Pixel-resolution math in `_source_bounds` and the chunk workers assumes
+    a uniform grid. Without this check, irregular or non-monotonic coords
+    silently produce wrong georeferencing (see #2184).
+
+    Parameters
+    ----------
+    coords : array-like
+        1-D coordinate values along one axis.
+    axis_name : str
+        Name of the axis ("x" or "y") for the error message.
+    func_name : str
+        Calling function name for the error prefix.
+    rtol : float
+        Relative tolerance for spacing regularity.
+
+    Raises
+    ------
+    ValueError
+        If coords contain non-finite values, are not strictly monotonic,
+        or have spacing that varies by more than ``rtol`` relative to the
+        median step.
+    """
+    arr = np.asarray(coords)
+    if arr.ndim != 1:
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' must be 1-D, "
+            f"got shape {arr.shape}."
+        )
+    if arr.size < 2:
+        # A single-pixel raster has no spacing to validate; the caller
+        # will fall back to res=1.0 in _source_bounds, which is fine.
+        return
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' contains non-finite "
+            f"values (NaN or inf)."
+        )
+    # np.asarray skips the copy when arr is already float64; np.diff promotes
+    # ints to int64, which is fine but we want float steps for the median /
+    # tolerance math below.
+    diffs = np.diff(np.asarray(arr, dtype=np.float64))
+    # Strict monotonicity: every step has the same sign and is non-zero.
+    # `diffs > 0` AND `diffs < 0` are both False for zero steps (repeated
+    # coords), so the combined check rejects them. Do NOT replace this with
+    # a sign-only test like `np.all(np.sign(diffs) == np.sign(diffs[0]))` --
+    # that variant accepts zero steps and lets a repeated coord through.
+    if not (np.all(diffs > 0) or np.all(diffs < 0)):
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' must be strictly "
+            f"monotonic (all ascending or all descending). The reproject "
+            f"pipeline assumes a uniformly-spaced grid; see #2184."
+        )
+    median_step = float(np.median(diffs))
+    abs_med = abs(median_step)
+    deviation = np.abs(diffs - median_step)
+    worst = float(np.max(deviation))
+    if worst > rtol * abs_med:
+        # Report the index of the worst step in the original coords so the
+        # caller can locate the offending sample without re-running diff.
+        worst_idx = int(np.argmax(deviation))
+        raise ValueError(
+            f"{func_name}(): coordinate '{axis_name}' is not regularly "
+            f"spaced. Median step is {median_step!r}; worst deviation is "
+            f"{worst!r} at index {worst_idx} (between {axis_name}[{worst_idx}]"
+            f"={float(arr[worst_idx])!r} and {axis_name}[{worst_idx + 1}]"
+            f"={float(arr[worst_idx + 1])!r}). The reproject pipeline "
+            f"assumes a uniformly-spaced grid; see #2184."
+        )
+
+
+def _validate_source_coords(raster, func_name):
+    """Validate both spatial axes of a raster before any reproject work."""
+    ydim, xdim = _find_spatial_dims(raster)
+    _validate_regular_axis(raster.coords[ydim].values, 'y', func_name)
+    _validate_regular_axis(raster.coords[xdim].values, 'x', func_name)
+
+
 def _source_bounds(raster):
     """Extract (left, bottom, right, top) from a DataArray's coordinates."""
     ydim, xdim = _find_spatial_dims(raster)
@@ -118,6 +205,20 @@ def _is_y_descending(raster):
     if len(y) < 2:
         return True
     return float(y[0]) > float(y[-1])
+
+
+def _is_x_descending(raster):
+    """Check if X axis goes from right (large) to left (small).
+
+    Mirrors :func:`_is_y_descending` for the horizontal axis. The default
+    convention for a single-column raster is ascending x (matching
+    :func:`_make_output_coords` which always emits ascending x).
+    """
+    _, xdim = _find_spatial_dims(raster)
+    x = raster.coords[xdim].values
+    if len(x) < 2:
+        return False
+    return float(x[0]) > float(x[-1])
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +299,16 @@ def _reproject_chunk_numpy(
     src_wkt, tgt_wkt,
     chunk_bounds_tuple, chunk_shape,
     resampling, nodata, transform_precision,
+    source_x_desc=False,
 ):
     """Reproject a single output chunk (numpy backend).
 
     Called inside ``dask.delayed`` for the dask path, or directly for numpy.
     CRS objects are passed as WKT strings for pickle safety.
+
+    ``source_x_desc`` mirrors ``source_y_desc`` for the horizontal axis:
+    when True, source column 0 is at the maximum x and column ``src_w-1``
+    is at the minimum x. Defaults to False so older callers keep working.
     """
     from ._crs_utils import _crs_from_wkt
 
@@ -239,7 +345,10 @@ def _reproject_chunk_numpy(
     src_res_x = (src_right - src_left) / src_w
     src_res_y = (src_top - src_bottom) / src_h
 
-    src_col_px = (src_x - src_left) / src_res_x - 0.5
+    if source_x_desc:
+        src_col_px = (src_right - src_x) / src_res_x - 0.5
+    else:
+        src_col_px = (src_x - src_left) / src_res_x - 0.5
     if source_y_desc:
         src_row_px = (src_top - src_y) / src_res_y - 0.5
     else:
@@ -336,8 +445,13 @@ def _reproject_chunk_cupy(
     src_wkt, tgt_wkt,
     chunk_bounds_tuple, chunk_shape,
     resampling, nodata, transform_precision,
+    source_x_desc=False,
 ):
-    """CuPy variant of ``_reproject_chunk_numpy``."""
+    """CuPy variant of ``_reproject_chunk_numpy``.
+
+    ``source_x_desc`` carries the horizontal direction flag (same meaning
+    as in :func:`_reproject_chunk_numpy`).
+    """
     import cupy as cp
 
     from ._crs_utils import _crs_from_wkt
@@ -370,7 +484,10 @@ def _reproject_chunk_cupy(
         src_res_x = (src_right - src_left) / src_w
         src_res_y = (src_top - src_bottom) / src_h
         # Pixel coordinate math stays on GPU via cupy operators
-        src_col_px = (src_x - src_left) / src_res_x - 0.5
+        if source_x_desc:
+            src_col_px = (src_right - src_x) / src_res_x - 0.5
+        else:
+            src_col_px = (src_x - src_left) / src_res_x - 0.5
         if source_y_desc:
             src_row_px = (src_top - src_y) / src_res_y - 0.5
         else:
@@ -411,7 +528,10 @@ def _reproject_chunk_cupy(
         src_res_x = (src_right - src_left) / src_w
         src_res_y = (src_top - src_bottom) / src_h
 
-        src_col_px = (src_x - src_left) / src_res_x - 0.5
+        if source_x_desc:
+            src_col_px = (src_right - src_x) / src_res_x - 0.5
+        else:
+            src_col_px = (src_x - src_left) / src_res_x - 0.5
         if source_y_desc:
             src_row_px = (src_top - src_y) / src_res_y - 0.5
         else:
@@ -631,9 +751,13 @@ def reproject(
         explicit.
 
         The output y coordinate is always emitted in descending order
-        (top-down, north-up) regardless of the input direction. This
-        matches the standard raster convention and the output of common
-        GIS libraries.
+        (top-down, north-up) and the output x coordinate is always
+        emitted in ascending order (left-to-right) regardless of the
+        input directions. This matches the standard raster convention
+        and the output of common GIS libraries. Inputs with descending
+        x are detected from the x coordinate values and handled the
+        same way as descending y: the pixel-index mapping is mirrored
+        so the output values stay correct.
 
         Non-spatial coords from the input (such as a scalar ``time``
         coord or a non-dimension coord that is not aligned to the
@@ -660,6 +784,13 @@ def reproject(
     _validate_raster(raster, func_name='reproject', name='raster',
                      ndim=(2, 3))
 
+    # Reject irregular / non-monotonic source coords before any CRS
+    # resolution or grid math. _source_bounds() infers pixel size from
+    # only the first two coord samples and downstream pixel math assumes
+    # uniform spacing, so an unchecked irregular input would silently
+    # produce wrong georeferencing (#2184).
+    _validate_source_coords(raster, 'reproject')
+
     _validate_grid_params(
         resolution=resolution,
         bounds=bounds,
@@ -684,6 +815,24 @@ def reproject(
                 f"{sorted(_VERTICAL_DATUM_EPSG)} or None."
             )
 
+    # Normalize 3-D inputs to canonical (y, x, band) layout.
+    # The per-chunk workers slice the source as ``source_data[r:, c:]`` and
+    # assume the band axis is trailing. A rasterio/rioxarray-style
+    # ``(band, y, x)`` input would otherwise slice the band/y axes instead
+    # of the y/x axes and either crash or return wrong-shape data (#2182).
+    # We record the input's original dim order so the output can be
+    # transposed back at the end, preserving downstream expectations.
+    _input_dims = tuple(raster.dims)
+    if raster.ndim == 3:
+        _ydim_in, _xdim_in = _find_spatial_dims(raster)
+        _band_dims_in = [d for d in _input_dims
+                         if d not in (_ydim_in, _xdim_in)]
+        _band_dim_in = _band_dims_in[0] if _band_dims_in else None
+        if _band_dim_in is not None:
+            _canonical = (_ydim_in, _xdim_in, _band_dim_in)
+            if _input_dims != _canonical:
+                raster = raster.transpose(*_canonical)
+
     # Resolve CRS
     src_crs = _resolve_crs(source_crs)
     if src_crs is None:
@@ -706,6 +855,7 @@ def reproject(
     _ydim, _xdim = _find_spatial_dims(raster)
     src_shape = (raster.sizes[_ydim], raster.sizes[_xdim])
     y_desc = _is_y_descending(raster)
+    x_desc = _is_x_descending(raster)
 
     # Compute output grid
     grid = _compute_output_grid(
@@ -777,6 +927,7 @@ def reproject(
             resampling, nd, transform_precision,
             chunk_size or 2048,
             _parse_max_memory(max_memory),
+            x_desc=x_desc,
         )
     elif is_dask and is_cupy:
         result_data = _reproject_dask_cupy(
@@ -785,6 +936,7 @@ def reproject(
             out_bounds, out_shape,
             resampling, nd, transform_precision,
             chunk_size,
+            x_desc=x_desc,
         )
     elif is_dask:
         result_data = _reproject_dask(
@@ -793,6 +945,7 @@ def reproject(
             out_bounds, out_shape,
             resampling, nd, transform_precision,
             chunk_size, False,
+            x_desc=x_desc,
         )
     elif is_cupy:
         result_data = _reproject_inmemory_cupy(
@@ -800,6 +953,7 @@ def reproject(
             src_wkt, tgt_wkt,
             out_bounds, out_shape,
             resampling, nd, transform_precision,
+            x_desc=x_desc,
         )
     else:
         result_data = _reproject_inmemory_numpy(
@@ -807,6 +961,7 @@ def reproject(
             src_wkt, tgt_wkt,
             out_bounds, out_shape,
             resampling, nd, transform_precision,
+            x_desc=x_desc,
         )
 
     # Vertical datum transformation (if requested)
@@ -895,6 +1050,14 @@ def reproject(
         name=name or raster.name,
         attrs=out_attrs,
     )
+
+    # Preserve the input's dim order so a ``(band, y, x)`` source produces a
+    # ``(band, y, x)`` output (#2182). The internal pipeline always builds the
+    # array as ``(y, x, band)`` for 3-D rasters; transpose back here.
+    if result.ndim == 3 and set(_input_dims) == set(result.dims):
+        if tuple(result.dims) != _input_dims:
+            result = result.transpose(*_input_dims)
+
     return result
 
 
@@ -1103,6 +1266,7 @@ def _reproject_inmemory_numpy(
     src_wkt, tgt_wkt,
     out_bounds, out_shape,
     resampling, nodata, precision,
+    x_desc=False,
 ):
     """Single-chunk numpy reproject."""
     return _reproject_chunk_numpy(
@@ -1111,6 +1275,7 @@ def _reproject_inmemory_numpy(
         src_wkt, tgt_wkt,
         out_bounds, out_shape,
         resampling, nodata, precision,
+        source_x_desc=x_desc,
     )
 
 
@@ -1119,6 +1284,7 @@ def _reproject_inmemory_cupy(
     src_wkt, tgt_wkt,
     out_bounds, out_shape,
     resampling, nodata, precision,
+    x_desc=False,
 ):
     """Single-chunk cupy reproject."""
     return _reproject_chunk_cupy(
@@ -1127,6 +1293,7 @@ def _reproject_inmemory_cupy(
         src_wkt, tgt_wkt,
         out_bounds, out_shape,
         resampling, nodata, precision,
+        source_x_desc=x_desc,
     )
 
 
@@ -1145,7 +1312,7 @@ def _parse_max_memory(max_memory):
 
 def _process_tile_batch(batch, source_data, src_bounds, src_shape, y_desc,
                         src_wkt, tgt_wkt, resampling, nodata, precision,
-                        max_memory_bytes, tile_mem):
+                        max_memory_bytes, tile_mem, x_desc=False):
     """Process a batch of tiles within a single worker.
 
     Uses ThreadPoolExecutor for intra-worker parallelism (Numba
@@ -1163,6 +1330,7 @@ def _process_tile_batch(batch, source_data, src_bounds, src_shape, y_desc,
             src_wkt, tgt_wkt,
             cb, (rchunk, cchunk),
             resampling, nodata, precision,
+            source_x_desc=x_desc,
         )
 
     results = []
@@ -1194,6 +1362,7 @@ def _reproject_streaming(
     out_bounds, out_shape,
     resampling, nodata, precision,
     tile_size, max_memory_bytes,
+    x_desc=False,
 ):
     """Streaming reproject for datasets too large for dask's graph.
 
@@ -1258,6 +1427,7 @@ def _reproject_streaming(
             src_wkt=src_wkt, tgt_wkt=tgt_wkt,
             resampling=resampling, nodata=nodata, precision=precision,
             max_memory_bytes=max_memory_bytes, tile_mem=tile_mem,
+            x_desc=x_desc,
         )
 
         # Compute all partitions and assemble result
@@ -1275,6 +1445,7 @@ def _reproject_streaming(
         src_wkt, tgt_wkt,
         resampling, nodata, precision,
         max_memory_bytes, tile_mem,
+        x_desc=x_desc,
     )
     for ro, co, tile in batch_results:
         result[ro:ro + tile.shape[0], co:co + tile.shape[1]] = tile
@@ -1288,6 +1459,7 @@ def _reproject_dask_cupy(
     out_bounds, out_shape,
     resampling, nodata, precision,
     chunk_size,
+    x_desc=False,
 ):
     """Dask+CuPy backend: process output chunks on GPU.
 
@@ -1331,6 +1503,7 @@ def _reproject_dask_cupy(
             out_bounds, out_shape,
             resampling, nodata, precision,
             chunk_size or 2048, True,  # is_cupy=True
+            x_desc=x_desc,
         )
 
     # Memory check: if the full output doesn't fit in GPU memory,
@@ -1355,6 +1528,7 @@ def _reproject_dask_cupy(
             out_bounds, out_shape,
             resampling, nodata, precision,
             chunk_size or 2048, True,  # is_cupy=True
+            x_desc=x_desc,
         )
 
     result = cp.full(out_shape, nodata, dtype=cp.float64)
@@ -1381,7 +1555,10 @@ def _reproject_dask_cupy(
 
             if cuda_coords is not None:
                 src_y, src_x = cuda_coords
-                src_col_px = (src_x - src_left) / src_res_x - 0.5
+                if x_desc:
+                    src_col_px = (src_right - src_x) / src_res_x - 0.5
+                else:
+                    src_col_px = (src_x - src_left) / src_res_x - 0.5
                 if y_desc:
                     src_row_px = (src_top - src_y) / src_res_y - 0.5
                 else:
@@ -1415,7 +1592,10 @@ def _reproject_dask_cupy(
                     transformer, cb, chunk_shape, precision,
                     src_crs=src_crs, tgt_crs=tgt_crs,
                 )
-                src_col_px = (src_x - src_left) / src_res_x - 0.5
+                if x_desc:
+                    src_col_px = (src_right - src_x) / src_res_x - 0.5
+                else:
+                    src_col_px = (src_x - src_left) / src_res_x - 0.5
                 if y_desc:
                     src_row_px = (src_top - src_y) / src_res_y - 0.5
                 else:
@@ -1545,6 +1725,7 @@ def _reproject_block_adapter(
     out_bounds, out_shape,
     resampling, nodata, precision,
     is_cupy, src_footprint_tgt, n_bands=None,
+    x_desc=False,
 ):
     """``map_blocks`` adapter for reprojection.
 
@@ -1583,6 +1764,7 @@ def _reproject_block_adapter(
         src_wkt, tgt_wkt,
         cb, chunk_shape,
         resampling, nodata, precision,
+        source_x_desc=x_desc,
     )
 
 
@@ -1592,6 +1774,7 @@ def _reproject_dask(
     out_bounds, out_shape,
     resampling, nodata, precision,
     chunk_size, is_cupy,
+    x_desc=False,
 ):
     """Dask+NumPy backend: ``map_blocks`` over a template array.
 
@@ -1646,6 +1829,7 @@ def _reproject_dask(
         is_cupy=is_cupy,
         src_footprint_tgt=src_footprint_tgt,
         n_bands=n_bands,
+        x_desc=x_desc,
     )
 
     # Pick the template dtype to match the eager path: integer sources
@@ -1789,6 +1973,11 @@ def merge(
         # (#2027). Reject 3-D up front so callers get a clear error.
         _validate_raster(r, func_name='merge', name=f'rasters[{i}]',
                          ndim=(2,))
+        # Each input must have strictly monotonic, regularly spaced spatial
+        # coords. _source_bounds() infers pixel size from only the first
+        # two samples, so irregular inputs would otherwise silently produce
+        # wrong georeferencing (#2184).
+        _validate_source_coords(r, f'merge[rasters[{i}]]')
 
     _validate_grid_params(
         resolution=resolution,
@@ -1834,6 +2023,7 @@ def merge(
         r_ydim, r_xdim = _find_spatial_dims(r)
         ss = (r.sizes[r_ydim], r.sizes[r_xdim])
         yd = _is_y_descending(r)
+        xd = _is_x_descending(r)
         # Per-raster input nodata sentinel. Detected independently of the
         # user-supplied output nodata so that mixed-sentinel inputs are
         # canonicalized correctly during merge. Pass the raster dtype so
@@ -1846,6 +2036,7 @@ def merge(
             'src_bounds': sb,
             'src_shape': ss,
             'y_desc': yd,
+            'x_desc': xd,
             'src_wkt': src_crs.to_wkt(),
             'raster_nodata': r_nd,
         })
@@ -1988,19 +2179,25 @@ def merge(
 
 
 def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
-                    out_bounds, out_shape, nodata):
+                    out_bounds, out_shape, nodata, x_desc=False):
     """Place a same-CRS tile into the output grid by coordinate alignment.
 
     No reprojection needed -- just index the output rows/columns that
     overlap with the source tile and copy the data.
 
-    The output grid is always north-up (row 0 is the top of
-    ``out_bounds``). When ``y_desc`` is ``False`` the source is
-    y-ascending (row 0 is the bottom of ``src_bounds``); in that case
-    the source window is flipped along y before being written so the
-    placed data has the same north-up orientation as the rest of the
-    output. Without this, ``merge([r])`` of a y-ascending raster
-    silently differs from ``reproject(r, target_crs=r.crs)`` (#2186).
+    The output grid is always north-up with ascending x (row 0 is the
+    top of ``out_bounds``, column 0 is the left edge). When ``y_desc``
+    is ``False`` the source is y-ascending (row 0 is the bottom of
+    ``src_bounds``); in that case the source window is flipped along y
+    before being written so the placed data has the same north-up
+    orientation as the rest of the output. Without this,
+    ``merge([r])`` of a y-ascending raster silently differs from
+    ``reproject(r, target_crs=r.crs)`` (#2186).
+
+    ``x_desc`` mirrors the same logic on the horizontal axis: when
+    True, ``src_data`` is laid out with column 0 at the maximum x, so
+    the source window is reversed along its column axis before
+    placement (#2183).
     """
     out_h, out_w = out_shape
     src_h, src_w = src_shape
@@ -2044,6 +2241,18 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
     if actual_cols <= 0:
         return out_data
 
+    # Resolve the source column slice. When ``x_desc`` is True the
+    # source has column 0 at max x, so we read a mirrored slice and
+    # reverse it; otherwise we read the natural left-to-right slice.
+    # ``src_col_start`` / ``src_c_end`` were computed above in
+    # ascending-x source space and stay valid for both branches.
+    if x_desc:
+        c_lo = src_w - src_c_end
+        c_hi = src_w - src_col_start
+    else:
+        c_lo = src_col_start
+        c_hi = src_c_end
+
     if y_desc:
         # Source is north-up: rows go top-to-bottom, same as output.
         # Output row R corresponds to source row ``R - row_start``.
@@ -2054,10 +2263,11 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
         if actual_rows <= 0:
             return out_data
         src_window = np.asarray(
-            src_data[src_row_start:src_r_end,
-                     src_col_start:src_c_end],
+            src_data[src_row_start:src_r_end, c_lo:c_hi],
             dtype=np.float64,
         )
+        if x_desc:
+            src_window = src_window[:, ::-1]
         out_row_start = row_start_clip
     else:
         # Source is south-up: source row 0 sits at the bottom of
@@ -2075,9 +2285,11 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
         if actual_rows <= 0:
             return out_data
         src_window = np.asarray(
-            src_data[src_lo:src_hi, src_col_start:src_c_end],
+            src_data[src_lo:src_hi, c_lo:c_hi],
             dtype=np.float64,
         )[::-1, :]
+        if x_desc:
+            src_window = src_window[:, ::-1]
         # The reversed slice's first row corresponds to source row
         # ``src_hi - 1``, which maps to output row ``row_end - src_hi``.
         # When the source is not clipped at the top, this equals
@@ -2118,6 +2330,7 @@ def _merge_inmemory(
                 info['raster'].values,
                 info['src_bounds'], info['src_shape'], info['y_desc'],
                 out_bounds, out_shape, r_nd,
+                x_desc=info.get('x_desc', False),
             )
         if placed is not None:
             arr = placed
@@ -2128,6 +2341,7 @@ def _merge_inmemory(
                 info['src_wkt'], tgt_wkt,
                 out_bounds, out_shape,
                 resampling, r_nd, transform_precision,
+                source_x_desc=info.get('x_desc', False),
             )
         # Canonicalize this raster's sentinel to NaN before the merge so
         # rasters with different sentinels merge correctly.
@@ -2149,6 +2363,7 @@ def _merge_block_adapter(
     out_bounds, out_shape,
     resampling, nodata, strategy, precision,
     src_footprints_tgt, raster_nodata_list, same_crs_list,
+    x_desc_list=None,
 ):
     """``map_blocks`` adapter for merge.
 
@@ -2170,6 +2385,7 @@ def _merge_block_adapter(
             continue
         r_nd = raster_nodata_list[i]
         placed = None
+        xd_i = x_desc_list[i] if x_desc_list is not None else False
         if same_crs_list[i]:
             # Same-CRS path: direct pixel placement (no resampling).
             # Pass the dask array straight through -- _place_same_crs
@@ -2181,6 +2397,7 @@ def _merge_block_adapter(
                 raster_data_list[i],
                 src_bounds_list[i], src_shape_list[i], y_desc_list[i],
                 cb, chunk_shape, r_nd,
+                x_desc=xd_i,
             )
         if placed is not None:
             arr = placed
@@ -2191,6 +2408,7 @@ def _merge_block_adapter(
                 src_wkt_list[i], tgt_wkt,
                 cb, chunk_shape,
                 resampling, r_nd, precision,
+                source_x_desc=xd_i,
             )
         if not np.isnan(r_nd):
             arr = np.asarray(arr, dtype=np.float64)
@@ -2221,6 +2439,7 @@ def _merge_dask(
     bounds_list = [info['src_bounds'] for info in raster_infos]
     shape_list = [info['src_shape'] for info in raster_infos]
     ydesc_list = [info['y_desc'] for info in raster_infos]
+    xdesc_list = [info.get('x_desc', False) for info in raster_infos]
     wkt_list = [info['src_wkt'] for info in raster_infos]
     rnodata_list = [
         info.get('raster_nodata', float('nan')) for info in raster_infos
@@ -2260,6 +2479,7 @@ def _merge_dask(
         src_footprints_tgt=footprints,
         raster_nodata_list=rnodata_list,
         same_crs_list=same_crs_list,
+        x_desc_list=xdesc_list,
     )
 
     template = da.empty(

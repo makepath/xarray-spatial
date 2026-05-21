@@ -21,6 +21,9 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import (
+    _apply_caller_dtype_cast,
+    _finalize_eager_read,
+    _finalize_lazy_read_attrs,
     _populate_attrs_from_geo_info,
     _set_nodata_attrs,
     _validate_read_geo_info,
@@ -28,21 +31,25 @@ from .._attrs import (
 from .._coords import (
     coords_from_geo_info as _coords_from_geo_info,
 )
-from .._reader import read_to_array as _read_to_array
+from .._reader import (
+    _MAX_CLOUD_BYTES_SENTINEL,
+    _coerce_path,
+    read_to_array as _read_to_array,
+)
 from .._runtime import (
     _GPU_DEPRECATED_SENTINEL,
+    _MISSING_SOURCES_SENTINEL,
     _ON_GPU_FAILURE_SENTINEL,
     _geotiff_strict_mode,
 )
 from .._validation import (
     _validate_chunks_arg,
+    _validate_dispatch_kwargs,
     _validate_dtype_cast,
-    _validate_overview_level_arg,
     _validate_predictor_sample_format,
 )
 from ._gpu_helpers import (
     _apply_nodata_mask_gpu,
-    _apply_nodata_mask_gpu_with_presence,
     _apply_orientation_geo_info,
     _apply_orientation_gpu,
     _gpu_apply_window_band,
@@ -85,9 +92,12 @@ def read_geotiff_gpu(source: str, *,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
+                     max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                     missing_sources: str = _MISSING_SOURCES_SENTINEL,
                      allow_rotated: bool = False,
                      allow_unparseable_crs: bool = False,
+                     band_nodata: str | None = None,
                      mask_nodata: bool = True,
                      gpu: str = _GPU_DEPRECATED_SENTINEL,
                      ) -> xr.DataArray:
@@ -197,11 +207,35 @@ def read_geotiff_gpu(source: str, *,
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
-    # Match ``open_geotiff``'s ordering so a bad ``overview_level`` is
-    # reported before unrelated ``on_gpu_failure`` / ``chunks=`` / source
-    # errors mask it (issue #2160). ``select_overview_ifd`` revalidates
-    # as defense in depth.
-    _validate_overview_level_arg(overview_level)
+    # Coerce ``pathlib.Path`` and other ``os.PathLike`` inputs to ``str``
+    # before the validator so the file-like guard inside
+    # ``_validate_dispatch_kwargs`` does not misclassify a Path as a
+    # file-like buffer (review feedback on #2175). The downstream
+    # ``_coerce_path`` call near the eager-path setup below is now a
+    # no-op for the same object but kept for the chunked branch's
+    # reuse of the same imported binding.
+    source = _coerce_path(source)
+
+    # Shared dispatcher-kwarg validator so direct callers see the same
+    # rejections as ``open_geotiff`` (issue #2175 / parent #2162). Runs
+    # ``_validate_overview_level_arg`` first to match ``open_geotiff``'s
+    # ordering -- a bad ``overview_level`` is reported before unrelated
+    # ``on_gpu_failure`` / ``chunks=`` / source errors mask it (issue
+    # #2160). The helper also rejects ``missing_sources`` on non-VRT,
+    # ``band_nodata`` on non-VRT (issue #1987), ``max_cloud_bytes`` (the
+    # GPU reader does not consume the cloud-byte budget, issue #1974),
+    # and the file-like-source guard. ``gpu=True`` because this entry
+    # point is always GPU.
+    _validate_dispatch_kwargs(
+        source=source,
+        gpu=True,
+        chunks=chunks,
+        overview_level=overview_level,
+        on_gpu_failure=on_gpu_failure,
+        missing_sources=missing_sources,
+        band_nodata=band_nodata,
+        max_cloud_bytes=max_cloud_bytes,
+    )
 
     new_passed = on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL
     old_passed = gpu is not _GPU_DEPRECATED_SENTINEL
@@ -271,7 +305,7 @@ def read_geotiff_gpu(source: str, *,
         )
 
     from .._reader import (
-        _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
+        _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT,
         _is_fsspec_uri, _max_tile_bytes_from_env, _resolve_masked_fill,
     )
     from .._compression import COMPRESSION_LERC
@@ -282,7 +316,8 @@ def read_geotiff_gpu(source: str, *,
     from .._geotags import extract_geo_info_with_overview_inheritance
     from .._gpu_decode import gpu_decode_tiles
 
-    source = _coerce_path(source)
+    # ``source`` is already coerced above (before the dispatch
+    # validator); no need to re-coerce here.
 
     if max_pixels is None:
         max_pixels = MAX_PIXELS_DEFAULT
@@ -467,68 +502,31 @@ def read_geotiff_gpu(source: str, *,
             if name is None:
                 import os
                 name = os.path.splitext(os.path.basename(source))[0]
-            _validate_read_geo_info(
-                geo_info, window=window,
+            # Hand the windowed+banded GPU buffer to the shared eager
+            # finalizer (issue #2179). ``read_to_array`` stashes the
+            # post-MinIsWhite sentinel on ``_stripped_geo._mask_nodata``
+            # for the masking step (#1809); fall back to the raw
+            # sentinel on non-MinIsWhite files. The helper's host-side
+            # mask block runs on CuPy arrays via numpy duck-typing and
+            # produces the same lifecycle attrs that
+            # ``_apply_nodata_mask_gpu_with_presence`` did inline.
+            nodata = geo_info.nodata
+            mask_sentinel = (
+                getattr(_stripped_geo, '_mask_nodata', nodata)
+                if nodata is not None else None
+            )
+            result = _finalize_eager_read(
+                arr_gpu,
+                geo_info=geo_info,
+                nodata=nodata,
+                mask_sentinel=mask_sentinel,
+                mask_nodata=mask_nodata,
+                dtype=dtype,
+                window=window,
+                name=name,
                 allow_rotated=allow_rotated,
                 allow_unparseable_crs=allow_unparseable_crs,
             )
-            attrs = {}
-            _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-            # Apply nodata mask + record sentinel so the GPU read agrees
-            # with the CPU eager path. Without this, integer rasters keep
-            # the literal sentinel value and float rasters keep the
-            # sentinel rather than NaN -- a silent backend divergence.
-            # ``read_to_array`` stashes the post-MinIsWhite sentinel on
-            # ``_mask_nodata`` when applicable; fall back to the original
-            # sentinel otherwise (#1809).
-            nodata = geo_info.nodata
-            nodata_pixels_present_attr: bool | None = None
-            if nodata is not None and mask_nodata:
-                mask_value = getattr(_stripped_geo, '_mask_nodata', nodata)
-                arr_gpu, nodata_pixels_present_attr = (
-                    _apply_nodata_mask_gpu_with_presence(arr_gpu, mask_value)
-                )
-            dtype_cast_attr: str | None = None
-            if dtype is not None:
-                target = np.dtype(dtype)
-                _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
-                arr_gpu = arr_gpu.astype(target)
-                dtype_cast_attr = target.name
-            # ``attrs['masked_nodata']`` reflects whether the function
-            # actually replaced sentinel pixels with NaN (#2092). With
-            # ``mask_nodata=False`` the GPU mask kernel above is
-            # skipped, so the buffer holds literal sentinel values
-            # even if the final dtype is float.
-            _set_nodata_attrs(
-                attrs, nodata,
-                masked=(mask_nodata
-                        and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
-                pixels_present=nodata_pixels_present_attr,
-                dtype_cast=dtype_cast_attr,
-            )
-            # ``read_to_array`` already applied window + band slicing, so
-            # ``arr_gpu`` is at output shape. Compute coords for that
-            # shape without re-slicing. Mirror the eager-numpy /
-            # ``read_geotiff_dask`` / ``_gpu_apply_window_band`` checks
-            # against ``has_georef``: a non-georef TIFF carries a
-            # default ``GeoTransform()`` placeholder (``t is None`` is
-            # never true here) so a transform-based coord path would
-            # emit synthetic ``[-0.5, -1.5, ...]`` floats instead of
-            # the integer pixel coords every other backend produces
-            # (#1753 / regression of #1710).
-            coords = _coords_from_geo_info(
-                geo_info, arr_gpu.shape[0], arr_gpu.shape[1], window=window,
-            )
-            # Multi-band stripped reads come back as (y, x, band); mirror
-            # the tiled branch so dims line up with ndim. Single-band stays
-            # 2-D ('y', 'x').
-            if arr_gpu.ndim == 3:
-                dims = ['y', 'x', 'band']
-                coords['band'] = np.arange(arr_gpu.shape[2])
-            else:
-                dims = ['y', 'x']
-            result = xr.DataArray(arr_gpu, dims=dims,
-                                  coords=coords, name=name, attrs=attrs)
             # ``chunks`` was previously honoured only on the tiled path,
             # so stripped TIFFs returned an unchunked DataArray even when
             # the caller asked for a Dask+CuPy result. Mirror the tiled
@@ -819,84 +817,63 @@ def read_geotiff_gpu(source: str, *,
             elif gpu_dtype.kind == 'f':
                 arr_gpu = -arr_gpu
 
-        # Apply nodata mask + record sentinel so the GPU read agrees with the
-        # CPU eager path (issue #1542). Without this, integer rasters keep the
-        # literal sentinel value and float rasters keep the sentinel rather
-        # than NaN -- a silent backend divergence. Apply before the optional
-        # dtype cast so the float promotion for masked integer rasters doesn't
-        # surprise a user-supplied dtype.
-        nodata = geo_info.nodata
-        nodata_pixels_present_attr: bool | None = None
-        if nodata is not None and mask_nodata:
-            # When MinIsWhite was applied, the mask must use the inverted
-            # sentinel; otherwise the original sentinel. The pure GPU path
-            # records the inverted sentinel in ``_mw_mask_nodata`` above; the
-            # CPU-fallback paths (sparse-tile, planar=2 auto-fallback, and
-            # post-decode CPU fallback) get it from ``read_to_array`` via
-            # ``_cpu_fallback_geo._mask_nodata`` (Copilot review of #1817).
-            if _mw_mask_nodata is not None:
-                _gpu_mask_value = _mw_mask_nodata
-            elif _cpu_fallback_geo is not None:
-                _gpu_mask_value = getattr(
-                    _cpu_fallback_geo, '_mask_nodata', nodata)
-            else:
-                _gpu_mask_value = nodata
-            arr_gpu, nodata_pixels_present_attr = (
-                _apply_nodata_mask_gpu_with_presence(
-                    arr_gpu, _gpu_mask_value)
-            )
-
-        dtype_cast_attr: str | None = None
-        if dtype is not None:
-            target = np.dtype(dtype)
-            _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
-            arr_gpu = arr_gpu.astype(target)
-            dtype_cast_attr = target.name
-
-        # Build DataArray
         if name is None:
             import os
             name = os.path.splitext(os.path.basename(source))[0]
 
-        _validate_read_geo_info(
-            geo_info, window=window,
+        # Slice the fully-decoded buffer down to the requested window/band
+        # BEFORE finalization so the shared eager helper builds the
+        # DataArray off the post-slice shape. The current path masks the
+        # full IFD then slices; the helper masks the post-slice buffer,
+        # which matches the eager-numpy contract and brings the GPU
+        # ``nodata_pixels_present`` attr in line with the rest of the
+        # backends (the attr now reports presence within the read
+        # window, not the whole IFD). The MinIsWhite inversion above
+        # already mutated the buffer in stored order, so slicing here
+        # carries through the inverted values. ``_gpu_apply_window_band``
+        # also returns coords, but the helper rebuilds them from
+        # ``geo_info`` / ``window`` so the local copy is discarded.
+        arr_gpu, _ = _gpu_apply_window_band(
+            arr_gpu, geo_info, window=window, band=band)
+
+        # Hand the windowed+banded GPU buffer to the shared eager
+        # finalizer (issue #2179). ``mask_sentinel`` resolution mirrors
+        # the original three-way pick: prefer the post-MinIsWhite value
+        # the pure GPU path stamps on ``_mw_mask_nodata``; otherwise
+        # fall back to the CPU-fallback path's stash on
+        # ``_cpu_fallback_geo._mask_nodata`` (#1817); otherwise the raw
+        # declared sentinel. The helper's host-side mask block runs on
+        # CuPy arrays via numpy duck-typing and produces the same
+        # lifecycle attrs that ``_apply_nodata_mask_gpu_with_presence``
+        # did inline.
+        #
+        # The sentinel is resolved even when ``mask_nodata=False``
+        # because the helper still needs it for the
+        # ``nodata_pixels_present`` scan in that branch (#2135); only
+        # ``nodata is None`` short-circuits the resolution.
+        nodata = geo_info.nodata
+        if nodata is None:
+            mask_sentinel = None
+        elif _mw_mask_nodata is not None:
+            mask_sentinel = _mw_mask_nodata
+        elif _cpu_fallback_geo is not None:
+            mask_sentinel = getattr(
+                _cpu_fallback_geo, '_mask_nodata', nodata)
+        else:
+            mask_sentinel = nodata
+
+        result = _finalize_eager_read(
+            arr_gpu,
+            geo_info=geo_info,
+            nodata=nodata,
+            mask_sentinel=mask_sentinel,
+            mask_nodata=mask_nodata,
+            dtype=dtype,
+            window=window,
+            name=name,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
         )
-
-        attrs = {}
-        _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-        # ``attrs['masked_nodata']`` reflects whether the function
-        # actually replaced sentinel pixels with NaN (#2092). The GPU
-        # mask kernel runs only when ``mask_nodata=True`` and a sentinel
-        # is declared, so the post-cast float dtype alone is not enough
-        # to claim masking.
-        _set_nodata_attrs(
-            attrs, nodata,
-            masked=(mask_nodata
-                    and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
-            pixels_present=nodata_pixels_present_attr,
-            dtype_cast=dtype_cast_attr,
-        )
-
-        # Apply window/band slicing post-decode. Coords are derived from the
-        # sliced array so the (y, x) labels line up with the user's requested
-        # subrectangle. This mirrors the ``open_geotiff`` / ``read_geotiff_dask``
-        # contract: ``attrs['transform']`` always carries the full-source
-        # GeoTransform shifted to the window origin (via
-        # ``_populate_attrs_from_geo_info(..., window=window)``), while
-        # ``coords['y']`` / ``coords['x']`` cover only the windowed cells.
-        arr_gpu, coords = _gpu_apply_window_band(
-            arr_gpu, geo_info, window=window, band=band)
-
-        if arr_gpu.ndim == 3:
-            dims = ['y', 'x', 'band']
-            coords['band'] = np.arange(arr_gpu.shape[2])
-        else:
-            dims = ['y', 'x']
-
-        result = xr.DataArray(arr_gpu, dims=dims, coords=coords,
-                              name=name, attrs=attrs)
 
         # ``chunks=`` is handled at function entry via
         # ``_read_geotiff_gpu_chunked`` for real out-of-core support; this
@@ -977,58 +954,31 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
         # stable label, which is fine for a default.
         name = os.path.splitext(os.path.basename(source))[0]
 
-    _validate_read_geo_info(
-        geo_info, window=window,
+    # Hand the GPU buffer to the shared eager finalizer (issue #2179).
+    # ``_read_to_array`` already applied window + band slicing and
+    # stashed the post-MinIsWhite sentinel on ``geo_info._mask_nodata``
+    # for the masking step (#1809); fall back to the raw sentinel on
+    # non-MinIsWhite files. The helper's host-side mask block runs on
+    # CuPy arrays via numpy duck-typing and produces the same
+    # lifecycle attrs that ``_apply_nodata_mask_gpu_with_presence``
+    # did inline.
+    nodata = geo_info.nodata
+    mask_sentinel = (
+        getattr(geo_info, '_mask_nodata', nodata)
+        if nodata is not None else None
+    )
+    return _finalize_eager_read(
+        arr_gpu,
+        geo_info=geo_info,
+        nodata=nodata,
+        mask_sentinel=mask_sentinel,
+        mask_nodata=mask_nodata,
+        dtype=dtype,
+        window=window,
+        name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``_read_to_array`` does NOT apply the nodata-to-NaN mask itself;
-    # it returns the raw decoded array and stashes the (possibly
-    # MinIsWhite-inverted) sentinel on ``geo_info._mask_nodata`` for
-    # the caller to use. This is the canonical place to apply the
-    # mask on the GPU buffer, mirroring the existing stripped /
-    # planar=2 / sparse-tile CPU-fallback branches in the local path.
-    # The post-MinIsWhite sentinel takes precedence when present
-    # (issue #1809); otherwise fall back to the raw sentinel.
-    nodata = geo_info.nodata
-    nodata_pixels_present_attr: bool | None = None
-    if nodata is not None and mask_nodata:
-        mask_value = getattr(geo_info, '_mask_nodata', nodata)
-        arr_gpu, nodata_pixels_present_attr = (
-            _apply_nodata_mask_gpu_with_presence(arr_gpu, mask_value)
-        )
-
-    dtype_cast_attr: str | None = None
-    if dtype is not None:
-        target = np.dtype(dtype)
-        _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
-        arr_gpu = arr_gpu.astype(target)
-        dtype_cast_attr = target.name
-
-    _set_nodata_attrs(
-        attrs, nodata,
-        masked=(mask_nodata and np.dtype(str(arr_gpu.dtype)).kind == 'f'),
-        pixels_present=nodata_pixels_present_attr,
-        dtype_cast=dtype_cast_attr,
-    )
-
-    # ``_read_to_array`` returns an array already sliced to ``window`` /
-    # ``band``, so derive coords from the post-slice shape (mirrors the
-    # stripped CPU-fallback branch in the local path).
-    coords = _coords_from_geo_info(
-        geo_info, arr_gpu.shape[0], arr_gpu.shape[1], window=window,
-    )
-    if arr_gpu.ndim == 3:
-        dims = ['y', 'x', 'band']
-        coords['band'] = np.arange(arr_gpu.shape[2])
-    else:
-        dims = ['y', 'x']
-
-    return xr.DataArray(arr_gpu, dims=dims, coords=coords,
-                        name=name, attrs=attrs)
 
 
 def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
@@ -1527,29 +1477,30 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     else:
         dims = ['y', 'x']
 
-    _validate_read_geo_info(
-        geo_info, window=window,
+    # Wave 2 of #2162: share the validate-then-populate-then-stamp
+    # block with the dask+numpy backend via ``_finalize_lazy_read_attrs``.
+    #
+    # The helper takes ``dtype`` as the resolved graph dtype so
+    # ``masked_nodata`` reflects whether per-chunk masking actually
+    # runs in the lazy graph (#2092). ``nodata_pixels_present`` stays
+    # unset on this path for the same reason as the dask+numpy path:
+    # a strict per-chunk reduction would force an eager ``.compute()``
+    # (#2135). The helper's ``dtype`` argument is conflated with the
+    # caller-supplied cast attr; fix the attr up here so
+    # ``nodata_dtype_cast`` surfaces only when the caller explicitly
+    # asked for a cast, not when masking auto-promoted the graph
+    # dtype to float64.
+    attrs = _finalize_lazy_read_attrs(
+        geo_info=geo_info,
+        nodata=nodata,
+        mask_nodata=mask_nodata,
+        dtype=declared_dtype,
+        window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
-
-    attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    # ``masked_nodata`` reflects whether per-chunk masking actually
-    # runs in the lazy graph (#2092); mirrors the dask+numpy backend
-    # contract. With ``mask_nodata=False`` ``declared_dtype`` stays
-    # equal to ``file_dtype`` (see the float-promotion gate earlier
-    # in this function), so the rule below is equivalent to "graph
-    # dtype is float AND the caller opted into masking."
-    # ``nodata_pixels_present`` stays unset on the dask+GPU path for the
-    # same reason as the dask+numpy path: a strict per-chunk reduction
-    # would force an eager ``.compute()`` (issue #2135). ``dtype_cast``
-    # records the caller-supplied ``dtype=`` kwarg when present.
-    _set_nodata_attrs(
-        attrs, nodata,
-        masked=(mask_nodata and declared_dtype.kind == 'f'),
-        pixels_present=None,
-        dtype_cast=(np.dtype(dtype).name if dtype is not None else None),
+    _apply_caller_dtype_cast(
+        attrs, caller_dtype=dtype, has_nodata=nodata is not None,
     )
 
     if name is None:
