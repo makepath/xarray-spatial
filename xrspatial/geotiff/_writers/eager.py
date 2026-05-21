@@ -1003,12 +1003,16 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # rejects rotated inputs at the same boundary. ``to_geotiff`` already
     # ran the check upstream when the caller reached this branch through
     # the dispatcher, but a direct call to ``_write_vrt_tiled`` would
-    # otherwise bypass the gate.
+    # otherwise bypass the gate. ``entry_point`` names the private helper
+    # so a direct caller sees the function actually running the check;
+    # the public ``to_geotiff`` dispatch path raised at its own gate
+    # before reaching this point so the helper-name surface is only
+    # visible to direct callers (review nit on #2216).
     _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
     _validate_no_rotated_affine(
         _drop_rotation_attrs,
         drop_rotation=drop_rotation,
-        entry_point="to_geotiff",
+        entry_point="_write_vrt_tiled",
     )
 
     # Issue #1987 ambiguous-metadata checks; mirrors the call in

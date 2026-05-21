@@ -268,3 +268,9 @@ def test_write_vrt_tiled_direct_call_rejects_rotated_affine(tmp_path):
 
     with pytest.raises(ValueError, match="rotated_affine"):
         _write_vrt_tiled(da, str(vrt_out))
+
+    # The error names the function actually running the check, not the
+    # public wrapper, so a direct caller of the private helper learns
+    # which entry point fired (review nit on #2216).
+    with pytest.raises(ValueError, match="_write_vrt_tiled"):
+        _write_vrt_tiled(da, str(vrt_out))

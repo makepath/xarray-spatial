@@ -610,6 +610,12 @@ def _validate_no_rotated_affine(attrs, *, drop_rotation: bool,
     """
     if not attrs:
         return
+    # ``is None`` skips both the missing-key case and the explicit-None
+    # case (the reader's ``_populate_attrs_from_geo_info`` only sets the
+    # attr to a tuple OR omits it; an explicit ``None`` arises from
+    # caller code that pre-allocates the key). Any other value -- tuple,
+    # empty tuple, list, ndarray -- falls through to the rejection
+    # branch so a malformed marker still fails closed.
     if attrs.get('rotated_affine') is None:
         return
     if drop_rotation:
