@@ -66,7 +66,14 @@ def test_range_request_ignored_for_nonzero_start_raises():
     url, httpd, _ = _serve(_Handler)
     try:
         src = _HTTPSource(url)
-        with pytest.raises(OSError, match="Content-Range|range fetch"):
+        # Post #2264 ``read_range`` rejects on the Content-Length
+        # preflight before any body bytes are read; pre-#2264 the
+        # ``_validate_range_response`` step rejected on
+        # Content-Range/range-fetch grounds after the body was already
+        # buffered. Both wordings prove the request was refused.
+        with pytest.raises(
+                OSError,
+                match="Content-Range|Content-Length|range fetch"):
             src.read_range(8, 16)
     finally:
         _stop(httpd)
@@ -184,19 +191,29 @@ def test_read_range_zero_length_returns_empty_without_request():
         _stop(httpd)
 
 
-def test_range_ignored_200_with_full_body_is_sliced_to_length():
-    """Server ignores ``Range`` for ``start=0`` and returns the full
-    object as a 200 with no ``Content-Range`` -> response is sliced to
-    the requested length.
+def test_range_ignored_200_oversize_rejected_via_content_length(
+        monkeypatch):
+    """Server ignores ``Range`` for ``start=0`` and returns a 200 with
+    a ``Content-Length`` past the full-object slack cap.
 
-    The implicit contract of ``read_range`` is "at most ``length``
-    bytes". A 16 KiB header prefetch against a 2 GiB object must not
-    drag the whole thing into memory when the server misbehaves.
+    Before #2264, ``read_range`` buffered the entire body into
+    ``resp.data`` (urllib3 default ``preload_content=True``) and then
+    sliced down to ``length``. That defeated the OOM guard the slice
+    comment claimed: a 16 KiB prefetch against a 2 GiB body still
+    pulled 2 GiB into memory before the slice ran. The fix caps the
+    fallback at :attr:`_HTTPSource._RANGE_IGNORED_FULL_OBJECT_CAP` and
+    rejects on the ``Content-Length`` preflight before any body bytes
+    are read.
+
+    Drop the cap to a small value here so the test does not have to
+    stand up a multi-MiB payload to trigger rejection.
     """
+    monkeypatch.setattr(
+        _HTTPSource, '_RANGE_IGNORED_FULL_OBJECT_CAP', 1024)
 
     class _Handler(_BaseHandler):
-        # Payload larger than the requested length so we can verify the
-        # slice happens.
+        # Payload larger than the patched cap so the preflight has
+        # something to reject.
         payload = b'\xab' * 4096
 
         def do_GET(self):  # noqa: N802
@@ -209,9 +226,156 @@ def test_range_ignored_200_with_full_body_is_sliced_to_length():
     url, httpd, _ = _serve(_Handler)
     try:
         src = _HTTPSource(url)
-        # start=0 -> validator should slice rather than raise.
-        out = src.read_range(0, 64)
-        assert len(out) == 64
-        assert out == _Handler.payload[:64]
+        with pytest.raises(OSError, match="Content-Length|byte budget"):
+            src.read_range(0, 64)
     finally:
         _stop(httpd)
+
+
+def test_range_ignored_200_full_object_sliced_within_cap():
+    """Server ignores ``Range`` for ``start=0`` and returns the full
+    object as 200 with no ``Content-Range``. When the body fits
+    inside the full-object slack cap, ``read_range`` slices it down
+    to the requested length.
+
+    This is the legitimate small-file fallback: the caller asked for
+    a 64-byte prefetch, the file is a few KiB, and the server doesn't
+    honour Range. Pre-#2264 the slice happened after the whole body
+    was already in ``resp.data``; post-#2264 the body is bounded by
+    the streaming cap on the wire.
+    """
+
+    class _Handler(_BaseHandler):
+        payload = b'\xcd' * 4096
+
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(self.payload)))
+            self.end_headers()
+            self.wfile.write(self.payload)
+
+    url, httpd, _ = _serve(_Handler)
+    try:
+        src = _HTTPSource(url)
+        out = src.read_range(0, 64)
+        # Caller's "at most length bytes" contract holds even when the
+        # server returned a much larger body.
+        assert out == _Handler.payload[:64]
+        assert len(out) == 64
+    finally:
+        _stop(httpd)
+
+
+def test_range_ignored_200_short_body_returned_as_is():
+    """A 200 fallback whose body is smaller than the requested length
+    is returned unchanged (no slicing needed).
+
+    This is the "tiny file served by a Range-blind origin" case: the
+    caller asked for a 64-byte header prefetch but the whole object
+    is only 40 bytes.
+    """
+
+    class _Handler(_BaseHandler):
+        payload = b'\xef' * 40
+
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(self.payload)))
+            self.end_headers()
+            self.wfile.write(self.payload)
+
+    url, httpd, _ = _serve(_Handler)
+    try:
+        src = _HTTPSource(url)
+        out = src.read_range(0, 64)
+        assert out == _Handler.payload
+        assert len(out) == 40
+    finally:
+        _stop(httpd)
+
+
+def test_range_ignored_200_no_content_length_is_streamed_and_capped(
+        monkeypatch):
+    """Server omits ``Content-Length`` and streams a body larger than
+    the full-object slack cap. ``_read_capped`` must abort once more
+    than the cap has arrived, so the body never gets fully buffered
+    into Python memory.
+
+    This is the second half of the #2264 fix: the ``Content-Length``
+    preflight catches honest oversize, the streaming cap (via chunked
+    transfer encoding here, since the server omits ``Content-Length``)
+    catches the case where the server volunteers no advertised size.
+
+    Drop the full-object cap to a small value to keep the test fast.
+    """
+    monkeypatch.setattr(
+        _HTTPSource, '_RANGE_IGNORED_FULL_OBJECT_CAP', 2048)
+
+    class _Handler(_BaseHandler):
+        def do_GET(self):  # noqa: N802
+            # No Content-Length; use chunked transfer encoding.
+            self.send_response(200)
+            self.send_header('Transfer-Encoding', 'chunked')
+            self.end_headers()
+            # Each chunk is 1024 bytes; send 8 of them (8192 total),
+            # past the 2048-byte patched cap.
+            chunk = b'\xee' * 1024
+            chunk_header = f'{len(chunk):x}\r\n'.encode()
+            for _ in range(8):
+                self.wfile.write(chunk_header)
+                self.wfile.write(chunk)
+                self.wfile.write(b'\r\n')
+            self.wfile.write(b'0\r\n\r\n')
+
+    url, httpd, _ = _serve(_Handler)
+    try:
+        src = _HTTPSource(url)
+        with pytest.raises(OSError, match="byte budget|exceeded"):
+            src.read_range(0, 64)
+    finally:
+        _stop(httpd)
+
+
+def test_range_request_uses_streaming_response(monkeypatch):
+    """``read_range`` must request the body with ``preload_content=
+    False`` so urllib3 hands back a streaming response instead of
+    buffering ``resp.data`` up front.
+
+    This pins the wire-level behaviour the OOM fix depends on. If a
+    future refactor flips the default back to ``preload_content=
+    True``, the streaming cap and the ``Content-Length`` preflight
+    both become advisory rather than enforcing. Issue #2264.
+    """
+
+    captured: dict = {}
+
+    class _FakeResp:
+        def __init__(self, body):
+            self.status = 206
+            self._body = body
+            self.headers = {
+                'Content-Length': str(len(body)),
+                'Content-Range': f'bytes 0-{len(body) - 1}/64',
+            }
+
+        def stream(self, amt=65536, decode_content=True):
+            if self._body:
+                yield self._body
+
+        def release_conn(self):
+            pass
+
+    class _FakePool:
+        def request(self, method, url, headers=None, timeout=None,
+                    redirect=None, preload_content=True):
+            captured['preload_content'] = preload_content
+            captured['headers'] = headers
+            return _FakeResp(b'\x01' * 16)
+
+    src = _HTTPSource('http://127.0.0.1:65535/x.bin')
+    monkeypatch.setattr(src, '_pool', _FakePool())
+    out = src.read_range(0, 16)
+    assert out == b'\x01' * 16
+    # The hard contract: the GET went out asking for a streaming body.
+    assert captured['preload_content'] is False
+    assert captured['headers'] == {'Range': 'bytes=0-15'}
