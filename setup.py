@@ -9,7 +9,7 @@ from setuptools import setup
 if __name__ == '__main__':
     _package_dir = os.path.dirname(os.path.abspath(__file__))
     example_path = os.path.join(_package_dir, 'xrspatial', 'examples')
-    _is_develop = any(arg == 'develop' or arg.endswith('develop') for arg in sys.argv)
+    _is_develop = len(sys.argv) > 1 and sys.argv[1] == 'develop'
     if not _is_develop:
         pyct.build.examples(example_path, __file__, force=True)
 
