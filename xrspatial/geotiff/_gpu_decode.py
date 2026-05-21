@@ -1557,7 +1557,17 @@ def _nvjpeg_batch_encode(d_tile_bufs, tile_width, tile_height, samples,
                         if status != _NVJPEG_STATUS_SUCCESS:
                             return None
 
-                        cupy.cuda.Device().synchronize()
+                        # Sync only the default stream so concurrent work
+                        # on other CUDA streams (e.g. predictor encodes /
+                        # D2H copies) is not serialised behind every
+                        # per-tile encode. ``Device().synchronize()`` is a
+                        # whole-device fence; the encode/retrieve sequence
+                        # only depends on the default stream the calls
+                        # were issued on. Mirrors the decode-side fix at
+                        # ``_try_nvjpeg_batch_decode`` (default stream sync)
+                        # and the nvJPEG2000 decode fix in #2107.
+                        # Issue #2212.
+                        cupy.cuda.Stream.null.synchronize()
 
                         # Get compressed size
                         length = ctypes.c_size_t(0)
@@ -2941,7 +2951,11 @@ def _nvjpeg2k_batch_encode(d_tile_bufs, tile_width, tile_height,
                 ctypes.byref(img),
                 ctypes.c_void_p(0),  # default CUDA stream
             )
-            cupy.cuda.Device().synchronize()
+            # Sync only the default stream so concurrent work on other
+            # CUDA streams is not serialised behind every per-tile encode.
+            # See issue #2212; matches the decoder-side fix from #2107
+            # and the nvJPEG encoder fix above.
+            cupy.cuda.Stream.null.synchronize()
             if s != 0:
                 lib.nvjpeg2kEncodeParamsDestroy(enc_params)
                 lib.nvjpeg2kEncodeStateDestroy(enc_state)
