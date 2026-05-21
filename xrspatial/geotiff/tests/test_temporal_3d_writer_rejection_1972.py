@@ -55,11 +55,15 @@ def test_validate_3d_still_accepts_yx_band():
     _validate_3d_writer_dims(('band', 'y', 'x'))
 
 
-def test_validate_3d_still_accepts_unknown_trailing_dim():
-    # The (y, x, *) fallback for raw numpy callers stays in place for
-    # genuinely unknown dim names; only known temporal names trip.
+def test_validate_3d_still_accepts_recognized_band_alias_trailing_dim():
+    # Recognized band aliases at the trailing position remain accepted.
+    # The loose ``(y, x, *)`` fallback for arbitrary unknown trailing
+    # names (``'foo'``, ``'z'``, ``'scenario'``) was removed in #2240
+    # because it silently wrote those values as TIFF bands. The
+    # regression coverage for the rejection lives in
+    # ``test_validate_3d_non_band_trailing_dim_2240.py``.
     _validate_3d_writer_dims(('y', 'x', 'channel'))
-    _validate_3d_writer_dims(('y', 'x', 'foo'))
+    _validate_3d_writer_dims(('y', 'x', 'bands'))
 
 
 def test_validate_3d_still_rejects_time_y_x():
