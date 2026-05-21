@@ -214,6 +214,33 @@ def read_vrt(source: str, *,
         actual pixels. See issue #2052. Float source bands are NaN-aware
         by virtue of how the internal reader handles them, so this kwarg
         is most useful for integer-dtype mosaics.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files referenced by the VRT. Forwarded to the per-source reader
+        for each ``<SourceFilename>``. See ``open_geotiff`` for the full
+        contract.
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        do not parse as WKT. ``False`` (the default since #1929) raises
+        ``UnparseableCRSError`` rather than carrying the unrecognised
+        payload through. See ``open_geotiff`` for the full description.
+    overview_level : int or None
+        Not supported for VRT sources. The VRT XML references its own
+        source files, so overview selection would need to apply to each
+        of them. Accepted at the signature level for cross-backend
+        symmetry; any value other than ``None`` or ``0`` raises
+        ``ValueError`` (issue #1685).
+    on_gpu_failure : str, optional
+        Accepted for cross-backend signature symmetry only. VRT reads
+        do not go through the GPU decoder pipeline, so passing this
+        kwarg raises ``ValueError`` at dispatch. See
+        ``read_geotiff_gpu`` for the kwarg's meaning on the GPU
+        reader.
+    max_cloud_bytes : int or None, optional
+        Accepted for cross-backend signature symmetry only. The VRT
+        reader does not consume the cloud-byte budget; passing this
+        kwarg raises ``ValueError`` at dispatch (issue #1974). See
+        ``open_geotiff`` for the eager-path description.
 
     Returns
     -------
