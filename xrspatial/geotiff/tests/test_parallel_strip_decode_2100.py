@@ -8,6 +8,7 @@ codify the gate and verify correctness (parallel vs serial parity).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import http.server
 import os
 import socket
@@ -21,6 +22,7 @@ import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff import _reader as _reader_mod
+from xrspatial.geotiff import _decode as _decode_mod
 from xrspatial.geotiff._reader import read_to_array
 
 
@@ -63,7 +65,10 @@ class TestReadStripsParallelGate:
         with open(p, "wb") as f:
             f.write(blob)
         par, _ = read_to_array(p)
-        with patch.object(_reader_mod,
+        # Patch the threshold in ``_decode`` (where ``_read_strips`` lives
+        # after PR-G, issue #2246), not in ``_reader``: the back-imported
+        # binding in ``_reader`` is a separate reference.
+        with patch.object(_decode_mod,
                           "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10**12):
             ser, _ = read_to_array(p)
         np.testing.assert_array_equal(par, ser)
@@ -77,8 +82,13 @@ class TestReadStripsParallelGate:
         p = str(tmp_path / "s.tif")
         with open(p, "wb") as f:
             f.write(blob)
-        with patch.object(_reader_mod, "ThreadPoolExecutor",
-                          wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+        # Patch ``concurrent.futures.ThreadPoolExecutor`` rather than the
+        # reader module binding because the strip decode lives in
+        # ``_decode`` and re-imports the executor function-locally (PR-G,
+        # issue #2246).
+        with patch.object(concurrent.futures, "ThreadPoolExecutor",
+                          wraps=concurrent.futures.ThreadPoolExecutor
+                          ) as mock_pool:
             out, _ = read_to_array(p)
             # n_strips for a 1024-row file with default rps -> at
             # least 4 strips (TIFFs default rps=8KB / row).
@@ -92,8 +102,9 @@ class TestReadStripsParallelGate:
         da = xr.DataArray(arr, dims=["y", "x"])
         p = str(tmp_path / "tiny.tif")
         to_geotiff(da, p, compression="deflate", tiled=False)
-        with patch.object(_reader_mod, "ThreadPoolExecutor",
-                          wraps=_reader_mod.ThreadPoolExecutor) as mock_pool:
+        with patch.object(concurrent.futures, "ThreadPoolExecutor",
+                          wraps=concurrent.futures.ThreadPoolExecutor
+                          ) as mock_pool:
             out, _ = read_to_array(p)
             # Single-strip file => no pool.
             assert not mock_pool.called
@@ -107,7 +118,7 @@ class TestReadStripsParallelGate:
         with open(p, "wb") as f:
             f.write(blob)
         par, _ = read_to_array(p, window=(100, 100, 1500, 1500))
-        with patch.object(_reader_mod,
+        with patch.object(_decode_mod,
                           "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10**12):
             ser, _ = read_to_array(p, window=(100, 100, 1500, 1500))
         np.testing.assert_array_equal(par, ser)
@@ -276,7 +287,7 @@ class TestPlanar2MultibandStripParallel:
 
         par, _ = read_to_array(p)
         with patch.object(
-                _reader_mod, "_PARALLEL_DECODE_PIXEL_THRESHOLD",
+                _decode_mod, "_PARALLEL_DECODE_PIXEL_THRESHOLD",
                 10 ** 12):
             ser, _ = read_to_array(p)
 
@@ -304,7 +315,7 @@ class TestPlanar2MultibandStripParallel:
 
         par, _ = read_to_array(p, window=(100, 100, 900, 900))
         with patch.object(
-                _reader_mod, "_PARALLEL_DECODE_PIXEL_THRESHOLD",
+                _decode_mod, "_PARALLEL_DECODE_PIXEL_THRESHOLD",
                 10 ** 12):
             ser, _ = read_to_array(p, window=(100, 100, 900, 900))
 
