@@ -55,7 +55,7 @@ def _is_temporal_dim_name(name) -> bool:
 
 
 def _validate_3d_writer_dims(dims) -> None:
-    """Reject ambiguous 3D writer inputs (issue #1812).
+    """Reject ambiguous 3D writer inputs (issues #1812, #1972, #2240).
 
     The writer interprets a 3D DataArray as either ``(band, y, x)`` or
     ``(y, x, band)``. ``data.dims[0] in _BAND_DIM_NAMES`` decides which
@@ -64,6 +64,18 @@ def _validate_3d_writer_dims(dims) -> None:
     the spatial ``y`` axis and the result was a TIFF with the leading
     axis values laid out along ``y`` (silent data corruption -- on
     read-back the array round-tripped with a swapped shape).
+
+    DataArray dim contract (tightened in #2240): the trailing axis of a
+    ``(y, x, *)`` layout must be a recognized band alias
+    (``_BAND_DIM_NAMES``). Previously the validator silently accepted
+    any unknown trailing name (e.g. ``('y', 'x', 'z')``,
+    ``('lat', 'lon', 'scenario')``) and wrote those values as TIFF
+    bands. That escape hatch was a hold-over for raw-ndarray callers
+    that build band-last arrays without dim metadata; raw ndarrays
+    never flow through this DataArray-dim validator (callers gate the
+    call on ``isinstance(data, xr.DataArray)``), so removing it here
+    only tightens the DataArray contract and leaves the bare-ndarray
+    path unaffected.
 
     Refuse the ambiguous case at the entry point. The message tells the
     caller exactly how to fix the input (rename to one of
@@ -80,15 +92,15 @@ def _validate_3d_writer_dims(dims) -> None:
                   and d2 in _BAND_DIM_NAMES)
     if band_layout or yxb_layout:
         return
-    # Bare (y, x, *) where the third dim is unnamed but spatial -- the
-    # writer's old behaviour treats the non-spatial axis as bands.
-    # Accept that only when the unknown dim is in the band position
-    # (last), which matches how raw numpy callers typically build a
-    # band-last array. Refuse known *temporal* dim names so a
-    # ``(y, x, time)`` stack is rejected with a clear error instead of
-    # silently being written as a 3-band TIFF (issue #1972). The
-    # mirror case ``(time, y, x)`` was already caught -- this closes
-    # the asymmetry.
+    # ``(y, x, *)`` with a non-band trailing dim. Temporal names get a
+    # dedicated friendly message (issue #1972); every other non-band
+    # trailing name (``z``, ``level``, ``scenario``, ``foo``, ...) is
+    # rejected with the dedicated ``"non-band trailing dim"`` message
+    # immediately below. Issue #2240 closes the escape hatch that
+    # previously let unknown trailing names through the band-position
+    # fallback. The generic ``"ambiguous dims"`` message at the bottom
+    # of the function only fires for layouts that are neither
+    # ``(y, x, *)`` nor ``(_TIME_, y, x)`` (e.g. ``('foo', 'y', 'x')``).
     if d0 in _Y_DIM_NAMES and d1 in _X_DIM_NAMES:
         if _is_temporal_dim_name(d2):
             raise ValueError(
@@ -100,7 +112,17 @@ def _validate_3d_writer_dims(dims) -> None:
                 f"{_BAND_DIM_NAMES} if you really intend the temporal "
                 f"axis to round-trip as TIFF bands (issue #1972)."
             )
-        return
+        raise ValueError(
+            f"3D writer input has non-band trailing dim {d2!r} in dims "
+            f"{dims!r}. The writer cannot infer that {d2!r} represents "
+            f"TIFF bands and used to silently write a multiband file "
+            f"with the {d2!r} axis stuffed into the band slot. Rename "
+            f"the trailing dim to one of {_BAND_DIM_NAMES}, reduce or "
+            f"select along it (e.g. ``data.isel({d2}=0)`` or "
+            f"``data.mean({d2!r})``), or pass a raw ndarray with "
+            f"shape ``(y, x, bands)`` if you really want the band-last "
+            f"layout written without a dim-name check (issue #2240)."
+        )
     # Symmetrise the friendly temporal message for the leading-dim case
     # ``(time, y, x)``. The generic ``ambiguous dims`` error below
     # already rejects this layout, but the temporal-specific message
@@ -157,12 +179,13 @@ def _validate_writer_spatial_shape(shape, dims=None,
     collapse of the band axis.
 
     Note that this validator runs before ``_validate_3d_writer_dims``
-    (#1812 / #1972) in ``to_geotiff``. For an ambiguous-dim input like
-    ``(5, 5, 0)`` with dims ``('y', 'x', 'time')``, the band-last branch
-    sees ``bands == 0`` and the "no bands" error wins over the friendlier
-    ambiguous-dim message. Both errors name the right call to fix, so
-    the ordering is acceptable; reorder only if the ambiguous-dim
-    diagnostic becomes more important than the empty-axis one.
+    (#1812 / #1972 / #2240) in ``to_geotiff``. For an ambiguous-dim
+    input like ``(5, 5, 0)`` with dims ``('y', 'x', 'time')``, the
+    band-last branch sees ``bands == 0`` and the "no bands" error wins
+    over the friendlier ambiguous-dim message. Both errors name the
+    right call to fix, so the ordering is acceptable; reorder only if
+    the ambiguous-dim diagnostic becomes more important than the
+    empty-axis one.
     """
     if shape is None:
         return
