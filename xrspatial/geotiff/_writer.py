@@ -99,6 +99,22 @@ from ._write_layout import (  # noqa: F401
     _serialize_tag_value,
     _should_use_bigtiff_streaming,
 )
+# Overview pyramid helpers (``_make_overview``, ``_block_reduce_2d``,
+# ``_replicate_pad_2d``, ``_resolve_int_nodata``,
+# ``_validate_overview_levels``) and the ``OVERVIEW_METHODS`` /
+# ``_MAX_OVERVIEW_LEVELS`` constants live in ``_overview.py``. Re-export
+# them here so internal call sites and external importers (the
+# ``_writers`` subpackage, ``_gpu_decode``, tests) keep using the
+# ``xrspatial.geotiff._writer`` import path. See issue #2259.
+from ._overview import (  # noqa: F401
+    OVERVIEW_METHODS,
+    _MAX_OVERVIEW_LEVELS,
+    _block_reduce_2d,
+    _make_overview,
+    _replicate_pad_2d,
+    _resolve_int_nodata,
+    _validate_overview_levels,
+)
 
 # Tag IDs the writer must never accept from ``extra_tags``. NewSubfileType
 # (254) is a per-IFD status flag the writer emits on its own for overview
@@ -356,26 +372,6 @@ def _compression_tag(compression_name: str) -> int:
 #: parallel becomes a net win around ~2 MiB, and the 4 MiB margin keeps
 #: a few-tile / two-strip layout from incurring a slowdown.
 _PARALLEL_MIN_BYTES = 4 * 1024 * 1024
-
-
-# ---------------------------------------------------------------------------
-# Overview pyramid helpers (``_make_overview``, ``_block_reduce_2d``,
-# ``_replicate_pad_2d``, ``_resolve_int_nodata``,
-# ``_validate_overview_levels``) and the ``OVERVIEW_METHODS`` /
-# ``_MAX_OVERVIEW_LEVELS`` constants live in ``_overview.py``. Re-export
-# them here so internal call sites and external importers (the
-# ``_writers`` subpackage, ``_gpu_decode``, tests) keep using the
-# ``xrspatial.geotiff._writer`` import path. See issue #2259.
-# ---------------------------------------------------------------------------
-from ._overview import (  # noqa: F401
-    OVERVIEW_METHODS,
-    _MAX_OVERVIEW_LEVELS,
-    _block_reduce_2d,
-    _make_overview,
-    _replicate_pad_2d,
-    _resolve_int_nodata,
-    _validate_overview_levels,
-)
 
 
 # ---------------------------------------------------------------------------
