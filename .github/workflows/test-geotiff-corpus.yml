@@ -1,0 +1,75 @@
+name: pytest-geotiff-corpus
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+    - '*'
+  # Nightly cron so the full corpus (slow lane included) runs at
+  # least once a day against rasterio from conda-forge. PR runs stay
+  # on the fast lane via `-m "not slow"`. See issue #2289 for why
+  # this workflow exists separately from `test.yml`: the geotiff
+  # golden_corpus tests all start with `pytest.importorskip("rasterio")`,
+  # and the pip-based job in `test.yml` cannot install rasterio
+  # reliably across the OS matrix because of the GDAL build chain.
+  # GitHub Actions only fires `schedule` triggers on the workflow
+  # file in the default branch -- use `workflow_dispatch` for an
+  # on-demand run from a feature branch.
+  schedule:
+    # 03:30 UTC daily. Offset from `test.yml` (03:00) so the two
+    # nightlies do not contend for runner capacity at the same time.
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ${{ matrix.os }}
+    # PR runs stick to ubuntu only to keep CI cost down; the nightly
+    # / push-to-main runs widen to macos + windows so the parity
+    # oracle exercises the full OS matrix against rasterio.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ github.event_name == 'pull_request' && fromJson('["ubuntu-latest"]') || fromJson('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14"]') || fromJson('["3.12", "3.14"]') }}
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON: ${{ matrix.python }}
+    defaults:
+      run:
+        # `-el` so micromamba's activation hooks fire and `rasterio`
+        # resolves to the conda-forge env in every step.
+        shell: bash -el {0}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up micromamba env (conda-forge rasterio + GDAL)
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        environment-name: xrspatial-geotiff
+        create-args: >-
+          python=${{ matrix.python }}
+          rasterio
+          gdal
+          pyyaml
+        condarc: |
+          channels:
+            - conda-forge
+          channel_priority: strict
+        cache-environment: true
+    - name: Install xrspatial (test extras)
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .[tests]
+    - name: Show rasterio / GDAL versions
+      run: |
+        python -c "import rasterio; print('rasterio', rasterio.__version__); print('gdal', rasterio.__gdal_version__)"
+    - name: Run geotiff golden_corpus tests (fast lane)
+      # PR triggers run the fast lane: `-m "not slow"` deselects the
+      # heavier corpus cells tagged via `_marks.fast_slow_marks_for`.
+      # push-to-main and the nightly schedule run the full set.
+      if: github.event_name == 'pull_request'
+      run: pytest xrspatial/geotiff/tests/ -m "not slow"
+    - name: Run geotiff golden_corpus tests (full)
+      if: github.event_name != 'pull_request'
+      run: pytest xrspatial/geotiff/tests/
