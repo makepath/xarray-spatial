@@ -559,11 +559,34 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             stacklevel=2,
         )
 
+    # Issue #2312: ``cog=True`` requires a tiled internal layout per the
+    # COG spec. The writer used to accept ``cog=True, tiled=False``, warn
+    # that ``tile_size`` was ignored, and then write strips via
+    # ``_write`` -- silently producing a file that violates the stable
+    # COG contract promoted in #2300. Reject the combination at the
+    # public boundary with the same actionable-error shape as the other
+    # COG input gates pinned in #2301 (commit f5fbad54): the message
+    # names the violated constraint and lists both fixes the caller can
+    # apply in one line. The defense-in-depth gate in ``_writer._write``
+    # catches direct callers that bypass this wrapper.
+    if cog and not tiled:
+        raise ValueError(
+            "cog=True requires tiled=True: the COG specification "
+            "mandates a tiled internal layout, so a strip-layout file "
+            "cannot be a valid Cloud Optimized GeoTIFF. Pass tiled=True "
+            "(or omit tiled, which defaults to True) to write a COG, or "
+            "set cog=False to write a non-COG strip TIFF. See issue "
+            "#2312."
+        )
+
     # tile_size only applies to tiled output; warn if the caller passed a
     # non-default size alongside strip mode (it would otherwise be silently
     # ignored). The VRT path always tiles, so the warning would be
     # misleading there -- the VRT branch below rejects tiled=False up front
-    # instead.
+    # instead. The ``cog=True, tiled=False`` arm of this warning is dead
+    # under the #2312 gate above (that combination raises before reaching
+    # this line), so the condition below only fires for ``cog=False,
+    # tiled=False, tile_size != 256``.
     if not tiled and tile_size != 256 and not _is_vrt_path:
         warnings.warn(
             f"tile_size={tile_size} is ignored when tiled=False "
