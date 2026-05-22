@@ -239,14 +239,10 @@ class TestNaNBurnValues:
     leave the fill value in covered cells, which is a different
     observable than emitting NaN there.
 
-    NOTE: the GPU ``max`` / ``min`` merges currently suppress NaN burn
-    values, asymmetric with the CPU IEEE-propagating behaviour pinned
-    here.  See issue #2255.  The
-    ``test_nan_burn_overlaps_max_gpu_suppresses_nan`` and
-    ``test_nan_burn_single_geom_max_gpu_returns_neg_inf`` tests below
-    pin the current (asymmetric) GPU observable so the divergence is
-    visible in CI; both will need to be inverted once the GPU kernels
-    are aligned with CPU semantics.
+    Issue #2255 aligned the cross-backend contract on strict NaN
+    propagation for ``max`` / ``min``: any NaN burn poisons the output
+    pixel regardless of order.  See ``TestNaNPropagationAcrossBackends``
+    below for the cross-backend pins.
     """
 
     @pytest.mark.parametrize('backend_name,kw', ALL_BACKENDS)
@@ -294,81 +290,6 @@ class TestNaNBurnValues:
         assert max(nan_rows) >= 9, (
             f"{backend_name}: expected at least 9 NaN cells in some row, "
             f"got per-row NaN counts {nan_rows}"
-        )
-
-    # CPU backends (numpy / dask+numpy) follow IEEE: max(NaN, 1.0) returns
-    # NaN because the comparison ``1.0 > NaN`` is False, so the kernel
-    # keeps the prior NaN pixel.  GPU backends (cupy / dask+cupy) currently
-    # return 1.0: the GPU kernel initialises the output buffer to -inf for
-    # max merge and uses atomic_max which is NaN-suppressing under IEEE
-    # device semantics.  See issue #2255.  The CPU pin and the GPU
-    # asymmetry pin keep the divergence visible until the GPU kernels are
-    # aligned with the CPU is_first semantics.
-
-    @pytest.mark.parametrize('backend_name,kw', [
-        ALL_BACKENDS[0],  # numpy
-        ALL_BACKENDS[2],  # dask_numpy
-    ])
-    def test_nan_burn_overlaps_max_cpu_propagates(self, backend_name, kw):
-        """CPU: ``max(NaN, 1.0) == NaN``.
-
-        Pin the IEEE NaN-propagating behaviour so a future change that
-        switches the CPU max to ``fmax`` (NaN-suppressing) is visible as
-        a diff, not silent.
-        """
-        r = rasterize(
-            [(box(0, 0, 10, 5), np.nan), (box(0, 0, 10, 5), 1.0)],
-            width=10, height=5, bounds=(0, 0, 10, 5),
-            fill=0, merge='max', **kw)
-        data = _materialise(r)
-        assert np.all(np.isnan(data))
-
-    @pytest.mark.parametrize('backend_name,kw', [
-        ALL_BACKENDS[1],  # cupy
-        ALL_BACKENDS[3],  # dask_cupy
-    ])
-    def test_nan_burn_overlaps_max_gpu_suppresses_nan(self, backend_name, kw):
-        """GPU: ``max(NaN, 1.0) == 1.0`` (NaN-suppressing).
-
-        Asymmetric with the CPU behaviour above; see issue #2255.
-        Pinning the current observable here so the GPU<->CPU divergence
-        is documented in CI until the GPU max kernel can be aligned with
-        IEEE NaN propagation.
-        """
-        r = rasterize(
-            [(box(0, 0, 10, 5), np.nan), (box(0, 0, 10, 5), 1.0)],
-            width=10, height=5, bounds=(0, 0, 10, 5),
-            fill=0, merge='max', **kw)
-        data = _materialise(r)
-        # Current (asymmetric) GPU behaviour: NaN was suppressed and the
-        # finite 1.0 won.  This pin will need to flip to ``np.all(isnan)``
-        # once the GPU max kernel is fixed to match the CPU IEEE
-        # propagation.
-        np.testing.assert_array_equal(data, np.ones_like(data))
-
-    @pytest.mark.parametrize('backend_name,kw', [
-        ALL_BACKENDS[1],  # cupy
-        ALL_BACKENDS[3],  # dask_cupy
-    ])
-    def test_nan_burn_single_geom_max_gpu_returns_neg_inf(
-            self, backend_name, kw):
-        """GPU: a single NaN-burn polygon under ``max`` leaves the
-        kernel's -inf init value in covered pixels.
-
-        On CPU the value would be NaN (the burn was the only write and
-        ``_merge_max`` returns ``props[0]`` on first-write).  On GPU the
-        buffer is initialised to -inf and atomicMax(-inf, NaN) keeps -inf
-        because NaN comparisons are False.  See issue #2255.  Pin so the
-        divergence is visible against the CPU behaviour pinned by
-        test_nan_burn_polygon[numpy].
-        """
-        r = rasterize([(box(0, 0, 10, 5), np.nan)],
-                      width=10, height=5, bounds=(0, 0, 10, 5),
-                      fill=0, merge='max', **kw)
-        data = _materialise(r)
-        # The 5x10 covered region is -inf, not NaN, not 0.
-        assert np.all(np.isneginf(data)), (
-            f"{backend_name}: expected -inf in covered pixels, got {data}"
         )
 
 
