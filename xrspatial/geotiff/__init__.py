@@ -61,6 +61,7 @@ from ._errors import (
     MixedBandMetadataError,
     NonUniformCoordsError,
     RotatedTransformError,
+    UnknownCRSModelTypeError,
     UnparseableCRSError,
 )
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
@@ -140,6 +141,7 @@ __all__ = [
     'NonUniformCoordsError',
     'RotatedTransformError',
     'SUPPORTED_FEATURES',
+    'UnknownCRSModelTypeError',
     'UnparseableCRSError',
     'UnsafeURLError',
     'open_geotiff',

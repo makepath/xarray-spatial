@@ -34,7 +34,7 @@ from ._header import (
     TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
 )
 from ._dtypes import resolve_bits_per_sample
-from ._errors import RotatedTransformError
+from ._errors import RotatedTransformError, UnknownCRSModelTypeError
 
 # ImageDescription tag (270). Captured for round-trip but not managed
 # by the writer -- it flows through extra_tags pass-through.
@@ -1317,6 +1317,72 @@ def _model_type_from_wkt(wkt: str) -> int:
     return MODEL_TYPE_PROJECTED
 
 
+# Hard-coded fallback set of EPSG codes known to be geographic. Used only
+# when pyproj is unavailable. Kept intentionally tight: the historic
+# 4000-4999 block plus EPSG 4326 itself, which is the case the legacy
+# range heuristic got right. Anything outside this set without pyproj is
+# treated as "unknown" and raises -- silent CRS corruption is worse than
+# an explicit error.
+#
+# The range covers the EPSG "geographic CRS" allocation that predates the
+# more recent realisations (NAD83(2011) = 6318, GDA2020 = 7844,
+# WGS 84 (G2139) = 9057, etc.) which live outside 4000-4999 and need
+# pyproj to classify correctly. See issue #2277.
+_KNOWN_GEOGRAPHIC_EPSG_FALLBACK = frozenset(range(4000, 5000))
+
+
+def _model_type_from_epsg(crs_epsg: int) -> int:
+    """Return the GeoTIFF ModelType (geographic vs projected) for an EPSG.
+
+    Prefers ``pyproj.CRS.from_epsg(crs_epsg).is_geographic`` so the
+    decision matches the actual EPSG registry. Falls back to a tight
+    hard-coded allowlist (EPSG 4326 plus the 4000-4999 block) when
+    pyproj isn't installed. Anything outside that fallback set raises
+    :class:`UnknownCRSModelTypeError` rather than guessing -- the legacy range
+    heuristic at this site silently mis-tagged geographic codes like
+    6318 (NAD83(2011)) and 7844 (GDA2020) as projected.
+
+    See issue #2277.
+    """
+    try:
+        from pyproj import CRS
+    except ImportError:
+        CRS = None  # type: ignore[assignment]
+
+    if CRS is not None:
+        try:
+            crs = CRS.from_epsg(crs_epsg)
+        except Exception as e:
+            # pyproj is installed but the code is unknown or malformed.
+            # Fall back to the hard-coded allowlist before giving up so
+            # an offline pyproj-database mismatch doesn't break a code
+            # that the legacy heuristic handled correctly.
+            if crs_epsg in _KNOWN_GEOGRAPHIC_EPSG_FALLBACK:
+                return MODEL_TYPE_GEOGRAPHIC
+            raise UnknownCRSModelTypeError(
+                f"Cannot determine GeoTIFF model type for EPSG:{crs_epsg}: "
+                f"pyproj.CRS.from_epsg failed "
+                f"({type(e).__name__}: {e}). Refusing to guess; passing a "
+                "known EPSG or installing a current pyproj database will "
+                "resolve this."
+            ) from e
+        if crs.is_geographic:
+            return MODEL_TYPE_GEOGRAPHIC
+        return MODEL_TYPE_PROJECTED
+
+    # pyproj unavailable. Use the tight fallback set; raise otherwise.
+    if crs_epsg in _KNOWN_GEOGRAPHIC_EPSG_FALLBACK:
+        return MODEL_TYPE_GEOGRAPHIC
+    raise UnknownCRSModelTypeError(
+        f"Cannot determine GeoTIFF model type for EPSG:{crs_epsg} without "
+        "pyproj. Install pyproj so the writer can consult "
+        "CRS.from_epsg(...).is_geographic, or pass an EPSG in the "
+        "hard-coded geographic fallback set (4000-4999). Refusing to "
+        "guess: the legacy range heuristic silently mis-tagged codes "
+        "like 6318 and 7844 as projected. See issue #2277."
+    )
+
+
 def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
                    nodata=None,
                    raster_type: int = RASTER_PIXEL_IS_AREA,
@@ -1402,11 +1468,12 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
 
     # ModelType
     if crs_epsg is not None:
-        # Guess model type from EPSG (simple heuristic)
-        if crs_epsg == 4326 or (crs_epsg >= 4000 and crs_epsg < 5000):
-            model_type = MODEL_TYPE_GEOGRAPHIC
-        else:
-            model_type = MODEL_TYPE_PROJECTED
+        # Resolve the GeoTIFF ModelType via pyproj when available; raise
+        # on unknown codes when pyproj is missing rather than guessing.
+        # See issue #2277 -- the historic EPSG-range heuristic silently
+        # mis-tagged geographic codes outside 4000-4999 (e.g. 6318,
+        # 7844, 9057) as projected, corrupting the CRS at write time.
+        model_type = _model_type_from_epsg(crs_epsg)
         key_entries.append((GEOKEY_MODEL_TYPE, 0, 1, model_type))
         num_keys += 1
     elif crs_wkt is not None:

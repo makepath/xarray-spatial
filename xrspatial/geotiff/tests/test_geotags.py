@@ -110,6 +110,139 @@ class TestBuildGeoTags:
         assert 3072 in geokeys  # GEOKEY_PROJECTED_CS_TYPE
 
 
+class TestModelTypeFromEPSG:
+    """Regression coverage for issue #2277.
+
+    The legacy heuristic at build_geo_tags decided geographic-vs-projected
+    from the EPSG number range (4326 plus 4000-4999). That silently
+    mis-tagged geographic CRSes registered outside the 4000-4999 block --
+    NAD83(2011) = 6318, GDA2020 = 7844, WGS 84 (G2139) = 9057, etc. --
+    as projected, which corrupts the CRS at write time.
+
+    The fix consults pyproj when available; when pyproj is missing,
+    anything outside the hard-coded fallback set raises rather than
+    guessing.
+    """
+
+    @pytest.mark.parametrize("epsg", [4326, 4269, 4267])
+    def test_geographic_in_legacy_range(self, epsg):
+        # Codes the old range heuristic already handled.
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        tags = build_geo_tags(gt, crs_epsg=epsg)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_GEOGRAPHIC_TYPE in geokeys
+        assert GEOKEY_PROJECTED_CS_TYPE not in geokeys
+
+    @pytest.mark.parametrize("epsg", [6318, 7844, 9057, 8252])
+    def test_geographic_outside_legacy_range(self, epsg):
+        # The bug: pre-fix, these wrote ProjectedCSTypeGeoKey.
+        # pyproj.CRS.from_epsg(...).is_geographic is True for all four.
+        pytest.importorskip("pyproj")
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        tags = build_geo_tags(gt, crs_epsg=epsg)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_GEOGRAPHIC_TYPE in geokeys, (
+            f"EPSG:{epsg} is geographic per pyproj but was written as "
+            f"projected -- regression of issue #2277"
+        )
+        assert GEOKEY_PROJECTED_CS_TYPE not in geokeys
+        # And the EPSG payload is attached to the geographic key.
+        flat = list(geokeys)
+        i = flat.index(GEOKEY_GEOGRAPHIC_TYPE)
+        # Each key entry is (key_id, location, count, value_offset);
+        # location=0 means the value is stored inline at value_offset.
+        assert flat[i + 3] == epsg
+
+    @pytest.mark.parametrize("epsg", [32610, 3857, 2193])
+    def test_projected_dispatch(self, epsg):
+        pytest.importorskip("pyproj")
+        gt = GeoTransform(500000.0, 4500000.0, 30.0, -30.0)
+        tags = build_geo_tags(gt, crs_epsg=epsg)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_PROJECTED_CS_TYPE in geokeys
+        assert GEOKEY_GEOGRAPHIC_TYPE not in geokeys
+
+    def test_unknown_epsg_without_pyproj_raises(self, monkeypatch):
+        """Fail closed when pyproj is unavailable and the code is unknown.
+
+        Mocks `pyproj` import failure to exercise the fallback path.
+        EPSG 7844 (GDA2020 geographic) is outside the hard-coded
+        4000-4999 allowlist, so without pyproj the writer cannot tell
+        geographic from projected and must raise -- silent corruption
+        is worse than an explicit error.
+        """
+        import builtins
+        from xrspatial.geotiff._errors import UnknownCRSModelTypeError
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pyproj" or name.startswith("pyproj."):
+                raise ImportError("simulated: pyproj not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        with pytest.raises(UnknownCRSModelTypeError, match="pyproj"):
+            build_geo_tags(gt, crs_epsg=7844)
+
+    def test_known_geographic_without_pyproj_still_works(self, monkeypatch):
+        """The 4000-4999 fallback set keeps working when pyproj is gone.
+
+        EPSG 4326 (and the broader 4000-4999 block) is in the hard-coded
+        fallback set so EPSG-tagged geographic rasters continue to round
+        trip without a pyproj dependency.
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pyproj" or name.startswith("pyproj."):
+                raise ImportError("simulated: pyproj not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        tags = build_geo_tags(gt, crs_epsg=4326)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_GEOGRAPHIC_TYPE in geokeys
+        assert GEOKEY_PROJECTED_CS_TYPE not in geokeys
+
+    def test_unknown_epsg_with_pyproj_raises(self, monkeypatch):
+        """pyproj raises on an unknown EPSG -> writer raises too.
+
+        Simulates the case where pyproj is installed but the EPSG code
+        isn't in its database (e.g. the local PROJ database is out of
+        date). The fallback set covers EPSG 4326 / 4000-4999; anything
+        else should raise rather than fall through to a guess.
+        """
+        from xrspatial.geotiff import _geotags
+        from xrspatial.geotiff._errors import UnknownCRSModelTypeError
+
+        # Patch _model_type_from_epsg's pyproj path by stubbing CRS.from_epsg.
+        import pyproj
+
+        def boom(code):
+            raise pyproj.exceptions.CRSError(f"simulated unknown code {code}")
+
+        monkeypatch.setattr(pyproj.CRS, "from_epsg", staticmethod(boom))
+
+        gt = GeoTransform(0.0, 0.0, 30.0, -30.0)
+        # 9999999 is outside the 4000-4999 fallback set.
+        with pytest.raises(UnknownCRSModelTypeError):
+            build_geo_tags(gt, crs_epsg=9999999)
+
+        # And the fallback set still rescues EPSG 4326 even when pyproj fails.
+        tags = build_geo_tags(gt, crs_epsg=4326)
+        assert GEOKEY_GEOGRAPHIC_TYPE in tags[TAG_GEO_KEY_DIRECTORY]
+
+        # Use _geotags to silence "imported but unused" linters.
+        assert _geotags is not None
+
+
 def _build_tiff_with_transformation_tag(matrix_16: tuple) -> bytes:
     """Build a tiny single-strip TIFF carrying a 4x4 ModelTransformationTag.
 
