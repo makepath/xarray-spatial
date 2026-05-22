@@ -215,7 +215,7 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Resample](xrspatial/resample.py) | Changes raster resolution (cell size) without reprojection. Nearest, bilinear, cubic, average, mode, min, max, median methods | Standard (interpolation / block aggregation) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling. Supports vertical datums (EGM96, EGM2008) and horizontal datum shifts (NAD27, OSGB36, etc.) | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy. Same-CRS tiles skip reprojection and are placed by direct coordinate alignment | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
 
 Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coordinate transforms. pyproj is used only for CRS metadata parsing (~1ms, once per call) and output grid boundary estimation (~500 control points, once per call). Any CRS pair without a built-in kernel falls back to pyproj automatically.
 
@@ -238,8 +238,6 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 **Datum shift support:** Reprojection from non-WGS84 datums (NAD27, OSGB36, DHDN, MGI, ED50, BD72, CH1903, D73, AGD66, Tokyo) applies grid-based shifts from PROJ CDN (sub-metre accuracy) with 7-parameter Helmert fallback (1-5m accuracy). 14 grids are registered covering North America, UK, Germany, Austria, Spain, Netherlands, Belgium, Switzerland, Portugal, and Australia.
 
 **ITRF frame support:** `itrf_transform` converts between ITRF2000, ITRF2008, ITRF2014, and ITRF2020 using 14-parameter time-dependent Helmert transforms from PROJ data files. Shifts are mm-level.
-
-Same-CRS tiles skip reprojection entirely and are placed by direct coordinate alignment.
 
 -------
 
