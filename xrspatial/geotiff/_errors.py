@@ -103,6 +103,21 @@ class ConflictingNodataError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
+    """Can't classify an EPSG as geographic or projected on write (#2277).
+
+    Raised by the GeoTIFF writer when the caller supplies an EPSG code
+    that pyproj cannot resolve, or when pyproj isn't installed and the
+    code falls outside the hard-coded geographic fallback set
+    (EPSG 4326 plus the 4000-4999 block). The legacy heuristic at the
+    same site guessed any code outside that window was projected, which
+    silently mis-tagged geographic codes like 6318 (NAD83(2011)),
+    7844 (GDA2020), and 9057 (WGS 84 (G2139)) as
+    ``ProjectedCSTypeGeoKey``. Silent CRS corruption is worse than an
+    explicit error.
+    """
+
+
 __all__ = [
     "GeoTIFFAmbiguousMetadataError",
     "InvalidCRSCodeError",
@@ -112,4 +127,5 @@ __all__ = [
     "MixedBandMetadataError",
     "ConflictingCRSError",
     "ConflictingNodataError",
+    "UnknownCRSModelTypeError",
 ]
