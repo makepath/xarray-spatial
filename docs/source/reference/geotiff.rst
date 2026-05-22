@@ -144,3 +144,25 @@ returned with holes left as the band's nodata sentinel (or zero on
 integer bands without a sentinel). ``XRSPATIAL_GEOTIFF_STRICT=1``
 forces the raise in ``'warn'`` mode too, so CI environments can enforce
 fail-fast behavior globally.
+
+BigTIFF COG (issue #2303)
+=========================
+
+A COG larger than the classic-TIFF 4 GiB offset ceiling needs the
+BigTIFF wrapper (magic ``43``, 8-byte offsets, 20-byte IFD entries).
+``to_geotiff(..., cog=True)`` auto-promotes to BigTIFF when the
+estimated file size exceeds ``UINT32_MAX`` (0xFFFFFFFF bytes); callers
+can force the wrapper with ``bigtiff=True`` even on small rasters when
+they want a stable layout for downstream tooling that probes the magic
+byte. The same threshold and force-flag rules apply whether the output
+is a plain GeoTIFF or a COG.
+
+``SUPPORTED_FEATURES['writer.bigtiff_cog']`` is currently ``advanced``.
+The external-interop gate lives in
+``xrspatial/geotiff/tests/test_bigtiff_cog_compliance_2286.py`` and
+covers the BigTIFF-specific layout (header, IFDs, tile and overview
+offset tables), one lossless integer codec, one lossless float codec,
+single-band and 3-band, one overview level, plus an auto-promotion row
+that drives the threshold via the IFD-overhead helper rather than
+allocating a multi-gigabyte buffer. Promotion to ``stable`` follows the
+same release-cycle soak rule as the rest of the COG surface.
