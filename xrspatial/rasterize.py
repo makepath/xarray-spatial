@@ -99,11 +99,8 @@ def _merge_max(pixel, props, is_first):
         return val
     if is_first:
         return val
-    # A NaN already in the pixel sticks: 'finite > NaN' is False so the
-    # comparison below would return the pixel anyway, but checking explicitly
-    # documents the intent and keeps the contract symmetric with the GPU path.
-    if pixel != pixel:
-        return pixel
+    # If pixel is already NaN from an earlier burn, 'val > NaN' is False
+    # below and we fall through to 'return pixel', keeping NaN sticky.
     if val > pixel:
         return val
     return pixel
@@ -116,8 +113,6 @@ def _merge_min(pixel, props, is_first):
         return val
     if is_first:
         return val
-    if pixel != pixel:
-        return pixel
     if val < pixel:
         return val
     return pixel
