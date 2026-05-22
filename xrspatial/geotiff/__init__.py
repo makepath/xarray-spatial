@@ -61,6 +61,7 @@ from ._errors import (
     MixedBandMetadataError,
     NonUniformCoordsError,
     RotatedTransformError,
+    UnknownCRSModelTypeError,
     UnparseableCRSError,
 )
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
@@ -140,6 +141,7 @@ __all__ = [
     'NonUniformCoordsError',
     'RotatedTransformError',
     'SUPPORTED_FEATURES',
+    'UnknownCRSModelTypeError',
     'UnparseableCRSError',
     'UnsafeURLError',
     'open_geotiff',
@@ -492,6 +494,15 @@ def open_geotiff(source: str | BinaryIO, *,
         ``to_geotiff`` / ``write_geotiff_gpu`` to accept the loss; the
         ``ModelTransformationTag`` emit path is tracked separately
         (issue #2115).
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        that do not parse as WKT. When ``False`` (the default since
+        #1929), an unrecognised CRS payload raises
+        ``UnparseableCRSError`` instead of landing in ``attrs['crs_wkt']``
+        verbatim. Set to ``True`` to keep the pre-#1929 permissive
+        behaviour where the citation field passes through unchanged.
+        Matches the same kwarg on ``to_geotiff`` / ``write_geotiff_gpu``
+        so a value the reader accepted can survive a round-trip.
 
     Returns
     -------
