@@ -84,6 +84,26 @@ TAG_GEO_DOUBLE_PARAMS = 34736
 TAG_GEO_ASCII_PARAMS = 34737
 
 
+# Human-readable names for tags that turn up in error messages. Only
+# tags that legitimately use RATIONAL / SRATIONAL are interesting here;
+# anything else gets formatted as the bare numeric id.
+_TAG_NAMES = {
+    TAG_X_RESOLUTION: "XResolution",
+    TAG_Y_RESOLUTION: "YResolution",
+    TAG_RESOLUTION_UNIT: "ResolutionUnit",
+}
+
+
+def _tag_label(tag: int | None) -> str:
+    """Format a tag id for error messages."""
+    if tag is None:
+        return "<unknown>"
+    name = _TAG_NAMES.get(tag)
+    if name is not None:
+        return f"{name} (tag={tag})"
+    return f"tag={tag}"
+
+
 @dataclass
 class TIFFHeader:
     """Parsed TIFF file header."""
@@ -427,8 +447,15 @@ def parse_header(data: bytes | memoryview) -> TIFFHeader:
 
 
 def _read_value(data: bytes | memoryview, offset: int, type_id: int,
-                count: int, bo: str) -> Any:
-    """Read a typed value array from data at the given offset."""
+                count: int, bo: str, tag: int | None = None) -> Any:
+    """Read a typed value array from data at the given offset.
+
+    A zero-denominator RATIONAL or SRATIONAL is rejected with a
+    `ValueError` rather than silently coerced to 0.0. The TIFF spec
+    treats denominator-zero rationals as malformed, and quietly mapping
+    them to 0.0 lets corrupted `XResolution` / `YResolution` metadata
+    round-trip through the reader as if the file were valid.
+    """
     type_size = TIFF_TYPE_SIZES.get(type_id, 1)
 
     if type_id == ASCII:
@@ -445,7 +472,13 @@ def _read_value(data: bytes | memoryview, offset: int, type_id: int,
             off = offset + i * 8
             num = struct.unpack_from(f'{bo}I', data, off)[0]
             den = struct.unpack_from(f'{bo}I', data, off + 4)[0]
-            values.append(num / den if den != 0 else 0.0)
+            if den == 0:
+                raise ValueError(
+                    f"Malformed RATIONAL on {_tag_label(tag)}: "
+                    f"numerator={num} denominator={den} at element {i}; "
+                    f"refusing to parse possibly malformed TIFF"
+                )
+            values.append(num / den)
         return tuple(values) if count > 1 else values[0]
 
     if type_id == SRATIONAL:
@@ -454,7 +487,13 @@ def _read_value(data: bytes | memoryview, offset: int, type_id: int,
             off = offset + i * 8
             num = struct.unpack_from(f'{bo}i', data, off)[0]
             den = struct.unpack_from(f'{bo}i', data, off + 4)[0]
-            values.append(num / den if den != 0 else 0.0)
+            if den == 0:
+                raise ValueError(
+                    f"Malformed SRATIONAL on {_tag_label(tag)}: "
+                    f"numerator={num} denominator={den} at element {i}; "
+                    f"refusing to parse possibly malformed TIFF"
+                )
+            values.append(num / den)
         return tuple(values) if count > 1 else values[0]
 
     fmt_char = TIFF_TYPE_STRUCT_CODES.get(type_id)
@@ -633,7 +672,7 @@ def parse_ifd(data: bytes | memoryview, offset: int,
             # cap still fires.
             continue
         try:
-            dims[tag] = _read_value(data, value_area_offset, type_id, count, bo)
+            dims[tag] = _read_value(data, value_area_offset, type_id, count, bo, tag=tag)
         except (struct.error, ValueError):
             continue
 
@@ -686,7 +725,7 @@ def parse_ifd(data: bytes | memoryview, offset: int,
                 )
 
         if total_size <= inline_max:
-            value = _read_value(data, value_area_offset, type_id, count, bo)
+            value = _read_value(data, value_area_offset, type_id, count, bo, tag=tag)
         else:
             if is_big:
                 ptr = struct.unpack_from(f'{bo}Q', data, value_area_offset)[0]
@@ -702,7 +741,7 @@ def parse_ifd(data: bytes | memoryview, offset: int,
                     f"[{ptr}, {ptr + total_size}) exceeds file length "
                     f"{data_len}"
                 )
-            value = _read_value(data, ptr, type_id, count, bo)
+            value = _read_value(data, ptr, type_id, count, bo, tag=tag)
 
         entries[tag] = IFDEntry(tag=tag, type_id=type_id, count=count, value=value)
 
