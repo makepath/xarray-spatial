@@ -18,18 +18,11 @@ These tests pin two invariants:
 """
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
-from xrspatial.geotiff._attrs import (
-    GeoTIFFMetadata,
-    _ATTRS_CONTRACT_VERSION,
-    attrs_to_metadata,
-    geo_info_to_metadata,
-    metadata_to_attrs,
-)
+from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, attrs_to_metadata,
+                                      geo_info_to_metadata, metadata_to_attrs)
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY
-
 
 # ---------------------------------------------------------------------------
 # Builders

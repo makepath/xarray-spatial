@@ -9,27 +9,22 @@ from __future__ import annotations
 
 import os
 import struct
-import tempfile
 import threading
 
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._reader import (
-    MAX_PIXELS_DEFAULT,
-    _check_dimensions,
-    _read_strips,
-    _read_tiles,
-    read_to_array,
-)
-from xrspatial.geotiff._header import parse_header, parse_all_ifds
 from xrspatial.geotiff._dtypes import tiff_dtype_to_numpy
-from .conftest import make_minimal_tiff
+from xrspatial.geotiff._header import parse_all_ifds, parse_header
+from xrspatial.geotiff._reader import (MAX_PIXELS_DEFAULT, _check_dimensions, _read_strips,
+                                       _read_tiles, read_to_array)
 
+from .conftest import make_minimal_tiff
 
 # ---------------------------------------------------------------------------
 # Cat 1: Unbounded allocation guard
 # ---------------------------------------------------------------------------
+
 
 class TestDimensionGuard:
     def test_check_dimensions_rejects_oversized(self):
@@ -222,7 +217,7 @@ class TestTileDimensionGuard:
         # Parse to locate the tile-width entry, then rewrite it in place.
         # The conftest TIFF uses little-endian SHORT for TileWidth (322).
         import struct
-        header = parse_header(base)
+
         # IFD starts at offset 8, then 2-byte count, then 12-byte entries
         num_entries = struct.unpack_from('<H', base, 8)[0]
         patched = bytearray(base)
@@ -314,6 +309,7 @@ class TestVRTAllocationGuard:
 # it did not enforce containment, so a crafted VRT could still hand
 # ``read_to_array`` an arbitrary path.
 # ---------------------------------------------------------------------------
+
 
 class TestVRTPathTraversal:
     def test_relative_path_traversal_rejected(self, tmp_path):
@@ -619,10 +615,8 @@ class _MockHTTPSource:
         gap_threshold=None,
         max_coalesced_range_bytes=None,
     ):
-        from xrspatial.geotiff._reader import (
-            coalesce_ranges, split_coalesced_bytes,
-            COALESCE_GAP_THRESHOLD_DEFAULT,
-        )
+        from xrspatial.geotiff._reader import (COALESCE_GAP_THRESHOLD_DEFAULT, coalesce_ranges,
+                                               split_coalesced_bytes)
         if gap_threshold is None:
             gap_threshold = COALESCE_GAP_THRESHOLD_DEFAULT
         merged, mapping = coalesce_ranges(
@@ -642,8 +636,9 @@ class TestHTTPTileByteCountCap:
 
     def _build_forged_cog(self, tmp_path, byte_count_value: int) -> bytes:
         """Build a real tiled COG, then patch every TileByteCounts entry."""
-        from xrspatial.geotiff import to_geotiff
         import xarray as xr
+
+        from xrspatial.geotiff import to_geotiff
         arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
         da = xr.DataArray(arr, dims=['y', 'x'])
         path = str(tmp_path / "forged_1536.tif")
@@ -685,8 +680,10 @@ class TestHTTPTileByteCountCap:
 
     def test_normal_cog_still_reads(self, tmp_path, monkeypatch):
         """Realistic per-tile byte counts pass under the default cap."""
-        from xrspatial.geotiff import to_geotiff, _reader as _reader_mod
         import xarray as xr
+
+        from xrspatial.geotiff import _reader as _reader_mod
+        from xrspatial.geotiff import to_geotiff
 
         arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
         da = xr.DataArray(arr, dims=['y', 'x'])
@@ -703,8 +700,10 @@ class TestHTTPTileByteCountCap:
 
     def test_env_override_lifts_cap(self, tmp_path, monkeypatch):
         """A user with legitimate large tiles can raise the cap via env."""
-        from xrspatial.geotiff import to_geotiff, _reader as _reader_mod
         import xarray as xr
+
+        from xrspatial.geotiff import _reader as _reader_mod
+        from xrspatial.geotiff import to_geotiff
 
         arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
         da = xr.DataArray(arr, dims=['y', 'x'])
@@ -729,8 +728,9 @@ class TestHTTPTileByteCountCap:
         cap is shared, so we just confirm the default (256 MiB) leaves
         plenty of headroom for a normal small tiled COG.
         """
-        from xrspatial.geotiff import open_geotiff, to_geotiff
         import xarray as xr
+
+        from xrspatial.geotiff import open_geotiff, to_geotiff
 
         arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
         da = xr.DataArray(arr, dims=['y', 'x'])

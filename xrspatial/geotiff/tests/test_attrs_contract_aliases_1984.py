@@ -28,7 +28,6 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._attrs import _resolve_nodata_attr
 
-
 # Arbitrary float-castable sentinel that is distinct from any data value
 # used below. The value itself does not matter; the tests assert it
 # survives the alias resolver and the round-trip.

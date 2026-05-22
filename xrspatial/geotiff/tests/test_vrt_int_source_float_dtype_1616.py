@@ -153,9 +153,9 @@ def test_float_vrt_int_source_with_band_select(tmp_path):
     must reach the source-side masking step, not just ``attrs['nodata']``.
     """
     src_a = _write_uint16_with_sentinel(tmp_path, sentinel=65535,
-                                          filename='ba.tif')
+                                        filename='ba.tif')
     src_b = _write_uint16_with_sentinel(tmp_path, sentinel=65000,
-                                          filename='bb.tif')
+                                        filename='bb.tif')
     vrt_xml = f"""<VRTDataset rasterXSize="2" rasterYSize="2">
   <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
   <VRTRasterBand dataType="Float32" band="1">

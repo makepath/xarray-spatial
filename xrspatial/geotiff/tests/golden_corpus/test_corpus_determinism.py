@@ -42,7 +42,6 @@ pytest.importorskip("rasterio")
 
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 
-
 FIXTURES_DIR = (
     pathlib.Path(__file__).resolve().parent / "fixtures"
 )

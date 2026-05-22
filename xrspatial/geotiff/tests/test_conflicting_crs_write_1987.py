@@ -35,15 +35,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    ConflictingCRSError,
-    GeoTIFFAmbiguousMetadataError,
-    to_geotiff,
-)
-from xrspatial.geotiff._validation import (
-    _check_write_conflicting_crs,
-    _registered_write_metadata_checks,
-)
+from xrspatial.geotiff import ConflictingCRSError, GeoTIFFAmbiguousMetadataError, to_geotiff
+from xrspatial.geotiff._validation import (_check_write_conflicting_crs,
+                                           _registered_write_metadata_checks)
 
 pyproj = pytest.importorskip("pyproj")
 

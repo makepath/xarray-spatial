@@ -15,7 +15,6 @@ byte-identical to the old "read full, resample full, then slice" path.
 """
 from __future__ import annotations
 
-import os
 from unittest import mock
 
 import numpy as np

@@ -25,18 +25,14 @@ import threading
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._reader import (
-    _HTTPSource,
-    _compute_full_image_byte_budget,
-    _FULL_IMAGE_BUDGET_HEADER_SLACK,
-    _read_cog_http,
-)
+from xrspatial.geotiff._reader import (_FULL_IMAGE_BUDGET_HEADER_SLACK,
+                                       _compute_full_image_byte_budget, _HTTPSource, _read_cog_http)
 from xrspatial.geotiff._writer import write
-
 
 # ---------------------------------------------------------------------------
 # Server helpers
 # ---------------------------------------------------------------------------
+
 
 class _BaseHandler(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''

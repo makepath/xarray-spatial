@@ -33,13 +33,7 @@ import importlib.util
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    read_vrt,
-    write_vrt,
-)
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt, write_vrt
 from xrspatial.geotiff._writer import write
 
 

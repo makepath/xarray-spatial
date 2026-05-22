@@ -17,18 +17,15 @@ from __future__ import annotations
 
 import importlib.util
 import struct
+import zlib
 
 import numpy as np
 import pytest
-import zlib
 
-from xrspatial.geotiff._compression import (
-    deflate_decompress,
-    lz4_decompress,
-    packbits_decompress,
-    zstd_decompress,
-)
+from xrspatial.geotiff._compression import (deflate_decompress, lz4_decompress, packbits_decompress,
+                                            zstd_decompress)
 from xrspatial.geotiff._reader import read_to_array
+
 
 def _module_available(name: str) -> bool:
     """True iff ``import name`` would succeed.
@@ -397,6 +394,7 @@ class TestJpeg2000Direct:
         ``jp2[:]``.
         """
         import glymur
+
         # Build a real 2000x2000 uint8 codestream (~150 bytes for zeros).
         arr = np.zeros((2000, 2000), dtype=np.uint8)
         tmp = tmp_path / "src.j2k"
@@ -413,6 +411,7 @@ class TestJpeg2000Direct:
     def test_jpeg2000_legitimate_passes(self, tmp_path):
         """A JPEG 2000 blob whose declared output matches expected_size passes."""
         import glymur
+
         # Use a 64x64 raster: large enough for the default 6-resolution
         # OpenJPEG pyramid without tripping its min-tile-size check.
         arr = (np.arange(64 * 64, dtype=np.uint8) % 200).reshape(64, 64)
@@ -502,8 +501,9 @@ def _forge_jpeg_with_sof_dimensions(real_h: int, real_w: int,
     The decoder never gets the chance to fail on the mismatch because
     the pre-decode cap fires first -- which is the property under test.
     """
-    from PIL import Image
     import io
+
+    from PIL import Image
     mode = 'RGB' if real_c == 3 else 'L'
     img = Image.new(mode, (real_w, real_h), color=0)
     buf = io.BytesIO()
@@ -551,6 +551,7 @@ class TestJpegDirect:
             declared_h=8000, declared_w=8000,
         )
         from xrspatial.geotiff._compression import jpeg_decompress
+
         # Match the full diagnostic so a regression that swaps in a
         # different error path (e.g. Pillow's own DecompressionBombError
         # with a different wording, or a numeric overflow before the
@@ -563,8 +564,9 @@ class TestJpegDirect:
 
     def test_jpeg_legitimate_passes(self):
         """A JPEG whose SOF dimensions match the expected tile size passes."""
-        from PIL import Image
         import io
+
+        from PIL import Image
         img = Image.new('RGB', (32, 32), color=(10, 20, 30))
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=90)
@@ -583,13 +585,14 @@ class TestJpegDirect:
             real_h=16, real_w=16, real_c=3,
             declared_h=64, declared_w=64,
         )
-        from xrspatial.geotiff._compression import jpeg_decompress
         # With no dimension kwargs, the cap is disabled. The forged JPEG
         # declares 64x64 but encodes only 16x16 of payload -- libjpeg
         # raises on the truncation; the bomb cap is what we're checking
         # is *not* the source of any exception here. Catch whatever
         # Pillow raises and assert it isn't our bomb message.
         from PIL import Image as _Img  # noqa: F401
+
+        from xrspatial.geotiff._compression import jpeg_decompress
         try:
             jpeg_decompress(blob)
         except ValueError as exc:
@@ -610,6 +613,7 @@ class TestJpegDirect:
         # with no SOF marker.
         blob = bytes([0xFF, 0xD8, 0xFF, 0xD9])
         from xrspatial.geotiff._compression import jpeg_decompress
+
         # No SOF -> bomb cap returns None -> Pillow raises on the empty
         # stream.
         with pytest.raises(Exception):

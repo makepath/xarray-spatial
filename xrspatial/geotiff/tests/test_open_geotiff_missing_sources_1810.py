@@ -17,12 +17,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    GeoTIFFFallbackWarning,
-    open_geotiff,
-    to_geotiff,
-    write_vrt,
-)
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff, write_vrt
 
 
 def _write_missing_source_vrt(path):

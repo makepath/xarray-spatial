@@ -10,11 +10,8 @@ from __future__ import annotations
 import warnings
 
 from .._crs import _resolve_crs_to_wkt
-from .._runtime import (
-    _CRS_WKT_DEPRECATED_SENTINEL,
-    _VRT_PATH_DEPRECATED_SENTINEL,
-    _VRT_PATH_MISSING_SENTINEL,
-)
+from .._runtime import (_CRS_WKT_DEPRECATED_SENTINEL, _VRT_PATH_DEPRECATED_SENTINEL,
+                        _VRT_PATH_MISSING_SENTINEL)
 from .._validation import _validate_nodata_arg
 
 

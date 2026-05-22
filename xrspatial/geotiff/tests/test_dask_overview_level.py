@@ -23,7 +23,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-
 tifffile = pytest.importorskip("tifffile")
 dask_array = pytest.importorskip("dask.array")
 
@@ -63,8 +62,7 @@ def test_dask_overview_level_zero_matches_full_res(tmp_path):
 
 def test_dask_overview_level_one_returns_half_res(tmp_path):
     """``overview_level=1`` materialises the half-resolution overview."""
-    from xrspatial.geotiff import read_geotiff_dask
-    from xrspatial.geotiff import open_geotiff
+    from xrspatial.geotiff import open_geotiff, read_geotiff_dask
 
     rng = np.random.RandomState(0xD0E)
     arr = rng.randint(0, 256, size=(128, 192), dtype=np.uint8)
@@ -86,8 +84,7 @@ def test_dask_overview_level_one_returns_half_res(tmp_path):
 
 def test_dask_overview_level_two_returns_quarter_res(tmp_path):
     """``overview_level=2`` materialises the quarter-resolution overview."""
-    from xrspatial.geotiff import read_geotiff_dask
-    from xrspatial.geotiff import open_geotiff
+    from xrspatial.geotiff import open_geotiff, read_geotiff_dask
 
     rng = np.random.RandomState(0xD0E)
     arr = rng.randint(0, 256, size=(128, 192), dtype=np.uint8)

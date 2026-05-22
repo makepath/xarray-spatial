@@ -46,16 +46,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_gpu,
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
+from xrspatial.geotiff import (open_geotiff, read_geotiff_gpu, to_geotiff, write_geotiff_gpu,
+                               write_vrt)
 from xrspatial.geotiff._header import parse_header
 from xrspatial.geotiff._vrt import parse_vrt
-
 
 # --------------------------------------------------------------------------
 # GPU gating

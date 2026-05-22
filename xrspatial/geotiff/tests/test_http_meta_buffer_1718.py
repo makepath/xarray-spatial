@@ -15,19 +15,14 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._reader import (
-    INITIAL_HTTP_HEADER_BYTES,
-    MAX_HTTP_HEADER_BYTES,
-    _HTTPSource,
-    _parse_cog_http_meta,
-    _read_cog_http,
-)
+from xrspatial.geotiff._reader import (INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES,
+                                       _HTTPSource, _parse_cog_http_meta, _read_cog_http)
 from xrspatial.geotiff._writer import write
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class _InMemoryHTTPSource(_HTTPSource):
     """_HTTPSource backed by an in-memory bytes buffer.

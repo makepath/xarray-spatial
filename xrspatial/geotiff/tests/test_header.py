@@ -7,18 +7,9 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff._dtypes import RATIONAL, SRATIONAL
-from xrspatial.geotiff._header import (
-    IFD,
-    TIFFHeader,
-    _read_value,
-    parse_all_ifds,
-    parse_header,
-    parse_ifd,
-    TAG_IMAGE_WIDTH,
-    TAG_IMAGE_LENGTH,
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-)
+from xrspatial.geotiff._header import (IFD, TAG_IMAGE_WIDTH, _read_value, parse_all_ifds,
+                                       parse_header, parse_ifd)
+
 from .conftest import make_minimal_tiff
 
 
@@ -134,7 +125,7 @@ class TestPlanarConfigValidation:
     """
 
     def _ifd_with_planar(self, value) -> IFD:
-        from xrspatial.geotiff._header import IFDEntry, TAG_PLANAR_CONFIG
+        from xrspatial.geotiff._header import TAG_PLANAR_CONFIG, IFDEntry
         ifd = IFD()
         ifd.entries[TAG_PLANAR_CONFIG] = IFDEntry(
             tag=TAG_PLANAR_CONFIG, type_id=3, count=1, value=value,
@@ -287,7 +278,6 @@ class TestReadValueRationals:
         buf = struct.pack('<II', 1, 1)
         with pytest.raises(struct.error):
             _read_value(buf, 0, RATIONAL, 4, '<')
-
 
 
 class TestTruncatedIFD:

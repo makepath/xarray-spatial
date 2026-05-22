@@ -50,8 +50,9 @@ _gds_only = pytest.mark.skipif(
 
 @pytest.fixture
 def small_raster_path_1876(tmp_path):
-    from xrspatial.geotiff import to_geotiff
     import xarray as xr
+
+    from xrspatial.geotiff import to_geotiff
 
     arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
     da = xr.DataArray(arr, dims=['y', 'x'],
@@ -64,8 +65,9 @@ def small_raster_path_1876(tmp_path):
 
 @pytest.fixture
 def multi_band_path_1876(tmp_path):
-    from xrspatial.geotiff import to_geotiff
     import xarray as xr
+
+    from xrspatial.geotiff import to_geotiff
 
     rng = np.random.RandomState(42)
     arr = rng.rand(3, 32, 32).astype(np.float32)
@@ -241,8 +243,9 @@ def test_read_geotiff_gpu_chunks_fallback_when_kvikio_absent(
     """When kvikio is reported missing, the chunked path falls back to
     the CPU-decode + cupy.asarray graph and still produces a Dask+CuPy
     DataArray with correct values."""
-    import cupy
     import importlib.util as _ilu
+
+    import cupy
 
     from xrspatial.geotiff import read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gtmod

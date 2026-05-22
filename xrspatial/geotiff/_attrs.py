@@ -159,20 +159,12 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
-
 import xarray as xr
 
-from ._coords import (
-    coords_from_geo_info as _coords_from_geo_info,
-    resolve_georef as _resolve_georef,
-    transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
-)
-from ._geotags import (
-    RASTER_PIXEL_IS_AREA,
-    RASTER_PIXEL_IS_POINT,
-    _NO_GEOREF_KEY,
-)
-
+from ._coords import coords_from_geo_info as _coords_from_geo_info
+from ._coords import resolve_georef as _resolve_georef
+from ._coords import transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry
+from ._geotags import _NO_GEOREF_KEY, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 
 # Per-codec valid compression-level ranges, used by ``to_geotiff`` for
 # friendly up-front validation. Codecs not listed here either reject any

@@ -33,7 +33,6 @@ write_vrt(path, source_files, ...)
 """
 from __future__ import annotations
 
-import math
 import os
 import warnings
 from typing import TYPE_CHECKING
@@ -44,80 +43,53 @@ import xarray as xr
 if TYPE_CHECKING:
     from typing import BinaryIO
 
-from ._coords import (
-    _BAND_DIM_NAMES,
-    coords_from_pixel_geometry as _coords_from_pixel_geometry,
-    transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
-    transform_tuple as _transform_tuple,
-    transform_from_attr as _transform_from_attr,
-    coords_to_transform as _coords_to_transform,
-    require_transform_for_georeferenced as _require_transform_for_georeferenced,
-)
-from ._errors import (
-    ConflictingCRSError,
-    ConflictingNodataError,
-    GeoTIFFAmbiguousMetadataError,
-    InvalidCRSCodeError,
-    MixedBandMetadataError,
-    NonUniformCoordsError,
-    RotatedTransformError,
-    UnparseableCRSError,
-)
-from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
-from ._reader import UnsafeURLError
+# Re-exports only; consumers import these as ``xrspatial.geotiff._coords_from_pixel_geometry``
 # ``read_to_array`` is internal: it is used by ``open_geotiff`` and the
 # GPU fallback below but is not in ``__all__`` or the module-level
 # Public API docstring. Bind it under a leading-underscore name so it
 # does not leak into ``xrspatial.geotiff``'s public namespace. Tests
 # and internal callers that genuinely need it can import directly from
 # ``xrspatial.geotiff._reader``. See issue #1708.
-from ._attrs import (
-    GEOREF_STATUS_CRS_ONLY,
-    GEOREF_STATUS_FULL,
-    GEOREF_STATUS_NONE,
-    GEOREF_STATUS_ROTATED_DROPPED,
-    GEOREF_STATUS_TRANSFORM_ONLY,
-    GEOREF_STATUS_VALUES,
-    _LEVEL_RANGES,
-    _VALID_COMPRESSIONS,
-    _extent_to_window,
-    _extract_rich_tags,
-    _finalize_eager_read,
-    _resolve_nodata_attr,
-)
-from ._backends._gpu_helpers import _is_gpu_data
+from ._attrs import (_LEVEL_RANGES, _VALID_COMPRESSIONS, GEOREF_STATUS_CRS_ONLY,  # noqa: F401
+                     GEOREF_STATUS_FULL, GEOREF_STATUS_NONE, GEOREF_STATUS_ROTATED_DROPPED,
+                     GEOREF_STATUS_TRANSFORM_ONLY, GEOREF_STATUS_VALUES, _extent_to_window,
+                     _extract_rich_tags, _finalize_eager_read, _resolve_nodata_attr)
 # Re-export only; called by xrspatial/geotiff/tests/test_nodata_*.py.
 from ._backends._gpu_helpers import _apply_nodata_mask_gpu  # noqa: F401
+from ._backends._gpu_helpers import _is_gpu_data  # noqa: F401
 from ._backends.dask import read_geotiff_dask
 from ._backends.gpu import read_geotiff_gpu
 from ._backends.vrt import read_vrt
-from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg
-from ._reader import (
-    _MAX_CLOUD_BYTES_SENTINEL,
-    read_to_array as _read_to_array,
-)
-from ._runtime import (
-    GeoTIFFFallbackWarning,
-    _CRS_WKT_DEPRECATED_SENTINEL,
-    _GPU_DEPRECATED_SENTINEL,
-    _MISSING_SOURCES_SENTINEL,
-    _ON_GPU_FAILURE_SENTINEL,
-    _geotiff_strict_mode,
-    _gpu_fallback_warning_message,
-)
-from ._validation import (
-    _validate_3d_writer_dims,
-    _validate_chunks_arg,
-    _validate_tile_size_arg,
-)
+# etc. See the ``# noqa: F401`` pattern at lines 89 and 119 for the same convention.
+from ._coords import _BAND_DIM_NAMES  # noqa: F401
+from ._coords import coords_from_pixel_geometry as _coords_from_pixel_geometry  # noqa: F401
+from ._coords import coords_to_transform as _coords_to_transform  # noqa: F401
+from ._coords import \
+    require_transform_for_georeferenced as _require_transform_for_georeferenced  # noqa: F401
+from ._coords import transform_from_attr as _transform_from_attr  # noqa: F401
+from ._coords import transform_tuple as _transform_tuple  # noqa: F401
+from ._coords import \
+    transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry  # noqa: F401
+from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
+from ._errors import (ConflictingCRSError, ConflictingNodataError, GeoTIFFAmbiguousMetadataError,
+                      InvalidCRSCodeError, MixedBandMetadataError, NonUniformCoordsError,
+                      RotatedTransformError, UnparseableCRSError)
+from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
+from ._reader import _MAX_CLOUD_BYTES_SENTINEL, UnsafeURLError
+from ._reader import read_to_array as _read_to_array
+from ._runtime import (_CRS_WKT_DEPRECATED_SENTINEL, _GPU_DEPRECATED_SENTINEL,  # noqa: F401
+                       _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, GeoTIFFFallbackWarning,
+                       _geotiff_strict_mode, _gpu_fallback_warning_message)
+from ._validation import (_validate_3d_writer_dims, _validate_chunks_arg,  # noqa: F401
+                          _validate_tile_size_arg)
+# Re-export only; called by xrspatial/geotiff/tests/test_nodata_no_extra_copy_1553.py.
 # ``_writer.write`` (alias for ``_writer._write``) is module-private;
 # see ``_writer.py`` docstring and issue #2138. The public eager write
 # surface is :func:`to_geotiff`; do not re-export the array-level
 # entry point here. The dotted path ``xrspatial.geotiff._writer._write``
 # still works for the handful of internal call sites that need it.
-from ._writers.eager import to_geotiff
-# Re-export only; called by xrspatial/geotiff/tests/test_nodata_no_extra_copy_1553.py.
 from ._writers.eager import _write_single_tile  # noqa: F401
+from ._writers.eager import to_geotiff
 from ._writers.gpu import write_geotiff_gpu
 from ._writers.vrt import write_vrt
 
@@ -211,9 +183,6 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         grid instead of raising ``RotatedTransformError`` (issues #2115,
         #2267).
     """
-    from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
-    from ._geotags import extract_geo_info_with_overview_inheritance
-    from ._header import parse_all_ifds, parse_header, select_overview_ifd
     # ``_parse_cog_http_meta`` is imported from ``_cog_http`` directly
     # rather than re-routed through ``_reader`` because the
     # ``open_geotiff(..., chunks=...)`` fsspec metadata path is not part
@@ -224,9 +193,10 @@ def _read_geo_info(source, *, overview_level: int | None = None,
     # ``_HTTPSource`` construction, both of which still go through
     # ``_reader`` for the patchable names. See PR-J / #2258.
     from ._cog_http import _parse_cog_http_meta
-    from ._sources import (
-        _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri,
-    )
+    from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
+    from ._geotags import extract_geo_info_with_overview_inheritance
+    from ._header import parse_all_ifds, parse_header, select_overview_ifd
+    from ._sources import _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri
     from ._validation import _validate_predictor_sample_format
 
     source = _coerce_path(source)
@@ -301,9 +271,7 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list
         # so ``overview_level`` indexes both internal and external
         # overviews (issue #2112). Local file paths only.
-        from ._sidecar import (
-            attach_sidecar_origin, find_sidecar, load_sidecar,
-        )
+        from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
             sidecar = load_sidecar(sidecar_path)
@@ -348,7 +316,8 @@ def open_geotiff(source: str | BinaryIO, *,
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
                  max_pixels: int | None = None,
-                 max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
+                 max_cloud_bytes: int | None = (
+                     _MAX_CLOUD_BYTES_SENTINEL),  # type: ignore[assignment]
                  on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
@@ -654,7 +623,6 @@ def open_geotiff(source: str | BinaryIO, *,
         # Derive from source path. File-like buffers don't have a path,
         # so leave name unset rather than fabricating one.
         if isinstance(source, str):
-            import os
             name = os.path.splitext(os.path.basename(source))[0]
 
     # Hand the post-decode buffer to the shared eager finalizer

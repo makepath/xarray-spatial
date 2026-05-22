@@ -17,11 +17,9 @@ import warnings
 import numpy as np
 import xarray as xr
 
-from .._coords import (
-    coords_from_geo_info as _coords_from_geo_info,
-    geo_to_coords as _geo_to_coords,
-)
-from .._geotags import GeoTransform, RASTER_PIXEL_IS_POINT
+from .._coords import coords_from_geo_info as _coords_from_geo_info
+from .._coords import geo_to_coords as _geo_to_coords
+from .._geotags import RASTER_PIXEL_IS_POINT, GeoTransform
 from .._nodata import _sentinel_fits_dtype
 from .._runtime import _geotiff_strict_mode
 

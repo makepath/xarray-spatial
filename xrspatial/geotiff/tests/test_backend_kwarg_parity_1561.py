@@ -188,7 +188,8 @@ def test_write_geotiff_gpu_rejects_nonzero_max_z_error(tmp_path):
 def test_write_geotiff_gpu_accepts_streaming_buffer_bytes_as_noop(tmp_path):
     """``streaming_buffer_bytes`` is accepted for API parity (no-op)."""
     import cupy
-    from xrspatial.geotiff import write_geotiff_gpu, open_geotiff
+
+    from xrspatial.geotiff import open_geotiff, write_geotiff_gpu
 
     arr = cupy.arange(16, dtype=cupy.float32).reshape(4, 4)
     da = xr.DataArray(arr, dims=['y', 'x'],
@@ -206,6 +207,7 @@ def test_write_geotiff_gpu_accepts_streaming_buffer_bytes_as_noop(tmp_path):
 def test_to_geotiff_threads_tiled_false_into_gpu_dispatcher(tmp_path):
     """``to_geotiff(..., gpu=True, tiled=False)`` rejects, not silently flips."""
     import cupy
+
     from xrspatial.geotiff import to_geotiff
 
     arr = cupy.zeros((2, 2), dtype=cupy.float32)

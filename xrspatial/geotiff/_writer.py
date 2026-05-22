@@ -20,98 +20,32 @@ from __future__ import annotations
 
 import math
 import struct
-import warnings
 
 import numpy as np
 
-from ._compression import (
-    COMPRESSION_JPEG,
-    COMPRESSION_NONE,
-)
-from ._dtypes import (
-    DOUBLE,
-    RATIONAL,
-    SHORT,
-    LONG,
-    ASCII,
-    numpy_to_tiff_dtype,
-)
-from ._geotags import (
-    GeoTransform,
-    build_geo_tags,
-    TAG_GEO_ASCII_PARAMS,
-    TAG_GEO_KEY_DIRECTORY,
-    TAG_GDAL_NODATA,
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
-    TAG_MODEL_TRANSFORMATION,
-)
-from ._header import (
-    TAG_NEW_SUBFILE_TYPE,
-    TAG_IMAGE_WIDTH,
-    TAG_IMAGE_LENGTH,
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-    TAG_PHOTOMETRIC,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_SAMPLE_FORMAT,
-    TAG_STRIP_OFFSETS,
-    TAG_ROWS_PER_STRIP,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_SUB_IFDS,
-    TAG_X_RESOLUTION,
-    TAG_Y_RESOLUTION,
-    TAG_RESOLUTION_UNIT,
-    TAG_TILE_WIDTH,
-    TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_EXTRA_SAMPLES,
-    TAG_PREDICTOR,
-    TAG_GDAL_METADATA,
-)
-# IFD-assembly and BigTIFF / COG layout helpers live in
-# ``_write_layout.py``. Re-export them here so internal call sites
-# (``_write``, ``_write_streaming``) and external importers (the
-# ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
-# ``xrspatial.geotiff._writer`` import path.
-from ._write_layout import (  # noqa: F401
-    BO,
-    _assemble_cog_layout,
-    _assemble_standard_layout,
-    _assemble_tiff,
-    _build_ifd,
-    _compute_classic_ifd_overhead,
-    _float_to_rational,
-    _pack_tag_value,
-    _promote_offsets_to_long8,
-    _serialize_tag_value,
-    _should_use_bigtiff_streaming,
-)
+from ._compression import COMPRESSION_JPEG, COMPRESSION_NONE
+from ._dtypes import ASCII, DOUBLE, LONG, RATIONAL, SHORT, numpy_to_tiff_dtype
 # Strip / tile encode helpers, photometric resolution, predictor
 # normalisation, and the compression-name tag mapping live in
 # ``_encode.py``. Re-export them here so internal call sites
 # (``_write``, ``_write_streaming``) and external importers (the
 # ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
 # ``xrspatial.geotiff._writer`` import path. See issue #2260.
-from ._encode import (  # noqa: F401
-    PHOTOMETRIC_MINISBLACK,
-    PHOTOMETRIC_RGB,
-    _PARALLEL_MIN_BYTES,
-    _PHOTOMETRIC_NAME_MAP,
-    _apply_photometric_miniswhite_invert,
-    _apply_predictor_encode,
-    _compress_block,
-    _compression_tag,
-    _invert_nodata_for_miniswhite,
-    _prepare_strip,
-    _prepare_tile,
-    _reject_disagreeing_photometric_override,
-    _resolve_photometric,
-    _write_stripped,
-    _write_tiled,
-    normalize_predictor,
-)
+from ._encode import (_PARALLEL_MIN_BYTES, _PHOTOMETRIC_NAME_MAP,  # noqa: F401
+                      PHOTOMETRIC_MINISBLACK, PHOTOMETRIC_RGB, _apply_photometric_miniswhite_invert,
+                      _apply_predictor_encode, _compress_block, _compression_tag,
+                      _invert_nodata_for_miniswhite, _prepare_strip, _prepare_tile,
+                      _reject_disagreeing_photometric_override, _resolve_photometric,
+                      _write_stripped, _write_tiled, normalize_predictor)
+from ._geotags import (TAG_GDAL_NODATA, TAG_GEO_ASCII_PARAMS, TAG_GEO_KEY_DIRECTORY,
+                       TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT, TAG_MODEL_TRANSFORMATION,
+                       GeoTransform, build_geo_tags)
+from ._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES, TAG_GDAL_METADATA,
+                      TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_NEW_SUBFILE_TYPE, TAG_PHOTOMETRIC,
+                      TAG_PREDICTOR, TAG_RESOLUTION_UNIT, TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT,
+                      TAG_SAMPLES_PER_PIXEL, TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS, TAG_SUB_IFDS,
+                      TAG_TILE_BYTE_COUNTS, TAG_TILE_LENGTH, TAG_TILE_OFFSETS, TAG_TILE_WIDTH,
+                      TAG_X_RESOLUTION, TAG_Y_RESOLUTION)
 # Overview pyramid helpers (``_make_overview``, ``_block_reduce_2d``,
 # ``_replicate_pad_2d``, ``_resolve_int_nodata``,
 # ``_validate_overview_levels``) and the ``OVERVIEW_METHODS`` /
@@ -119,15 +53,18 @@ from ._encode import (  # noqa: F401
 # them here so internal call sites and external importers (the
 # ``_writers`` subpackage, ``_gpu_decode``, tests) keep using the
 # ``xrspatial.geotiff._writer`` import path. See issue #2259.
-from ._overview import (  # noqa: F401
-    OVERVIEW_METHODS,
-    _MAX_OVERVIEW_LEVELS,
-    _block_reduce_2d,
-    _make_overview,
-    _replicate_pad_2d,
-    _resolve_int_nodata,
-    _validate_overview_levels,
-)
+from ._overview import (_MAX_OVERVIEW_LEVELS, OVERVIEW_METHODS, _block_reduce_2d,  # noqa: F401
+                        _make_overview, _replicate_pad_2d, _resolve_int_nodata,
+                        _validate_overview_levels)
+# IFD-assembly and BigTIFF / COG layout helpers live in
+# ``_write_layout.py``. Re-export them here so internal call sites
+# (``_write``, ``_write_streaming``) and external importers (the
+# ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
+# ``xrspatial.geotiff._writer`` import path.
+from ._write_layout import (BO, _assemble_cog_layout, _assemble_standard_layout,  # noqa: F401
+                            _assemble_tiff, _build_ifd, _compute_classic_ifd_overhead,
+                            _float_to_rational, _pack_tag_value, _promote_offsets_to_long8,
+                            _serialize_tag_value, _should_use_bigtiff_streaming)
 
 # Tag IDs the writer must never accept from ``extra_tags``. NewSubfileType
 # (254) is a per-IFD status flag the writer emits on its own for overview
@@ -307,30 +244,30 @@ def _validate_lowlevel_write_kwargs(*,
 
 
 def _write(data: np.ndarray, path: str, *,
-          geo_transform: GeoTransform | None = None,
-          crs_epsg: int | None = None,
-          crs_wkt: str | None = None,
-          nodata=None,
-          compression: str = 'zstd',
-          compression_level: int | None = None,
-          tiled: bool = True,
-          tile_size: int = 256,
-          predictor: bool | int = False,
-          cog: bool = False,
-          overview_levels: list[int] | None = None,
-          overview_resampling: str = 'mean',
-          raster_type: int = 1,
-          x_resolution: float | None = None,
-          y_resolution: float | None = None,
-          resolution_unit: int | None = None,
-          gdal_metadata_xml: str | None = None,
-          extra_tags: list | None = None,
-          bigtiff: bool | None = None,
-          max_z_error: float = 0.0,
-          photometric='auto',
-          restore_sentinel: bool = True,
-          allow_internal_only_jpeg: bool = False,
-          allow_unparseable_crs: bool = False) -> None:
+           geo_transform: GeoTransform | None = None,
+           crs_epsg: int | None = None,
+           crs_wkt: str | None = None,
+           nodata=None,
+           compression: str = 'zstd',
+           compression_level: int | None = None,
+           tiled: bool = True,
+           tile_size: int = 256,
+           predictor: bool | int = False,
+           cog: bool = False,
+           overview_levels: list[int] | None = None,
+           overview_resampling: str = 'mean',
+           raster_type: int = 1,
+           x_resolution: float | None = None,
+           y_resolution: float | None = None,
+           resolution_unit: int | None = None,
+           gdal_metadata_xml: str | None = None,
+           extra_tags: list | None = None,
+           bigtiff: bool | None = None,
+           max_z_error: float = 0.0,
+           photometric='auto',
+           restore_sentinel: bool = True,
+           allow_internal_only_jpeg: bool = False,
+           allow_unparseable_crs: bool = False) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -532,12 +469,12 @@ def _write(data: np.ndarray, path: str, *,
     # Full resolution
     if tiled:
         rel_off, bc, comp_data = _write_tiled(data, comp_tag, pred_int, tile_size,
-                                               compression_level=compression_level,
-                                               max_z_error=max_z_error)
+                                              compression_level=compression_level,
+                                              max_z_error=max_z_error)
     else:
         rel_off, bc, comp_data = _write_stripped(data, comp_tag, pred_int,
-                                                  compression_level=compression_level,
-                                                  max_z_error=max_z_error)
+                                                 compression_level=compression_level,
+                                                 max_z_error=max_z_error)
 
     h, w = data.shape[:2]
     parts.append((data, w, h, rel_off, bc, comp_data))
@@ -611,13 +548,13 @@ def _write(data: np.ndarray, path: str, *,
             oh, ow = current.shape[:2]
             if tiled:
                 o_off, o_bc, o_data = _write_tiled(current, comp_tag, pred_int,
-                                                    tile_size,
-                                                    compression_level=compression_level,
-                                                    max_z_error=max_z_error)
+                                                   tile_size,
+                                                   compression_level=compression_level,
+                                                   max_z_error=max_z_error)
             else:
                 o_off, o_bc, o_data = _write_stripped(current, comp_tag, pred_int,
-                                                       compression_level=compression_level,
-                                                       max_z_error=max_z_error)
+                                                      compression_level=compression_level,
+                                                      max_z_error=max_z_error)
             parts.append((current, ow, oh, o_off, o_bc, o_data))
 
     file_bytes = _assemble_tiff(
@@ -658,30 +595,29 @@ write = _write
 # re-exported above for backwards compatibility.
 
 
-
 def _write_streaming(dask_data, path: str, *,
-                    geo_transform: 'GeoTransform | None' = None,
-                    crs_epsg: int | None = None,
-                    crs_wkt: str | None = None,
-                    nodata=None,
-                    compression: str = 'zstd',
-                    compression_level: int | None = None,
-                    tiled: bool = True,
-                    tile_size: int = 256,
-                    predictor: bool | int = False,
-                    raster_type: int = 1,
-                    x_resolution: float | None = None,
-                    y_resolution: float | None = None,
-                    resolution_unit: int | None = None,
-                    gdal_metadata_xml: str | None = None,
-                    extra_tags: list | None = None,
-                    bigtiff: bool | None = None,
-                    streaming_buffer_bytes: int = 256 * 1024 * 1024,
-                    max_z_error: float = 0.0,
-                    photometric='auto',
-                    restore_sentinel: bool = True,
-                    allow_internal_only_jpeg: bool = False,
-                    allow_unparseable_crs: bool = False) -> None:
+                     geo_transform: 'GeoTransform | None' = None,
+                     crs_epsg: int | None = None,
+                     crs_wkt: str | None = None,
+                     nodata=None,
+                     compression: str = 'zstd',
+                     compression_level: int | None = None,
+                     tiled: bool = True,
+                     tile_size: int = 256,
+                     predictor: bool | int = False,
+                     raster_type: int = 1,
+                     x_resolution: float | None = None,
+                     y_resolution: float | None = None,
+                     resolution_unit: int | None = None,
+                     gdal_metadata_xml: str | None = None,
+                     extra_tags: list | None = None,
+                     bigtiff: bool | None = None,
+                     streaming_buffer_bytes: int = 256 * 1024 * 1024,
+                     max_z_error: float = 0.0,
+                     photometric='auto',
+                     restore_sentinel: bool = True,
+                     allow_internal_only_jpeg: bool = False,
+                     allow_unparseable_crs: bool = False) -> None:
     """Write a dask array as a GeoTIFF by streaming pixel data.
 
     For tiled output, each tile-row is computed in horizontal segments
@@ -964,7 +900,7 @@ def _write_streaming(dask_data, path: str, *,
     ifd_block_size = count_size + entry_size * num_tags + next_size
     overflow_base = header_size + ifd_block_size
     _, placeholder_overflow = _build_ifd(sorted_tags, overflow_base,
-                                          bigtiff=use_bigtiff)
+                                         bigtiff=use_bigtiff)
     pixel_data_start = overflow_base + len(placeholder_overflow)
 
     dir_name = os.path.dirname(os.path.abspath(path))
@@ -1033,7 +969,7 @@ def _write_streaming(dask_data, path: str, *,
 
                     for seg_start in range(0, tiles_across, tiles_per_segment):
                         seg_end = min(seg_start + tiles_per_segment,
-                                       tiles_across)
+                                      tiles_across)
                         seg_c0 = seg_start * tw
                         seg_c1 = min(seg_end * tw, width)
 

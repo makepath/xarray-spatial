@@ -24,7 +24,6 @@ import pytest
 from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY, TAG_MODEL_TRANSFORMATION
 
-
 # Rotated 4x4 ModelTransformation: pixel_width 1.0, b=0.1 (column-axis
 # rotation), pixel_height -1.0, origin (100, 200). Identical structure
 # to the fixture in ``test_allow_rotated_geotiff_2115.py`` but with the
@@ -43,7 +42,7 @@ _GEO_KEYS_4326 = (
     1, 1, 0, 3,
     1024, 0, 1, 2,    # GTModelTypeGeoKey = Geographic
     1025, 0, 1, 1,    # GTRasterTypeGeoKey = Area
-    2048, 0, 1, 4326, # GeographicTypeGeoKey
+    2048, 0, 1, 4326,  # GeographicTypeGeoKey
 )
 
 

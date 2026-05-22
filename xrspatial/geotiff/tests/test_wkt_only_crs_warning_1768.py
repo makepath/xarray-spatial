@@ -28,7 +28,6 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._geotags import GeoTransform, build_geo_tags
 
-
 _USER_DEFINED_WKT = (
     'PROJCS["User defined LCC 1768",'
     'GEOGCS["NAD83",'

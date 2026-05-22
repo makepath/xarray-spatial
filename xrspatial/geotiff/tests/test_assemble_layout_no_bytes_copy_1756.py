@@ -26,13 +26,8 @@ import numpy as np
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import COMPRESSION_NONE
-from xrspatial.geotiff._writer import (
-    _assemble_cog_layout,
-    _assemble_standard_layout,
-    _assemble_tiff,
-    _write_stripped,
-    _write_tiled,
-)
+from xrspatial.geotiff._writer import (_assemble_cog_layout, _assemble_standard_layout,
+                                       _assemble_tiff, _write_stripped, _write_tiled)
 
 
 def _build_parts(arr: np.ndarray):
@@ -48,12 +43,10 @@ def test_assemble_standard_layout_returns_bytearray():
 
     # Minimal tag set sufficient for the assembler to lay out the file.
     from xrspatial.geotiff._dtypes import LONG, SHORT, numpy_to_tiff_dtype
-    from xrspatial.geotiff._header import (
-        TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_IMAGE_LENGTH,
-        TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC, TAG_ROWS_PER_STRIP,
-        TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL, TAG_STRIP_BYTE_COUNTS,
-        TAG_STRIP_OFFSETS,
-    )
+    from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_IMAGE_LENGTH,
+                                           TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC, TAG_ROWS_PER_STRIP,
+                                           TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL,
+                                           TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS)
     bps, sf = numpy_to_tiff_dtype(arr.dtype)
     rel_off, bc, _ = parts[0][3], parts[0][4], parts[0][5]
     tags = [
@@ -83,12 +76,10 @@ def test_assemble_cog_layout_returns_bytearray():
         (arr[:8, :8], 8, 8, rel_off, bc, chunks),  # mock overview
     ]
     from xrspatial.geotiff._dtypes import LONG, SHORT, numpy_to_tiff_dtype
-    from xrspatial.geotiff._header import (
-        TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_IMAGE_LENGTH,
-        TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC, TAG_SAMPLE_FORMAT,
-        TAG_SAMPLES_PER_PIXEL, TAG_TILE_BYTE_COUNTS, TAG_TILE_LENGTH,
-        TAG_TILE_OFFSETS, TAG_TILE_WIDTH,
-    )
+    from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_IMAGE_LENGTH,
+                                           TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC, TAG_SAMPLE_FORMAT,
+                                           TAG_SAMPLES_PER_PIXEL, TAG_TILE_BYTE_COUNTS,
+                                           TAG_TILE_LENGTH, TAG_TILE_OFFSETS, TAG_TILE_WIDTH)
     bps, sf = numpy_to_tiff_dtype(arr.dtype)
 
     def _build_tags(w, h):

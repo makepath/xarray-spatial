@@ -28,12 +28,12 @@ import pytest
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff
 from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
 
-
 # ---------------------------------------------------------------------------
 # GPU gating: matches the ``_gpu_available`` / ``_HAS_GPU`` predicate that
 # the rest of the geotiff test suite (e.g. test_backend_kwarg_parity_1561,
 # test_attrs_parity_1548) uses, so future GPU tests stay greppable.
 # ---------------------------------------------------------------------------
+
 
 def _gpu_available() -> bool:
     if importlib.util.find_spec("cupy") is None:

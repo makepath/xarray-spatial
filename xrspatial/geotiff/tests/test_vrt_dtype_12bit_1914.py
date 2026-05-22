@@ -29,12 +29,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._vrt import (
-    _NP_TO_VRT_DTYPE,
-    _vrt_dtype_name_for,
-    write_vrt,
-)
-
+from xrspatial.geotiff._vrt import _NP_TO_VRT_DTYPE, _vrt_dtype_name_for, write_vrt
 
 # ---------------------------------------------------------------------------
 # Direct helper tests: every supported (bps, sample_format) pair
@@ -125,7 +120,7 @@ def _unique_dir(tmp_path, label: str) -> str:
 
 
 def _write_uint16_tif(path: str, *, h: int = 4, w: int = 4,
-                     origin_x: float = 0.0) -> None:
+                      origin_x: float = 0.0) -> None:
     arr = np.arange(h * w, dtype=np.uint16).reshape(h, w)
     y = 100.0 + (np.arange(h) + 0.5) * -1.0
     x = origin_x + (np.arange(w) + 0.5) * 1.0

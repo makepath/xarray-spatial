@@ -31,7 +31,6 @@ from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt
 rasterio = pytest.importorskip("rasterio")
 from rasterio.transform import from_origin  # noqa: E402
 
-
 _SENTINEL = -9999.0
 
 
@@ -593,6 +592,7 @@ class TestShouldRestoreNanSentinelHelper:
     def test_stray_truthy_value_is_true(self):
         """Only literal ``False`` disables. Stray ``0`` / ``''`` stays True."""
         from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
+
         # Anything other than literal False should keep the default
         # behaviour. ``0`` is falsy but is not the contract value.
         assert _should_restore_nan_sentinel({"masked_nodata": 0}) is True
@@ -605,8 +605,9 @@ class TestWriterRoundTripEager:
 
     def test_masked_nodata_true_restores_sentinel(self, tmp_path):
         """Reader-style attrs (masked_nodata=True): NaN -> sentinel on write."""
-        from xrspatial.geotiff import to_geotiff
         import xarray as xr
+
+        from xrspatial.geotiff import to_geotiff
 
         path = tmp_path / "test_1988_writer_masked.tif"
         arr = np.array(
@@ -636,8 +637,9 @@ class TestWriterRoundTripEager:
 
     def test_masked_nodata_false_preserves_nan(self, tmp_path):
         """``masked_nodata=False`` -> NaN survives, no silent sentinel rewrite."""
-        from xrspatial.geotiff import to_geotiff
         import xarray as xr
+
+        from xrspatial.geotiff import to_geotiff
 
         path = tmp_path / "test_1988_writer_unmasked.tif"
         arr = np.array(
@@ -672,8 +674,9 @@ class TestWriterRoundTripEager:
 
     def test_missing_masked_nodata_attr_restores_sentinel(self, tmp_path):
         """External DataArrays without the attr keep pre-#1988 behaviour."""
-        from xrspatial.geotiff import to_geotiff
         import xarray as xr
+
+        from xrspatial.geotiff import to_geotiff
 
         path = tmp_path / "test_1988_writer_no_attr.tif"
         arr = np.array(
@@ -732,9 +735,10 @@ class TestWriterRoundTripEager:
 
     def test_dask_streaming_path_respects_flag(self, tmp_path):
         """Dask + tiled streaming write must honour the gate too."""
-        from xrspatial.geotiff import to_geotiff
         import dask.array as da_mod
         import xarray as xr
+
+        from xrspatial.geotiff import to_geotiff
 
         path = tmp_path / "test_1988_writer_dask.tif"
         # 32x32 with NaN sprinkled in -- the tiled streaming writer
@@ -783,6 +787,7 @@ class TestWriteStreamingRestoreSentinelKwarg:
 
     def test_streaming_restore_sentinel_true_rewrites(self, tmp_path):
         import dask.array as da_mod
+
         from xrspatial.geotiff._writer import write_streaming
 
         path = tmp_path / "test_1988_stream_true.tif"
@@ -804,6 +809,7 @@ class TestWriteStreamingRestoreSentinelKwarg:
 
     def test_streaming_restore_sentinel_false_preserves_nan(self, tmp_path):
         import dask.array as da_mod
+
         from xrspatial.geotiff._writer import write_streaming
 
         path = tmp_path / "test_1988_stream_false.tif"
@@ -828,6 +834,7 @@ class TestWriteStreamingRestoreSentinelKwarg:
     def test_streaming_default_is_true(self, tmp_path):
         """Default preserves pre-#1988 behaviour."""
         import dask.array as da_mod
+
         from xrspatial.geotiff._writer import write_streaming
 
         path = tmp_path / "test_1988_stream_default.tif"
@@ -849,6 +856,7 @@ class TestWriteStreamingRestoreSentinelKwarg:
     def test_streaming_strip_layout_restore_false_preserves_nan(self, tmp_path):
         """The strip-write branch in ``write_streaming`` must honour the gate."""
         import dask.array as da_mod
+
         from xrspatial.geotiff._writer import write_streaming
 
         path = tmp_path / "test_1988_stream_strip_false.tif"
@@ -941,6 +949,7 @@ class TestWriterGPU:
     def test_masked_nodata_false_preserves_nan_gpu(self, tmp_path):
         import cupy
         import xarray as xr
+
         from xrspatial.geotiff import write_geotiff_gpu
 
         path = tmp_path / "test_1988_writer_gpu_unmasked.tif"
@@ -972,6 +981,7 @@ class TestWriterGPU:
     def test_masked_nodata_true_restores_sentinel_gpu(self, tmp_path):
         import cupy
         import xarray as xr
+
         from xrspatial.geotiff import write_geotiff_gpu
 
         path = tmp_path / "test_1988_writer_gpu_masked.tif"

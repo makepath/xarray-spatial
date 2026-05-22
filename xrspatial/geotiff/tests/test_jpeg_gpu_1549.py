@@ -81,7 +81,7 @@ _gpu_only = pytest.mark.skipif(
 
 
 def _write_jpeg_rgb_tiff(path: str, seed: int = 0,
-                          noise: bool = True) -> np.ndarray:
+                         noise: bool = True) -> np.ndarray:
     """Write a 3-band 256x256 tiled JPEG TIFF using tifffile.
 
     tifffile emits a complete JFIF stream (SOI + APP0 + DQT + DHT + SOF0
@@ -137,9 +137,9 @@ def test_rgb_jpeg_gpu_no_crash(tmp_path, monkeypatch):
     guard the test would pass on a system whose nvJPEG returned None for
     any reason, defeating the point of the regression test.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
-    from xrspatial.geotiff import _gpu_decode
     import cupy
+
+    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu
 
     spy = {"calls": 0, "successes": 0}
     original = _gpu_decode._try_nvjpeg_batch_decode
@@ -242,6 +242,7 @@ def test_cuda_context_survives_after_jpeg_gpu_read(tmp_path):
     operation and an unrelated GPU read and asserts both succeed.
     """
     import cupy
+
     from xrspatial.geotiff import open_geotiff
 
     path = str(tmp_path / "rgb_ctx_1549.tif")

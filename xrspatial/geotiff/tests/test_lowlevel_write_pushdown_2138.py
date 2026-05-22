@@ -31,8 +31,8 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._writer import _write, _write_streaming
 from xrspatial.geotiff._reader import _read_to_array
+from xrspatial.geotiff._writer import _write, _write_streaming
 
 
 def _codec_available(name: str) -> bool:

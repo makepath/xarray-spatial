@@ -28,10 +28,9 @@ import uuid
 import numpy as np
 import xarray as xr
 
-from xrspatial.geotiff import to_geotiff, open_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._writer import _write_tiled
-
 
 # Peak ``tracemalloc`` size, in multiples of the input raster size, that
 # the uncompressed branch of ``_write_tiled`` must stay under. The dead

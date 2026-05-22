@@ -51,31 +51,17 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff._attrs import (
-    GEOREF_STATUS_CRS_ONLY,
-    GEOREF_STATUS_FULL,
-    GEOREF_STATUS_NONE,
-    GEOREF_STATUS_ROTATED_DROPPED,
-    GEOREF_STATUS_TRANSFORM_ONLY,
-    _compute_georef_status,
-    _compute_georef_status_from_parts,
-)
-from xrspatial.geotiff._coords import (
-    GEOREF_STATUS_COORDS,
-    GeorefResolution,
-    resolve_georef,
-)
-from xrspatial.geotiff._geotags import (
-    _NO_GEOREF_KEY,
-    GeoInfo,
-    GeoTransform,
-    RASTER_PIXEL_IS_AREA,
-)
-
+from xrspatial.geotiff._attrs import (GEOREF_STATUS_CRS_ONLY, GEOREF_STATUS_FULL,
+                                      GEOREF_STATUS_NONE, GEOREF_STATUS_ROTATED_DROPPED,
+                                      GEOREF_STATUS_TRANSFORM_ONLY, _compute_georef_status,
+                                      _compute_georef_status_from_parts)
+from xrspatial.geotiff._coords import GEOREF_STATUS_COORDS, GeorefResolution, resolve_georef
+from xrspatial.geotiff._geotags import _NO_GEOREF_KEY, RASTER_PIXEL_IS_AREA, GeoInfo, GeoTransform
 
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
+
 
 def _make_axis_aligned_da(y_name: str, x_name: str) -> xr.DataArray:
     """Return a 4x5 DataArray with axis-aligned float pixel-center coords.

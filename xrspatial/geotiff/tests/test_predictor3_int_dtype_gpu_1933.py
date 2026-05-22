@@ -33,27 +33,13 @@ import pytest
 
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._dtypes import LONG, SHORT, numpy_to_tiff_dtype
-from xrspatial.geotiff._header import (
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_PHOTOMETRIC,
-    TAG_PREDICTOR,
-    TAG_SAMPLE_FORMAT,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_STRIP_OFFSETS,
-    TAG_ROWS_PER_STRIP,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS,
-    TAG_TILE_WIDTH,
-)
-from xrspatial.geotiff._writer import (
-    _assemble_standard_layout,
-    _write_stripped,
-)
+from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_IMAGE_LENGTH,
+                                       TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC, TAG_PREDICTOR,
+                                       TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL,
+                                       TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS,
+                                       TAG_TILE_BYTE_COUNTS, TAG_TILE_LENGTH, TAG_TILE_OFFSETS,
+                                       TAG_TILE_WIDTH)
+from xrspatial.geotiff._writer import _assemble_standard_layout, _write_stripped
 
 
 def _gpu_available() -> bool:

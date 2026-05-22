@@ -104,7 +104,7 @@ def _build_multi_band_tiff(
             out.extend(payload)
         else:
             out.extend(struct.pack(f'{bo}I',
-                                    overflow_start + tag_overflow_offsets[tag]))
+                                   overflow_start + tag_overflow_offsets[tag]))
     out.extend(struct.pack(f'{bo}I', 0))           # next IFD = 0
     out.extend(overflow_buf)
     out.extend(pixel_bytes)

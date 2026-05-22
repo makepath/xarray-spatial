@@ -17,15 +17,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    to_geotiff,
-)
-from xrspatial.geotiff._reader import (
-    _int_nodata_in_range,
-    _resolve_masked_fill,
-)
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, to_geotiff
+from xrspatial.geotiff._reader import _int_nodata_in_range, _resolve_masked_fill
 
 
 def _gpu_available() -> bool:
@@ -143,6 +136,7 @@ def test_apply_nodata_mask_gpu_out_of_range_no_crash():
     cupy with CUDA available.
     """
     import cupy
+
     from xrspatial.geotiff import _apply_nodata_mask_gpu
 
     arr_gpu = cupy.array([[1, 2, 3], [4, 5, 6]], dtype=cupy.uint16)

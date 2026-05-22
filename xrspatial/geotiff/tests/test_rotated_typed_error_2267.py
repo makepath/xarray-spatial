@@ -26,16 +26,9 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff._errors import (
-    GeoTIFFAmbiguousMetadataError,
-    RotatedTransformError,
-)
-from xrspatial.geotiff._geotags import (
-    TAG_MODEL_TRANSFORMATION,
-    _extract_transform,
-)
+from xrspatial.geotiff._errors import GeoTIFFAmbiguousMetadataError, RotatedTransformError
+from xrspatial.geotiff._geotags import TAG_MODEL_TRANSFORMATION, _extract_transform
 from xrspatial.geotiff._header import IFD, IFDEntry
-
 
 _COS30 = 0.8660254037844387
 _SIN30 = 0.5

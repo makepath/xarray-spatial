@@ -27,7 +27,6 @@ from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
 # top-level import does not form a cycle at module load time.
 from ._reader import _is_fsspec_uri
 
-
 #: Type of the bytes-like buffer a sidecar carries: an mmap for local
 #: files, bytes for HTTP / fsspec downloads. Narrowed from ``object``
 #: so the reader sees the actual variants when slicing IFD data.

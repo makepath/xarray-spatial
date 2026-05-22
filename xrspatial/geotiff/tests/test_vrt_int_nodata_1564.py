@@ -13,12 +13,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_vrt,
-    to_geotiff,
-    write_vrt,
-)
+from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt
 
 
 def _write_uint16_with_nodata_tif(path, sentinel):

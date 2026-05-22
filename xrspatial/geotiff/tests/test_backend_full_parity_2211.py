@@ -71,10 +71,7 @@ pytest.importorskip("rasterio")
 
 from xrspatial.geotiff import open_geotiff, write_vrt  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
-from xrspatial.geotiff.tests.golden_corpus._marks import (  # noqa: E402
-    fast_slow_marks_for,
-)
-
+from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
 
 FIXTURES_DIR = (
     pathlib.Path(generate.__file__).resolve().parent / "fixtures"

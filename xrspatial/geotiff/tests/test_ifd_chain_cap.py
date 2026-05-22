@@ -14,12 +14,7 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._header import (
-    MAX_IFDS,
-    TAG_IMAGE_WIDTH,
-    parse_all_ifds,
-    parse_header,
-)
+from xrspatial.geotiff._header import MAX_IFDS, TAG_IMAGE_WIDTH, parse_all_ifds, parse_header
 
 
 def _build_chained_ifd_bytes(n_ifds: int, big_endian: bool = False) -> bytes:

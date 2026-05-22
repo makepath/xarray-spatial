@@ -27,10 +27,10 @@ import pytest
 
 from xrspatial.geotiff._nodata import NodataLifecycle
 
-
 # ---------------------------------------------------------------------------
 # Skip helpers (loud, not silent: a missing-cupy test reports the skip reason)
 # ---------------------------------------------------------------------------
+
 
 def _gpu_available() -> bool:
     if importlib.util.find_spec("cupy") is None:
@@ -716,6 +716,7 @@ class TestExplicitDtypeRequestParity:
 def simple_vrt(tmp_path):
     """A trivial VRT wrapping a single GeoTIFF with a -9999 sentinel."""
     import os
+
     import xarray as xr
 
     from xrspatial.geotiff import to_geotiff
@@ -832,8 +833,8 @@ class TestWriterRestoreParity:
 
     @_gpu_only
     def test_gpu_writer_matches_eager(self, tmp_path):
-        import xarray as xr
         import cupy
+        import xarray as xr
 
         from xrspatial.geotiff import open_geotiff, to_geotiff
 

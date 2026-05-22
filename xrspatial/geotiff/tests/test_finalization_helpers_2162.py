@@ -28,12 +28,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._attrs import (
-    _finalize_eager_read,
-    _finalize_lazy_read_attrs,
-)
+from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
 from xrspatial.geotiff._errors import UnparseableCRSError
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

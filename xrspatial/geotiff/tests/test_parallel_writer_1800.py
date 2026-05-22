@@ -4,20 +4,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._writer import (
-    _PARALLEL_MIN_BYTES,
-    _write_stripped,
-    _write_tiled,
-    write,
-)
+from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLATE, COMPRESSION_NONE,
+                                            deflate_compress)
 from xrspatial.geotiff._reader import read_to_array
-from xrspatial.geotiff._compression import (
-    COMPRESSION_DEFLATE,
-    COMPRESSION_NONE,
-    _HAVE_LIBDEFLATE,
-    deflate_compress,
-)
-
+from xrspatial.geotiff._writer import _PARALLEL_MIN_BYTES, _write_stripped, _write_tiled, write
 
 # -- Strip writer parity --------------------------------------------------
 

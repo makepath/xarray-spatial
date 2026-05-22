@@ -33,7 +33,6 @@ from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._reader import _read_cog_http, read_to_array
 from xrspatial.geotiff._writer import write
 
-
 # ---------------------------------------------------------------------------
 # Loopback HTTP server with Range support
 # ---------------------------------------------------------------------------
@@ -42,6 +41,7 @@ from xrspatial.geotiff._writer import write
 # fixtures stay self-contained without depending on ``tifffile`` or a
 # live network. Each server holds one payload and shuts down at test
 # teardown.
+
 
 class _RangeHandler(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''

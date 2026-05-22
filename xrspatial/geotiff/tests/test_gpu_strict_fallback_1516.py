@@ -32,7 +32,6 @@ import pytest
 
 from .conftest import make_minimal_tiff
 
-
 _CUPY_ORIG_SENTINEL = object()
 _cupy_saved = _CUPY_ORIG_SENTINEL
 _cupy_cuda_saved = _CUPY_ORIG_SENTINEL

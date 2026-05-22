@@ -9,17 +9,13 @@ import time
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._reader import (
-    _HTTPSource,
-    _read_cog_http,
-    read_to_array,
-)
+from xrspatial.geotiff._reader import _HTTPSource, _read_cog_http, read_to_array
 from xrspatial.geotiff._writer import write
-
 
 # ---------------------------------------------------------------------------
 # read_ranges: ordering and concurrency
 # ---------------------------------------------------------------------------
+
 
 class _FakeHTTPSource(_HTTPSource):
     """_HTTPSource that fakes read_range with a configurable sleep.

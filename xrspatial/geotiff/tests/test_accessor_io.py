@@ -8,10 +8,10 @@ import xarray as xr
 import xrspatial  # noqa: F401 -- registers .xrs accessor
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_da(height=8, width=10, crs=4326, name='elevation'):
     """Build a georeferenced DataArray for testing."""

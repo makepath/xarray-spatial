@@ -9,10 +9,10 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_da(seed: int = 0, shape: tuple = (64, 64)) -> xr.DataArray:
     """Return a small float32 DataArray with reproducible content."""

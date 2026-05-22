@@ -31,8 +31,7 @@ import numpy as np
 import xarray as xr
 
 from ._errors import NonUniformCoordsError
-from ._geotags import _NO_GEOREF_KEY, GeoTransform, RASTER_PIXEL_IS_POINT
-
+from ._geotags import _NO_GEOREF_KEY, RASTER_PIXEL_IS_POINT, GeoTransform
 
 # Canonical georef_status string values (mirrored in ``_attrs.py`` as
 # ``GEOREF_STATUS_*`` constants). Issue #2225 centralises the

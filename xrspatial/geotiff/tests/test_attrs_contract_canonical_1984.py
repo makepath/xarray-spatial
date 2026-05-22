@@ -59,7 +59,6 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._attrs import _ATTRS_CONTRACT_VERSION
 
-
 _CONTRACT_KEY = '_xrspatial_geotiff_contract'
 
 # Every key the canonical tier guarantees round-trip stable. Keep the

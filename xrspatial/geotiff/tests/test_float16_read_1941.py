@@ -23,13 +23,8 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask
-from xrspatial.geotiff._dtypes import (
-    SAMPLE_FORMAT_FLOAT,
-    SAMPLE_FORMAT_INT,
-    SAMPLE_FORMAT_UINT,
-    tiff_dtype_to_numpy,
-    tiff_storage_dtype,
-)
+from xrspatial.geotiff._dtypes import (SAMPLE_FORMAT_FLOAT, SAMPLE_FORMAT_INT, SAMPLE_FORMAT_UINT,
+                                       tiff_dtype_to_numpy, tiff_storage_dtype)
 
 
 class TestDtypeMap:

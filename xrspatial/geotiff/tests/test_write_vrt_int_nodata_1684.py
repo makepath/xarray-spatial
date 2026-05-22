@@ -19,8 +19,8 @@ import typing
 import numpy as np
 import xarray as xr
 
-from xrspatial.geotiff import to_geotiff, write_vrt
 from xrspatial.geotiff import _vrt as _vrt_module
+from xrspatial.geotiff import to_geotiff, write_vrt
 
 
 def _nodata_annotation(fn):

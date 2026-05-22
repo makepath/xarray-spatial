@@ -28,15 +28,9 @@ import pytest
 
 from xrspatial.geotiff import _header
 from xrspatial.geotiff._dtypes import DOUBLE, LONG, SHORT
-from xrspatial.geotiff._header import (
-    MAX_IFD_ENTRY_BYTES,
-    MAX_IFD_ENTRY_COUNT,
-    TAG_IMAGE_WIDTH,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_TILE_OFFSETS,
-    parse_header,
-    parse_ifd,
-)
+from xrspatial.geotiff._header import (MAX_IFD_ENTRY_BYTES, MAX_IFD_ENTRY_COUNT, TAG_IMAGE_WIDTH,
+                                       TAG_TILE_BYTE_COUNTS, TAG_TILE_OFFSETS, parse_header,
+                                       parse_ifd)
 
 
 def _build_tiff(

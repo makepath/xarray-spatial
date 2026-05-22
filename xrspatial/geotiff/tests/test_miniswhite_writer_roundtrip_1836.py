@@ -164,9 +164,9 @@ def test_miniswhite_rejected_with_extra_tags_photometric_override(tmp_path):
     be refused -- otherwise the writer transforms pixels for one tag
     while the IFD advertises a different one.
     """
-    from xrspatial.geotiff._writer import write as _eager_write
     from xrspatial.geotiff._dtypes import SHORT
     from xrspatial.geotiff._header import TAG_PHOTOMETRIC
+    from xrspatial.geotiff._writer import write as _eager_write
     arr = np.array([[10, 20]], dtype=np.uint8)
     path = str(tmp_path / 'extras_msw_1836.tif')
     # photometric kwarg defaults to MinIsBlack (1), extra_tags forces

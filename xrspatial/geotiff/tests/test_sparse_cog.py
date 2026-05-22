@@ -13,8 +13,8 @@ import pytest
 
 rasterio = pytest.importorskip('rasterio')
 
-from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff import open_geotiff  # noqa: E402
+from xrspatial.geotiff._reader import read_to_array  # noqa: E402
 
 
 def _write_sparse_tiled(path, *, dtype='uint16', nodata=0,

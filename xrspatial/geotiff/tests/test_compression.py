@@ -1,24 +1,13 @@
 """Tests for compression codecs."""
 from __future__ import annotations
 
-import zlib
-
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._compression import (
-    COMPRESSION_DEFLATE,
-    COMPRESSION_LZW,
-    COMPRESSION_NONE,
-    compress,
-    decompress,
-    deflate_compress,
-    deflate_decompress,
-    lzw_compress,
-    lzw_decompress,
-    predictor_decode,
-    predictor_encode,
-)
+from xrspatial.geotiff._compression import (COMPRESSION_DEFLATE, COMPRESSION_LZW, COMPRESSION_NONE,
+                                            compress, decompress, deflate_compress,
+                                            deflate_decompress, lzw_compress, lzw_decompress,
+                                            predictor_decode, predictor_encode)
 
 
 class TestDeflate:

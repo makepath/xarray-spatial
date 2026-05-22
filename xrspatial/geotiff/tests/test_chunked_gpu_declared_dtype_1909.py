@@ -45,13 +45,9 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 def _parse_for_gds(path: str):
     """Return ``(ifd, geo_info, header)`` for the GDS entry point."""
+    from xrspatial.geotiff._geotags import extract_geo_info_with_overview_inheritance
+    from xrspatial.geotiff._header import parse_all_ifds, parse_header, select_overview_ifd
     from xrspatial.geotiff._reader import _FileSource
-    from xrspatial.geotiff._header import (
-        parse_header, parse_all_ifds, select_overview_ifd,
-    )
-    from xrspatial.geotiff._geotags import (
-        extract_geo_info_with_overview_inheritance,
-    )
 
     fs = _FileSource(path)
     try:

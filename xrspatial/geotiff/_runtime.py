@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import os
 
-
 # Sentinels distinguishing "user passed this kwarg explicitly" from "user
 # passed nothing". A plain default of None does not work because None is
 # itself a value a caller could supply. ``read_geotiff_gpu`` needs both

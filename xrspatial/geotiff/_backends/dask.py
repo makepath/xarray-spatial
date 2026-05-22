@@ -18,18 +18,13 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import _finalize_lazy_read_attrs
-from .._coords import (
-    coords_from_geo_info as _coords_from_geo_info,
-    geo_to_coords as _geo_to_coords,
-)
+from .._coords import coords_from_geo_info as _coords_from_geo_info
+from .._coords import geo_to_coords as _geo_to_coords
 from .._nodata import NodataLifecycle
-from .._reader import _MAX_CLOUD_BYTES_SENTINEL, read_to_array as _read_to_array
+from .._reader import _MAX_CLOUD_BYTES_SENTINEL
+from .._reader import read_to_array as _read_to_array
 from .._runtime import _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL
-from .._validation import (
-    _validate_chunks_arg,
-    _validate_dispatch_kwargs,
-    _validate_dtype_cast,
-)
+from .._validation import _validate_chunks_arg, _validate_dispatch_kwargs, _validate_dtype_cast
 from .vrt import read_vrt
 
 
@@ -41,7 +36,8 @@ def read_geotiff_dask(source: str, *,
                       name: str | None = None,
                       chunks: int | tuple = 512,
                       max_pixels: int | None = None,
-                      max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
+                      max_cloud_bytes: int | None = (
+                          _MAX_CLOUD_BYTES_SENTINEL),  # type: ignore[assignment]
                       on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                       missing_sources: str = _MISSING_SOURCES_SENTINEL,
                       allow_rotated: bool = False,
@@ -187,6 +183,7 @@ def read_geotiff_dask(source: str, *,
     effective_source = source
     if is_http or is_fsspec:
         import dask
+
         from .._cog_http import _parse_cog_http_meta
         if is_http:
             # ``_HTTPSource`` is resolved through ``_reader`` so existing

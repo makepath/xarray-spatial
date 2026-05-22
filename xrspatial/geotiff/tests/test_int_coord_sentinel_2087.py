@@ -32,7 +32,6 @@ from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._coords import _has_no_georef_marker
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY
 
-
 # --- Unit checks on the no-georef marker predicate ----------------------
 #
 # Pre-#2133, ``xrspatial.geotiff._coords`` exported an

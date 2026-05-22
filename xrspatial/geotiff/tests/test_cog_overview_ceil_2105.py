@@ -307,6 +307,7 @@ def test_even_input_matches_legacy_2x2_behaviour(method):
 @pytest.mark.parametrize("shape", [(5, 5), (5, 4), (4, 5), (7, 3)])
 def test_gpu_block_reduce_matches_cpu_on_odd_shapes(method, shape):
     import cupy
+
     from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
 
     rng = np.random.default_rng(2105)
@@ -320,6 +321,7 @@ def test_gpu_block_reduce_matches_cpu_on_odd_shapes(method, shape):
 @_gpu_only
 def test_gpu_block_reduce_int_5x5_with_nodata():
     import cupy
+
     from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
 
     sentinel = -9999

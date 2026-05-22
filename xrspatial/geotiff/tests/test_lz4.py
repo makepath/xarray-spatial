@@ -4,14 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._compression import (
-    COMPRESSION_LZ4,
-    LZ4_AVAILABLE,
-    lz4_compress,
-    lz4_decompress,
-    compress,
-    decompress,
-)
+from xrspatial.geotiff._compression import (COMPRESSION_LZ4, LZ4_AVAILABLE, compress, decompress,
+                                            lz4_compress, lz4_decompress)
 
 pytestmark = pytest.mark.skipif(
     not LZ4_AVAILABLE,
@@ -54,8 +48,8 @@ class TestLZ4WriteRoundTrip:
     """Write-read roundtrip using the TIFF writer with LZ4 compression."""
 
     def test_tiled_uint8(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.uint8).reshape(8, 8)
         path = str(tmp_path / 'lz4_1051_tiled_uint8.tif')
@@ -65,8 +59,8 @@ class TestLZ4WriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_tiled_float32(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.random.RandomState(1051).rand(16, 16).astype(np.float32)
         path = str(tmp_path / 'lz4_1051_tiled_f32.tif')
@@ -76,8 +70,8 @@ class TestLZ4WriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_stripped_uint8(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.uint8).reshape(8, 8)
         path = str(tmp_path / 'lz4_1051_stripped.tif')
@@ -87,8 +81,8 @@ class TestLZ4WriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_with_predictor(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.random.RandomState(1051).rand(16, 16).astype(np.float32)
         path = str(tmp_path / 'lz4_1051_predictor.tif')
@@ -100,6 +94,7 @@ class TestLZ4WriteRoundTrip:
 
     def test_public_api_roundtrip(self, tmp_path):
         import xarray as xr
+
         from xrspatial.geotiff import open_geotiff, to_geotiff
 
         data = np.arange(64, dtype=np.uint8).reshape(8, 8)

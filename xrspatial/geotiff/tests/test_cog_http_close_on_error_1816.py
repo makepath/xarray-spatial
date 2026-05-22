@@ -26,10 +26,10 @@ from xrspatial.geotiff import _reader as reader_mod
 from xrspatial.geotiff._reader import _read_cog_http
 from xrspatial.geotiff._writer import write
 
-
 # ---------------------------------------------------------------------------
 # Loopback HTTP server with Range support (mirrors #1695 pattern).
 # ---------------------------------------------------------------------------
+
 
 class _RangeHandler(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''

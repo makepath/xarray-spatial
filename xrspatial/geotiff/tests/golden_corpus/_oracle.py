@@ -29,10 +29,10 @@ from typing import Any, Callable
 import numpy as np
 import xarray as xr
 
-
 # ---------------------------------------------------------------------------
 # Rasterio lazy import
 # ---------------------------------------------------------------------------
+
 
 def _require_rasterio():
     """Import rasterio lazily so the module is importable in environments

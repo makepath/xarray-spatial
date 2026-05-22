@@ -355,6 +355,7 @@ def test_zstd_error_warns_and_continues_if_available(
     """
     pytest.importorskip('zstandard')
     from zstandard import ZstdError
+
     from xrspatial.geotiff import read_vrt
 
     src_path = tmp_path / 'src_1670_zstd.tif'

@@ -6,7 +6,7 @@ import os
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import to_geotiff, read_geotiff_dask
+from xrspatial.geotiff import read_geotiff_dask, to_geotiff
 
 
 def _write_vrt(vrt_path, source_name, *, bands=1):

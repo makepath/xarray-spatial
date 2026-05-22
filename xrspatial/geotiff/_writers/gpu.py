@@ -17,29 +17,19 @@ import xarray as xr
 if TYPE_CHECKING:
     from typing import BinaryIO
 
-from .._attrs import (
-    _EXPERIMENTAL_CODECS,
-    _extract_rich_tags,
-    _resolve_nodata_attr,
-    _should_restore_nan_sentinel,
-)
-from .._coords import (
-    _BAND_DIM_NAMES,
-    _has_no_georef_marker,
-    require_transform_for_georeferenced as _require_transform_for_georeferenced,
-    resolve_georef as _resolve_georef,
-)
+    import cupy
+
+from .._attrs import (_EXPERIMENTAL_CODECS, _extract_rich_tags, _resolve_nodata_attr,
+                      _should_restore_nan_sentinel)
+from .._coords import _BAND_DIM_NAMES, _has_no_georef_marker
+from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
+from .._coords import resolve_georef as _resolve_georef
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
 from .._nodata import NodataLifecycle as _NL
 from .._runtime import GeoTIFFFallbackWarning, _resolve_spatial_coords
-from .._validation import (
-    _validate_3d_writer_dims,
-    _validate_no_rotated_affine,
-    _validate_nodata_arg,
-    _validate_tile_size_arg,
-    _validate_writer_spatial_shape,
-    validate_write_metadata,
-)
+from .._validation import (_validate_3d_writer_dims, _validate_no_rotated_affine,
+                           _validate_nodata_arg, _validate_tile_size_arg,
+                           _validate_writer_spatial_shape, validate_write_metadata)
 
 
 def _compute_gpu_samples_hint(data) -> int:
@@ -433,10 +423,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         raise ImportError("cupy is required for GPU writes")
 
     from .._gpu_decode import gpu_compress_tiles, make_overview_gpu
-    from .._writer import (
-        _compression_tag, _assemble_tiff, _write_bytes,
-        normalize_predictor,
-    )
+    from .._writer import _assemble_tiff, _compression_tag, _write_bytes, normalize_predictor
 
     # Extract array and metadata
     geo_transform = None
@@ -610,6 +597,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     if cog:
         if overview_levels is None:
             from .._overview import _MAX_OVERVIEW_LEVELS
+
             # Auto-generated lists hold actual decimation factors (2,
             # 4, 8, ...) so the loop below treats auto-generated and
             # user-supplied lists identically (issue #1766).
@@ -705,5 +693,3 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
 
     _write_bytes(file_bytes, path)
     return path
-
-

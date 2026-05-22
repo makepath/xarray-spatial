@@ -15,10 +15,9 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._header import parse_header, parse_all_ifds
+from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._reader import _FileSource
 from xrspatial.geotiff._writer import _validate_overview_levels, write
-
 
 # A unique stem so temp paths cannot collide with sibling tests running
 # in parallel worktrees (rockout convention).

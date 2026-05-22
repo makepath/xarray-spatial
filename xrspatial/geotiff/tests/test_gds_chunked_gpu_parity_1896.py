@@ -49,13 +49,9 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 def _parse_for_gds(path: str):
     """Return ``(ifd, geo_info, header)`` for the GDS entry point."""
+    from xrspatial.geotiff._geotags import extract_geo_info_with_overview_inheritance
+    from xrspatial.geotiff._header import parse_all_ifds, parse_header, select_overview_ifd
     from xrspatial.geotiff._reader import _FileSource
-    from xrspatial.geotiff._header import (
-        parse_header, parse_all_ifds, select_overview_ifd,
-    )
-    from xrspatial.geotiff._geotags import (
-        extract_geo_info_with_overview_inheritance,
-    )
 
     fs = _FileSource(path)
     try:
@@ -164,7 +160,6 @@ lerc = pytest.importorskip("lerc")
 
 from xrspatial.geotiff._compression import LERC_AVAILABLE  # noqa: E402
 
-
 _lerc_gpu_only = pytest.mark.skipif(
     not (_HAS_GPU and LERC_AVAILABLE),
     reason="cupy + CUDA + lerc required",
@@ -219,9 +214,9 @@ def test_gds_chunked_lerc_mask_matches_eager(tmp_path, lerc_writer_with_mask_189
     The eager GPU path resolves and forwards ``masked_fill``; this
     test pins the chunked path to the same behaviour.
     """
-    from xrspatial.geotiff._writer import write
     from xrspatial.geotiff import read_geotiff_gpu
     from xrspatial.geotiff._backends.gpu import _read_geotiff_gpu_chunked_gds
+    from xrspatial.geotiff._writer import write
 
     arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
     invalid_positions = {(0, 1), (3, 3), (7, 7)}
@@ -262,9 +257,9 @@ def test_gds_chunked_lerc_mask_matches_eager(tmp_path, lerc_writer_with_mask_189
 def test_gds_chunked_lerc_mask_sentinel_nodata(tmp_path,
                                                lerc_writer_with_mask_1896):
     """Sentinel nodata (-9999) on float LERC: chunked path matches eager."""
-    from xrspatial.geotiff._writer import write
     from xrspatial.geotiff import read_geotiff_gpu
     from xrspatial.geotiff._backends.gpu import _read_geotiff_gpu_chunked_gds
+    from xrspatial.geotiff._writer import write
 
     arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
     invalid_positions = {(0, 1), (5, 4)}

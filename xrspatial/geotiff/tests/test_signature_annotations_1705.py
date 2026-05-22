@@ -23,11 +23,7 @@ from __future__ import annotations
 
 import inspect
 
-from xrspatial.geotiff import (
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
+from xrspatial.geotiff import to_geotiff, write_geotiff_gpu, write_vrt
 
 
 def _annotation(fn, param_name):

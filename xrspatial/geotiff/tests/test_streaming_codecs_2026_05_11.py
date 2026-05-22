@@ -29,15 +29,12 @@ import xarray as xr
 pytest.importorskip("dask")
 
 from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
-from xrspatial.geotiff._compression import (  # noqa: E402
-    LERC_AVAILABLE,
-    LZ4_AVAILABLE,
-)
-
+from xrspatial.geotiff._compression import LERC_AVAILABLE, LZ4_AVAILABLE  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def float_raster():
@@ -77,7 +74,7 @@ def dask_uint8_raster(uint8_raster):
 @pytest.mark.skipif(not LERC_AVAILABLE, reason="lerc not installed")
 class TestStreamingLerc:
     def test_lossless_round_trip(self, float_raster, dask_float_raster,
-                                  tmp_path):
+                                 tmp_path):
         """Dask + LERC (max_z_error=0) round-trips exactly."""
         path = str(tmp_path / 'stream_lerc_lossless.tif')
         # Tier 3 codec (issue #2137); opt in to exercise the encode path.
@@ -88,7 +85,7 @@ class TestStreamingLerc:
         np.testing.assert_array_equal(result.values, float_raster.values)
 
     def test_lossy_respects_max_z_error(self, float_raster, dask_float_raster,
-                                         tmp_path):
+                                        tmp_path):
         """Dask + LERC with non-zero max_z_error keeps every pixel within bound."""
         max_z = 0.1
         path = str(tmp_path / 'stream_lerc_lossy.tif')
@@ -102,7 +99,7 @@ class TestStreamingLerc:
             f"{max_diff} > {max_z}")
 
     def test_streaming_matches_eager(self, float_raster, dask_float_raster,
-                                      tmp_path):
+                                     tmp_path):
         """Pixel-identical output between eager and streaming LERC writers.
 
         This is the parity guarantee: both paths feed the same
@@ -137,7 +134,7 @@ class TestStreamingLz4:
         np.testing.assert_array_equal(result.values, float_raster.values)
 
     def test_streaming_matches_eager(self, float_raster, dask_float_raster,
-                                      tmp_path):
+                                     tmp_path):
         eager_path = str(tmp_path / 'eager_lz4.tif')
         stream_path = str(tmp_path / 'stream_lz4.tif')
         to_geotiff(float_raster, eager_path, compression='lz4',
@@ -161,7 +158,7 @@ class TestStreamingPackbits:
         np.testing.assert_array_equal(result.values, uint8_raster.values)
 
     def test_streaming_matches_eager(self, uint8_raster, dask_uint8_raster,
-                                      tmp_path):
+                                     tmp_path):
         eager_path = str(tmp_path / 'eager_packbits.tif')
         stream_path = str(tmp_path / 'stream_packbits.tif')
         to_geotiff(uint8_raster, eager_path, compression='packbits')

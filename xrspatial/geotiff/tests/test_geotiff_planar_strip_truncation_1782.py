@@ -33,10 +33,10 @@ import pytest
 from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff.tests.conftest import make_minimal_tiff
 
-
 # ---------------------------------------------------------------------------
 # Hand-rolled planar=2 stripped TIFF builder
 # ---------------------------------------------------------------------------
+
 
 def _make_planar2_stripped_tiff(
     width: int,

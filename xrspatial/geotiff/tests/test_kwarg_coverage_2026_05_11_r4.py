@@ -32,12 +32,7 @@ import importlib.util
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    to_geotiff,
-)
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_geotiff_gpu, to_geotiff
 
 
 def _gpu_available() -> bool:

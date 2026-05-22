@@ -59,51 +59,27 @@ from ._compression import COMPRESSION_LERC
 # pulled back through ``_reader`` so monkeypatches against
 # ``_reader._apply_photometric_miniswhite`` / ``_reader._decode_strip_or_tile``
 # keep working after the helper move (PR-J / #2258).
-from ._decode import (
-    _PARALLEL_DECODE_PIXEL_THRESHOLD,
-    _apply_orientation_with_geo,
-    _miniswhite_inverted_nodata,
-    _read_strips,
-    _resolve_masked_fill,
-)
+from ._decode import (_PARALLEL_DECODE_PIXEL_THRESHOLD, _apply_orientation_with_geo,
+                      _miniswhite_inverted_nodata, _read_strips, _resolve_masked_fill)
 from ._dtypes import SUB_BYTE_BPS, resolve_bits_per_sample, tiff_dtype_to_numpy
-from ._geotags import (
-    GeoInfo,
-    extract_geo_info_with_overview_inheritance,
-)
-from ._header import (
-    IFD,
-    TIFFHeader,
-    parse_all_ifds,
-    parse_header,
-    select_overview_ifd,
-    validate_tile_layout,
-)
-from ._layout import (
-    MAX_PIXELS_DEFAULT,
-    _check_dimensions,
-    _check_source_dimensions,
-    _compute_full_image_byte_budget,
-    _has_sparse,
-    _ifd_required_extent,
-    _sparse_fill_value,
-)
-from ._sources import (
-    COALESCE_GAP_THRESHOLD_DEFAULT,
-    # ``_HTTPSource`` is imported as a real module-level binding (rather
-    # than guarded by TYPE_CHECKING) because it appears in the public
-    # signature of three helpers and ``typing.get_type_hints(...)``
-    # resolves annotations against the function's ``__globals__``.
-    # Hiding the name behind TYPE_CHECKING would break runtime hint
-    # introspection on this module *and* on the re-exports in
-    # ``_reader`` (which share the same function objects). At runtime
-    # every construction call still goes through ``_reader._HTTPSource``
-    # so monkeypatches against the ``_reader`` namespace continue to
-    # intercept the source. PR-J / #2258.
-    _HTTPSource,
-    _max_coalesced_range_bytes_from_env,
-    _max_tile_bytes_from_env,
-)
+from ._geotags import GeoInfo, extract_geo_info_with_overview_inheritance
+from ._header import (IFD, TIFFHeader, parse_all_ifds, parse_header, select_overview_ifd,
+                      validate_tile_layout)
+from ._layout import (MAX_PIXELS_DEFAULT, _check_dimensions, _check_source_dimensions,
+                      _compute_full_image_byte_budget, _has_sparse, _ifd_required_extent,
+                      _sparse_fill_value)
+# ``_HTTPSource`` is imported as a real module-level binding (rather
+# than guarded by TYPE_CHECKING) because it appears in the public
+# signature of three helpers and ``typing.get_type_hints(...)``
+# resolves annotations against the function's ``__globals__``.
+# Hiding the name behind TYPE_CHECKING would break runtime hint
+# introspection on this module *and* on the re-exports in
+# ``_reader`` (which share the same function objects). At runtime
+# every construction call still goes through ``_reader._HTTPSource``
+# so monkeypatches against the ``_reader`` namespace continue to
+# intercept the source. PR-J / #2258.
+from ._sources import (COALESCE_GAP_THRESHOLD_DEFAULT, _HTTPSource,
+                       _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env)
 from ._validation import _validate_predictor_sample_format
 
 #: Initial prefetch size for ``_parse_cog_http_meta``. Sized for the common

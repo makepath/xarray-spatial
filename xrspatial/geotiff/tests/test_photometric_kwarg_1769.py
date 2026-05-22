@@ -29,12 +29,7 @@ import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._dtypes import SHORT
-from xrspatial.geotiff._header import (
-    TAG_EXTRA_SAMPLES,
-    TAG_PHOTOMETRIC,
-    parse_header,
-    parse_ifd,
-)
+from xrspatial.geotiff._header import TAG_EXTRA_SAMPLES, TAG_PHOTOMETRIC, parse_header, parse_ifd
 
 
 def _read_primary_ifd(path: str):
