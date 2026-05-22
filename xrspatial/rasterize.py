@@ -90,15 +90,36 @@ _merge_first = _merge_overwrite
 
 @ngjit
 def _merge_max(pixel, props, is_first):
-    if is_first or props[0] > pixel:
-        return props[0]
+    val = props[0]
+    # NaN burn poisons max regardless of order.  Without this branch the
+    # outcome would depend on whether the NaN burn happened to land before
+    # or after the finite burns ('NaN > finite' is False, so a NaN burn
+    # arriving second is silently dropped).  Issue #2255.
+    if val != val:
+        return val
+    if is_first:
+        return val
+    # A NaN already in the pixel sticks: 'finite > NaN' is False so the
+    # comparison below would return the pixel anyway, but checking explicitly
+    # documents the intent and keeps the contract symmetric with the GPU path.
+    if pixel != pixel:
+        return pixel
+    if val > pixel:
+        return val
     return pixel
 
 
 @ngjit
 def _merge_min(pixel, props, is_first):
-    if is_first or props[0] < pixel:
-        return props[0]
+    val = props[0]
+    if val != val:
+        return val
+    if is_first:
+        return val
+    if pixel != pixel:
+        return pixel
+    if val < pixel:
+        return val
     return pixel
 
 
@@ -1318,10 +1339,25 @@ def _ensure_gpu_kernels(merge_fn, should_write, merge_name=None):
             cuda.atomic.add(out, (r, c), 1.0)
             cuda.atomic.max(order, (r, c), new_idx)
         elif atomic_mode == 'min':
-            cuda.atomic.min(out, (r, c), props[0])
+            val = props[0]
+            # CUDA atomicMin uses a < comparison, which returns False for
+            # any NaN operand, so a NaN burn would silently leave the +inf
+            # initialiser in place.  Track NaN burns in ``written`` (sized
+            # H*W int32 for min/max, see _gpu_init_buffers) and stamp NaN
+            # into ``out`` at finalize.  Issue #2255.
+            if val == val:
+                cuda.atomic.min(out, (r, c), val)
+            else:
+                cuda.atomic.max(written, (r, c), 1)
             cuda.atomic.max(order, (r, c), new_idx)
         elif atomic_mode == 'max':
-            cuda.atomic.max(out, (r, c), props[0])
+            val = props[0]
+            # See min branch above; the -inf initialiser would otherwise
+            # win against any NaN burn.  Issue #2255.
+            if val == val:
+                cuda.atomic.max(out, (r, c), val)
+            else:
+                cuda.atomic.max(written, (r, c), 1)
             cuda.atomic.max(order, (r, c), new_idx)
         elif atomic_mode == 'first':
             # Pass 1: resolve winning input index per pixel.
@@ -1882,12 +1918,22 @@ def _gpu_init_buffers(height, width, fill, merge_name):
     sentinel value used in ``order`` so the caller can blend ``fill``
     back in afterwards.
 
-    The atomic kernels never consult ``written`` (the legacy
-    user-callable path is the only consumer), so atomic modes get a
-    placeholder ``(1, 1)`` buffer to satisfy the kernel signature
-    without spending ``H*W`` bytes on dead storage.
+    Most atomic kernels never consult ``written`` (the legacy
+    user-callable path is the only consumer of the H*W int8 mask), so
+    they get a placeholder ``(1, 1)`` buffer to satisfy the kernel
+    signature without spending ``H*W`` bytes on dead storage.
+
+    ``min`` / ``max`` repurpose ``written`` as a NaN-burn mask: the
+    +/-inf initialisers used by the atomic min/max kernels would
+    otherwise outrank any NaN burn ('NaN > finite' is False), silently
+    dropping NaN-valued geometries.  The mask records which pixels saw
+    a NaN burn so finalize can stamp NaN back in.  Issue #2255.
+    ``cuda.atomic.max`` requires int32 / int64 / uint32 / uint64 (int8
+    is not supported), hence the dtype bump for these two modes.
     """
-    if merge_name in _GPU_ATOMIC_MERGES:
+    if merge_name in ('min', 'max'):
+        written = cupy.zeros((height, width), dtype=cupy.int32)
+    elif merge_name in _GPU_ATOMIC_MERGES:
         written = cupy.zeros((1, 1), dtype=cupy.int8)
     else:
         written = cupy.zeros((height, width), dtype=cupy.int8)
@@ -1924,10 +1970,15 @@ def _gpu_init_buffers(height, width, fill, merge_name):
     return out, written, order, order_sentinel
 
 
-def _gpu_finalize_buffers(out, order, order_sentinel, fill, merge_name):
+def _gpu_finalize_buffers(out, written, order, order_sentinel, fill,
+                          merge_name):
     """Apply the post-pass blend that restores ``fill`` for untouched
     pixels (sum/count/min/max/first/last) and replaces the +/- inf
     initialisers used by min/max.
+
+    For ``min`` / ``max``, also stamps NaN into pixels that received at
+    least one NaN burn -- ``written`` is repurposed as the NaN-mask for
+    those modes (see ``_gpu_init_buffers``).  Issue #2255.
 
     Returns ``out`` (modified in-place where convenient).
     """
@@ -1937,10 +1988,13 @@ def _gpu_finalize_buffers(out, order, order_sentinel, fill, merge_name):
     if merge_name in ('sum', 'count'):
         # Pixels with no contribution should show ``fill``, not 0.
         out = cupy.where(touched, out, cupy.float64(fill))
-    elif merge_name == 'min':
-        # +inf initialiser leaks into untouched pixels.
-        out = cupy.where(touched, out, cupy.float64(fill))
-    elif merge_name == 'max':
+    elif merge_name in ('min', 'max'):
+        # Any pixel that saw a NaN burn must show NaN, otherwise the
+        # +/-inf initialiser would leak through (or the finite max/min
+        # of the non-NaN burns would silently win).  Issue #2255.
+        nan_burned = written > 0
+        out = cupy.where(nan_burned, cupy.float64(cupy.nan), out)
+        # +/-inf initialiser leaks into untouched pixels; restore fill.
         out = cupy.where(touched, out, cupy.float64(fill))
     # first/last already initialise ``out`` to ``fill``; pass-2 only
     # writes for touched pixels, so no blend is needed.
@@ -2069,8 +2123,8 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
                       kernels['burn_lines_supercover_pass2'],
                       kernels['burn_points_pass2'])
 
-    final_out = _gpu_finalize_buffers(out, order, order_sentinel, fill,
-                                      atomic_mode)
+    final_out = _gpu_finalize_buffers(out, written, order, order_sentinel,
+                                      fill, atomic_mode)
     return final_out.astype(dtype)
 
 
@@ -2531,8 +2585,8 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                       kernels['burn_lines_supercover_pass2'],
                       kernels['burn_points_pass2'])
 
-    final_out = _gpu_finalize_buffers(out, order, order_sentinel, fill,
-                                      atomic_mode)
+    final_out = _gpu_finalize_buffers(out, written, order, order_sentinel,
+                                      fill, atomic_mode)
     return final_out.astype(dtype)
 
 
