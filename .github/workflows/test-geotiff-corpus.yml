@@ -49,6 +49,7 @@ jobs:
           rasterio
           gdal
           pyyaml
+          tifffile
         condarc: |
           channels:
             - conda-forge
