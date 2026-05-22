@@ -396,6 +396,24 @@ def _write(data: np.ndarray, path: str, *,
         entry_point="_write",
     )
 
+    # Issue #2311: defense in depth for the COG auto-overview hang.
+    # ``to_geotiff`` already rejects non-positive tile_size when either
+    # tiled or cog is true, but ``_write`` is a public-ish array-level
+    # entry point reached from the GPU CPU-fallback path and downstream
+    # code that imports it directly. Without the gate, a non-positive
+    # tile_size with ``cog=True`` hits ``ZeroDivisionError`` in
+    # ``_write_tiled`` (tiled=True path) or the infinite auto-overview
+    # halving loop (tiled=False path). Convert both to a typed
+    # ValueError up front so callers see one actionable failure mode
+    # instead of two divergent ones.
+    if cog and (not isinstance(tile_size, (int, np.integer))
+                or isinstance(tile_size, bool)
+                or tile_size <= 0):
+        raise ValueError(
+            f"tile_size must be a positive int for cog=True (consumed by "
+            f"tile encoding and auto-overview generation), got "
+            f"tile_size={tile_size!r}.")
+
     # Issue #2138 gap #7: auto-promote ``float16`` and ``bool_`` before
     # the dtype mapper. ``to_geotiff`` already does this upstream; the
     # push-down here lets direct callers feed unsupported dtypes without
@@ -496,10 +514,25 @@ def _write(data: np.ndarray, path: str, *,
             # holds actual decimation factors (2, 4, 8, ...) so the loop
             # below treats auto-generated and user-supplied lists
             # identically (issue #1766).
+            #
+            # Defense in depth (issue #2311): require a positive tile_size
+            # before entering the halving loop. The public ``to_geotiff``
+            # entry point already validates tile_size when either tiled or
+            # cog is true, but ``write()`` is also reachable from internal
+            # callers; without this guard a non-positive tile_size leaves
+            # the ``oh > tile_size`` termination condition permanently true
+            # while the inner ``oh > 0`` guard suppresses appends, so the
+            # loop spins forever.
+            if not isinstance(tile_size, (int, np.integer)) or tile_size <= 0:
+                raise ValueError(
+                    f"tile_size must be a positive int for COG overview "
+                    f"generation, got tile_size={tile_size!r}.")
             overview_levels = []
             oh, ow = h, w
             factor = 2
-            while oh > tile_size and ow > tile_size and len(overview_levels) < _MAX_OVERVIEW_LEVELS:
+            while (oh > tile_size and ow > tile_size
+                    and oh > 0 and ow > 0
+                    and len(overview_levels) < _MAX_OVERVIEW_LEVELS):
                 oh //= 2
                 ow //= 2
                 if oh > 0 and ow > 0:

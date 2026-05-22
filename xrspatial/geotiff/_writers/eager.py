@@ -335,10 +335,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         raise TypeError(
             f"nodata must be numeric (int or float), got {nodata!r}")
 
-    # tiled=False ignores tile_size, so only validate when tiled output
-    # is requested. Shared with write_geotiff_gpu via
+    # tiled=False ignores tile_size for the strip-layout pixel data, so
+    # historically validation only ran when tiled=True. The COG path
+    # (cog=True) still reads tile_size to auto-generate overviews in
+    # ``_writer.py`` regardless of the strip-vs-tiled choice, so a
+    # non-positive tile_size with cog=True drove the overview loop
+    # into a hang once oh, ow halved to 0 (issue #2311). Validate
+    # tile_size whenever either path will consume it: tiled output OR
+    # COG overview generation. Shared with write_geotiff_gpu via
     # _validate_tile_size_arg so both writers keep identical validation.
-    if tiled:
+    if tiled or cog:
         _validate_tile_size_arg(tile_size)
 
     _validate_nodata_arg(nodata)
