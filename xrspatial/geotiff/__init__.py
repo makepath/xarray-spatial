@@ -273,24 +273,38 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # so ``overview_level`` indexes both internal and external
         # overviews (issue #2112). Local file paths only.
         from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
+        sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
             sidecar = load_sidecar(sidecar_path)
-            # Metadata-only path: drop the origin mapping. The reader
-            # only needs the merged IFD list to resolve the requested
-            # ``overview_level`` against; strip/tile bytes are sliced by
-            # ``read_to_array`` on the actual read.
-            attach_sidecar_origin(
+            # The origin mapping is consumed below for georef extraction
+            # only -- strip/tile bytes are sliced by ``read_to_array`` on
+            # the actual read. A sidecar IFD that carries its own
+            # GeoKeyDirectory / ModelPixelScale / ModelTiepoint /
+            # ModelTransformation needs the sidecar's byte order to
+            # parse cleanly; without the mapping the helper falls back
+            # to the base file's bytes (today's default, correct under
+            # the usual GDAL convention). See issue #2315.
+            sidecar_origin = attach_sidecar_origin(
                 sidecar.ifds, sidecar.data, sidecar.header)
             ifds = ifds + sidecar.ifds
         ifd = select_overview_ifd(ifds, overview_level)
         # Inherit georef from the level-0 IFD when the overview itself
         # has no geokeys (issue #1640). Pass-through for level 0. The
         # sidecar IFDs typically lack geokeys so the inheritance pulls
-        # from the base file's full-resolution IFD as GDAL does.
+        # from the base file's full-resolution IFD as GDAL does. When a
+        # sidecar IFD does declare its own georef payload, ``georef_origin``
+        # routes the parse to the sidecar's bytes / byte order so the
+        # sidecar's georef wins. See issue #2315.
+        georef_origin = (
+            {iid: (od, oh.byte_order)
+             for iid, (od, oh) in sidecar_origin.items()}
+            if sidecar_origin else None
+        )
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order,
-            allow_rotated=allow_rotated)
+            allow_rotated=allow_rotated,
+            sidecar_origin=georef_origin)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         _validate_predictor_sample_format(ifd.predictor, ifd.sample_format)

@@ -227,13 +227,24 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # Inherit georef from level 0 when an overview IFD lacks its own
         # geokeys (issue #1640). For overview_level=0 (or None) this is a
         # no-op: the helper short-circuits when the IFD is not a
-        # NewSubfileType=overview entry. Sidecar IFDs always lack
-        # geokeys, so the inheritance pulls from the base file's
-        # level-0 IFD (kept first in the merged list) which is the
-        # GDAL convention.
+        # NewSubfileType=overview entry. Sidecar IFDs typically lack
+        # geokeys (the GDAL convention), so the inheritance pulls from
+        # the base file's level-0 IFD (kept first in the merged list).
+        # A sidecar that does declare its own georef payload is a corner
+        # case: ``georef_origin`` maps the sidecar IFDs to
+        # ``(data, byte_order)`` from the sidecar so the helper resolves
+        # those tags against the right buffer. Sidecar IFDs without
+        # geokeys still inherit from the base file via the existing
+        # overview-inheritance path. See issues #1640 and #2315.
+        georef_origin = (
+            {iid: (od, oh.byte_order)
+             for iid, (od, oh) in sidecar_origin.items()}
+            if sidecar_origin else None
+        )
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order,
-            allow_rotated=allow_rotated)
+            allow_rotated=allow_rotated,
+            sidecar_origin=georef_origin)
 
         # Orientation tag (274): values 2-8 mean the stored pixel order
         # differs from display order. We need to remap the array post
