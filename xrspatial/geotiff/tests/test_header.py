@@ -250,16 +250,37 @@ class TestIFDChainLoop:
 class TestReadValueRationals:
     """T-8 coverage for RATIONAL / SRATIONAL edge cases in _read_value."""
 
-    def test_rational_denominator_zero_returns_zero(self):
-        # numerator=5, denominator=0 -- by convention return 0.0
+    def test_rational_denominator_zero_raises(self):
+        # numerator=5, denominator=0 -- malformed, reject instead of
+        # silently mapping to 0.0 (issue #2313).
         buf = struct.pack('<II', 5, 0)
-        result = _read_value(buf, 0, RATIONAL, 1, '<')
-        assert result == 0.0
+        with pytest.raises(ValueError, match="Malformed RATIONAL"):
+            _read_value(buf, 0, RATIONAL, 1, '<')
 
-    def test_srational_denominator_zero_returns_zero(self):
+    def test_rational_denominator_zero_names_tag(self):
+        # When the tag is known, the error message names it.
+        from xrspatial.geotiff._header import TAG_X_RESOLUTION
+        buf = struct.pack('<II', 5, 0)
+        with pytest.raises(ValueError, match="XResolution"):
+            _read_value(buf, 0, RATIONAL, 1, '<', tag=TAG_X_RESOLUTION)
+
+    def test_srational_denominator_zero_raises(self):
         buf = struct.pack('<ii', -3, 0)
-        result = _read_value(buf, 0, SRATIONAL, 1, '<')
-        assert result == 0.0
+        with pytest.raises(ValueError, match="Malformed SRATIONAL"):
+            _read_value(buf, 0, SRATIONAL, 1, '<')
+
+    def test_srational_denominator_zero_names_tag(self):
+        from xrspatial.geotiff._header import TAG_Y_RESOLUTION
+        buf = struct.pack('<ii', -3, 0)
+        with pytest.raises(ValueError, match="YResolution"):
+            _read_value(buf, 0, SRATIONAL, 1, '<', tag=TAG_Y_RESOLUTION)
+
+    def test_rational_denominator_zero_in_array_raises(self):
+        # Second element has denominator=0; the failure points at the
+        # offending element index.
+        buf = struct.pack('<IIII', 1, 1, 5, 0)
+        with pytest.raises(ValueError, match="element 1"):
+            _read_value(buf, 0, RATIONAL, 2, '<')
 
     def test_rational_normal_value(self):
         buf = struct.pack('<II', 22, 7)
