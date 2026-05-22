@@ -36,14 +36,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    GeoTIFFFallbackWarning,
-    SUPPORTED_FEATURES,
-    to_geotiff,
-    write_geotiff_gpu,
-)
+from xrspatial.geotiff import (SUPPORTED_FEATURES, GeoTIFFFallbackWarning, to_geotiff,
+                               write_geotiff_gpu)
 from xrspatial.geotiff._attrs import _VALID_COMPRESSIONS
-
 
 _TIER_VALUES = {'stable', 'advanced', 'experimental', 'internal_only'}
 

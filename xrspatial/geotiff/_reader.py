@@ -17,10 +17,6 @@ internal call sites that pre-date the rename.
 """
 from __future__ import annotations
 
-import math
-import os as _os_module
-from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
 # ``urllib3`` is kept as a top-level import here even though the HTTP
 # source moved to ``_sources`` in #2228. ``test_http_no_stdlib_fallback_2050``
@@ -29,127 +25,6 @@ import numpy as np
 # itself uses the ``_sources`` import; this binding is purely the
 # "urllib3 is a hard install dep" guard.
 import urllib3  # noqa: F401
-
-from ._compression import COMPRESSION_LERC
-from ._dtypes import SUB_BYTE_BPS, resolve_bits_per_sample, tiff_dtype_to_numpy
-from ._geotags import (
-    GeoInfo,
-    extract_geo_info_with_overview_inheritance,
-)
-from ._header import (
-    IFD,
-    TIFFHeader,
-    parse_all_ifds,
-    parse_header,
-    select_overview_ifd,
-    validate_tile_layout,
-)
-from ._validation import _validate_predictor_sample_format
-
-# Layout / validation helpers live in ``_layout``. They are imported back
-# here so that:
-#   * existing call sites inside this module keep their bare names, and
-#   * the historical public import surface
-#     (``from xrspatial.geotiff._reader import PixelSafetyLimitError``,
-#     ``MAX_PIXELS_DEFAULT``, ``_check_dimensions`` and friends -- used
-#     by sidecar / VRT / GPU / dask backends and by the test suite) is
-#     preserved without churn.
-# Source: PR-H of the GeoTIFF refactor epic, issue #2247.
-from ._layout import (  # noqa: F401
-    MAX_PIXELS_DEFAULT,
-    PixelSafetyLimitError,
-    _FULL_IMAGE_BUDGET_HEADER_SLACK,
-    _check_dimensions,
-    _check_source_dimensions,
-    _compute_full_image_byte_budget,
-    _has_sparse,
-    _ifd_required_extent,
-    _sparse_fill_value,
-)
-
-# The data-source layer (local mmap, HTTP with SSRF defences and DNS-rebind
-# pinning, fsspec cloud, BytesIO) lives in ``_sources``. It is imported back
-# here so that:
-#   * existing call sites inside this module (``_open_source``, ``_HTTPSource``,
-#     ``_FileSource`` etc.) keep their bare names, and
-#   * the historical public import surface
-#     (``from xrspatial.geotiff._reader import _HTTPSource`` and friends,
-#     used by sidecar / VRT / GPU / dask backends and by the test suite) is
-#     preserved without churn.
-# Source: PR-E of the GeoTIFF refactor epic, issue #2228.
-from ._sources import (  # noqa: F401
-    # Public module-level constants.
-    COALESCE_GAP_THRESHOLD_DEFAULT,
-    MAX_CLOUD_BYTES_DEFAULT,
-    MAX_COALESCED_RANGE_BYTES_DEFAULT,
-    MAX_TILE_BYTES_DEFAULT,
-    # Private module-level constants and sentinels.
-    _CLOUD_SCHEMES,
-    _DEFAULT_MMAP_CACHE_SIZE,
-    _HTTP_ALLOWED_SCHEMES,
-    _HTTP_CONNECT_TIMEOUT_DEFAULT,
-    _HTTP_MAX_REDIRECTS,
-    _HTTP_READ_TIMEOUT_DEFAULT,
-    _MAX_CLOUD_BYTES_SENTINEL,
-    # Exceptions.
-    CloudSizeLimitError,
-    UnsafeURLError,
-    # Source classes and the shared mmap cache singleton.
-    _BytesIOSource,
-    _CloudSource,
-    _FileSource,
-    _HTTPSource,
-    _MmapCache,
-    _mmap_cache,
-    # Public byte-range helpers.
-    coalesce_ranges,
-    split_coalesced_bytes,
-    # Private helpers and dispatch.
-    _build_pinned_connection_classes,
-    _coerce_path,
-    _get_http_pool,
-    _get_pinned_conn_classes,
-    _http_allow_private_hosts,
-    _http_connect_timeout,
-    _http_read_timeout,
-    _http_timeout_from_env,
-    _ip_is_private,
-    _is_file_like,
-    _is_fsspec_uri,
-    _make_pinned_pool,
-    _max_coalesced_range_bytes_from_env,
-    _max_tile_bytes_from_env,
-    _mmap_cache_size_from_env,
-    _open_source,
-    _resolve_max_cloud_bytes,
-    _validate_http_url,
-)
-
-# Strip/tile decode orchestration lives in ``_decode``. It is imported
-# back here so that:
-#   * existing call sites inside this module (``_read_strips``,
-#     ``_read_tiles``, ``_decode_strip_or_tile``, the photometric and
-#     orientation helpers) keep their bare names, and
-#   * the historical public import surface
-#     (``from xrspatial.geotiff._reader import _read_strips`` and
-#     friends, used by VRT / GPU / dask backends, the writer, and the
-#     test suite) is preserved without churn.
-# Source: PR-G of the GeoTIFF refactor epic, issue #2246.
-from ._decode import (  # noqa: F401
-    _NATIVE_ORDER,
-    _PARALLEL_DECODE_PIXEL_THRESHOLD,
-    _apply_orientation,
-    _apply_orientation_with_geo,
-    _apply_photometric_miniswhite,
-    _apply_predictor,
-    _decode_strip_or_tile,
-    _int_nodata_in_range,
-    _miniswhite_inverted_nodata,
-    _packed_byte_count,
-    _read_strips,
-    _read_tiles,
-    _resolve_masked_fill,
-)
 
 # COG-over-HTTP transport (bounded header prefetch, range-based tile/strip
 # fetch + decode) lives in ``_cog_http``. It is imported back here so that:
@@ -165,26 +40,76 @@ from ._decode import (  # noqa: F401
 # at call time) so monkeypatches against ``_reader._HTTPSource`` /
 # ``_reader._parse_cog_http_meta`` continue to take effect after the move.
 # Source: PR-J of the GeoTIFF refactor epic, issue #2258.
-from ._cog_http import (  # noqa: F401
-    INITIAL_HTTP_HEADER_BYTES,
-    MAX_HTTP_HEADER_BYTES,
-    _fetch_decode_cog_http_strips,
-    _fetch_decode_cog_http_tiles,
-    _parse_cog_http_meta,
-    _read_cog_http,
-)
-
+from ._cog_http import (INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES,  # noqa: F401
+                        _fetch_decode_cog_http_strips, _fetch_decode_cog_http_tiles,
+                        _parse_cog_http_meta, _read_cog_http)
+# Strip/tile decode orchestration lives in ``_decode``. It is imported
+# back here so that:
+#   * existing call sites inside this module (``_read_strips``,
+#     ``_read_tiles``, ``_decode_strip_or_tile``, the photometric and
+#     orientation helpers) keep their bare names, and
+#   * the historical public import surface
+#     (``from xrspatial.geotiff._reader import _read_strips`` and
+#     friends, used by VRT / GPU / dask backends, the writer, and the
+#     test suite) is preserved without churn.
+# Source: PR-G of the GeoTIFF refactor epic, issue #2246.
+from ._decode import (_NATIVE_ORDER, _PARALLEL_DECODE_PIXEL_THRESHOLD,  # noqa: F401
+                      _apply_orientation, _apply_orientation_with_geo,
+                      _apply_photometric_miniswhite, _apply_predictor, _decode_strip_or_tile,
+                      _int_nodata_in_range, _miniswhite_inverted_nodata, _packed_byte_count,
+                      _read_strips, _read_tiles, _resolve_masked_fill)
+from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
+from ._geotags import GeoInfo, extract_geo_info_with_overview_inheritance
+from ._header import parse_all_ifds, parse_header, select_overview_ifd
+# Layout / validation helpers live in ``_layout``. They are imported back
+# here so that:
+#   * existing call sites inside this module keep their bare names, and
+#   * the historical public import surface
+#     (``from xrspatial.geotiff._reader import PixelSafetyLimitError``,
+#     ``MAX_PIXELS_DEFAULT``, ``_check_dimensions`` and friends -- used
+#     by sidecar / VRT / GPU / dask backends and by the test suite) is
+#     preserved without churn.
+# Source: PR-H of the GeoTIFF refactor epic, issue #2247.
+from ._layout import (_FULL_IMAGE_BUDGET_HEADER_SLACK, MAX_PIXELS_DEFAULT,  # noqa: F401
+                      PixelSafetyLimitError, _check_dimensions, _check_source_dimensions,
+                      _compute_full_image_byte_budget, _has_sparse, _ifd_required_extent,
+                      _sparse_fill_value)
+# The data-source layer (local mmap, HTTP with SSRF defences and DNS-rebind
+# pinning, fsspec cloud, BytesIO) lives in ``_sources``. It is imported back
+# here so that:
+#   * existing call sites inside this module (``_open_source``, ``_HTTPSource``,
+#     ``_FileSource`` etc.) keep their bare names, and
+#   * the historical public import surface
+#     (``from xrspatial.geotiff._reader import _HTTPSource`` and friends,
+#     used by sidecar / VRT / GPU / dask backends and by the test suite) is
+#     preserved without churn.
+# Source: PR-E of the GeoTIFF refactor epic, issue #2228.
+from ._sources import (_CLOUD_SCHEMES, _DEFAULT_MMAP_CACHE_SIZE,  # noqa: F401
+                       _HTTP_ALLOWED_SCHEMES, _HTTP_CONNECT_TIMEOUT_DEFAULT, _HTTP_MAX_REDIRECTS,
+                       _HTTP_READ_TIMEOUT_DEFAULT, _MAX_CLOUD_BYTES_SENTINEL,
+                       COALESCE_GAP_THRESHOLD_DEFAULT, MAX_CLOUD_BYTES_DEFAULT,
+                       MAX_COALESCED_RANGE_BYTES_DEFAULT, MAX_TILE_BYTES_DEFAULT,
+                       CloudSizeLimitError, UnsafeURLError, _build_pinned_connection_classes,
+                       _BytesIOSource, _CloudSource, _coerce_path, _FileSource, _get_http_pool,
+                       _get_pinned_conn_classes, _http_allow_private_hosts, _http_connect_timeout,
+                       _http_read_timeout, _http_timeout_from_env, _HTTPSource, _ip_is_private,
+                       _is_file_like, _is_fsspec_uri, _make_pinned_pool,
+                       _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env, _mmap_cache,
+                       _mmap_cache_size_from_env, _MmapCache, _open_source,
+                       _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
+                       split_coalesced_bytes)
 
 # ---------------------------------------------------------------------------
 # Main read function
 # ---------------------------------------------------------------------------
 
+
 def _read_to_array(source, *, window=None, overview_level: int | None = None,
-                  band: int | None = None,
-                  max_pixels: int = MAX_PIXELS_DEFAULT,
-                  max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
-                  allow_rotated: bool = False,
-                  ) -> tuple[np.ndarray, GeoInfo]:
+                   band: int | None = None,
+                   max_pixels: int = MAX_PIXELS_DEFAULT,
+                   max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
+                   allow_rotated: bool = False,
+                   ) -> tuple[np.ndarray, GeoInfo]:
     """Read a GeoTIFF/COG to a numpy array (module-private).
 
     Parameters
@@ -279,9 +204,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # enforces (#2121). The sidecar must be loaded before IFD
         # selection so ``overview_level`` indexes into a unified
         # pyramid list.
-        from ._sidecar import (
-            attach_sidecar_origin, find_sidecar, load_sidecar,
-        )
+        from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:

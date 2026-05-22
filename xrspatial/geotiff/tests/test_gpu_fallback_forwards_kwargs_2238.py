@@ -293,10 +293,9 @@ def test_sparse_tile_fallback_forwards_all_kwargs(tmp_path, monkeypatch):
 
 @_gpu_only
 def test_gpu_decode_failure_fallback_forwards_all_kwargs(tmp_path,
-                                                        monkeypatch):
+                                                         monkeypatch):
     """``gpu_decode_tiles`` failure routes through fallback with kwargs."""
-    from xrspatial.geotiff import read_geotiff_gpu
-    from xrspatial.geotiff import _gpu_decode
+    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gpu_backend
 
     src = tmp_path / "2238_decode_fail.tif"
@@ -434,8 +433,7 @@ def test_decode_failure_fallback_applies_window_band(tmp_path, monkeypatch):
     """
     tifffile = pytest.importorskip("tifffile")
 
-    from xrspatial.geotiff import read_geotiff_gpu
-    from xrspatial.geotiff import _gpu_decode
+    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu
 
     src = tmp_path / "2238_windowed_fallback.tif"
     bands, h, w = 3, 64, 64

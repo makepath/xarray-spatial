@@ -23,14 +23,14 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import to_geotiff, read_geotiff_dask, write_vrt
+from xrspatial.geotiff import read_geotiff_dask, to_geotiff, write_vrt
 from xrspatial.geotiff._reader import _MmapCache, read_to_array
 from xrspatial.geotiff._writer import _MAX_OVERVIEW_LEVELS, write
-
 
 # ---------------------------------------------------------------------------
 # C-1: early compression validation
 # ---------------------------------------------------------------------------
+
 
 class TestC1CompressionValidation:
     def test_unknown_compression_raises_at_top(self, tmp_path):
@@ -407,6 +407,7 @@ class TestP6GpuMemoryCheck:
 
     def test_helper_noop_for_zero_or_negative(self):
         from xrspatial.geotiff import _gpu_decode
+
         # Should not even try to query CUDA.
         _gpu_decode._check_gpu_memory(0, what="empty")
         _gpu_decode._check_gpu_memory(-100, what="negative")
@@ -414,8 +415,9 @@ class TestP6GpuMemoryCheck:
     def test_helper_silent_when_cupy_unavailable(self, monkeypatch):
         # When cupy isn't importable, the helper falls through silently
         # so the real allocation can produce its own error.
-        from xrspatial.geotiff import _gpu_decode
         import builtins
+
+        from xrspatial.geotiff import _gpu_decode
 
         real_import = builtins.__import__
 
@@ -447,7 +449,7 @@ class TestP9OverviewCap:
               cog=True)
 
         # Re-open and count IFDs (overviews + full-res).
-        from xrspatial.geotiff._header import parse_header, parse_all_ifds
+        from xrspatial.geotiff._header import parse_all_ifds, parse_header
         from xrspatial.geotiff._reader import _FileSource
         src = _FileSource(path)
         try:
@@ -468,7 +470,7 @@ class TestP9OverviewCap:
         write(arr, path, compression='none', tiled=True, tile_size=64,
               cog=True, overview_levels=[2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
 
-        from xrspatial.geotiff._header import parse_header, parse_all_ifds
+        from xrspatial.geotiff._header import parse_all_ifds, parse_header
         from xrspatial.geotiff._reader import _FileSource
         src = _FileSource(path)
         try:

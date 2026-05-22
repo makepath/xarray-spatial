@@ -14,11 +14,8 @@ import pytest
 tifffile = pytest.importorskip("tifffile")
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
-from xrspatial.geotiff._header import (  # noqa: E402
-    parse_all_ifds,
-    parse_header,
-    select_overview_ifd,
-)
+from xrspatial.geotiff._header import (parse_all_ifds, parse_header,  # noqa: E402
+                                       select_overview_ifd)
 
 
 def _write_tiff_with_mask(path, full_res, mask, overview):

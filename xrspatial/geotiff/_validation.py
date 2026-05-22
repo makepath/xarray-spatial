@@ -26,21 +26,10 @@ from typing import Any, Callable, Iterable, Mapping
 import numpy as np
 
 from ._coords import _BAND_DIM_NAMES
-from ._errors import (
-    ConflictingCRSError,
-    ConflictingNodataError,
-    MixedBandMetadataError,
-    NonUniformCoordsError,
-    RotatedTransformError,
-    UnparseableCRSError,
-)
-from ._runtime import (
-    _MISSING_SOURCES_SENTINEL,
-    _ON_GPU_FAILURE_SENTINEL,
-    _TIME_DIM_NAMES,
-    _X_DIM_NAMES,
-    _Y_DIM_NAMES,
-)
+from ._errors import (ConflictingCRSError, ConflictingNodataError, MixedBandMetadataError,
+                      NonUniformCoordsError, RotatedTransformError, UnparseableCRSError)
+from ._runtime import (_MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, _TIME_DIM_NAMES,
+                       _X_DIM_NAMES, _Y_DIM_NAMES)
 
 
 def _is_temporal_dim_name(name) -> bool:
@@ -309,8 +298,8 @@ def _validate_chunks_arg(chunks, *, allow_none=False):
         if allow_none:
             return chunks
         raise ValueError(
-            f"chunks must be a positive int or (row, col) tuple of "
-            f"positive ints, got chunks=None.")
+            "chunks must be a positive int or (row, col) tuple of "
+            "positive ints, got chunks=None.")
     if (isinstance(chunks, (int, np.integer))
             and not isinstance(chunks, bool)):
         if chunks <= 0:

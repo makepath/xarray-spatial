@@ -48,7 +48,7 @@ def _make_cog_with_overviews(path: str) -> xr.DataArray:
     """
     arr = np.arange(1024 * 1024, dtype=np.float32).reshape(1024, 1024)
     y = np.arange(1024, dtype=np.float64) * (-0.5) + 200.0
-    x = np.arange(1024, dtype=np.float64) *   0.5 + 100.0
+    x = np.arange(1024, dtype=np.float64) * 0.5 + 100.0
     da = xr.DataArray(arr, dims=['y', 'x'],
                       coords={'y': y, 'x': x},
                       attrs={'crs': 4326})

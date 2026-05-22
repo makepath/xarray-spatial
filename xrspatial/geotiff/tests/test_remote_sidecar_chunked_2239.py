@@ -24,11 +24,9 @@ from __future__ import annotations
 
 import io
 import pathlib
-import shutil
 
 import numpy as np
 import pytest
-
 
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parent

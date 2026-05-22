@@ -27,7 +27,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-
 tifffile = pytest.importorskip("tifffile")
 dask_array = pytest.importorskip("dask.array")
 

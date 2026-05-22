@@ -20,11 +20,7 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import _reader as reader_mod
-from xrspatial.geotiff._reader import (
-    PixelSafetyLimitError,
-    _HTTPSource,
-    _read_cog_http,
-)
+from xrspatial.geotiff._reader import PixelSafetyLimitError, _HTTPSource, _read_cog_http
 from xrspatial.geotiff._writer import write
 
 

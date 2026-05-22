@@ -36,7 +36,6 @@ from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
 
 from .conftest import make_minimal_tiff  # noqa: E402
 
-
 # Exception types the geotiff module is allowed to raise on invalid input.
 # Any other exception class indicates an undocumented failure mode -- either
 # the strategy generated something we should reject explicitly, or there's
@@ -52,7 +51,7 @@ ALLOWED_PARSE_EXCEPTIONS = (ValueError, TypeError)
 # not in the [tests] extras. Drop them from the strategy when those
 # packages are missing so the fuzz run does not flake the moment
 # Hypothesis happens to draw a codec the runner can't actually write.
-from xrspatial.geotiff._compression import LZ4_AVAILABLE, ZSTD_AVAILABLE
+from xrspatial.geotiff._compression import LZ4_AVAILABLE, ZSTD_AVAILABLE  # noqa: E402
 
 LOSSLESS_CODECS = ['none', 'deflate', 'lzw', 'packbits']
 if ZSTD_AVAILABLE:

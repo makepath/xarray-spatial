@@ -29,18 +29,14 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._header import (
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_SAMPLES_PER_PIXEL,
-    parse_header,
-)
+from xrspatial.geotiff._header import (TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_SAMPLES_PER_PIXEL,
+                                       parse_header)
 from xrspatial.geotiff._reader import _check_source_dimensions
-
 
 # ---------------------------------------------------------------------------
 # Helpers: locate and patch a tag value inside a classic-TIFF IFD entry
 # ---------------------------------------------------------------------------
+
 
 def _find_ifd_entry_offset(buf: bytes, tag_id: int) -> int:
     """Return the byte offset of the IFD entry for ``tag_id``.
@@ -228,12 +224,9 @@ class TestWindowedEmptyStillAllowed:
         # supports one; otherwise call the lower-level reader directly.
         # We use the lower-level _read_strips because open_geotiff
         # doesn't expose a window kwarg consistently across versions.
+        from xrspatial.geotiff._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
         from xrspatial.geotiff._header import parse_all_ifds
         from xrspatial.geotiff._reader import _read_strips
-        from xrspatial.geotiff._dtypes import (
-            resolve_bits_per_sample,
-            tiff_dtype_to_numpy,
-        )
 
         data = bytes(buf)
         header = parse_header(data)

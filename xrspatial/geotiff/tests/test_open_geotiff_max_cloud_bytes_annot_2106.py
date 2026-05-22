@@ -18,16 +18,8 @@ import inspect
 
 import pytest
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    read_vrt,
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
-
+from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
+                               to_geotiff, write_geotiff_gpu, write_vrt)
 
 PUBLIC_ENTRY_POINTS = (
     open_geotiff,

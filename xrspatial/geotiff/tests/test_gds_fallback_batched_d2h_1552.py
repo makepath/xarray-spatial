@@ -102,6 +102,7 @@ def test_batched_d2h_checks_gpu_memory_before_concat(monkeypatch):
     happens.
     """
     import cupy
+
     from xrspatial.geotiff import _gpu_decode
 
     seen = {"total_bytes": None, "what": None, "called": False}

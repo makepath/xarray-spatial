@@ -22,9 +22,8 @@ import xarray as xr
 
 tifffile = pytest.importorskip("tifffile")
 
-from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._geotags import _looks_like_wkt
-
+from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
+from xrspatial.geotiff._geotags import _looks_like_wkt  # noqa: E402
 
 # A user-defined Lambert Conformal Conic that pyproj cannot identify
 # as a registered EPSG. Trimmed to keep test fixtures readable.
@@ -260,10 +259,7 @@ def test_synthesize_user_defined_wkt_sphere():
     """Sphere ellipsoid (``inv_flattening == 0``) round-trips to a longlat
     CRS with ``b == a``. This is the ``crs_citation_only`` fixture shape."""
     pyproj = pytest.importorskip("pyproj")
-    from xrspatial.geotiff._geotags import (
-        MODEL_TYPE_GEOGRAPHIC,
-        _synthesize_user_defined_wkt,
-    )
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOGRAPHIC, _synthesize_user_defined_wkt
 
     wkt = _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_GEOGRAPHIC,
@@ -282,10 +278,7 @@ def test_synthesize_user_defined_wkt_sphere():
 def test_synthesize_user_defined_wkt_oblate_ellipsoid():
     """An oblate ellipsoid (inv_flattening != 0) maps to PROJ ``rf=...``."""
     pyproj = pytest.importorskip("pyproj")
-    from xrspatial.geotiff._geotags import (
-        MODEL_TYPE_GEOGRAPHIC,
-        _synthesize_user_defined_wkt,
-    )
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOGRAPHIC, _synthesize_user_defined_wkt
 
     wkt = _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_GEOGRAPHIC,
@@ -304,10 +297,7 @@ def test_synthesize_user_defined_wkt_projected_returns_none():
     GeoKeys alone (they need the GeogPrime / Projection parameters), so
     the helper returns ``None`` and the caller falls back to the
     deprecated-attrs path."""
-    from xrspatial.geotiff._geotags import (
-        MODEL_TYPE_PROJECTED,
-        _synthesize_user_defined_wkt,
-    )
+    from xrspatial.geotiff._geotags import MODEL_TYPE_PROJECTED, _synthesize_user_defined_wkt
 
     assert _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_PROJECTED,
@@ -321,10 +311,7 @@ def test_synthesize_user_defined_wkt_geocentric_returns_none():
     """Geocentric and unknown model_type values also fall through to
     ``None``. Pinned so a future change that promotes geocentric to a
     real proj_dict still has to update this test deliberately."""
-    from xrspatial.geotiff._geotags import (
-        MODEL_TYPE_GEOCENTRIC,
-        _synthesize_user_defined_wkt,
-    )
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOCENTRIC, _synthesize_user_defined_wkt
 
     assert _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_GEOCENTRIC,
@@ -346,10 +333,7 @@ def test_synthesize_user_defined_wkt_missing_ellipsoid_returns_none():
     """Without any ellipsoid info, refuse to fabricate a CRS rather than
     silently emit a WGS84 fallback that would compare-equal to unrelated
     files."""
-    from xrspatial.geotiff._geotags import (
-        MODEL_TYPE_GEOGRAPHIC,
-        _synthesize_user_defined_wkt,
-    )
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOGRAPHIC, _synthesize_user_defined_wkt
 
     # No semi_major: cannot build an ellipsoid.
     assert _synthesize_user_defined_wkt(

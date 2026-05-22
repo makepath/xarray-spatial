@@ -9,9 +9,11 @@ import math
 import os
 import struct
 import zlib
-from dataclasses import dataclass, field, replace as _dc_replace
+from dataclasses import dataclass, field
+from dataclasses import replace as _dc_replace
 from typing import Union
-from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
+from xml.sax.saxutils import escape as _xml_escape
+from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
 import numpy as np
 
@@ -163,6 +165,7 @@ def _xml_attr(value) -> str:
     if value is None:
         return '""'
     return _xml_quoteattr(str(value))
+
 
 # Mapping from GDAL VRT dataType names to NumPy dtypes.
 #
@@ -1072,7 +1075,7 @@ def read_vrt(vrt_path: str, *, window=None,
     out_h = r1 - r0
     out_w = c1 - c0
 
-    from ._reader import _check_dimensions, MAX_PIXELS_DEFAULT
+    from ._reader import MAX_PIXELS_DEFAULT, _check_dimensions
     if max_pixels is None:
         max_pixels = MAX_PIXELS_DEFAULT
     n_bands = len([vrt.bands[band]] if band is not None else vrt.bands)
@@ -1301,7 +1304,8 @@ def read_vrt(vrt_path: str, *, window=None,
                 # sentinel, which is why the default was flipped to raise
                 # in #1843. See also issues #1734 and #1843.
                 import warnings
-                from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+
+                from . import GeoTIFFFallbackWarning, _geotiff_strict_mode
                 if missing_sources == 'raise' or _geotiff_strict_mode():
                     raise
                 warnings.warn(
@@ -1529,11 +1533,10 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     str
         Path to the written VRT file.
     """
-    from ._reader import read_to_array
-    from ._header import parse_header, parse_all_ifds
-    from ._geotags import extract_geo_info
-    from ._reader import _FileSource
     from ._dtypes import resolve_bits_per_sample
+    from ._geotags import extract_geo_info
+    from ._header import parse_all_ifds, parse_header
+    from ._reader import _FileSource
 
     # Defense-in-depth: the public ``write_vrt`` wrapper in
     # ``_writers/vrt.py`` already rejects bool / non-numeric ``nodata`` via
@@ -1569,7 +1572,10 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
             'bands': ifd.samples_per_pixel,
             'dtype': np.dtype(_DTYPE_MAP.get(
                 {v: k for k, v in _DTYPE_MAP.items()}.get(
-                    np.dtype(f'{"f" if ifd.sample_format == 3 else ("i" if ifd.sample_format == 2 else "u")}{bps // 8}').type,
+                    np.dtype(
+                        f'{"f" if ifd.sample_format == 3 else ("i" if ifd.sample_format == 2 else "u")}'  # noqa: E501
+                        f'{bps // 8}'
+                    ).type,
                     'Float32'),
                 np.float32)),
             'bps': bps,

@@ -26,33 +26,18 @@ import numpy as np
 import pytest
 
 import xrspatial.geotiff._compression as comp_mod
-from xrspatial.geotiff._compression import (
-    COMPRESSION_DEFLATE,
-    COMPRESSION_LZW,
-    COMPRESSION_LZ4,
-    COMPRESSION_NONE,
-    COMPRESSION_PACKBITS,
-    COMPRESSION_ZSTD,
-    _HAVE_LIBDEFLATE,
-    LZ4_AVAILABLE,
-    compress,
-    deflate_compress,
-)
+from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLATE, COMPRESSION_LZ4,
+                                            COMPRESSION_LZW, COMPRESSION_NONE, COMPRESSION_PACKBITS,
+                                            COMPRESSION_ZSTD, LZ4_AVAILABLE, compress,
+                                            deflate_compress)
 from xrspatial.geotiff._reader import read_to_array
-from xrspatial.geotiff._writer import (
-    _PARALLEL_MIN_BYTES,
-    _compress_block,
-    _prepare_strip,
-    _prepare_tile,
-    _write_stripped,
-    _write_tiled,
-    write,
-)
-
+from xrspatial.geotiff._writer import (_PARALLEL_MIN_BYTES, _compress_block, _prepare_strip,
+                                       _prepare_tile, _write_stripped, _write_tiled, write)
 
 # ---------------------------------------------------------------------------
 # deflate_compress(gil_friendly=...) at the codec layer
 # ---------------------------------------------------------------------------
+
 
 def _payload(n: int = 8192) -> bytes:
     """Repeatable payload large enough to exercise real codec branches."""

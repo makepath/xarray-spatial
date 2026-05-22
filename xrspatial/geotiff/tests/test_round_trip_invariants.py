@@ -58,10 +58,10 @@ from xrspatial.geotiff import open_geotiff, to_geotiff, write_vrt
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._writer import write
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _default_gt() -> GeoTransform:
     return GeoTransform(

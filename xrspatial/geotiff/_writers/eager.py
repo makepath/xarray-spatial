@@ -21,38 +21,20 @@ import xarray as xr
 if TYPE_CHECKING:
     from typing import BinaryIO
 
-from .._attrs import (
-    _EXPERIMENTAL_CODECS,
-    _LEVEL_RANGES,
-    _VALID_COMPRESSIONS,
-    _extract_rich_tags,
-    _resolve_nodata_attr,
-    _should_restore_nan_sentinel,
-)
+from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _VALID_COMPRESSIONS, _extract_rich_tags,
+                      _resolve_nodata_attr, _should_restore_nan_sentinel)
 from .._backends._gpu_helpers import _is_gpu_data
-from .._coords import (
-    _BAND_DIM_NAMES,
-    _has_no_georef_marker,
-    require_transform_for_georeferenced as _require_transform_for_georeferenced,
-    resolve_georef as _resolve_georef,
-)
+from .._coords import _BAND_DIM_NAMES, _has_no_georef_marker
+from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
+from .._coords import resolve_georef as _resolve_georef
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
-from .._geotags import GeoTransform, RASTER_PIXEL_IS_AREA
+from .._geotags import RASTER_PIXEL_IS_AREA, GeoTransform
 from .._nodata import NodataLifecycle as _NL
-from .._runtime import (
-    GeoTIFFFallbackWarning,
-    _geotiff_strict_mode,
-    _gpu_fallback_warning_message,
-    _resolve_spatial_coords,
-)
-from .._validation import (
-    _validate_3d_writer_dims,
-    _validate_no_rotated_affine,
-    _validate_nodata_arg,
-    _validate_tile_size_arg,
-    _validate_writer_spatial_shape,
-    validate_write_metadata,
-)
+from .._runtime import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _gpu_fallback_warning_message,
+                        _resolve_spatial_coords)
+from .._validation import (_validate_3d_writer_dims, _validate_no_rotated_affine,
+                           _validate_nodata_arg, _validate_tile_size_arg,
+                           _validate_writer_spatial_shape, validate_write_metadata)
 from .._writer import write
 from .gpu import write_geotiff_gpu
 
@@ -234,7 +216,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         * ``'rgba'`` -- RGB with the 4th band tagged as unassociated
           alpha (TIFF ExtraSamples=2). Requires at least 4 bands.
         * ``'minisblack'`` or ``'miniswhite'`` -- grayscale; multi-band
-          extras tagged ``0``.
+          extras tagged ``0``. Signed-integer pixel types with
+          ``'miniswhite'`` are rejected with ``NotImplementedError`` --
+          xrspatial has no semantically correct inversion for signed
+          MinIsWhite and the silent passthrough that used to happen
+          produced files that disagreed with the on-disk Photometric
+          tag against every standards-compliant TIFF reader (issue
+          #2278). Cast to an unsigned dtype or pass
+          ``photometric='minisblack'``.
         * An ``int`` -- written verbatim into Photometric for advanced
           callers (e.g. ``3`` for Palette, ``5`` for CMYK).
 
@@ -778,6 +767,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                             f"compression_level={compression_level} out of "
                             f"range for {compression} (valid: {lo}-{hi})")
             from .._writer import write_streaming
+
             # Issue #1929: refuse to write an unvalidatable CRS string
             # into GTCitationGeoKey unless the caller opts in. ``epsg``
             # is set when ``_wkt_to_epsg`` succeeded; only the fallback
@@ -1278,4 +1268,3 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # Write VRT index with relative paths
     from .._vrt import write_vrt as _write_vrt_fn
     _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
-

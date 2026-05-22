@@ -28,7 +28,6 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._writers.eager import _write_vrt_tiled
 
-
 _ROTATED_TUPLE = (8.66, -5.0, 100.0, 5.0, 8.66, 200.0)
 
 

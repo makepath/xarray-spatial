@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from xrspatial.geotiff._vrt import read_vrt as _read_vrt_internal
 from xrspatial.geotiff import GeoTIFFFallbackWarning
+from xrspatial.geotiff._vrt import read_vrt as _read_vrt_internal
 
 
 def _write_missing_source_vrt(path):

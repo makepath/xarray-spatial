@@ -20,38 +20,18 @@ import warnings
 import numpy as np
 import xarray as xr
 
-from .._attrs import (
-    _finalize_eager_read,
-    _finalize_lazy_read_attrs,
-)
-from .._coords import (
-    coords_from_geo_info as _coords_from_geo_info,
-)
+from .._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
+from .._coords import coords_from_geo_info as _coords_from_geo_info
 from .._nodata import NodataLifecycle as _NL
-from .._reader import (
-    _MAX_CLOUD_BYTES_SENTINEL,
-    _coerce_path,
-    read_to_array as _read_to_array,
-)
-from .._runtime import (
-    _GPU_DEPRECATED_SENTINEL,
-    _MISSING_SOURCES_SENTINEL,
-    _ON_GPU_FAILURE_SENTINEL,
-    _geotiff_strict_mode,
-)
-from .._validation import (
-    _validate_chunks_arg,
-    _validate_dispatch_kwargs,
-    _validate_dtype_cast,
-    _validate_predictor_sample_format,
-)
-from ._gpu_helpers import (
-    _apply_nodata_mask_gpu,
-    _apply_orientation_geo_info,
-    _apply_orientation_gpu,
-    _gpu_apply_window_band,
-    _gpu_decode_single_band_tiles,
-)
+from .._reader import _MAX_CLOUD_BYTES_SENTINEL, _coerce_path
+from .._reader import read_to_array as _read_to_array
+from .._runtime import (_GPU_DEPRECATED_SENTINEL, _MISSING_SOURCES_SENTINEL,
+                        _ON_GPU_FAILURE_SENTINEL, _geotiff_strict_mode)
+from .._validation import (_validate_chunks_arg, _validate_dispatch_kwargs, _validate_dtype_cast,
+                           _validate_predictor_sample_format)
+from ._gpu_helpers import (_apply_nodata_mask_gpu, _apply_orientation_geo_info,
+                           _apply_orientation_gpu, _gpu_apply_window_band,
+                           _gpu_decode_single_band_tiles)
 from .dask import read_geotiff_dask
 
 
@@ -89,7 +69,8 @@ def read_geotiff_gpu(source: str, *,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
-                     max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
+                     max_cloud_bytes: int | None = (
+                         _MAX_CLOUD_BYTES_SENTINEL),  # type: ignore[assignment]
                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                      missing_sources: str = _MISSING_SOURCES_SENTINEL,
                      allow_rotated: bool = False,
@@ -198,6 +179,33 @@ def read_geotiff_gpu(source: str, *,
         carries the sentinel either way. Pass ``mask_nodata=False``
         together with ``dtype=<integer>`` to preserve an integer source
         dtype on a file with a matching sentinel. See issue #2052.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files. Forwarded through both GPU decode stages and the CPU
+        fallback so the rotated branch behaves the same regardless of
+        which stage produces the bytes. See ``open_geotiff`` for the
+        full contract; on the GPU path the result still lands as a
+        CuPy-backed DataArray.
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        do not parse as WKT. ``False`` (the default since #1929) raises
+        ``UnparseableCRSError``; ``True`` keeps the pre-#1929 permissive
+        behaviour. See ``open_geotiff`` for the full description.
+    band_nodata : {'first', None}, optional
+        VRT-only. Accepted at the signature level for parity with
+        ``open_geotiff``; passing it to ``read_geotiff_gpu`` raises
+        ``ValueError`` because the GPU dispatcher rejects ``.vrt``
+        sources up front and the kwarg only applies to VRT. See
+        ``read_vrt`` for the kwarg's meaning.
+    missing_sources : {'raise', 'warn'}, optional
+        VRT-only. Same shape as ``band_nodata`` above: accepted for
+        signature parity, rejected at dispatch with ``ValueError`` for
+        non-VRT sources. See ``read_vrt`` for the full description.
+    max_cloud_bytes : int or None, optional
+        Accepted for cross-backend signature symmetry only. The GPU
+        reader does not consume the cloud-byte budget; passing this
+        kwarg raises ``ValueError`` at dispatch (issue #1974). See
+        ``open_geotiff`` for the eager-path description.
 
     Returns
     -------
@@ -301,17 +309,13 @@ def read_geotiff_gpu(source: str, *,
             mask_nodata=mask_nodata,
         )
 
-    from .._reader import (
-        _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT,
-        _is_fsspec_uri, _max_tile_bytes_from_env, _resolve_masked_fill,
-    )
     from .._compression import COMPRESSION_LERC
-    from .._header import (
-        parse_header, parse_all_ifds, select_overview_ifd, validate_tile_layout,
-    )
     from .._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from .._geotags import extract_geo_info_with_overview_inheritance
     from .._gpu_decode import gpu_decode_tiles
+    from .._header import parse_all_ifds, parse_header, select_overview_ifd, validate_tile_layout
+    from .._reader import (MAX_PIXELS_DEFAULT, _check_dimensions, _FileSource, _is_fsspec_uri,
+                           _max_tile_bytes_from_env, _resolve_masked_fill)
 
     # ``source`` is already coerced above (before the dispatch
     # validator); no need to re-coerce here.
@@ -372,10 +376,7 @@ def read_geotiff_gpu(source: str, *,
         # we swap ``data`` / ``header`` to the sidecar's buffers below
         # and skip the GDS fast path -- GDS reads the source file path,
         # which would point at the base file rather than the sidecar.
-        from .._sidecar import (
-            attach_sidecar_origin, close_sidecar, find_sidecar,
-            load_sidecar,
-        )
+        from .._sidecar import attach_sidecar_origin, close_sidecar, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
@@ -845,6 +846,24 @@ def read_geotiff_gpu(source: str, *,
                 arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
             elif gpu_dtype.kind == 'f':
                 arr_gpu = -arr_gpu
+            elif gpu_dtype.kind == 'i':
+                # Mirror the CPU reader's signed-int MinIsWhite
+                # rejection (issue #2278). Without this the pure-GPU
+                # decode path would silently return un-inverted
+                # signed pixels while the CPU decode path raises,
+                # breaking backend parity.
+                raise NotImplementedError(
+                    f"Signed-integer MinIsWhite TIFFs are not "
+                    f"supported on the GPU decode path either "
+                    f"(issue #2278): Photometric=0 (MinIsWhite), "
+                    f"SampleFormat={ifd.sample_format} (signed int), "
+                    f"BitsPerSample={ifd.bits_per_sample}, "
+                    f"dtype={gpu_dtype}. xrspatial has no "
+                    f"semantically correct inversion for signed "
+                    f"pixels here. Convert the file to MinIsBlack "
+                    f"(Photometric=1) with another tool, or open it "
+                    f"in an unsigned dtype."
+                )
 
         if name is None:
             import os
@@ -978,6 +997,7 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
 
     if name is None:
         import os
+
         # ``os.path.basename`` strips the scheme and host from a URL
         # (``basename('https://host/path/foo.tif') == 'foo.tif'``); for
         # ``s3://bucket/foo.tif`` it returns ``'foo.tif'``. Match the
@@ -1177,11 +1197,9 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     """
     import cupy
 
-    from .._reader import (
-        _FileSource, _coerce_path, _max_tile_bytes_from_env,
-    )
-    from .._header import parse_header, parse_all_ifds, select_overview_ifd
     from .._geotags import extract_geo_info_with_overview_inheritance
+    from .._header import parse_all_ifds, parse_header, select_overview_ifd
+    from .._reader import _coerce_path, _FileSource, _max_tile_bytes_from_env
 
     src_path = _coerce_path(source)
 
@@ -1312,13 +1330,11 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     import dask
     import dask.array as da_mod
 
-    from .._reader import (
-        _check_dimensions, MAX_PIXELS_DEFAULT,
-        _max_tile_bytes_from_env, _resolve_masked_fill,
-    )
     from .._compression import COMPRESSION_LERC
-    from .._header import validate_tile_layout
     from .._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
+    from .._header import validate_tile_layout
+    from .._reader import (MAX_PIXELS_DEFAULT, _check_dimensions, _max_tile_bytes_from_env,
+                           _resolve_masked_fill)
 
     if max_pixels is None:
         max_pixels = MAX_PIXELS_DEFAULT

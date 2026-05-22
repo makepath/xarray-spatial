@@ -28,11 +28,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._crs import (
-    _looks_like_wkt,
-    _validate_crs_fallback,
-    _WKT_ROOT_KEYWORDS,
-)
+from xrspatial.geotiff._crs import _WKT_ROOT_KEYWORDS, _looks_like_wkt, _validate_crs_fallback
 
 
 def _make_da() -> xr.DataArray:

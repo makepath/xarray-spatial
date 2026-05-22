@@ -16,7 +16,6 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import LERC_AVAILABLE
 
-
 pytestmark = pytest.mark.skipif(
     not LERC_AVAILABLE,
     reason="lerc not installed",

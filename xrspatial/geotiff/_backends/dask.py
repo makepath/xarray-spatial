@@ -18,18 +18,13 @@ import numpy as np
 import xarray as xr
 
 from .._attrs import _finalize_lazy_read_attrs
-from .._coords import (
-    coords_from_geo_info as _coords_from_geo_info,
-    geo_to_coords as _geo_to_coords,
-)
+from .._coords import coords_from_geo_info as _coords_from_geo_info
+from .._coords import geo_to_coords as _geo_to_coords
 from .._nodata import NodataLifecycle
-from .._reader import _MAX_CLOUD_BYTES_SENTINEL, read_to_array as _read_to_array
+from .._reader import _MAX_CLOUD_BYTES_SENTINEL
+from .._reader import read_to_array as _read_to_array
 from .._runtime import _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL
-from .._validation import (
-    _validate_chunks_arg,
-    _validate_dispatch_kwargs,
-    _validate_dtype_cast,
-)
+from .._validation import _validate_chunks_arg, _validate_dispatch_kwargs, _validate_dtype_cast
 from .vrt import read_vrt
 
 
@@ -41,7 +36,8 @@ def read_geotiff_dask(source: str, *,
                       name: str | None = None,
                       chunks: int | tuple = 512,
                       max_pixels: int | None = None,
-                      max_cloud_bytes: int | None = _MAX_CLOUD_BYTES_SENTINEL,  # type: ignore[assignment]
+                      max_cloud_bytes: int | None = (
+                          _MAX_CLOUD_BYTES_SENTINEL),  # type: ignore[assignment]
                       on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                       missing_sources: str = _MISSING_SOURCES_SENTINEL,
                       allow_rotated: bool = False,
@@ -100,6 +96,34 @@ def read_geotiff_dask(source: str, *,
         Pass ``mask_nodata=False`` together with ``dtype=<integer>`` to
         keep an integer source dtype; the default promotes to
         ``float64`` and the cast then raises. See issue #2052.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files. Forwarded to every per-chunk read so a rotated source
+        yields an ungeoreferenced pixel grid instead of raising
+        ``NotImplementedError``. See ``open_geotiff`` for the full
+        contract; the dask path honours the same attrs (``crs`` /
+        ``crs_wkt`` dropped, ``rotated_affine`` set).
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        do not parse as WKT. When ``False`` (the default since #1929)
+        the chunk task raises ``UnparseableCRSError`` instead of
+        carrying the unrecognised payload through ``attrs['crs_wkt']``.
+        See ``open_geotiff`` for the full description.
+    on_gpu_failure : str, optional
+        Accepted for cross-backend signature symmetry only. The dask
+        path runs CPU decoders, so passing this kwarg raises
+        ``ValueError`` at dispatch. See ``read_geotiff_gpu`` for the
+        kwarg's meaning on the GPU reader.
+    missing_sources : {'raise', 'warn'}, optional
+        VRT-only. Forwarded to ``read_vrt`` when the source ends in
+        ``.vrt``; otherwise raises ``ValueError`` at dispatch. See
+        ``read_vrt`` for the full description.
+    max_cloud_bytes : int or None, optional
+        Accepted for cross-backend signature symmetry only. The dask
+        reader uses bounded range GETs and does not consume the
+        cloud-byte budget, so passing this kwarg raises ``ValueError``
+        at dispatch. See ``open_geotiff`` for the eager-path
+        description (issue #1974).
 
     Returns
     -------
@@ -187,6 +211,7 @@ def read_geotiff_dask(source: str, *,
     effective_source = source
     if is_http or is_fsspec:
         import dask
+
         from .._cog_http import _parse_cog_http_meta
         if is_http:
             # ``_HTTPSource`` is resolved through ``_reader`` so existing

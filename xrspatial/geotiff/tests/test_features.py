@@ -8,21 +8,16 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._compression import (
-    COMPRESSION_PACKBITS,
-    packbits_compress,
-    packbits_decompress,
-    zstd_compress,
-    zstd_decompress,
-)
-from xrspatial.geotiff._header import parse_header, parse_all_ifds
+from xrspatial.geotiff._compression import (packbits_compress, packbits_decompress, zstd_compress,
+                                            zstd_decompress)
+from xrspatial.geotiff._header import parse_header
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import write
-
 
 # -----------------------------------------------------------------------
 # Multi-band write and read
 # -----------------------------------------------------------------------
+
 
 class TestMultiBand:
 
@@ -387,7 +382,7 @@ class TestGeoKeys:
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'proj_in.tif')
         to_geotiff(arr, path, crs='+proj=utm +zone=18 +datum=NAD83',
-                      compression='none')
+                   compression='none')
 
         da = open_geotiff(path)
         # pyproj should resolve this to EPSG:26918
@@ -484,7 +479,6 @@ class TestFixesBatch:
 
     def test_min_is_white_inversion(self, tmp_path):
         """MinIsWhite (photometric=0) inverts grayscale values on read."""
-        from .conftest import make_minimal_tiff
         import struct
 
         # Build a minimal TIFF with photometric=0
@@ -494,8 +488,10 @@ class TestFixesBatch:
         pixels = np.array([[0, 50, 100, 200]], dtype=np.uint8).repeat(4, axis=0)
 
         tag_list = []
+
         def add_short(tag, val):
             tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
         def add_long(tag, val):
             tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
 
@@ -552,7 +548,7 @@ class TestFixesBatch:
         wrong for multispectral data and has been replaced with
         MinIsBlack.
         """
-        from xrspatial.geotiff._header import parse_header, parse_all_ifds, TAG_EXTRA_SAMPLES
+        from xrspatial.geotiff._header import TAG_EXTRA_SAMPLES, parse_all_ifds, parse_header
         arr = np.ones((4, 4, 4), dtype=np.uint8) * 128
         path = str(tmp_path / 'rgba.tif')
         write(arr, path, compression='none', tiled=False, photometric='rgba')
@@ -616,7 +612,7 @@ class TestFixesBatch:
             '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
             '  <VRTRasterBand dataType="Float32" band="1">\n'
             '    <SimpleSource>\n'
-            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'  # noqa: E501
             '      <SourceBand>1</SourceBand>\n'
             '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
             '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
@@ -654,7 +650,7 @@ class TestVRT:
         ]
         for path, (th, tw), (yo, xo) in zip(tile_paths, tile_shapes, tile_offsets):
             lines.append('    <SimpleSource>')
-            lines.append(f'      <SourceFilename relativeToVRT="1">{os.path.basename(path)}</SourceFilename>')
+            lines.append(f'      <SourceFilename relativeToVRT="1">{os.path.basename(path)}</SourceFilename>')  # noqa: E501
             lines.append('      <SourceBand>1</SourceBand>')
             lines.append(f'      <SrcRect xOff="0" yOff="0" xSize="{tw}" ySize="{th}"/>')
             lines.append(f'      <DstRect xOff="{xo}" yOff="{yo}" xSize="{tw}" ySize="{th}"/>')
@@ -757,7 +753,7 @@ class TestVRT:
             '  <GeoTransform>-120.0, 0.001, 0.0, 45.0, 0.0, -0.001</GeoTransform>\n'
             '  <VRTRasterBand dataType="Float32" band="1">\n'
             '    <SimpleSource>\n'
-            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'  # noqa: E501
             '      <SourceBand>1</SourceBand>\n'
             '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
             '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
@@ -784,7 +780,7 @@ class TestVRT:
             '  <VRTRasterBand dataType="Float32" band="1">\n'
             '    <NoDataValue>-9999</NoDataValue>\n'
             '    <SimpleSource>\n'
-            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'  # noqa: E501
             '      <SourceBand>1</SourceBand>\n'
             '      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
             '      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
@@ -883,7 +879,7 @@ class TestVRT:
             '  <VRTRasterBand dataType="Float64" band="1">\n'
             '    <NoDataValue>-9999.1</NoDataValue>\n'
             '    <SimpleSource>\n'
-            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'  # noqa: E501
             '      <SourceBand>1</SourceBand>\n'
             '      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
             '      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
@@ -932,7 +928,7 @@ class TestVRT:
             f'{origin_y}, 0.0, {pixel_h}</GeoTransform>\n'
             f'  <VRTRasterBand dataType="Float32" band="1">\n'
             f'    <SimpleSource>\n'
-            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'  # noqa: E501
             f'      <SourceBand>1</SourceBand>\n'
             f'      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
             f'      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
@@ -975,7 +971,7 @@ class TestVRT:
             f'{origin_y}, 0.0, {pixel_h}</GeoTransform>\n'
             f'  <VRTRasterBand dataType="Float32" band="1">\n'
             f'    <SimpleSource>\n'
-            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'  # noqa: E501
             f'      <SourceBand>1</SourceBand>\n'
             f'      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
             f'      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
@@ -1019,9 +1015,7 @@ class TestCloudStorage:
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
 
         # Write to memory filesystem via fsspec
-        from xrspatial.geotiff._writer import write, _write_bytes
-        from xrspatial.geotiff._writer import _assemble_tiff, _write_stripped
-        from xrspatial.geotiff._compression import COMPRESSION_NONE
+        from xrspatial.geotiff._writer import write
 
         # First write locally, then copy to memory fs
         local_path = str(tmp_path / 'test.tif')
@@ -1104,7 +1098,7 @@ class TestCloudStorage:
             fs.rm('/dask_1749_full.tif')
 
     def test_dask_path_fsspec_uri_no_full_download_1749(self, tmp_path,
-                                                       monkeypatch):
+                                                        monkeypatch):
         """Dask graph build for fsspec URIs must not pull the whole file.
 
         ``_read_geo_info`` previously called ``_CloudSource.read_all`` to
@@ -1155,6 +1149,7 @@ class TestCloudStorage:
     def test_write_to_memory_filesystem(self, tmp_path):
         """_write_bytes can write to fsspec memory filesystem."""
         import fsspec
+
         from xrspatial.geotiff._writer import write
 
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
@@ -1181,7 +1176,7 @@ class TestBigEndian:
         from .conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.float32).reshape(4, 4)
         tiff_data = make_minimal_tiff(4, 4, np.dtype('float32'),
-                                       pixel_data=expected, big_endian=True)
+                                      pixel_data=expected, big_endian=True)
         path = str(tmp_path / 'be_f32.tif')
         with open(path, 'wb') as f:
             f.write(tiff_data)
@@ -1195,7 +1190,7 @@ class TestBigEndian:
         from .conftest import make_minimal_tiff
         expected = np.arange(20, dtype=np.uint16).reshape(4, 5) * 1000
         tiff_data = make_minimal_tiff(5, 4, np.dtype('uint16'),
-                                       pixel_data=expected, big_endian=True)
+                                      pixel_data=expected, big_endian=True)
         path = str(tmp_path / 'be_u16.tif')
         with open(path, 'wb') as f:
             f.write(tiff_data)
@@ -1209,7 +1204,7 @@ class TestBigEndian:
         from .conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.int32).reshape(4, 4) - 8
         tiff_data = make_minimal_tiff(4, 4, np.dtype('int32'),
-                                       pixel_data=expected, big_endian=True)
+                                      pixel_data=expected, big_endian=True)
         path = str(tmp_path / 'be_i32.tif')
         with open(path, 'wb') as f:
             f.write(tiff_data)
@@ -1223,7 +1218,7 @@ class TestBigEndian:
         from .conftest import make_minimal_tiff
         expected = np.linspace(-1.0, 1.0, 16, dtype=np.float64).reshape(4, 4)
         tiff_data = make_minimal_tiff(4, 4, np.dtype('float64'),
-                                       pixel_data=expected, big_endian=True)
+                                      pixel_data=expected, big_endian=True)
         path = str(tmp_path / 'be_f64.tif')
         with open(path, 'wb') as f:
             f.write(tiff_data)
@@ -1237,7 +1232,7 @@ class TestBigEndian:
         from .conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.uint8).reshape(4, 4)
         tiff_data = make_minimal_tiff(4, 4, np.dtype('uint8'),
-                                       pixel_data=expected, big_endian=True)
+                                      pixel_data=expected, big_endian=True)
         path = str(tmp_path / 'be_u8.tif')
         with open(path, 'wb') as f:
             f.write(tiff_data)
@@ -1250,7 +1245,7 @@ class TestBigEndian:
         from .conftest import make_minimal_tiff
         expected = np.arange(64, dtype=np.float32).reshape(8, 8)
         tiff_data = make_minimal_tiff(8, 8, np.dtype('float32'),
-                                       pixel_data=expected, big_endian=True)
+                                      pixel_data=expected, big_endian=True)
         path = str(tmp_path / 'be_window.tif')
         with open(path, 'wb') as f:
             f.write(tiff_data)
@@ -1286,10 +1281,13 @@ class TestExtraTags:
         pixel_bytes = pixels.tobytes()
 
         tag_list = []
+
         def add_short(tag, val):
             tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
         def add_long(tag, val):
             tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
         def add_ascii(tag, text):
             raw = text.encode('ascii') + b'\x00'
             tag_list.append((tag, 2, len(raw), raw))
@@ -1430,8 +1428,7 @@ class TestGDALMetadata:
 
     def test_build_gdal_metadata_xml(self):
         """Dict serializes back to valid XML."""
-        from xrspatial.geotiff._geotags import (
-            _build_gdal_metadata_xml, _parse_gdal_metadata)
+        from xrspatial.geotiff._geotags import _build_gdal_metadata_xml, _parse_gdal_metadata
         meta = {
             'DataType': 'Generic',
             ('STATS_MAX', 0): '42.0',
@@ -1509,7 +1506,8 @@ class TestGDALMetadata:
 
     def test_real_file_round_trip(self):
         """GDAL metadata survives real-file round-trip."""
-        import os, tempfile
+        import os
+        import tempfile
         path = '../rtxpy/examples/USGS_one_meter_x65y454_NY_LongIsland_Z18_2014.tif'
         if not os.path.exists(path):
             pytest.skip("Real test files not available")
@@ -1727,7 +1725,7 @@ class TestOverviewResampling:
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / 'api_nearest.tif')
         to_geotiff(arr, path, compression='deflate',
-                      cog=True, overview_resampling='nearest')
+                   cog=True, overview_resampling='nearest')
 
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
@@ -1750,9 +1748,8 @@ class TestBigTIFF:
         # We can't easily create a >4GB file in tests, but we can verify
         # the BigTIFF path works by writing a small file with bigtiff=True
         # through the internal API.
-        from xrspatial.geotiff._writer import _assemble_tiff, _write_stripped
         from xrspatial.geotiff._compression import COMPRESSION_NONE
-        from xrspatial.geotiff._geotags import GeoTransform
+        from xrspatial.geotiff._writer import _assemble_tiff, _write_stripped
 
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         rel_off, bc, chunks = _write_stripped(arr, COMPRESSION_NONE, False)
@@ -1768,17 +1765,14 @@ class TestBigTIFF:
 
     def test_bigtiff_read_write_round_trip(self, tmp_path):
         """Test that BigTIFF files produced internally can be read back."""
-        from xrspatial.geotiff._writer import (
-            _assemble_tiff, _write_stripped, _assemble_standard_layout,
-        )
         from xrspatial.geotiff._compression import COMPRESSION_NONE
-        from xrspatial.geotiff._dtypes import numpy_to_tiff_dtype, SHORT, LONG, DOUBLE
-        from xrspatial.geotiff._header import (
-            TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
-            TAG_COMPRESSION, TAG_PHOTOMETRIC, TAG_SAMPLES_PER_PIXEL,
-            TAG_SAMPLE_FORMAT, TAG_ROWS_PER_STRIP,
-            TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS,
-        )
+        from xrspatial.geotiff._dtypes import LONG, SHORT, numpy_to_tiff_dtype
+        from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION,
+                                               TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC,
+                                               TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT,
+                                               TAG_SAMPLES_PER_PIXEL, TAG_STRIP_BYTE_COUNTS,
+                                               TAG_STRIP_OFFSETS)
+        from xrspatial.geotiff._writer import _assemble_standard_layout, _write_stripped
 
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         rel_off, bc, chunks = _write_stripped(arr, COMPRESSION_NONE, False)
@@ -1846,11 +1840,10 @@ class TestBigTIFF:
 
     def _assert_offset_tags_are_long8(self, path):
         """Parse *path*'s first IFD and assert offset tags use LONG8."""
-        from xrspatial.geotiff._header import (
-            parse_all_ifds, TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS,
-            TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
-        )
         from xrspatial.geotiff._dtypes import LONG8
+        from xrspatial.geotiff._header import (TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS,
+                                               TAG_TILE_BYTE_COUNTS, TAG_TILE_OFFSETS,
+                                               parse_all_ifds)
 
         with open(path, 'rb') as f:
             buf = f.read()
@@ -1938,7 +1931,6 @@ def _make_sub_byte_tiff(width, height, bps, pixel_values):
     """
     import struct
     bo = '<'
-    dtype_np = np.dtype('uint8') if bps <= 8 else np.dtype('uint16')
 
     # Pack pixel values into bytes
     flat = pixel_values.ravel()
@@ -1979,8 +1971,10 @@ def _make_sub_byte_tiff(width, height, bps, pixel_values):
 
     # Build tags
     tag_list = []
+
     def add_short(tag, val):
         tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
     def add_long(tag, val):
         tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
 
@@ -2184,7 +2178,6 @@ def _make_planar_tiff(width, height, bands, dtype=np.uint8, tiled=False,
         tw = th = tile_size
         tiles_across = math.ceil(width / tw)
         tiles_down = math.ceil(height / th)
-        tiles_per_band = tiles_across * tiles_down
 
         # Build tile data: all tiles for band 0, then band 1, etc.
         tile_blobs = []
@@ -2212,12 +2205,16 @@ def _make_planar_tiff(width, height, bands, dtype=np.uint8, tiled=False,
 
     # Build tags
     tag_list = []
+
     def add_short(tag, val):
         tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
     def add_shorts(tag, vals):
         tag_list.append((tag, 3, len(vals), struct.pack(f'{bo}{len(vals)}H', *vals)))
+
     def add_long(tag, val):
         tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
     def add_longs(tag, vals):
         tag_list.append((tag, 4, len(vals), struct.pack(f'{bo}{len(vals)}I', *vals)))
 
@@ -2361,10 +2358,13 @@ def _make_palette_tiff(width, height, bps, pixel_values, palette_rgb):
     cmap_values = r_vals + g_vals + b_vals
 
     tag_list = []
+
     def add_short(tag, val):
         tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
     def add_long(tag, val):
         tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
     def add_shorts(tag, vals):
         tag_list.append((tag, 3, len(vals), struct.pack(f'{bo}{len(vals)}H', *vals)))
 
@@ -2448,7 +2448,7 @@ class TestPalette:
             (65535, 0, 0),       # 0 = red
             (0, 65535, 0),       # 1 = green
             (0, 0, 65535),       # 2 = blue
-            (65535, 65535, 65535),# 3 = white
+            (65535, 65535, 65535),  # 3 = white
         ] + [(0, 0, 0)] * 252   # pad to 256 entries for 8-bit
 
         pixels = np.array([[0, 1, 2, 3],
@@ -2514,9 +2514,10 @@ class TestPalette:
         after the contract v2 removal."""
         import matplotlib
         matplotlib.use('Agg')
-        import xrspatial.accessor  # register .xrs accessor
-        from xrspatial.accessor import _listed_colormap_from_attrs
         from matplotlib.colors import ListedColormap
+
+        import xrspatial.accessor  # register .xrs accessor  # noqa: F401
+        from xrspatial.accessor import _listed_colormap_from_attrs
 
         palette = [
             (65535, 0, 0),
@@ -2545,7 +2546,7 @@ class TestPalette:
         """da.xrs.plot() uses the embedded colormap."""
         import matplotlib
         matplotlib.use('Agg')
-        import xrspatial.accessor  # register .xrs accessor
+        import xrspatial.accessor  # register .xrs accessor  # noqa: F401
 
         palette = [
             (65535, 0, 0),
@@ -2571,7 +2572,7 @@ class TestPalette:
         """da.xrs.plot() falls through to normal plot for non-palette data."""
         import matplotlib
         matplotlib.use('Agg')
-        import xrspatial.accessor
+        import xrspatial.accessor  # noqa: F401
 
         arr = np.random.RandomState(42).rand(4, 4).astype(np.float32)
         path = str(tmp_path / 'no_palette.tif')
@@ -2587,7 +2588,7 @@ class TestPalette:
         """plot_geotiff still works but emits a DeprecationWarning."""
         import matplotlib
         matplotlib.use('Agg')
-        import xrspatial.accessor
+        import xrspatial.accessor  # noqa: F401
         from xrspatial.geotiff import plot_geotiff
 
         palette = [(65535, 0, 0), (0, 65535, 0)] + [(0, 0, 0)] * 254
@@ -2702,6 +2703,7 @@ class TestDaskReads:
     def test_dask_basic(self, tmp_path):
         """read_geotiff_dask returns a dask-backed DataArray."""
         import dask.array as da
+
         from xrspatial.geotiff import read_geotiff_dask
 
         arr = np.arange(256, dtype=np.float32).reshape(16, 16)
@@ -2766,6 +2768,7 @@ class TestPublicAPI:
 
     def test_all_lists_supported_functions(self):
         import xrspatial.geotiff as g
+
         # Frozen list of names that callers / tests treat as part of the
         # public API. If any of these gets removed or renamed, that is a
         # breaking change and should go through a deprecation cycle.
@@ -2780,6 +2783,7 @@ class TestPublicAPI:
             'MixedBandMetadataError',
             'NonUniformCoordsError',
             'RotatedTransformError',
+            'UnknownCRSModelTypeError',
             'UnparseableCRSError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',

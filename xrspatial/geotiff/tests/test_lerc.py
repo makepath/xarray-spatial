@@ -4,13 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._compression import (
-    COMPRESSION_LERC,
-    LERC_AVAILABLE,
-    lerc_compress,
-    lerc_decompress,
-    decompress,
-)
+from xrspatial.geotiff._compression import (COMPRESSION_LERC, LERC_AVAILABLE, decompress,
+                                            lerc_compress, lerc_decompress)
 
 pytestmark = pytest.mark.skipif(
     not LERC_AVAILABLE,
@@ -89,8 +84,8 @@ class TestLERCWriteRoundTrip:
     """Write-read roundtrip using the TIFF writer with LERC compression."""
 
     def test_tiled_float32(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / 'lerc_1052_tiled_f32.tif')
@@ -100,8 +95,8 @@ class TestLERCWriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_tiled_uint8(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.uint8).reshape(8, 8)
         path = str(tmp_path / 'lerc_1052_tiled_u8.tif')
@@ -111,8 +106,8 @@ class TestLERCWriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_stripped_float32(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / 'lerc_1052_stripped.tif')
@@ -123,6 +118,7 @@ class TestLERCWriteRoundTrip:
 
     def test_public_api_roundtrip(self, tmp_path):
         import xarray as xr
+
         from xrspatial.geotiff import open_geotiff, to_geotiff
 
         data = np.arange(64, dtype=np.float32).reshape(8, 8)

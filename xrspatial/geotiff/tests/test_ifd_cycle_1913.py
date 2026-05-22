@@ -18,12 +18,7 @@ import struct
 
 import pytest
 
-from xrspatial.geotiff._header import (
-    MAX_IFDS,
-    TAG_IMAGE_WIDTH,
-    parse_all_ifds,
-    parse_header,
-)
+from xrspatial.geotiff._header import MAX_IFDS, TAG_IMAGE_WIDTH, parse_all_ifds, parse_header
 
 
 def _build_cyclic_ifd_bytes(big_endian: bool = False) -> bytes:

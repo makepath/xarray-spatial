@@ -19,7 +19,7 @@ import pytest
 pytest.importorskip("yaml")
 rasterio = pytest.importorskip("rasterio")
 
-from xrspatial.geotiff.tests.golden_corpus import _oracle
+from xrspatial.geotiff.tests.golden_corpus import _oracle  # noqa: E402
 
 generate = importlib.import_module(
     "xrspatial.geotiff.tests.golden_corpus.generate"

@@ -65,10 +65,10 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff, write_vrt
 from xrspatial.geotiff._errors import RotatedTransformError
 
-
 # ---------------------------------------------------------------------------
 # Environment gating
 # ---------------------------------------------------------------------------
+
 
 def _gpu_available() -> bool:
     """True iff cupy is importable and the CUDA runtime is available.

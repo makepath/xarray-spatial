@@ -18,7 +18,6 @@ import warnings
 from ._errors import UnparseableCRSError
 from ._runtime import GeoTIFFFallbackWarning, _geotiff_strict_mode
 
-
 #: WKT root keywords. A string that starts with one of these (after
 #: stripping leading whitespace) is structurally a WKT and is allowed
 #: to land in ``GTCitationGeoKey`` even when pyproj is not available
@@ -237,7 +236,7 @@ def _resolve_crs_to_wkt(crs) -> str | None:
         # keywords; anything else (EPSG:NNNN, +proj=...) gets normalised
         # through pyproj so the downstream XML sees a canonical WKT.
         if crs.lstrip().startswith(('PROJCS', 'GEOGCS', 'PROJCRS', 'GEOGCRS',
-                                     'COMPD_CS', 'COMPOUNDCRS')):
+                                    'COMPD_CS', 'COMPOUNDCRS')):
             return crs
         try:
             from pyproj import CRS

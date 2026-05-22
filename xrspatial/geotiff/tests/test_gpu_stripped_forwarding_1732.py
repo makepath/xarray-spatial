@@ -46,7 +46,7 @@ _gpu_only = pytest.mark.skipif(
 @_gpu_only
 def test_stripped_max_pixels_cap_is_enforced():
     """max_pixels smaller than the file must raise before full decode."""
-    from xrspatial.geotiff import to_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(64, 96)).astype(np.uint8)
@@ -71,7 +71,7 @@ def test_stripped_window_returns_only_window():
     regression in the coord-only branch -- or a drift in the windowed
     ``attrs['transform']`` -- shows up here.
     """
-    from xrspatial.geotiff import to_geotiff, open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(64, 96)).astype(np.uint8)
@@ -127,7 +127,7 @@ def test_stripped_window_returns_only_window():
 def test_stripped_band_selection_returns_2d():
     """Selecting band=1 on a 3-band stripped file returns a 2D array
     matching the requested band."""
-    from xrspatial.geotiff import to_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(48, 80, 3)).astype(np.uint8)
@@ -145,7 +145,7 @@ def test_stripped_band_selection_returns_2d():
 @_gpu_only
 def test_stripped_window_plus_band():
     """Windowed read with band selection composes correctly."""
-    from xrspatial.geotiff import to_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(48, 80, 3)).astype(np.uint8)

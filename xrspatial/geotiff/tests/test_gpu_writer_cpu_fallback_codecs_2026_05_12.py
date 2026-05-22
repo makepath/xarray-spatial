@@ -43,18 +43,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    to_geotiff,
-    write_geotiff_gpu,
-)
-from xrspatial.geotiff._compression import (
-    JPEG2000_AVAILABLE,
-    LERC_AVAILABLE,
-    LZ4_AVAILABLE,
-)
+from xrspatial.geotiff import open_geotiff, to_geotiff, write_geotiff_gpu
+from xrspatial.geotiff._compression import JPEG2000_AVAILABLE, LERC_AVAILABLE, LZ4_AVAILABLE
 from xrspatial.geotiff._header import parse_header, parse_ifd
-
 
 # --------------------------------------------------------------------------
 # GPU gating

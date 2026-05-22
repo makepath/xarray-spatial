@@ -31,9 +31,7 @@ rasterio = pytest.importorskip("rasterio")
 
 import xarray as xr  # noqa: E402
 
-from xrspatial.geotiff.tests.golden_corpus._oracle import (  # noqa: E402
-    compare_to_oracle,
-)
+from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 generate = importlib.import_module(
     "xrspatial.geotiff.tests.golden_corpus.generate"

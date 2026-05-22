@@ -17,20 +17,14 @@ import time
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff import read_geotiff_dask
-from xrspatial.geotiff._reader import (
-    COALESCE_GAP_THRESHOLD_DEFAULT,
-    _HTTPSource,
-    coalesce_ranges,
-    split_coalesced_bytes,
-)
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask
+from xrspatial.geotiff._reader import _HTTPSource, coalesce_ranges, split_coalesced_bytes
 from xrspatial.geotiff._writer import write
-
 
 # ---------------------------------------------------------------------------
 # Pure unit tests on the coalescer
 # ---------------------------------------------------------------------------
+
 
 def test_coalesce_empty_input():
     merged, mapping = coalesce_ranges([])
@@ -162,9 +156,7 @@ def test_coalesce_default_cap_bounds_adversarial_input_2266():
     # with offsets spaced 1 MiB apart. Without the cap this collapses
     # into one ~4 GiB merged range. With the default cap nothing
     # exceeds MAX_COALESCED_RANGE_BYTES_DEFAULT.
-    from xrspatial.geotiff._sources import (
-        MAX_COALESCED_RANGE_BYTES_DEFAULT,
-    )
+    from xrspatial.geotiff._sources import MAX_COALESCED_RANGE_BYTES_DEFAULT
 
     one_mib = 1 << 20
     ranges = [(i * one_mib, 1024) for i in range(4096)]

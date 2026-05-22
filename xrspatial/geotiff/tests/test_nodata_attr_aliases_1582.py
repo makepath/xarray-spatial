@@ -26,7 +26,6 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-
 _SENTINEL = -9999.0
 
 
@@ -70,7 +69,7 @@ def test_nodatavals_list_resolves_to_nodata_tag(tmp_path, _arr_with_sentinel):
 
 
 def test_nodatavals_scalar_resolves_to_nodata_tag(tmp_path,
-                                                   _arr_with_sentinel):
+                                                  _arr_with_sentinel):
     """Single-band variant where the attr is a scalar, not a sequence."""
     da = _da_float(_arr_with_sentinel,
                    crs=4326, nodatavals=_SENTINEL)
@@ -179,9 +178,10 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
     ("_FillValue", _SENTINEL),
 ])
 def test_gpu_writer_resolves_alias(tmp_path, _arr_with_sentinel,
-                                    attr_key, attr_value):
+                                   attr_key, attr_value):
     """The GPU write path (write_geotiff_gpu) honours the same aliases."""
     import cupy
+
     from xrspatial.geotiff import write_geotiff_gpu
 
     da = xr.DataArray(

@@ -44,11 +44,9 @@ from typing import Any, Callable
 
 import numpy as np
 import pytest
-
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff
-
 
 tifffile = pytest.importorskip("tifffile")
 
@@ -296,6 +294,7 @@ def _open_vrt(path, meta):
     in :func:`open_geotiff` cannot propagate into this helper.
     """
     import os
+
     from pyproj import CRS
 
     height = _FIX_HEIGHT

@@ -21,19 +21,13 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    read_vrt,
-    to_geotiff,
-    write_vrt,
-)
-
+from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
+                               to_geotiff, write_vrt)
 
 # ---------------------------------------------------------------------------
 # Environment gating
 # ---------------------------------------------------------------------------
+
 
 def _gpu_available() -> bool:
     if importlib.util.find_spec("cupy") is None:

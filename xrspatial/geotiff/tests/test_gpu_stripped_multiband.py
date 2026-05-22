@@ -42,7 +42,7 @@ _gpu_only = pytest.mark.skipif(
 @_gpu_only
 def test_stripped_3band_uint8():
     """3-band uint8 stripped TIFF reads as (y, x, band)."""
-    from xrspatial.geotiff import to_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260508)
     data = rng.randint(0, 200, size=(64, 96, 3)).astype(np.uint8)
@@ -60,7 +60,7 @@ def test_stripped_3band_uint8():
 @_gpu_only
 def test_stripped_2band_uint16():
     """2-band uint16 stripped TIFF reads as (y, x, band)."""
-    from xrspatial.geotiff import to_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260508)
     data = rng.randint(0, 60000, size=(48, 80, 2)).astype(np.uint16)
@@ -79,7 +79,7 @@ def test_stripped_2band_uint16():
 @_gpu_only
 def test_stripped_singleband_still_2d():
     """Single-band stripped TIFF still produces a 2-D (y, x) DataArray."""
-    from xrspatial.geotiff import to_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260508)
     data = rng.randint(0, 200, size=(40, 60)).astype(np.uint8)

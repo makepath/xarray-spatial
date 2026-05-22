@@ -48,7 +48,6 @@ except ImportError as exc:  # pragma: no cover - environment guard
 
 import numpy as np
 
-
 HERE = pathlib.Path(__file__).resolve().parent
 MANIFEST_PATH = HERE / "manifest.yaml"
 DEFAULT_OUTPUT_DIR = HERE / "fixtures"

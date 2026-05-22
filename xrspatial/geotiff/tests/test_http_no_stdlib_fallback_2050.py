@@ -19,7 +19,6 @@ import pytest
 
 from xrspatial.geotiff import _reader as _reader_mod
 
-
 # ---------------------------------------------------------------------------
 # urllib3 is a hard runtime dependency
 # ---------------------------------------------------------------------------

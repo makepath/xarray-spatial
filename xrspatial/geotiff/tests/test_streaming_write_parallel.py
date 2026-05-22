@@ -18,13 +18,13 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff import _writer as writer_mod
-
+from xrspatial.geotiff import open_geotiff, to_geotiff
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_dataarray(shape, dtype=np.float32, seed=20260508):
     rng = np.random.default_rng(seed)

@@ -27,7 +27,8 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._vrt import parse_vrt, read_vrt as _read_vrt_internal
+from xrspatial.geotiff._vrt import parse_vrt
+from xrspatial.geotiff._vrt import read_vrt as _read_vrt_internal
 
 
 def _unique_dir(tmp_path, label: str) -> str:

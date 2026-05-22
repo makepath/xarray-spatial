@@ -1,9 +1,20 @@
 """GeoTIFF tag interpretation: CRS, affine transform, GeoKeys."""
 from __future__ import annotations
 
-import struct
 from dataclasses import dataclass, field
 
+from ._dtypes import resolve_bits_per_sample
+from ._errors import RotatedTransformError, UnknownCRSModelTypeError
+from ._header import (IFD, TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES,
+                      TAG_GDAL_METADATA, TAG_GDAL_NODATA, TAG_GEO_ASCII_PARAMS,
+                      TAG_GEO_DOUBLE_PARAMS, TAG_GEO_KEY_DIRECTORY, TAG_IMAGE_LENGTH,
+                      TAG_IMAGE_WIDTH, TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
+                      TAG_MODEL_TRANSFORMATION, TAG_NEW_SUBFILE_TYPE, TAG_ORIENTATION,
+                      TAG_PHOTOMETRIC, TAG_PLANAR_CONFIG, TAG_PREDICTOR, TAG_RESOLUTION_UNIT,
+                      TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL,
+                      TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS, TAG_SUB_IFDS, TAG_TILE_BYTE_COUNTS,
+                      TAG_TILE_LENGTH, TAG_TILE_OFFSETS, TAG_TILE_WIDTH, TAG_X_RESOLUTION,
+                      TAG_Y_RESOLUTION)
 
 # Stamped by the reader on arrays read from files that carry no
 # GeoTIFF transform tags (ModelTransformation, ModelPixelScale, or
@@ -14,27 +25,6 @@ from dataclasses import dataclass, field
 # constants) so both ``_coords`` and ``_attrs`` can import it
 # without a cycle. See issue #2120.
 _NO_GEOREF_KEY = '_xrspatial_no_georef'
-
-from ._header import (
-    IFD,
-    TAG_NEW_SUBFILE_TYPE,
-    TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION, TAG_PHOTOMETRIC,
-    TAG_STRIP_OFFSETS, TAG_ORIENTATION, TAG_SAMPLES_PER_PIXEL,
-    TAG_ROWS_PER_STRIP, TAG_STRIP_BYTE_COUNTS,
-    TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
-    TAG_PLANAR_CONFIG, TAG_RESOLUTION_UNIT,
-    TAG_PREDICTOR, TAG_COLORMAP, TAG_SUB_IFDS,
-    TAG_TILE_WIDTH, TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
-    TAG_EXTRA_SAMPLES,
-    TAG_SAMPLE_FORMAT, TAG_GDAL_METADATA, TAG_GDAL_NODATA,
-    TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
-    TAG_MODEL_TRANSFORMATION,
-    TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
-)
-from ._dtypes import resolve_bits_per_sample
-from ._errors import RotatedTransformError
 
 # ImageDescription tag (270). Captured for round-trip but not managed
 # by the writer -- it flows through extra_tags pass-through.
@@ -202,6 +192,7 @@ def _parse_gdal_metadata(xml_str: str) -> dict:
     Per-band items are stored as ``{(name, band_int): value}``.
     """
     import xml.etree.ElementTree as ET
+
     from ._safe_xml import safe_fromstring
     result = {}
     try:
@@ -238,7 +229,8 @@ def _build_gdal_metadata_xml(meta: dict) -> str:
     the document or inject extra elements. Sample indices are emitted
     from an ``int(...)`` cast and need no escaping. See issue #1614.
     """
-    from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
+    from xml.sax.saxutils import escape as _xml_escape
+    from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
     def _text(v) -> str:
         if v is None:
@@ -276,7 +268,8 @@ def _epsg_to_wkt(epsg: int) -> str | None:
         return CRS.from_epsg(epsg).to_wkt()
     except Exception as e:
         import warnings
-        from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+
+        from . import GeoTIFFFallbackWarning, _geotiff_strict_mode
         if _geotiff_strict_mode():
             raise
         warnings.warn(
@@ -403,7 +396,8 @@ def _synthesize_user_defined_wkt(
         return crs.to_wkt()
     except Exception as exc:
         import warnings
-        from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+
+        from . import GeoTIFFFallbackWarning, _geotiff_strict_mode
         if _geotiff_strict_mode():
             raise
         warnings.warn(
@@ -1057,7 +1051,10 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         has_georef=has_georef,
         crs_epsg=epsg,
         model_type=int(model_type) if isinstance(model_type, (int, float)) else 0,
-        raster_type=int(raster_type) if isinstance(raster_type, (int, float)) else RASTER_PIXEL_IS_AREA,
+        raster_type=(
+            int(raster_type) if isinstance(raster_type, (int, float))
+            else RASTER_PIXEL_IS_AREA
+        ),
         nodata=nodata,
         colormap=colormap,
         x_resolution=ifd.x_resolution,
@@ -1317,6 +1314,92 @@ def _model_type_from_wkt(wkt: str) -> int:
     return MODEL_TYPE_PROJECTED
 
 
+# Vetted allowlist of EPSG codes known to be geographic. Consulted in
+# two situations: when pyproj is unavailable at all, and when pyproj is
+# installed but its database can't resolve the code (e.g. out-of-date
+# PROJ db). Anything outside this set falls through to
+# UnknownCRSModelTypeError -- silent CRS corruption is worse than an
+# explicit error.
+#
+# The set is kept intentionally small. The original range heuristic
+# (4000-4999) was wrong in both directions: it missed geographic codes
+# outside the window (NAD83(2011) = 6318, GDA2020 = 7844, etc., the bug
+# this PR fixes), AND it also covered projected codes inside the window
+# (4087 / 4088 World Equidistant Cylindrical, 4499 CGCS2000 / GK
+# zone 21, etc.). Expanding the set without pyproj's authoritative
+# answer just trades one mis-tag for another.
+#
+# Currently: the few datums callers regularly write without pyproj.
+# Extend only after verifying ``CRS.from_epsg(code).is_geographic`` is
+# True. See issue #2277.
+_KNOWN_GEOGRAPHIC_EPSG_FALLBACK = frozenset({
+    4326,   # WGS 84
+    4269,   # NAD83
+    4267,   # NAD27
+    4258,   # ETRS89
+    4283,   # GDA94
+    4322,   # WGS 72
+    4230,   # ED50
+    4019,   # Unknown datum based on GRS 1980 ellipsoid
+    4047,   # Unspecified datum based on GRS 1980 Authalic Sphere
+})
+
+
+def _model_type_from_epsg(crs_epsg: int) -> int:
+    """Return the GeoTIFF ModelType (geographic vs projected) for an EPSG.
+
+    Prefers ``pyproj.CRS.from_epsg(crs_epsg).is_geographic`` so the
+    decision matches the actual EPSG registry. Falls back to a small
+    vetted allowlist of common geographic datums
+    (:data:`_KNOWN_GEOGRAPHIC_EPSG_FALLBACK`) when pyproj isn't
+    installed *or* when pyproj is installed but fails to resolve the
+    code. Anything outside that allowlist raises
+    :class:`UnknownCRSModelTypeError` rather than guessing -- the legacy
+    range heuristic at this site silently mis-tagged geographic codes
+    like 6318 (NAD83(2011)) and 7844 (GDA2020) as projected.
+
+    See issue #2277.
+    """
+    try:
+        from pyproj import CRS
+    except ImportError:
+        CRS = None  # type: ignore[assignment]
+
+    if CRS is not None:
+        try:
+            crs = CRS.from_epsg(crs_epsg)
+        except Exception as e:
+            # pyproj is installed but the code is unknown or malformed.
+            # Fall back to the hard-coded allowlist before giving up so
+            # an offline pyproj-database mismatch doesn't break a code
+            # that the legacy heuristic handled correctly.
+            if crs_epsg in _KNOWN_GEOGRAPHIC_EPSG_FALLBACK:
+                return MODEL_TYPE_GEOGRAPHIC
+            raise UnknownCRSModelTypeError(
+                f"Cannot determine GeoTIFF model type for EPSG:{crs_epsg}: "
+                f"pyproj.CRS.from_epsg failed "
+                f"({type(e).__name__}: {e}). Refusing to guess; passing a "
+                "known EPSG or installing a current pyproj database will "
+                "resolve this."
+            ) from e
+        if crs.is_geographic:
+            return MODEL_TYPE_GEOGRAPHIC
+        return MODEL_TYPE_PROJECTED
+
+    # pyproj unavailable. Use the tight fallback set; raise otherwise.
+    if crs_epsg in _KNOWN_GEOGRAPHIC_EPSG_FALLBACK:
+        return MODEL_TYPE_GEOGRAPHIC
+    raise UnknownCRSModelTypeError(
+        f"Cannot determine GeoTIFF model type for EPSG:{crs_epsg} without "
+        "pyproj. Install pyproj so the writer can consult "
+        "CRS.from_epsg(...).is_geographic, or pass an EPSG in the "
+        "hard-coded geographic fallback set "
+        f"({sorted(_KNOWN_GEOGRAPHIC_EPSG_FALLBACK)}). Refusing to "
+        "guess: the legacy range heuristic silently mis-tagged codes "
+        "like 6318 and 7844 as projected. See issue #2277."
+    )
+
+
 def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
                    nodata=None,
                    raster_type: int = RASTER_PIXEL_IS_AREA,
@@ -1391,7 +1474,6 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         )
 
     # GeoKeyDirectoryTag (34735)
-    geokeys = []
     # Header: version=1, revision=1, minor=0
     num_keys = 1  # at least RasterType
     key_entries = []
@@ -1402,11 +1484,14 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
 
     # ModelType
     if crs_epsg is not None:
-        # Guess model type from EPSG (simple heuristic)
-        if crs_epsg == 4326 or (crs_epsg >= 4000 and crs_epsg < 5000):
-            model_type = MODEL_TYPE_GEOGRAPHIC
-        else:
-            model_type = MODEL_TYPE_PROJECTED
+        # Resolve the GeoTIFF ModelType via pyproj when available; raise
+        # on unknown codes when pyproj can't classify them rather than
+        # guessing. See issue #2277 -- the historic EPSG-range heuristic
+        # silently mis-tagged geographic codes outside 4000-4999 (e.g.
+        # 6318, 7844, 9057) as projected AND projected codes inside
+        # 4000-4999 (e.g. 4087, 4088, 4499) as geographic, corrupting
+        # the CRS at write time.
+        model_type = _model_type_from_epsg(crs_epsg)
         key_entries.append((GEOKEY_MODEL_TYPE, 0, 1, model_type))
         num_keys += 1
     elif crs_wkt is not None:

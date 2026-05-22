@@ -38,7 +38,6 @@ from rasterio.transform import Affine, from_origin  # noqa: E402
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 from xrspatial.geotiff._crs import _resolve_crs_to_wkt  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -162,7 +161,7 @@ def _build_rasterio_coords(transform: Affine, height: int, width: int):
     ``origin_y + (i + 0.5) * pixel_height``.
     """
     pw, _, ox, _, ph, oy = (transform.a, transform.b, transform.c,
-                             transform.d, transform.e, transform.f)
+                            transform.d, transform.e, transform.f)
     y = oy + (np.arange(height) + 0.5) * ph
     x = ox + (np.arange(width) + 0.5) * pw
     return y, x
@@ -221,9 +220,9 @@ def _parity_check_single_band(
         ref_y, ref_x = _build_rasterio_coords(
             ras_transform, ras_raw.shape[0], ras_raw.shape[1])
         np.testing.assert_allclose(xrs.y.values, ref_y,
-                                    rtol=0.0, atol=ATOL_COORD)
+                                   rtol=0.0, atol=ATOL_COORD)
         np.testing.assert_allclose(xrs.x.values, ref_x,
-                                    rtol=0.0, atol=ATOL_COORD)
+                                   rtol=0.0, atol=ATOL_COORD)
         _assert_transforms_match(ras_transform, xrs.attrs['transform'])
         _assert_crs_match(ras_crs, xrs.attrs)
     else:
@@ -244,9 +243,9 @@ def _parity_check_single_band(
     _assert_pixels_equal(xrs_np, rt_np)
     assert rt.dtype == xrs.dtype
     np.testing.assert_allclose(rt.y.values, xrs.y.values,
-                                rtol=0.0, atol=ATOL_COORD)
+                               rtol=0.0, atol=ATOL_COORD)
     np.testing.assert_allclose(rt.x.values, xrs.x.values,
-                                rtol=0.0, atol=ATOL_COORD)
+                               rtol=0.0, atol=ATOL_COORD)
     # Critical scalar attrs survive the zarr trip.
     for key in ('crs', 'crs_wkt', 'nodata', 'transform'):
         if key in xrs.attrs:

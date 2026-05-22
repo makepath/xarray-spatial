@@ -13,28 +13,14 @@ import math
 import numpy as np
 import xarray as xr
 
-from .._attrs import (
-    _finalize_lazy_read_attrs,
-)
-from .._coords import (
-    coords_from_pixel_geometry as _coords_from_pixel_geometry,
-)
+from .._attrs import _finalize_lazy_read_attrs
+from .._coords import coords_from_pixel_geometry as _coords_from_pixel_geometry
 from .._crs import _wkt_to_epsg
-from .._geotags import (
-    RASTER_PIXEL_IS_AREA,
-    RASTER_PIXEL_IS_POINT,
-    GeoInfo,
-    GeoTransform,
-)
+from .._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoInfo, GeoTransform
 from .._reader import _MAX_CLOUD_BYTES_SENTINEL
 from .._runtime import _ON_GPU_FAILURE_SENTINEL
-from .._validation import (
-    _gdal_geotransform_to_affine_tuple,
-    _validate_chunks_arg,
-    _validate_dispatch_kwargs,
-    _validate_dtype_cast,
-)
-
+from .._validation import (_gdal_geotransform_to_affine_tuple, _validate_chunks_arg,
+                           _validate_dispatch_kwargs, _validate_dtype_cast)
 
 # Hard cap on the per-VRT chunk task count. Matches the
 # ``_MAX_DASK_CHUNKS`` value used by ``read_geotiff_dask`` so the two
@@ -219,6 +205,33 @@ def read_vrt(source: str, *,
         actual pixels. See issue #2052. Float source bands are NaN-aware
         by virtue of how the internal reader handles them, so this kwarg
         is most useful for integer-dtype mosaics.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files referenced by the VRT. Forwarded to the per-source reader
+        for each ``<SourceFilename>``. See ``open_geotiff`` for the full
+        contract.
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        do not parse as WKT. ``False`` (the default since #1929) raises
+        ``UnparseableCRSError`` rather than carrying the unrecognised
+        payload through. See ``open_geotiff`` for the full description.
+    overview_level : int or None
+        Not supported for VRT sources. The VRT XML references its own
+        source files, so overview selection would need to apply to each
+        of them. Accepted at the signature level for cross-backend
+        symmetry; any value other than ``None`` or ``0`` raises
+        ``ValueError`` (issue #1685).
+    on_gpu_failure : str, optional
+        Accepted for cross-backend signature symmetry only. VRT reads
+        do not go through the GPU decoder pipeline, so passing this
+        kwarg raises ``ValueError`` at dispatch. See
+        ``read_geotiff_gpu`` for the kwarg's meaning on the GPU
+        reader.
+    max_cloud_bytes : int or None, optional
+        Accepted for cross-backend signature symmetry only. The VRT
+        reader does not consume the cloud-byte budget; passing this
+        kwarg raises ``ValueError`` at dispatch (issue #1974). See
+        ``open_geotiff`` for the eager-path description.
 
     Returns
     -------
@@ -259,11 +272,9 @@ def read_vrt(source: str, *,
     missing sources at execution time as well.
     """
     from .._reader import _coerce_path
-    from .._vrt import (
-        read_vrt as _read_vrt_internal,
-        _apply_integer_sentinel_mask_with_presence as _vrt_mask_with_presence,
-        _scan_for_sentinel as _vrt_scan_for_sentinel,
-    )
+    from .._vrt import _apply_integer_sentinel_mask_with_presence as _vrt_mask_with_presence
+    from .._vrt import _scan_for_sentinel as _vrt_scan_for_sentinel
+    from .._vrt import read_vrt as _read_vrt_internal
 
     source = _coerce_path(source)
 
@@ -369,8 +380,10 @@ def read_vrt(source: str, *,
     # helper-routed post-read call acts as a defensive consistency check
     # rather than the no-op it was before #2210.
     import os as _os
+
     from .._validation import validate_read_metadata
-    from .._vrt import parse_vrt as _parse_vrt, _read_vrt_xml
+    from .._vrt import _read_vrt_xml
+    from .._vrt import parse_vrt as _parse_vrt
     _xml_str = _read_vrt_xml(source)
     _vrt_dir = _os.path.dirname(_os.path.abspath(source))
     _parsed_vrt = _parse_vrt(_xml_str, _vrt_dir)
@@ -632,10 +645,8 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
     of the surrounding ``dask.array.from_delayed`` is the contract; a
     mismatch would silently produce a wrong-shape dask array.
     """
-    from .._vrt import (
-        read_vrt as _read_vrt_internal,
-        _apply_integer_sentinel_mask,
-    )
+    from .._vrt import _apply_integer_sentinel_mask
+    from .._vrt import read_vrt as _read_vrt_internal
 
     # Forward ``mask_nodata`` to the internal reader so the float
     # source NaN masking inside ``_read_data`` honors the opt-out too,
@@ -696,17 +707,13 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     ``GeoTIFFFallbackWarning`` from each worker.
     """
     import os as _os
+
     import dask
     import dask.array as da
 
     from .._reader import MAX_PIXELS_DEFAULT
     from .._runtime import _geotiff_strict_mode
-    from .._vrt import (
-        parse_vrt,
-        _read_vrt_xml,
-        _effective_dtype_for_bands,
-        _sentinel_for_dtype,
-    )
+    from .._vrt import _effective_dtype_for_bands, _read_vrt_xml, _sentinel_for_dtype, parse_vrt
 
     # Parse the VRT XML up-front (cheap; no pixel decode). Route through
     # ``_read_vrt_xml`` so the 64 MiB ``XRSPATIAL_VRT_MAX_XML_BYTES`` cap

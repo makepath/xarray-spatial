@@ -38,11 +38,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import NonUniformCoordsError, to_geotiff
-from xrspatial.geotiff._runtime import (
-    _X_DIM_NAMES,
-    _Y_DIM_NAMES,
-    _resolve_spatial_coords,
-)
+from xrspatial.geotiff._runtime import _X_DIM_NAMES, _Y_DIM_NAMES, _resolve_spatial_coords
 
 
 def _da_with_alias_coords(y_name, x_name, *, y_coord=None, x_coord=None,

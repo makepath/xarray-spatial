@@ -16,15 +16,14 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff import _reader as _reader_mod
+from xrspatial.geotiff import open_geotiff, to_geotiff
 
+from ._tiff_surgery import patch_byte_counts as _patch_byte_counts  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers -- patch in-place IFD entries for tile / strip byte counts
 # ---------------------------------------------------------------------------
-
-from ._tiff_surgery import patch_byte_counts as _patch_byte_counts  # noqa: E402
 
 
 def _build_forged_tiled_cog(tmp_path, byte_count_value: int) -> str:

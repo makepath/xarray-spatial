@@ -29,12 +29,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    GeoTIFFFallbackWarning,
-    open_geotiff,
-    to_geotiff,
-    write_geotiff_gpu,
-)
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff, write_geotiff_gpu
 
 
 def _make_rgb_uint8_da() -> xr.DataArray:

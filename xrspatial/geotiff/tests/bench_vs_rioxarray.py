@@ -12,6 +12,7 @@ import xarray as xr
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _timer(fn, warmup=1, runs=5):
     """Time a callable, returning (median_seconds, result_from_last_call)."""
     for _ in range(warmup):
@@ -36,6 +37,7 @@ def _fmt_ms(seconds):
 def check_consistency(path):
     """Compare pixel values and geo metadata between the two readers."""
     import rioxarray  # noqa: F401
+
     from xrspatial.geotiff import open_geotiff
 
     rio_da = xr.open_dataarray(path, engine='rasterio')
@@ -96,6 +98,7 @@ def check_consistency(path):
 def bench_read(path, runs=10):
     """Benchmark read performance."""
     import rioxarray  # noqa: F401
+
     from xrspatial.geotiff import open_geotiff
 
     def rio_read():
@@ -120,8 +123,8 @@ def bench_read(path, runs=10):
 def bench_write(shape=(512, 512), compression='deflate', runs=5):
     """Benchmark write performance."""
     import rioxarray  # noqa: F401
+
     from xrspatial.geotiff import to_geotiff
-    from xrspatial.geotiff._geotags import GeoTransform
 
     rng = np.random.RandomState(42)
     arr = rng.rand(*shape).astype(np.float32)
@@ -166,6 +169,7 @@ def bench_write(shape=(512, 512), compression='deflate', runs=5):
 def bench_round_trip(shape=(256, 256), compression='deflate'):
     """Write with our module, read back with rioxarray, and vice versa."""
     import rioxarray  # noqa: F401
+
     from xrspatial.geotiff import open_geotiff, to_geotiff
 
     rng = np.random.RandomState(99)
@@ -236,7 +240,7 @@ def main():
         print(f"         pixels: max_diff={c['max_pixel_diff']:.6f}  "
               f"mean_diff={c['mean_pixel_diff']:.6f}  exact={c['pct_exact_match']:.1f}%")
         print(f"         EPSG: rio={c['epsg_rio']} ours={c['epsg_ours']} match={c['epsg_match']}")
-        print(f"         coords: y_max_diff={c['y_max_diff']:.6f}  x_max_diff={c['x_max_diff']:.6f}")
+        print(f"         coords: y_max_diff={c['y_max_diff']:.6f}  x_max_diff={c['x_max_diff']:.6f}")  # noqa: E501
 
     # --- Read performance ---
     print("\n--- Read Performance (median of 10 runs) ---\n")
@@ -253,7 +257,7 @@ def main():
 
     # --- Write performance ---
     print("\n--- Write Performance (512x512 float32, median of 5 runs) ---\n")
-    print(f"  {'Compression':<12} {'rioxarray':>12} {'xrspatial':>12} {'ratio':>8} {'size rio':>10} {'size ours':>10}")
+    print(f"  {'Compression':<12} {'rioxarray':>12} {'xrspatial':>12} {'ratio':>8} {'size rio':>10} {'size ours':>10}")  # noqa: E501
     print(f"  {'-'*12} {'-'*12} {'-'*12} {'-'*8} {'-'*10} {'-'*10}")
     for comp in ['none', 'deflate', 'lzw']:
         rio_t, our_t, rio_sz, our_sz = bench_write((512, 512), comp, runs=5)
@@ -263,7 +267,7 @@ def main():
 
     # --- Write performance (larger) ---
     print("\n--- Write Performance (2048x2048 float32, median of 3 runs) ---\n")
-    print(f"  {'Compression':<12} {'rioxarray':>12} {'xrspatial':>12} {'ratio':>8} {'size rio':>10} {'size ours':>10}")
+    print(f"  {'Compression':<12} {'rioxarray':>12} {'xrspatial':>12} {'ratio':>8} {'size rio':>10} {'size ours':>10}")  # noqa: E501
     print(f"  {'-'*12} {'-'*12} {'-'*12} {'-'*8} {'-'*10} {'-'*10}")
     for comp in ['none', 'deflate']:
         rio_t, our_t, rio_sz, our_sz = bench_write((2048, 2048), comp, runs=3)
@@ -289,7 +293,7 @@ def main():
     ]
 
     print("\n--- Real-World Files: Consistency & Read Performance ---\n")
-    print(f"  {'File':<52} {'Format':<20} {'Shape':>12} {'Exact%':>7} {'rio':>9} {'ours':>9} {'ratio':>7}")
+    print(f"  {'File':<52} {'Format':<20} {'Shape':>12} {'Exact%':>7} {'rio':>9} {'ours':>9} {'ratio':>7}")  # noqa: E501
     print(f"  {'-'*52} {'-'*20} {'-'*12} {'-'*7} {'-'*9} {'-'*9} {'-'*7}")
 
     for fname, desc in rtxpy_files:

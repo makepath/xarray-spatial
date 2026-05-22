@@ -1,6 +1,7 @@
 """Tests for VRT tiled output from to_geotiff."""
-import numpy as np
 import os
+
+import numpy as np
 import pytest
 import xarray as xr
 
@@ -88,12 +89,12 @@ class TestVrtOutputDask:
 class TestVrtEdgeCases:
     def test_cog_with_vrt_raises(self, sample_raster, tmp_path):
         vrt_path = str(tmp_path / 'cog_1083.vrt')
-        with pytest.raises(ValueError, match='cog.*vrt|vrt.*cog|COG.*VRT|VRT.*COG|cog.*VRT|vrt.*COG'):
+        with pytest.raises(ValueError, match='cog.*vrt|vrt.*cog|COG.*VRT|VRT.*COG|cog.*VRT|vrt.*COG'):  # noqa: E501
             to_geotiff(sample_raster, vrt_path, cog=True)
 
     def test_overview_levels_with_vrt_raises(self, sample_raster, tmp_path):
         vrt_path = str(tmp_path / 'ovr_1083.vrt')
-        with pytest.raises(ValueError, match='overview.*vrt|vrt.*overview|overview.*VRT|VRT.*overview'):
+        with pytest.raises(ValueError, match='overview.*vrt|vrt.*overview|overview.*VRT|VRT.*overview'):  # noqa: E501
             to_geotiff(sample_raster, vrt_path, overview_levels=[2, 4])
 
     def test_nonempty_tiles_dir_raises(self, sample_raster, tmp_path):

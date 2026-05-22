@@ -4,13 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._compression import (
-    COMPRESSION_JPEG2000,
-    JPEG2000_AVAILABLE,
-    jpeg2000_compress,
-    jpeg2000_decompress,
-    decompress,
-)
+from xrspatial.geotiff._compression import (COMPRESSION_JPEG2000, JPEG2000_AVAILABLE, decompress,
+                                            jpeg2000_compress, jpeg2000_decompress)
 
 pytestmark = pytest.mark.skipif(
     not JPEG2000_AVAILABLE,
@@ -89,8 +84,8 @@ class TestJPEG2000WriteRoundTrip:
     """Write-read roundtrip using the TIFF writer with JPEG 2000 compression."""
 
     def test_tiled_uint8(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.uint8).reshape(8, 8)
         path = str(tmp_path / 'j2k_1048_tiled_uint8.tif')
@@ -100,8 +95,8 @@ class TestJPEG2000WriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_tiled_uint16(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.uint16).reshape(8, 8)
         path = str(tmp_path / 'j2k_1048_tiled_uint16.tif')
@@ -111,8 +106,8 @@ class TestJPEG2000WriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_stripped_uint8(self, tmp_path):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.arange(64, dtype=np.uint8).reshape(8, 8)
         path = str(tmp_path / 'j2k_1048_stripped.tif')
@@ -122,9 +117,9 @@ class TestJPEG2000WriteRoundTrip:
         np.testing.assert_array_equal(arr, expected)
 
     def test_with_geo_info(self, tmp_path):
-        from xrspatial.geotiff._writer import write
-        from xrspatial.geotiff._reader import read_to_array
         from xrspatial.geotiff._geotags import GeoTransform
+        from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         expected = np.ones((8, 8), dtype=np.uint8) * 100
         gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
@@ -139,6 +134,7 @@ class TestJPEG2000WriteRoundTrip:
     def test_public_api_roundtrip(self, tmp_path):
         """Test via open_geotiff / to_geotiff public API."""
         import xarray as xr
+
         from xrspatial.geotiff import open_geotiff, to_geotiff
 
         data = np.arange(64, dtype=np.uint8).reshape(8, 8)
@@ -174,9 +170,8 @@ class TestJPEG2000Availability:
 
     def test_unavailable_raises_import_error(self):
         """If glymur is missing, codec functions raise ImportError."""
-        import unittest.mock
-        import importlib
         import xrspatial.geotiff._compression as comp_mod
+
         # Temporarily pretend glymur is unavailable
         orig = comp_mod.JPEG2000_AVAILABLE
         comp_mod.JPEG2000_AVAILABLE = False

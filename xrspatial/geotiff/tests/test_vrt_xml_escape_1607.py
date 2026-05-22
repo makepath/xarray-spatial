@@ -6,12 +6,13 @@ elements that change how the VRT parses when read back.
 from __future__ import annotations
 
 import os
+
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._vrt import write_vrt, parse_vrt
+from xrspatial.geotiff._vrt import parse_vrt, write_vrt
 
 
 @pytest.fixture

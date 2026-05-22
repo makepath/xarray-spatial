@@ -36,7 +36,6 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-
 _HAS_LZ4 = importlib.util.find_spec("lz4") is not None
 _HAS_DASK = importlib.util.find_spec("dask") is not None
 

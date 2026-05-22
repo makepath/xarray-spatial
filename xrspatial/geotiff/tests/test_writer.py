@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff._geotags import GeoTransform
-from xrspatial.geotiff._writer import write, _make_overview
 from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff._writer import _make_overview, write
 
 
 class TestMakeOverview:

@@ -20,98 +20,32 @@ from __future__ import annotations
 
 import math
 import struct
-import warnings
 
 import numpy as np
 
-from ._compression import (
-    COMPRESSION_JPEG,
-    COMPRESSION_NONE,
-)
-from ._dtypes import (
-    DOUBLE,
-    RATIONAL,
-    SHORT,
-    LONG,
-    ASCII,
-    numpy_to_tiff_dtype,
-)
-from ._geotags import (
-    GeoTransform,
-    build_geo_tags,
-    TAG_GEO_ASCII_PARAMS,
-    TAG_GEO_KEY_DIRECTORY,
-    TAG_GDAL_NODATA,
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
-    TAG_MODEL_TRANSFORMATION,
-)
-from ._header import (
-    TAG_NEW_SUBFILE_TYPE,
-    TAG_IMAGE_WIDTH,
-    TAG_IMAGE_LENGTH,
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-    TAG_PHOTOMETRIC,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_SAMPLE_FORMAT,
-    TAG_STRIP_OFFSETS,
-    TAG_ROWS_PER_STRIP,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_SUB_IFDS,
-    TAG_X_RESOLUTION,
-    TAG_Y_RESOLUTION,
-    TAG_RESOLUTION_UNIT,
-    TAG_TILE_WIDTH,
-    TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_EXTRA_SAMPLES,
-    TAG_PREDICTOR,
-    TAG_GDAL_METADATA,
-)
-# IFD-assembly and BigTIFF / COG layout helpers live in
-# ``_write_layout.py``. Re-export them here so internal call sites
-# (``_write``, ``_write_streaming``) and external importers (the
-# ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
-# ``xrspatial.geotiff._writer`` import path.
-from ._write_layout import (  # noqa: F401
-    BO,
-    _assemble_cog_layout,
-    _assemble_standard_layout,
-    _assemble_tiff,
-    _build_ifd,
-    _compute_classic_ifd_overhead,
-    _float_to_rational,
-    _pack_tag_value,
-    _promote_offsets_to_long8,
-    _serialize_tag_value,
-    _should_use_bigtiff_streaming,
-)
+from ._compression import COMPRESSION_JPEG, COMPRESSION_NONE
+from ._dtypes import ASCII, DOUBLE, LONG, RATIONAL, SHORT, numpy_to_tiff_dtype
 # Strip / tile encode helpers, photometric resolution, predictor
 # normalisation, and the compression-name tag mapping live in
 # ``_encode.py``. Re-export them here so internal call sites
 # (``_write``, ``_write_streaming``) and external importers (the
 # ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
 # ``xrspatial.geotiff._writer`` import path. See issue #2260.
-from ._encode import (  # noqa: F401
-    PHOTOMETRIC_MINISBLACK,
-    PHOTOMETRIC_RGB,
-    _PARALLEL_MIN_BYTES,
-    _PHOTOMETRIC_NAME_MAP,
-    _apply_photometric_miniswhite_invert,
-    _apply_predictor_encode,
-    _compress_block,
-    _compression_tag,
-    _invert_nodata_for_miniswhite,
-    _prepare_strip,
-    _prepare_tile,
-    _reject_disagreeing_photometric_override,
-    _resolve_photometric,
-    _write_stripped,
-    _write_tiled,
-    normalize_predictor,
-)
+from ._encode import (_PARALLEL_MIN_BYTES, _PHOTOMETRIC_NAME_MAP,  # noqa: F401
+                      PHOTOMETRIC_MINISBLACK, PHOTOMETRIC_RGB, _apply_photometric_miniswhite_invert,
+                      _apply_predictor_encode, _compress_block, _compression_tag,
+                      _invert_nodata_for_miniswhite, _prepare_strip, _prepare_tile,
+                      _reject_disagreeing_photometric_override, _resolve_photometric,
+                      _write_stripped, _write_tiled, normalize_predictor)
+from ._geotags import (TAG_GDAL_NODATA, TAG_GEO_ASCII_PARAMS, TAG_GEO_KEY_DIRECTORY,
+                       TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT, TAG_MODEL_TRANSFORMATION,
+                       GeoTransform, build_geo_tags)
+from ._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES, TAG_GDAL_METADATA,
+                      TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_NEW_SUBFILE_TYPE, TAG_PHOTOMETRIC,
+                      TAG_PREDICTOR, TAG_RESOLUTION_UNIT, TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT,
+                      TAG_SAMPLES_PER_PIXEL, TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS, TAG_SUB_IFDS,
+                      TAG_TILE_BYTE_COUNTS, TAG_TILE_LENGTH, TAG_TILE_OFFSETS, TAG_TILE_WIDTH,
+                      TAG_X_RESOLUTION, TAG_Y_RESOLUTION)
 # Overview pyramid helpers (``_make_overview``, ``_block_reduce_2d``,
 # ``_replicate_pad_2d``, ``_resolve_int_nodata``,
 # ``_validate_overview_levels``) and the ``OVERVIEW_METHODS`` /
@@ -119,15 +53,18 @@ from ._encode import (  # noqa: F401
 # them here so internal call sites and external importers (the
 # ``_writers`` subpackage, ``_gpu_decode``, tests) keep using the
 # ``xrspatial.geotiff._writer`` import path. See issue #2259.
-from ._overview import (  # noqa: F401
-    OVERVIEW_METHODS,
-    _MAX_OVERVIEW_LEVELS,
-    _block_reduce_2d,
-    _make_overview,
-    _replicate_pad_2d,
-    _resolve_int_nodata,
-    _validate_overview_levels,
-)
+from ._overview import (_MAX_OVERVIEW_LEVELS, OVERVIEW_METHODS, _block_reduce_2d,  # noqa: F401
+                        _make_overview, _replicate_pad_2d, _resolve_int_nodata,
+                        _validate_overview_levels)
+# IFD-assembly and BigTIFF / COG layout helpers live in
+# ``_write_layout.py``. Re-export them here so internal call sites
+# (``_write``, ``_write_streaming``) and external importers (the
+# ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
+# ``xrspatial.geotiff._writer`` import path.
+from ._write_layout import (BO, _assemble_cog_layout, _assemble_standard_layout,  # noqa: F401
+                            _assemble_tiff, _build_ifd, _compute_classic_ifd_overhead,
+                            _float_to_rational, _pack_tag_value, _promote_offsets_to_long8,
+                            _serialize_tag_value, _should_use_bigtiff_streaming)
 
 # Tag IDs the writer must never accept from ``extra_tags``. NewSubfileType
 # (254) is a per-IFD status flag the writer emits on its own for overview
@@ -143,6 +80,13 @@ _DANGEROUS_EXTRA_TAG_IDS = frozenset({TAG_NEW_SUBFILE_TYPE, TAG_SUB_IFDS})
 # interpretation tags so callers cannot accidentally clobber tags
 # carrying computed offsets, dimensions, or layout. See issue #1769.
 _OVERRIDABLE_AUTO_TAG_IDS = frozenset({TAG_PHOTOMETRIC, TAG_EXTRA_SAMPLES})
+
+# Thread-name prefix for the per-tile compression ``ThreadPoolExecutor``
+# in the streaming write path. Tagging the workers lets leak-detection
+# tests (issue #2276) tell our pool's threads apart from dask's
+# offload/scheduler pools, which also use ``ThreadPoolExecutor`` and
+# are kept alive deliberately by dask as singletons.
+_TILE_POOL_THREAD_PREFIX = 'xrspatial-geotiff-tile-compress'
 
 # TIFF Photometric Interpretation values (``PHOTOMETRIC_MINISBLACK``,
 # ``PHOTOMETRIC_RGB``) and the ``_PHOTOMETRIC_NAME_MAP`` friendly-name
@@ -307,30 +251,30 @@ def _validate_lowlevel_write_kwargs(*,
 
 
 def _write(data: np.ndarray, path: str, *,
-          geo_transform: GeoTransform | None = None,
-          crs_epsg: int | None = None,
-          crs_wkt: str | None = None,
-          nodata=None,
-          compression: str = 'zstd',
-          compression_level: int | None = None,
-          tiled: bool = True,
-          tile_size: int = 256,
-          predictor: bool | int = False,
-          cog: bool = False,
-          overview_levels: list[int] | None = None,
-          overview_resampling: str = 'mean',
-          raster_type: int = 1,
-          x_resolution: float | None = None,
-          y_resolution: float | None = None,
-          resolution_unit: int | None = None,
-          gdal_metadata_xml: str | None = None,
-          extra_tags: list | None = None,
-          bigtiff: bool | None = None,
-          max_z_error: float = 0.0,
-          photometric='auto',
-          restore_sentinel: bool = True,
-          allow_internal_only_jpeg: bool = False,
-          allow_unparseable_crs: bool = False) -> None:
+           geo_transform: GeoTransform | None = None,
+           crs_epsg: int | None = None,
+           crs_wkt: str | None = None,
+           nodata=None,
+           compression: str = 'zstd',
+           compression_level: int | None = None,
+           tiled: bool = True,
+           tile_size: int = 256,
+           predictor: bool | int = False,
+           cog: bool = False,
+           overview_levels: list[int] | None = None,
+           overview_resampling: str = 'mean',
+           raster_type: int = 1,
+           x_resolution: float | None = None,
+           y_resolution: float | None = None,
+           resolution_unit: int | None = None,
+           gdal_metadata_xml: str | None = None,
+           extra_tags: list | None = None,
+           bigtiff: bool | None = None,
+           max_z_error: float = 0.0,
+           photometric='auto',
+           restore_sentinel: bool = True,
+           allow_internal_only_jpeg: bool = False,
+           allow_unparseable_crs: bool = False) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -532,12 +476,12 @@ def _write(data: np.ndarray, path: str, *,
     # Full resolution
     if tiled:
         rel_off, bc, comp_data = _write_tiled(data, comp_tag, pred_int, tile_size,
-                                               compression_level=compression_level,
-                                               max_z_error=max_z_error)
+                                              compression_level=compression_level,
+                                              max_z_error=max_z_error)
     else:
         rel_off, bc, comp_data = _write_stripped(data, comp_tag, pred_int,
-                                                  compression_level=compression_level,
-                                                  max_z_error=max_z_error)
+                                                 compression_level=compression_level,
+                                                 max_z_error=max_z_error)
 
     h, w = data.shape[:2]
     parts.append((data, w, h, rel_off, bc, comp_data))
@@ -611,13 +555,13 @@ def _write(data: np.ndarray, path: str, *,
             oh, ow = current.shape[:2]
             if tiled:
                 o_off, o_bc, o_data = _write_tiled(current, comp_tag, pred_int,
-                                                    tile_size,
-                                                    compression_level=compression_level,
-                                                    max_z_error=max_z_error)
+                                                   tile_size,
+                                                   compression_level=compression_level,
+                                                   max_z_error=max_z_error)
             else:
                 o_off, o_bc, o_data = _write_stripped(current, comp_tag, pred_int,
-                                                       compression_level=compression_level,
-                                                       max_z_error=max_z_error)
+                                                      compression_level=compression_level,
+                                                      max_z_error=max_z_error)
             parts.append((current, ow, oh, o_off, o_bc, o_data))
 
     file_bytes = _assemble_tiff(
@@ -658,30 +602,29 @@ write = _write
 # re-exported above for backwards compatibility.
 
 
-
 def _write_streaming(dask_data, path: str, *,
-                    geo_transform: 'GeoTransform | None' = None,
-                    crs_epsg: int | None = None,
-                    crs_wkt: str | None = None,
-                    nodata=None,
-                    compression: str = 'zstd',
-                    compression_level: int | None = None,
-                    tiled: bool = True,
-                    tile_size: int = 256,
-                    predictor: bool | int = False,
-                    raster_type: int = 1,
-                    x_resolution: float | None = None,
-                    y_resolution: float | None = None,
-                    resolution_unit: int | None = None,
-                    gdal_metadata_xml: str | None = None,
-                    extra_tags: list | None = None,
-                    bigtiff: bool | None = None,
-                    streaming_buffer_bytes: int = 256 * 1024 * 1024,
-                    max_z_error: float = 0.0,
-                    photometric='auto',
-                    restore_sentinel: bool = True,
-                    allow_internal_only_jpeg: bool = False,
-                    allow_unparseable_crs: bool = False) -> None:
+                     geo_transform: 'GeoTransform | None' = None,
+                     crs_epsg: int | None = None,
+                     crs_wkt: str | None = None,
+                     nodata=None,
+                     compression: str = 'zstd',
+                     compression_level: int | None = None,
+                     tiled: bool = True,
+                     tile_size: int = 256,
+                     predictor: bool | int = False,
+                     raster_type: int = 1,
+                     x_resolution: float | None = None,
+                     y_resolution: float | None = None,
+                     resolution_unit: int | None = None,
+                     gdal_metadata_xml: str | None = None,
+                     extra_tags: list | None = None,
+                     bigtiff: bool | None = None,
+                     streaming_buffer_bytes: int = 256 * 1024 * 1024,
+                     max_z_error: float = 0.0,
+                     photometric='auto',
+                     restore_sentinel: bool = True,
+                     allow_internal_only_jpeg: bool = False,
+                     allow_unparseable_crs: bool = False) -> None:
     """Write a dask array as a GeoTIFF by streaming pixel data.
 
     For tiled output, each tile-row is computed in horizontal segments
@@ -964,7 +907,7 @@ def _write_streaming(dask_data, path: str, *,
     ifd_block_size = count_size + entry_size * num_tags + next_size
     overflow_base = header_size + ifd_block_size
     _, placeholder_overflow = _build_ifd(sorted_tags, overflow_base,
-                                          bigtiff=use_bigtiff)
+                                         bigtiff=use_bigtiff)
     pixel_data_start = overflow_base + len(placeholder_overflow)
 
     dir_name = os.path.dirname(os.path.abspath(path))
@@ -1023,113 +966,133 @@ def _write_streaming(dask_data, path: str, *,
                 _pool_workers = min(tiles_per_segment, os.cpu_count() or 4)
                 _use_pool = (comp_tag != COMPRESSION_NONE
                              and _pool_workers > 1)
-                tile_pool = (ThreadPoolExecutor(max_workers=_pool_workers)
-                             if _use_pool else None)
+                # ``thread_name_prefix`` tags the worker threads so leak
+                # detection in tests (issue #2276) can tell our pool's
+                # workers apart from dask's offload/scheduler pools.
+                tile_pool = (
+                    ThreadPoolExecutor(
+                        max_workers=_pool_workers,
+                        thread_name_prefix=_TILE_POOL_THREAD_PREFIX)
+                    if _use_pool else None)
 
-                for tr in range(tiles_down):
-                    r0 = tr * th
-                    r1 = min(r0 + th, height)
-                    actual_h = r1 - r0
+                # Wrap the tile loop in ``try/finally`` so the pool is
+                # always shut down before any exception (compression
+                # failure, dask compute failure, file write failure)
+                # propagates. The previous code only called
+                # ``shutdown`` after the loop completed and leaked
+                # worker threads on any mid-stream raise. See #2276.
+                try:
+                    for tr in range(tiles_down):
+                        r0 = tr * th
+                        r1 = min(r0 + th, height)
+                        actual_h = r1 - r0
 
-                    for seg_start in range(0, tiles_across, tiles_per_segment):
-                        seg_end = min(seg_start + tiles_per_segment,
-                                       tiles_across)
-                        seg_c0 = seg_start * tw
-                        seg_c1 = min(seg_end * tw, width)
+                        for seg_start in range(0, tiles_across, tiles_per_segment):
+                            seg_end = min(seg_start + tiles_per_segment,
+                                          tiles_across)
+                            seg_c0 = seg_start * tw
+                            seg_c1 = min(seg_end * tw, width)
 
-                        # Compute just this horizontal segment
-                        if dask_data.ndim == 3:
-                            seg_np = np.asarray(
-                                dask_data[r0:r1, seg_c0:seg_c1, :].compute())
-                        else:
-                            seg_np = np.asarray(
-                                dask_data[r0:r1, seg_c0:seg_c1].compute())
-                        if hasattr(seg_np, 'get'):
-                            seg_np = seg_np.get()
-
-                        if seg_np.dtype != out_dtype:
-                            seg_np = seg_np.astype(out_dtype)
-
-                        # NaN -> nodata sentinel
-                        if (nodata is not None and seg_np.dtype.kind == 'f'
-                                and not np.isnan(nodata)
-                                and restore_sentinel):
-                            nan_mask = np.isnan(seg_np)
-                            if nan_mask.any():
-                                seg_np = seg_np.copy()
-                                seg_np[nan_mask] = seg_np.dtype.type(nodata)
-
-                        # Build tile arrays for this segment
-                        seg_tile_arrs = []
-                        for tc in range(seg_start, seg_end):
-                            c0 = tc * tw
-                            c1 = min(c0 + tw, width)
-                            actual_w = c1 - c0
-
-                            local_c0 = c0 - seg_c0
-                            local_c1 = c1 - seg_c0
-                            tile_slice = seg_np[:, local_c0:local_c1]
-
-                            if actual_h < th or actual_w < tw:
-                                if seg_np.ndim == 3:
-                                    padded = np.zeros((th, tw, samples),
-                                                      dtype=out_dtype)
-                                else:
-                                    padded = np.zeros((th, tw), dtype=out_dtype)
-                                padded[:actual_h, :actual_w] = tile_slice
-                                tile_arr = padded
+                            # Compute just this horizontal segment
+                            if dask_data.ndim == 3:
+                                seg_np = np.asarray(
+                                    dask_data[r0:r1, seg_c0:seg_c1, :].compute())
                             else:
-                                tile_arr = np.ascontiguousarray(tile_slice)
+                                seg_np = np.asarray(
+                                    dask_data[r0:r1, seg_c0:seg_c1].compute())
+                            if hasattr(seg_np, 'get'):
+                                seg_np = seg_np.get()
 
-                            seg_tile_arrs.append(tile_arr)
+                            if seg_np.dtype != out_dtype:
+                                seg_np = seg_np.astype(out_dtype)
 
-                        # Parallel compress on the hoisted ``tile_pool``
-                        # when it exists. zlib/zstd/LZW release the GIL,
-                        # so threading actually parallelises the C-level
-                        # work. Peak memory while the segment is in
-                        # flight covers BOTH the uncompressed
-                        # ``seg_tile_arrs`` (one full tile per column,
-                        # released after the futures resolve) AND the
-                        # compressed buffers ``seg_compressed`` (held
-                        # until the sequential write loop drains them).
-                        # Both lists are bounded by ``tiles_per_segment``
-                        # which the streaming buffer cap sets; fall
-                        # through to a serial path when the pool is None
-                        # (no compression / single core) or when only
-                        # one tile sits in this segment.
-                        n_seg_tiles = len(seg_tile_arrs)
-                        if tile_pool is None or n_seg_tiles <= 1:
-                            seg_compressed = [
-                                _compress_block(
-                                    ta, tw, th, samples, out_dtype,
-                                    bytes_per_sample, pred_int, comp_tag,
-                                    compression_level, max_z_error)
-                                for ta in seg_tile_arrs
-                            ]
-                        else:
-                            futures = [
-                                tile_pool.submit(
-                                    _compress_block,
-                                    ta, tw, th, samples, out_dtype,
-                                    bytes_per_sample, pred_int, comp_tag,
-                                    compression_level, max_z_error,
-                                    True)
-                                for ta in seg_tile_arrs
-                            ]
-                            seg_compressed = [
-                                fut.result() for fut in futures]
+                            # NaN -> nodata sentinel
+                            if (nodata is not None and seg_np.dtype.kind == 'f'
+                                    and not np.isnan(nodata)
+                                    and restore_sentinel):
+                                nan_mask = np.isnan(seg_np)
+                                if nan_mask.any():
+                                    seg_np = seg_np.copy()
+                                    seg_np[nan_mask] = seg_np.dtype.type(nodata)
 
-                        # Sequential file write to preserve on-disk tile order
-                        for compressed in seg_compressed:
-                            actual_offsets.append(current_offset)
-                            actual_counts.append(len(compressed))
-                            f.write(compressed)
-                            current_offset += len(compressed)
+                            # Build tile arrays for this segment
+                            seg_tile_arrs = []
+                            for tc in range(seg_start, seg_end):
+                                c0 = tc * tw
+                                c1 = min(c0 + tw, width)
+                                actual_w = c1 - c0
 
-                        del seg_np, seg_tile_arrs, seg_compressed
+                                local_c0 = c0 - seg_c0
+                                local_c1 = c1 - seg_c0
+                                tile_slice = seg_np[:, local_c0:local_c1]
 
-                if tile_pool is not None:
-                    tile_pool.shutdown(wait=True)
+                                if actual_h < th or actual_w < tw:
+                                    if seg_np.ndim == 3:
+                                        padded = np.zeros((th, tw, samples),
+                                                          dtype=out_dtype)
+                                    else:
+                                        padded = np.zeros((th, tw), dtype=out_dtype)
+                                    padded[:actual_h, :actual_w] = tile_slice
+                                    tile_arr = padded
+                                else:
+                                    tile_arr = np.ascontiguousarray(tile_slice)
+
+                                seg_tile_arrs.append(tile_arr)
+
+                            # Parallel compress on the hoisted ``tile_pool``
+                            # when it exists. zlib/zstd/LZW release the GIL,
+                            # so threading actually parallelises the C-level
+                            # work. Peak memory while the segment is in
+                            # flight covers BOTH the uncompressed
+                            # ``seg_tile_arrs`` (one full tile per column,
+                            # released after the futures resolve) AND the
+                            # compressed buffers ``seg_compressed`` (held
+                            # until the sequential write loop drains them).
+                            # Both lists are bounded by ``tiles_per_segment``
+                            # which the streaming buffer cap sets; fall
+                            # through to a serial path when the pool is None
+                            # (no compression / single core) or when only
+                            # one tile sits in this segment.
+                            n_seg_tiles = len(seg_tile_arrs)
+                            if tile_pool is None or n_seg_tiles <= 1:
+                                seg_compressed = [
+                                    _compress_block(
+                                        ta, tw, th, samples, out_dtype,
+                                        bytes_per_sample, pred_int, comp_tag,
+                                        compression_level, max_z_error)
+                                    for ta in seg_tile_arrs
+                                ]
+                            else:
+                                futures = [
+                                    tile_pool.submit(
+                                        _compress_block,
+                                        ta, tw, th, samples, out_dtype,
+                                        bytes_per_sample, pred_int, comp_tag,
+                                        compression_level, max_z_error,
+                                        True)
+                                    for ta in seg_tile_arrs
+                                ]
+                                seg_compressed = [
+                                    fut.result() for fut in futures]
+
+                            # Sequential file write to preserve on-disk tile order
+                            for compressed in seg_compressed:
+                                actual_offsets.append(current_offset)
+                                actual_counts.append(len(compressed))
+                                f.write(compressed)
+                                current_offset += len(compressed)
+
+                            del seg_np, seg_tile_arrs, seg_compressed
+                finally:
+                    # ``cancel_futures=True`` (Python 3.9+) drops any
+                    # queued-but-not-started compress jobs on the
+                    # error path so ``wait=True`` only blocks on work
+                    # already in flight. The previous shutdown call
+                    # lived past the for-loop and never ran when an
+                    # exception escaped, leaking worker threads. See
+                    # issue #2276.
+                    if tile_pool is not None:
+                        tile_pool.shutdown(wait=True, cancel_futures=True)
             else:
                 # Strip layout
                 for i in range(n_entries):

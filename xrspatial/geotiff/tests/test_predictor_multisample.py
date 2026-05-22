@@ -20,9 +20,7 @@ CPU correctness against a hand-built TN3-compliant predictor=3 buffer.
 """
 from __future__ import annotations
 
-import os
 import struct
-import tempfile
 import zlib
 
 import numpy as np
@@ -30,7 +28,6 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-
 
 try:
     import cupy  # noqa: F401
@@ -238,7 +235,7 @@ def _build_predictor3_stripped_tiff(arr: np.ndarray) -> bytes:
                 patched.append((tag, 4, 1, new_raw))
             else:
                 new_raw = struct.pack(f'{bo}{len(strip_offsets)}I',
-                                       *strip_offsets)
+                                      *strip_offsets)
                 patched.append((tag, 4, len(strip_offsets), new_raw))
         else:
             patched.append((tag, typ, count, raw))
@@ -272,7 +269,7 @@ def _build_predictor3_stripped_tiff(arr: np.ndarray) -> bytes:
                     patched2.append((tag, 4, 1, new_raw))
                 else:
                     new_raw = struct.pack(f'{bo}{len(strip_offsets)}I',
-                                           *strip_offsets)
+                                          *strip_offsets)
                     patched2.append((tag, 4, len(strip_offsets), new_raw))
             else:
                 patched2.append((tag, typ, count, raw))

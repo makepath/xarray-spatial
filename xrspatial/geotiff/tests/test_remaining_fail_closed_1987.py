@@ -35,23 +35,15 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    ConflictingNodataError,
-    GeoTIFFAmbiguousMetadataError,
-    NonUniformCoordsError,
-    RotatedTransformError,
-    UnparseableCRSError,
-    open_geotiff,
-    to_geotiff,
-)
-from xrspatial.geotiff._validation import (
-    _check_read_rotated_transform,
-    _check_read_unparseable_crs,
-    _check_write_conflicting_nodata,
-    _check_write_non_uniform_coords,
-    _registered_read_metadata_checks,
-    _registered_write_metadata_checks,
-)
+from xrspatial.geotiff import (ConflictingNodataError, GeoTIFFAmbiguousMetadataError,
+                               NonUniformCoordsError, RotatedTransformError, UnparseableCRSError,
+                               open_geotiff, to_geotiff)
+from xrspatial.geotiff._validation import (_check_read_rotated_transform,
+                                           _check_read_unparseable_crs,
+                                           _check_write_conflicting_nodata,
+                                           _check_write_non_uniform_coords,
+                                           _registered_read_metadata_checks,
+                                           _registered_write_metadata_checks)
 
 pyproj = pytest.importorskip("pyproj")
 

@@ -24,7 +24,7 @@ from xrspatial.geotiff._writer import write
 
 
 def _write_float32_with_sentinel(tmp_path, sentinel=-9999.0,
-                                  filename='float_2158.tif'):
+                                 filename='float_2158.tif'):
     """float32 GeoTIFF with a non-NaN sentinel and matching pixels.
 
     The middle row has a literal ``-9999.0`` so the inline masking
@@ -39,7 +39,7 @@ def _write_float32_with_sentinel(tmp_path, sentinel=-9999.0,
 
 
 def _write_float64_with_fractional_sentinel(tmp_path, sentinel=-9999.25,
-                                             filename='float64_2158.tif'):
+                                            filename='float64_2158.tif'):
     """float64 GeoTIFF with a fractional sentinel.
 
     Float32's exact-cast rounding would clobber a fractional value
@@ -232,7 +232,7 @@ def test_masked_vs_unmasked_differ_only_at_sentinels(tmp_path):
 
 
 def _write_uint16_with_sentinel(tmp_path, sentinel=65535,
-                                 filename='uint16_2158.tif'):
+                                filename='uint16_2158.tif'):
     """uint16 GeoTIFF with a matching sentinel.
 
     Used to exercise the integer-source-feeding-float-VRT promotion at

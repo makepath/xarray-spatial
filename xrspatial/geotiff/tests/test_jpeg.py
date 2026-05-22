@@ -7,14 +7,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff._compression import (
-    COMPRESSION_JPEG,
-    _splice_jpeg_tables,
-    jpeg_compress,
-    jpeg_decompress,
-)
-from xrspatial.geotiff._writer import write, _compression_tag
+from xrspatial.geotiff._compression import (COMPRESSION_JPEG, _splice_jpeg_tables, jpeg_compress,
+                                            jpeg_decompress)
 from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff._writer import _compression_tag, write
 
 
 class TestJpegCodec:
@@ -171,8 +167,9 @@ class TestJpegTablesSplice:
     def test_splice_reconstructs_complete_jpeg(self):
         # Build a complete JPEG, then split it into a tables stream + a
         # tile fragment. Splicing should recover a decodable stream.
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         rng = np.random.RandomState(1502)
         arr = rng.randint(50, 200, (16, 16, 3), dtype=np.uint8)
@@ -201,8 +198,9 @@ class TestJpegTablesSplice:
         assert _splice_jpeg_tables(b'no soi', b'\xff\xd8\xff\xd9') == b'no soi'
 
     def test_jpeg_decompress_accepts_jpeg_tables_kwarg(self):
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         rng = np.random.RandomState(1502)
         arr = rng.randint(50, 200, (16, 16, 3), dtype=np.uint8)
@@ -242,9 +240,8 @@ class TestGdalTiledJpegRead:
 
     def test_tiled_ycbcr_jpeg(self, tmp_path):
         import rasterio as rio
-        from xrspatial.geotiff._header import (
-            parse_header, parse_all_ifds, TAG_JPEG_TABLES,
-        )
+
+        from xrspatial.geotiff._header import TAG_JPEG_TABLES, parse_all_ifds, parse_header
 
         size = 128
         data = self._gradient_rgb(size)

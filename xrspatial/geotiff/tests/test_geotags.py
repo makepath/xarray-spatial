@@ -4,25 +4,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._geotags import (
-    GeoInfo,
-    GeoTransform,
-    build_geo_tags,
-    extract_geo_info,
-    GEOKEY_GEOGRAPHIC_TYPE,
-    GEOKEY_MODEL_TYPE,
-    GEOKEY_PROJECTED_CS_TYPE,
-    GEOKEY_RASTER_TYPE,
-    MODEL_TYPE_GEOGRAPHIC,
-    MODEL_TYPE_PROJECTED,
-    RASTER_PIXEL_IS_AREA,
-    TAG_GEO_KEY_DIRECTORY,
-    TAG_GDAL_NODATA,
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
-)
 from xrspatial.geotiff._errors import RotatedTransformError
+from xrspatial.geotiff._geotags import (GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_PROJECTED_CS_TYPE,
+                                        MODEL_TYPE_GEOGRAPHIC, MODEL_TYPE_PROJECTED,
+                                        TAG_GDAL_NODATA, TAG_GEO_KEY_DIRECTORY,
+                                        TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT, GeoTransform,
+                                        build_geo_tags, extract_geo_info)
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
+
 from .conftest import make_minimal_tiff
 
 
@@ -108,6 +97,148 @@ class TestBuildGeoTags:
         geokeys = tags[TAG_GEO_KEY_DIRECTORY]
         # Flatten and check that ProjectedCSType is present
         assert 3072 in geokeys  # GEOKEY_PROJECTED_CS_TYPE
+
+
+class TestModelTypeFromEPSG:
+    """Regression coverage for issue #2277.
+
+    The legacy heuristic at build_geo_tags decided geographic-vs-projected
+    from the EPSG number range (4326 plus 4000-4999). That silently
+    mis-tagged geographic CRSes registered outside the 4000-4999 block
+    (NAD83(2011) = 6318, GDA2020 = 7844, WGS 84 (G2139) = 9057, etc.) as
+    projected, AND mis-tagged projected codes inside the block (4087 /
+    4088 / 4499 etc.) as geographic. Both directions corrupt the CRS at
+    write time.
+
+    The fix consults pyproj when available; when pyproj can't classify
+    a code (uninstalled, or installed but DB lookup fails), anything
+    outside a small vetted geographic allowlist raises rather than
+    guessing.
+    """
+
+    @pytest.mark.parametrize("epsg", [4326, 4269, 4267, 4258, 4283])
+    def test_geographic_allowlist(self, epsg):
+        # Codes the hard-coded fallback set covers explicitly.
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        tags = build_geo_tags(gt, crs_epsg=epsg)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_GEOGRAPHIC_TYPE in geokeys
+        assert GEOKEY_PROJECTED_CS_TYPE not in geokeys
+
+    @pytest.mark.parametrize("epsg", [6318, 7844, 9057, 8252])
+    def test_geographic_outside_legacy_range(self, epsg):
+        # The bug: pre-fix, these wrote ProjectedCSTypeGeoKey.
+        # pyproj.CRS.from_epsg(...).is_geographic is True for all four.
+        pytest.importorskip("pyproj")
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        tags = build_geo_tags(gt, crs_epsg=epsg)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_GEOGRAPHIC_TYPE in geokeys, (
+            f"EPSG:{epsg} is geographic per pyproj but was written as "
+            f"projected -- regression of issue #2277"
+        )
+        assert GEOKEY_PROJECTED_CS_TYPE not in geokeys
+
+    @pytest.mark.parametrize("epsg", [4087, 4088, 4499])
+    def test_projected_inside_legacy_range(self, epsg):
+        # The other direction of the legacy bug: codes in 4000-4999 that
+        # are actually projected (World Equidistant Cylindrical at 4087 /
+        # 4088, CGCS2000 Gauss-Kruger zone 21 at 4499). The fix routes
+        # these through pyproj, which classifies them correctly.
+        pytest.importorskip("pyproj")
+        gt = GeoTransform(500000.0, 4500000.0, 30.0, -30.0)
+        tags = build_geo_tags(gt, crs_epsg=epsg)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_PROJECTED_CS_TYPE in geokeys, (
+            f"EPSG:{epsg} is projected per pyproj but was written as "
+            f"geographic -- regression of issue #2277"
+        )
+        assert GEOKEY_GEOGRAPHIC_TYPE not in geokeys
+
+    @pytest.mark.parametrize("epsg", [32610, 3857, 2193])
+    def test_projected_dispatch(self, epsg):
+        pytest.importorskip("pyproj")
+        gt = GeoTransform(500000.0, 4500000.0, 30.0, -30.0)
+        tags = build_geo_tags(gt, crs_epsg=epsg)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_PROJECTED_CS_TYPE in geokeys
+        assert GEOKEY_GEOGRAPHIC_TYPE not in geokeys
+
+    def test_unknown_epsg_without_pyproj_raises(self, monkeypatch):
+        """Fail closed when pyproj is unavailable and the code is unknown.
+
+        Mocks `pyproj` import failure to exercise the fallback path.
+        EPSG 7844 (GDA2020 geographic) is outside the hard-coded
+        allowlist, so without pyproj the writer cannot tell geographic
+        from projected and must raise -- silent corruption is worse
+        than an explicit error.
+        """
+        import builtins
+
+        from xrspatial.geotiff._errors import UnknownCRSModelTypeError
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pyproj" or name.startswith("pyproj."):
+                raise ImportError("simulated: pyproj not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        with pytest.raises(UnknownCRSModelTypeError, match="pyproj"):
+            build_geo_tags(gt, crs_epsg=7844)
+
+    def test_known_geographic_without_pyproj_still_works(self, monkeypatch):
+        """The hard-coded allowlist keeps working when pyproj is gone.
+
+        EPSG 4326 (and the rest of the vetted allowlist) lets common
+        geographic rasters round-trip without a pyproj dependency.
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pyproj" or name.startswith("pyproj."):
+                raise ImportError("simulated: pyproj not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        tags = build_geo_tags(gt, crs_epsg=4326)
+        geokeys = tags[TAG_GEO_KEY_DIRECTORY]
+        assert GEOKEY_GEOGRAPHIC_TYPE in geokeys
+        assert GEOKEY_PROJECTED_CS_TYPE not in geokeys
+
+    def test_unknown_epsg_with_pyproj_raises(self, monkeypatch):
+        """pyproj raises on an unknown EPSG -> writer raises too.
+
+        Simulates the case where pyproj is installed but the EPSG code
+        isn't in its database (e.g. the local PROJ database is out of
+        date). The fallback set covers a small vetted allowlist;
+        anything else should raise rather than guess.
+        """
+        # Patch CRS.from_epsg to simulate a missing DB entry.
+        import pyproj
+
+        from xrspatial.geotiff._errors import UnknownCRSModelTypeError
+
+        def boom(code):
+            raise pyproj.exceptions.CRSError(f"simulated unknown code {code}")
+
+        monkeypatch.setattr(pyproj.CRS, "from_epsg", staticmethod(boom))
+
+        gt = GeoTransform(0.0, 0.0, 30.0, -30.0)
+        # 9999999 is outside the hard-coded allowlist.
+        with pytest.raises(UnknownCRSModelTypeError):
+            build_geo_tags(gt, crs_epsg=9999999)
+
+        # And the allowlist still rescues EPSG 4326 even when pyproj fails.
+        tags = build_geo_tags(gt, crs_epsg=4326)
+        assert GEOKEY_GEOGRAPHIC_TYPE in tags[TAG_GEO_KEY_DIRECTORY]
 
 
 def _build_tiff_with_transformation_tag(matrix_16: tuple) -> bytes:

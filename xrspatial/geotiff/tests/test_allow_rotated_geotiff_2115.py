@@ -26,11 +26,7 @@ import pytest
 
 from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._errors import RotatedTransformError
-from xrspatial.geotiff._geotags import (
-    GeoTransform,
-    TAG_MODEL_TRANSFORMATION,
-    _extract_transform,
-)
+from xrspatial.geotiff._geotags import TAG_MODEL_TRANSFORMATION, GeoTransform, _extract_transform
 from xrspatial.geotiff._header import IFD, IFDEntry
 
 

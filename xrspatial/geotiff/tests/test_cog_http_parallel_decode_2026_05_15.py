@@ -25,24 +25,18 @@ from __future__ import annotations
 import http.server
 import socketserver
 import threading
-from concurrent.futures import ThreadPoolExecutor as _RealPool
 
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._reader import (
-    _HTTPSource,
-    _fetch_decode_cog_http_tiles,
-    _parse_cog_http_meta,
-    read_to_array,
-)
+from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import write
-
 
 # ---------------------------------------------------------------------------
 # Local HTTP server fixture (range-aware) -- copied minimal pattern from
 # test_cog_http_concurrent.py.
 # ---------------------------------------------------------------------------
+
 
 class _RangeHandler(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''
@@ -196,7 +190,6 @@ def test_serial_path_below_threshold(monkeypatch, cog_http_url_small_tiles):
     decode-sized pools.
     """
     import concurrent.futures as _cf
-    import os
 
     pool_made = []
     orig = _cf.ThreadPoolExecutor

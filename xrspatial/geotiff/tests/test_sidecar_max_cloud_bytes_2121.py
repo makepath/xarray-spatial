@@ -30,7 +30,6 @@ import pytest
 from xrspatial.geotiff._reader import CloudSizeLimitError
 from xrspatial.geotiff._sidecar import load_sidecar
 
-
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parent
     / "golden_corpus"

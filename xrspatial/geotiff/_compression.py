@@ -585,7 +585,8 @@ def _predictor_encode_u64(view, width, height, samples_per_pixel):
             view[idx] = np.uint64(view[idx]) - np.uint64(view[idx - samples_per_pixel])
 
 
-import sys as _sys
+import sys as _sys  # noqa: E402
+
 _NATIVE_BO = '<' if _sys.byteorder == 'little' else '>'
 
 
@@ -1482,8 +1483,9 @@ def jpeg2000_decompress(data: bytes, width: int = 0, height: int = 0,
             "glymur is required to read JPEG 2000-compressed TIFFs. "
             "Install it with: pip install glymur")
     import math
-    import tempfile
     import os
+    import tempfile
+
     # glymur reads from files, so write the codestream to a temp file
     fd, tmp = tempfile.mkstemp(suffix='.j2k')
     try:
@@ -1540,8 +1542,8 @@ def jpeg2000_compress(data: bytes, width: int, height: int,
             "glymur is required to write JPEG 2000-compressed TIFFs. "
             "Install it with: pip install glymur")
     import math
-    import tempfile
     import os
+    import tempfile
     if samples == 1:
         arr = np.frombuffer(data, dtype=dtype).reshape(height, width)
     else:

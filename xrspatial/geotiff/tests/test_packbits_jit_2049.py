@@ -8,11 +8,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._compression import (
-    packbits_compress,
-    packbits_decompress,
-)
-from xrspatial.geotiff._compression import _packbits_encode_kernel
+from xrspatial.geotiff._compression import (_packbits_encode_kernel, packbits_compress,
+                                            packbits_decompress)
 
 
 def _roundtrip(data: bytes) -> None:

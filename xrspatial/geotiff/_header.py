@@ -6,14 +6,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any
 
-from ._dtypes import (
-    TIFF_TYPE_SIZES,
-    TIFF_TYPE_STRUCT_CODES,
-    RATIONAL,
-    SRATIONAL,
-    ASCII,
-    UNDEFINED,
-)
+from ._dtypes import ASCII, RATIONAL, SRATIONAL, TIFF_TYPE_SIZES, TIFF_TYPE_STRUCT_CODES, UNDEFINED
 
 # Caps for IFD entries that aren't pixel-data offset or byte-count
 # arrays. Pixel-data arrays (TileOffsets, StripOffsets, etc.) scale with

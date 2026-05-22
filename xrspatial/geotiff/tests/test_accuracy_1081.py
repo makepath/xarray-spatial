@@ -6,20 +6,13 @@ Bug 3: NaN not restored to nodata sentinel on write
 """
 from __future__ import annotations
 
-import struct
-
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._geotags import (
-    RASTER_PIXEL_IS_POINT,
-    TAG_GEO_ASCII_PARAMS,
-    TAG_GEO_KEY_DIRECTORY,
-    extract_geo_info,
-)
-from xrspatial.geotiff._header import parse_header, parse_all_ifds
+from xrspatial.geotiff._geotags import RASTER_PIXEL_IS_POINT, TAG_GEO_ASCII_PARAMS, extract_geo_info
+from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import write
 
