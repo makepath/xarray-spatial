@@ -128,6 +128,28 @@ _TILE_POOL_THREAD_PREFIX = 'xrspatial-geotiff-tile-compress'
 
 
 # ---------------------------------------------------------------------------
+# Shared error messages
+# ---------------------------------------------------------------------------
+
+# Issue #2312: a single source of truth for the ``cog=True, tiled=False``
+# rejection message used by both the public ``to_geotiff`` boundary and
+# the array-level ``_write`` defense-in-depth gate. Keeping the message
+# string in one place stops the two raise sites from drifting if one
+# ever gets reworded. The substring assertions in
+# ``test_cog_requires_tiled_2312.py`` pin the actionable tokens
+# (``tiled=True``, ``cog=False``, ``COG``) so a future rewrite still
+# has to satisfy the same contract.
+_COG_REQUIRES_TILED_MSG = (
+    "cog=True requires tiled=True: the COG specification "
+    "mandates a tiled internal layout, so a strip-layout file "
+    "cannot be a valid Cloud Optimized GeoTIFF. Pass tiled=True "
+    "(or omit tiled, which defaults to True) to write a COG, or "
+    "set cog=False to write a non-COG strip TIFF. See issue "
+    "#2312."
+)
+
+
+# ---------------------------------------------------------------------------
 # Array-level write entry points (module-private; see module docstring)
 # ---------------------------------------------------------------------------
 
@@ -487,6 +509,18 @@ def _write(data: np.ndarray, path: str, *,
             data, _resolved_photo, _samples)
         if nodata is not None:
             nodata = _invert_nodata_for_miniswhite(nodata, data.dtype)
+
+    # Issue #2312: defense-in-depth gate for ``cog=True, tiled=False``.
+    # The public ``to_geotiff`` wrapper rejects this combination at its
+    # own boundary, so this branch is unreachable when the wrapper is
+    # the caller; the gate matters for direct callers of ``_write`` and
+    # for any future caller (test harness, internal tool) that bypasses
+    # the wrapper. Without it, ``_write_stripped`` would run below and
+    # the overview-pyramid block at line ~490 would attach overviews to
+    # a strip-layout body, producing a malformed file that claims to be
+    # a COG.
+    if cog and not tiled:
+        raise ValueError(_COG_REQUIRES_TILED_MSG)
 
     # Build pixel data parts
     parts = []
