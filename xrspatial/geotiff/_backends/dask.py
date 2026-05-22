@@ -100,6 +100,34 @@ def read_geotiff_dask(source: str, *,
         Pass ``mask_nodata=False`` together with ``dtype=<integer>`` to
         keep an integer source dtype; the default promotes to
         ``float64`` and the cast then raises. See issue #2052.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files. Forwarded to every per-chunk read so a rotated source
+        yields an ungeoreferenced pixel grid instead of raising
+        ``NotImplementedError``. See ``open_geotiff`` for the full
+        contract; the dask path honours the same attrs (``crs`` /
+        ``crs_wkt`` dropped, ``rotated_affine`` set).
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        do not parse as WKT. When ``False`` (the default since #1929)
+        the chunk task raises ``UnparseableCRSError`` instead of
+        carrying the unrecognised payload through ``attrs['crs_wkt']``.
+        See ``open_geotiff`` for the full description.
+    on_gpu_failure : str, optional
+        Accepted for cross-backend signature symmetry only. The dask
+        path runs CPU decoders, so passing this kwarg raises
+        ``ValueError`` at dispatch. See ``read_geotiff_gpu`` for the
+        kwarg's meaning on the GPU reader.
+    missing_sources : {'raise', 'warn'}, optional
+        VRT-only. Forwarded to ``read_vrt`` when the source ends in
+        ``.vrt``; otherwise raises ``ValueError`` at dispatch. See
+        ``read_vrt`` for the full description.
+    max_cloud_bytes : int or None, optional
+        Accepted for cross-backend signature symmetry only. The dask
+        reader uses bounded range GETs and does not consume the
+        cloud-byte budget, so passing this kwarg raises ``ValueError``
+        at dispatch. See ``open_geotiff`` for the eager-path
+        description (issue #1974).
 
     Returns
     -------
