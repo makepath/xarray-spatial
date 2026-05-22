@@ -22,12 +22,29 @@ on:
     - cron: '0 4 * * *'
   workflow_dispatch:
 
+# Cancel older runs on the same ref. The micromamba env build is the
+# expensive part of this job; queueing a fresh one for every push on a
+# busy PR is wasteful.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: this job only reads the repo. No write scopes
+# needed.
+permissions:
+  contents: read
+
 jobs:
   run:
     # Linux-only by design: rio-cogeo and the GDAL Python bindings
     # are simplest to provision through conda-forge on Linux.
     # Widening to macOS / Windows is a separate follow-up.
     runs-on: ubuntu-latest
+    # 20 minutes is plenty for the compliance + parity subset on a
+    # warm conda cache and well above the headroom for the cold-cache
+    # case. Without this cap a hung `to_geotiff` or validator would
+    # hold the runner for the 6h default.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -35,7 +52,9 @@ jobs:
         # rio-cogeo + GDAL combo. 3.12 is the safest target today;
         # 3.14 wheels for some of the GDAL stack are not yet
         # universally available, and the gate has to install reliably
-        # to be a useful required check.
+        # to be a useful required check. Add 3.13 / 3.14 here once
+        # conda-forge has caught up with stable rio-cogeo + GDAL
+        # builds for those interpreters.
         python: ['3.12']
     defaults:
       run:

@@ -25,9 +25,11 @@ COG validator CI gate
 =====================
 
 ``to_geotiff(..., cog=True)`` is validated against the external
-`rio-cogeo <https://github.com/cogeotiff/rio-cogeo>`_ /
-`GDAL validate_cloud_optimized_geotiff <https://gdal.org/programs/gdaladdo.html#gdaladdo>`_
-sample on every PR. A dedicated Linux job (``pytest-cog-validator``)
+`rio-cogeo <https://github.com/cogeotiff/rio-cogeo>`_ and GDAL's
+``validate_cloud_optimized_geotiff`` sample (from
+`gdal/swig/python/gdal-utils/osgeo_utils/samples
+<https://github.com/OSGeo/gdal/blob/master/swig/python/gdal-utils/osgeo_utils/samples/validate_cloud_optimized_geotiff.py>`_)
+on every PR. A dedicated Linux job (``pytest-cog-validator``)
 installs rio-cogeo and the GDAL Python bindings from conda-forge,
 sets ``XRSPATIAL_REQUIRE_COG_VALIDATOR=1``, and runs the compliance
 suite in ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``.

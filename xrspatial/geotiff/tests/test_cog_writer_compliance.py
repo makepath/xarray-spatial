@@ -182,6 +182,9 @@ def _assert_ifds_before_data(path: str) -> None:
 def _require_validator_env() -> bool:
     """Return True if ``XRSPATIAL_REQUIRE_COG_VALIDATOR`` is set truthy.
 
+    Truthy values: ``1``, ``true``, ``yes``, ``on`` (case-insensitive).
+    Anything else, including unset / empty, returns False.
+
     CI sets this to make a missing validator dependency a hard failure
     rather than a silent skip. On a contributor laptop without rio-cogeo
     or GDAL it is unset and the validator step skips cleanly.
@@ -576,11 +579,15 @@ def test_require_validator_env_strict_fails_when_dep_missing(
     real_import = builtins.__import__
 
     def _blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "rio_cogeo.cogeo" or (
+        fl = tuple(fromlist) if fromlist else ()
+        rio_match = (
+            name == "rio_cogeo.cogeo" and "cog_validate" in fl
+        )
+        gdal_match = (
             name == "osgeo_utils.samples"
-            and fromlist
-            and "validate_cloud_optimized_geotiff" in tuple(fromlist)
-        ):
+            and "validate_cloud_optimized_geotiff" in fl
+        )
+        if rio_match or gdal_match:
             raise ImportError(f"blocked for test: {name}")
         return real_import(name, globals, locals, fromlist, level)
 
@@ -596,6 +603,9 @@ def test_require_validator_env_strict_fails_when_dep_missing(
         overview_levels=[2],
     )
 
+    # ``pytest.fail.Exception`` is a documented alias for
+    # ``_pytest.outcomes.Failed`` on pytest >= 7 (which this repo pins
+    # via setup.cfg). Update both spots in this file if that pin moves.
     with pytest.raises(pytest.fail.Exception, match="XRSPATIAL_REQUIRE_COG_VALIDATOR"):
         _try_cog_validate(path)
 
@@ -614,11 +624,15 @@ def test_require_validator_env_unset_skips_when_dep_missing(
     real_import = builtins.__import__
 
     def _blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "rio_cogeo.cogeo" or (
+        fl = tuple(fromlist) if fromlist else ()
+        rio_match = (
+            name == "rio_cogeo.cogeo" and "cog_validate" in fl
+        )
+        gdal_match = (
             name == "osgeo_utils.samples"
-            and fromlist
-            and "validate_cloud_optimized_geotiff" in tuple(fromlist)
-        ):
+            and "validate_cloud_optimized_geotiff" in fl
+        )
+        if rio_match or gdal_match:
             raise ImportError(f"blocked for test: {name}")
         return real_import(name, globals, locals, fromlist, level)
 
