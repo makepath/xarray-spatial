@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff._dtypes import RATIONAL, SRATIONAL
-from xrspatial.geotiff._header import (IFD, TAG_IMAGE_WIDTH, _read_value, parse_all_ifds,
-                                       parse_header, parse_ifd)
+from xrspatial.geotiff._header import (IFD, TAG_IMAGE_WIDTH, TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
+                                       _read_value, parse_all_ifds, parse_header, parse_ifd)
 
 from .conftest import make_minimal_tiff
 
@@ -259,7 +259,6 @@ class TestReadValueRationals:
 
     def test_rational_denominator_zero_names_tag(self):
         # When the tag is known, the error message names it.
-        from xrspatial.geotiff._header import TAG_X_RESOLUTION
         buf = struct.pack('<II', 5, 0)
         with pytest.raises(ValueError, match="XResolution"):
             _read_value(buf, 0, RATIONAL, 1, '<', tag=TAG_X_RESOLUTION)
@@ -270,7 +269,6 @@ class TestReadValueRationals:
             _read_value(buf, 0, SRATIONAL, 1, '<')
 
     def test_srational_denominator_zero_names_tag(self):
-        from xrspatial.geotiff._header import TAG_Y_RESOLUTION
         buf = struct.pack('<ii', -3, 0)
         with pytest.raises(ValueError, match="YResolution"):
             _read_value(buf, 0, SRATIONAL, 1, '<', tag=TAG_Y_RESOLUTION)
