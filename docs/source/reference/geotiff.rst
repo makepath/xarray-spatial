@@ -30,7 +30,7 @@ cross-backend parity gate (#2293), and the per-tile byte-budget contract
 the stable surface fails the build rather than silently shipping.
 
 Outside the stable contract
----------------------------
+----------------------------
 
 The following combinations stay outside the stable contract. They still
 work where they did before and are still tested, but they keep their
