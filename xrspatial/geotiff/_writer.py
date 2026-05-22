@@ -144,6 +144,13 @@ _DANGEROUS_EXTRA_TAG_IDS = frozenset({TAG_NEW_SUBFILE_TYPE, TAG_SUB_IFDS})
 # carrying computed offsets, dimensions, or layout. See issue #1769.
 _OVERRIDABLE_AUTO_TAG_IDS = frozenset({TAG_PHOTOMETRIC, TAG_EXTRA_SAMPLES})
 
+# Thread-name prefix for the per-tile compression ``ThreadPoolExecutor``
+# in the streaming write path. Tagging the workers lets leak-detection
+# tests (issue #2276) tell our pool's threads apart from dask's
+# offload/scheduler pools, which also use ``ThreadPoolExecutor`` and
+# are kept alive deliberately by dask as singletons.
+_TILE_POOL_THREAD_PREFIX = 'xrspatial-geotiff-tile-compress'
+
 # TIFF Photometric Interpretation values (``PHOTOMETRIC_MINISBLACK``,
 # ``PHOTOMETRIC_RGB``) and the ``_PHOTOMETRIC_NAME_MAP`` friendly-name
 # table live in ``_encode.py`` and are re-exported above for
@@ -1029,16 +1036,15 @@ def _write_streaming(dask_data, path: str, *,
                 tile_pool = (
                     ThreadPoolExecutor(
                         max_workers=_pool_workers,
-                        thread_name_prefix='xrspatial-geotiff-tile-compress')
+                        thread_name_prefix=_TILE_POOL_THREAD_PREFIX)
                     if _use_pool else None)
 
-                # Track in-flight futures so the error path can cancel
-                # pending work before shutting the pool down. Without
-                # this, a mid-stream raise (compression failure, dask
-                # compute failure, file write failure) used to bypass
-                # ``tile_pool.shutdown`` entirely and leak worker
-                # threads. See issue #2276.
-                _inflight_futures: list = []
+                # Wrap the tile loop in ``try/finally`` so the pool is
+                # always shut down before any exception (compression
+                # failure, dask compute failure, file write failure)
+                # propagates. The previous code only called
+                # ``shutdown`` after the loop completed and leaked
+                # worker threads on any mid-stream raise. See #2276.
                 try:
                     for tr in range(tiles_down):
                         r0 = tr * th
@@ -1121,7 +1127,7 @@ def _write_streaming(dask_data, path: str, *,
                                     for ta in seg_tile_arrs
                                 ]
                             else:
-                                _inflight_futures = [
+                                futures = [
                                     tile_pool.submit(
                                         _compress_block,
                                         ta, tw, th, samples, out_dtype,
@@ -1130,17 +1136,8 @@ def _write_streaming(dask_data, path: str, *,
                                         True)
                                     for ta in seg_tile_arrs
                                 ]
-                                try:
-                                    seg_compressed = [
-                                        fut.result()
-                                        for fut in _inflight_futures]
-                                finally:
-                                    # Drop the references once we have
-                                    # collected results (or once a
-                                    # ``fut.result()`` raised) so the
-                                    # outer ``finally`` below does not
-                                    # re-cancel completed work.
-                                    _inflight_futures = []
+                                seg_compressed = [
+                                    fut.result() for fut in futures]
 
                             # Sequential file write to preserve on-disk tile order
                             for compressed in seg_compressed:
@@ -1151,17 +1148,15 @@ def _write_streaming(dask_data, path: str, *,
 
                             del seg_np, seg_tile_arrs, seg_compressed
                 finally:
-                    # Guarantee the compression pool is shut down on
-                    # every exit path. The previous shutdown call lived
-                    # past the for-loop and never ran when an exception
-                    # escaped from compress / dask compute / file
-                    # write, leaking worker threads. Cancel any
-                    # still-pending futures first so ``shutdown(wait=
-                    # True)`` does not block on work we do not need.
+                    # ``cancel_futures=True`` (Python 3.9+) drops any
+                    # queued-but-not-started compress jobs on the
+                    # error path so ``wait=True`` only blocks on work
+                    # already in flight. The previous shutdown call
+                    # lived past the for-loop and never ran when an
+                    # exception escaped, leaking worker threads. See
+                    # issue #2276.
                     if tile_pool is not None:
-                        for fut in _inflight_futures:
-                            fut.cancel()
-                        tile_pool.shutdown(wait=True)
+                        tile_pool.shutdown(wait=True, cancel_futures=True)
             else:
                 # Strip layout
                 for i in range(n_entries):

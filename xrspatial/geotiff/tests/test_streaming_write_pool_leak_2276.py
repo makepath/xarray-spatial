@@ -9,18 +9,22 @@ failure path.
 
 These tests inject a failure mid-stream and assert that:
 
-1. No ``ThreadPoolExecutor`` worker threads remain alive after the call
-   returns, and
+1. No worker threads owned by the writer's pool remain alive after the
+   call returns, and
 2. The injected exception propagates cleanly out of ``to_geotiff`` (no
    "swallowed" failures), and
-3. The previously-allocated pool is shut down (``_shutdown`` flag set).
+3. The pool the writer constructed is shut down (``_shutdown`` flag
+   set).
 
-We monkey-patch ``ThreadPoolExecutor`` inside ``_writer`` so we can
-capture the pool that ``_write_streaming`` constructs and inspect its
-state after the failure path. The test also walks
-``threading.enumerate()`` to confirm no threads with the
-``ThreadPoolExecutor-`` name prefix remain (the
-``concurrent.futures.thread`` worker naming convention).
+We monkey-patch ``ThreadPoolExecutor`` inside ``_writer`` to capture
+the pool ``_write_streaming`` constructs and inspect its state after
+the failure path. The test also walks ``threading.enumerate()`` to
+check that no threads with the writer's distinctive
+``thread_name_prefix`` (``_TILE_POOL_THREAD_PREFIX`` from the writer
+module) remain. Dask spins up its own ``ThreadPoolExecutor`` instances
+during ``.compute()`` -- those use a different prefix and are
+deliberately kept alive as singletons, so filtering on the writer's
+prefix avoids false positives.
 """
 from __future__ import annotations
 
@@ -37,11 +41,10 @@ from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff import _writer as writer_mod
 
 
-# The writer pool tags its worker threads with this prefix so leak
-# detection here can distinguish the writer's pool from dask's own
-# offload / scheduler pools (which also use ``ThreadPoolExecutor`` and
-# are kept alive deliberately by dask as singletons).
-_WRITER_POOL_PREFIX = 'xrspatial-geotiff-tile-compress'
+# Re-use the writer's own constant so the test does not silently drift
+# if the prefix ever changes on the writer side. ``_writer`` exposes
+# ``_TILE_POOL_THREAD_PREFIX`` for exactly this purpose (#2276).
+_WRITER_POOL_PREFIX = writer_mod._TILE_POOL_THREAD_PREFIX
 
 
 def _make_dataarray(shape, dtype=np.float32, seed=20260521):
