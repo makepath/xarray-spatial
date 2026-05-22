@@ -1317,30 +1317,49 @@ def _model_type_from_wkt(wkt: str) -> int:
     return MODEL_TYPE_PROJECTED
 
 
-# Hard-coded fallback set of EPSG codes known to be geographic. Used only
-# when pyproj is unavailable. Kept intentionally tight: the historic
-# 4000-4999 block plus EPSG 4326 itself, which is the case the legacy
-# range heuristic got right. Anything outside this set without pyproj is
-# treated as "unknown" and raises -- silent CRS corruption is worse than
-# an explicit error.
+# Vetted allowlist of EPSG codes known to be geographic. Consulted in
+# two situations: when pyproj is unavailable at all, and when pyproj is
+# installed but its database can't resolve the code (e.g. out-of-date
+# PROJ db). Anything outside this set falls through to
+# UnknownCRSModelTypeError -- silent CRS corruption is worse than an
+# explicit error.
 #
-# The range covers the EPSG "geographic CRS" allocation that predates the
-# more recent realisations (NAD83(2011) = 6318, GDA2020 = 7844,
-# WGS 84 (G2139) = 9057, etc.) which live outside 4000-4999 and need
-# pyproj to classify correctly. See issue #2277.
-_KNOWN_GEOGRAPHIC_EPSG_FALLBACK = frozenset(range(4000, 5000))
+# The set is kept intentionally small. The original range heuristic
+# (4000-4999) was wrong in both directions: it missed geographic codes
+# outside the window (NAD83(2011) = 6318, GDA2020 = 7844, etc., the bug
+# this PR fixes), AND it also covered projected codes inside the window
+# (4087 / 4088 World Equidistant Cylindrical, 4499 CGCS2000 / GK
+# zone 21, etc.). Expanding the set without pyproj's authoritative
+# answer just trades one mis-tag for another.
+#
+# Currently: the few datums callers regularly write without pyproj.
+# Extend only after verifying ``CRS.from_epsg(code).is_geographic`` is
+# True. See issue #2277.
+_KNOWN_GEOGRAPHIC_EPSG_FALLBACK = frozenset({
+    4326,   # WGS 84
+    4269,   # NAD83
+    4267,   # NAD27
+    4258,   # ETRS89
+    4283,   # GDA94
+    4322,   # WGS 72
+    4230,   # ED50
+    4019,   # Unknown datum based on GRS 1980 ellipsoid
+    4047,   # Unspecified datum based on GRS 1980 Authalic Sphere
+})
 
 
 def _model_type_from_epsg(crs_epsg: int) -> int:
     """Return the GeoTIFF ModelType (geographic vs projected) for an EPSG.
 
     Prefers ``pyproj.CRS.from_epsg(crs_epsg).is_geographic`` so the
-    decision matches the actual EPSG registry. Falls back to a tight
-    hard-coded allowlist (EPSG 4326 plus the 4000-4999 block) when
-    pyproj isn't installed. Anything outside that fallback set raises
-    :class:`UnknownCRSModelTypeError` rather than guessing -- the legacy range
-    heuristic at this site silently mis-tagged geographic codes like
-    6318 (NAD83(2011)) and 7844 (GDA2020) as projected.
+    decision matches the actual EPSG registry. Falls back to a small
+    vetted allowlist of common geographic datums
+    (:data:`_KNOWN_GEOGRAPHIC_EPSG_FALLBACK`) when pyproj isn't
+    installed *or* when pyproj is installed but fails to resolve the
+    code. Anything outside that allowlist raises
+    :class:`UnknownCRSModelTypeError` rather than guessing -- the legacy
+    range heuristic at this site silently mis-tagged geographic codes
+    like 6318 (NAD83(2011)) and 7844 (GDA2020) as projected.
 
     See issue #2277.
     """
@@ -1377,7 +1396,8 @@ def _model_type_from_epsg(crs_epsg: int) -> int:
         f"Cannot determine GeoTIFF model type for EPSG:{crs_epsg} without "
         "pyproj. Install pyproj so the writer can consult "
         "CRS.from_epsg(...).is_geographic, or pass an EPSG in the "
-        "hard-coded geographic fallback set (4000-4999). Refusing to "
+        "hard-coded geographic fallback set "
+        f"({sorted(_KNOWN_GEOGRAPHIC_EPSG_FALLBACK)}). Refusing to "
         "guess: the legacy range heuristic silently mis-tagged codes "
         "like 6318 and 7844 as projected. See issue #2277."
     )
@@ -1469,10 +1489,12 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
     # ModelType
     if crs_epsg is not None:
         # Resolve the GeoTIFF ModelType via pyproj when available; raise
-        # on unknown codes when pyproj is missing rather than guessing.
-        # See issue #2277 -- the historic EPSG-range heuristic silently
-        # mis-tagged geographic codes outside 4000-4999 (e.g. 6318,
-        # 7844, 9057) as projected, corrupting the CRS at write time.
+        # on unknown codes when pyproj can't classify them rather than
+        # guessing. See issue #2277 -- the historic EPSG-range heuristic
+        # silently mis-tagged geographic codes outside 4000-4999 (e.g.
+        # 6318, 7844, 9057) as projected AND projected codes inside
+        # 4000-4999 (e.g. 4087, 4088, 4499) as geographic, corrupting
+        # the CRS at write time.
         model_type = _model_type_from_epsg(crs_epsg)
         key_entries.append((GEOKEY_MODEL_TYPE, 0, 1, model_type))
         num_keys += 1
