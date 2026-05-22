@@ -239,6 +239,13 @@ def _parse_cog_http_meta(
     # IFD lives in the sidecar; that mirrors the eager local reader,
     # whose sidecar IFDs typically carry no out-of-line geokeys and
     # inherit from level-0 (which sits in the base buffer). #2239.
+    #
+    # The ``sidecar_origin`` kwarg added in #2315 for the eager local /
+    # fsspec paths is intentionally not threaded here. A separate fix
+    # is tracked in the HTTP / dask sidecar-byte-order finding (see
+    # the linked issue / PR for the HTTP side). When that lands, this
+    # call should pick up the same mapping so an HTTP sidecar with
+    # its own geokeys is parsed against the sidecar bytes too.
     geo_info = extract_geo_info_with_overview_inheritance(
         ifd, ifds, header_bytes, header.byte_order,
         allow_rotated=allow_rotated)

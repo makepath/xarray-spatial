@@ -1225,7 +1225,19 @@ def extract_geo_info_with_overview_inheritance(
     if base_ifd is None:
         return info
 
-    base_info = extract_geo_info(base_ifd, data, byte_order,
+    # Mirror the sidecar-origin routing for ``base_ifd``. The base IFD
+    # normally lives in the base file (``data`` / ``byte_order`` are
+    # correct), but a file with no full-resolution IFD of its own could
+    # land here with ``base_ifd`` resolved out of a sidecar. The lookup
+    # is the same shape as the one applied to ``ifd`` above. See
+    # review nit on #2315.
+    base_data, base_byte_order = data, byte_order
+    if sidecar_origin is not None:
+        base_origin = sidecar_origin.get(id(base_ifd))
+        if base_origin is not None:
+            base_data, base_byte_order = base_origin
+
+    base_info = extract_geo_info(base_ifd, base_data, base_byte_order,
                                  allow_rotated=allow_rotated)
 
     # Inherit the per-IFD metadata that the COG writer emits only on the

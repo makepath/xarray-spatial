@@ -106,7 +106,17 @@ def _mark_first_ifd_as_overview(path):
 
     # The IFD entries are sorted by tag id. 254 sorts before every tag
     # ``to_geotiff`` emits in practice (the smallest the writer uses is
-    # 256 / ImageWidth), so the new entry goes at position 0.
+    # 256 / ImageWidth), so the new entry goes at position 0. Assert
+    # the invariant so a future writer change that emits a tag <= 254
+    # fails this fixture loudly instead of silently producing an
+    # out-of-order IFD that the reader could later reject. (Review nit
+    # on #2315.)
+    if n_entries > 0:
+        first_tag = struct.unpack_from("<H", raw, first_ifd_offset + 2)[0]
+        assert first_tag > NSF, (
+            f"test fixture invariant: first emitted tag must be > {NSF}, "
+            f"got {first_tag}"
+        )
     insert_pos = first_ifd_offset + 2
 
     next_ifd_off_pos = first_ifd_offset + 2 + n_entries * 12
