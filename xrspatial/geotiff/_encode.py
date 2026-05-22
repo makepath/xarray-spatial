@@ -120,8 +120,12 @@ def _apply_photometric_miniswhite_invert(
     See issue #1836.
 
     Returns the pre-inverted array (a new array) so that the reader's
-    inversion restores the original values. Multi-band data and signed
-    integer data pass through unchanged, matching the reader.
+    inversion restores the original values. Multi-band data passes
+    through unchanged. Signed-integer single-band MinIsWhite raises
+    ``NotImplementedError`` -- the previous passthrough produced files
+    whose pixel values disagreed with the on-disk Photometric tag
+    against every standards-compliant TIFF consumer (GDAL, libtiff).
+    See issue #2278.
     """
     if resolved_photometric != 0 or samples_per_pixel != 1:
         return arr
@@ -129,6 +133,23 @@ def _apply_photometric_miniswhite_invert(
         return np.iinfo(arr.dtype).max - arr
     if arr.dtype.kind == 'f':
         return -arr
+    if arr.dtype.kind == 'i':
+        # Defer the import to dodge any module-load cycle through
+        # ``_dtypes``.
+        from ._dtypes import numpy_to_tiff_dtype
+        bps, sf = numpy_to_tiff_dtype(arr.dtype)
+        raise NotImplementedError(
+            f"Writing signed-integer MinIsWhite TIFFs is not supported "
+            f"(issue #2278): Photometric=0 (MinIsWhite), "
+            f"SampleFormat={sf} (signed int), BitsPerSample={bps}, "
+            f"dtype={arr.dtype}. xrspatial has no semantically correct "
+            f"inversion for signed pixels here, and writing them "
+            f"un-inverted would produce a file whose pixels disagree "
+            f"with the Photometric tag against every standards-"
+            f"compliant TIFF reader (GDAL, libtiff, etc.). Cast to an "
+            f"unsigned dtype, or write with photometric='minisblack' "
+            f"/ 'auto'."
+        )
     return arr
 
 

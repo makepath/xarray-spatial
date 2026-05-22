@@ -216,7 +216,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         * ``'rgba'`` -- RGB with the 4th band tagged as unassociated
           alpha (TIFF ExtraSamples=2). Requires at least 4 bands.
         * ``'minisblack'`` or ``'miniswhite'`` -- grayscale; multi-band
-          extras tagged ``0``.
+          extras tagged ``0``. Signed-integer pixel types with
+          ``'miniswhite'`` are rejected with ``NotImplementedError`` --
+          xrspatial has no semantically correct inversion for signed
+          MinIsWhite and the silent passthrough that used to happen
+          produced files that disagreed with the on-disk Photometric
+          tag against every standards-compliant TIFF reader (issue
+          #2278). Cast to an unsigned dtype or pass
+          ``photometric='minisblack'``.
         * An ``int`` -- written verbatim into Photometric for advanced
           callers (e.g. ``3`` for Palette, ``5`` for CMYK).
 

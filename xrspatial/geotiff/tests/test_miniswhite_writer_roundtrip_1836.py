@@ -74,15 +74,26 @@ def test_miniswhite_with_nodata_round_trip(tmp_path):
     np.testing.assert_allclose(out[0, [0, 2, 3]], arr[0, [0, 2, 3]])
 
 
-def test_miniswhite_int_passthrough(tmp_path):
-    """The reader does not invert signed integer MinIsWhite data, so the
-    writer must also pass it through unchanged. Otherwise the round-trip
-    would silently corrupt signed data."""
+def test_miniswhite_int_rejected_at_write_2278(tmp_path):
+    """Issue #2278: signed-integer MinIsWhite is rejected at write time.
+
+    The writer used to leave signed pixels untouched, which round-tripped
+    inside xrspatial but produced a file whose pixel values disagreed
+    with the on-disk Photometric tag against every other TIFF consumer
+    (GDAL, libtiff, ImageMagick). The writer now refuses the combination
+    outright with a message that includes SampleFormat / BitsPerSample /
+    Photometric so callers can diagnose without digging into the spec.
+    """
     arr = np.array([[-5, -1, 0, 1, 5]], dtype=np.int16)
-    path = tmp_path / 'i16_msw_1836.tif'
-    to_geotiff(_da(arr), str(path), photometric='miniswhite')
-    r = open_geotiff(str(path))
-    np.testing.assert_array_equal(np.asarray(r.values), arr)
+    path = tmp_path / 'i16_msw_2278.tif'
+    with pytest.raises(NotImplementedError) as excinfo:
+        to_geotiff(_da(arr), str(path), photometric='miniswhite')
+    msg = str(excinfo.value)
+    assert '2278' in msg
+    assert 'MinIsWhite' in msg
+    assert 'SampleFormat' in msg
+    assert 'BitsPerSample' in msg
+    assert 'int16' in msg
 
 
 def test_uint16_miniswhite_with_in_range_nodata_round_trip(tmp_path):

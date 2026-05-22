@@ -73,7 +73,7 @@ from ._coords import \
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, GeoTIFFAmbiguousMetadataError,
                       InvalidCRSCodeError, MixedBandMetadataError, NonUniformCoordsError,
-                      RotatedTransformError, UnparseableCRSError)
+                      RotatedTransformError, UnknownCRSModelTypeError, UnparseableCRSError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
@@ -112,6 +112,7 @@ __all__ = [
     'NonUniformCoordsError',
     'RotatedTransformError',
     'SUPPORTED_FEATURES',
+    'UnknownCRSModelTypeError',
     'UnparseableCRSError',
     'UnsafeURLError',
     'open_geotiff',
@@ -461,6 +462,15 @@ def open_geotiff(source: str | BinaryIO, *,
         ``to_geotiff`` / ``write_geotiff_gpu`` to accept the loss; the
         ``ModelTransformationTag`` emit path is tracked separately
         (issue #2115).
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        that do not parse as WKT. When ``False`` (the default since
+        #1929), an unrecognised CRS payload raises
+        ``UnparseableCRSError`` instead of landing in ``attrs['crs_wkt']``
+        verbatim. Set to ``True`` to keep the pre-#1929 permissive
+        behaviour where the citation field passes through unchanged.
+        Matches the same kwarg on ``to_geotiff`` / ``write_geotiff_gpu``
+        so a value the reader accepted can survive a round-trip.
 
     Returns
     -------

@@ -179,6 +179,33 @@ def read_geotiff_gpu(source: str, *,
         carries the sentinel either way. Pass ``mask_nodata=False``
         together with ``dtype=<integer>`` to preserve an integer source
         dtype on a file with a matching sentinel. See issue #2052.
+    allow_rotated : bool, default False
+        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
+        files. Forwarded through both GPU decode stages and the CPU
+        fallback so the rotated branch behaves the same regardless of
+        which stage produces the bytes. See ``open_geotiff`` for the
+        full contract; on the GPU path the result still lands as a
+        CuPy-backed DataArray.
+    allow_unparseable_crs : bool, default False
+        Read-side opt-in for CRS strings that pyproj cannot resolve and
+        do not parse as WKT. ``False`` (the default since #1929) raises
+        ``UnparseableCRSError``; ``True`` keeps the pre-#1929 permissive
+        behaviour. See ``open_geotiff`` for the full description.
+    band_nodata : {'first', None}, optional
+        VRT-only. Accepted at the signature level for parity with
+        ``open_geotiff``; passing it to ``read_geotiff_gpu`` raises
+        ``ValueError`` because the GPU dispatcher rejects ``.vrt``
+        sources up front and the kwarg only applies to VRT. See
+        ``read_vrt`` for the kwarg's meaning.
+    missing_sources : {'raise', 'warn'}, optional
+        VRT-only. Same shape as ``band_nodata`` above: accepted for
+        signature parity, rejected at dispatch with ``ValueError`` for
+        non-VRT sources. See ``read_vrt`` for the full description.
+    max_cloud_bytes : int or None, optional
+        Accepted for cross-backend signature symmetry only. The GPU
+        reader does not consume the cloud-byte budget; passing this
+        kwarg raises ``ValueError`` at dispatch (issue #1974). See
+        ``open_geotiff`` for the eager-path description.
 
     Returns
     -------
@@ -819,6 +846,24 @@ def read_geotiff_gpu(source: str, *,
                 arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
             elif gpu_dtype.kind == 'f':
                 arr_gpu = -arr_gpu
+            elif gpu_dtype.kind == 'i':
+                # Mirror the CPU reader's signed-int MinIsWhite
+                # rejection (issue #2278). Without this the pure-GPU
+                # decode path would silently return un-inverted
+                # signed pixels while the CPU decode path raises,
+                # breaking backend parity.
+                raise NotImplementedError(
+                    f"Signed-integer MinIsWhite TIFFs are not "
+                    f"supported on the GPU decode path either "
+                    f"(issue #2278): Photometric=0 (MinIsWhite), "
+                    f"SampleFormat={ifd.sample_format} (signed int), "
+                    f"BitsPerSample={ifd.bits_per_sample}, "
+                    f"dtype={gpu_dtype}. xrspatial has no "
+                    f"semantically correct inversion for signed "
+                    f"pixels here. Convert the file to MinIsBlack "
+                    f"(Photometric=1) with another tool, or open it "
+                    f"in an unsigned dtype."
+                )
 
         if name is None:
             import os
