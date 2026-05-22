@@ -1023,113 +1023,145 @@ def _write_streaming(dask_data, path: str, *,
                 _pool_workers = min(tiles_per_segment, os.cpu_count() or 4)
                 _use_pool = (comp_tag != COMPRESSION_NONE
                              and _pool_workers > 1)
-                tile_pool = (ThreadPoolExecutor(max_workers=_pool_workers)
-                             if _use_pool else None)
+                # ``thread_name_prefix`` tags the worker threads so leak
+                # detection in tests (issue #2276) can tell our pool's
+                # workers apart from dask's offload/scheduler pools.
+                tile_pool = (
+                    ThreadPoolExecutor(
+                        max_workers=_pool_workers,
+                        thread_name_prefix='xrspatial-geotiff-tile-compress')
+                    if _use_pool else None)
 
-                for tr in range(tiles_down):
-                    r0 = tr * th
-                    r1 = min(r0 + th, height)
-                    actual_h = r1 - r0
+                # Track in-flight futures so the error path can cancel
+                # pending work before shutting the pool down. Without
+                # this, a mid-stream raise (compression failure, dask
+                # compute failure, file write failure) used to bypass
+                # ``tile_pool.shutdown`` entirely and leak worker
+                # threads. See issue #2276.
+                _inflight_futures: list = []
+                try:
+                    for tr in range(tiles_down):
+                        r0 = tr * th
+                        r1 = min(r0 + th, height)
+                        actual_h = r1 - r0
 
-                    for seg_start in range(0, tiles_across, tiles_per_segment):
-                        seg_end = min(seg_start + tiles_per_segment,
-                                       tiles_across)
-                        seg_c0 = seg_start * tw
-                        seg_c1 = min(seg_end * tw, width)
+                        for seg_start in range(0, tiles_across, tiles_per_segment):
+                            seg_end = min(seg_start + tiles_per_segment,
+                                           tiles_across)
+                            seg_c0 = seg_start * tw
+                            seg_c1 = min(seg_end * tw, width)
 
-                        # Compute just this horizontal segment
-                        if dask_data.ndim == 3:
-                            seg_np = np.asarray(
-                                dask_data[r0:r1, seg_c0:seg_c1, :].compute())
-                        else:
-                            seg_np = np.asarray(
-                                dask_data[r0:r1, seg_c0:seg_c1].compute())
-                        if hasattr(seg_np, 'get'):
-                            seg_np = seg_np.get()
-
-                        if seg_np.dtype != out_dtype:
-                            seg_np = seg_np.astype(out_dtype)
-
-                        # NaN -> nodata sentinel
-                        if (nodata is not None and seg_np.dtype.kind == 'f'
-                                and not np.isnan(nodata)
-                                and restore_sentinel):
-                            nan_mask = np.isnan(seg_np)
-                            if nan_mask.any():
-                                seg_np = seg_np.copy()
-                                seg_np[nan_mask] = seg_np.dtype.type(nodata)
-
-                        # Build tile arrays for this segment
-                        seg_tile_arrs = []
-                        for tc in range(seg_start, seg_end):
-                            c0 = tc * tw
-                            c1 = min(c0 + tw, width)
-                            actual_w = c1 - c0
-
-                            local_c0 = c0 - seg_c0
-                            local_c1 = c1 - seg_c0
-                            tile_slice = seg_np[:, local_c0:local_c1]
-
-                            if actual_h < th or actual_w < tw:
-                                if seg_np.ndim == 3:
-                                    padded = np.zeros((th, tw, samples),
-                                                      dtype=out_dtype)
-                                else:
-                                    padded = np.zeros((th, tw), dtype=out_dtype)
-                                padded[:actual_h, :actual_w] = tile_slice
-                                tile_arr = padded
+                            # Compute just this horizontal segment
+                            if dask_data.ndim == 3:
+                                seg_np = np.asarray(
+                                    dask_data[r0:r1, seg_c0:seg_c1, :].compute())
                             else:
-                                tile_arr = np.ascontiguousarray(tile_slice)
+                                seg_np = np.asarray(
+                                    dask_data[r0:r1, seg_c0:seg_c1].compute())
+                            if hasattr(seg_np, 'get'):
+                                seg_np = seg_np.get()
 
-                            seg_tile_arrs.append(tile_arr)
+                            if seg_np.dtype != out_dtype:
+                                seg_np = seg_np.astype(out_dtype)
 
-                        # Parallel compress on the hoisted ``tile_pool``
-                        # when it exists. zlib/zstd/LZW release the GIL,
-                        # so threading actually parallelises the C-level
-                        # work. Peak memory while the segment is in
-                        # flight covers BOTH the uncompressed
-                        # ``seg_tile_arrs`` (one full tile per column,
-                        # released after the futures resolve) AND the
-                        # compressed buffers ``seg_compressed`` (held
-                        # until the sequential write loop drains them).
-                        # Both lists are bounded by ``tiles_per_segment``
-                        # which the streaming buffer cap sets; fall
-                        # through to a serial path when the pool is None
-                        # (no compression / single core) or when only
-                        # one tile sits in this segment.
-                        n_seg_tiles = len(seg_tile_arrs)
-                        if tile_pool is None or n_seg_tiles <= 1:
-                            seg_compressed = [
-                                _compress_block(
-                                    ta, tw, th, samples, out_dtype,
-                                    bytes_per_sample, pred_int, comp_tag,
-                                    compression_level, max_z_error)
-                                for ta in seg_tile_arrs
-                            ]
-                        else:
-                            futures = [
-                                tile_pool.submit(
-                                    _compress_block,
-                                    ta, tw, th, samples, out_dtype,
-                                    bytes_per_sample, pred_int, comp_tag,
-                                    compression_level, max_z_error,
-                                    True)
-                                for ta in seg_tile_arrs
-                            ]
-                            seg_compressed = [
-                                fut.result() for fut in futures]
+                            # NaN -> nodata sentinel
+                            if (nodata is not None and seg_np.dtype.kind == 'f'
+                                    and not np.isnan(nodata)
+                                    and restore_sentinel):
+                                nan_mask = np.isnan(seg_np)
+                                if nan_mask.any():
+                                    seg_np = seg_np.copy()
+                                    seg_np[nan_mask] = seg_np.dtype.type(nodata)
 
-                        # Sequential file write to preserve on-disk tile order
-                        for compressed in seg_compressed:
-                            actual_offsets.append(current_offset)
-                            actual_counts.append(len(compressed))
-                            f.write(compressed)
-                            current_offset += len(compressed)
+                            # Build tile arrays for this segment
+                            seg_tile_arrs = []
+                            for tc in range(seg_start, seg_end):
+                                c0 = tc * tw
+                                c1 = min(c0 + tw, width)
+                                actual_w = c1 - c0
 
-                        del seg_np, seg_tile_arrs, seg_compressed
+                                local_c0 = c0 - seg_c0
+                                local_c1 = c1 - seg_c0
+                                tile_slice = seg_np[:, local_c0:local_c1]
 
-                if tile_pool is not None:
-                    tile_pool.shutdown(wait=True)
+                                if actual_h < th or actual_w < tw:
+                                    if seg_np.ndim == 3:
+                                        padded = np.zeros((th, tw, samples),
+                                                          dtype=out_dtype)
+                                    else:
+                                        padded = np.zeros((th, tw), dtype=out_dtype)
+                                    padded[:actual_h, :actual_w] = tile_slice
+                                    tile_arr = padded
+                                else:
+                                    tile_arr = np.ascontiguousarray(tile_slice)
+
+                                seg_tile_arrs.append(tile_arr)
+
+                            # Parallel compress on the hoisted ``tile_pool``
+                            # when it exists. zlib/zstd/LZW release the GIL,
+                            # so threading actually parallelises the C-level
+                            # work. Peak memory while the segment is in
+                            # flight covers BOTH the uncompressed
+                            # ``seg_tile_arrs`` (one full tile per column,
+                            # released after the futures resolve) AND the
+                            # compressed buffers ``seg_compressed`` (held
+                            # until the sequential write loop drains them).
+                            # Both lists are bounded by ``tiles_per_segment``
+                            # which the streaming buffer cap sets; fall
+                            # through to a serial path when the pool is None
+                            # (no compression / single core) or when only
+                            # one tile sits in this segment.
+                            n_seg_tiles = len(seg_tile_arrs)
+                            if tile_pool is None or n_seg_tiles <= 1:
+                                seg_compressed = [
+                                    _compress_block(
+                                        ta, tw, th, samples, out_dtype,
+                                        bytes_per_sample, pred_int, comp_tag,
+                                        compression_level, max_z_error)
+                                    for ta in seg_tile_arrs
+                                ]
+                            else:
+                                _inflight_futures = [
+                                    tile_pool.submit(
+                                        _compress_block,
+                                        ta, tw, th, samples, out_dtype,
+                                        bytes_per_sample, pred_int, comp_tag,
+                                        compression_level, max_z_error,
+                                        True)
+                                    for ta in seg_tile_arrs
+                                ]
+                                try:
+                                    seg_compressed = [
+                                        fut.result()
+                                        for fut in _inflight_futures]
+                                finally:
+                                    # Drop the references once we have
+                                    # collected results (or once a
+                                    # ``fut.result()`` raised) so the
+                                    # outer ``finally`` below does not
+                                    # re-cancel completed work.
+                                    _inflight_futures = []
+
+                            # Sequential file write to preserve on-disk tile order
+                            for compressed in seg_compressed:
+                                actual_offsets.append(current_offset)
+                                actual_counts.append(len(compressed))
+                                f.write(compressed)
+                                current_offset += len(compressed)
+
+                            del seg_np, seg_tile_arrs, seg_compressed
+                finally:
+                    # Guarantee the compression pool is shut down on
+                    # every exit path. The previous shutdown call lived
+                    # past the for-loop and never ran when an exception
+                    # escaped from compress / dask compute / file
+                    # write, leaking worker threads. Cancel any
+                    # still-pending futures first so ``shutdown(wait=
+                    # True)`` does not block on work we do not need.
+                    if tile_pool is not None:
+                        for fut in _inflight_futures:
+                            fut.cancel()
+                        tile_pool.shutdown(wait=True)
             else:
                 # Strip layout
                 for i in range(n_entries):
