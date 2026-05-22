@@ -314,6 +314,11 @@ def _assemble_cog_layout(header_size: int,
     if n_parts > 1:
         pixel_emission_order = list(range(n_parts - 1, 0, -1)) + [0]
     else:
+        # In normal use, _assemble_tiff routes single-IFD outputs to
+        # ``_assemble_standard_layout``; the upstream gate
+        # ``is_cog and len(ifd_specs) > 1`` guarantees n_parts >= 2 here.
+        # The single-entry fallback keeps the helper safe for direct
+        # unit tests that exercise the COG layout with one IFD.
         pixel_emission_order = [0]
 
     # Second pass: pixel data offsets per level. We walk the emission
