@@ -93,7 +93,7 @@ def test_write_signed_miniswhite_rejected_2278(tmp_path, dtype, expected_bps):
     message that lists SampleFormat, BitsPerSample, and Photometric."""
     info = np.iinfo(dtype)
     arr = np.array([[info.min, -1, 0, 1, info.max]], dtype=dtype)
-    path = tmp_path / f'i{expected_bps}_msw_2278_{tmp_path.name}.tif'
+    path = tmp_path / f'i{expected_bps}_msw_2278.tif'
     with pytest.raises(NotImplementedError) as excinfo:
         to_geotiff(_da(arr), str(path), photometric='miniswhite')
     msg = str(excinfo.value)
@@ -190,3 +190,27 @@ def test_float_miniswhite_still_round_trips_2278(tmp_path):
     to_geotiff(_da(arr), str(path), photometric='miniswhite')
     out = np.asarray(open_geotiff(str(path)).values)
     np.testing.assert_allclose(out, arr)
+
+
+# ---------------------------------------------------------------------------
+# GPU read path: same rejection so CPU and GPU stay in sync
+# ---------------------------------------------------------------------------
+
+def test_read_signed_miniswhite_rejected_on_gpu_path_2278(tmp_path):
+    """The pure-GPU decode path mirrors the CPU rejection (#2278 review
+    follow-up). Without it, ``open_geotiff(..., gpu=True)`` on a signed
+    MinIsWhite file would silently return un-inverted pixels while the
+    CPU path raises, breaking backend parity.
+    """
+    cupy = pytest.importorskip("cupy")
+    try:
+        if cupy.cuda.runtime.getDeviceCount() < 1:
+            pytest.skip("no CUDA device available")
+    except Exception as exc:  # pragma: no cover - CI without CUDA
+        pytest.skip(f"cupy importable but CUDA unusable: {exc}")
+    path = _forge_signed_miniswhite_tif(tmp_path, 'i16_msw_gpu_2278.tif')
+    with pytest.raises(NotImplementedError) as excinfo:
+        open_geotiff(path, gpu=True)
+    msg = str(excinfo.value)
+    assert '2278' in msg, msg
+    assert 'MinIsWhite' in msg, msg

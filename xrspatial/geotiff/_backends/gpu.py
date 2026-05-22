@@ -845,6 +845,24 @@ def read_geotiff_gpu(source: str, *,
                 arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
             elif gpu_dtype.kind == 'f':
                 arr_gpu = -arr_gpu
+            elif gpu_dtype.kind == 'i':
+                # Mirror the CPU reader's signed-int MinIsWhite
+                # rejection (issue #2278). Without this the pure-GPU
+                # decode path would silently return un-inverted
+                # signed pixels while the CPU decode path raises,
+                # breaking backend parity.
+                raise NotImplementedError(
+                    f"Signed-integer MinIsWhite TIFFs are not "
+                    f"supported on the GPU decode path either "
+                    f"(issue #2278): Photometric=0 (MinIsWhite), "
+                    f"SampleFormat={ifd.sample_format} (signed int), "
+                    f"BitsPerSample={ifd.bits_per_sample}, "
+                    f"dtype={gpu_dtype}. xrspatial has no "
+                    f"semantically correct inversion for signed "
+                    f"pixels here. Convert the file to MinIsBlack "
+                    f"(Photometric=1) with another tool, or open it "
+                    f"in an unsigned dtype."
+                )
 
         if name is None:
             import os
