@@ -33,9 +33,6 @@ jobs:
       matrix:
         os: ${{ github.event_name == 'pull_request' && fromJson('["ubuntu-latest"]') || fromJson('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
         python: ${{ github.event_name == 'pull_request' && fromJson('["3.14"]') || fromJson('["3.12", "3.14"]') }}
-    env:
-      OS: ${{ matrix.os }}
-      PYTHON: ${{ matrix.python }}
     defaults:
       run:
         # `-el` so micromamba's activation hooks fire and `rasterio`
@@ -61,15 +58,21 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -e .[tests]
-    - name: Show rasterio / GDAL versions
+    - name: Verify rasterio still imports after pip step
+      # `pip install -e .[tests]` can pull PyPI wheels (pyproj, numpy) on
+      # top of the conda-forge env and shadow the GDAL/proj stack that
+      # rasterio links against. Re-import here so a broken env fails
+      # this step with a clear message instead of mid-pytest.
       run: |
-        python -c "import rasterio; print('rasterio', rasterio.__version__); print('gdal', rasterio.__gdal_version__)"
+        python -c "import sys, rasterio, numpy; print('python', sys.version.split()[0]); print('rasterio', rasterio.__version__); print('gdal', rasterio.__gdal_version__); print('numpy', numpy.__version__)"
     - name: Run geotiff golden_corpus tests (fast lane)
       # PR triggers run the fast lane: `-m "not slow"` deselects the
       # heavier corpus cells tagged via `_marks.fast_slow_marks_for`.
       # push-to-main and the nightly schedule run the full set.
+      # Target is scoped to `golden_corpus/` to match the issue (#2289);
+      # broader geotiff integration tests stay on the `test.yml` job.
       if: github.event_name == 'pull_request'
-      run: pytest xrspatial/geotiff/tests/ -m "not slow"
+      run: pytest xrspatial/geotiff/tests/golden_corpus/ -m "not slow"
     - name: Run geotiff golden_corpus tests (full)
       if: github.event_name != 'pull_request'
-      run: pytest xrspatial/geotiff/tests/
+      run: pytest xrspatial/geotiff/tests/golden_corpus/
