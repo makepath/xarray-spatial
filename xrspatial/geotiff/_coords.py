@@ -33,6 +33,13 @@ import xarray as xr
 from ._errors import NonUniformCoordsError
 from ._geotags import _NO_GEOREF_KEY, RASTER_PIXEL_IS_POINT, GeoTransform
 
+# Tolerance for rotation/shear detection in affine transforms. ``b`` and
+# ``d`` terms below this magnitude are treated as float noise and pass
+# through as axis-aligned. Shared between ``transform_from_attr`` (6-tuple
+# attrs) and ``to_geotiff`` (rasterio ``Affine`` attrs) so the two gates
+# stay in lockstep on future tolerance tweaks (#2301).
+ROTATION_SHEAR_TOL = 1e-12
+
 # Canonical georef_status string values (mirrored in ``_attrs.py`` as
 # ``GEOREF_STATUS_*`` constants). Issue #2225 centralises the
 # transform/georef contract here; ``_attrs.py`` aliases these names so
@@ -330,8 +337,7 @@ def transform_from_attr(attr_val) -> 'GeoTransform | None':
         a, b, c, d, e, f = (float(x) for x in seq)
     except (TypeError, ValueError):
         return None
-    _ROT_TOL = 1e-12
-    if abs(b) > _ROT_TOL or abs(d) > _ROT_TOL:
+    if abs(b) > ROTATION_SHEAR_TOL or abs(d) > ROTATION_SHEAR_TOL:
         raise ValueError(
             f"attrs['transform'] has non-zero rotation/shear "
             f"(b={b!r}, d={d!r}); rotated or skewed affines are not "

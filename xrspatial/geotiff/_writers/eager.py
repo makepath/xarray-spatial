@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _VALID_COMPRESSIONS, _extract_rich_tags,
                       _resolve_nodata_attr, _should_restore_nan_sentinel)
 from .._backends._gpu_helpers import _is_gpu_data
-from .._coords import _BAND_DIM_NAMES, _has_no_georef_marker
+from .._coords import ROTATION_SHEAR_TOL, _BAND_DIM_NAMES, _has_no_georef_marker
 from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
 from .._coords import resolve_georef as _resolve_georef
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
@@ -356,6 +356,47 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         drop_rotation=drop_rotation,
         entry_point="to_geotiff",
     )
+
+    # Issue #2301: ``attrs['transform']`` carrying a rasterio
+    # ``Affine`` with non-zero rotation/shear (``b != 0`` or ``d != 0``)
+    # silently slipped past ``transform_from_attr`` because ``Affine``
+    # iterates as a 9-element augmented matrix and the 6-tuple gate
+    # there ran ``len(seq) != 6 -> return None``. Without the
+    # rejection the writer falls back to coord-derived or no-georef
+    # output and the rotation is lost on disk. Detect the Affine shape
+    # by duck-typing the (b, d) attrs and surface the same diagnostic
+    # the 6-tuple branch raises (#1987 PR 3 wording, kept verbatim so
+    # the existing match patterns still hit).
+    _attr_transform = _drop_rotation_attrs.get('transform')
+    if (_attr_transform is not None
+            and hasattr(_attr_transform, 'b')
+            and hasattr(_attr_transform, 'd')):
+        try:
+            _b = float(_attr_transform.b)
+            _d = float(_attr_transform.d)
+        except (TypeError, ValueError) as _exc:
+            # Fail-closed on a malformed ``.b`` / ``.d`` rather than
+            # zero-defaulting: an unconvertable value inside an attr
+            # claiming to be an affine transform is itself a writer
+            # input contract violation. Without the explicit raise the
+            # branch would bypass every downstream georef gate that
+            # would otherwise catch the bad value.
+            raise ValueError(
+                f"attrs['transform'] has unconvertable rotation/shear "
+                f"terms (b={_attr_transform.b!r}, "
+                f"d={_attr_transform.d!r}); expected numeric values on "
+                f"a rasterio Affine-like object."
+            ) from _exc
+        if abs(_b) > ROTATION_SHEAR_TOL or abs(_d) > ROTATION_SHEAR_TOL:
+            raise ValueError(
+                f"attrs['transform'] has non-zero rotation/shear "
+                f"(b={_b!r}, d={_d!r}); rotated or skewed affines are "
+                f"not supported by the GeoTIFF writers in this module "
+                f"because the on-disk GeoTIFF representation is "
+                f"axis-aligned and would be written at the wrong "
+                f"location. Reproject the raster to an axis-aligned "
+                f"grid before writing."
+            )
 
     # Issue #2075: reject zero-height / zero-width inputs before any
     # dispatch decision. Clip / window pipelines naturally produce empty
