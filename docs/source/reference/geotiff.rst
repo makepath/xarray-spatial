@@ -21,6 +21,23 @@ Writing
     xrspatial.geotiff.write_geotiff_gpu
     xrspatial.geotiff.write_vrt
 
+COG validator CI gate
+=====================
+
+``to_geotiff(..., cog=True)`` is validated against the external
+`rio-cogeo <https://github.com/cogeotiff/rio-cogeo>`_ /
+`GDAL validate_cloud_optimized_geotiff <https://gdal.org/programs/gdaladdo.html#gdaladdo>`_
+sample on every PR. A dedicated Linux job (``pytest-cog-validator``)
+installs rio-cogeo and the GDAL Python bindings from conda-forge,
+sets ``XRSPATIAL_REQUIRE_COG_VALIDATOR=1``, and runs the compliance
+suite in ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``.
+With the env var set, a missing validator dependency is a hard
+failure instead of a silent skip, so a misconfigured install step
+cannot quietly let the gate pass. Contributors without rio-cogeo
+or GDAL installed locally are unaffected: the env var is unset on
+their machines and the optional validator step still skips cleanly.
+See issue #2302 for the gate's design rationale.
+
 Security and I/O limits
 =======================
 

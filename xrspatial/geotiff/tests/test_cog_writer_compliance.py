@@ -22,6 +22,8 @@ here.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -177,8 +179,25 @@ def _assert_ifds_before_data(path: str) -> None:
     )
 
 
+def _require_validator_env() -> bool:
+    """Return True if ``XRSPATIAL_REQUIRE_COG_VALIDATOR`` is set truthy.
+
+    CI sets this to make a missing validator dependency a hard failure
+    rather than a silent skip. On a contributor laptop without rio-cogeo
+    or GDAL it is unset and the validator step skips cleanly.
+    """
+    val = os.environ.get("XRSPATIAL_REQUIRE_COG_VALIDATOR", "")
+    return val.lower() in {"1", "true", "yes", "on"}
+
+
 def _try_cog_validate(path: str) -> None:
-    """Call rio-cogeo's validator if present, else GDAL's, else skip."""
+    """Call rio-cogeo's validator if present, else GDAL's.
+
+    When ``XRSPATIAL_REQUIRE_COG_VALIDATOR=1`` is set in the environment
+    and neither validator is importable, fail loudly instead of skipping
+    so a misconfigured CI job cannot pretend the gate passed. When the
+    env var is unset, missing dependencies skip cleanly.
+    """
     try:
         from rio_cogeo.cogeo import cog_validate
     except ImportError:
@@ -192,6 +211,14 @@ def _try_cog_validate(path: str) -> None:
     try:
         from osgeo_utils.samples import validate_cloud_optimized_geotiff
     except ImportError:
+        if _require_validator_env():
+            pytest.fail(
+                "XRSPATIAL_REQUIRE_COG_VALIDATOR=1 but neither rio-cogeo "
+                "nor GDAL validate_cloud_optimized_geotiff is importable. "
+                "Install rio-cogeo (and/or GDAL Python bindings) on this "
+                "job, or unset XRSPATIAL_REQUIRE_COG_VALIDATOR to allow "
+                "the soft skip."
+            )
         pytest.skip(
             "neither rio-cogeo nor GDAL validate_cloud_optimized_geotiff "
             "is installed; skipping external COG validator step"
@@ -526,3 +553,103 @@ def test_external_cog_validator(tmp_path):
     )
 
     _try_cog_validate(path)
+
+
+# ---------------------------------------------------------------------------
+# Validator-mode env contract (issue #2302)
+# ---------------------------------------------------------------------------
+
+
+def test_require_validator_env_strict_fails_when_dep_missing(
+    tmp_path, monkeypatch,
+):
+    """``XRSPATIAL_REQUIRE_COG_VALIDATOR=1`` must fail (not skip) if both
+    validators are absent.
+
+    This guards the CI gate: if the install step silently drops rio-cogeo
+    or GDAL, the compliance suite must fail rather than skip past the
+    validator step. Stub both imports as ``ImportError`` so the test runs
+    the same on every job, validator-present or not.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "rio_cogeo.cogeo" or (
+            name == "osgeo_utils.samples"
+            and fromlist
+            and "validate_cloud_optimized_geotiff" in tuple(fromlist)
+        ):
+            raise ImportError(f"blocked for test: {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked_import)
+    monkeypatch.setenv("XRSPATIAL_REQUIRE_COG_VALIDATOR", "1")
+
+    arr = _make_data(np.float32, bands=1, height=64, width=64)
+    da = _build_da(arr, raster_type="area", crs=4326)
+    path = str(tmp_path / "2302_require_strict.tif")
+    to_geotiff(
+        da, path,
+        compression="deflate", cog=True, tile_size=16,
+        overview_levels=[2],
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="XRSPATIAL_REQUIRE_COG_VALIDATOR"):
+        _try_cog_validate(path)
+
+
+def test_require_validator_env_unset_skips_when_dep_missing(
+    tmp_path, monkeypatch,
+):
+    """With the env var unset, missing validators trigger a clean skip.
+
+    This is the contributor-laptop path: no rio-cogeo / GDAL installed,
+    the compliance suite still passes without the optional validator
+    step.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "rio_cogeo.cogeo" or (
+            name == "osgeo_utils.samples"
+            and fromlist
+            and "validate_cloud_optimized_geotiff" in tuple(fromlist)
+        ):
+            raise ImportError(f"blocked for test: {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked_import)
+    monkeypatch.delenv("XRSPATIAL_REQUIRE_COG_VALIDATOR", raising=False)
+
+    arr = _make_data(np.float32, bands=1, height=64, width=64)
+    da = _build_da(arr, raster_type="area", crs=4326)
+    path = str(tmp_path / "2302_require_unset.tif")
+    to_geotiff(
+        da, path,
+        compression="deflate", cog=True, tile_size=16,
+        overview_levels=[2],
+    )
+
+    with pytest.raises(pytest.skip.Exception):
+        _try_cog_validate(path)
+
+
+@pytest.mark.parametrize("val", ["1", "true", "TRUE", "yes", "on"])
+def test_require_validator_env_truthy_values(monkeypatch, val):
+    """All documented truthy spellings activate strict mode."""
+    monkeypatch.setenv("XRSPATIAL_REQUIRE_COG_VALIDATOR", val)
+    assert _require_validator_env() is True
+
+
+@pytest.mark.parametrize("val", ["", "0", "false", "no", "off", "anything"])
+def test_require_validator_env_non_truthy_values(monkeypatch, val):
+    """Empty or non-truthy spellings leave strict mode off."""
+    if val == "":
+        monkeypatch.delenv("XRSPATIAL_REQUIRE_COG_VALIDATOR", raising=False)
+    else:
+        monkeypatch.setenv("XRSPATIAL_REQUIRE_COG_VALIDATOR", val)
+    assert _require_validator_env() is False
