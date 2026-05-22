@@ -17,8 +17,12 @@ Rows
 6. ``golden/rasterio COG fixture -> xrspatial dask HTTP range read``
 
 Each row asserts byte-exact pixels (every fixture used here is
-lossless) and the metadata contract that the release gate must lock
-in: CRS, transform, nodata, dtype, band count, and dim names.
+lossless) and a fixed subset of the metadata contract: ``crs`` (or
+``crs_wkt``), ``transform``, ``nodata`` (including the no-nodata
+case), pixel ``dtype``, band count, and the ``(y, x)`` dim names.
+The wider canonical-attrs surface (resolution, georef_status, etc.)
+lives in ``test_backend_full_parity_2211.py``; this file is the
+narrower COG-only gate.
 
 Skip policy
 -----------
@@ -45,6 +49,7 @@ import importlib.util
 import pathlib
 import socketserver
 import threading
+import uuid
 
 import numpy as np
 import pytest
@@ -121,12 +126,30 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
 
 
 def _serve_payload(payload: bytes, monkeypatch):
-    """Spin a range-aware server bound to localhost; return (httpd, port)."""
+    """Spin a range-aware server bound to localhost; return (httpd, port).
+
+    The handler subclass is named with a uuid suffix so that the two
+    fixtures in this module (and any future ones) don't share a
+    qualname. Without the suffix, tracebacks reuse the same class
+    identifier across fixture invocations and become harder to read.
+
+    ``allow_reuse_address = True`` lets the OS reclaim the port
+    quickly when the test tears down (avoiding TIME_WAIT-related
+    binding races under parallel pytest runs). ``timeout=5`` on the
+    server caps how long a stuck request can pin the daemon thread.
+    """
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     handler_cls = type(
-        "RangeHandler2286", (_RangeHandler,), {"payload": payload}
+        f"RangeHandler2286_{uuid.uuid4().hex[:8]}",
+        (_RangeHandler,),
+        {"payload": payload},
     )
-    httpd = socketserver.TCPServer(("127.0.0.1", 0), handler_cls)
+
+    class _ReusableTCPServer(socketserver.TCPServer):
+        allow_reuse_address = True
+        timeout = 5
+
+    httpd = _ReusableTCPServer(("127.0.0.1", 0), handler_cls)
     port = httpd.server_address[1]
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -240,6 +263,11 @@ def _assert_byte_exact(
         )
 
 
+# Scope note: every fixture in this file is single-band 2D. The two
+# helpers below hard-code that shape on purpose. If a future row adds
+# a multi-band fixture, extend the helpers (or replace them with
+# parametrised checks) rather than reusing them as-is.
+
 def _assert_dim_names(da: xr.DataArray, *, label: str) -> None:
     """The 2D COG path must come back with ``(y, x)`` dim names."""
     assert da.dims == ("y", "x"), (
@@ -302,9 +330,19 @@ def _assert_transform_equals(
 def _assert_nodata_equals(
     da: xr.DataArray, expected: float | int | None, *, label: str,
 ) -> None:
+    """Assert nodata sentinel matches, including the no-nodata case.
+
+    When ``expected`` is ``None`` we still check the read side: the
+    reader must not fabricate a sentinel that the writer never stamped.
+    The reader is allowed to expose the attr as ``None`` or omit it
+    entirely; both count as "no nodata".
+    """
     nd = da.attrs.get("nodata")
     if expected is None:
-        # The writer may legitimately leave nodata unset; pass through.
+        assert nd is None, (
+            f"{label}: writer stamped no nodata, but reader exposed "
+            f"nodata={nd!r}"
+        )
         return
     assert nd == expected, (
         f"{label}: nodata mismatch expected={expected!r} got={nd!r}"
@@ -432,11 +470,16 @@ def test_row3_xrspatial_cog_rasterio(xrspatial_cog):
 def test_row4_golden_cog_xrspatial_local():
     """Read the GDAL-written golden COG fixture with xrspatial's local reader.
 
-    This is the reference comparison every HTTP / dask row in this
-    module checks against, so it doubles as the canonical local-read
-    sanity check. The fixture was produced by GDAL's COG driver so the
-    third-party-producer interop side is in scope here.
+    Compares pixels byte-exact against a rasterio read of the same
+    bytes -- the GDAL COG driver wrote the file, so rasterio is the
+    canonical oracle here. Catches regressions that returned the right
+    shape but mangled values (e.g. wrong endianness, predictor drift,
+    overview IFD picked instead of full res).
     """
+    rasterio = pytest.importorskip(
+        "rasterio",
+        reason="rasterio is required for row 4 oracle (issue #2294)",
+    )
     path = _golden_cog_path()
     if not path.exists():
         pytest.skip(
@@ -456,6 +499,12 @@ def test_row4_golden_cog_xrspatial_local():
     )
     _assert_crs_present(da, label=label)
     _assert_transform(da, label=label)
+
+    # Pixel parity against the rasterio oracle. The fixture is lossless
+    # deflate, so byte-exact is the right bar.
+    with rasterio.open(str(path)) as src:
+        expected = src.read(1)
+    _assert_byte_exact(expected, pixels, label=label)
 
 
 # ---------------------------------------------------------------------------
