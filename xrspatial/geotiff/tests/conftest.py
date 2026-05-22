@@ -10,6 +10,32 @@ import struct
 import numpy as np
 import pytest
 
+#: Vetted allowlist of EPSG codes known to be geographic (for test fixtures).
+#: Mirrors the fallback set in _geotags.py. Kept intentionally small.
+_KNOWN_GEOGRAPHIC_EPSG_FALLBACK = frozenset({
+    4326,   # WGS 84
+    4269,   # NAD83
+    4267,   # NAD27
+    4258,   # ETRS89
+    4283,   # GDA94
+    4322,   # WGS 72
+    4230,   # ED50
+    4019,   # Unknown datum based on GRS 1980 ellipsoid
+    4047,   # Unspecified datum based on GRS 1980 Authalic Sphere
+})
+
+
+def _is_geographic(epsg: int) -> bool:
+    """Return True if the EPSG code refers to a geographic CRS.
+
+    Uses pyproj when available; falls back to the vetted allowlist.
+    """
+    try:
+        from pyproj import CRS
+        return CRS.from_epsg(epsg).is_geographic
+    except Exception:
+        return epsg in _KNOWN_GEOGRAPHIC_EPSG_FALLBACK
+
 
 def gpu_available() -> bool:
     """True iff cupy imports AND a CUDA device is actually usable.
@@ -223,7 +249,7 @@ def make_minimal_tiff(
         add_doubles(33922, [0.0, 0.0, 0.0, ox, oy, 0.0])  # ModelTiepoint
 
     if epsg is not None:
-        if epsg == 4326 or (4000 <= epsg < 5000):
+        if _is_geographic(epsg):
             model_type, key_id = 2, 2048
         else:
             model_type, key_id = 1, 3072
