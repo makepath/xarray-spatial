@@ -117,7 +117,13 @@ def _build_da(
 
 
 def _pick_sentinel(dtype: np.dtype) -> float | int:
-    """Pick a nodata sentinel that fits the dtype."""
+    """Pick a nodata sentinel that fits the dtype.
+
+    The signed-int branch is unreachable from the current DTYPES list
+    (only ``uint16`` and ``float32``) but is kept for the eventual case
+    where the matrix grows. Dead branches in a helper are cheap and the
+    intent is clearer than special-casing the current matrix here.
+    """
     dt = np.dtype(dtype)
     if dt.kind == "f":
         return -9999.0
@@ -192,7 +198,7 @@ def _try_cog_validate(path: str) -> None:
         )
         return
 
-    warnings, errors, _details = validate_cloud_optimized_geotiff.validate(
+    _warns, errors, _details = validate_cloud_optimized_geotiff.validate(
         path, full_check=True,
     )
     assert not errors, f"GDAL validator errors: {errors}"
@@ -207,7 +213,16 @@ def _try_cog_validate(path: str) -> None:
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("codec", STABLE_CODECS)
 def test_codec_dtype_bands_roundtrip(tmp_path, codec, dtype, bands):
-    """Stable codec round-trip via rasterio: base pixels byte-exact, georef survives."""
+    """Stable codec round-trip via rasterio: base pixels byte-exact, georef survives.
+
+    Contracts asserted per row:
+    - rasterio.open succeeds and reports a tiled COG.
+    - Band count and dtype survive.
+    - Base pixels are byte-exact (stable codecs are lossless).
+    - Overview decimation factors survive.
+    - CRS and transform survive.
+    - IFDs sit before any tile data block (COG layout).
+    """
     arr = _make_data(dtype, bands=bands, height=64, width=64)
     da = _build_da(arr, raster_type="area", crs=4326)
 
@@ -249,7 +264,7 @@ def test_codec_dtype_bands_roundtrip(tmp_path, codec, dtype, bands):
         assert src.crs is not None and src.crs.to_epsg() == 4326, (
             f"CRS round-trip failed: got {src.crs}"
         )
-        assert src.transform.is_identity is False, (
+        assert not src.transform.is_identity, (
             "transform should not be identity for a georeferenced raster"
         )
     # COG layout invariant
@@ -376,6 +391,52 @@ def test_overviews_explicit_levels(tmp_path):
     _assert_ifds_before_data(path)
 
 
+@pytest.mark.parametrize("resampling", ["mean", "nearest"])
+def test_overview_pixels_match_expected(tmp_path, resampling):
+    """Overview pixel values agree with a hand-computed 2x decimation.
+
+    Uses a deterministic base array so we can predict the level-1 overview
+    in pure numpy. ``mean`` reduces each 2x2 block to its mean; ``nearest``
+    keeps the upper-left pixel of each block. The writer should produce
+    overviews that match within float tolerance (lossless codec on the
+    base, deterministic block reducer on the overview).
+    """
+    base = _make_data(np.float32, bands=1, height=64, width=64)
+    da = _build_da(base, raster_type="area", crs=4326)
+
+    path = str(tmp_path / f"2292_ovpix_{resampling}.tif")
+    to_geotiff(
+        da, path,
+        compression="deflate", cog=True, tile_size=16,
+        overview_levels=[2], overview_resampling=resampling,
+    )
+
+    if resampling == "mean":
+        # Block-mean 2x2 -> (32, 32). Promote to float64 for the reduction
+        # so the comparison is not biased by float32 round-off in the
+        # intermediate sum, then cast back to match what the reader
+        # returns.
+        b = base.astype(np.float64).reshape(32, 2, 32, 2).mean(axis=(1, 3))
+        expected_ov = b.astype(np.float32)
+    else:  # nearest
+        # Upper-left pixel of each 2x2 block.
+        expected_ov = base[::2, ::2]
+
+    with rasterio.open(path, OVERVIEW_LEVEL=0) as ov:
+        actual = ov.read(1)
+    assert actual.shape == expected_ov.shape, (
+        f"{resampling}: expected overview shape {expected_ov.shape}, "
+        f"got {actual.shape}"
+    )
+    # Tolerance: the writer's mean reducer accumulates in float64 internally
+    # but the on-disk result is float32; comparing against our hand-computed
+    # float32 expected leaves <= 1 ULP of slack per cell.
+    np.testing.assert_allclose(
+        actual, expected_ov, rtol=1e-5, atol=1e-5,
+        err_msg=f"{resampling} overview pixels diverged from expected",
+    )
+
+
 def test_overviews_auto_generated(tmp_path):
     """``overview_levels=None`` with cog=True auto-generates a pyramid."""
     arr = _make_data(np.float32, bands=1, height=128, width=128)
@@ -392,7 +453,10 @@ def test_overviews_auto_generated(tmp_path):
         assert len(ovs) >= 1, f"expected at least one overview, got {ovs}"
         # Auto-generated pyramid: every level is a power of two, strictly
         # increasing, and large enough that the next halving would not fall
-        # below the tile_size of 32.
+        # below the tile_size of 32. The bitwise test below is the classic
+        # power-of-two check: ``o & (o - 1) == 0`` is True iff ``o`` has a
+        # single set bit. The ``o >= 2`` guard rules out the false-positive
+        # at ``o == 0``.
         assert all((o & (o - 1)) == 0 and o >= 2 for o in ovs), (
             f"auto overviews should be powers of two >= 2, got {ovs}"
         )
