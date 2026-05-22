@@ -261,6 +261,12 @@ def read_geotiff_dask(source: str, *,
             if sidecar is not None:
                 from .._sidecar import close_sidecar
                 close_sidecar(sidecar)
+        # ``http_header`` carries the sidecar's ``TIFFHeader`` when
+        # ``used_sidecar`` was True (``_parse_cog_http_meta`` swaps it
+        # so ``byte_order`` matches the file the per-chunk range GETs
+        # land on). Pass that through to the per-chunk decode step so a
+        # mixed-endian base / ``.ovr`` pair decodes against the right
+        # endianness. Issue #2314.
         http_meta = (http_header, http_ifd)
         if http_ifd.orientation != 1:
             raise ValueError(
