@@ -35,7 +35,7 @@ from .._runtime import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _gpu_fallb
 from .._validation import (_validate_3d_writer_dims, _validate_no_rotated_affine,
                            _validate_nodata_arg, _validate_tile_size_arg,
                            _validate_writer_spatial_shape, validate_write_metadata)
-from .._writer import write
+from .._writer import _COG_REQUIRES_TILED_MSG, write
 from .gpu import write_geotiff_gpu
 
 
@@ -141,7 +141,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         Codecs without a level concept (lzw, packbits, jpeg) accept any
         value and ignore it.
     tiled : bool
-        Use tiled layout (default True).
+        Use tiled layout (default True). Incompatible with ``cog=True``
+        because the COG specification requires a tiled internal layout;
+        passing ``cog=True, tiled=False`` raises ``ValueError`` (#2312).
     tile_size : int
         Tile size in pixels (default 256). Must be a positive multiple
         of 16 when ``tiled=True``; this is a TIFF 6 spec requirement
@@ -160,7 +162,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         Advanced: COG output materialises the full array because
         overview pyramids need it, and the all-IFDs-at-file-start layout
         only round-trips through readers that honour the COG layout
-        contract. Write as Cloud Optimized GeoTIFF.
+        contract. Write as Cloud Optimized GeoTIFF. Requires
+        ``tiled=True`` (the default): the COG specification mandates a
+        tiled internal layout, so ``cog=True, tiled=False`` raises
+        ``ValueError`` (#2312).
     overview_levels : list[int] or None
         Advanced: overview pyramids are an optional COG feature; the
         decimation factors and resampling choice affect downstream
@@ -570,14 +575,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # apply in one line. The defense-in-depth gate in ``_writer._write``
     # catches direct callers that bypass this wrapper.
     if cog and not tiled:
-        raise ValueError(
-            "cog=True requires tiled=True: the COG specification "
-            "mandates a tiled internal layout, so a strip-layout file "
-            "cannot be a valid Cloud Optimized GeoTIFF. Pass tiled=True "
-            "(or omit tiled, which defaults to True) to write a COG, or "
-            "set cog=False to write a non-COG strip TIFF. See issue "
-            "#2312."
-        )
+        raise ValueError(_COG_REQUIRES_TILED_MSG)
 
     # tile_size only applies to tiled output; warn if the caller passed a
     # non-default size alongside strip mode (it would otherwise be silently
