@@ -36,9 +36,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import http.server
-import os
 import socket
-import tempfile
 import threading
 from unittest.mock import patch
 
@@ -51,12 +49,12 @@ import pytest
 # under test do not depend on rasterio at runtime.
 rasterio = pytest.importorskip("rasterio")
 
-from xrspatial.geotiff._reader import read_to_array  # noqa: E402
-from xrspatial.geotiff import _reader as _reader_mod  # noqa: E402
 from xrspatial.geotiff import _decode as _decode_mod  # noqa: E402
-
+from xrspatial.geotiff import _reader as _reader_mod  # noqa: E402
+from xrspatial.geotiff._reader import read_to_array  # noqa: E402
 
 # Local-strip helpers -------------------------------------------------------
+
 
 def _write_sparse_stripped_large(
     path: str,

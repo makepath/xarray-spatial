@@ -25,7 +25,6 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-
 TAG_PHOTOMETRIC = 262
 TYPE_SHORT = 3
 

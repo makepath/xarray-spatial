@@ -17,8 +17,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff import _writer as writer_mod
+from xrspatial.geotiff import to_geotiff
 
 
 def _make_float32(h: int = 8, w: int = 8) -> xr.DataArray:

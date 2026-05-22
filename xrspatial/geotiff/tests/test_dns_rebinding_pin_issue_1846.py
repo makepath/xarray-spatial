@@ -27,7 +27,6 @@ import pytest
 from xrspatial.geotiff import UnsafeURLError
 from xrspatial.geotiff import _reader as _reader_mod
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -331,10 +330,8 @@ class TestRedirectRevalidates:
 
         # Use the existing _pool slot for mocking (matches the rest of
         # the SSRF tests in this codebase).
-        from xrspatial.geotiff.tests.test_ssrf_hardening_1664 import (
-            _MockPool as _SsrfMockPool,
-            _MockPoolResponse as _SsrfResp,
-        )
+        from xrspatial.geotiff.tests.test_ssrf_hardening_1664 import _MockPool as _SsrfMockPool
+        from xrspatial.geotiff.tests.test_ssrf_hardening_1664 import _MockPoolResponse as _SsrfResp
         src._pool = _SsrfMockPool([
             _SsrfResp(302, location='http://attacker.test/inner.tif'),
         ])

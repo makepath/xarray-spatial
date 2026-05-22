@@ -16,17 +16,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-
 fsspec = pytest.importorskip("fsspec")
 
 from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
-from xrspatial.geotiff._reader import (  # noqa: E402
-    MAX_CLOUD_BYTES_DEFAULT,
-    CloudSizeLimitError,
-    _MAX_CLOUD_BYTES_SENTINEL,
-    _resolve_max_cloud_bytes,
-    read_to_array,
-)
+from xrspatial.geotiff._reader import _MAX_CLOUD_BYTES_SENTINEL  # noqa: E402
+from xrspatial.geotiff._reader import MAX_CLOUD_BYTES_DEFAULT  # noqa: E402
+from xrspatial.geotiff._reader import (CloudSizeLimitError, _resolve_max_cloud_bytes,  # noqa: E402
+                                       read_to_array)
 
 
 def _put_in_memory_fs(path: str, payload: bytes) -> None:

@@ -4,25 +4,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._geotags import (
-    GeoInfo,
-    GeoTransform,
-    build_geo_tags,
-    extract_geo_info,
-    GEOKEY_GEOGRAPHIC_TYPE,
-    GEOKEY_MODEL_TYPE,
-    GEOKEY_PROJECTED_CS_TYPE,
-    GEOKEY_RASTER_TYPE,
-    MODEL_TYPE_GEOGRAPHIC,
-    MODEL_TYPE_PROJECTED,
-    RASTER_PIXEL_IS_AREA,
-    TAG_GEO_KEY_DIRECTORY,
-    TAG_GDAL_NODATA,
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
-)
 from xrspatial.geotiff._errors import RotatedTransformError
+from xrspatial.geotiff._geotags import (GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_PROJECTED_CS_TYPE,
+                                        MODEL_TYPE_GEOGRAPHIC, MODEL_TYPE_PROJECTED,
+                                        TAG_GDAL_NODATA, TAG_GEO_KEY_DIRECTORY,
+                                        TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT, GeoTransform,
+                                        build_geo_tags, extract_geo_info)
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
+
 from .conftest import make_minimal_tiff
 
 
@@ -185,6 +174,7 @@ class TestModelTypeFromEPSG:
         than an explicit error.
         """
         import builtins
+
         from xrspatial.geotiff._errors import UnknownCRSModelTypeError
 
         real_import = builtins.__import__
@@ -231,10 +221,10 @@ class TestModelTypeFromEPSG:
         date). The fallback set covers a small vetted allowlist;
         anything else should raise rather than guess.
         """
-        from xrspatial.geotiff._errors import UnknownCRSModelTypeError
-
         # Patch CRS.from_epsg to simulate a missing DB entry.
         import pyproj
+
+        from xrspatial.geotiff._errors import UnknownCRSModelTypeError
 
         def boom(code):
             raise pyproj.exceptions.CRSError(f"simulated unknown code {code}")

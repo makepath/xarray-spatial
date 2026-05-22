@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from xrspatial.geotiff import read_vrt
-from xrspatial.geotiff import GeoTIFFFallbackWarning
+from xrspatial.geotiff import GeoTIFFFallbackWarning, read_vrt
 
 
 def _write_missing_source_vrt(path):
@@ -48,4 +47,3 @@ def test_read_vrt_missing_sources_validates_policy(tmp_path):
 
     with pytest.raises(ValueError, match="missing_sources"):
         read_vrt(str(vrt), missing_sources='ignore')
-

@@ -120,8 +120,9 @@ def test_block_reduce_cubic_no_nodata_unchanged():
 def test_block_reduce_cubic_nodata_unset_is_zoom():
     """nodata=None goes through the original zoom path, no prefilter change."""
     pytest.importorskip("scipy")
-    from xrspatial.geotiff._writer import _block_reduce_2d
     from scipy.ndimage import zoom
+
+    from xrspatial.geotiff._writer import _block_reduce_2d
 
     arr = np.linspace(0.0, 1.0, 64, dtype=np.float32).reshape(8, 8)
     out = _block_reduce_2d(arr, 'cubic', nodata=None)
@@ -132,7 +133,7 @@ def test_block_reduce_cubic_nodata_unset_is_zoom():
 def test_to_geotiff_cog_cubic_nodata_round_trip(tmp_path):
     """End-to-end: writing a COG with cubic + nodata produces a clean overview."""
     pytest.importorskip("scipy")
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _flat_with_corner_nan()
     da = xr.DataArray(arr, dims=['y', 'x'])
@@ -159,7 +160,7 @@ def test_to_geotiff_cog_cubic_nodata_round_trip(tmp_path):
 def test_to_geotiff_cog_cubic_no_nodata_round_trip(tmp_path):
     """Regression guard: cubic without nodata still produces the same overview."""
     pytest.importorskip("scipy")
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = np.arange(256, dtype=np.float32).reshape(16, 16)
     da = xr.DataArray(arr, dims=['y', 'x'])
@@ -192,8 +193,9 @@ def test_block_reduce_cubic_inf_nodata_is_masked():
 def test_block_reduce_cubic_nan_sentinel_skips_mask():
     """nodata=NaN is a no-op (matches the existing nan-pass-through gate)."""
     pytest.importorskip("scipy")
-    from xrspatial.geotiff._writer import _block_reduce_2d
     from scipy.ndimage import zoom
+
+    from xrspatial.geotiff._writer import _block_reduce_2d
 
     arr = np.linspace(0.0, 1.0, 64, dtype=np.float32).reshape(8, 8)
     out = _block_reduce_2d(arr, 'cubic', nodata=np.nan)
@@ -213,6 +215,7 @@ def test_gpu_block_reduce_cubic_falls_back_to_cpu():
     """GPU cubic must route through the CPU helper and return cupy data."""
     pytest.importorskip("scipy")
     import cupy
+
     from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
     from xrspatial.geotiff._writer import _block_reduce_2d
 
@@ -232,7 +235,8 @@ def test_to_geotiff_cog_cubic_nodata_gpu_round_trip(tmp_path):
     """End-to-end GPU writer: cubic + nodata produces a clean overview."""
     pytest.importorskip("scipy")
     import cupy
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _flat_with_corner_nan()
     da = xr.DataArray(cupy.asarray(arr), dims=['y', 'x'])
@@ -258,7 +262,8 @@ def test_gpu_cpu_cubic_overview_bytes_match(tmp_path):
     """CPU and GPU writers produce the same cubic overview pixels."""
     pytest.importorskip("scipy")
     import cupy
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _flat_with_corner_nan()
     cpu_da = xr.DataArray(arr, dims=['y', 'x'])

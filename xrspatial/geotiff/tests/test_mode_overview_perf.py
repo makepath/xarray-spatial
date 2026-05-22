@@ -35,9 +35,9 @@ def _mode_resample_reference(arr2d):
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.int16,
-                                    np.int32, np.uint32, np.int64])
+                                   np.int32, np.uint32, np.int64])
 @pytest.mark.parametrize("shape", [(16, 16), (17, 19), (100, 101),
-                                    (1, 1), (2, 2), (3, 3), (64, 65)])
+                                   (1, 1), (2, 2), (3, 3), (64, 65)])
 def test_bit_exact_match_reference(dtype, shape):
     rng = np.random.default_rng(seed=42)
     info = np.iinfo(dtype)

@@ -23,11 +23,7 @@ import warnings
 
 import pytest
 
-from xrspatial.geotiff import (
-    GeoTIFFFallbackWarning,
-    _geotiff_strict_mode,
-    _wkt_to_epsg,
-)
+from xrspatial.geotiff import GeoTIFFFallbackWarning, _geotiff_strict_mode, _wkt_to_epsg
 from xrspatial.geotiff._geotags import _epsg_to_wkt
 
 
@@ -319,8 +315,7 @@ def test_read_geotiff_gpu_env_var_promotes_to_strict(monkeypatch, tmp_path):
     import numpy as np
     import xarray as xr
 
-    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
-    from xrspatial.geotiff import _gpu_decode
+    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu, to_geotiff
 
     # 1. Write a small valid TIF so the metadata parse succeeds and we
     # reach the GPU decode stage.

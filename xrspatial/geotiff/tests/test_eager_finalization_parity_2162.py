@@ -346,6 +346,7 @@ def test_miniswhite_post_inversion_sentinel_parity(tmp_path):
     land on the same NaN positions and the same lifecycle attrs.
     """
     import tifffile
+
     # uint8 + nodata=0; MinIsWhite inverts the stored value to 255
     # before masking, and 255 is the post-inversion sentinel.
     stored = np.array([[0, 100, 200], [50, 0, 255]], dtype=np.uint8)
@@ -388,6 +389,7 @@ def test_multiband_stripped_parity(tmp_path):
 
     path = str(tmp_path / 'eager_parity_2179_multiband.tif')
     from xrspatial.geotiff import to_geotiff
+
     # Stripped (tiled=False) routes the GPU read through the
     # CPU-fallback eager site, which is one of the three sites this
     # PR migrated.

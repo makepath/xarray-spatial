@@ -19,24 +19,12 @@ import pytest
 from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._dtypes import LONG, SHORT, numpy_to_tiff_dtype
-from xrspatial.geotiff._header import (
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_PHOTOMETRIC,
-    TAG_PREDICTOR,
-    TAG_ROWS_PER_STRIP,
-    TAG_SAMPLE_FORMAT,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_STRIP_OFFSETS,
-)
+from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_IMAGE_LENGTH,
+                                       TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC, TAG_PREDICTOR,
+                                       TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL,
+                                       TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS)
 from xrspatial.geotiff._validation import _validate_predictor_sample_format
-from xrspatial.geotiff._writer import (
-    _assemble_standard_layout,
-    _write_stripped,
-)
+from xrspatial.geotiff._writer import _assemble_standard_layout, _write_stripped
 
 
 def _build_predictor3_uint32_tiff(arr: np.ndarray) -> bytes:

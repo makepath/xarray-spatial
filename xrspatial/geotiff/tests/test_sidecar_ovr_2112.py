@@ -31,7 +31,6 @@ from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._sidecar import find_sidecar, load_sidecar
 
-
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parent
     / "golden_corpus"

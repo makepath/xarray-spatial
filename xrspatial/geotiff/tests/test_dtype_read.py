@@ -69,9 +69,8 @@ class TestDtypeEager:
         result = open_geotiff(path, dtype=None)
         assert result.dtype == np.float64
 
-
     def test_int_with_nodata_float_to_int_raises(self, tmp_path):
-        """uint16 file with nodata: nodata masking promotes to float64, so float->int validation fires."""
+        """uint16 file with nodata: nodata masking promotes to float64, so float->int validation fires."""  # noqa: E501
         arr = np.array([[1, 2], [3, 9999]], dtype=np.uint16)
         y = np.linspace(40.0, 41.0, 2)
         x = np.linspace(-105.0, -104.0, 2)
@@ -104,7 +103,7 @@ class TestDtypeDask:
             open_geotiff(path, dtype='int32', chunks=40)
 
     def test_int_with_nodata_float_to_int_raises_dask(self, tmp_path):
-        """uint16 file with nodata: nodata masking promotes to float64, so float->int validation fires."""
+        """uint16 file with nodata: nodata masking promotes to float64, so float->int validation fires."""  # noqa: E501
         arr = np.array([[1, 2], [3, 9999]], dtype=np.uint16)
         y = np.linspace(40.0, 41.0, 2)
         x = np.linspace(-105.0, -104.0, 2)

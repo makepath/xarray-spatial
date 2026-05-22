@@ -22,9 +22,8 @@ def test_apply_nodata_mask_gpu_with_presence_not_importable_2208():
     # #2207 routed all GPU eager sites through _finalize_eager_read;
     # the helper had zero remaining callers.
     with pytest.raises(ImportError):
-        from xrspatial.geotiff._backends._gpu_helpers import (  # noqa: F401
-            _apply_nodata_mask_gpu_with_presence,
-        )
+        from xrspatial.geotiff._backends._gpu_helpers import \
+            _apply_nodata_mask_gpu_with_presence  # noqa: F401
 
 
 def test_apply_nodata_mask_gpu_still_present_2208():

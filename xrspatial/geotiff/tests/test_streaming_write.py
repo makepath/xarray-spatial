@@ -1,6 +1,5 @@
 """Tests for streaming TIFF write from dask-backed DataArrays (#1084)."""
 import numpy as np
-import os
 import pytest
 import xarray as xr
 

@@ -7,7 +7,7 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import to_geotiff, read_vrt
+from xrspatial.geotiff import read_vrt, to_geotiff
 
 
 def _write_vrt(vrt_path, source_name):

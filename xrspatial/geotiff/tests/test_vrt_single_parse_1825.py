@@ -145,7 +145,7 @@ def test_parsed_vrt_is_picklable(single_tile_vrt_1825):
     (cloudpickle is a strict superset).
     """
     vrt_path, _ = single_tile_vrt_1825
-    from xrspatial.geotiff._vrt import parse_vrt, _read_vrt_xml
+    from xrspatial.geotiff._vrt import _read_vrt_xml, parse_vrt
 
     xml_str = _read_vrt_xml(vrt_path)
     vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
@@ -180,7 +180,7 @@ def test_chunked_matches_eager_after_refactor(two_by_two_vrt_1825):
 
 
 def test_no_path_containment_revalidation_per_chunk(monkeypatch,
-                                                   two_by_two_vrt_1825):
+                                                    two_by_two_vrt_1825):
     """Per-chunk tasks skip the source-path containment check.
 
     ``parse_vrt`` is the only place that resolves and validates source
@@ -229,11 +229,8 @@ def test_parsed_kwarg_does_not_mutate_caller_holes(single_tile_vrt_1825):
     object). Pin that ``parsed.holes`` stays untouched.
     """
     vrt_path, _ = single_tile_vrt_1825
-    from xrspatial.geotiff._vrt import (
-        _read_vrt_xml,
-        parse_vrt,
-        read_vrt as _read_vrt_internal,
-    )
+    from xrspatial.geotiff._vrt import _read_vrt_xml, parse_vrt
+    from xrspatial.geotiff._vrt import read_vrt as _read_vrt_internal
 
     xml_str = _read_vrt_xml(vrt_path)
     vrt_dir = os.path.dirname(os.path.abspath(vrt_path))

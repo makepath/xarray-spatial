@@ -49,7 +49,7 @@ def _gpu_available() -> bool:
 _HAS_GPU = _gpu_available()
 
 # nvCOMP is the entry point that exercises this code path.
-from xrspatial.geotiff import _gpu_decode
+from xrspatial.geotiff import _gpu_decode  # noqa: E402
 
 needs_cupy = pytest.mark.skipif(
     not _HAS_GPU, reason="cupy + CUDA required"
@@ -103,7 +103,7 @@ def test_gpu_write_roundtrip_after_batched_compress(compression):
     buffer would scramble tile order, which a round-trip equality
     check picks up immediately.
     """
-    from xrspatial.geotiff import write_geotiff_gpu, open_geotiff
+    from xrspatial.geotiff import open_geotiff, write_geotiff_gpu
 
     rng = np.random.default_rng(seed=1712)
     arr_cpu = rng.random((512, 512), dtype=np.float32)
@@ -143,7 +143,7 @@ def test_gpu_write_zero_tile_edge_case():
     # Instead, exercise the public writer with a tiny single-tile
     # input and confirm the fast path does not crash. Real n_tiles==0
     # never occurs via the writer (every image has at least one tile).
-    from xrspatial.geotiff import write_geotiff_gpu, open_geotiff
+    from xrspatial.geotiff import open_geotiff, write_geotiff_gpu
     arr_gpu = cupy.zeros((32, 32), dtype=cupy.float32)
     darr = xr.DataArray(arr_gpu, dims=["y", "x"])
     with tempfile.TemporaryDirectory(prefix="nvcomp_batch_1712_") as td:

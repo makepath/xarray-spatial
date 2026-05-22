@@ -13,12 +13,7 @@ import struct
 
 import pytest
 
-from xrspatial.geotiff._header import (
-    TAG_IMAGE_WIDTH,
-    TIFFHeader,
-    parse_all_ifds,
-    parse_header,
-)
+from xrspatial.geotiff._header import TAG_IMAGE_WIDTH, TIFFHeader, parse_all_ifds, parse_header
 
 
 def _build_single_ifd_with_next_offset_1863(next_offset: int,

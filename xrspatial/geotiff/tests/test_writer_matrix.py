@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import os
 import platform
-import stat
-import sys
 
 import numpy as np
 import pytest
@@ -23,7 +21,6 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import write
-
 
 # ---------------------------------------------------------------------------
 # T-5: dtype x compression matrix

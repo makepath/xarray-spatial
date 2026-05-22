@@ -21,12 +21,8 @@ from __future__ import annotations
 
 import pytest
 
-from xrspatial.geotiff._geotags import (
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
-    _extract_transform,
-    _validate_tiepoint_consistency,
-)
+from xrspatial.geotiff._geotags import (TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
+                                        _extract_transform, _validate_tiepoint_consistency)
 from xrspatial.geotiff._header import IFD, IFDEntry
 
 

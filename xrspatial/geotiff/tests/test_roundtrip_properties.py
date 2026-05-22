@@ -74,18 +74,11 @@ import xarray as xr
 
 hypothesis = pytest.importorskip("hypothesis")
 
-from hypothesis import (  # noqa: E402
-    HealthCheck,
-    assume,
-    event,
-    given,
-    settings,
-)
+from hypothesis import HealthCheck, assume, event, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Profile registration

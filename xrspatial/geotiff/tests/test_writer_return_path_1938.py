@@ -27,11 +27,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
+from xrspatial.geotiff import to_geotiff, write_geotiff_gpu, write_vrt
 
 
 def _gpu_available() -> bool:

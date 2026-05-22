@@ -32,12 +32,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    read_vrt,
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
+from xrspatial.geotiff import read_vrt, to_geotiff, write_geotiff_gpu, write_vrt
 
 
 def _build_source_tif(tmp_path, name='src.tif'):

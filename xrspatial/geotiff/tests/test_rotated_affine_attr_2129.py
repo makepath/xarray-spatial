@@ -25,14 +25,9 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff._attrs import (
-    _ATTRS_CONTRACT_VERSION,
-    _populate_attrs_from_geo_info,
-    attrs_to_metadata,
-    geo_info_to_metadata,
-)
+from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, _populate_attrs_from_geo_info,
+                                      attrs_to_metadata, geo_info_to_metadata)
 from xrspatial.geotiff._geotags import GeoInfo, GeoTransform
-
 
 _ROTATED_TUPLE = (8.66, -5.0, 100.0, 5.0, 8.66, 200.0)
 

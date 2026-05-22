@@ -18,7 +18,6 @@ import pytest
 from xrspatial.geotiff import UnsafeURLError
 from xrspatial.geotiff import _reader as _reader_mod
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

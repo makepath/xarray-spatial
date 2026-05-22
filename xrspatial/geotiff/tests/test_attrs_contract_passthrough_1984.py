@@ -45,7 +45,6 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-
 # Full set of pass-through keys defined by the contract. Contract v2
 # (issue #2016) trimmed this set to the three TIFF-tag-derived keys
 # that actually round-trip via ``_merge_friendly_extra_tags``.
@@ -123,8 +122,11 @@ _PASSTHROUGH_CASES = [
     # by-equality after the round-trip; if the writer ever rescales 8-bit
     # input to 16-bit (or vice versa), update this fixture rather than
     # the contract.
-    ('colormap',          4326,  tuple([0] * 256 + [128] * 256 + [255] * 256),
-                                                    'reconstructible'),
+    (
+        'colormap', 4326,
+        tuple([0] * 256 + [128] * 256 + [255] * 256),
+        'reconstructible',
+    ),
 ]
 
 

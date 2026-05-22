@@ -32,10 +32,10 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._writer import _block_reduce_2d
 
-
 # ---------------------------------------------------------------------------
 # Helper-level: _block_reduce_2d cubic + integer + sentinel
 # ---------------------------------------------------------------------------
+
 
 def _make_block_with_nodata_corner(dtype, nodata_value, size=64,
                                    corner=16, fill=100):

@@ -105,6 +105,7 @@ def test_no_holes_attr_when_all_sources_read(clear_strict_env, tmp_path):
     cheap completeness check."""
     import numpy as np
     import xarray as xr
+
     from xrspatial.geotiff import to_geotiff
 
     # Write a real source the VRT can reference.

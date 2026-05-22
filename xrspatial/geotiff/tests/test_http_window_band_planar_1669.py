@@ -37,10 +37,10 @@ from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._reader import _read_cog_http, read_to_array
 from xrspatial.geotiff._writer import write
 
-
 # ---------------------------------------------------------------------------
 # Loopback HTTP server with Range support
 # ---------------------------------------------------------------------------
+
 
 class _RangeHandler(http.server.BaseHTTPRequestHandler):
     """Serve a single in-memory bytes payload with HTTP Range support."""

@@ -38,10 +38,7 @@ import xarray as xr
 
 rasterio = pytest.importorskip('rasterio')
 
-from xrspatial.geotiff.tests.golden_corpus._oracle import (  # noqa: E402
-    compare_to_oracle,
-)
-
+from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 FIXTURE_DIR = Path(__file__).resolve().parent / 'fixtures'
 

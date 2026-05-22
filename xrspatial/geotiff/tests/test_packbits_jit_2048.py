@@ -15,11 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from xrspatial.geotiff._compression import (
-    packbits_compress,
-    packbits_decompress,
-)
-
+from xrspatial.geotiff._compression import packbits_compress, packbits_decompress
 
 # -- Bit-exact decode against known PackBits encodings -----------------------
 

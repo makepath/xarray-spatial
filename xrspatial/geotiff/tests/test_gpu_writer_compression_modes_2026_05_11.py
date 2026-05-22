@@ -31,11 +31,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    write_geotiff_gpu,
-)
-from xrspatial.geotiff import _gpu_decode
+from xrspatial.geotiff import _gpu_decode, open_geotiff, write_geotiff_gpu
 from xrspatial.geotiff._header import parse_header, parse_ifd
 
 
@@ -273,7 +269,7 @@ def test_write_geotiff_gpu_jpeg_uint8_single_band_roundtrip(tmp_path):
 
 @_nvjpeg_only
 def test_write_geotiff_gpu_jpeg_uses_nvjpeg_when_available(tmp_path,
-                                                          monkeypatch):
+                                                           monkeypatch):
     """When libnvjpeg is present the writer must hit ``_nvjpeg_batch_encode``,
     not silently fall back to Pillow.
 

@@ -14,10 +14,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._geotags import (
-    _build_gdal_metadata_xml,
-    _parse_gdal_metadata,
-)
+from xrspatial.geotiff._geotags import _build_gdal_metadata_xml, _parse_gdal_metadata
 
 
 class TestBuildGdalMetadataXMLEscape:
@@ -108,6 +105,7 @@ class TestToGeotiffMetadataRoundTrip:
 
     def test_to_geotiff_special_chars_round_trip(self, tmp_path):
         import xarray as xr
+
         from xrspatial.geotiff import open_geotiff, to_geotiff
 
         arr = np.ones((4, 4), dtype=np.float32)

@@ -20,15 +20,8 @@ from __future__ import annotations
 
 import inspect
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    read_vrt,
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
+from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
+                               to_geotiff, write_geotiff_gpu, write_vrt)
 
 
 def _annotation(fn, param_name):
@@ -208,6 +201,7 @@ def test_open_geotiff_bytesio_source_runtime(tmp_path):
     drops the file-like branch fails CI. See issue #1754.
     """
     import io
+
     import numpy as np
     import xarray as xr
 

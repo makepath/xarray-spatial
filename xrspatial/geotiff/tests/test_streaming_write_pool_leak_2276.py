@@ -37,9 +37,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff import _writer as writer_mod
-
+from xrspatial.geotiff import to_geotiff
 
 # Re-use the writer's own constant so the test does not silently drift
 # if the prefix ever changes on the writer side. ``_writer`` exposes

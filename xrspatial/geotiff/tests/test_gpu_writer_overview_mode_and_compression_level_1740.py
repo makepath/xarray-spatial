@@ -38,13 +38,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    to_geotiff,
-    write_geotiff_gpu,
-)
+from xrspatial.geotiff import open_geotiff, to_geotiff, write_geotiff_gpu
 from xrspatial.geotiff._writer import _block_reduce_2d
-
 
 # ---------------------------------------------------------------------------
 # GPU gating

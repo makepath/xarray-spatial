@@ -59,7 +59,7 @@ def _arr_with_full_nan_block():
 
 def test_cpu_cog_overview_mean_ignores_sentinel(tmp_path):
     """CPU writer: overview 'mean' must skip sentinel pixels (issue #1613)."""
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _arr_with_partial_nan()
     da = xr.DataArray(arr, dims=['y', 'x'])
@@ -75,7 +75,7 @@ def test_cpu_cog_overview_mean_ignores_sentinel(tmp_path):
 
 def test_cpu_cog_overview_mean_partial_block(tmp_path):
     """CPU writer: partial-NaN 2x2 block averages over the finite cells only."""
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _arr_with_full_nan_block()
     da = xr.DataArray(arr, dims=['y', 'x'])
@@ -108,7 +108,7 @@ def test_cpu_cog_overview_mean_partial_block(tmp_path):
 def test_cpu_cog_overview_aggregations_ignore_sentinel(
         tmp_path, method, expected):
     """min/max/median overview reductions must also skip the sentinel."""
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _arr_with_partial_nan()
     da = xr.DataArray(arr, dims=['y', 'x'])
@@ -123,7 +123,7 @@ def test_cpu_cog_overview_aggregations_ignore_sentinel(
 
 def test_cpu_cog_overview_mean_no_nodata_passes(tmp_path):
     """When nodata is unset the reducer behaves as before."""
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = np.arange(16, dtype=np.float32).reshape(4, 4)
     da = xr.DataArray(arr, dims=['y', 'x'])
@@ -212,7 +212,8 @@ def test_block_reduce_2d_all_nan_block_does_not_warn():
 def test_gpu_cog_overview_mean_ignores_sentinel(tmp_path):
     """GPU writer: overview 'mean' must skip sentinel pixels (issue #1613)."""
     import cupy
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr_cpu = _arr_with_partial_nan()
     arr_gpu = cupy.asarray(arr_cpu)
@@ -232,6 +233,7 @@ def test_gpu_cog_overview_mean_ignores_sentinel(tmp_path):
 def test_gpu_block_reduce_nodata_kwarg_directly():
     """Exercise the GPU helper directly so a regression is caught fast."""
     import cupy
+
     from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
 
     arr_cpu = _arr_with_partial_nan()
@@ -250,6 +252,7 @@ def test_gpu_block_reduce_nodata_kwarg_directly():
 def test_gpu_block_reduce_inf_nodata_is_masked():
     """GPU helper mirrors the CPU isnan-only gate for nodata=inf."""
     import cupy
+
     from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
 
     arr_cpu = np.array([
@@ -269,7 +272,8 @@ def test_gpu_block_reduce_inf_nodata_is_masked():
 def test_gpu_cog_overview_matches_cpu(tmp_path):
     """CPU and GPU overview pyramids must agree on nodata-masked data."""
     import cupy
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _arr_with_partial_nan()
 

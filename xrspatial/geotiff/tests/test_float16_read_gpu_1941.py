@@ -30,7 +30,6 @@ import importlib.util
 
 import numpy as np
 import pytest
-import xarray as xr
 
 
 def _gpu_available() -> bool:

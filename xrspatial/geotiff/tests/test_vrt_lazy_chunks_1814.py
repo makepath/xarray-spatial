@@ -30,11 +30,10 @@ from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
 
 def _gpu_available() -> bool:
     try:
-        import cupy  # noqa: F401
+        import cupy
     except ImportError:
         return False
     try:
-        import cupy
         return bool(cupy.cuda.is_available())
     except Exception:
         return False
@@ -120,7 +119,7 @@ def test_chunks_builds_dask_array_with_multiple_blocks(two_by_two_vrt):
 
 
 def test_chunks_is_lazy_does_not_call_internal_reader(monkeypatch,
-                                                     two_by_two_vrt):
+                                                      two_by_two_vrt):
     """Construction-time call count of the internal VRT reader is zero;
     after ``.compute()`` it equals the chunk count.
     """
@@ -288,6 +287,7 @@ def test_chunked_propagates_vrt_holes_when_source_missing(two_by_two_vrt):
     under #2265, so this test exercises the explicit ``'warn'`` opt-in.
     """
     import warnings
+
     from xrspatial.geotiff import GeoTIFFFallbackWarning
     from xrspatial.geotiff._reader import _mmap_cache
 

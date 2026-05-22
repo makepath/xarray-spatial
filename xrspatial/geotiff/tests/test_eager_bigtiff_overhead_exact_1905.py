@@ -26,15 +26,11 @@ from __future__ import annotations
 import struct
 
 import numpy as np
-import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._dtypes import ASCII, LONG, SHORT
-from xrspatial.geotiff._writer import (
-    _build_ifd,
-    _compute_classic_ifd_overhead,
-)
+from xrspatial.geotiff._dtypes import ASCII, LONG
+from xrspatial.geotiff._writer import _build_ifd, _compute_classic_ifd_overhead
 
 
 def _make_4x4_float32(

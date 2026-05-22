@@ -25,7 +25,7 @@ def _warn_or_raise_gpu_fallback(stage: str, exc: BaseException) -> bool:
     chooses its own next step (typically another decoder or CPU
     fallback).
     """
-    from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+    from . import GeoTIFFFallbackWarning, _geotiff_strict_mode
     if _geotiff_strict_mode():
         return True
     warnings.warn(
@@ -35,6 +35,7 @@ def _warn_or_raise_gpu_fallback(stage: str, exc: BaseException) -> bool:
         stacklevel=3,
     )
     return False
+
 
 #: Fraction of free GPU memory we're willing to allocate in a single call.
 #: Above this, raise MemoryError up-front so the caller gets an actionable
@@ -80,6 +81,7 @@ def _check_gpu_memory(required_bytes: int, what: str = "tile buffer") -> None:
             "read_geotiff_dask(..., chunks=...) or freeing GPU memory "
             "with cupy.get_default_memory_pool().free_all_blocks()."
         )
+
 
 def _xp_byteswap(arr):
     """Return *arr* with each element's bytes physically reversed.
@@ -313,15 +315,10 @@ def _lzw_decode_tiles_kernel(
 
 
 # Type aliases for Numba CUDA local arrays
-from numba import (
-    int32 as numba_int32,
-    uint8 as numba_uint8,
-    uint16 as numba_uint16,
-    uint32 as numba_uint32,
-    uint64 as numba_uint64,
-    int64 as numba_int64,
-)
-
+from numba import int32 as numba_int32  # noqa: E402
+from numba import int64 as numba_int64  # noqa: E402
+from numba import uint8 as numba_uint8  # noqa: E402
+from numba import uint32 as numba_uint32  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Deflate/inflate decode kernel -- one thread block per tile
@@ -368,7 +365,7 @@ def _inflate_read_bits(src, src_start, src_len, bit_pos, n):
 
 @cuda.jit(device=True)
 def _inflate_build_table(lengths, n_codes, table, max_bits,
-                          overflow_codes, overflow_lens, n_overflow):
+                         overflow_codes, overflow_lens, n_overflow):
     """Build a Huffman decode table from code lengths.
 
     Codes <= max_bits go into the fast table: table[reversed_code] = (sym << 5) | length.
@@ -425,7 +422,7 @@ def _inflate_build_table(lengths, n_codes, table, max_bits,
 
 @cuda.jit(device=True)
 def _inflate_decode_symbol(src, src_start, src_len, bit_pos, table, max_bits,
-                            overflow_codes, overflow_lens, n_overflow):
+                           overflow_codes, overflow_lens, n_overflow):
     """Decode one Huffman symbol. Fast table for short codes, overflow scan for long."""
     # Peek 15 bits (max deflate code length)
     peek = numba_int64(0)
@@ -968,8 +965,8 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
         return []
 
     try:
-        import kvikio
         import cupy
+        import kvikio
     except ImportError:
         return None
 
@@ -1146,6 +1143,7 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
 
     # Direct ctypes nvCOMP C API
     import ctypes
+
     import cupy
 
     class _NvcompDecompOpts(ctypes.Structure):
@@ -1350,7 +1348,7 @@ _NVJPEG_BACKEND_GPU_HYBRID = 2
 
 
 def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
-                              samples):
+                             samples):
     """Try batch JPEG decode via nvJPEG. Returns CuPy buffer or None.
 
     Decodes all JPEG tiles on GPU in one batched call. Falls back to None
@@ -1361,6 +1359,7 @@ def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
         return None
 
     import ctypes
+
     import cupy
 
     try:
@@ -1459,7 +1458,7 @@ def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
 
 
 def _nvjpeg_batch_encode(d_tile_bufs, tile_width, tile_height, samples,
-                          quality=75):
+                         quality=75):
     """Encode tiles as JPEG on GPU via nvJPEG. Returns list of bytes or None.
 
     Each tile must be a CuPy uint8 array of interleaved pixel data.
@@ -1469,11 +1468,10 @@ def _nvjpeg_batch_encode(d_tile_bufs, tile_width, tile_height, samples,
         return None
 
     import ctypes
+
     import cupy
 
     try:
-        n_tiles = len(d_tile_bufs)
-
         nvjpeg_handle = ctypes.c_void_p()
         create_fn = getattr(lib, 'nvjpegCreateSimple', None)
         if create_fn is None:
@@ -1694,6 +1692,7 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
     See issue #1659.
     """
     import ctypes
+
     import cupy
 
     lib = _get_nvcomp()
@@ -1839,10 +1838,10 @@ def _gpu_predictor2_encode(d_decomp, tile_width, total_rows, dtype, samples):
 
 
 def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
-                                    tile_width, tile_height,
-                                    image_width, image_height,
-                                    predictor, dtype, samples, tile_bytes,
-                                    byte_order: str = '<'):
+                                  tile_width, tile_height,
+                                  image_width, image_height,
+                                  predictor, dtype, samples, tile_bytes,
+                                  byte_order: str = '<'):
     """Apply predictor decode and tile assembly on GPU."""
     import cupy
 
@@ -2439,6 +2438,7 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
         Compressed tile data on CPU, ready for file assembly.
     """
     import ctypes
+
     import cupy
 
     lib = _get_nvcomp()
@@ -2546,8 +2546,8 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
         # stream and is the dominant cost on the deflate path).
         adler_checksums = None
         if compression in (8, 32946):
-            import zlib
             import struct
+            import zlib
             adler_checksums = [None] * n_tiles
             if n_tiles > 0:
                 d_contig = cupy.empty(n_tiles * tile_bytes, dtype=cupy.uint8)
@@ -2656,7 +2656,7 @@ def _get_nvjpeg2k():
 
 
 def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
-                                dtype, samples):
+                               dtype, samples):
     """Try decoding JPEG 2000 tiles via nvJPEG2000. Returns list of CuPy arrays or None.
 
     Each tile is decoded independently. The decoded pixels are returned as a
@@ -2844,13 +2844,14 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
 
 
 def _nvjpeg2k_batch_encode(d_tile_bufs, tile_width, tile_height,
-                            dtype, samples, n_tiles, lossless=True):
+                           dtype, samples, n_tiles, lossless=True):
     """Encode tiles as JPEG 2000 via nvJPEG2000. Returns list of bytes or None."""
     lib = _get_nvjpeg2k()
     if lib is None:
         return None
 
     import ctypes
+
     import cupy
 
     try:

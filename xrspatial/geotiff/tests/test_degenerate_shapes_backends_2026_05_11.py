@@ -29,18 +29,13 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    to_geotiff,
-    write_geotiff_gpu,
-)
-
+from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, to_geotiff,
+                               write_geotiff_gpu)
 
 # ---------------------------------------------------------------------------
 # GPU gating: matches the predicate the rest of the geotiff test suite uses.
 # ---------------------------------------------------------------------------
+
 
 def _gpu_available() -> bool:
     if importlib.util.find_spec("cupy") is None:

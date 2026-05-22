@@ -22,13 +22,7 @@ import re
 
 import pytest
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    read_vrt,
-)
-
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt
 
 READ_ENTRY_POINTS = (
     open_geotiff,

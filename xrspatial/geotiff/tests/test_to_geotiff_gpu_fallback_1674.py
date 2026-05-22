@@ -32,10 +32,10 @@ import xarray as xr
 
 from xrspatial.geotiff import GeoTIFFFallbackWarning
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def clear_strict_env(monkeypatch):
@@ -254,7 +254,6 @@ def test_auto_detected_gpu_fallback_warns(
     passed.
     """
     from xrspatial.geotiff import to_geotiff
-
     # Synthesise a "CuPy-looking" DataArray via _is_gpu_data's hook.
     # Easiest: patch _is_gpu_data to True in the writer module that
     # actually calls it (the to_geotiff body lives in _writers.eager
@@ -330,8 +329,8 @@ def test_explicit_gpu_false_then_true_uses_explicit_template(
     not from the resolved ``use_gpu`` value -- so passing ``gpu=True``
     on numpy data still attributes the fallback to the explicit flag.
     """
-    from xrspatial.geotiff import to_geotiff
     from xrspatial import geotiff as g
+    from xrspatial.geotiff import to_geotiff
 
     # Even if auto-detect would say "not GPU", the explicit request
     # should drive the wording.

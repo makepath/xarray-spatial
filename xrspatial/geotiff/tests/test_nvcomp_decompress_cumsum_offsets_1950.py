@@ -130,6 +130,7 @@ def test_nvcomp_batch_decompress_roundtrip_1950():
         pytest.skip("CUDA device not available")
 
     import xarray as xr
+
     from xrspatial.geotiff import open_geotiff, to_geotiff
 
     rng = np.random.RandomState(1950)

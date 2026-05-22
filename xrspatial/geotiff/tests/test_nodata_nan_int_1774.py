@@ -30,7 +30,6 @@ import struct
 import numpy as np
 import pytest
 
-
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask
 
 

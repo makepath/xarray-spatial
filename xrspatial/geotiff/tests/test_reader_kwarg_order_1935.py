@@ -21,13 +21,7 @@ from __future__ import annotations
 
 import inspect
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    read_vrt,
-)
-
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt
 
 # Canonical order taken from ``open_geotiff``'s public signature.
 _CANONICAL_ORDER = (

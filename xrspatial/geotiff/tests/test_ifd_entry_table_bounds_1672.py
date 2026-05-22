@@ -23,12 +23,7 @@ import struct
 import pytest
 
 from xrspatial.geotiff._dtypes import LONG
-from xrspatial.geotiff._header import (
-    TAG_IMAGE_WIDTH,
-    parse_header,
-    parse_ifd,
-)
-
+from xrspatial.geotiff._header import TAG_IMAGE_WIDTH, parse_header, parse_ifd
 
 # --- Classic TIFF ---
 

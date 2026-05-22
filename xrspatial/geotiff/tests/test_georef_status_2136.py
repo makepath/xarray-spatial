@@ -30,18 +30,12 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff
-from xrspatial.geotiff._errors import RotatedTransformError
-from xrspatial.geotiff._attrs import (
-    GEOREF_STATUS_CRS_ONLY,
-    GEOREF_STATUS_FULL,
-    GEOREF_STATUS_NONE,
-    GEOREF_STATUS_ROTATED_DROPPED,
-    GEOREF_STATUS_TRANSFORM_ONLY,
-    _ATTRS_CONTRACT_VERSION,
-    _compute_georef_status,
-    _compute_georef_status_from_parts,
-)
+from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GEOREF_STATUS_CRS_ONLY,
+                                      GEOREF_STATUS_FULL, GEOREF_STATUS_NONE,
+                                      GEOREF_STATUS_ROTATED_DROPPED, GEOREF_STATUS_TRANSFORM_ONLY,
+                                      _compute_georef_status, _compute_georef_status_from_parts)
 from xrspatial.geotiff._coords import _NO_GEOREF_KEY
+from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._geotags import GeoInfo, GeoTransform
 
 tifffile = pytest.importorskip("tifffile")
@@ -49,10 +43,8 @@ tifffile = pytest.importorskip("tifffile")
 # Reuse the rotated-TIFF writer from the #2115 test rather than copying
 # the byte layout. The function is private to that test module but
 # the test runner sees the package directory so the import succeeds.
-from xrspatial.geotiff.tests.test_allow_rotated_geotiff_2115 import (  # noqa: E402
-    _write_rotated_tiff,
-)
-
+from xrspatial.geotiff.tests.test_allow_rotated_geotiff_2115 import \
+    _write_rotated_tiff  # noqa: E402
 
 _STATUS_KEY = 'georef_status'
 

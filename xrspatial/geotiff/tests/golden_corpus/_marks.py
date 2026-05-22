@@ -36,7 +36,6 @@ from typing import Any
 
 import pytest
 
-
 _FAST_TAG = "fast"
 
 

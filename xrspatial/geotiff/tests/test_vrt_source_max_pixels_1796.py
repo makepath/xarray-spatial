@@ -19,7 +19,7 @@ import os
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import to_geotiff, read_vrt
+from xrspatial.geotiff import read_vrt, to_geotiff
 
 
 def test_tiny_vrt_with_huge_srcrect_now_reads_minimally(tmp_path):

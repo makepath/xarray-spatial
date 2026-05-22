@@ -61,6 +61,7 @@ def test_no_nvcomp_lib_returns_none(monkeypatch):
     deeper in the function.
     """
     import cupy
+
     from xrspatial.geotiff import _gpu_decode
 
     monkeypatch.setattr(_gpu_decode, "_get_nvcomp", lambda: None)
@@ -79,6 +80,7 @@ def test_memory_guard_runs_with_full_decomp_size(monkeypatch):
     removed the guard would surface as an opaque CUDA OOM instead.
     """
     import cupy
+
     from xrspatial.geotiff import _gpu_decode
 
     seen = {"total_bytes": None, "what": None, "called": False}
@@ -175,6 +177,7 @@ def test_no_orphan_decomp_buffers_after_call(monkeypatch):
     and inspecting it confirms ``result.size == n_tiles * tile_bytes``.
     """
     import cupy
+
     from xrspatial.geotiff import _gpu_decode
 
     # Stub the nvCOMP entry points so the decompress "succeeds" without an

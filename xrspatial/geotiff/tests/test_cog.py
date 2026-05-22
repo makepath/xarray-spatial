@@ -6,9 +6,11 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._header import parse_header, parse_all_ifds
+from xrspatial.geotiff._geotags import GeoTransform
+from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._writer import write
-from xrspatial.geotiff._geotags import GeoTransform, extract_geo_info
+
+from .conftest import gpu_available
 
 
 class TestCOGWriter:
@@ -277,8 +279,6 @@ class TestCOGPublicAPIOverviews:
         assert len(ifds) >= 2
 
 
-from .conftest import gpu_available
-
 _HAS_GPU = gpu_available()
 
 
@@ -338,6 +338,7 @@ class TestGPUCOGOverviews:
     def test_gpu_make_overview_values(self):
         """GPU overview block-reduce matches CPU for simple case."""
         import cupy
+
         from xrspatial.geotiff._gpu_decode import make_overview_gpu
         from xrspatial.geotiff._writer import _make_overview
 

@@ -21,19 +21,11 @@ The tests below pin the four entry-point contracts:
 """
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import (
-    GeoTIFFAmbiguousMetadataError,
-    MixedBandMetadataError,
-    open_geotiff,
-    read_geotiff_dask,
-    read_vrt,
-    to_geotiff,
-)
+from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, MixedBandMetadataError, open_geotiff,
+                               read_geotiff_dask, read_vrt, to_geotiff)
 from xrspatial.geotiff._writer import write
 
 

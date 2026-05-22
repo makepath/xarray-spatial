@@ -19,7 +19,6 @@ import types
 
 import pytest
 
-
 _CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
 
 
@@ -72,6 +71,7 @@ def test_preflight_returns_silently_when_device_present(monkeypatch):
 
     _install_cupy_stub(monkeypatch, get_device_count=lambda: 1)
     import cupy
+
     # Should not raise.
     gpu_mod._preflight_cuda_runtime(cupy)
 
@@ -85,6 +85,7 @@ def test_read_geotiff_gpu_preflight_surface(monkeypatch, tmp_path):
     """
     import numpy as np
     import xarray as xr
+
     from xrspatial.geotiff import to_geotiff
     from xrspatial.geotiff._backends.gpu import read_geotiff_gpu
 
@@ -121,6 +122,7 @@ def test_preflight_when_real_cupy_present(monkeypatch):
     works the same way -- the import in read_geotiff_gpu finds the
     patched attribute."""
     import cupy
+
     from xrspatial.geotiff._backends import gpu as gpu_mod
 
     class FakeCudaError(RuntimeError):

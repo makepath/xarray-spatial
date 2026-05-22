@@ -31,11 +31,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    NonUniformCoordsError,
-    open_geotiff,
-    to_geotiff,
-)
+from xrspatial.geotiff import NonUniformCoordsError, open_geotiff, to_geotiff
 from xrspatial.geotiff._coords import _NO_GEOREF_KEY, _has_no_georef_marker
 from xrspatial.geotiff._writer import write
 

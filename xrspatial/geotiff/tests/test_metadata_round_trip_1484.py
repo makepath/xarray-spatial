@@ -23,10 +23,10 @@ import pytest
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._writer import write
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_palette_uint8_tiff(path, pixels, palette_rgb16):
     """Write an 8-bit, 256-entry palette TIFF directly (no writer support
@@ -285,6 +285,7 @@ class TestTransformCrsRoundTrip:
         """Backward compat: passing a WKT string in attrs['crs'] still works
         on the write side. open_geotiff turns it back into an int EPSG."""
         import xarray as xr
+
         from xrspatial.geotiff._geotags import _epsg_to_wkt
         wkt = _epsg_to_wkt(4326)
         if wkt is None:

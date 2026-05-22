@@ -19,10 +19,7 @@ import inspect
 
 import pytest
 
-from xrspatial.geotiff._attrs import (
-    _finalize_lazy_read_attrs,
-    _validate_read_geo_info,
-)
+from xrspatial.geotiff._attrs import _finalize_lazy_read_attrs, _validate_read_geo_info
 from xrspatial.geotiff._errors import MixedBandMetadataError
 
 

@@ -37,21 +37,10 @@ import math
 
 import numpy as np
 
-from ._compression import (
-    COMPRESSION_DEFLATE,
-    COMPRESSION_JPEG,
-    COMPRESSION_JPEG2000,
-    COMPRESSION_LERC,
-    COMPRESSION_LZ4,
-    COMPRESSION_LZW,
-    COMPRESSION_NONE,
-    COMPRESSION_PACKBITS,
-    COMPRESSION_ZSTD,
-    compress,
-    fp_predictor_encode,
-    jpeg_compress,
-    predictor_encode,
-)
+from ._compression import (COMPRESSION_DEFLATE, COMPRESSION_JPEG, COMPRESSION_JPEG2000,
+                           COMPRESSION_LERC, COMPRESSION_LZ4, COMPRESSION_LZW, COMPRESSION_NONE,
+                           COMPRESSION_PACKBITS, COMPRESSION_ZSTD, compress, fp_predictor_encode,
+                           jpeg_compress, predictor_encode)
 from ._header import TAG_PHOTOMETRIC
 from ._write_layout import BO
 
@@ -435,8 +424,8 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
     # ``deflate`` (libdeflate) binding holds the GIL during compress, so
     # 8 threads run effectively serially through it. Sequential callers
     # still get libdeflate's per-call speedup (~3x).
-    from concurrent.futures import ThreadPoolExecutor
     import os
+    from concurrent.futures import ThreadPoolExecutor
 
     n_workers = min(num_strips, os.cpu_count() or 4)
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -622,8 +611,8 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
         return rel_offsets, byte_counts, tiles
 
     # Parallel tile compression -- zlib/zstd/LZW all release the GIL
-    from concurrent.futures import ThreadPoolExecutor
     import os
+    from concurrent.futures import ThreadPoolExecutor
 
     n_workers = min(n_tiles, os.cpu_count() or 4)
     tile_indices = [(tr, tc) for tr in range(tiles_down)

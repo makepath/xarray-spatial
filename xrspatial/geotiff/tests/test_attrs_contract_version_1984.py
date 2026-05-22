@@ -29,8 +29,8 @@ import re
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import open_geotiff, read_vrt
 from xrspatial.geotiff import _attrs as _attrs_module
+from xrspatial.geotiff import open_geotiff, read_vrt
 from xrspatial.geotiff._attrs import _ATTRS_CONTRACT_VERSION
 
 tifffile = pytest.importorskip("tifffile")

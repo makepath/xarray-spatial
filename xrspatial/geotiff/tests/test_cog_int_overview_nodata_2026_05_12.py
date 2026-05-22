@@ -192,7 +192,7 @@ def test_cpu_int_cog_overview_not_poisoned(_int_cog_inputs, method):
     sentinel, 100, 100) cast back to uint16. The reader can't mask them
     because they don't equal 65535.
     """
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     da, tmp_path = _int_cog_inputs
     path = str(tmp_path / f'int_overview_{method}_2026_05_12.tif')
@@ -210,7 +210,7 @@ def test_cpu_int_cog_overview_not_poisoned(_int_cog_inputs, method):
 
 def test_cpu_int_cog_overview_3band_not_poisoned(tmp_path):
     """3-band integer COG: same fix applies via the 3D _make_overview branch."""
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     H, W = 256, 256
     data = np.full((H, W, 3), 100, dtype=np.uint16)
@@ -239,7 +239,7 @@ def test_cpu_int_cog_overview_3band_not_poisoned(tmp_path):
 
 def test_cpu_int_cog_no_nodata_unchanged(tmp_path):
     """No nodata kwarg: integer overview path stays as it was."""
-    from xrspatial.geotiff import to_geotiff, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     H, W = 256, 256
     data = np.full((H, W), 100, dtype=np.uint16)
@@ -279,6 +279,7 @@ def test_cpu_int_cog_no_nodata_unchanged(tmp_path):
 def test_gpu_block_reduce_int_sentinel_masked(method, dtype, sentinel):
     """GPU mirror of the CPU integer sentinel-mask fix."""
     import cupy
+
     from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
 
     arr = _int_block_partial_sentinel(sentinel, dtype)
@@ -304,8 +305,9 @@ def test_gpu_cpu_int_overview_byte_match(method):
     sentinels -- two backends disagreeing on identical input.
     """
     import cupy
-    from xrspatial.geotiff._writer import _block_reduce_2d
+
     from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
+    from xrspatial.geotiff._writer import _block_reduce_2d
 
     arr = _int_block_partial_sentinel(-9999, np.int16)
     cpu_out = _block_reduce_2d(arr, method, nodata=-9999)

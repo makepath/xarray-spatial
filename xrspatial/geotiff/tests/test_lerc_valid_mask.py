@@ -25,11 +25,8 @@ import pytest
 
 lerc = pytest.importorskip("lerc")
 
-from xrspatial.geotiff._compression import (  # noqa: E402
-    LERC_AVAILABLE,
-    lerc_decompress,
-    lerc_decompress_with_mask,
-)
+from xrspatial.geotiff._compression import (LERC_AVAILABLE, lerc_decompress,  # noqa: E402
+                                            lerc_decompress_with_mask)
 
 pytestmark = pytest.mark.skipif(
     not LERC_AVAILABLE,
@@ -145,8 +142,8 @@ class TestLercTiffRoundTripWithMask:
     """End-to-end TIFF round-trips that exercise the reader's mask merge."""
 
     def test_float32_nan_nodata(self, tmp_path, lerc_writer_with_mask):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
         # Mask positions (0, 1) and (5, 4); the rest stays valid.
@@ -174,8 +171,8 @@ class TestLercTiffRoundTripWithMask:
                         f"value mismatch at ({r},{c})"
 
     def test_float32_sentinel_nodata(self, tmp_path, lerc_writer_with_mask):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
         invalid_positions = {(0, 1), (3, 3), (7, 7)}
@@ -201,8 +198,8 @@ class TestLercTiffRoundTripWithMask:
                     assert out[r, c] == arr[r, c]
 
     def test_uint16_sentinel_nodata(self, tmp_path, lerc_writer_with_mask):
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         arr = (np.arange(1, 65, dtype=np.uint16) * 100).reshape(8, 8)
         invalid_positions = {(0, 1), (4, 4)}
@@ -228,8 +225,8 @@ class TestLercTiffRoundTripWithMask:
 
     def test_no_mask_roundtrip_bitexact(self, tmp_path):
         """Sanity: an all-valid LERC file (no mask) still round-trips."""
-        from xrspatial.geotiff._writer import write
         from xrspatial.geotiff._reader import read_to_array
+        from xrspatial.geotiff._writer import write
 
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / "lerc_no_mask.tif")

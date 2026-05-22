@@ -21,14 +21,12 @@ rasterio = pytest.importorskip('rasterio')
 
 from rasterio.transform import Affine, from_origin  # noqa: E402
 
-from xrspatial.geotiff.tests.golden_corpus._oracle import (  # noqa: E402
-    compare_to_oracle,
-)
-
+from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
+
 
 def _write_tiff(
     path: Path,
@@ -806,9 +804,7 @@ def test_masked_nodata_out_of_range_sentinel_does_not_mask() -> None:
     The test calls the helper directly with synthesised inputs to
     confirm the guard fires.
     """
-    from xrspatial.geotiff.tests.golden_corpus._oracle import (
-        _normalise_for_masked_nodata,
-    )
+    from xrspatial.geotiff.tests.golden_corpus._oracle import _normalise_for_masked_nodata
 
     ref_pixels = np.array(
         [[1, 2, 65535], [4, 5, 6]], dtype=np.uint16,
@@ -986,9 +982,7 @@ def test_normalise_axis_order_helper_directly() -> None:
     A genuine 3-D mismatch (e.g. different band counts on either side)
     falls through unchanged.
     """
-    from xrspatial.geotiff.tests.golden_corpus._oracle import (
-        _normalise_axis_order,
-    )
+    from xrspatial.geotiff.tests.golden_corpus._oracle import _normalise_axis_order
 
     a2 = np.arange(12).reshape(3, 4)
     a3_lead_single = a2[np.newaxis]  # (1, 3, 4)

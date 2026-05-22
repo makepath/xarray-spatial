@@ -7,15 +7,12 @@ Issue #1482:
 """
 from __future__ import annotations
 
-import os
-
 import numpy as np
-import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._geotags import extract_geo_info
+from xrspatial.geotiff._header import parse_all_ifds, parse_header
 
 from .conftest import make_minimal_tiff
 

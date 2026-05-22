@@ -1,9 +1,20 @@
 """GeoTIFF tag interpretation: CRS, affine transform, GeoKeys."""
 from __future__ import annotations
 
-import struct
 from dataclasses import dataclass, field
 
+from ._dtypes import resolve_bits_per_sample
+from ._errors import RotatedTransformError, UnknownCRSModelTypeError
+from ._header import (IFD, TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES,
+                      TAG_GDAL_METADATA, TAG_GDAL_NODATA, TAG_GEO_ASCII_PARAMS,
+                      TAG_GEO_DOUBLE_PARAMS, TAG_GEO_KEY_DIRECTORY, TAG_IMAGE_LENGTH,
+                      TAG_IMAGE_WIDTH, TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
+                      TAG_MODEL_TRANSFORMATION, TAG_NEW_SUBFILE_TYPE, TAG_ORIENTATION,
+                      TAG_PHOTOMETRIC, TAG_PLANAR_CONFIG, TAG_PREDICTOR, TAG_RESOLUTION_UNIT,
+                      TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL,
+                      TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS, TAG_SUB_IFDS, TAG_TILE_BYTE_COUNTS,
+                      TAG_TILE_LENGTH, TAG_TILE_OFFSETS, TAG_TILE_WIDTH, TAG_X_RESOLUTION,
+                      TAG_Y_RESOLUTION)
 
 # Stamped by the reader on arrays read from files that carry no
 # GeoTIFF transform tags (ModelTransformation, ModelPixelScale, or
@@ -14,27 +25,6 @@ from dataclasses import dataclass, field
 # constants) so both ``_coords`` and ``_attrs`` can import it
 # without a cycle. See issue #2120.
 _NO_GEOREF_KEY = '_xrspatial_no_georef'
-
-from ._header import (
-    IFD,
-    TAG_NEW_SUBFILE_TYPE,
-    TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION, TAG_PHOTOMETRIC,
-    TAG_STRIP_OFFSETS, TAG_ORIENTATION, TAG_SAMPLES_PER_PIXEL,
-    TAG_ROWS_PER_STRIP, TAG_STRIP_BYTE_COUNTS,
-    TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
-    TAG_PLANAR_CONFIG, TAG_RESOLUTION_UNIT,
-    TAG_PREDICTOR, TAG_COLORMAP, TAG_SUB_IFDS,
-    TAG_TILE_WIDTH, TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
-    TAG_EXTRA_SAMPLES,
-    TAG_SAMPLE_FORMAT, TAG_GDAL_METADATA, TAG_GDAL_NODATA,
-    TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
-    TAG_MODEL_TRANSFORMATION,
-    TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
-)
-from ._dtypes import resolve_bits_per_sample
-from ._errors import RotatedTransformError, UnknownCRSModelTypeError
 
 # ImageDescription tag (270). Captured for round-trip but not managed
 # by the writer -- it flows through extra_tags pass-through.
@@ -202,6 +192,7 @@ def _parse_gdal_metadata(xml_str: str) -> dict:
     Per-band items are stored as ``{(name, band_int): value}``.
     """
     import xml.etree.ElementTree as ET
+
     from ._safe_xml import safe_fromstring
     result = {}
     try:
@@ -238,7 +229,8 @@ def _build_gdal_metadata_xml(meta: dict) -> str:
     the document or inject extra elements. Sample indices are emitted
     from an ``int(...)`` cast and need no escaping. See issue #1614.
     """
-    from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
+    from xml.sax.saxutils import escape as _xml_escape
+    from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
     def _text(v) -> str:
         if v is None:
@@ -276,7 +268,8 @@ def _epsg_to_wkt(epsg: int) -> str | None:
         return CRS.from_epsg(epsg).to_wkt()
     except Exception as e:
         import warnings
-        from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+
+        from . import GeoTIFFFallbackWarning, _geotiff_strict_mode
         if _geotiff_strict_mode():
             raise
         warnings.warn(
@@ -403,7 +396,8 @@ def _synthesize_user_defined_wkt(
         return crs.to_wkt()
     except Exception as exc:
         import warnings
-        from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+
+        from . import GeoTIFFFallbackWarning, _geotiff_strict_mode
         if _geotiff_strict_mode():
             raise
         warnings.warn(
@@ -1057,7 +1051,10 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         has_georef=has_georef,
         crs_epsg=epsg,
         model_type=int(model_type) if isinstance(model_type, (int, float)) else 0,
-        raster_type=int(raster_type) if isinstance(raster_type, (int, float)) else RASTER_PIXEL_IS_AREA,
+        raster_type=(
+            int(raster_type) if isinstance(raster_type, (int, float))
+            else RASTER_PIXEL_IS_AREA
+        ),
         nodata=nodata,
         colormap=colormap,
         x_resolution=ifd.x_resolution,
@@ -1477,7 +1474,6 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         )
 
     # GeoKeyDirectoryTag (34735)
-    geokeys = []
     # Header: version=1, revision=1, minor=0
     num_keys = 1  # at least RasterType
     key_entries = []

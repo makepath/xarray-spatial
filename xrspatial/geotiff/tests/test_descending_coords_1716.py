@@ -8,18 +8,12 @@ for non-standard orientations so the sign survives the round trip.
 """
 from __future__ import annotations
 
-import os
-
 import numpy as np
-import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._geotags import (
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
-    TAG_MODEL_TRANSFORMATION,
-)
+from xrspatial.geotiff._geotags import (TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
+                                        TAG_MODEL_TRANSFORMATION)
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 
 

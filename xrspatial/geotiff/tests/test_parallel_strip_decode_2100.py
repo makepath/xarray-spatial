@@ -20,9 +20,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import _decode as _decode_mod
+from xrspatial.geotiff import _reader as _reader_mod
+from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._reader import read_to_array
 
 

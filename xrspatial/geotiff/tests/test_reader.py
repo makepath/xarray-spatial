@@ -1,16 +1,13 @@
 """Tests for the TIFF reader."""
 from __future__ import annotations
 
-import os
-import tempfile
-
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._reader import read_to_array, _read_strips, _read_tiles
-from xrspatial.geotiff._header import parse_header, parse_all_ifds
 from xrspatial.geotiff._dtypes import tiff_dtype_to_numpy
-from xrspatial.geotiff._geotags import extract_geo_info
+from xrspatial.geotiff._header import parse_all_ifds, parse_header
+from xrspatial.geotiff._reader import _read_strips, _read_tiles, read_to_array
+
 from .conftest import make_minimal_tiff
 
 

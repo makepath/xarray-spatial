@@ -11,16 +11,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._coords import (
-    coords_from_geo_info,
-    coords_from_pixel_geometry,
-    transform_tuple_from_pixel_geometry,
-)
-from xrspatial.geotiff._geotags import (
-    GeoTransform,
-    RASTER_PIXEL_IS_AREA,
-    RASTER_PIXEL_IS_POINT,
-)
+from xrspatial.geotiff._coords import (coords_from_geo_info, coords_from_pixel_geometry,
+                                       transform_tuple_from_pixel_geometry)
+from xrspatial.geotiff._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform
 
 
 class TestCoordsFromPixelGeometry:

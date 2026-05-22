@@ -21,11 +21,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._header import (
-    TAG_PHOTOMETRIC,
-    TAG_SAMPLE_FORMAT,
-    parse_header,
-)
+from xrspatial.geotiff._header import TAG_PHOTOMETRIC, TAG_SAMPLE_FORMAT, parse_header
 
 
 def _da(arr: np.ndarray, attrs_extra=None) -> xr.DataArray:

@@ -217,7 +217,7 @@ def test_gpu_writer_happy_path_still_works(tmp_path):
 
     arr_bf = cupy.arange(3 * 4 * 5, dtype=cupy.uint8).reshape(3, 4, 5)
     da_bf = xr.DataArray(arr_bf, dims=("band", "y", "x"),
-                        attrs={"crs": "EPSG:4326"})
+                         attrs={"crs": "EPSG:4326"})
     p_bf = tmp_path / "tmp_1812_gpu_bf.tif"
     write_geotiff_gpu(da_bf, str(p_bf), crs=4326)
     out_bf = open_geotiff(str(p_bf))
@@ -225,7 +225,7 @@ def test_gpu_writer_happy_path_still_works(tmp_path):
 
     arr_bl = cupy.arange(4 * 5 * 3, dtype=cupy.uint8).reshape(4, 5, 3)
     da_bl = xr.DataArray(arr_bl, dims=("y", "x", "band"),
-                        attrs={"crs": "EPSG:4326"})
+                         attrs={"crs": "EPSG:4326"})
     p_bl = tmp_path / "tmp_1812_gpu_bl.tif"
     write_geotiff_gpu(da_bl, str(p_bl), crs=4326)
     out_bl = open_geotiff(str(p_bl))

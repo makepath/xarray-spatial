@@ -31,11 +31,11 @@ from xrspatial.geotiff._writer import write
 
 
 def _write_two_band_per_band_nodata_vrt(tmp_path, *, dtype_str="UInt16",
-                                       np_dtype=np.uint16,
-                                       band0_sentinel=65535,
-                                       band1_sentinel=65000,
-                                       band0_other=(1, 2, 3),
-                                       band1_other=(7, 8, 9)):
+                                        np_dtype=np.uint16,
+                                        band0_sentinel=65535,
+                                        band1_sentinel=65000,
+                                        band0_other=(1, 2, 3),
+                                        band1_other=(7, 8, 9)):
     """Two single-band integer sources, each with a distinct nodata
     sentinel, exposed as bands 1 and 2 of a hand-rolled VRT.
 

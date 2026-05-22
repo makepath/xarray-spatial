@@ -34,7 +34,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import urllib3
 
-
 # ---------------------------------------------------------------------------
 # Cloud byte budget (eager fsspec reads)
 # ---------------------------------------------------------------------------
@@ -733,12 +732,9 @@ def _build_pinned_connection_classes():
     subclasses override ``_new_conn`` to dial the validated IP directly.
     """
     import socket as _socket
+
     from urllib3.connection import HTTPConnection, HTTPSConnection
-    from urllib3.exceptions import (
-        ConnectTimeoutError,
-        NameResolutionError,
-        NewConnectionError,
-    )
+    from urllib3.exceptions import ConnectTimeoutError, NameResolutionError, NewConnectionError
 
     class _PinnedHTTPConnection(HTTPConnection):
         """``HTTPConnection`` that dials a fixed IP, ignoring DNS.
@@ -834,7 +830,7 @@ def _get_pinned_conn_classes():
 
 
 def _make_pinned_pool(scheme: str, host: str, port: int, pinned_ip: str,
-                     connect_timeout: float, read_timeout: float):
+                      connect_timeout: float, read_timeout: float):
     """Build a urllib3 ConnectionPool whose connections dial *pinned_ip*.
 
     The pool's ``host`` stays the original hostname so the HTTP ``Host``

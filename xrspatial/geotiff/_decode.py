@@ -33,25 +33,11 @@ import sys as _sys
 
 import numpy as np
 
-from ._compression import (
-    COMPRESSION_LERC,
-    decompress,
-    fp_predictor_decode,
-    lerc_decompress_with_mask,
-    predictor_decode,
-    unpack_bits,
-)
+from ._compression import (COMPRESSION_LERC, decompress, fp_predictor_decode,
+                           lerc_decompress_with_mask, predictor_decode, unpack_bits)
 from ._dtypes import SUB_BYTE_BPS, resolve_bits_per_sample
-from ._geotags import (
-    GeoInfo,
-    GeoTransform,
-    RASTER_PIXEL_IS_POINT,
-)
-from ._header import (
-    IFD,
-    TIFFHeader,
-    validate_tile_layout,
-)
+from ._geotags import RASTER_PIXEL_IS_POINT, GeoInfo, GeoTransform
+from ._header import IFD, TIFFHeader, validate_tile_layout
 from ._sources import _max_tile_bytes_from_env
 from ._validation import _validate_predictor_sample_format
 
@@ -76,6 +62,7 @@ def _resolve_max_pixels(value):
         from ._reader import MAX_PIXELS_DEFAULT
         return MAX_PIXELS_DEFAULT
     return value
+
 
 #: Per-tile pixel count at and above which the local and HTTP tile-read paths
 #: spread codec decode across a ``ThreadPoolExecutor``. Below this, pool
@@ -329,12 +316,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     # Layout / validation helpers live in ``_layout`` (issue #2247).
     # Imported lazily so the decode module stays cycle-free against the
     # layout module's lazy import of ``_int_nodata_in_range`` from here.
-    from ._layout import (
-        _check_dimensions,
-        _check_source_dimensions,
-        _has_sparse,
-        _sparse_fill_value,
-    )
+    from ._layout import (_check_dimensions, _check_source_dimensions, _has_sparse,
+                          _sparse_fill_value)
     max_pixels = _resolve_max_pixels(max_pixels)
     width = ifd.width
     height = ifd.height
@@ -559,12 +542,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # the layout module's binding) so tests that monkeypatch
     # ``_reader.MAX_PIXELS_DEFAULT`` keep taking effect on the per-tile
     # path. The function-level helpers come from ``_layout`` directly.
+    from ._layout import _check_dimensions, _has_sparse, _sparse_fill_value
     from ._reader import MAX_PIXELS_DEFAULT
-    from ._layout import (
-        _check_dimensions,
-        _has_sparse,
-        _sparse_fill_value,
-    )
     max_pixels = _resolve_max_pixels(max_pixels)
     width = ifd.width
     height = ifd.height

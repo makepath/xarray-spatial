@@ -23,13 +23,8 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._geotags import (
-    GeoTransform,
-    RASTER_PIXEL_IS_AREA,
-    RASTER_PIXEL_IS_POINT,
-    GeoInfo,
-    extract_geo_info_with_overview_inheritance,
-)
+from xrspatial.geotiff._geotags import (RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoInfo,
+                                        GeoTransform, extract_geo_info_with_overview_inheritance)
 
 
 def _gpu_available() -> bool:

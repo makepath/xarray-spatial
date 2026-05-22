@@ -183,7 +183,7 @@ def test_read_geotiff_gpu_window_bounds_validation(single_band_tiff):
 
 @_gpu_only
 def test_read_geotiff_gpu_band_bounds_validation(multi_band_tiff,
-                                                  single_band_tiff):
+                                                 single_band_tiff):
     """Out-of-range band raises IndexError."""
     multi_path, _ = multi_band_tiff
     single_path, _ = single_band_tiff
@@ -231,6 +231,7 @@ def test_read_geotiff_gpu_stripped_chunks_produces_dask(tmp_path):
     """
     tifffile = pytest.importorskip("tifffile")
     import dask.array as dask_array
+
     from xrspatial.geotiff import read_geotiff_gpu
 
     arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)
@@ -257,6 +258,7 @@ def test_read_geotiff_gpu_stripped_chunks_tuple(tmp_path):
     """Stripped branch accepts the (rh, cw) tuple chunks spec too."""
     tifffile = pytest.importorskip("tifffile")
     import dask.array as dask_array
+
     from xrspatial.geotiff import read_geotiff_gpu
 
     arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)

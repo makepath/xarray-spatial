@@ -9,25 +9,18 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._compression import (
-    COMPRESSION_DEFLATE,
-    COMPRESSION_LZW,
-    COMPRESSION_NONE,
-    compress,
-    decompress,
-    deflate_decompress,
-    lzw_compress,
-    lzw_decompress,
-)
+from xrspatial.geotiff._compression import (COMPRESSION_DEFLATE, COMPRESSION_LZW, COMPRESSION_NONE,
+                                            compress, decompress, deflate_decompress, lzw_compress,
+                                            lzw_decompress)
 from xrspatial.geotiff._dtypes import numpy_to_tiff_dtype, tiff_dtype_to_numpy
-from xrspatial.geotiff._header import parse_all_ifds, parse_header
+from xrspatial.geotiff._header import parse_header
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import write
-
 
 # -----------------------------------------------------------------------
 # Writer: invalid inputs
 # -----------------------------------------------------------------------
+
 
 class TestWriteInvalidInputs:
     """Writer should reject or gracefully handle bad inputs."""
@@ -256,7 +249,7 @@ class TestReadCorruptFiles:
 
     def test_empty_file(self, tmp_path):
         path = str(tmp_path / 'empty.tif')
-        with open(path, 'wb') as f:
+        with open(path, 'wb'):
             pass  # 0 bytes
         with pytest.raises((ValueError, Exception)):
             read_to_array(path)

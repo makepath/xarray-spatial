@@ -16,8 +16,8 @@ import pytest
 
 tifffile = pytest.importorskip("tifffile")
 
-from xrspatial.geotiff import read_geotiff_dask
-from xrspatial.geotiff._reader import MAX_PIXELS_DEFAULT
+from xrspatial.geotiff import read_geotiff_dask  # noqa: E402
+from xrspatial.geotiff._reader import MAX_PIXELS_DEFAULT  # noqa: E402
 
 
 def _write_oversized(path, *, h: int, w: int) -> None:

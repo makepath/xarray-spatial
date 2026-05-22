@@ -30,8 +30,8 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._writer import write
 from xrspatial.geotiff._geotags import GeoTransform
+from xrspatial.geotiff._writer import write
 
 
 def _gpu_available() -> bool:
@@ -274,10 +274,6 @@ def test_overview_with_own_nodata_keeps_own_value(tmp_path):
     own value" branch by simulating it directly against
     ``extract_geo_info_with_overview_inheritance``.
     """
-    from xrspatial.geotiff._geotags import (
-        extract_geo_info_with_overview_inheritance,
-        GeoInfo, GeoTransform as _GT,
-    )
     # Drive the helper with fake IFD objects + a fake base IFD to
     # avoid having to hand-pack a TIFF with re-declared overview
     # nodata. The helper only inspects ``ifd.subfile_type`` /
@@ -285,6 +281,9 @@ def test_overview_with_own_nodata_keeps_own_value(tmp_path):
     # ``extract_geo_info``; we monkeypatch that to return controlled
     # GeoInfo instances.
     import xrspatial.geotiff._geotags as _gt_mod
+    from xrspatial.geotiff._geotags import GeoInfo
+    from xrspatial.geotiff._geotags import GeoTransform as _GT
+    from xrspatial.geotiff._geotags import extract_geo_info_with_overview_inheritance
 
     class _StubIFD:
         def __init__(self, subfile_type, width, height):

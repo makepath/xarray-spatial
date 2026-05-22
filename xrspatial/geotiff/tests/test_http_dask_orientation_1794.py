@@ -78,4 +78,3 @@ def test_http_dask_read_rejects_non_default_orientation(tmp_path, monkeypatch):
     finally:
         httpd.shutdown()
         httpd.server_close()
-

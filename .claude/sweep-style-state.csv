@@ -1,0 +1,2 @@
+module,last_inspected,issue,severity_max,categories_found,notes
+geotiff,2026-05-21,2282,HIGH,1;2;3;4,Bundled 309 flake8 + 22 isort fixes; __init__.py F401 re-exports use # noqa pattern; Cat 5 grep clean.

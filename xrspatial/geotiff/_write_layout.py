@@ -34,48 +34,16 @@ import struct
 import numpy as np
 
 from ._compression import COMPRESSION_NONE
-from ._dtypes import (
-    ASCII,
-    DOUBLE,
-    LONG,
-    LONG8,
-    RATIONAL,
-    SHORT,
-    numpy_to_tiff_dtype,
-)
-from ._geotags import (
-    GeoTransform,
-    TAG_GDAL_NODATA,
-    TAG_GEO_ASCII_PARAMS,
-    TAG_GEO_KEY_DIRECTORY,
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
-    TAG_MODEL_TRANSFORMATION,
-    build_geo_tags,
-)
-from ._header import (
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-    TAG_EXTRA_SAMPLES,
-    TAG_GDAL_METADATA,
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_NEW_SUBFILE_TYPE,
-    TAG_PHOTOMETRIC,
-    TAG_PREDICTOR,
-    TAG_RESOLUTION_UNIT,
-    TAG_ROWS_PER_STRIP,
-    TAG_SAMPLE_FORMAT,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_STRIP_OFFSETS,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS,
-    TAG_TILE_WIDTH,
-    TAG_X_RESOLUTION,
-    TAG_Y_RESOLUTION,
-)
+from ._dtypes import ASCII, DOUBLE, LONG, LONG8, RATIONAL, SHORT, numpy_to_tiff_dtype
+from ._geotags import (TAG_GDAL_NODATA, TAG_GEO_ASCII_PARAMS, TAG_GEO_KEY_DIRECTORY,
+                       TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT, TAG_MODEL_TRANSFORMATION,
+                       GeoTransform, build_geo_tags)
+from ._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES, TAG_GDAL_METADATA,
+                      TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_NEW_SUBFILE_TYPE, TAG_PHOTOMETRIC,
+                      TAG_PREDICTOR, TAG_RESOLUTION_UNIT, TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT,
+                      TAG_SAMPLES_PER_PIXEL, TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS,
+                      TAG_TILE_BYTE_COUNTS, TAG_TILE_LENGTH, TAG_TILE_OFFSETS, TAG_TILE_WIDTH,
+                      TAG_X_RESOLUTION, TAG_Y_RESOLUTION)
 
 # Byte order: always write little-endian.
 BO = '<'
@@ -288,7 +256,7 @@ def _assemble_standard_layout(header_size: int,
                 patched_tags.append((tag_id, type_id, count, values))
 
         ifd_bytes, overflow_bytes = _build_ifd(patched_tags, overflow_base,
-                                                bigtiff=bigtiff)
+                                               bigtiff=bigtiff)
 
         output.extend(ifd_bytes)
         output.extend(overflow_bytes)
@@ -370,7 +338,7 @@ def _assemble_cog_layout(header_size: int,
         overflow_base = current_ifd_pos + ifd_block_size
 
         ifd_bytes, overflow_bytes = _build_ifd(patched_tags, overflow_base,
-                                                bigtiff=bigtiff)
+                                               bigtiff=bigtiff)
 
         # Patch next IFD offset
         if level_idx < len(ifd_specs) - 1:
@@ -495,7 +463,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
     Parameters
     ----------
-    pixel_data_parts : list of (array, width, height, relative_offsets, byte_counts, compressed_data)
+    pixel_data_parts : list of (array, width, height, rel_offsets, byte_counts, comp_data)
         One entry per resolution level (full res first, then overviews).
     is_cog : bool
         If True, layout IFDs contiguously at file start (COG layout).
@@ -575,7 +543,8 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
     # Build IFDs for each resolution level
     ifd_specs = []
-    for level_idx, (arr, lw, lh, rel_offsets, byte_counts, comp_data) in enumerate(pixel_data_parts):
+    for level_idx, (arr, lw, lh, rel_offsets, byte_counts, comp_data) in enumerate(
+            pixel_data_parts):
         tags = []
 
         # Mark overview IFDs as reduced-resolution images (TIFF tag 254).
