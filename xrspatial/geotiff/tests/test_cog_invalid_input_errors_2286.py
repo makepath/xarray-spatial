@@ -196,6 +196,26 @@ def test_skewed_transform_affine_attr_raises(tmp_path):
     assert 'rotation/shear' in msg, msg
 
 
+def test_affine_attr_with_unconvertable_b_d_raises(tmp_path):
+    """An attrs['transform'] object that quacks like an Affine (has
+    ``.b`` and ``.d``) but carries non-numeric values for them is
+    refused with a clear ``ValueError``. The fail-closed branch
+    prevents a malformed input from bypassing the rotation/shear gate
+    and falling through to the no-georef path."""
+    class _BogusAffine:
+        b = "not a number"
+        d = 0.0
+    da = _float_da()
+    da.attrs['transform'] = _BogusAffine()
+    p = tmp_path / 'cog_bogus_affine_2301.tif'
+
+    with pytest.raises(ValueError) as exc:
+        to_geotiff(da, str(p), cog=True)
+
+    msg = str(exc.value)
+    assert 'unconvertable' in msg or 'rotation/shear' in msg, msg
+
+
 def test_axis_aligned_affine_attr_still_writes(tmp_path):
     """Sanity guard: an axis-aligned Affine (b=d=0) must keep working.
     Without this row the #2301 hook could regress every legitimate
@@ -334,14 +354,20 @@ def test_conflicting_attrs_crs_and_crs_wkt_raises(tmp_path):
 
 
 def test_crs_kwarg_overrides_attrs_silently(tmp_path):
-    """``crs=`` kwarg overrides the attrs disagreement (the check
-    short-circuits when the kwarg is set). Pinned so a future
-    'stricter' rewrite of the conflict check does not surprise
-    callers that intentionally use the kwarg to clobber stale attrs."""
+    """``crs=`` kwarg overrides the attrs disagreement. The
+    ``_check_write_conflicting_crs`` short-circuit at the top of the
+    check (``if context.get('crs_kwarg') is not None: return``) lets
+    the write proceed even when the two attrs would otherwise
+    disagree, so callers can intentionally use the kwarg to clobber
+    stale attrs. Pinned here so a future 'stricter' rewrite of the
+    conflict check that drops the short-circuit does not surprise
+    those callers."""
     pytest.importorskip('pyproj')
     da = _float_da()
     da.attrs['crs'] = 4326
-    da.attrs['crs_wkt'] = 'GEOGCS["foo"]'  # unparseable; check no-ops
+    # ``crs_wkt`` value is irrelevant: the check short-circuits on the
+    # kwarg before pyproj parsing ever runs.
+    da.attrs['crs_wkt'] = 'GEOGCS["foo"]'
     p = tmp_path / 'cog_crs_kwarg_override_2301.tif'
 
     to_geotiff(da, str(p), cog=True, crs=3857)
