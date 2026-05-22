@@ -300,11 +300,36 @@ def _assemble_cog_layout(header_size: int,
     total_ifd_size = sum(bs + ov for bs, ov in ifd_blocks)
     pixel_data_start = header_size + total_ifd_size
 
-    # Second pass: pixel data offsets per level
+    # COG block-order requirement (issue #2308): on-disk pixel data must
+    # run smallest-overview first, then progressively larger overviews,
+    # with the main-resolution image's blocks last. ``pixel_data_parts``
+    # arrives in ``[main, ov_factor_2, ov_factor_4, ...]`` order (full
+    # res first, then overviews of increasing decimation), so the
+    # emission order is the overview tail reversed (smallest factor =
+    # largest decimation = last entry, emitted first) followed by index
+    # 0 (main resolution). The IFD chain still walks ``[main, ov1, ov2,
+    # ...]`` -- only the byte-level placement of the tile/strip blocks
+    # changes, which is what external validators like rio-cogeo check.
+    n_parts = len(pixel_data_parts)
+    if n_parts > 1:
+        pixel_emission_order = list(range(n_parts - 1, 0, -1)) + [0]
+    else:
+        # In normal use, _assemble_tiff routes single-IFD outputs to
+        # ``_assemble_standard_layout``; the upstream gate
+        # ``is_cog and len(ifd_specs) > 1`` guarantees n_parts >= 2 here.
+        # The single-entry fallback keeps the helper safe for direct
+        # unit tests that exercise the COG layout with one IFD.
+        pixel_emission_order = [0]
+
+    # Second pass: pixel data offsets per level. We walk the emission
+    # order to accumulate offsets, then store them indexed by the
+    # original level so the third pass can look up each IFD's tile/strip
+    # base directly.
+    level_pixel_offsets = [0] * n_parts
     current_pixel_offset = pixel_data_start
-    level_pixel_offsets = []
-    for _arr, _lw, _lh, rel_offsets, byte_counts, comp_chunks in pixel_data_parts:
-        level_pixel_offsets.append(current_pixel_offset)
+    for emit_idx in pixel_emission_order:
+        _arr, _lw, _lh, _rel, _bc, comp_chunks = pixel_data_parts[emit_idx]
+        level_pixel_offsets[emit_idx] = current_pixel_offset
         current_pixel_offset += sum(len(c) for c in comp_chunks)
 
     # Third pass: build IFDs with correct offsets
@@ -355,8 +380,11 @@ def _assemble_cog_layout(header_size: int,
         output.extend(overflow_bytes)
         current_ifd_pos = len(output)
 
-    # Append all pixel data
-    for _arr, _lw, _lh, _rel_offsets, _byte_counts, comp_chunks in pixel_data_parts:
+    # Append all pixel data in COG-compliant order: smallest overview
+    # first, then progressively larger, with the main resolution image
+    # last (issue #2308).
+    for emit_idx in pixel_emission_order:
+        _arr, _lw, _lh, _rel, _bc, comp_chunks = pixel_data_parts[emit_idx]
         for chunk in comp_chunks:
             output.extend(chunk)
 
