@@ -2780,6 +2780,7 @@ class TestPublicAPI:
             'MixedBandMetadataError',
             'NonUniformCoordsError',
             'RotatedTransformError',
+            'UnknownCRSModelTypeError',
             'UnparseableCRSError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
