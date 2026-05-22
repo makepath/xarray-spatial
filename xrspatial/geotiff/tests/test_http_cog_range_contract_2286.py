@@ -40,7 +40,6 @@ from xrspatial.geotiff import _reader as reader_mod
 from xrspatial.geotiff import read_geotiff_dask
 from xrspatial.geotiff._reader import (
     _HTTPSource,
-    _parse_cog_http_meta,
     _read_cog_http,
     coalesce_ranges,
     split_coalesced_bytes,
@@ -107,17 +106,6 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *_args, **_kwargs):
         pass
-
-
-def _serve(payload: bytes, tag: str = '2286'):
-    handler_cls = type(
-        f'RangeHandler{tag}', (_RangeHandler,), {'payload': payload}
-    )
-    httpd = socketserver.TCPServer(('127.0.0.1', 0), handler_cls)
-    port = httpd.server_address[1]
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    return f'http://127.0.0.1:{port}/cog.tif', httpd, thread
 
 
 def _stop(httpd):
@@ -244,7 +232,7 @@ def multiband_chunky_cog(tmp_path):
 
 def test_windowed_tile_read_bounded_bytes_and_range_count(
         small_tiled_cog, monkeypatch):
-    """A 16x16 window aligned to one tile fetches a single tile's bytes,
+    """A 32x32 window aligned to one tile fetches a single tile's bytes,
     not the whole file.
 
     Pre-#1669/#1842 the HTTP path either ignored ``window=`` or fell
@@ -289,7 +277,8 @@ def test_windowed_tile_read_bounded_bytes_and_range_count(
 
 def test_windowed_multi_tile_read_range_count_bounded(
         small_tiled_cog, monkeypatch):
-    """A window that touches 2x2=4 tiles must not fetch all 16 tiles.
+    """A window that touches 2x2=4 tiles must not fetch all 64 tiles
+    in the file.
 
     Pins the intersect-only contract for windows that span multiple
     tiles. With coalescing on by default the four adjacent tiles may
@@ -378,7 +367,7 @@ def test_band_selection_multiband_chunky_bounded_reads(
     requested rows -- but it must not exceed the file size, and the
     fetched bytes must decode to the same pixels as the local read.
     """
-    buf, expected, path = multiband_chunky_cog
+    buf, _expected, path = multiband_chunky_cog
 
     # Reference via the local-file path on the same buffer.
     from xrspatial.geotiff import open_geotiff
@@ -406,7 +395,7 @@ def test_band_selection_with_window_bounded_range_count(
     """``window=`` + ``band=`` on a multi-band COG: pixels match the
     local path, range count is bounded by the window footprint.
     """
-    buf, expected, path = multiband_chunky_cog
+    buf, _expected, path = multiband_chunky_cog
     from xrspatial.geotiff import open_geotiff
     window = (0, 0, 32, 32)
     local = open_geotiff(path, window=window, band=2)
@@ -418,7 +407,7 @@ def test_band_selection_with_window_bounded_range_count(
     np.testing.assert_array_equal(remote, np.asarray(local))
 
     assert not src.read_all_called
-    # 16x16 window aligned to one tile; one pixel GET, two at most if
+    # 32x32 window aligned to one tile; one pixel GET, two at most if
     # the coalescer happens to split. Anything past that means the
     # reader fetched a tile outside the window or every band in turn.
     pixel_calls = src.tile_or_strip_calls()
@@ -480,7 +469,7 @@ def test_dask_header_gets_independent_of_chunk_count(
         small_tiled_cog, monkeypatch):
     """Doubling chunk count must not double header GETs (O(1) in chunks).
 
-    Runs the same compute at two chunk granularities (8 and 16) and
+    Runs the same compute at two chunk granularities (32 and 64) and
     asserts neither pulls more than one header. Pinning the rate, not
     just an absolute count, catches a regression where the per-chunk
     GET is hidden under a small constant overhead at low chunk counts
