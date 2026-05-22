@@ -228,8 +228,10 @@ SUPPORTED_FEATURES = {
     'reader.sidecar_ovr': 'advanced',
     'reader.allow_rotated': 'advanced',
     'reader.allow_unparseable_crs': 'advanced',
-    # COG reader paths (issue #2291): split from the single writer.cog
-    # entry so the local and HTTP variants can promote independently.
+    # COG reader paths (issue #2291): split out from the previous
+    # single COG concept (which only carried ``writer.cog``) so the
+    # local and HTTP reader variants can promote independently of the
+    # writer and of each other.
     'reader.local_cog': 'advanced',
     'reader.http_cog': 'advanced',
     'reader.gpu': 'experimental',
