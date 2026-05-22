@@ -102,6 +102,25 @@ def test_supported_features_is_a_mapping():
         assert tier in _TIER_VALUES, (name, tier)
 
 
+def test_supported_features_has_split_cog_keys():
+    """The COG entry is split into three keys (issue #2291) so the
+    writer, local reader, and HTTP reader can promote between tiers on
+    independent tracks. All three keys must resolve in
+    ``SUPPORTED_FEATURES`` with a known tier label.
+
+    Pinned here so a future refactor that folds the keys back together
+    has to update the docs, the notebook, and this test in one commit.
+    """
+    for key in ('writer.cog', 'reader.local_cog', 'reader.http_cog'):
+        assert key in SUPPORTED_FEATURES, (
+            f"{key!r} missing from SUPPORTED_FEATURES; the split was "
+            "introduced in #2291 and must stay surfaced so the writer / "
+            "local reader / HTTP reader tracks stay independent."
+        )
+        assert SUPPORTED_FEATURES[key] in _TIER_VALUES, (
+            key, SUPPORTED_FEATURES[key])
+
+
 def test_supported_features_covers_every_valid_codec():
     """Every codec name in ``_VALID_COMPRESSIONS`` carries a tier in
     ``SUPPORTED_FEATURES``. The gate cannot silently miss a codec.
