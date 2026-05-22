@@ -1085,6 +1085,35 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     )
 
 
+# Tag IDs that carry georeferencing payload (offsets into either the
+# IFD entry's inline value or the file's byte stream). When a sidecar
+# IFD declares any of these, the georef extractor must parse against
+# the sidecar's bytes / byte order, not the base file's. See issue
+# #2315.
+_GEOREF_PAYLOAD_TAGS = frozenset({
+    33550,  # TAG_MODEL_PIXEL_SCALE
+    33922,  # TAG_MODEL_TIEPOINT
+    34264,  # TAG_MODEL_TRANSFORMATION
+    34735,  # TAG_GEO_KEY_DIRECTORY
+})
+
+
+def _ifd_has_georef_payload(ifd: IFD) -> bool:
+    """Return True if ``ifd`` declares any georef-bearing tag.
+
+    The GDAL convention is that an external ``.tif.ovr`` sidecar
+    inherits georef from the base file -- the sidecar IFDs do not
+    re-declare ModelPixelScale / ModelTiepoint / GeoKeyDirectory.
+    Hand-rolled sidecars and non-GDAL writers can break that convention,
+    and when they do the sidecar's georef tags must be parsed against
+    the sidecar's byte buffer rather than the base file's. This helper
+    is the conservative gate that flips the data / byte_order swap in
+    :func:`extract_geo_info_with_overview_inheritance`. See issue #2315.
+    """
+    entries = ifd.entries
+    return any(tag in entries for tag in _GEOREF_PAYLOAD_TAGS)
+
+
 def extract_geo_info_with_overview_inheritance(
     ifd: IFD,
     ifds: list,
@@ -1092,6 +1121,7 @@ def extract_geo_info_with_overview_inheritance(
     byte_order: str,
     *,
     allow_rotated: bool = False,
+    sidecar_origin: dict | None = None,
 ) -> GeoInfo:
     """Extract geo metadata, inheriting from level 0 when the IFD lacks it.
 
@@ -1141,12 +1171,36 @@ def extract_geo_info_with_overview_inheritance(
         Full file bytes (forwarded to ``extract_geo_info``).
     byte_order : str
         ``'<'`` or ``'>'`` (forwarded to ``extract_geo_info``).
+    sidecar_origin : dict, optional
+        Mapping from ``id(ifd)`` to ``(data, byte_order)`` for IFDs
+        that live in an external ``.tif.ovr`` sidecar. When the
+        selected IFD is from a sidecar that declares its own georef
+        payload (ModelPixelScale / ModelTiepoint /
+        ModelTransformation / GeoKeyDirectory), this mapping tells
+        the extractor which byte buffer the tag offsets resolve
+        against. IFDs absent from the mapping fall through to
+        ``(data, byte_order)`` for the base file. The conservative
+        default is ``None``, which preserves the legacy behavior
+        (read sidecar IFDs against the base file's bytes -- correct
+        only when the sidecar has no geokeys, which is the GDAL
+        convention). See issue #2315.
 
     Returns
     -------
     GeoInfo
     """
-    info = extract_geo_info(ifd, data, byte_order,
+    # When the selected IFD lives in a sidecar AND it carries its own
+    # georef payload, resolve tag offsets against the sidecar's bytes /
+    # byte order. The sidecar-without-geokeys convention (GDAL) keeps
+    # ``(data, byte_order)`` from the base file and inherits below.
+    # See issue #2315.
+    sel_data, sel_byte_order = data, byte_order
+    if sidecar_origin is not None:
+        origin = sidecar_origin.get(id(ifd))
+        if origin is not None and _ifd_has_georef_payload(ifd):
+            sel_data, sel_byte_order = origin
+
+    info = extract_geo_info(ifd, sel_data, sel_byte_order,
                             allow_rotated=allow_rotated)
 
     # Overview IFDs have NewSubfileType bit 0 set; mask IFDs (bit 2) and
@@ -1171,7 +1225,19 @@ def extract_geo_info_with_overview_inheritance(
     if base_ifd is None:
         return info
 
-    base_info = extract_geo_info(base_ifd, data, byte_order,
+    # Mirror the sidecar-origin routing for ``base_ifd``. The base IFD
+    # normally lives in the base file (``data`` / ``byte_order`` are
+    # correct), but a file with no full-resolution IFD of its own could
+    # land here with ``base_ifd`` resolved out of a sidecar. The lookup
+    # is the same shape as the one applied to ``ifd`` above. See
+    # review nit on #2315.
+    base_data, base_byte_order = data, byte_order
+    if sidecar_origin is not None:
+        base_origin = sidecar_origin.get(id(base_ifd))
+        if base_origin is not None:
+            base_data, base_byte_order = base_origin
+
+    base_info = extract_geo_info(base_ifd, base_data, base_byte_order,
                                  allow_rotated=allow_rotated)
 
     # Inherit the per-IFD metadata that the COG writer emits only on the
