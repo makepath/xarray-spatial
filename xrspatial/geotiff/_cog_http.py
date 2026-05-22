@@ -147,6 +147,18 @@ def _parse_cog_http_meta(
         ``sidecar`` and must close it; ``route_path`` is the URL/URI
         that per-chunk fetches should target; ``used_sidecar`` is
         ``True`` iff the selected IFD came from the sidecar.
+
+        ``header`` is the :class:`TIFFHeader` of the file the chosen
+        IFD lives in: the sidecar's header when ``used_sidecar=True``,
+        otherwise the base file's header. Callers that decode pixel
+        bytes (the eager HTTP path, the dask chunk reader) MUST use
+        this returned header for ``byte_order`` so the decode step
+        interprets the right endianness; a big-endian ``.ovr`` paired
+        with a little-endian base file would otherwise scramble the
+        result. ``geo_info`` is still extracted from the base file's
+        ``header_bytes`` (sidecar IFDs typically carry no geokeys and
+        inherit from the level-0 IFD that sits in the base buffer);
+        that parse is unaffected by the swap. Issue #2314.
     """
     if return_sidecar and source_path is None:
         # The 5-tuple contract guarantees ``route_path`` is a usable
@@ -242,9 +254,25 @@ def _parse_cog_http_meta(
     geo_info = extract_geo_info_with_overview_inheritance(
         ifd, ifds, header_bytes, header.byte_order,
         allow_rotated=allow_rotated)
+    # When the chosen IFD lives in the sidecar, return the sidecar's own
+    # ``TIFFHeader`` so the per-chunk / eager decode step sees the byte
+    # order of the file the bytes actually came from. A big-endian
+    # ``.ovr`` paired with a little-endian base (or vice versa) would
+    # otherwise have its pixels reinterpreted with the wrong endianness
+    # at ``_decode_strip_or_tile``. Mirrors the local sidecar path in
+    # ``_reader.py:223`` which swaps to the sidecar header for the same
+    # reason. Issue #2314.
+    #
+    # ``used_sidecar`` can only be True when ``sidecar`` is not None:
+    # ``sidecar_ifd_ids`` is populated by ``discover_remote_sidecar``
+    # only on the same branch that assigns ``sidecar`` (and stays empty
+    # otherwise), so ``id(ifd) in sidecar_ifd_ids`` implies the sidecar
+    # was loaded successfully. The branch below relies on that
+    # invariant when it reads ``sidecar.header``.
+    return_header = sidecar.header if used_sidecar else header
     if return_sidecar:
         route_path = sidecar.path if used_sidecar else source_path
-        return (header, ifd, geo_info, header_bytes,
+        return (return_header, ifd, geo_info, header_bytes,
                 (sidecar, route_path, used_sidecar))
     # Caller did not opt into sidecar metadata. Close the sidecar (if
     # any was loaded) before returning so the buffer does not leak --
@@ -252,7 +280,7 @@ def _parse_cog_http_meta(
     if sidecar is not None:
         from ._sidecar import close_sidecar
         close_sidecar(sidecar)
-    return header, ifd, geo_info, header_bytes
+    return return_header, ifd, geo_info, header_bytes
 
 
 def _read_cog_http(url: str, overview_level: int | None = None,
