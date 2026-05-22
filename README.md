@@ -206,34 +206,6 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 - Overview generation (CPU and GPU): mean, nearest, min, max, median, mode, cubic
 - Planar config, big-endian byte swap, PixelIsArea/PixelIsPoint
 
-**Read performance** (real-world files, A6000 GPU):
-
-| File | Format | xrspatial CPU | rioxarray | GPU (nvCOMP) |
-|:-----|:-------|:------------:|:---------:|:------------:|
-| render_demo 187x253 | uncompressed | **0.2ms** | 2.4ms | 0.7ms |
-| Landsat B4 1310x1093 | uncompressed | **1.0ms** | 6.0ms | 1.7ms |
-| Copernicus 3600x3600 | deflate+fp3 | 241ms | 195ms | 872ms |
-| USGS 1as 3612x3612 | LZW+fp3 | 275ms | 215ms | 747ms |
-| USGS 1m 10012x10012 | LZW | **1.25s** | 1.80s | **990ms** |
-
-**Read performance** (synthetic tiled, GPU shines at scale):
-
-| Size | Codec | xrspatial CPU | rioxarray | GPU (nvCOMP) |
-|:-----|:------|:------------:|:---------:|:------------:|
-| 4096x4096 | deflate | 265ms | 211ms | **158ms** |
-| 4096x4096 | zstd | **73ms** | 159ms | **58ms** |
-| 8192x8192 | deflate | 1.06s | 859ms | **565ms** |
-| 8192x8192 | zstd | **288ms** | 668ms | **171ms** |
-
-**Write performance** (synthetic tiled):
-
-| Size | Codec | xrspatial CPU | rioxarray | GPU (nvCOMP) |
-|:-----|:------|:------------:|:---------:|:------------:|
-| 2048x2048 | deflate | 424ms | 110ms | **135ms** |
-| 2048x2048 | zstd | 49ms | 83ms | 81ms |
-| 4096x4096 | deflate | 1.68s | 447ms | **302ms** |
-| 8192x8192 | deflate | 6.84s | 2.03s | **1.11s** |
-| 8192x8192 | zstd | 847ms | 822ms | 1.03s |
 **Consistency:** 100% pixel-exact match vs rioxarray on all tested files (Landsat 8, Copernicus DEM, USGS 1-arc-second, USGS 1-meter).
 
 -----------
@@ -243,7 +215,7 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Resample](xrspatial/resample.py) | Changes raster resolution (cell size) without reprojection. Nearest, bilinear, cubic, average, mode, min, max, median methods | Standard (interpolation / block aggregation) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling. Supports vertical datums (EGM96, EGM2008) and horizontal datum shifts (NAD27, OSGB36, etc.) | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy. Same-CRS tiles skip reprojection and are placed by direct coordinate alignment | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
 
 Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coordinate transforms. pyproj is used only for CRS metadata parsing (~1ms, once per call) and output grid boundary estimation (~500 control points, once per call). Any CRS pair without a built-in kernel falls back to pyproj automatically.
 
@@ -266,38 +238,6 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 **Datum shift support:** Reprojection from non-WGS84 datums (NAD27, OSGB36, DHDN, MGI, ED50, BD72, CH1903, D73, AGD66, Tokyo) applies grid-based shifts from PROJ CDN (sub-metre accuracy) with 7-parameter Helmert fallback (1-5m accuracy). 14 grids are registered covering North America, UK, Germany, Austria, Spain, Netherlands, Belgium, Switzerland, Portugal, and Australia.
 
 **ITRF frame support:** `itrf_transform` converts between ITRF2000, ITRF2008, ITRF2014, and ITRF2020 using 14-parameter time-dependent Helmert transforms from PROJ data files. Shifts are mm-level.
-
-**Reproject performance** (reproject-only, 1024x1024, bilinear, vs rioxarray):
-
-| Transform | xrspatial | rioxarray |
-|:---|---:|---:|
-| WGS84 -> Web Mercator | 23ms | 14ms |
-| WGS84 -> UTM 33N | 24ms | 18ms |
-| WGS84 -> Albers CONUS | 41ms | 33ms |
-| WGS84 -> LAEA Europe | 57ms | 17ms |
-| WGS84 -> Polar Stere S | 44ms | 38ms |
-| WGS84 -> LCC France | 44ms | 25ms |
-| WGS84 -> Ellipsoidal Merc | 27ms | 14ms |
-| WGS84 -> CEA EASE-Grid | 24ms | 15ms |
-
-**Full pipeline** (read 3600x3600 Copernicus DEM + reproject to EPSG:3857 + write GeoTIFF):
-
-| Backend | Time |
-|:---|---:|
-| NumPy | 784ms |
-| CuPy GPU | 348ms |
-| Dask+CuPy GPU | 343ms |
-| rioxarray (GDAL) | 749ms |
-
-**Merge performance** (4 overlapping same-CRS tiles, vs rioxarray):
-
-| Tile size | xrspatial | rioxarray | Speedup |
-|:---|---:|---:|---:|
-| 512x512 | 16ms | 29ms | **1.8x** |
-| 1024x1024 | 52ms | 76ms | **1.5x** |
-| 2048x2048 | 361ms | 280ms | 0.8x |
-
-Same-CRS tiles skip reprojection entirely and are placed by direct coordinate alignment.
 
 -------
 
@@ -692,7 +632,7 @@ Check out the user guide [here](/examples/user_guide/).
 - **Pure Python, fully extensible.** All codec, header parsing, and metadata code is readable Python/Numba, not wrapped C/C++.
 - **GPU-accelerated reads.** With optional nvCOMP and nvJPEG2000, compressed tiles decompress directly on the GPU via CUDA -- something GDAL cannot do.
 
-The native reader is pixel-exact against rasterio/GDAL across Landsat 8, Copernicus DEM, USGS 1-arc-second, and USGS 1-meter DEMs. For uncompressed files it reads 5-7x faster than rioxarray; for compressed COGs it is comparable or faster with GPU acceleration.
+The native reader is pixel-exact against rasterio/GDAL across Landsat 8, Copernicus DEM, USGS 1-arc-second, and USGS 1-meter DEMs.
 
 #### Citation
 Cite this code:
