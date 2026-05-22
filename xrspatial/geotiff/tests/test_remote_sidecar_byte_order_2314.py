@@ -38,23 +38,36 @@ tifffile = pytest.importorskip("tifffile")
 # parallel runs (pytest-xdist) do not race on a shared path. Filenames
 # include the issue number so a stray collision is easy to trace.
 # ---------------------------------------------------------------------------
-def _mixed_endian_pair(tmp_path, base_byteorder: str, sidecar_byteorder: str):
+def _mixed_endian_pair(tmp_path, base_byteorder: str, sidecar_byteorder: str,
+                       *, tile: int | None = None):
     """Return (base_path, sidecar_path, base_arr, sidecar_arr).
 
     The two arrays are deliberately different so a wrong-endian decode
     on the sidecar cannot accidentally compare equal to the base array.
     Distinct multipliers also keep the byte patterns visually different
     when a failure dump shows the raw values.
+
+    ``tile`` selects the on-disk layout: ``None`` writes stripped TIFFs
+    (tifffile's default), an int writes tiled TIFFs with the given
+    square tile size. The stripped layout exercises
+    ``_fetch_decode_cog_http_strips`` and the tiled layout exercises
+    ``_fetch_decode_cog_http_tiles``; both paths read
+    ``header.byte_order`` and benefit from the sidecar header swap.
     """
     base_arr = (np.arange(64 * 64, dtype=np.uint16) * 7).reshape(64, 64)
     sidecar_arr = (np.arange(32 * 32, dtype=np.uint16) * 13).reshape(32, 32)
     suffix = uuid.uuid4().hex[:8]
     base_path = tmp_path / f"mixedendian_2314_{suffix}.tif"
     sidecar_path = tmp_path / f"mixedendian_2314_{suffix}.tif.ovr"
+    write_kwargs = {}
+    if tile is not None:
+        write_kwargs['tile'] = (tile, tile)
     tifffile.imwrite(str(base_path), base_arr,
-                     byteorder=base_byteorder, compression=None)
+                     byteorder=base_byteorder, compression=None,
+                     **write_kwargs)
     tifffile.imwrite(str(sidecar_path), sidecar_arr,
-                     byteorder=sidecar_byteorder, compression=None)
+                     byteorder=sidecar_byteorder, compression=None,
+                     **write_kwargs)
     return base_path, sidecar_path, base_arr, sidecar_arr
 
 
@@ -239,6 +252,40 @@ def test_fsspec_chunked_mixed_endian_sidecar(tmp_path, base_bo, side_bo):
                 fs.rm_file(p.replace("memory://", ""))
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Tiled-layout variant. The stripped path above already exercises the
+# header swap end to end, but the tiled HTTP path is the more common
+# COG shape in the wild and reads ``header.byte_order`` from a different
+# call site (``_fetch_decode_cog_http_tiles``'s ``_decode_one`` closure).
+# Run one parametrized case here so a future regression that decouples
+# the two paths gets caught.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("base_bo,side_bo", [
+    ('<', '>'),
+    ('>', '<'),
+])
+def test_http_eager_mixed_endian_sidecar_tiled(tmp_path, monkeypatch,
+                                               base_bo, side_bo):
+    from xrspatial.geotiff import open_geotiff
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+    base_path, sidecar_path, base_arr, side_arr = _mixed_endian_pair(
+        tmp_path, base_bo, side_bo, tile=16)
+    payloads = {
+        "/x.tif": base_path.read_bytes(),
+        "/x.tif.ovr": sidecar_path.read_bytes(),
+    }
+    httpd, port = _start_range_http_server(payloads)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif"
+        r0 = open_geotiff(url, overview_level=0)
+        np.testing.assert_array_equal(r0.values, base_arr)
+        r1 = open_geotiff(url, overview_level=1)
+        np.testing.assert_array_equal(r1.values, side_arr)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 # ---------------------------------------------------------------------------

@@ -262,6 +262,13 @@ def _parse_cog_http_meta(
     # at ``_decode_strip_or_tile``. Mirrors the local sidecar path in
     # ``_reader.py:223`` which swaps to the sidecar header for the same
     # reason. Issue #2314.
+    #
+    # ``used_sidecar`` can only be True when ``sidecar`` is not None:
+    # ``sidecar_ifd_ids`` is populated by ``discover_remote_sidecar``
+    # only on the same branch that assigns ``sidecar`` (and stays empty
+    # otherwise), so ``id(ifd) in sidecar_ifd_ids`` implies the sidecar
+    # was loaded successfully. The branch below relies on that
+    # invariant when it reads ``sidecar.header``.
     return_header = sidecar.header if used_sidecar else header
     if return_sidecar:
         route_path = sidecar.path if used_sidecar else source_path
