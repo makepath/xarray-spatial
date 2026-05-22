@@ -205,6 +205,34 @@ _VALID_COMPRESSIONS = (
 # them into a single ``cog`` key would tie a promotion of any one path to
 # a promotion of all three. The keys carry no behaviour today; production
 # code still gates on the underlying writer / reader options.
+#
+# Stable COG contract (issue #2300, closes the #2286 wave)
+# --------------------------------------------------------
+# As of #2300 the local COG paths (``writer.cog`` and ``reader.local_cog``)
+# are tagged ``stable``. The promotion is backed by the writer compliance
+# suite (#2292), the cross-backend parity gate (#2293), and the per-tile
+# byte-budget contract that pins HTTP fetch behaviour (#2294 / #2298).
+#
+# The stable COG contract covers:
+#
+# * Axis-aligned 2D / 3D rasters.
+# * CPU writer and CPU reader paths.
+# * Lossless codecs: ``none``, ``deflate``, ``lzw``, ``zstd``, ``packbits``.
+# * Internal overviews only (no ``.tif.ovr`` sidecars).
+# * Normal CRS, transform, dtype, nodata, band, and
+#   pixel-is-area / pixel-is-point round-trip.
+#
+# The following combinations stay outside the stable contract and keep
+# their existing tier:
+#
+# * GPU COG read / write (``writer.gpu``, ``reader.gpu``).
+# * Experimental codecs (``lerc``, ``jpeg2000``, ``j2k``, ``lz4``) and the
+#   internal-only ``jpeg`` codec.
+# * Rotated transforms (``reader.allow_rotated``).
+# * External ``.tif.ovr`` sidecars (``reader.sidecar_ovr``).
+# * File-like destinations with ``cog=True``.
+# * BigTIFF COG (tracked separately).
+# * HTTP / range COG (``reader.http_cog``); see the per-key comment below.
 SUPPORTED_FEATURES = {
     # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
     'codec.none': 'stable',
@@ -232,12 +260,31 @@ SUPPORTED_FEATURES = {
     # single COG concept (which only carried ``writer.cog``) so the
     # local and HTTP reader variants can promote independently of the
     # writer and of each other.
-    'reader.local_cog': 'advanced',
+    #
+    # ``reader.local_cog`` is ``stable`` as of #2300: on-disk
+    # overview-IFD parsing is covered by the compliance suite (#2292)
+    # and the parity gate (#2293).
+    #
+    # ``reader.http_cog`` stays ``advanced``. The HTTP path layers
+    # range-request fetching, range coalescing, an SSRF / private-host
+    # filter, a per-tile byte-count cap, and partial-IFD handling on
+    # top of the local COG reader. The byte-budget contract (#2294 /
+    # #2298) pins per-tile fetch behaviour, but the transport-side
+    # surface -- redirect handling, network error reporting, cache /
+    # retry policy -- is not yet contracted at the ``stable`` bar.
+    # Tracked for separate promotion.
+    'reader.local_cog': 'stable',
     'reader.http_cog': 'advanced',
     'reader.gpu': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
-    'writer.cog': 'advanced',
+    # ``writer.cog`` is ``stable`` as of #2300: the CPU writer emits a
+    # spec-conforming COG layout (IFD-first, tiled, internal
+    # overviews, lossless codec) covered by the compliance suite
+    # (#2292) and the cross-backend parity gate (#2293). GPU writes,
+    # BigTIFF COG, file-like destinations, and experimental codecs
+    # stay outside the contract; see the block comment above.
+    'writer.cog': 'stable',
     'writer.overviews': 'advanced',
     'writer.bigtiff': 'advanced',
     'writer.gpu': 'experimental',

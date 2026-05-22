@@ -4,6 +4,49 @@
 GeoTIFF / COG
 ***************
 
+Stable COG contract
+===================
+
+As of the #2286 production-readiness wave, the local COG read and write
+paths are tagged ``stable`` in
+:data:`xrspatial.geotiff.SUPPORTED_FEATURES`. ``SUPPORTED_FEATURES['writer.cog']``
+and ``SUPPORTED_FEATURES['reader.local_cog']`` both report ``stable``;
+``SUPPORTED_FEATURES['reader.http_cog']`` stays ``advanced`` while the
+HTTP transport surface is contracted separately.
+
+The contract covers:
+
+* Axis-aligned 2D / 3D rasters.
+* CPU writer and CPU reader paths.
+* Stable codecs only: ``none``, ``deflate``, ``lzw``, ``zstd``,
+  ``packbits``.
+* Internal overviews only.
+* Normal CRS, transform, dtype, nodata, band, and
+  pixel-is-area / pixel-is-point behavior.
+
+The promotion is backed by the writer compliance suite (#2292), the
+cross-backend parity gate (#2293), and the per-tile byte-budget contract
+(#2294 / #2298). These tests run on every CI build so a regression in
+the stable surface fails the build rather than silently shipping.
+
+Outside the stable contract
+----------------------------
+
+The following combinations stay outside the stable contract. They still
+work where they did before and are still tested, but they keep their
+existing tier (``advanced``, ``experimental``, or ``internal_only``) and
+the corresponding caveats:
+
+* GPU COG read / write.
+* Experimental codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``).
+* Internal-only ``jpeg``.
+* Rotated transforms.
+* External ``.tif.ovr`` sidecars.
+* File-like destinations with ``cog=True``.
+* BigTIFF COG (tracked separately).
+* HTTP / range COG (tracked separately; see the byte-budget contract in
+  #2298).
+
 Reading
 =======
 .. autosummary::
