@@ -195,6 +195,16 @@ _VALID_COMPRESSIONS = (
 # See ``xrspatial/geotiff/__init__.py`` for the per-tier semantics; the
 # inline comments here track the codec/reader/writer split used by the
 # user-guide notebook table.
+#
+# COG entries are split into three keys (issue #2291, part of the #2286
+# rollout) so the writer, local reader, and HTTP reader can move between
+# tiers on their own track. The three code paths have different stability
+# profiles: the writer emits a self-contained COG layout, the local reader
+# parses overview IFDs out of an on-disk file, and the HTTP reader adds
+# range-request fetching and partial-IFD handling on top of that. Folding
+# them into a single ``cog`` key would tie a promotion of any one path to
+# a promotion of all three. The keys carry no behaviour today; production
+# code still gates on the underlying writer / reader options.
 SUPPORTED_FEATURES = {
     # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
     'codec.none': 'stable',
@@ -218,6 +228,12 @@ SUPPORTED_FEATURES = {
     'reader.sidecar_ovr': 'advanced',
     'reader.allow_rotated': 'advanced',
     'reader.allow_unparseable_crs': 'advanced',
+    # COG reader paths (issue #2291): split out from the previous
+    # single COG concept (which only carried ``writer.cog``) so the
+    # local and HTTP reader variants can promote independently of the
+    # writer and of each other.
+    'reader.local_cog': 'advanced',
+    'reader.http_cog': 'advanced',
     'reader.gpu': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
