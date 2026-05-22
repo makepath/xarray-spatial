@@ -523,7 +523,9 @@ def _write(data: np.ndarray, path: str, *,
             # the ``oh > tile_size`` termination condition permanently true
             # while the inner ``oh > 0`` guard suppresses appends, so the
             # loop spins forever.
-            if not isinstance(tile_size, (int, np.integer)) or tile_size <= 0:
+            if (not isinstance(tile_size, (int, np.integer))
+                    or isinstance(tile_size, bool)
+                    or tile_size <= 0):
                 raise ValueError(
                     f"tile_size must be a positive int for COG overview "
                     f"generation, got tile_size={tile_size!r}.")

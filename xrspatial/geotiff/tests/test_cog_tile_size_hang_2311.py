@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import os
 import signal
+import warnings
 
 import numpy as np
 import pytest
@@ -118,7 +119,6 @@ def test_to_geotiff_non_cog_strip_does_not_validate_tile_size(tmp_path):
     # (with the "ignored" warning) because nothing consumes the value.
     # Use ``filterwarnings`` to swallow the warning so the test only
     # asserts no raise / no hang.
-    import warnings
     with _alarm_timeout(5), warnings.catch_warnings():
         warnings.simplefilter('ignore')
         to_geotiff(da, str(p), cog=False, tiled=False, tile_size=-1)
@@ -157,3 +157,54 @@ def test_writer_auto_overview_loop_rejects_non_positive_tile_size(
                overview_levels=None)
 
     assert 'tile_size' in str(exc.value), str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Non-int tile_size values reach the same gate. The public
+# ``_validate_tile_size`` (called from ``to_geotiff`` when tiled or cog is
+# true) rejects None, float, and bool with typed errors; the
+# defense-in-depth gate at the top of ``_write`` does the same for direct
+# callers. Both layers should reject all three types.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('bad_tile_size', [None, 128.0, True, False])
+def test_to_geotiff_cog_non_int_tile_size_raises(tmp_path, bad_tile_size):
+    """Non-int ``tile_size`` (None, float, bool) with ``cog=True`` is
+    rejected at the public boundary, regardless of ``tiled``. Bool is
+    explicitly listed because Python treats ``True``/``False`` as int
+    subclasses (#2311 follow-up)."""
+    da = _float_da()
+    p = tmp_path / (
+        f'cog_tile_size_hang_2311_nonint_{type(bad_tile_size).__name__}.tif')
+
+    with _alarm_timeout(5), pytest.raises((ValueError, TypeError)) as exc:
+        to_geotiff(da, str(p), cog=True, tiled=True, tile_size=bad_tile_size)
+
+    assert 'tile_size' in str(exc.value), str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Inner-loop guard coverage: confirm the auto-overview halving loop's own
+# ``tile_size > 0`` pre-check is present in ``_write``'s compiled
+# constants. Inspecting the constants pins the literal so a future
+# refactor that removes the inner guard fails this test loudly even if
+# the top-of-``_write`` gate still catches the bad input at runtime.
+# (Reaching the inner guard through ``_write`` directly would require
+# patching out the top gate, which is invasive; the constants check is
+# the simplest reliable pin without rewriting production code.)
+# ---------------------------------------------------------------------------
+
+def test_inner_overview_loop_guard_message_is_pinned():
+    """Pin the inner-overview ``tile_size`` guard literal so removing
+    the loop-side defense fails this test even when the top gate at
+    line 407 still raises for the same inputs (#2311)."""
+    from xrspatial.geotiff import _writer as wmod
+
+    guard_msg = (
+        'tile_size must be a positive int for COG overview '
+        'generation, got tile_size=')
+    consts = wmod._write.__code__.co_consts
+    found = any(isinstance(c, str) and guard_msg in c for c in consts)
+    assert found, (
+        'inner-loop guard message not present in _write constants; the '
+        'auto-overview guard introduced in #2311 may have been removed.')
