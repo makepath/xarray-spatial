@@ -45,36 +45,19 @@ if TYPE_CHECKING:
 _SUPPORTED_DTYPE_KINDS = frozenset({'u', 'i', 'f'})
 
 
-# GDAL ``<ResampleAlg>`` text equivalent to nearest-neighbour. Kept in
-# sync with ``xrspatial.geotiff._vrt._NEAREST_RESAMPLE_ALGS`` (mirroring
-# rather than importing to keep this module a leaf with no _vrt back-
-# reference).
-_NEAREST_RESAMPLE_ALGS = frozenset({
-    '', 'nearest', 'nearestneighbour', 'nearestneighbor', 'near',
-})
-
-
 def _is_nearest_resample(alg: str | None) -> bool:
+    """True iff ``alg`` is a recognised nearest-neighbour spelling.
+
+    Delegates to the canonical ``_NEAREST_RESAMPLE_ALGS`` set in
+    ``_vrt.py``. Lazy-imported here so the validator stays a leaf
+    module with no eager back-reference to ``_vrt``, while still
+    matching whatever ``_vrt`` recognises as nearest. Avoids the
+    drift risk of a hand-copied set.
+    """
     if alg is None:
         return True
+    from ._vrt import _NEAREST_RESAMPLE_ALGS
     return alg.strip().lower() in _NEAREST_RESAMPLE_ALGS
-
-
-def _looks_like_wkt(crs_wkt: str) -> bool:
-    """Mirror of ``_crs._looks_like_wkt`` for the VRT validator.
-
-    A WKT-shaped CRS string starts (after lstrip) with one of the
-    recognised root keywords. Strings that do not match are treated as
-    unparseable unless the caller passed ``allow_unparseable_crs=True``.
-    """
-    if not isinstance(crs_wkt, str):
-        return False
-    head = crs_wkt.lstrip().upper()
-    return head.startswith((
-        'PROJCS', 'GEOGCS', 'PROJCRS', 'GEOGCRS', 'COMPD_CS',
-        'COMPOUNDCRS', 'VERT_CS', 'VERTCRS', 'LOCAL_CS', 'ENGCRS',
-        'GEOCCS', 'TIMECRS',
-    ))
 
 
 def validate_parsed_vrt(
@@ -128,6 +111,23 @@ def validate_parsed_vrt(
     and so on. The validator covers the residual capability checks
     that previously fired mid-decode (or per chunk task under chunked
     dispatch).
+
+    Overlap with registered ``validate_read_metadata`` hooks
+    --------------------------------------------------------
+    The rotated-transform and unparseable-CRS branches in this
+    validator overlap with the registered hooks
+    ``_check_read_rotated_transform`` and
+    ``_check_read_unparseable_crs`` in :mod:`._validation`. The VRT
+    call sites in ``_backends/vrt.py`` call this validator first and
+    ``validate_read_metadata`` immediately after, so the validator's
+    branches preempt the registered hooks for the VRT path: the
+    registered hooks remain reachable only when the validator passes
+    the case through (e.g. ``allow_rotated=True``, or a non-VRT call
+    site that does not run this validator at all). The duplication
+    is intentional -- the validator embeds the source path in the
+    message and lifts the check ahead of any decode -- but maintainers
+    editing the registered hooks should keep both copies in sync, or
+    fold one into the other.
     """
     if mode != 'read':
         raise ValueError(
@@ -239,23 +239,44 @@ def validate_parsed_vrt(
     # (the ``_looks_like_wkt`` cheap check).
     crs_wkt = parsed.crs_wkt
     if crs_wkt and not allow_unparseable_crs:
+        # Lazy-import the WKT structural check from ``_crs`` so the two
+        # call sites cannot drift on which root keywords count as WKT.
+        from ._crs import _looks_like_wkt
         if not _looks_like_wkt(crs_wkt):
-            # Try pyproj before raising so a valid PROJ / EPSG token
-            # passes when pyproj is installed.
-            from ._crs import _wkt_to_epsg
-            epsg = _wkt_to_epsg(crs_wkt)
-            if epsg is None:
-                # Use the existing typed error so callers that already
-                # ``except UnparseableCRSError`` keep catching this
-                # case. Adds the source path to the message.
-                raise UnparseableCRSError(
-                    f"VRT '{source}' declares a CRS string that does "
-                    f"not look like WKT and that pyproj could not "
-                    f"resolve: {crs_wkt!r}. Pass "
-                    f"allow_unparseable_crs=True to read the VRT "
-                    f"anyway, or re-export the VRT with a WKT-formatted "
-                    f"<SRS>."
-                )
+            # Probe pyproj directly so a valid PROJ / EPSG token passes
+            # when pyproj is installed, without going through
+            # ``_wkt_to_epsg``. The wrapper emits a
+            # ``GeoTIFFFallbackWarning`` on parse failure; the
+            # registered ``_check_read_unparseable_crs`` hook in
+            # ``_validation.py`` does not. Routing through the wrapper
+            # would emit a warning here that the existing check would
+            # not have emitted, which is a small but visible regression
+            # in the unparseable-CRS path. Match the existing hook's
+            # silent-probe behaviour.
+            try:
+                from pyproj import CRS as _PyProjCRS
+                from pyproj.exceptions import CRSError as _PyProjCRSError
+            except ImportError:
+                # No pyproj available: cannot prove the CRS is bad, so
+                # mirror the registered hook's no-op behaviour and let
+                # downstream code see the unparseable string.
+                pass
+            else:
+                try:
+                    _PyProjCRS.from_user_input(crs_wkt)
+                except _PyProjCRSError:
+                    # Use the existing typed error so callers that
+                    # already ``except UnparseableCRSError`` keep
+                    # catching this case. Adds the source path to the
+                    # message.
+                    raise UnparseableCRSError(
+                        f"VRT '{source}' declares a CRS string that "
+                        f"does not look like WKT and that pyproj could "
+                        f"not resolve: {crs_wkt!r}. Pass "
+                        f"allow_unparseable_crs=True to read the VRT "
+                        f"anyway, or re-export the VRT with a "
+                        f"WKT-formatted <SRS>."
+                    )
 
     # Rule 7 / 8: SrcRect and DstRect sanity, plus the supported
     # resampling set. Walk every source on every band so the message
