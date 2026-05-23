@@ -316,6 +316,7 @@ def read_geotiff_gpu(source: str, *,
     from .._header import parse_all_ifds, parse_header, select_overview_ifd, validate_tile_layout
     from .._reader import (MAX_PIXELS_DEFAULT, _check_dimensions, _FileSource, _is_fsspec_uri,
                            _max_tile_bytes_from_env, _resolve_masked_fill)
+    from .._sources import _is_http_source
 
     # ``source`` is already coerced above (before the dispatch
     # validator); no need to re-coerce here.
@@ -347,7 +348,7 @@ def read_geotiff_gpu(source: str, *,
     # decode instead of nvCOMP-on-GPU. Callers who want bounded GPU
     # memory should pass ``chunks=...``.
     if isinstance(source, str) and (
-            source.startswith(('http://', 'https://'))
+            _is_http_source(source)
             or _is_fsspec_uri(source)):
         return _read_geotiff_gpu_eager_via_cpu(
             source, dtype=dtype, window=window,
@@ -1053,7 +1054,8 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     """
     if not isinstance(source, str):
         return False
-    if source.startswith(('http://', 'https://')):
+    from .._sources import _is_http_source
+    if _is_http_source(source):
         return False
     try:
         from .._reader import _is_fsspec_uri

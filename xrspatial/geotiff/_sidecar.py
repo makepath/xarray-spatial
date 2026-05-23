@@ -43,7 +43,14 @@ class SidecarOverviews(NamedTuple):
 
 
 def _is_http_url(source: str) -> bool:
-    return source.startswith(("http://", "https://"))
+    """Case-insensitive HTTP(S) scheme test for sidecar routing.
+
+    Delegates to :func:`xrspatial.geotiff._sources._is_http_source` so
+    the SSRF-relevant routing decision matches the rest of the package.
+    Issue #2332.
+    """
+    from ._sources import _is_http_source
+    return _is_http_source(source)
 
 
 def find_sidecar(source) -> str | None:

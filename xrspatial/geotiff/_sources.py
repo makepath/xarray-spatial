@@ -1451,11 +1451,35 @@ class _HTTPSource:
 _CLOUD_SCHEMES = ('s3://', 'gs://', 'az://', 'abfs://')
 
 
+def _is_http_source(source) -> bool:
+    """Return True if ``source`` is an HTTP(S) URL, case-insensitively.
+
+    Centralized so every routing call site in ``xrspatial/geotiff/``
+    classifies the scheme the same way. Before this helper existed,
+    each call site did ``source.startswith(('http://', 'https://'))``,
+    which is case-sensitive and let ``HTTP://example.internal/...``
+    (uppercase) slip past :class:`_HTTPSource` and the SSRF allow-list
+    in :func:`_validate_http_url`. Per RFC 3986 section 3.1 URI schemes
+    are case-insensitive, so any uppercase / mixed-case variant has to
+    route through the same validator as ``http`` / ``https``.
+
+    Non-string inputs (``None``, ``bytes``, ``os.PathLike``, file-like
+    objects) return ``False`` so callers can drop the surrounding
+    ``isinstance(_, str)`` check where they want to. Issue #2332.
+    """
+    if not isinstance(source, str) or not source:
+        return False
+    # ``urlparse`` strips off the scheme cleanly even for unusual inputs
+    # (e.g. ``HTTP:`` with no ``//``) and avoids the prefix-tuple trap.
+    from urllib.parse import urlparse
+    return urlparse(source).scheme.lower() in ('http', 'https')
+
+
 def _is_fsspec_uri(path: str) -> bool:
     """Check if a path is a fsspec-compatible URI (not http/https/local)."""
     if not isinstance(path, str):
         return False
-    if path.startswith(('http://', 'https://')):
+    if _is_http_source(path):
         return False
     return '://' in path
 
@@ -1636,7 +1660,7 @@ def _open_source(source):
         raise TypeError(
             f"source must be a str path/URL or a binary file-like object "
             f"with read+seek methods, got {type(source).__name__}")
-    if source.startswith(('http://', 'https://')):
+    if _is_http_source(source):
         return _HTTPSource(source)
     if _is_fsspec_uri(source):
         return _CloudSource(source)

@@ -1238,10 +1238,19 @@ write_streaming = _write_streaming
 
 
 def _is_fsspec_uri(path) -> bool:
-    """Check if a path is a fsspec-compatible URI (string only)."""
+    """Check if a path is a fsspec-compatible URI (string only).
+
+    HTTP(S) URLs are deliberately excluded here so the writer can raise
+    a typed "writes not supported over HTTP" error instead of handing
+    the URL to fsspec. Uses :func:`_sources._is_http_source` so the
+    HTTP detection is case-insensitive (RFC 3986); without that, an
+    uppercase ``HTTP://...`` slipped past this check and into fsspec.
+    Issue #2332.
+    """
+    from ._sources import _is_http_source
     if not isinstance(path, str):
         return False
-    if path.startswith(('http://', 'https://')):
+    if _is_http_source(path):
         return False
     return '://' in path
 

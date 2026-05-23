@@ -194,11 +194,9 @@ def read_geotiff_dask(source: str, *,
     # and ``_CloudSource`` satisfies that contract. Going through it
     # bounds metadata reads to ``MAX_HTTP_HEADER_BYTES`` instead of
     # fetching the whole remote object up front. See PR #1755 review.
-    is_http = (
-        isinstance(source, str)
-        and source.startswith(('http://', 'https://'))
-    )
+    from .._sources import _is_http_source
     from .._reader import _is_fsspec_uri
+    is_http = _is_http_source(source)
     is_fsspec = isinstance(source, str) and _is_fsspec_uri(source)
     http_meta = None
     http_meta_key = None
