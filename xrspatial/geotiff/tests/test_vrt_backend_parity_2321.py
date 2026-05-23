@@ -346,18 +346,34 @@ def _vrt_parity_dir(tmp_path_factory):
     return tmp_path_factory.mktemp("vrt_parity_2321_")
 
 
+@pytest.fixture(scope="session")
+def _vrt_parity_cache() -> dict[str, tuple[Path, np.dtype]]:
+    """Session-scoped (path, dtype) cache shared across every cell.
+
+    The cache must outlive a single test function. A function-scoped
+    cache would be reset between cells, causing every cell to rebuild
+    the same VRT and its source TIFFs. On POSIX a rebuild is just
+    inefficient; on Windows it surfaces as PermissionError / OSError
+    because ``to_geotiff`` writes through a ``.tmp`` file and then
+    renames over the existing target while another cell may still
+    hold the previous file mapped (issue surfaced in CI on
+    ``windows-latest`` for #2330).
+    """
+    return {}
+
+
 @pytest.fixture
-def vrt_fixture(_vrt_parity_dir):
+def vrt_fixture(_vrt_parity_dir, _vrt_parity_cache):
     """Resolve a :class:`_FixtureSpec` to a (vrt_path, dtype) pair on disk.
 
     Each builder gets its own subdirectory so the on-disk layout (vrt +
-    sources + any sidecar) is isolated from neighbouring builders. The
-    subdirectory is cached across cells in the session. Builder return
-    values (path + dtype) are cached in an in-process dict so cache hits
-    do not re-open the VRT just to recover the dtype.
+    sources + any sidecar) is isolated from neighbouring builders. Builds
+    are cached at session scope so the four cells that share a builder
+    (e.g. full-extent + windowed over the same VRT) reuse one set of
+    source TIFFs and one ``.vrt`` file.
     """
     base = _vrt_parity_dir
-    cache: dict[str, tuple[Path, np.dtype]] = {}
+    cache = _vrt_parity_cache
 
     def _resolve(spec: _FixtureSpec) -> tuple[Path, np.dtype]:
         # The fix_id encodes both the builder and the window; collapse to
