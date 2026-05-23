@@ -357,7 +357,22 @@ def open_geotiff(source: str | BinaryIO, *,
     - ``gpu=True, chunks=N``: Dask+CuPy for out-of-core GPU pipelines
     - Default: NumPy eager read
 
-    VRT files are auto-detected by extension.
+    VRT files are auto-detected by extension. The supported VRT subset
+    is narrow on purpose (issue #2321; see the "VRT support matrix"
+    section in ``docs/source/reference/geotiff.rst`` for the canonical
+    contract). In short:
+
+    * Supported: simple GDAL VRT mosaics over GeoTIFF sources;
+      compatible CRS, transform orientation, pixel size, dtype, and
+      band count across sources; clean windowed reads; lazy / dask
+      reads over the same subset; explicit nodata with mixed-band
+      rejection by default; ``missing_sources='raise'`` as the
+      default.
+    * Non-goals (allowed to raise): warped / reprojection VRTs,
+      arbitrary resampling beyond the tested subset, mixed CRS /
+      resolution / dtype / band metadata without an opt-in, nested
+      VRTs, complex source / mask band / alpha band structures, full
+      GDAL VRT parity.
 
     Parameters
     ----------
@@ -517,6 +532,30 @@ def open_geotiff(source: str | BinaryIO, *,
     then raises ``ValueError`` (float-to-int is lossy in a way users
     rarely intend). When the file has no in-range sentinel match, the
     promotion is skipped and ``dtype=<integer>`` works either way.
+
+    Examples
+    --------
+    Safe VRT usage. Mosaic two compatible tiles and read with the
+    fail-closed defaults:
+
+    >>> from xrspatial.geotiff import open_geotiff, write_vrt
+    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    ...     'mosaic.vrt',
+    ...     source_files=['tile_west.tif', 'tile_east.tif'],
+    ... )
+    >>> da = open_geotiff(vrt_path)  # doctest: +SKIP
+
+    Intentionally raises. A VRT whose source tiles disagree on their
+    per-band nodata sentinels is rejected by the default
+    ``band_nodata=None``:
+
+    >>> from xrspatial.geotiff import MixedBandMetadataError
+    >>> try:  # doctest: +SKIP
+    ...     open_geotiff('mixed_nodata.vrt')
+    ... except MixedBandMetadataError:
+    ...     pass  # pass band_nodata='first' to opt back into the
+    ...           # legacy flatten-to-band-0 semantics, or fix the
+    ...           # source tiles.
     """
     from ._reader import _coerce_path
 
