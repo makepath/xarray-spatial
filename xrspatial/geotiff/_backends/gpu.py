@@ -374,9 +374,10 @@ def read_geotiff_gpu(source: str, *,
         # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list so
         # ``overview_level`` indexes both internal and external overviews
         # (issue #2112). When the selected IFD comes from the sidecar,
-        # we swap ``data`` / ``header`` to the sidecar's buffers below
-        # and skip the GDS fast path -- GDS reads the source file path,
-        # which would point at the base file rather than the sidecar.
+        # tile / strip reads below use ``ifd_data`` / ``ifd_header`` for
+        # the sidecar's buffers, and we skip the GDS fast path -- GDS
+        # reads the source file path, which would point at the base
+        # file rather than the sidecar.
         from .._sidecar import attach_sidecar_origin, close_sidecar, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
@@ -389,21 +390,36 @@ def read_geotiff_gpu(source: str, *,
         # Skip mask IFDs (NewSubfileType bit 2)
         ifd = select_overview_ifd(ifds, overview_level)
 
-        # Swap base data / header for the sidecar's buffers when the
-        # requested overview level lives in the sidecar. Subsequent
-        # tile / strip reads slice the right buffer.
+        # Keep ``data`` / ``header`` bound to the base file's buffers so
+        # the georef extractor below resolves base-IFD tag offsets
+        # against the right bytes. Introduce ``ifd_data`` / ``ifd_header``
+        # for tile / strip reads that need the sidecar buffer when the
+        # selected IFD lives in the sidecar (issue #2324).
+        ifd_data, ifd_header = data, header
         origin = sidecar_origin.get(id(ifd))
         if origin is not None:
-            data, header = origin
+            ifd_data, ifd_header = origin
             sidecar_owned_ifd = True
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         # Inherit georef from the level-0 IFD when the overview itself
         # has no geokeys (issue #1640); pass-through for level 0.
+        # ``sidecar_origin`` routes tag-offset parsing to the sidecar
+        # bytes for any IFD that lives in the sidecar AND declares its
+        # own georef payload, mirroring the CPU eager path
+        # (``_reader.py``) and dask path (``__init__.py``). Without
+        # this, a sidecar-owned IFD that lacks geokeys would parse the
+        # base IFD against the sidecar bytes (issue #2324).
+        georef_origin = (
+            {iid: (od, oh.byte_order)
+             for iid, (od, oh) in sidecar_origin.items()}
+            if sidecar_origin else None
+        )
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order,
-            allow_rotated=allow_rotated)
+            allow_rotated=allow_rotated,
+            sidecar_origin=georef_origin)
         # Capture the Orientation tag (274) once so the post-decode flip
         # below picks it up for both the stripped fallback and the tiled
         # GPU pipelines. CPU read_to_array applies the array remap +
@@ -671,7 +687,7 @@ def read_geotiff_gpu(source: str, *,
                     source, _read_once, band_offsets, band_byte_counts,
                     tw, th, width, height,
                     compression, predictor, file_dtype,
-                    byte_order=header.byte_order,
+                    byte_order=ifd_header.byte_order,
                     gpu=gpu,
                 )
                 if band_arr is None:
@@ -735,7 +751,7 @@ def read_geotiff_gpu(source: str, *,
                         source, offsets, byte_counts,
                         tw, th, width, height,
                         compression, predictor, file_dtype, samples,
-                        byte_order=header.byte_order,
+                        byte_order=ifd_header.byte_order,
                         masked_fill=masked_fill,
                     )
                 except Exception as e:
@@ -751,12 +767,13 @@ def read_geotiff_gpu(source: str, *,
 
         if arr_gpu is None:
             # Fallback: extract tiles via CPU mmap, then GPU decode. For
-            # sidecar IFDs the tile bytes already live in ``data`` (loaded
-            # from the .ovr above); re-opening ``source`` would point at the
-            # base file. Use the in-scope ``data`` directly in that case.
+            # sidecar IFDs the tile bytes already live in ``ifd_data``
+            # (loaded from the .ovr above); re-opening ``source`` would
+            # point at the base file. Use ``ifd_data`` directly in that
+            # case.
             if sidecar_owned_ifd:
                 compressed_tiles = [
-                    bytes(data[offsets[i]:offsets[i] + byte_counts[i]])
+                    bytes(ifd_data[offsets[i]:offsets[i] + byte_counts[i]])
                     for i in range(len(offsets))
                 ]
             else:
@@ -776,7 +793,7 @@ def read_geotiff_gpu(source: str, *,
                     compressed_tiles,
                     tw, th, width, height,
                     compression, predictor, file_dtype, samples,
-                    byte_order=header.byte_order,
+                    byte_order=ifd_header.byte_order,
                     masked_fill=masked_fill,
                 )
             except Exception as e:
@@ -1269,9 +1286,17 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
             if not ifds:
                 raise ValueError("No IFDs found in TIFF file")
             ifd = select_overview_ifd(ifds, overview_level)
+            # The GDS qualification probe parses base-file IFDs only --
+            # sidecar files do not qualify for the disk->GPU fast path
+            # and the chunked path falls through to ``read_geotiff_dask``
+            # which carries its own sidecar handling. Pass
+            # ``sidecar_origin=None`` explicitly so all four call sites
+            # of this helper share the same call shape (review nit
+            # on #2324).
             geo_info = extract_geo_info_with_overview_inheritance(
                 ifd, ifds, raw, header.byte_order,
                 allow_rotated=allow_rotated,
+                sidecar_origin=None,
             )
             orientation = ifd.orientation
             has_sparse_tile = (
