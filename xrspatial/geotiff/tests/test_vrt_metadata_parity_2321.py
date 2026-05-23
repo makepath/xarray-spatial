@@ -4,15 +4,34 @@ Most VRT regression coverage today asserts pixel values. A VRT read
 can return the right pixels with the wrong georeferencing attrs and
 nothing in the current suite catches it -- the attrs sweep gets
 single-source coverage from ``test_vrt_finalization_parity_2162`` but
-no cross-backend pin on the metadata the contract promises (transform,
-crs, crs_wkt, nodata, masked_nodata, georef_status, raster_type,
-gdal_metadata_xml, extra_tags).
+no cross-backend pin on the metadata the contract promises.
 
 This module locks the cross-backend metadata contract for VRT reads:
 
-* eager (numpy) vs dask both via ``read_vrt(... chunks=...)`` and
-  via ``open_geotiff(..., chunks=...)`` -- the public dispatcher path
-* GPU eager via ``read_vrt(gpu=True)`` guarded by ``pytest.importorskip``
+* eager (numpy) vs dask via ``open_geotiff(..., chunks=...)`` and
+  ``read_vrt(..., chunks=...)`` -- the public dispatcher path
+* GPU eager via ``read_vrt(gpu=True)`` guarded by
+  ``pytest.importorskip``
+
+Scope of coverage for this file. The following attrs get cross-backend
+parity asserts here:
+
+* ``transform``
+* ``crs``
+* ``nodata``
+* ``masked_nodata``
+* ``georef_status``
+* ``raster_type`` (when the source is AREA_OR_POINT=Point; the area
+  default leaves the attr unset, so it is not in the required-key list)
+
+The following keys are intentionally OUT of scope for this file --
+the VRT path is documented to omit them, and the non-VRT backend
+parity suite owns their cross-backend pin:
+
+* ``crs_wkt`` (compared via the ``crs`` EPSG integer instead, because
+  WKT text can re-emit under pyproj normalisation)
+* ``gdal_metadata_xml``
+* ``extra_tags``
 
 The negative tests pin the fail-closed posture for ambiguous VRT input:
 mixed CRS, mixed per-band nodata, unsupported resampling, malformed
@@ -29,37 +48,26 @@ collisions in parallel runs.
 """
 from __future__ import annotations
 
-import importlib.util
 import os
 import pathlib
 
 import numpy as np
 import pytest
 
+# Two writer imports because the fixture builders below have two
+# shapes of input:
+# - ``to_geotiff`` (public surface, takes an ``xr.DataArray``) for the
+#   full-coords / CRS-on-DataArray fixtures
+# - ``write`` (``xrspatial.geotiff._writer``, takes a raw numpy array
+#   plus a ``nodata=`` kwarg) for the per-band integer fixtures where
+#   constructing a DataArray just to round-trip via to_geotiff would
+#   add nothing
 from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError,
                                open_geotiff, read_vrt, to_geotiff)
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_FULL,
                                       GEOREF_STATUS_TRANSFORM_ONLY)
 from xrspatial.geotiff._writer import write
-
-
-# ---------------------------------------------------------------------------
-# Backend helpers
-# ---------------------------------------------------------------------------
-
-
-def _cupy_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _cupy_available()
+from xrspatial.geotiff.tests.conftest import requires_gpu
 
 
 # WKT for EPSG:4326. Same constant as the finalization parity module so
@@ -69,19 +77,6 @@ _WGS84_WKT = (
     'AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,'
     'AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,'
     'AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4326"]]'
-)
-
-# WKT for EPSG:32633 (UTM zone 33N). Used for the mixed-CRS negative.
-_UTM33N_WKT = (
-    'PROJCS["WGS 84 / UTM zone 33N",GEOGCS["WGS 84",DATUM["WGS_1984",'
-    'SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],'
-    'AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
-    'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
-    'AUTHORITY["EPSG","4326"]],PROJECTION["Transverse_Mercator"],'
-    'PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",15],'
-    'PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],'
-    'PARAMETER["false_northing",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]],'
-    'AUTHORITY["EPSG","32633"]]'
 )
 
 
@@ -262,6 +257,18 @@ def _read_dask(vrt_path: str):
     return lazy.compute()
 
 
+def _read_dask_chunks_2(vrt_path: str):
+    """Dask via the dispatcher, lazy (no compute).
+
+    Used for negative-tests that pin the build-time raise contract
+    (e.g., ``test_mixed_nodata_vrt_fails_closed_by_default``). Named
+    at module scope so pytest test ids render as
+    ``[dask_chunks_2-_read_dask_chunks_2]`` rather than the cryptic
+    ``[dask_chunks_2-<lambda>]`` an inline lambda would produce.
+    """
+    return open_geotiff(vrt_path, chunks=2)
+
+
 def _read_gpu_eager(vrt_path: str):
     """GPU eager via ``read_vrt(gpu=True)``.
 
@@ -274,16 +281,15 @@ def _read_gpu_eager(vrt_path: str):
 
 
 # Backends used by the cross-backend parity sweep. The GPU entry is
-# parametrized in but skipped without cupy + a working device.
+# parametrized in but skipped without cupy + a working CUDA device.
+# Reuses the project-wide ``requires_gpu`` skip marker from
+# ``xrspatial.geotiff.tests.conftest`` so the import-time CUDA probe
+# stays canonical -- a local re-implementation would risk drift from
+# the shared ``gpu_available()`` helper.
 _BACKENDS = [
     pytest.param('numpy', _read_eager_numpy, id='numpy'),
     pytest.param('dask', _read_dask, id='dask'),
-    pytest.param(
-        'gpu', _read_gpu_eager, id='gpu',
-        marks=pytest.mark.skipif(
-            not _HAS_GPU, reason='cupy + CUDA device required'
-        ),
-    ),
+    pytest.param('gpu', _read_gpu_eager, id='gpu', marks=requires_gpu),
 ]
 
 
@@ -507,15 +513,17 @@ def _write_mixed_crs_vrt(tmp_path: pathlib.Path) -> str:
     """Two single-band sources with disagreeing CRS at the VRT.
 
     The VRT XML carries one SRS (WGS84) but the second underlying TIFF
-    carries a UTM CRS, so reading either source independently shows
-    the CRS conflict. We surface this via the per-source CRS check that
-    the existing reader runs (``allow_unparseable_crs`` etc.) -- a
-    mixed-CRS mosaic must not silently flatten to the VRT-declared CRS.
+    carries a UTM CRS. The fail-closed contract calls for the read to
+    reject this up front, but today the per-source CRS check does NOT
+    surface the conflict: the read succeeds and silently flattens to
+    the VRT-declared SRS. See the xfail on
+    ``test_mixed_crs_vrt_does_not_silently_flatten`` for the
+    consumer-side pin and the gap PR 2 must close.
 
     TODO(#2321): when sub-PR 2 (`VRTUnsupportedError`) lands, the
     centralised validator must reject the mixed-CRS VRT up front with
-    a typed error; switch the ``pytest.raises`` here to that type and
-    drop the broad ``Exception`` fallback.
+    a typed error; switch the ``pytest.raises`` on the consumer test
+    to that type and drop the broad ``Exception`` fallback.
     """
     import xarray as xr
 
@@ -607,8 +615,10 @@ def test_mixed_crs_vrt_does_not_silently_flatten(tmp_path):
     # Today this read succeeds and produces an attrs blob that names
     # only the VRT-declared CRS, ignoring the second source's UTM CRS.
     # The xfail above documents the gap; this assertion is what the
-    # contract requires after sub-PR 2 lands.
-    with pytest.raises(Exception):  # noqa: B017 -- broad until PR 2
+    # contract requires after sub-PR 2 lands. Catching Exception is
+    # intentional until PR 2 lands and a typed error class exists;
+    # narrow this to ``VRTUnsupportedError`` once that imports cleanly.
+    with pytest.raises(Exception):
         read_vrt(vrt)
 
 
@@ -662,7 +672,7 @@ def _write_mixed_nodata_vrt(tmp_path: pathlib.Path) -> str:
     'reader_label, reader',
     [
         ('eager_numpy', _read_eager_numpy),
-        ('dask_chunks_2', lambda p: open_geotiff(p, chunks=2)),
+        ('dask_chunks_2', _read_dask_chunks_2),
     ],
 )
 def test_mixed_nodata_vrt_fails_closed_by_default(
@@ -741,11 +751,16 @@ def test_unsupported_resample_alg_raises(tmp_path):
     must raise ``NotImplementedError`` rather than return
     silently-nearest-sampled pixels mislabelled as Bilinear.
 
+    The ``match=`` clause pins the algorithm name and the issue number
+    so an unrelated ``NotImplementedError`` from some other VRT code
+    path cannot keep the test green. See ``_vrt.py`` for the existing
+    raise that names both fields.
+
     TODO(#2321): when sub-PR 2 lands the typed ``VRTUnsupportedError``
     should be raised here instead; accept either today.
     """
     vrt = _write_unsupported_resample_vrt(tmp_path)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match=r"Bilinear|1751"):
         read_vrt(vrt)
 
 
@@ -825,14 +840,17 @@ def _write_bad_dstrect_vrt(
 def test_negative_dstrect_size_rejected(tmp_path):
     """Malformed ``DstRect`` must not survive into the read path.
 
-    Accept either ``ValueError`` (today's posture; the existing
-    ``_resample_window_inverse`` chain raises on a negative target
-    size) or a typed validator error once PR 2 lands.
+    Accept ``ValueError`` (today's posture; the SimpleSource DstRect
+    validator raises ``VRT SimpleSource DstRect has negative size
+    (...)`` before any pixel work begins). The ``match=`` clause pins
+    the field name and the rejection reason so an unrelated
+    ``ValueError`` from some other VRT code path cannot silently keep
+    the test green.
 
     TODO(#2321): tighten to ``VRTUnsupportedError`` when PR 2 ships.
     """
     vrt = _write_bad_dstrect_vrt(tmp_path, x_size=-10)
-    with pytest.raises((ValueError, NotImplementedError)):
+    with pytest.raises(ValueError, match=r"DstRect.*negative size"):
         read_vrt(vrt)
 
 
@@ -920,9 +938,15 @@ def test_missing_sources_warn_records_holes(tmp_path):
     holes = result.attrs['vrt_holes']
     assert len(holes) == 1
     # The hole entry should name the skipped source so downstream
-    # consumers can audit what was dropped.
-    hole_source = holes[0].get('source') if isinstance(holes[0], dict) else None
-    if hole_source is not None:
-        assert 'tmp_2321_missing_src.tif' in hole_source, (
-            f"hole source path drifted: {hole_source!r}"
-        )
+    # consumers can audit what was dropped. The shape pinned in #1734
+    # is a dict with a ``source`` key; pin it as a hard assertion so a
+    # future refactor that changes the entry type (e.g., dataclass)
+    # surfaces here instead of silently weakening the path check.
+    assert isinstance(holes[0], dict), (
+        f"vrt_holes entry type drifted: {type(holes[0]).__name__}; "
+        f"#1734 documents a dict shape"
+    )
+    hole_source = holes[0]['source']
+    assert 'tmp_2321_missing_src.tif' in hole_source, (
+        f"hole source path drifted: {hole_source!r}"
+    )
