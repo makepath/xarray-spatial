@@ -184,10 +184,18 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
                     f"read.")
     else:
         src = _FileSource(source)
-    data = src.read_all()
 
     sidecar = None
+    # Wrap source lifetime in the try/finally immediately after
+    # construction so ``src.close()`` runs even when ``read_all()``
+    # raises (e.g. a fsspec network failure mid-download, a transient
+    # S3 error, or a local I/O error). ``_CloudSource.close()`` is a
+    # no-op today, but the structural guard prevents a future
+    # resource-holding source from leaking state on the failure path.
+    # Mirrors the close-on-error contract that ``_read_cog_http``
+    # already enforces (issue #1816). See issue #2322.
     try:
+        data = src.read_all()
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
 
