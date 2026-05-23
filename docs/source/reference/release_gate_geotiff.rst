@@ -178,8 +178,10 @@ HTTP / fsspec reads
      - URLs resolving to loopback, link-local, or RFC1918 ranges raise
        :class:`xrspatial.geotiff.UnsafeURLError` unless
        ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set.
-     - ``xrspatial/geotiff/tests/test_release_gate_2321.py``
-       (HTTP SSRF presence gate), plus the per-feature suites linked above.
+     - ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
+       ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``,
+       ``xrspatial/geotiff/tests/test_release_gate_2321.py``
+       (HTTP SSRF presence gate)
    * - HTTP per-tile byte-count cap
      - stable
      - Tile or strip declared sizes exceeding ``XRSPATIAL_COG_MAX_TILE_BYTES``

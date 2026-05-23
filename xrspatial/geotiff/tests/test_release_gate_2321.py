@@ -88,6 +88,16 @@ def test_release_gate_cites_only_existing_test_files() -> None:
         "rename the checklist row to a real file or restore the test: "
         f"{missing}"
     )
+    # Tighten: every cited path must point at a `test_*.py` file, not at
+    # ``conftest.py`` or a helper module. The leaf-prefix check catches
+    # typos like ``conftests.py`` and accidental citations of non-test
+    # support files even though they happen to exist on disk.
+    non_test = sorted(p for p in cited if not Path(p).name.startswith("test_"))
+    assert not non_test, (
+        "release gate checklist cites paths that do not start with "
+        "``test_``; the checklist should point at regression tests, not "
+        f"conftest or helper modules: {non_test}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -97,10 +107,11 @@ def test_release_gate_cites_only_existing_test_files() -> None:
 # Tiers that release notes are allowed to make promises about. ``stable``
 # and ``advanced`` features must show up in the checklist so a reader can
 # tell what the release covers. ``experimental`` and ``internal_only``
-# stay in ``SUPPORTED_FEATURES`` as opt-ins but are not required to have
-# a checklist row -- the prose calls them out as not-promised. Codec
-# keys are handled together as a group in the local-read/write section,
-# so the gate excludes them.
+# are deliberately excluded -- the checklist's prose tags them as
+# not-promised, so a missing row for those tiers is not a release gate
+# failure. Codec keys are handled together as a group in the
+# local-read/write section, so the gate excludes them from the
+# per-key enumeration.
 _PROMISED_TIERS = {"stable", "advanced"}
 
 
@@ -155,7 +166,11 @@ def test_release_gate_http_ssrf_rejects_loopback() -> None:
         "remove this xfail marker so the release gate enforces the promise."
     ),
     strict=False,
-    raises=Exception,
+    # Narrow to the two known shapes today (fsspec ValueError) and the
+    # post-#2326 shape (UnsafeURLError). A future regression that raises
+    # anything else (RuntimeError, OSError from a real socket dial, etc.)
+    # should NOT silently xfail -- it should fail loudly.
+    raises=(ValueError, UnsafeURLError),
 )
 def test_release_gate_http_ssrf_rejects_loopback_uppercase_scheme() -> None:
     """Uppercase scheme (sub-PR 5 of #2321) must take the same SSRF
