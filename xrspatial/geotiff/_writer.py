@@ -65,6 +65,9 @@ from ._write_layout import (BO, _assemble_cog_layout, _assemble_standard_layout,
                             _assemble_tiff, _build_ifd, _compute_classic_ifd_overhead,
                             _float_to_rational, _pack_tag_value, _promote_offsets_to_long8,
                             _serialize_tag_value, _should_use_bigtiff_streaming)
+# Canonical case-insensitive http(s) check (#2323) so the writer-side
+# fsspec gate cannot be tricked by uppercase URLs.
+from ._sources import _is_http_url as _is_http_url_canonical
 
 # Tag IDs the writer must never accept from ``extra_tags``. NewSubfileType
 # (254) is a per-IFD status flag the writer emits on its own for overview
@@ -1238,10 +1241,14 @@ write_streaming = _write_streaming
 
 
 def _is_fsspec_uri(path) -> bool:
-    """Check if a path is a fsspec-compatible URI (string only)."""
+    """Check if a path is a fsspec-compatible URI (string only).
+
+    Excludes http(s) case-insensitively so uppercase URLs are not routed
+    through fsspec on the writer side (issue #2323).
+    """
     if not isinstance(path, str):
         return False
-    if path.startswith(('http://', 'https://')):
+    if _is_http_url_canonical(path):
         return False
     return '://' in path
 

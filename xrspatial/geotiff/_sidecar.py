@@ -26,6 +26,9 @@ from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
 # ``_reader`` imports ``_sidecar`` lazily (inside functions), so this
 # top-level import does not form a cycle at module load time.
 from ._reader import _is_fsspec_uri
+# Canonical case-insensitive http(s) check (#2323). Reused via the
+# wrapper ``_is_http_url`` below so existing imports keep working.
+from ._sources import _is_http_url as _canonical_is_http_url
 
 #: Type of the bytes-like buffer a sidecar carries: an mmap for local
 #: files, bytes for HTTP / fsspec downloads. Narrowed from ``object``
@@ -43,7 +46,9 @@ class SidecarOverviews(NamedTuple):
 
 
 def _is_http_url(source: str) -> bool:
-    return source.startswith(("http://", "https://"))
+    # Delegate to the canonical case-insensitive check so uppercase
+    # ``HTTP://`` URLs cannot dodge SSRF validation (issue #2323).
+    return _canonical_is_http_url(source)
 
 
 def find_sidecar(source) -> str | None:

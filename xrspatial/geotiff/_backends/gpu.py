@@ -346,8 +346,9 @@ def read_geotiff_gpu(source: str, *,
     # whole image either way for the eager path; the trade-off is a CPU
     # decode instead of nvCOMP-on-GPU. Callers who want bounded GPU
     # memory should pass ``chunks=...``.
+    from .._reader import _is_http_url
     if isinstance(source, str) and (
-            source.startswith(('http://', 'https://'))
+            _is_http_url(source)
             or _is_fsspec_uri(source)):
         return _read_geotiff_gpu_eager_via_cpu(
             source, dtype=dtype, window=window,
@@ -1053,7 +1054,13 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     """
     if not isinstance(source, str):
         return False
-    if source.startswith(('http://', 'https://')):
+    # The http(s) gate must NOT live inside a ``try/except`` -- a hidden
+    # import failure would silently let an HTTP URL into the kvikio
+    # branch (which opens the path as a local file and panics). The
+    # canonical case-insensitive helper is a sibling module, so the
+    # import is safe at module load time (#2323).
+    from .._sources import _is_http_url
+    if _is_http_url(source):
         return False
     try:
         from .._reader import _is_fsspec_uri
