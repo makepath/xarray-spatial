@@ -296,6 +296,10 @@ class _FixtureSpec:
     window: tuple[int, int, int, int] | None
 
 
+# ``fix_id`` is unique per (builder, window); the ``vrt_fixture`` resolver
+# below caches one on-disk layout per *builder*, so two specs that share
+# a builder (e.g. the full-extent and windowed cells over the same VRT)
+# reuse a single set of source TIFFs and a single ``.vrt`` file.
 _FIXTURES: tuple[_FixtureSpec, ...] = (
     _FixtureSpec(
         fix_id="two-tile-float32-full",
@@ -348,22 +352,24 @@ def vrt_fixture(_vrt_parity_dir):
 
     Each builder gets its own subdirectory so the on-disk layout (vrt +
     sources + any sidecar) is isolated from neighbouring builders. The
-    subdirectory is cached across cells in the session.
+    subdirectory is cached across cells in the session. Builder return
+    values (path + dtype) are cached in an in-process dict so cache hits
+    do not re-open the VRT just to recover the dtype.
     """
     base = _vrt_parity_dir
+    cache: dict[str, tuple[Path, np.dtype]] = {}
 
     def _resolve(spec: _FixtureSpec) -> tuple[Path, np.dtype]:
         # The fix_id encodes both the builder and the window; collapse to
         # the builder so we do not rebuild identical layouts.
-        sub = base / spec.builder.__name__
+        key = spec.builder.__name__
+        if key in cache:
+            return cache[key]
+        sub = base / key
         sub.mkdir(exist_ok=True)
-        # The builder writes deterministic filenames; reuse if present.
-        vrt_files = list(sub.glob("*.vrt"))
-        if vrt_files:
-            # Re-derive the dtype without rebuilding.
-            sample = open_geotiff(str(vrt_files[0]))
-            return vrt_files[0], sample.dtype
-        return spec.builder(sub)
+        result = spec.builder(sub)
+        cache[key] = result
+        return result
     return _resolve
 
 
@@ -543,6 +549,41 @@ def test_windowed_vrt_shifts_coords_and_transform_consistently(tmp_path):
     assert eager.attrs.get("georef_status") == lazy.attrs.get(
         "georef_status"
     )
+
+
+# ---------------------------------------------------------------------------
+# Absolute-shift parity for the sidecar windowed cell. The parametrised
+# matrix only checks eager-vs-dask equality; pin the actual shifted
+# coords and transform here so a regression that drifts BOTH backends
+# the same way still surfaces. The bundled sidecar fixture has a known
+# pixel size of 0.001 and origin (-120.0, 45.0).
+# ---------------------------------------------------------------------------
+
+def test_sidecar_window_shifts_to_known_coords(tmp_path):
+    """The sidecar VRT, read with ``window=(8, 8, 56, 56)``, should land
+    on the same coords / transform an absolute calculation would predict.
+
+    The bundled fixture is 64x64 at pixel size 0.001 with origin
+    (-120.0, 45.0). Trimming rows 8..56 / cols 8..56 yields a 48x48
+    window whose x-coord array starts at -120.0 + 8 * 0.001 + half-pixel
+    centre offset, and whose transform's c/f entries shift by the same
+    8-pixel offsets.
+    """
+    vrt_path, _ = _build_sidecar_vrt(tmp_path)
+    window = (8, 8, 56, 56)
+
+    eager = open_geotiff(str(vrt_path), window=window)
+
+    assert eager.shape == (48, 48)
+    # Pixel size column (a, e) of the rasterio 6-tuple stays constant.
+    t = eager.attrs.get("transform")
+    assert t is not None, "windowed sidecar VRT dropped attrs['transform']"
+    assert t[0] == pytest.approx(0.001)
+    assert t[4] == pytest.approx(-0.001)
+    # Origin shifts by 8 pixels: c += 8 * a, f += 8 * e.
+    # Full-extent origin is c=-120.0, f=45.0.
+    assert t[2] == pytest.approx(-120.0 + 8 * 0.001)
+    assert t[5] == pytest.approx(45.0 + 8 * -0.001)
 
 
 # ---------------------------------------------------------------------------
