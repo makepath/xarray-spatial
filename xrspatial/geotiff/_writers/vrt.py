@@ -31,6 +31,24 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     disagreement. See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for
     the full tier map.
 
+    Output targets the same narrow subset of GDAL's VRT spec that the
+    reader supports (issue #2321; see the "VRT support matrix" section
+    in ``docs/source/reference/geotiff.rst`` for the canonical
+    contract):
+
+    * Supported: simple GDAL VRT mosaics over GeoTIFF sources;
+      compatible CRS, transform orientation, pixel size, dtype, and
+      band count across sources; clean windowed reads on the
+      consumer side; lazy / dask reads over the same subset on the
+      consumer side; explicit nodata; ``missing_sources='raise'`` as
+      the read-side default.
+    * Non-goals (the writer does not emit these and the reader is
+      allowed to raise on them): warped / reprojection VRTs,
+      arbitrary resampling beyond the tested subset, mixed CRS /
+      resolution / dtype / band metadata without an opt-in, nested
+      VRTs, complex source / mask band / alpha band structures, full
+      GDAL VRT parity.
+
     Parameters
     ----------
     path : str
@@ -73,6 +91,36 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     -------
     str
         Path to the written VRT file.
+
+    Examples
+    --------
+    Safe usage. Mosaic two compatible tiles; the consumer can then
+    read the resulting VRT with the fail-closed defaults:
+
+    >>> from xrspatial.geotiff import write_vrt, open_geotiff
+    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    ...     'mosaic.vrt',
+    ...     source_files=['tile_west.tif', 'tile_east.tif'],
+    ... )
+    >>> da = open_geotiff(vrt_path)  # doctest: +SKIP
+
+    Intentionally raises (on the read side). If the source tiles
+    disagree on their per-band nodata sentinels, the default
+    ``band_nodata=None`` on ``open_geotiff`` / ``read_vrt`` rejects
+    the mosaic with ``MixedBandMetadataError``. The writer does not
+    pre-validate cross-tile metadata; the failure mode lives on the
+    read side:
+
+    >>> from xrspatial.geotiff import MixedBandMetadataError
+    >>> # tile_a.tif declares nodata=-9999; tile_b.tif declares nodata=0
+    >>> bad_path = write_vrt(  # doctest: +SKIP
+    ...     'mixed_nodata.vrt',
+    ...     source_files=['tile_a.tif', 'tile_b.tif'],
+    ... )
+    >>> try:  # doctest: +SKIP
+    ...     open_geotiff(bad_path)
+    ... except MixedBandMetadataError:
+    ...     pass  # fix the source tiles or pass band_nodata='first'.
     """
     # Explicit signature (previously ``**kwargs``) so ``inspect.signature``,
     # IDE autocomplete, and ``mypy --strict`` can see the accepted kwargs
