@@ -194,8 +194,11 @@ def read_geotiff_dask(source: str, *,
     # and ``_CloudSource`` satisfies that contract. Going through it
     # bounds metadata reads to ``MAX_HTTP_HEADER_BYTES`` instead of
     # fetching the whole remote object up front. See PR #1755 review.
-    from .._sources import _is_http_source
+    # Local imports: backend modules avoid eager-importing the reader /
+    # sources layer at module load so the package can be imported without
+    # urllib3 in environments that only consume the dask path. Issue #2332.
     from .._reader import _is_fsspec_uri
+    from .._sources import _is_http_source
     is_http = _is_http_source(source)
     is_fsspec = isinstance(source, str) and _is_fsspec_uri(source)
     http_meta = None

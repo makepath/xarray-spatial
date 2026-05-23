@@ -61,6 +61,7 @@ from ._overview import (_MAX_OVERVIEW_LEVELS, OVERVIEW_METHODS, _block_reduce_2d
 # (``_write``, ``_write_streaming``) and external importers (the
 # ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
 # ``xrspatial.geotiff._writer`` import path.
+from ._sources import _is_http_source
 from ._write_layout import (BO, _assemble_cog_layout, _assemble_standard_layout,  # noqa: F401
                             _assemble_tiff, _build_ifd, _compute_classic_ifd_overhead,
                             _float_to_rational, _pack_tag_value, _promote_offsets_to_long8,
@@ -1247,7 +1248,6 @@ def _is_fsspec_uri(path) -> bool:
     uppercase ``HTTP://...`` slipped past this check and into fsspec.
     Issue #2332.
     """
-    from ._sources import _is_http_source
     if not isinstance(path, str):
         return False
     if _is_http_source(path):
@@ -1281,6 +1281,16 @@ def _write_bytes(file_bytes: bytes | bytearray, path) -> None:
                 pass
         path.write(file_bytes)
         return
+
+    # Reject HTTP(S) write targets with a typed error before the local
+    # file path tries to treat the URL as a filename. ``_is_http_source``
+    # is case-insensitive so ``HTTP://...`` reports the same friendly
+    # error as ``http://...``. Issue #2332.
+    if isinstance(path, str) and _is_http_source(path):
+        raise NotImplementedError(
+            f"Writes are not supported over HTTP(S). Got {path!r}. "
+            "Write to a local path or an fsspec-supported cloud URL "
+            "(s3://, gs://, az://, ...) instead.")
 
     if _is_fsspec_uri(path):
         try:

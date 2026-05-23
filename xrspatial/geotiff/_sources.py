@@ -31,6 +31,7 @@ import os as _os_module
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import urllib3
 
@@ -1471,7 +1472,6 @@ def _is_http_source(source) -> bool:
         return False
     # ``urlparse`` strips off the scheme cleanly even for unusual inputs
     # (e.g. ``HTTP:`` with no ``//``) and avoids the prefix-tuple trap.
-    from urllib.parse import urlparse
     return urlparse(source).scheme.lower() in ('http', 'https')
 
 

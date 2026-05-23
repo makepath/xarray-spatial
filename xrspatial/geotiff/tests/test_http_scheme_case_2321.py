@@ -105,6 +105,23 @@ class TestIsHttpSourceHelper:
         # ``http://`` should classify as HTTP.
         assert _sources_mod._is_http_source('http') is False
 
+    def test_scheme_colon_no_slashes_classifies_as_http(self):
+        # ``urlparse('http:foo').scheme == 'http'``: this is broader than
+        # the old ``startswith('http://')`` gate but is RFC-correct. The
+        # validator rejects these downstream as "no hostname", so the
+        # security posture is unchanged. Locking the broader classifier
+        # in here keeps any future tightening explicit. Issue #2332.
+        assert _sources_mod._is_http_source('http:foo') is True
+        assert _sources_mod._is_http_source('HTTP:foo') is True
+
+    def test_open_source_http_colon_no_hostname_raises(self):
+        # End-to-end follow-up: ``_open_source('http:foo')`` now routes
+        # into ``_HTTPSource``, which calls ``_validate_http_url`` and
+        # raises ``UnsafeURLError('... has no hostname')``. The previous
+        # case-sensitive gate would have sent this to fsspec instead.
+        with pytest.raises(UnsafeURLError):
+            _sources_mod._open_source('http:foo')
+
 
 # ---------------------------------------------------------------------------
 # Dispatch: ``_open_source`` must route uppercase URLs through ``_HTTPSource``
@@ -268,3 +285,34 @@ class TestUppercaseSchemeStillRejectsPrivateHosts:
         with pytest.raises(UnsafeURLError):
             _sources_mod._open_source(
                 'HTTP://metadata.google.internal/computeMetadata/v1/')
+
+
+# ---------------------------------------------------------------------------
+# Writer: HTTP(S) destinations must raise a typed error, not a raw OSError
+# ---------------------------------------------------------------------------
+
+
+class TestWriterRejectsHttpTargets:
+    """``_write_bytes(_, 'HTTP://...')`` must raise ``NotImplementedError``.
+
+    Without the early gate the uppercase URL fell through ``_is_fsspec_uri``
+    (correctly returns False) and into the local file write path, which
+    surfaced an OS-specific ``OSError`` for the colon-in-filename. The
+    typed error matches the lowercase-HTTP behaviour and points users at
+    the supported destinations. Follow-up to issue #2332 review.
+    """
+
+    @pytest.mark.parametrize("url", [
+        'http://example.com/x.tif',
+        'https://example.com/x.tif',
+        'HTTP://example.com/x.tif',
+        'HTTPS://example.com/x.tif',
+        'Http://example.com/x.tif',
+    ])
+    def test_write_bytes_rejects_http(self, url):
+        from xrspatial.geotiff import _writer as _writer_mod
+        with pytest.raises(NotImplementedError) as excinfo:
+            _writer_mod._write_bytes(b'IIxxxx', url)
+        msg = str(excinfo.value)
+        assert 'HTTP' in msg
+        assert url in msg

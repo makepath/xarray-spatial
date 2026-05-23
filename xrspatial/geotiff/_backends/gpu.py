@@ -1054,6 +1054,8 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     """
     if not isinstance(source, str):
         return False
+    # Local import: backend gate is called once per source and the GDS
+    # path is optional, so avoid eager top-level coupling. Issue #2332.
     from .._sources import _is_http_source
     if _is_http_source(source):
         return False
