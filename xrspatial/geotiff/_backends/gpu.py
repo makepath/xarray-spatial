@@ -346,8 +346,9 @@ def read_geotiff_gpu(source: str, *,
     # whole image either way for the eager path; the trade-off is a CPU
     # decode instead of nvCOMP-on-GPU. Callers who want bounded GPU
     # memory should pass ``chunks=...``.
+    from .._reader import _is_http_url
     if isinstance(source, str) and (
-            source.startswith(('http://', 'https://'))
+            _is_http_url(source)
             or _is_fsspec_uri(source)):
         return _read_geotiff_gpu_eager_via_cpu(
             source, dtype=dtype, window=window,
@@ -1053,10 +1054,10 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     """
     if not isinstance(source, str):
         return False
-    if source.startswith(('http://', 'https://')):
-        return False
     try:
-        from .._reader import _is_fsspec_uri
+        from .._reader import _is_fsspec_uri, _is_http_url
+        if _is_http_url(source):
+            return False
         if _is_fsspec_uri(source):
             return False
     except Exception:

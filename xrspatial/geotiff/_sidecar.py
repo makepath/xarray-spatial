@@ -43,7 +43,10 @@ class SidecarOverviews(NamedTuple):
 
 
 def _is_http_url(source: str) -> bool:
-    return source.startswith(("http://", "https://"))
+    # Delegate to the canonical case-insensitive check so uppercase
+    # ``HTTP://`` URLs cannot dodge SSRF validation (issue #2323).
+    from ._sources import _is_http_url as _ihu
+    return _ihu(source)
 
 
 def find_sidecar(source) -> str | None:

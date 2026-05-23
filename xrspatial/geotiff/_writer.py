@@ -1238,10 +1238,15 @@ write_streaming = _write_streaming
 
 
 def _is_fsspec_uri(path) -> bool:
-    """Check if a path is a fsspec-compatible URI (string only)."""
+    """Check if a path is a fsspec-compatible URI (string only).
+
+    Excludes http(s) case-insensitively so uppercase URLs are not routed
+    through fsspec on the writer side (issue #2323).
+    """
     if not isinstance(path, str):
         return False
-    if path.startswith(('http://', 'https://')):
+    from ._sources import _is_http_url
+    if _is_http_url(path):
         return False
     return '://' in path
 

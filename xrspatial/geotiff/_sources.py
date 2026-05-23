@@ -1451,11 +1451,33 @@ class _HTTPSource:
 _CLOUD_SCHEMES = ('s3://', 'gs://', 'az://', 'abfs://')
 
 
-def _is_fsspec_uri(path: str) -> bool:
-    """Check if a path is a fsspec-compatible URI (not http/https/local)."""
+def _is_http_url(path) -> bool:
+    """Return True if *path* is an ``http://`` or ``https://`` URL.
+
+    Case-insensitive: URL schemes are case-insensitive per RFC 3986, so an
+    uppercase ``HTTP://`` or mixed-case ``Http://`` must dispatch to the
+    SSRF-validating :class:`_HTTPSource`, not to the fsspec branch. See
+    issue #2323.
+    """
     if not isinstance(path, str):
         return False
-    if path.startswith(('http://', 'https://')):
+    from urllib.parse import urlparse
+    try:
+        scheme = urlparse(path).scheme
+    except (ValueError, TypeError):
+        return False
+    return scheme.lower() in ('http', 'https')
+
+
+def _is_fsspec_uri(path: str) -> bool:
+    """Check if a path is a fsspec-compatible URI (not http/https/local).
+
+    Excludes http(s) case-insensitively so uppercase URLs cannot dodge the
+    SSRF allow-list and pinned DNS in :class:`_HTTPSource` (issue #2323).
+    """
+    if not isinstance(path, str):
+        return False
+    if _is_http_url(path):
         return False
     return '://' in path
 
@@ -1636,7 +1658,7 @@ def _open_source(source):
         raise TypeError(
             f"source must be a str path/URL or a binary file-like object "
             f"with read+seek methods, got {type(source).__name__}")
-    if source.startswith(('http://', 'https://')):
+    if _is_http_url(source):
         return _HTTPSource(source)
     if _is_fsspec_uri(source):
         return _CloudSource(source)
