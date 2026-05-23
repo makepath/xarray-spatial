@@ -103,6 +103,24 @@ class ConflictingNodataError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class VRTUnsupportedError(GeoTIFFAmbiguousMetadataError):
+    """A parsed VRT declares a feature the read pipeline does not honour (#2329).
+
+    Raised by the centralised VRT validator at graph-build / eager-read
+    setup time, before any source bytes are decoded. Covers CRS / dtype
+    / band / nodata / transform / pixel-size / source-window /
+    destination-window / resampling mismatches that the VRT read path
+    cannot serve correctly. The message names the offending source path
+    and field so a caller can locate the bad source without re-parsing
+    the VRT XML themselves.
+
+    Subclasses ``GeoTIFFAmbiguousMetadataError`` (and therefore
+    ``ValueError``) so existing ``except ValueError`` callers keep
+    catching VRT-capability failures alongside the older ambiguous-
+    metadata family.
+    """
+
+
 class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """Can't classify an EPSG as geographic or projected on write (#2277).
 
@@ -127,5 +145,6 @@ __all__ = [
     "MixedBandMetadataError",
     "ConflictingCRSError",
     "ConflictingNodataError",
+    "VRTUnsupportedError",
     "UnknownCRSModelTypeError",
 ]

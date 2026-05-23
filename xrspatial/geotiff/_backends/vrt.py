@@ -384,9 +384,27 @@ def read_vrt(source: str, *,
     from .._validation import validate_read_metadata
     from .._vrt import _read_vrt_xml
     from .._vrt import parse_vrt as _parse_vrt
+    from .._vrt_validation import validate_parsed_vrt as _validate_parsed_vrt
     _xml_str = _read_vrt_xml(source)
     _vrt_dir = _os.path.dirname(_os.path.abspath(source))
     _parsed_vrt = _parse_vrt(_xml_str, _vrt_dir)
+    # Centralised VRT capability validator (issue #2329). Runs before
+    # ``validate_read_metadata`` so capability mismatches (negative
+    # SrcRect / DstRect, unsupported resampling, zero pixel size, etc.)
+    # surface with the typed ``VRTUnsupportedError`` and a message that
+    # names the offending source path and field. The validator overlaps
+    # ``validate_read_metadata`` on rotated-transform / unparseable-CRS
+    # / mixed-band-nodata; running the centralised one first keeps the
+    # ``VRTUnsupportedError`` type at the entry-point boundary for the
+    # capability checks added in #2329.
+    _validate_parsed_vrt(
+        _parsed_vrt,
+        source=source,
+        mode='read',
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+        band_nodata=band_nodata,
+    )
     _band_nodata_values = (
         [b.nodata for b in _parsed_vrt.bands]
         if _parsed_vrt.bands else None
@@ -736,6 +754,22 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # the ``band`` / window / ``max_pixels`` validators below so the
     # error ordering matches the eager path.
     from .._validation import validate_read_metadata
+    from .._vrt_validation import validate_parsed_vrt as _validate_parsed_vrt
+    # Centralised VRT capability validator (issue #2329). Run at graph
+    # build time so capability mismatches surface here, not inside a
+    # per-chunk decode task. ``read_vrt(..., chunks=)`` previously let
+    # unsupported features ride through the graph build and raised
+    # deep in a ``compute()`` chunk function (an opaque user
+    # experience); the validator moves the rejection back to where the
+    # caller stands.
+    _validate_parsed_vrt(
+        vrt,
+        source=source,
+        mode='read',
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+        band_nodata=band_nodata,
+    )
     band_nodata_values = (
         [b.nodata for b in vrt.bands] if vrt.bands else None
     )
