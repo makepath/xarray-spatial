@@ -31,6 +31,7 @@ import os as _os_module
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import urllib3
 
@@ -1461,7 +1462,6 @@ def _is_http_url(path) -> bool:
     """
     if not isinstance(path, str):
         return False
-    from urllib.parse import urlparse
     try:
         scheme = urlparse(path).scheme
     except (ValueError, TypeError):

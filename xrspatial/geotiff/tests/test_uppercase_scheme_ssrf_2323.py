@@ -202,3 +202,88 @@ class TestReadToArrayUppercaseDispatch:
         assert captured['source'] == (
             f'http://example.com/x_{_ISSUE}.tif'
         )
+
+
+# ---------------------------------------------------------------------------
+# Dask backend dispatch -- uppercase URL must construct _HTTPSource
+# (not _CloudSource) inside ``_read_geotiff_dask``
+# ---------------------------------------------------------------------------
+
+
+class TestDaskBackendUppercaseDispatch:
+    """The dask backend has its own ``is_http``/``is_fsspec`` split at
+    ``_backends/dask.py:197-199``. Confirm an uppercase URL lands on the
+    HTTP branch (which constructs ``_HTTPSource``) rather than the
+    fsspec branch (``_CloudSource``).
+    """
+
+    def _stub_dask_http_path(self, monkeypatch):
+        """Replace ``_HTTPSource``, ``_CloudSource``, and
+        ``_parse_cog_http_meta`` with tracking stubs that raise once the
+        dispatch decision is observable. Returns a dict the caller reads
+        to check which source class was instantiated.
+        """
+        from xrspatial.geotiff import _reader as _r
+
+        seen = {'http': 0, 'cloud': 0}
+
+        class _Sentinel(Exception):
+            pass
+
+        def _fake_http_source(url):
+            seen['http'] += 1
+            seen['url'] = url
+            raise _Sentinel("dispatched to _HTTPSource")
+
+        def _fake_cloud_source(url, **kw):
+            seen['cloud'] += 1
+            seen['url'] = url
+            raise _Sentinel("dispatched to _CloudSource")
+
+        monkeypatch.setattr(_r, '_HTTPSource', _fake_http_source)
+        monkeypatch.setattr(_r, '_CloudSource', _fake_cloud_source)
+        return seen, _Sentinel
+
+    def test_uppercase_url_constructs_http_source(self, monkeypatch):
+        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+
+        seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
+
+        url = f'HTTP://example.com/x_dask_{_ISSUE}.tif'
+        with pytest.raises(_Sentinel, match="_HTTPSource"):
+            read_geotiff_dask(url)
+
+        assert seen['http'] == 1, (
+            "uppercase URL did not reach _HTTPSource; "
+            f"seen={seen!r}")
+        assert seen['cloud'] == 0, (
+            "uppercase URL leaked to _CloudSource (fsspec branch); "
+            f"seen={seen!r}")
+        assert seen['url'] == url
+
+    def test_lowercase_url_still_constructs_http_source(self, monkeypatch):
+        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+
+        seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
+
+        url = f'http://example.com/x_dask_{_ISSUE}.tif'
+        with pytest.raises(_Sentinel, match="_HTTPSource"):
+            read_geotiff_dask(url)
+
+        assert seen['http'] == 1
+        assert seen['cloud'] == 0
+
+    def test_uppercase_s3_url_still_constructs_cloud_source(
+            self, monkeypatch):
+        # Counter-check: a real fsspec URI (uppercase scheme too) must
+        # still go to the cloud branch.
+        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+
+        seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
+
+        url = f'S3://bucket/x_dask_{_ISSUE}.tif'
+        with pytest.raises(_Sentinel, match="_CloudSource"):
+            read_geotiff_dask(url)
+
+        assert seen['cloud'] == 1
+        assert seen['http'] == 0

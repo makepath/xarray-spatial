@@ -1054,10 +1054,16 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     """
     if not isinstance(source, str):
         return False
+    # The http(s) gate must NOT live inside a ``try/except`` -- a hidden
+    # import failure would silently let an HTTP URL into the kvikio
+    # branch (which opens the path as a local file and panics). The
+    # canonical case-insensitive helper is a sibling module, so the
+    # import is safe at module load time (#2323).
+    from .._sources import _is_http_url
+    if _is_http_url(source):
+        return False
     try:
-        from .._reader import _is_fsspec_uri, _is_http_url
-        if _is_http_url(source):
-            return False
+        from .._reader import _is_fsspec_uri
         if _is_fsspec_uri(source):
             return False
     except Exception:
