@@ -95,7 +95,9 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     Examples
     --------
     Safe usage. Mosaic two compatible tiles; the consumer can then
-    read the resulting VRT with the fail-closed defaults:
+    read the resulting VRT with the fail-closed defaults. Paths
+    below are illustrative; replace with paths to real GeoTIFF
+    files on disk:
 
     >>> from xrspatial.geotiff import write_vrt, open_geotiff
     >>> vrt_path = write_vrt(  # doctest: +SKIP

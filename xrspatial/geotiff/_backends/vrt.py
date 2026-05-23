@@ -166,30 +166,6 @@ def read_vrt(source: str, *,
     The VRT's source GeoTIFFs are read via windowed reads and assembled
     into a single array.
 
-    Examples
-    --------
-    Safe usage. Mosaic two compatible tiles and read with the
-    fail-closed defaults:
-
-    >>> from xrspatial.geotiff import open_geotiff, write_vrt
-    >>> vrt_path = write_vrt(  # doctest: +SKIP
-    ...     'mosaic.vrt',
-    ...     source_files=['tile_west.tif', 'tile_east.tif'],
-    ... )
-    >>> da = read_vrt(vrt_path)  # doctest: +SKIP
-
-    Intentionally raises. A VRT whose source tiles disagree on their
-    per-band nodata sentinels is rejected by the default
-    ``band_nodata=None``:
-
-    >>> from xrspatial.geotiff import MixedBandMetadataError
-    >>> try:  # doctest: +SKIP
-    ...     read_vrt('mixed_nodata.vrt')
-    ... except MixedBandMetadataError:
-    ...     pass  # pass band_nodata='first' to opt back into the
-    ...           # legacy flatten-to-band-0 semantics, or fix the
-    ...           # source tiles.
-
     Parameters
     ----------
     source : str
@@ -318,6 +294,30 @@ def read_vrt(source: str, *,
     failures, which surface as per-task ``GeoTIFFFallbackWarning``
     instead. Each worker still emits ``GeoTIFFFallbackWarning`` for
     missing sources at execution time as well.
+
+    Examples
+    --------
+    Safe usage. Mosaic two compatible tiles and read with the
+    fail-closed defaults:
+
+    >>> from xrspatial.geotiff import open_geotiff, write_vrt
+    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    ...     'mosaic.vrt',
+    ...     source_files=['tile_west.tif', 'tile_east.tif'],
+    ... )
+    >>> da = read_vrt(vrt_path)  # doctest: +SKIP
+
+    Intentionally raises. A VRT whose source tiles disagree on their
+    per-band nodata sentinels is rejected by the default
+    ``band_nodata=None``:
+
+    >>> from xrspatial.geotiff import MixedBandMetadataError
+    >>> try:  # doctest: +SKIP
+    ...     read_vrt('mixed_nodata.vrt')
+    ... except MixedBandMetadataError:
+    ...     pass  # pass band_nodata='first' to opt back into the
+    ...           # legacy flatten-to-band-0 semantics, or fix the
+    ...           # source tiles.
     """
     from .._reader import _coerce_path
     from .._vrt import _apply_integer_sentinel_mask_with_presence as _vrt_mask_with_presence

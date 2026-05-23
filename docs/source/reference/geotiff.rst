@@ -270,8 +270,7 @@ per-band nodata sentinels triggers the fail-closed check:
 
 .. code-block:: python
 
-    from xrspatial.geotiff import open_geotiff
-    from xrspatial.geotiff import MixedBandMetadataError
+    from xrspatial.geotiff import open_geotiff, MixedBandMetadataError
 
     # tile_a.tif declares nodata=-9999, tile_b.tif declares nodata=0.
     # The default band_nodata=None rejects the mosaic rather than
