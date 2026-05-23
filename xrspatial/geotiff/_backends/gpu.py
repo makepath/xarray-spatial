@@ -1279,9 +1279,17 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
             if not ifds:
                 raise ValueError("No IFDs found in TIFF file")
             ifd = select_overview_ifd(ifds, overview_level)
+            # The GDS qualification probe parses base-file IFDs only --
+            # sidecar files do not qualify for the disk->GPU fast path
+            # and the chunked path falls through to ``read_geotiff_dask``
+            # which carries its own sidecar handling. Pass
+            # ``sidecar_origin=None`` explicitly so all four call sites
+            # of this helper share the same call shape (review nit
+            # on #2324).
             geo_info = extract_geo_info_with_overview_inheritance(
                 ifd, ifds, raw, header.byte_order,
                 allow_rotated=allow_rotated,
+                sidecar_origin=None,
             )
             orientation = ifd.orientation
             has_sparse_tile = (

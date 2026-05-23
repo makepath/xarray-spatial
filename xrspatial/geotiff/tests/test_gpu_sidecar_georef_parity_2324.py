@@ -47,9 +47,17 @@ _gpu_only = pytest.mark.skipif(
 
 
 def _attrs_subset(da):
-    """Pull the georef attrs we want to compare across backends."""
+    """Pull the georef attrs we want to compare across backends.
+
+    Coerce transform elements to plain ``float`` so an attr stored as a
+    numpy array (some backends round-trip through ``np.asarray``) does
+    not produce numpy scalars in the tuple. The equality check below
+    would still pass for matching values but the comparison semantics
+    are clearer with native Python floats.
+    """
+    transform = da.attrs.get("transform", ())
     return {
-        "transform": tuple(da.attrs.get("transform", ())),
+        "transform": tuple(float(x) for x in transform),
         "crs": da.attrs.get("crs"),
     }
 
