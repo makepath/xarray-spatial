@@ -232,7 +232,7 @@ def test_write_geotiff_gpu_jpeg_rgb_roundtrip(tmp_path):
             allow_internal_only_jpeg=True,
         )
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, allow_internal_only_jpeg=True)
     assert out.shape == arr.shape
     assert out.dtype == arr.dtype
     diff = np.abs(out.values.astype(np.int32) - arr.astype(np.int32))
@@ -260,7 +260,7 @@ def test_write_geotiff_gpu_jpeg_uint8_single_band_roundtrip(tmp_path):
             allow_internal_only_jpeg=True,
         )
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, allow_internal_only_jpeg=True)
     assert out.shape == arr.shape
     assert out.dtype == arr.dtype
     diff = np.abs(out.values.astype(np.int32) - arr.astype(np.int32))

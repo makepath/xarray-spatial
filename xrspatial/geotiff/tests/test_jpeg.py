@@ -76,7 +76,7 @@ class TestJpegWriteRoundTrip:
         write(expected, path, compression='jpeg', tiled=True, tile_size=16,
               allow_internal_only_jpeg=True)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_internal_only_jpeg=True)
         assert arr.shape == expected.shape
         assert arr.dtype == np.uint8
         # JPEG is lossy, check approximate
@@ -89,7 +89,7 @@ class TestJpegWriteRoundTrip:
         write(expected, path, compression='jpeg', tiled=False,
               allow_internal_only_jpeg=True)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_internal_only_jpeg=True)
         assert arr.shape == expected.shape
         assert np.abs(arr.astype(int) - expected.astype(int)).mean() < 10
 
@@ -105,7 +105,7 @@ class TestJpegWriteRoundTrip:
         write(expected, path, compression='jpeg', tiled=True, tile_size=16,
               allow_internal_only_jpeg=True)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_internal_only_jpeg=True)
         assert arr.shape == expected.shape
         assert np.abs(arr.astype(int) - expected.astype(int)).mean() < 10
 
@@ -262,7 +262,7 @@ class TestGdalTiledJpegRead:
         assert ifds[0].jpeg_tables is not None
         assert ifds[0].jpeg_tables[:2] == b'\xff\xd8'
 
-        arr, _ = read_to_array(path)
+        arr, _ = read_to_array(path, allow_internal_only_jpeg=True)
         assert arr.shape == (size, size, 3)
         assert arr.dtype == np.uint8
 
@@ -289,7 +289,7 @@ class TestGdalTiledJpegRead:
         ) as dst:
             dst.write(gray, 1)
 
-        arr, _ = read_to_array(path)
+        arr, _ = read_to_array(path, allow_internal_only_jpeg=True)
         assert arr.shape == (size, size)
 
         with rio.open(path) as src:

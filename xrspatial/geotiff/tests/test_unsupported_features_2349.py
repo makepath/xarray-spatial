@@ -28,6 +28,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff import (RotatedTransformError, UnsupportedGeoTIFFFeatureError,
                                open_geotiff, to_geotiff)
 from xrspatial.geotiff._vrt import parse_vrt, write_vrt
@@ -452,5 +453,13 @@ def test_vrt_with_skewed_geotransform_rejected(tmp_path):
         f'  </VRTRasterBand>'
         f'</VRTDataset>'
     )
-    with pytest.raises(RotatedTransformError, match=r"rotated affine"):
+    # Sub-PR 2 of epic #2321 (#2329) centralised this rejection in
+    # ``_vrt_validation.py`` and re-typed it as ``VRTUnsupportedError``
+    # with a message naming the skew terms. Accept either the legacy
+    # ``RotatedTransformError`` or the new typed error so the regression
+    # pin survives the validator refactor.
+    with pytest.raises(
+        (RotatedTransformError, VRTUnsupportedError),
+        match=r"rotated affine|rotation/shear",
+    ):
         open_geotiff(str(vrt))

@@ -233,7 +233,7 @@ def test_write_geotiff_gpu_lz4_roundtrip(tmp_path):
 
     write_geotiff_gpu(da, path, compression='lz4', allow_experimental_codecs=True)
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
     assert out.dtype == arr.dtype
 
@@ -272,7 +272,7 @@ def test_write_geotiff_gpu_lerc_float_lossless_roundtrip(tmp_path):
 
     write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
     assert out.dtype == arr.dtype
 
@@ -292,7 +292,7 @@ def test_write_geotiff_gpu_lerc_int_roundtrip(tmp_path):
 
     write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
     assert out.dtype == arr.dtype
 
@@ -334,7 +334,7 @@ def test_write_geotiff_gpu_jpeg2000_uint8_lossless_roundtrip(tmp_path):
 
     write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
     assert out.dtype == arr.dtype
 
@@ -355,7 +355,7 @@ def test_write_geotiff_gpu_jpeg2000_rgb_roundtrip(tmp_path):
 
     write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
     assert out.shape == arr.shape
 
@@ -379,8 +379,12 @@ def test_write_geotiff_gpu_j2k_alias_matches_jpeg2000(tmp_path):
 
     assert _read_compression_tag(j2k_path) == _COMPRESSION_TAGS['j2k']
     assert _read_compression_tag(jpeg2k_path) == _COMPRESSION_TAGS['jpeg2000']
-    np.testing.assert_array_equal(open_geotiff(j2k_path).values, arr)
-    np.testing.assert_array_equal(open_geotiff(jpeg2k_path).values, arr)
+    np.testing.assert_array_equal(
+        open_geotiff(j2k_path, allow_experimental_codecs=True).values, arr,
+    )
+    np.testing.assert_array_equal(
+        open_geotiff(jpeg2k_path, allow_experimental_codecs=True).values, arr,
+    )
 
 
 @_gpu_only
