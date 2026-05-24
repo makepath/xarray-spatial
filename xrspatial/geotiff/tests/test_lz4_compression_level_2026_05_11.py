@@ -76,7 +76,7 @@ class TestLZ4LevelRoundTrip:
         to_geotiff(da, path, compression="lz4",
                    compression_level=level,
                    allow_experimental_codecs=True)
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         # lz4 is lossless: assert_array_equal, not assert_allclose.
         np.testing.assert_array_equal(result.values, da.values)
 
@@ -88,7 +88,7 @@ class TestLZ4LevelRoundTrip:
         path = str(tmp_path / "lz4_default.tif")
         to_geotiff(da, path, compression="lz4",
                    allow_experimental_codecs=True)
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, da.values)
 
 
@@ -177,7 +177,7 @@ class TestLZ4LevelDaskStreaming:
         to_geotiff(dask_da, path, compression="lz4",
                    compression_level=level, tile_size=16,
                    allow_experimental_codecs=True)
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, np_arr)
 
     @pytest.mark.parametrize("level", [-1, 17, 50])

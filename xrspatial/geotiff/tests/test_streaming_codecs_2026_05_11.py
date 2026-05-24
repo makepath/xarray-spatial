@@ -80,7 +80,7 @@ class TestStreamingLerc:
         # Tier 3 codec (issue #2137); opt in to exercise the encode path.
         to_geotiff(dask_float_raster, path, compression='lerc',
                    allow_experimental_codecs=True)
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         # LERC with max_z_error=0 is lossless for float32 sources.
         np.testing.assert_array_equal(result.values, float_raster.values)
 
@@ -92,7 +92,7 @@ class TestStreamingLerc:
         to_geotiff(dask_float_raster, path,
                    compression='lerc', max_z_error=max_z,
                    allow_experimental_codecs=True)
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         max_diff = float(np.abs(result.values - float_raster.values).max())
         assert max_diff <= max_z + 1e-7, (
             f"LERC lossy stream write exceeded max_z_error budget: "
@@ -114,8 +114,8 @@ class TestStreamingLerc:
         to_geotiff(dask_float_raster, stream_path,
                    compression='lerc', max_z_error=0.05,
                    allow_experimental_codecs=True)
-        eager = open_geotiff(eager_path).values
-        stream = open_geotiff(stream_path).values
+        eager = open_geotiff(eager_path, allow_experimental_codecs=True).values
+        stream = open_geotiff(stream_path, allow_experimental_codecs=True).values
         np.testing.assert_array_equal(eager, stream)
 
 
@@ -130,7 +130,7 @@ class TestStreamingLz4:
         # Tier 3 codec (issue #2137); opt in to exercise the encode path.
         to_geotiff(dask_float_raster, path, compression='lz4',
                    allow_experimental_codecs=True)
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, float_raster.values)
 
     def test_streaming_matches_eager(self, float_raster, dask_float_raster,
@@ -141,8 +141,8 @@ class TestStreamingLz4:
                    allow_experimental_codecs=True)
         to_geotiff(dask_float_raster, stream_path, compression='lz4',
                    allow_experimental_codecs=True)
-        eager = open_geotiff(eager_path).values
-        stream = open_geotiff(stream_path).values
+        eager = open_geotiff(eager_path, allow_experimental_codecs=True).values
+        stream = open_geotiff(stream_path, allow_experimental_codecs=True).values
         np.testing.assert_array_equal(eager, stream)
 
 
@@ -154,7 +154,7 @@ class TestStreamingPackbits:
     def test_round_trip_uint8(self, uint8_raster, dask_uint8_raster, tmp_path):
         path = str(tmp_path / 'stream_packbits.tif')
         to_geotiff(dask_uint8_raster, path, compression='packbits')
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, uint8_raster.values)
 
     def test_streaming_matches_eager(self, uint8_raster, dask_uint8_raster,
@@ -163,8 +163,8 @@ class TestStreamingPackbits:
         stream_path = str(tmp_path / 'stream_packbits.tif')
         to_geotiff(uint8_raster, eager_path, compression='packbits')
         to_geotiff(dask_uint8_raster, stream_path, compression='packbits')
-        eager = open_geotiff(eager_path).values
-        stream = open_geotiff(stream_path).values
+        eager = open_geotiff(eager_path, allow_experimental_codecs=True).values
+        stream = open_geotiff(stream_path, allow_experimental_codecs=True).values
         np.testing.assert_array_equal(eager, stream)
 
 
@@ -194,7 +194,7 @@ class TestCubicOverview:
                    overview_resampling='cubic')
 
         # Full-resolution data is preserved exactly.
-        full = open_geotiff(path)
+        full = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(full.values, arr)
 
         # Overview is half-size and same dtype (the cubic branch ends in
@@ -229,7 +229,7 @@ class TestCubicOverview:
                    tiled=True, cog=True, overview_levels=[2],
                    overview_resampling='mean')
 
-        cubic_ov = open_geotiff(cubic_path, overview_level=1).values
-        mean_ov = open_geotiff(mean_path, overview_level=1).values
+        cubic_ov = open_geotiff(cubic_path, allow_experimental_codecs=True, overview_level=1).values
+        mean_ov = open_geotiff(mean_path, allow_experimental_codecs=True, overview_level=1).values
         assert not np.array_equal(cubic_ov, mean_ov), (
             "cubic and mean overview should differ on a non-linear ramp")

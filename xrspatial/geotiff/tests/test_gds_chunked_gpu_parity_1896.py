@@ -232,7 +232,10 @@ def test_gds_chunked_lerc_mask_matches_eager(tmp_path, lerc_writer_with_mask_189
     write(arr, path, compression="lerc", tiled=True, tile_size=8,
           nodata=float("nan"))
 
-    eager = read_geotiff_gpu(path, on_gpu_failure='strict').data.get()
+    eager = read_geotiff_gpu(
+        path, on_gpu_failure='strict',
+        allow_experimental_codecs=True,
+    ).data.get()
 
     ifd, geo_info, header = _parse_for_gds(path)
     chunked_da = _read_geotiff_gpu_chunked_gds(
@@ -275,7 +278,10 @@ def test_gds_chunked_lerc_mask_sentinel_nodata(tmp_path,
     write(arr, path, compression="lerc", tiled=True, tile_size=8,
           nodata=-9999.0)
 
-    eager = read_geotiff_gpu(path, on_gpu_failure='strict').data.get()
+    eager = read_geotiff_gpu(
+        path, on_gpu_failure='strict',
+        allow_experimental_codecs=True,
+    ).data.get()
 
     ifd, geo_info, header = _parse_for_gds(path)
     chunked_da = _read_geotiff_gpu_chunked_gds(
