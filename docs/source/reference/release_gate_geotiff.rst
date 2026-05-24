@@ -504,6 +504,15 @@ These gates are not tier rows but they back the rest of the checklist.
 * ``test_release_gate_2321.py`` -- meta-gate that asserts every promised
   VRT behaviour in this checklist resolves to a real test file and a real
   ``SUPPORTED_FEATURES`` entry.
+* ``xrspatial/geotiff/tests/test_release_gate_negative_2341.py`` --
+  negative cross-cutting gate from epic #2341 PR 5. Pins that
+  ambiguous metadata fails closed at every promised read entry point:
+  conflicting CRS between header and ``.aux.xml`` PAM sidecar
+  (xfail until PAM sidecar support lands), integer nodata sentinel
+  that cannot be honoured on a float-promoted raster (xfail against
+  ``#1774`` follow-up), rotated transform without ``allow_rotated=True``
+  uniformly across eager / dask / windowed paths, and mixed-tier VRT
+  children when stable-only is requested (xfail against epic ``#2342``).
 
 Placeholder PR cross-references
 ===============================

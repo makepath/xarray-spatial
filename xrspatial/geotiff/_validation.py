@@ -1117,8 +1117,9 @@ def _check_read_rotated_transform(context: Mapping[str, Any]) -> None:
         f"zonal) assume axis-aligned rasters and would silently produce "
         f"wrong results on a rotated grid. Pass ``allow_rotated=True`` "
         f"to read the pixel grid without the geospatial assumption "
-        f"(useful when you only want the array, not the geo-aware "
-        f"downstream ops). See issue #1987."
+        f"(``reader.allow_rotated`` is the experimental tier opt-in; "
+        f"see ``docs/source/reference/release_gate_geotiff.rst`` for "
+        f"the release-contract row; issue #1987)."
     )
 
 
