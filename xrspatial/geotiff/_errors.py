@@ -118,6 +118,22 @@ class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class UnsupportedGeoTIFFFeatureError(ValueError):
+    """Caller asked for a feature this release does not implement (#2349).
+
+    Raised at the read or write entry point when the input declares a
+    feature the GeoTIFF module does not support (warped / reprojection
+    VRTs, pansharpened / processed / derived VRT subclasses, unknown
+    VRT band children, source transforms with non-zero skew on a VRT
+    mosaic). The message names the feature and points the caller at
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` callers
+    keep catching the case; new code can ``except`` this class to
+    distinguish "we refuse this input" from "the input is malformed".
+    """
+
+
 __all__ = [
     "GeoTIFFAmbiguousMetadataError",
     "InvalidCRSCodeError",
@@ -128,4 +144,5 @@ __all__ = [
     "ConflictingCRSError",
     "ConflictingNodataError",
     "UnknownCRSModelTypeError",
+    "UnsupportedGeoTIFFFeatureError",
 ]
