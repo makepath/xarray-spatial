@@ -228,7 +228,9 @@ _VALID_COMPRESSIONS = (
 # * GPU COG read / write (``writer.gpu``, ``reader.gpu``).
 # * Experimental codecs (``lerc``, ``jpeg2000``, ``j2k``, ``lz4``) and the
 #   internal-only ``jpeg`` codec.
-# * Rotated transforms (``reader.allow_rotated``).
+# * Rotated transforms (``reader.allow_rotated``); wave-1 of epic
+#   #2340 additionally demoted this entry from ``advanced`` to
+#   ``experimental`` -- see the alignment block immediately below.
 # * External ``.tif.ovr`` sidecars (``reader.sidecar_ovr``).
 # * File-like destinations with ``cog=True``.
 # * BigTIFF COG (tracked separately).
@@ -276,11 +278,9 @@ SUPPORTED_FEATURES = {
     'codec.jpeg': 'internal_only',
     # Read paths.
     'reader.local_file': 'stable',
-    # Windowed reads (#2340): release-gate covered by
-    # ``test_window_out_of_bounds_1634``, ``test_no_georef_windowed_coords_1710``,
-    # ``test_gpu_window_band_1605``, ``test_gpu_stripped_no_georef_window_1753``,
-    # ``test_http_window_band_planar_1669``, ``test_http_stripped_window_max_pixels_issue_A_1842``,
-    # and ``test_vrt_window_validation_1697``.
+    # Windowed reads (#2340): release-gate covered by the window-read
+    # suite in ``xrspatial/geotiff/tests/`` (eager numpy, dask, GPU,
+    # HTTP, and VRT branches each have a window-validation test).
     'reader.windowed': 'stable',
     # Dask reads (#2340): parity-tested against the eager numpy reader
     # by ``test_backend_parity_matrix.py`` and ``test_backend_full_parity_2211.py``,
