@@ -86,10 +86,10 @@ _RELEASE_ATTR_KEYS: tuple[str, ...] = (
 # Corpus selection
 # ---------------------------------------------------------------------------
 
-# One ``pytest.param`` per fixture scenario. ``open_kwargs`` carries any
-# extra kwargs (e.g. ``mask_nodata=True``) applied to both the eager and
-# dask reads so the masked-nodata-lifecycle row exercises the same
-# masking semantics on both paths.
+# One ``pytest.param`` per fixture scenario. ``open_kwargs`` carries
+# any extra kwargs (e.g. ``mask_nodata=False``) applied to both the
+# eager and dask reads so the masked-nodata-lifecycle row exercises
+# the same masking semantics on both paths.
 _CORPUS = [
     pytest.param(
         "nodata_int_sentinel_uint16",
