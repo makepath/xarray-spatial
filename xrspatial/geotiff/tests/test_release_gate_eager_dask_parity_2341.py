@@ -30,8 +30,10 @@ The corpus covers the four scenarios called out in the issue:
 * integer dtype with explicit integer nodata sentinel
 * float dtype with NaN nodata
 * MinIsWhite photometric (no explicit nodata tag)
-* masked-nodata lifecycle (``mask_nodata=True`` upcasts int to float and
-  rewrites the sentinel to NaN)
+* masked-nodata lifecycle: the same integer-sentinel fixture read with
+  ``mask_nodata=False`` so the raw uint sentinel branch is pinned in
+  parity against the default ``mask_nodata=True`` branch (which the
+  integer-nodata row above already covers)
 
 Out of scope (sibling PRs of epic #2341):
 
@@ -104,9 +106,14 @@ _CORPUS = [
         {},
         id="miniswhite",
     ),
+    # ``mask_nodata=False`` is the contrast cell to the first row's
+    # default ``mask_nodata=True``: the raw uint16 sentinel is preserved
+    # and ``masked_nodata`` flips to ``False``. Together the two cells
+    # pin both sides of the nodata lifecycle on the same fixture, which
+    # is the silent-disagreement case the issue calls out.
     pytest.param(
         "nodata_int_sentinel_uint16",
-        {"mask_nodata": True},
+        {"mask_nodata": False},
         id="masked-nodata-lifecycle",
     ),
 ]
@@ -122,7 +129,9 @@ def _materialise(da: xr.DataArray) -> np.ndarray:
     For an eager numpy-backed DataArray this is a straight ``np.asarray``;
     for a dask-backed DataArray ``.values`` triggers ``.compute()`` so
     the result is the materialised numpy array. The eager / lazy split
-    is hidden here so the assertion call sites stay symmetric.
+    is hidden here so the assertion call sites stay symmetric. Kept as
+    a named helper (rather than inlined) so the sibling PRs of epic
+    #2341 can copy the same shape when they land their own gates.
     """
     return np.asarray(da.values)
 
@@ -208,7 +217,16 @@ def _is_nan_sentinel(value: Any) -> bool:
 
 
 def _attr_equal(a: Any, b: Any) -> bool:
-    """Compare two attr values, treating NaN as equal to NaN."""
+    """Compare two attr values, treating NaN as equal to NaN.
+
+    Notable divergence from ``test_backend_full_parity_2211.py``: the
+    transform 6-tuple of floats is compared bit-exact here (via the
+    tuple-recursion branch below), where the sibling gate allows a
+    1e-9 ULP tolerance. Bit-exact is the contract the issue calls for
+    on the same-file eager-vs-dask axis; the wider gate has to absorb
+    a hypothetical future cross-backend float-rounding op (e.g. a GPU
+    decode path) that does not exist on either of the two paths here.
+    """
     if _is_nan_sentinel(a) and _is_nan_sentinel(b):
         return True
     if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):

@@ -77,8 +77,9 @@ Local GeoTIFF read and write
        same pixels, ``dims``, ``coords``, and the seven release-attr
        keys (``transform``, ``crs``, ``crs_wkt``, ``nodata``,
        ``masked_nodata``, ``georef_status``, ``raster_type``) across
-       integer-nodata, float-NaN-nodata, MinIsWhite, and
-       masked-nodata-lifecycle fixtures.
+       four scenarios: integer-nodata, float-NaN-nodata, MinIsWhite,
+       and the ``mask_nodata=False`` raw-sentinel branch of the
+       nodata lifecycle.
      - ``xrspatial/geotiff/tests/test_release_gate_eager_dask_parity_2341.py``
    * - ``writer.local_file``
      - stable
