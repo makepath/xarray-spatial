@@ -26,11 +26,14 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-
-# Same stable lossless set as ``test_release_gate_codecs.py``; the
-# cross-file parity check in that file keeps the list in sync with
-# ``SUPPORTED_FEATURES``.
-STABLE_LOSSLESS_CODECS = ("none", "deflate", "lzw", "packbits", "zstd")
+# Import the stable lossless set from the sibling release-gate file
+# rather than redefining it. The cross-check against
+# ``SUPPORTED_FEATURES`` lives in that file; reusing the same tuple
+# here means a tier change in ``_attrs.py`` cannot leave the COG gate
+# parametrized on a stale list.
+from xrspatial.geotiff.tests.test_release_gate_codecs import (  # noqa: E402
+    STABLE_LOSSLESS_CODECS,
+)
 
 # COG requires a tiled internal layout and benefits from a slightly
 # larger raster than the plain-file gate so the writer can emit a real
