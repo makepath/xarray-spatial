@@ -409,6 +409,15 @@ Sidecar and overview interactions
        CRS attrs as inline-overview sources.
      - ``xrspatial/geotiff/tests/test_sidecar_ovr_2112.py``,
        ``xrspatial/geotiff/tests/test_sidecar_own_geokeys_2315.py``
+   * - Overview metadata survival (internal COG and ``.ovr`` sidecar)
+     - stable
+     - For both internal-COG and external ``.ovr`` sources at factors
+       ``[2, 4]``, every overview level agrees with the base on ``crs``,
+       ``crs_wkt``, ``georef_status``, ``raster_type``, ``nodata``, and
+       ``masked_nodata``; ``transform`` scales pixel size by the level
+       factor with the origin preserved. Covered through the eager and
+       dask read paths.
+     - ``xrspatial/geotiff/tests/test_release_gate_overview_sidecar_metadata_2341.py``
    * - Remote sidecar byte order
      - stable
      - Sidecar ``.ovr`` files fetched over HTTP honour the sidecar's own
