@@ -1715,6 +1715,32 @@ def _check_no_mixed_raster_type(sources_meta: list[dict]) -> None:
             )
 
 
+def _nodata_values_agree(a, b) -> bool:
+    """Return True iff two nodata sentinels are the same value.
+
+    Float NaN must be compared via :func:`math.isnan` because
+    ``float('nan') != float('nan')`` is ``True`` and would otherwise
+    flag two sources that both carry the standard float NaN sentinel
+    as a mismatch. ``None`` (no sentinel declared) is symmetric: two
+    Nones agree. Integer / float cross-type equality
+    (``-9999 == -9999.0``) is fine as-is.
+    """
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    try:
+        a_is_nan = isinstance(a, float) and math.isnan(a)
+        b_is_nan = isinstance(b, float) and math.isnan(b)
+    except (TypeError, ValueError):
+        a_is_nan = b_is_nan = False
+    if a_is_nan and b_is_nan:
+        return True
+    if a_is_nan or b_is_nan:
+        return False
+    return a == b
+
+
 def _check_no_mixed_nodata(sources_meta: list[dict], *,
                            caller_nodata) -> None:
     """Reject VRT writer sources whose nodata sentinels disagree (#2349).
@@ -1732,7 +1758,7 @@ def _check_no_mixed_nodata(sources_meta: list[dict], *,
     first_nodata = first.get('nodata')
     for m in sources_meta[1:]:
         m_nodata = m.get('nodata')
-        if m_nodata != first_nodata:
+        if not _nodata_values_agree(m_nodata, first_nodata):
             raise UnsupportedGeoTIFFFeatureError(
                 f"VRT source {m['path']!r} declares nodata="
                 f"{m_nodata!r} which does not match the first source "

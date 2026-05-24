@@ -315,6 +315,26 @@ def test_mixed_per_source_nodata_rejected(tmp_path):
         write_vrt(vrt, [a, b])
 
 
+def test_matching_nan_nodata_passes(tmp_path):
+    """Two sources both declaring NaN nodata are not a mismatch.
+
+    ``float('nan') != float('nan')`` evaluates True in plain Python,
+    so the naive cross-source equality check would flag a perfectly
+    consistent pair of NaN-sentinel sources as a mismatch. The
+    helper compares via ``math.isnan`` to keep two NaNs equal. Pin
+    the round-trip so a refactor cannot regress to the naive
+    comparator.
+    """
+    d = _unique_dir(tmp_path, "nan_nodata")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_source(a, origin_x=0.0, nodata=float('nan'))
+    _write_source(b, origin_x=4.0, nodata=float('nan'))
+    vrt = os.path.join(d, "out.vrt")
+    write_vrt(vrt, [a, b])
+    assert os.path.exists(vrt)
+
+
 def test_mixed_nodata_override_via_kwarg_passes(tmp_path):
     """``write_vrt(..., nodata=<value>)`` opts back into flatten-to-kwarg.
 
