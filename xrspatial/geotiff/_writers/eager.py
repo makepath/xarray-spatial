@@ -87,7 +87,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
       separately in #2115); silent mixed-metadata flattening.
 
     See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
-    map (issue #2137).
+    map (issue #2137). Per-parameter tier markers below describe the
+    tier the parameter itself carries; a parameter's effective tier
+    is bounded by the function-level surface above (e.g. ``[stable]``
+    ``nodata`` is still only stable when combined with a ``[stable]``
+    codec and options).
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
     at a time, without materialising the full array into RAM.  Peak
@@ -222,7 +226,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         [stable] Soft cap on bytes materialised per dask compute call
         when streaming a dask-backed DataArray. Defaults to 256 MB.
         Wide rasters whose tile-row exceeds this budget are split into
-        horizontal segments. Ignored for numpy / CuPy / COG paths.
+        horizontal segments. Only relevant for dask-backed inputs; the
+        kwarg is a no-op for numpy / CuPy / COG paths (the COG path
+        materialises the full array because the overview pyramid
+        needs it).
     max_z_error : float
         [experimental] Per-pixel error budget for LERC compression.
         ``0.0`` (default) is lossless; larger values let the encoder

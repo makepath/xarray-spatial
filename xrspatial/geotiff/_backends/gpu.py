@@ -174,7 +174,7 @@ def read_geotiff_gpu(source: str, *,
         ``cupy.asarray(...)`` upload (e.g. device OOM) still propagate
         unchanged in both modes.
     gpu : str, optional
-        [internal-only] Deprecated alias for ``on_gpu_failure``. Emits
+        [experimental] Deprecated alias for ``on_gpu_failure``. Emits
         ``DeprecationWarning`` when used. Passing both ``gpu`` and
         ``on_gpu_failure`` raises ``TypeError``. The old name shipped
         with values ``'auto'`` / ``'strict'`` and was easy to confuse

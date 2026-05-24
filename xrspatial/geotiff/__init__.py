@@ -356,15 +356,21 @@ def open_geotiff(source: str | BinaryIO, *,
       These paths work and are tested, but each carries a specific
       failure mode named on the parameter doc.
     * [experimental] ``gpu=True``; LERC / JPEG2000 / J2K / LZ4 decode.
-      No cross-backend numerical parity claim. JPEG-in-TIFF is
-      ``[internal-only]`` and the read path only decodes files this
-      library itself wrote.
+      No cross-backend numerical parity claim. JPEG-in-TIFF on the
+      read side decodes best-effort with no parity claim against
+      libtiff / GDAL / rasterio; the write side is ``[internal-only]``
+      (the encoder omits the required JPEGTables tag, so round-trips
+      hold only for files this library itself wrote).
     * Out of scope for this release (allowed to raise): full GDAL VRT
       parity, warped / reprojection VRTs, rotated/sheared write
       support.
 
     See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
-    map (issue #2137).
+    map (issue #2137). Per-parameter tier markers below describe the
+    tier the parameter itself carries; a parameter's effective tier
+    is bounded by the function-level surface above (e.g. ``[stable]``
+    ``mask_nodata`` is still only stable when combined with a
+    ``[stable]`` source, codec, and options).
 
     Automatically dispatches to the best backend:
     - ``gpu=True``: GPU-accelerated read via nvCOMP (returns CuPy)
@@ -394,12 +400,12 @@ def open_geotiff(source: str | BinaryIO, *,
     Parameters
     ----------
     source : str or binary file-like
-        [stable for local file paths; advanced for HTTP/fsspec URIs;
-        advanced for ``.vrt`` paths] File path, HTTP URL, cloud URI
-        (s3://, gs://, az://), or a binary file-like object
-        (e.g. ``io.BytesIO``) with read+seek. VRT, dask-chunked, GPU,
-        and remote-URL paths require a string; in-memory file-like
-        buffers go through the eager numpy reader.
+        [stable for local file paths; advanced for HTTP/fsspec URIs,
+        ``.vrt`` paths, and in-memory file-like buffers (the file-like
+        path is restricted to the eager numpy reader -- dask, GPU,
+        VRT, and remote-URL paths require a string)] File path, HTTP
+        URL, cloud URI (s3://, gs://, az://), or a binary file-like
+        object (e.g. ``io.BytesIO``) with read+seek.
     dtype : str, numpy.dtype, or None
         [stable] Cast the result to this dtype after reading. None
         keeps the file's native dtype. Float-to-int casts raise

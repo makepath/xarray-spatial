@@ -963,8 +963,9 @@ def read_vrt(vrt_path: str, *, window=None,
              ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
-    Release-contract tier (epic #2340): this is the [internal-only]
-    pixel-assembly helper. The public surface lives in
+    Do not call this symbol directly from external code. Release-contract
+    tier (epic #2340): this is the [internal-only] pixel-assembly
+    helper. The public surface lives in
     ``xrspatial.geotiff.read_vrt`` (re-exported from
     ``_backends/vrt.py``) and carries the [advanced] tier; this
     function is what that public wrapper calls into. See
@@ -1520,11 +1521,11 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
               nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
-    Release-contract tier (epic #2340): this is the [internal-only]
-    VRT XML emitter. The public surface lives in
-    ``xrspatial.geotiff.write_vrt`` (re-exported from
-    ``_writers/vrt.py``) and carries the [advanced] tier; this
-    function is what that public wrapper calls into. See
+    Do not call this symbol directly from external code. Release-contract
+    tier (epic #2340): this is the [internal-only] VRT XML emitter.
+    The public surface lives in ``xrspatial.geotiff.write_vrt``
+    (re-exported from ``_writers/vrt.py``) and carries the [advanced]
+    tier; this function is what that public wrapper calls into. See
     ``docs/source/reference/release_gate_geotiff.rst`` and
     ``docs/source/reference/geotiff_release_contract.rst`` for the
     contract.
