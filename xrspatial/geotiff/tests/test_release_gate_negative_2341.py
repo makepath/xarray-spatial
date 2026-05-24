@@ -482,9 +482,6 @@ def test_release_gate_negative_mixed_tier_vrt_children(tmp_path) -> None:
     contract docs. If either assertion would not pass, fix the
     production message in the same PR that removes the xfail.
     """
-    # The kwarg name is the contract that epic #2342 will land.
-    # Until then this call fails for an unrelated reason (unknown
-    # kwarg), which the strict=False xfail swallows.
     path = _tmp(tmp_path, "case4_mixed_tier_vrt", suffix=".vrt")
     Path(path).write_text(
         '<VRTDataset rasterXSize="2" rasterYSize="2"></VRTDataset>\n',
