@@ -110,7 +110,11 @@ def _make_input(dtype_name: str) -> xr.DataArray:
         nodata: float | int = float("nan")
     else:
         # Small positive ramp so the dtype min sentinel never collides
-        # with a real pixel.
+        # with a real pixel. The ramp climbs to ``n - 1 == 16383`` with
+        # the 128*128 fixture, which fits in ``int16`` (max 32767). If
+        # a future dtype with a smaller positive range is added (e.g.
+        # ``int8``) the ramp would wrap and collide with the sentinel;
+        # cap the ramp or shrink the fixture in that case.
         arr = np.arange(n, dtype=dtype).reshape(height, width)
         sentinel = _INT_NODATA[dtype_name]
         arr[0, 0] = sentinel
@@ -184,16 +188,35 @@ def _assert_pixels_equal(actual: np.ndarray, expected: np.ndarray,
         equal = np.array_equal(actual, expected, equal_nan=True)
     else:
         equal = np.array_equal(actual, expected)
-    assert equal, (
-        f"release gate (#2341): codec {codec!r} did not preserve "
-        f"{dtype_name!r} pixels byte-for-byte; the release contract "
-        f"names this codec as lossless for this dtype"
-    )
+    if not equal:
+        # Surface the first divergent pixel so a debug session can
+        # jump straight to the offending tile / row.
+        if np.issubdtype(expected.dtype, np.floating):
+            mismatch_mask = ~(
+                (actual == expected) | (np.isnan(actual) & np.isnan(expected))
+            )
+        else:
+            mismatch_mask = actual != expected
+        first = np.argwhere(mismatch_mask)
+        first_idx = tuple(int(v) for v in first[0]) if first.size else None
+        first_actual = (
+            actual[first_idx] if first_idx is not None else None
+        )
+        first_expected = (
+            expected[first_idx] if first_idx is not None else None
+        )
+        raise AssertionError(
+            f"release gate (#2341): codec {codec!r} did not preserve "
+            f"{dtype_name!r} pixels byte-for-byte; the release contract "
+            f"names this codec as lossless for this dtype. First "
+            f"divergence at index {first_idx!r}: actual="
+            f"{first_actual!r}, expected={first_expected!r}"
+        )
 
 
 @pytest.mark.release_gate
-@pytest.mark.parametrize("codec", STABLE_CODECS)
 @pytest.mark.parametrize("dtype_name", DTYPES)
+@pytest.mark.parametrize("codec", STABLE_CODECS)
 def test_release_gate_codec_round_trip(tmp_path, codec, dtype_name) -> None:
     """Stable codec * dtype: pixels and release attrs survive a full
     read/write/read cycle.
@@ -239,13 +262,21 @@ def test_release_gate_codec_round_trip(tmp_path, codec, dtype_name) -> None:
                    if np.issubdtype(np.dtype(dtype_name), np.floating)
                    else {"mask_nodata": False})
 
-    # Pass 1: write the in-memory source.
+    # Pass 1: write the in-memory source. The writer infers NaN as the
+    # implicit float sentinel without a ``nodata=`` kwarg, so only the
+    # integer branch passes one explicitly. This keeps the test from
+    # locking the writer into accepting ``nodata=NaN`` if that ever
+    # becomes a no-op or a rejected redundancy.
+    is_float = np.issubdtype(np.dtype(dtype_name), np.floating)
+    pass_one_kwargs: dict = (
+        {} if is_float else {"nodata": source.attrs["nodata"]}
+    )
     to_geotiff(
         source,
         write_first,
         compression=codec,
         tiled=False,
-        nodata=source.attrs["nodata"],
+        **pass_one_kwargs,
     )
 
     baseline = open_geotiff(write_first, **mask_kwargs)
@@ -261,12 +292,19 @@ def test_release_gate_codec_round_trip(tmp_path, codec, dtype_name) -> None:
     )
 
     # Pass 2: rewrite the baseline DataArray under the same codec.
+    # The baseline DataArray already carries ``attrs['nodata']`` from
+    # the first read; the writer picks the sentinel up from the attrs
+    # on the float path. For the integer branch we pass the sentinel
+    # explicitly so the writer does not need to fall back to a default.
+    pass_two_kwargs: dict = (
+        {} if is_float else {"nodata": baseline.attrs.get("nodata")}
+    )
     to_geotiff(
         baseline,
         write_second,
         compression=codec,
         tiled=False,
-        nodata=baseline.attrs.get("nodata"),
+        **pass_two_kwargs,
     )
 
     second = open_geotiff(write_second, **mask_kwargs)
