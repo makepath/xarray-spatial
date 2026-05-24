@@ -56,6 +56,21 @@ Local GeoTIFF read and write
        ``nodata`` all survive read.
      - ``xrspatial/geotiff/tests/test_backend_pixel_parity_matrix_1813.py``,
        ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``
+   * - ``reader.windowed``
+     - stable
+     - ``open_geotiff(window=(x0, y0, w, h))`` returns the requested
+       pixel sub-rectangle for tiled and stripped layouts; out-of-bounds
+       and zero-area windows raise rather than silently clamp; coords
+       on georeferenced inputs match the eager full-read slice.
+     - ``xrspatial/geotiff/tests/test_window_out_of_bounds_1634.py``,
+       ``xrspatial/geotiff/tests/test_no_georef_windowed_coords_1710.py``
+   * - ``reader.dask``
+     - stable
+     - ``open_geotiff(chunks=...)`` returns a Dask-backed
+       :class:`xarray.DataArray` that computes to the same pixels,
+       coords, and ``attrs`` as the eager numpy read.
+     - ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``,
+       ``xrspatial/geotiff/tests/test_backend_full_parity_2211.py``
    * - ``writer.local_file``
      - stable
      - ``to_geotiff`` writes a file that ``open_geotiff`` reads back
