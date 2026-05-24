@@ -1105,6 +1105,8 @@ def read_vrt(vrt_path: str, *, window=None,
              missing_sources: str = 'raise',
              parsed: VRTDataset | None = None,
              mask_nodata: bool = True,
+             allow_experimental_codecs: bool = False,
+             allow_internal_only_jpeg: bool = False,
              ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
@@ -1443,6 +1445,8 @@ def read_vrt(vrt_path: str, *, window=None,
                     window=(read_r0, read_c0, read_r1, read_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
                     max_pixels=max_pixels,
+                    allow_experimental_codecs=allow_experimental_codecs,
+                    allow_internal_only_jpeg=allow_internal_only_jpeg,
                 )
             except (
                 OSError, ValueError, struct.error,
