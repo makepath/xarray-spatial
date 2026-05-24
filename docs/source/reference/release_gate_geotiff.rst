@@ -71,6 +71,15 @@ Local GeoTIFF read and write
        coords, and ``attrs`` as the eager numpy read.
      - ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``,
        ``xrspatial/geotiff/tests/test_backend_full_parity_2211.py``
+   * - ``reader.eager_dask_parity``
+     - stable
+     - ``open_geotiff(path)`` and ``read_geotiff_dask(path)`` return the
+       same pixels, ``dims``, ``coords``, and the seven release-attr
+       keys (``transform``, ``crs``, ``crs_wkt``, ``nodata``,
+       ``masked_nodata``, ``georef_status``, ``raster_type``) across
+       integer-nodata, float-NaN-nodata, MinIsWhite, and
+       masked-nodata-lifecycle fixtures.
+     - ``xrspatial/geotiff/tests/test_release_gate_eager_dask_parity_2341.py``
    * - ``writer.local_file``
      - stable
      - ``to_geotiff`` writes a file that ``open_geotiff`` reads back
