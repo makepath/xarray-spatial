@@ -252,22 +252,20 @@ def test_release_gate_codec_round_trip(tmp_path, codec, dtype_name) -> None:
     )
 
     source = _make_input(dtype_name)
+    is_float = np.issubdtype(np.dtype(dtype_name), np.floating)
 
     # The masking behaviour differs by dtype: integer reads default to
     # masking the sentinel into NaN (which would change dtype and break
     # the byte-exact comparison), so we read integers with
     # ``mask_nodata=False`` to keep the sentinel as a real pixel.
     # Float reads round-trip NaN as NaN regardless of mask_nodata.
-    mask_kwargs = ({}
-                   if np.issubdtype(np.dtype(dtype_name), np.floating)
-                   else {"mask_nodata": False})
+    mask_kwargs: dict = {} if is_float else {"mask_nodata": False}
 
     # Pass 1: write the in-memory source. The writer infers NaN as the
     # implicit float sentinel without a ``nodata=`` kwarg, so only the
     # integer branch passes one explicitly. This keeps the test from
     # locking the writer into accepting ``nodata=NaN`` if that ever
     # becomes a no-op or a rejected redundancy.
-    is_float = np.issubdtype(np.dtype(dtype_name), np.floating)
     pass_one_kwargs: dict = (
         {} if is_float else {"nodata": source.attrs["nodata"]}
     )
