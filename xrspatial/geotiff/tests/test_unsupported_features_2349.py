@@ -153,6 +153,81 @@ def test_unknown_band_child_rejected_at_parse():
         parse_vrt(xml, '.')
 
 
+def test_dataset_level_maskband_rejected_at_parse():
+    """A dataset-level ``<MaskBand>`` sibling of VRTRasterBand is rejected.
+
+    Per the GDAL VRT spec, ``<MaskBand>`` lives at the ``<VRTDataset>``
+    level (not inside a band). The band-children loop never sees it,
+    so without the dataset-root sweep the mask gets silently dropped.
+    Pin the typed error and the substring naming the offending tag.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <MaskBand>'
+        '    <VRTRasterBand dataType="Byte"></VRTRasterBand>'
+        '  </MaskBand>'
+        '  <VRTRasterBand band="1" dataType="Float32"></VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError, match="MaskBand"):
+        parse_vrt(xml, '.')
+
+
+def test_dataset_level_gcplist_rejected_at_parse():
+    """A dataset-level ``<GCPList>`` (ground-control points) is rejected.
+
+    GCPList signals a non-axis-aligned georeferencing model that
+    read_vrt cannot honour. Pin the rejection so a future refactor
+    cannot regress to the silent no-op pre-#2349 behaviour.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <GCPList Projection="EPSG:4326"></GCPList>'
+        '  <VRTRasterBand band="1" dataType="Float32"></VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError, match="GCPList"):
+        parse_vrt(xml, '.')
+
+
+def test_overview_list_band_child_still_passes(tmp_path):
+    """``<OverviewList>`` and ``<Overview>`` band children are informational.
+
+    GDAL emits these on VRTs whose source GeoTIFFs carry external
+    overviews. read_vrt does not consume VRT-level overview
+    declarations (the source-side reader handles overviews via
+    ``overview_level=``), so the elements were and remain
+    no-ops. Pin the allow-list so the catch-all "unknown element"
+    branch added in #2349 does not regress this case.
+    """
+    src = tmp_path / f'src_2349_ov_{uuid.uuid4().hex[:6]}.tif'
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    y = np.arange(4, dtype=np.float64)
+    x = np.arange(4, dtype=np.float64)
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      coords={'y': y, 'x': x},
+                      attrs={'crs': 4326})
+    to_geotiff(da, str(src), compression='none')
+    xml = (
+        f'<VRTDataset rasterXSize="4" rasterYSize="4">'
+        f'  <SRS>EPSG:4326</SRS>'
+        f'  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, 1.0</GeoTransform>'
+        f'  <VRTRasterBand band="1" dataType="Float32">'
+        f'    <OverviewList resampling="average">2 4</OverviewList>'
+        f'    <SimpleSource>'
+        f'      <SourceFilename relativeToVRT="1">{src.name}</SourceFilename>'
+        f'      <SourceBand>1</SourceBand>'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'    </SimpleSource>'
+        f'  </VRTRasterBand>'
+        f'</VRTDataset>'
+    )
+    parsed = parse_vrt(xml, str(tmp_path))
+    assert len(parsed.bands) == 1
+    assert len(parsed.bands[0].sources) == 1
+
+
 def test_informational_band_children_still_pass(tmp_path):
     """``<Description>`` / ``<UnitType>`` / ``<Offset>`` / ``<Scale>`` skip.
 

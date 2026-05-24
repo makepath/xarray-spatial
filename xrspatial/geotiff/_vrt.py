@@ -346,6 +346,60 @@ def _parse_band_nodata(text: str | None,
         return None
 
 
+# VRTRasterBand child elements that read_vrt explicitly supports or
+# tolerates. Hoisted to module scope so the parse_vrt band loop does
+# not rebuild the frozensets on every iteration (epic #2340 / PR 5).
+#
+# ``_INFORMATIONAL_BAND_TAGS`` -- pure-metadata children that have no
+# effect on the assembled array. Silently ignored.
+#
+# ``_SOURCE_BAND_TAGS`` -- the source types whose pixel-placement
+# semantics this reader implements.
+#
+# ``_UNSUPPORTED_BAND_TAGS`` -- known GDAL VRT children that alter the
+# computed output (kernel filters, derived band expressions, mask /
+# pansharpening sources). Rejected with ``UnsupportedGeoTIFFFeatureError``
+# so a VRT relying on them cannot read as a plain mosaic and lose its
+# declared computation. Anything that is none of the three -- e.g. a
+# future GDAL VRT extension -- also raises, via the catch-all branch in
+# ``parse_vrt``.
+_INFORMATIONAL_BAND_TAGS = frozenset({
+    'NoDataValue', 'ColorInterp', 'Description', 'Offset',
+    'Scale', 'Metadata', 'UnitType', 'CategoryNames',
+    'ColorTable', 'Histograms', 'GDALRasterAttributeTable',
+    'ColorEntry', 'HideNoDataValue',
+    # VRT band-level overview declarations. The reader does not load
+    # VRT-declared overviews (overview_level= is honoured by the
+    # underlying GeoTIFF source reader, not by VRT-level overview
+    # tags), so keeping these informational preserves pre-#2349
+    # behaviour for VRTs emitted by GDAL with declared overviews.
+    'OverviewList', 'Overview',
+})
+_SOURCE_BAND_TAGS = frozenset({'SimpleSource', 'ComplexSource'})
+_UNSUPPORTED_BAND_TAGS = frozenset({
+    'KernelFilteredSource', 'AveragedSource', 'NoDataFromMaskSource',
+    'PixelFunctionType', 'PixelFunctionLanguage',
+    'PixelFunctionCode', 'PixelFunctionArguments',
+    'SourceTransferType', 'MaskBand', 'PansharpeningOptions',
+})
+
+# Dataset-level (``<VRTDataset>`` children, sibling of ``<VRTRasterBand>``)
+# elements that signal a feature this reader does not implement. The band
+# loop never sees these because they sit at the dataset level; sweep the
+# root for them after the ``subClass`` check. See epic #2340 / PR 5.
+_UNSUPPORTED_DATASET_TAGS = frozenset({
+    # Per-dataset alpha / mask band. GDAL writes this as a sibling of
+    # the VRTRasterBand entries; the previous parser ignored it and
+    # silently dropped the per-pixel mask.
+    'MaskBand',
+    # Ground-control-point list for warped reprojection.
+    'GCPList',
+    # Pansharpening setup at the dataset level (separate from the
+    # band-level <PansharpeningOptions>).
+    'PansharpeningOptions',
+})
+
+
 def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
     """Parse a VRT XML string into a VRTDataset.
 
@@ -395,11 +449,30 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
             f"a supported feature in this release. read_vrt implements "
             f"plain ``<VRTDataset>`` mosaics only; warped / pansharpened "
             f"/ processed / derived VRT subclasses are listed as "
-            f"unsupported in :data:`xrspatial.geotiff.SUPPORTED_FEATURES` "
+            f"unsupported in `xrspatial.geotiff.SUPPORTED_FEATURES` "
             f"(see epic #2340). Materialise the warped or derived output "
             f"with an external tool (e.g. ``gdalwarp``) and read the "
             f"resulting GeoTIFF instead."
         )
+
+    # Sweep the dataset root for known unsupported sibling elements.
+    # The band loop below only walks ``<VRTRasterBand>`` children, so a
+    # ``<MaskBand>`` / ``<GCPList>`` / dataset-level
+    # ``<PansharpeningOptions>`` would otherwise slip through silently
+    # and drop its declared semantics (per-pixel mask, ground control
+    # points, pansharpening setup). See epic #2340 / PR 5.
+    for _ds_child in root:
+        _ds_tag = _ds_child.tag
+        if isinstance(_ds_tag, str) and _ds_tag in _UNSUPPORTED_DATASET_TAGS:
+            raise UnsupportedGeoTIFFFeatureError(
+                f"VRTDataset declares a <{_ds_tag}> element, which is "
+                f"not a supported feature in this release. read_vrt "
+                f"implements plain ``<VRTDataset>`` mosaics over "
+                f"``<VRTRasterBand>`` children only; mask bands, GCP "
+                f"lists, and dataset-level pansharpening setup are "
+                f"listed as unsupported in "
+                f"`xrspatial.geotiff.SUPPORTED_FEATURES` (epic #2340)."
+            )
 
     width = int(root.get('rasterXSize', 0))
     height = int(root.get('rasterYSize', 0))
@@ -446,8 +519,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                 f"by read_vrt. Only the plain ``<VRTRasterBand>`` "
                 f"mosaic case is implemented; derived / pixel-function "
                 f"bands are listed as unsupported in "
-                f":data:`xrspatial.geotiff.SUPPORTED_FEATURES` "
-                f"(epic #2340)."
+                f"`xrspatial.geotiff.SUPPORTED_FEATURES` (epic #2340)."
             )
         # Distinguish "attribute missing" (GDAL default: Float32) from
         # "attribute present but unsupported".  The previous
@@ -480,27 +552,13 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         nodata = _parse_band_nodata(nodata_str, dtype)
         color_interp = _text(band_elem, 'ColorInterp')
 
-        # GDAL VRT allows several band sub-elements that this reader
-        # silently ignored before #2349. The pure-metadata ones
-        # (informational, no effect on the array) stay ignored; the
-        # ones that alter the computed output (kernel filters, derived
-        # band expressions, mask bands, pansharpening) get rejected so
-        # a VRT relying on them cannot read as a plain mosaic and lose
+        # Band-children classification is driven by the module-scope
+        # ``_INFORMATIONAL_BAND_TAGS`` / ``_SOURCE_BAND_TAGS`` /
+        # ``_UNSUPPORTED_BAND_TAGS`` frozensets above. The pure-metadata
+        # ones stay ignored; the output-altering ones (kernel filters,
+        # derived band expressions, pansharpening) get rejected so a
+        # VRT relying on them cannot read as a plain mosaic and lose
         # its declared computation. See epic #2340 / PR 5.
-        _INFORMATIONAL_BAND_TAGS = frozenset({
-            'NoDataValue', 'ColorInterp', 'Description', 'Offset',
-            'Scale', 'Metadata', 'UnitType', 'CategoryNames',
-            'ColorTable', 'Histograms', 'GDALRasterAttributeTable',
-            'ColorEntry', 'HideNoDataValue',
-        })
-        _SOURCE_BAND_TAGS = frozenset({'SimpleSource', 'ComplexSource'})
-        _UNSUPPORTED_BAND_TAGS = frozenset({
-            'KernelFilteredSource', 'AveragedSource', 'NoDataFromMaskSource',
-            'PixelFunctionType', 'PixelFunctionLanguage',
-            'PixelFunctionCode', 'PixelFunctionArguments',
-            'SourceTransferType', 'MaskBand', 'PansharpeningOptions',
-        })
-
         sources = []
         for src_elem in band_elem:
             tag = src_elem.tag
@@ -514,8 +572,8 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                     f"mask-band source) that read_vrt does not "
                     f"implement. Only ``<SimpleSource>`` and "
                     f"``<ComplexSource>`` are supported. See "
-                    f":data:`xrspatial.geotiff.SUPPORTED_FEATURES` for "
-                    f"the release tier map (epic #2340)."
+                    f"`xrspatial.geotiff.SUPPORTED_FEATURES` for the "
+                    f"release tier map (epic #2340)."
                 )
             if tag not in _SOURCE_BAND_TAGS:
                 # Unknown band child that is neither informational nor a
@@ -529,8 +587,8 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                     f"``<SimpleSource>`` and ``<ComplexSource>`` sources "
                     f"plus informational metadata children; an unknown "
                     f"element could change the declared pixel output. "
-                    f"See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` "
-                    f"for the release tier map (epic #2340)."
+                    f"See `xrspatial.geotiff.SUPPORTED_FEATURES` for "
+                    f"the release tier map (epic #2340)."
                 )
 
             filename = _text(src_elem, 'SourceFilename') or ''
@@ -1585,6 +1643,112 @@ def _vrt_dtype_name_for(bps, sample_format):
         )
 
 
+def _check_no_rotated_source_transforms(sources_meta: list[dict]) -> None:
+    """Reject VRT writer sources whose transform has non-zero skew (#2349).
+
+    The writer emits an axis-aligned mosaic GeoTransform with ``0.0``
+    skew slots. A source whose own GeoTIFF declared a rotated /
+    sheared affine cannot be placed correctly on that mosaic; the
+    on-disk VRT would point at the source with the rotation silently
+    dropped, mis-locating the tile. Refuse rather than write a
+    mis-aligned mosaic.
+
+    The rotated 6-tuple is stamped on ``GeoTransform.rotated_affine``
+    by the reader when ``allow_rotated=True`` -- see issue #2129. A
+    plain axis-aligned source has ``rotated_affine=None`` and skips
+    the check.
+    """
+    for m in sources_meta:
+        ra = getattr(m['transform'], 'rotated_affine', None)
+        if ra is None:
+            continue
+        # ``rotated_affine`` is the rasterio 6-tuple
+        # ``(pixel_width, b, origin_x, d, pixel_height, origin_y)``;
+        # positions 1 and 3 are the skew terms.
+        try:
+            b = float(ra[1])
+            d = float(ra[3])
+        except (IndexError, TypeError, ValueError):
+            b = d = 0.0
+        if b != 0.0 or d != 0.0:
+            raise UnsupportedGeoTIFFFeatureError(
+                f"VRT source {m['path']!r} has a rotated / sheared "
+                f"affine transform (b={b!r}, d={d!r}); rotated source "
+                f"transforms are not a supported feature in this "
+                f"release. write_vrt emits an axis-aligned mosaic and "
+                f"would silently drop the skew terms, mis-placing the "
+                f"source on the virtual raster. Reproject the source "
+                f"to an axis-aligned grid before adding it to the "
+                f"mosaic. See `xrspatial.geotiff.SUPPORTED_FEATURES` "
+                f"for the release tier map (epic #2340)."
+            )
+
+
+def _check_no_mixed_raster_type(sources_meta: list[dict]) -> None:
+    """Reject VRT writer sources whose AREA_OR_POINT disagrees (#2349).
+
+    The mosaic VRT emits a single dataset-level ``AREA_OR_POINT``
+    value. Silent flattening to ``first['raster_type']`` would shift
+    the disagreeing source by half a pixel on read, because
+    PixelIsArea origin is the pixel's edge and PixelIsPoint origin is
+    the pixel's centre.
+    """
+    if not sources_meta:
+        return
+    first = sources_meta[0]
+    first_raster_type = first.get('raster_type')
+    for m in sources_meta[1:]:
+        m_raster_type = m.get('raster_type')
+        if (m_raster_type is not None and first_raster_type is not None
+                and m_raster_type != first_raster_type):
+            raise UnsupportedGeoTIFFFeatureError(
+                f"VRT source {m['path']!r} declares raster_type="
+                f"{m_raster_type!r} which does not match the first "
+                f"source ({first_raster_type!r}). Silent flattening of "
+                f"mixed AREA_OR_POINT registration across stacked "
+                f"sources is not supported; the mosaic would emit a "
+                f"single dataset-level value and shift the disagreeing "
+                f"source by half a pixel. Re-tag the sources so they "
+                f"share the same pixel registration before mosaicing. "
+                f"See `xrspatial.geotiff.SUPPORTED_FEATURES` "
+                f"(epic #2340)."
+            )
+
+
+def _check_no_mixed_nodata(sources_meta: list[dict], *,
+                           caller_nodata) -> None:
+    """Reject VRT writer sources whose nodata sentinels disagree (#2349).
+
+    The legacy writer silently picked ``first['nodata']`` for every
+    band of every source, so a tile whose own sentinel was different
+    had its "valid" pixels masked by the mosaic-level
+    ``<NoDataValue>`` on read. Fail closed unless the caller pinned
+    the mosaic nodata explicitly via the ``nodata`` kwarg. Mirrors
+    the read-side ``MixedBandMetadataError`` opt-out pattern.
+    """
+    if caller_nodata is not None or not sources_meta:
+        return
+    first = sources_meta[0]
+    first_nodata = first.get('nodata')
+    for m in sources_meta[1:]:
+        m_nodata = m.get('nodata')
+        if m_nodata != first_nodata:
+            raise UnsupportedGeoTIFFFeatureError(
+                f"VRT source {m['path']!r} declares nodata="
+                f"{m_nodata!r} which does not match the first source "
+                f"({first_nodata!r}). Silent flattening of mixed "
+                f"per-source nodata sentinels across stacked sources "
+                f"is not supported; the writer would emit the first "
+                f"source's value as a single dataset-level "
+                f"``<NoDataValue>`` and the disagreeing source's "
+                f"sentinel would become a valid-looking pixel on "
+                f"read. Either pin the mosaic nodata explicitly with "
+                f"``write_vrt(..., nodata=<value>)`` or re-tag the "
+                f"sources so they agree. See "
+                f"`xrspatial.geotiff.SUPPORTED_FEATURES` (epic #2340)."
+            )
+
+
 def write_vrt(vrt_path: str, source_files: list[str], *,
               relative: bool = True,
               crs_wkt: str | None = None,
@@ -1705,42 +1869,30 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
             return abs(a - b) > 0.0
         return abs(a - b) / denom > _PIXEL_SIZE_RTOL
 
-    # Reject sources whose declared transform carries non-zero skew
-    # terms (rotated / sheared affine). The writer emits an axis-aligned
-    # GeoTransform with ``0.0`` skew slots; a rotated source would be
-    # placed at the wrong pixel offset in the mosaic and the on-disk
-    # VRT would point at the source with the rotation silently dropped.
-    # Refuse rather than write a mosaic with mis-located tiles.
-    # Epic #2340 / PR 5.
-    for m in sources_meta:
-        ra = getattr(m['transform'], 'rotated_affine', None)
-        if ra is None:
-            continue
-        # ``rotated_affine`` is the rasterio 6-tuple
-        # ``(pixel_width, b, origin_x, d, pixel_height, origin_y)``;
-        # positions 1 and 3 are the skew terms.
-        try:
-            b = float(ra[1])
-            d = float(ra[3])
-        except (IndexError, TypeError, ValueError):
-            b = d = 0.0
-        if b != 0.0 or d != 0.0:
-            raise UnsupportedGeoTIFFFeatureError(
-                f"VRT source {m['path']!r} has a rotated / sheared "
-                f"affine transform (b={b!r}, d={d!r}); rotated source "
-                f"transforms are not a supported feature in this "
-                f"release. write_vrt emits an axis-aligned mosaic and "
-                f"would silently drop the skew terms, mis-placing the "
-                f"source on the virtual raster. Reproject the source "
-                f"to an axis-aligned grid before adding it to the "
-                f"mosaic. See "
-                f":data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the "
-                f"release tier map (epic #2340)."
-            )
+    # Group the new "fail-loudly on unsupported feature combinations"
+    # gates (epic #2340 / PR 5) in one block so the cross-source policy
+    # is easy to read end-to-end:
+    #
+    #   1. Reject any source whose declared transform carries a
+    #      non-zero skew term (rotated / sheared affine). write_vrt
+    #      emits an axis-aligned GeoTransform, so a rotated source
+    #      would be silently mis-placed on the mosaic.
+    #   2. Reject mixed per-source AREA_OR_POINT registration. The
+    #      mosaic writes a single dataset-level value; flattening to
+    #      ``first`` would shift the disagreeing source by half a
+    #      pixel on read.
+    #   3. Reject mixed per-source nodata sentinels unless the caller
+    #      pinned the mosaic value via the ``nodata`` kwarg. Mirrors
+    #      the read-side ``MixedBandMetadataError`` opt-out pattern.
+    _check_no_rotated_source_transforms(sources_meta)
+    _check_no_mixed_raster_type(sources_meta)
+    _check_no_mixed_nodata(sources_meta, caller_nodata=nodata)
 
+    # Pixel size, sample format, band count, and CRS share the
+    # documented "all sources must agree with first" contract (#1733).
+    # These remain inline here because they predate #2349 and have
+    # their own match-pattern tests.
     first_crs = first.get('crs_wkt')
-    first_raster_type = first.get('raster_type')
-    first_nodata = first.get('nodata')
     for m in sources_meta[1:]:
         t = m['transform']
         if _pixel_size_mismatch(t.pixel_width, res_x) \
@@ -1778,54 +1930,6 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
                 f"VRT source {m['path']!r} has CRS WKT that does not "
                 f"match the first source. All sources in a VRT must "
                 f"share the same CRS."
-            )
-        # Pixel registration must match across sources. The mosaic
-        # writes a single dataset-level ``AREA_OR_POINT``; flattening to
-        # the first source's value would silently shift downstream pixel
-        # coords by half a pixel for every source that disagrees.
-        # Epic #2340 / PR 5.
-        m_raster_type = m.get('raster_type')
-        if (m_raster_type is not None and first_raster_type is not None
-                and m_raster_type != first_raster_type):
-            raise UnsupportedGeoTIFFFeatureError(
-                f"VRT source {m['path']!r} declares raster_type="
-                f"{m_raster_type!r} which does not match the first "
-                f"source ({first_raster_type!r}). Silent flattening of "
-                f"mixed AREA_OR_POINT registration across stacked "
-                f"sources is not supported; the mosaic would emit a "
-                f"single dataset-level value and shift the disagreeing "
-                f"source by half a pixel. Re-tag the sources so they "
-                f"share the same pixel registration before mosaicing. "
-                f"See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` "
-                f"(epic #2340)."
-            )
-        # Refuse mixed per-source nodata sentinels when the caller did
-        # not pin one via the ``nodata`` kwarg. The legacy writer
-        # silently picked ``first['nodata']`` for every band of every
-        # source, which means a tile whose own sentinel was different
-        # got its "valid" pixels masked once the consumer applied the
-        # mosaic-level ``<NoDataValue>``. The fail-closed surface
-        # mirrors the read-side ``MixedBandMetadataError`` opt-out:
-        # callers who really want the first-source value override the
-        # check by passing ``nodata=<value>`` explicitly. Epic #2340 /
-        # PR 5.
-        m_nodata = m.get('nodata')
-        if nodata is None and m_nodata != first_nodata:
-            raise UnsupportedGeoTIFFFeatureError(
-                f"VRT source {m['path']!r} declares nodata="
-                f"{m_nodata!r} which does not match the first source "
-                f"({first_nodata!r}). Silent flattening of mixed "
-                f"per-source nodata sentinels across stacked sources "
-                f"is not supported; the writer would emit the first "
-                f"source's value as a single dataset-level "
-                f"``<NoDataValue>`` and the disagreeing source's "
-                f"sentinel would become a "
-                f"valid-looking pixel on read. Either pin the mosaic "
-                f"nodata explicitly with ``write_vrt(..., "
-                f"nodata=<value>)`` or re-tag the sources so they "
-                f"agree. See "
-                f":data:`xrspatial.geotiff.SUPPORTED_FEATURES` "
-                f"(epic #2340)."
             )
 
     # Compute the bounding box of all sources
