@@ -233,6 +233,32 @@ _VALID_COMPRESSIONS = (
 # * File-like destinations with ``cog=True``.
 # * BigTIFF COG (tracked separately).
 # * HTTP / range COG (``reader.http_cog``); see the per-key comment below.
+#
+# Epic #2340 alignment (release contract)
+# ---------------------------------------
+# The epic tiers the public geotiff surface as Stable / Advanced /
+# Experimental / Internal-only for the next release. The mapping below
+# is the source of truth that the docs page, the user-guide notebook,
+# and the writer gates read from, so it has to match the epic.
+#
+# Wave-1 reconciliation under #2340:
+#
+# * Add ``reader.windowed`` at ``stable``. Windowed reads have a
+#   release-gate suite (``test_window_*`` + ``test_no_georef_windowed_coords_1710``
+#   and the GPU window cases) and the epic places them in Stable.
+# * Add ``reader.dask`` at ``stable``. Dask reads are parity-tested
+#   against the eager numpy reader via
+#   ``test_backend_parity_matrix.py`` and ``test_backend_full_parity_2211.py``,
+#   which is the bar the epic asks for ("dask reads only where
+#   parity-tested").
+# * Demote ``reader.allow_rotated`` from ``advanced`` to ``experimental``.
+#   The opt-in lets a caller bypass the read-side rotated-transform
+#   check that ``RotatedTransformError`` defends; the epic places
+#   rotated writes as Unsupported and the read-side escape hatch sits
+#   naturally in Experimental.
+# * Demote ``reader.allow_unparseable_crs`` from ``advanced`` to
+#   ``experimental``. The epic places "explicit-CRS permissive escape
+#   hatches" in Experimental.
 SUPPORTED_FEATURES = {
     # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
     'codec.none': 'stable',
@@ -250,12 +276,27 @@ SUPPORTED_FEATURES = {
     'codec.jpeg': 'internal_only',
     # Read paths.
     'reader.local_file': 'stable',
+    # Windowed reads (#2340): release-gate covered by
+    # ``test_window_out_of_bounds_1634``, ``test_no_georef_windowed_coords_1710``,
+    # ``test_gpu_window_band_1605``, ``test_gpu_stripped_no_georef_window_1753``,
+    # ``test_http_window_band_planar_1669``, ``test_http_stripped_window_max_pixels_issue_A_1842``,
+    # and ``test_vrt_window_validation_1697``.
+    'reader.windowed': 'stable',
+    # Dask reads (#2340): parity-tested against the eager numpy reader
+    # by ``test_backend_parity_matrix.py`` and ``test_backend_full_parity_2211.py``,
+    # which is the gate the epic asks for. GPU-backed dask reads remain
+    # under ``reader.gpu`` and stay experimental.
+    'reader.dask': 'stable',
     'reader.fsspec': 'advanced',
     'reader.http': 'advanced',
     'reader.vrt': 'advanced',
     'reader.sidecar_ovr': 'advanced',
-    'reader.allow_rotated': 'advanced',
-    'reader.allow_unparseable_crs': 'advanced',
+    # Permissive escape hatches (#2340): demoted from ``advanced`` to
+    # ``experimental``. Both opt-ins let a caller bypass a read-side
+    # check (rotated transform / unparseable CRS) the writer normally
+    # rejects; the epic places these in Experimental.
+    'reader.allow_rotated': 'experimental',
+    'reader.allow_unparseable_crs': 'experimental',
     # COG reader paths (issue #2291): split out from the previous
     # single COG concept (which only carried ``writer.cog``) so the
     # local and HTTP reader variants can promote independently of the
