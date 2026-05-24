@@ -7,9 +7,9 @@ trust. This file is the single release-gate citation for that risk.
 
 For each file in a small representative corpus (integer dtype with a
 nodata sentinel, float dtype with NaN nodata, float dtype without a
-sentinel) and for both eager (``open_geotiff(..., window=...)``) and
-dask (``read_geotiff_dask(..., window=...)``) read paths the test
-asserts:
+sentinel, uint8 MinIsWhite stripped without GeoTIFF tags) and for
+both eager (``open_geotiff(..., window=...)``) and dask
+(``read_geotiff_dask(..., window=...)``) read paths the test asserts:
 
 * the returned shape equals the window's ``(height, width)``;
 * ``coords['y']`` / ``coords['x']`` equal the matching slice of the
