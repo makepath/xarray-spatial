@@ -73,7 +73,8 @@ from ._coords import \
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, GeoTIFFAmbiguousMetadataError,
                       InvalidCRSCodeError, MixedBandMetadataError, NonUniformCoordsError,
-                      RotatedTransformError, UnknownCRSModelTypeError, UnparseableCRSError)
+                      RotatedTransformError, UnknownCRSModelTypeError, UnparseableCRSError,
+                      UnsupportedGeoTIFFFeatureError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
@@ -115,6 +116,7 @@ __all__ = [
     'UnknownCRSModelTypeError',
     'UnparseableCRSError',
     'UnsafeURLError',
+    'UnsupportedGeoTIFFFeatureError',
     'open_geotiff',
     'read_geotiff_gpu',
     'read_geotiff_dask',
