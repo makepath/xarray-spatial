@@ -26,9 +26,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff._geotags import GeoTransform
-from xrspatial.geotiff._writer import write
+# Every test in this file exercises the ``chunks=`` dask backend. Skip
+# the whole file if dask is not installed -- the parity claim is
+# vacuous without the backend it compares against.
+pytest.importorskip("dask")
+
+from xrspatial.geotiff import open_geotiff  # noqa: E402
+from xrspatial.geotiff._geotags import GeoTransform  # noqa: E402
+from xrspatial.geotiff._writer import write  # noqa: E402
 
 
 def _write_known_good(path: str) -> np.ndarray:
@@ -132,7 +137,6 @@ def test_release_gate_dask_read_is_lazy(tmp_path) -> None:
     without anyone noticing. The dask backend's defining property is
     laziness; pin it.
     """
-    pytest.importorskip("dask")
     import dask.array as da_mod
 
     path = str(tmp_path / "release_gate_dask_parity_lazy_2340.tif")

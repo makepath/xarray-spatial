@@ -21,7 +21,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import open_geotiff
+from xrspatial.geotiff import SUPPORTED_FEATURES, open_geotiff
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._writer import write
 
@@ -118,8 +118,6 @@ def test_release_gate_codec_stable_set_matches_supported_features() -> None:
     Fail loudly here so the PR that changes the tier also updates the
     gate.
     """
-    from xrspatial.geotiff import SUPPORTED_FEATURES
-
     stable_from_constant = {
         key.split(".", 1)[1]
         for key, tier in SUPPORTED_FEATURES.items()
