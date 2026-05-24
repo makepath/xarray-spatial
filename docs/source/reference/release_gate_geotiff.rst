@@ -102,6 +102,16 @@ Local GeoTIFF read and write
      - Lossless byte-for-byte round-trip on integer and float dtypes.
      - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
        ``xrspatial/geotiff/tests/test_compression.py``
+   * - Stable codec round-trip (read / write / read)
+     - stable
+     - On every stable codec (``none``, ``deflate``, ``lzw``, ``zstd``,
+       ``packbits``) crossed with every promised dtype (``int16``,
+       ``int32``, ``float32``, ``float64``), a write / read / write /
+       read cycle preserves both byte-exact pixels (NaN-aware for
+       float) and every canonical release attr (``transform``, ``crs``,
+       ``crs_wkt``, ``nodata``, ``masked_nodata``, ``georef_status``,
+       ``raster_type``).
+     - ``xrspatial/geotiff/tests/test_release_gate_codec_round_trip_2341.py``
    * - Codec ``lerc`` / ``jpeg2000`` / ``j2k`` / ``lz4``
      - experimental
      - Rejected by default; accepted with
