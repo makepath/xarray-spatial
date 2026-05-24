@@ -389,6 +389,18 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         entry_point="write_geotiff_gpu",
     )
 
+    # Reject ``gdal_metadata_xml`` / ``extra_tags`` pass-through writes
+    # unless the caller opted in via ``allow_experimental_codecs=True``.
+    # Mirrors ``to_geotiff`` so the two writers expose the same surface.
+    # PR 4 of epic #2340.
+    from .._attrs import _validate_write_rich_tag_optin
+    _attrs_for_optin = getattr(data, 'attrs', None) or {}
+    _validate_write_rich_tag_optin(
+        _attrs_for_optin,
+        allow_experimental_codecs=allow_experimental_codecs,
+        entry_point="write_geotiff_gpu",
+    )
+
     # Issue #1987 ambiguous-metadata checks; mirrors ``to_geotiff`` so the
     # GPU writer enforces the same crs/crs_wkt consistency rule. Alias
     # resolution (issue #2215) keeps the validator consistent across
