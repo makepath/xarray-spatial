@@ -121,7 +121,9 @@ def test_user_extra_tags_override_extra_samples_1769(tmp_path):
         ]},
     )
     path = str(tmp_path / 'override_extras_1769.tif')
-    to_geotiff(da, path, photometric='rgb')
+    # extra_tags is the Experimental write surface (PR 4 of epic #2340).
+    to_geotiff(da, path, photometric='rgb',
+               allow_experimental_codecs=True)
 
     ifd = _read_primary_ifd(path)
     assert ifd.get_value(TAG_PHOTOMETRIC) == 2  # RGB from kwarg
@@ -142,7 +144,9 @@ def test_user_extra_tags_override_photometric_1769(tmp_path):
     )
     path = str(tmp_path / 'override_photometric_1769.tif')
     # photometric='rgb' would otherwise emit Photometric=2.
-    to_geotiff(da, path, photometric='rgb')
+    # extra_tags is the Experimental write surface (PR 4 of epic #2340).
+    to_geotiff(da, path, photometric='rgb',
+               allow_experimental_codecs=True)
 
     ifd = _read_primary_ifd(path)
     assert ifd.get_value(TAG_PHOTOMETRIC) == 0  # MinIsWhite from override

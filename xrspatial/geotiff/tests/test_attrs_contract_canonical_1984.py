@@ -172,7 +172,13 @@ def canonical_roundtrip(tmp_path):
     """
     da, expected_transform = _make_canonical_da()
     path = str(tmp_path / 'attrs_contract_canonical.tif')
-    to_geotiff(da, path)
+    # The canonical fixture carries ``extra_tags``; the PR 4 rich-tag
+    # gate (#2340) exempts attrs carrying ``_xrspatial_geotiff_contract``
+    # (set by the readers), but this fixture builds a fresh DataArray
+    # without the marker, so the initial write must opt in. The
+    # round-trip's subsequent open->write would NOT need the flag --
+    # this fixture exercises the initial write only.
+    to_geotiff(da, path, allow_experimental_codecs=True)
     rd = open_geotiff(path)
     return rd, expected_transform
 
@@ -355,7 +361,9 @@ def test_canonical_keys_present_per_backend(tmp_path, opener):
     """
     da, _ = _make_canonical_da()
     path = str(tmp_path / f'canonical_{opener.__name__}.tif')
-    to_geotiff(da, path)
+    # Fresh DataArray with ``extra_tags`` -> rich-tag opt-in required
+    # (PR 4 of epic #2340; see ``canonical_roundtrip`` for details).
+    to_geotiff(da, path, allow_experimental_codecs=True)
 
     rd = opener(path)
     missing = sorted(k for k in _CANONICAL_KEYS if k not in rd.attrs)
@@ -380,7 +388,7 @@ def test_raster_type_area_omitted_on_roundtrip(tmp_path):
     da, _ = _make_canonical_da()
     assert 'raster_type' not in da.attrs
     path = str(tmp_path / 'raster_type_area.tif')
-    to_geotiff(da, path)
+    to_geotiff(da, path, allow_experimental_codecs=True)
     rd = open_geotiff(path)
     assert 'raster_type' not in rd.attrs, (
         f"area is the implicit default but the reader emitted "
@@ -394,6 +402,6 @@ def test_raster_type_point_roundtrip(tmp_path):
     da, _ = _make_canonical_da()
     da.attrs['raster_type'] = 'point'
     path = str(tmp_path / 'raster_type_point.tif')
-    to_geotiff(da, path)
+    to_geotiff(da, path, allow_experimental_codecs=True)
     rd = open_geotiff(path)
     assert rd.attrs.get('raster_type') == 'point'
