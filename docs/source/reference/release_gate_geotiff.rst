@@ -64,6 +64,16 @@ Local GeoTIFF read and write
        on georeferenced inputs match the eager full-read slice.
      - ``xrspatial/geotiff/tests/test_window_out_of_bounds_1634.py``,
        ``xrspatial/geotiff/tests/test_no_georef_windowed_coords_1710.py``
+   * - ``reader.windowed`` -- shifted-transform parity (eager + dask)
+     - stable
+     - For each representative file, a window strictly interior to the
+       raster returns the expected shape, coords that are a bit-exact
+       slice of the unwindowed read, an ``attrs['transform']`` equal to
+       ``T_full * Affine.translation(col_off, row_off)`` (no float
+       drift), and the canonical non-transform release attrs unchanged.
+       Covered for both ``open_geotiff(window=...)`` and
+       ``read_geotiff_dask(window=...)``.
+     - ``xrspatial/geotiff/tests/test_release_gate_windowed_reads_2341.py``
    * - ``reader.dask``
      - stable
      - ``open_geotiff(chunks=...)`` returns a Dask-backed
