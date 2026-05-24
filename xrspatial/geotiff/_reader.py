@@ -93,7 +93,8 @@ from ._sources import (_CLOUD_SCHEMES, _DEFAULT_MMAP_CACHE_SIZE,  # noqa: F401
                        _BytesIOSource, _CloudSource, _coerce_path, _FileSource, _get_http_pool,
                        _get_pinned_conn_classes, _http_allow_private_hosts, _http_connect_timeout,
                        _http_read_timeout, _http_timeout_from_env, _HTTPSource, _ip_is_private,
-                       _is_file_like, _is_fsspec_uri, _is_http_url, _make_pinned_pool,
+                       _is_file_like, _is_fsspec_uri, _is_http_source, _is_http_url,
+                       _make_pinned_pool,
                        _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env, _mmap_cache,
                        _mmap_cache_size_from_env, _MmapCache, _open_source,
                        _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
@@ -142,7 +143,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
     (np.ndarray, GeoInfo) tuple
     """
     source = _coerce_path(source)
-    if _is_http_url(source):
+    if _is_http_source(source):
         return _read_cog_http(source, overview_level=overview_level, band=band,
                               max_pixels=max_pixels, window=window,
                               allow_rotated=allow_rotated)
