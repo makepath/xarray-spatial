@@ -55,7 +55,7 @@ class TestLZ4WriteRoundTrip:
         path = str(tmp_path / 'lz4_1051_tiled_uint8.tif')
         write(expected, path, compression='lz4', tiled=True, tile_size=8)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_tiled_float32(self, tmp_path):
@@ -66,7 +66,7 @@ class TestLZ4WriteRoundTrip:
         path = str(tmp_path / 'lz4_1051_tiled_f32.tif')
         write(expected, path, compression='lz4', tiled=True, tile_size=8)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_stripped_uint8(self, tmp_path):
@@ -77,7 +77,7 @@ class TestLZ4WriteRoundTrip:
         path = str(tmp_path / 'lz4_1051_stripped.tif')
         write(expected, path, compression='lz4', tiled=False)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_with_predictor(self, tmp_path):
@@ -89,7 +89,7 @@ class TestLZ4WriteRoundTrip:
         write(expected, path, compression='lz4', tiled=True, tile_size=8,
               predictor=True)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_public_api_roundtrip(self, tmp_path):
@@ -107,7 +107,7 @@ class TestLZ4WriteRoundTrip:
         to_geotiff(da, path, compression='lz4',
                    allow_experimental_codecs=True)
 
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, data)
 
 

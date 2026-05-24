@@ -66,6 +66,7 @@ from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError,
                                open_geotiff, read_vrt, to_geotiff)
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_FULL,
                                       GEOREF_STATUS_TRANSFORM_ONLY)
+from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff._writer import write
 from xrspatial.geotiff.tests.conftest import requires_gpu
 
@@ -760,7 +761,11 @@ def test_unsupported_resample_alg_raises(tmp_path):
     should be raised here instead; accept either today.
     """
     vrt = _write_unsupported_resample_vrt(tmp_path)
-    with pytest.raises(NotImplementedError, match=r"Bilinear|1751"):
+    # Sub-PR 2 (#2329) landed the centralised VRT validator, which
+    # now raises ``VRTUnsupportedError`` for this case.
+    with pytest.raises(
+        (NotImplementedError, VRTUnsupportedError), match=r"Bilinear|1751",
+    ):
         read_vrt(vrt)
 
 
@@ -802,7 +807,12 @@ def test_negative_srcrect_size_rejected(tmp_path):
     upgrade to ``VRTUnsupportedError``.
     """
     vrt = _write_bad_srcrect_vrt(tmp_path, x_size=-50)
-    with pytest.raises(ValueError, match=r"SrcRect.*negative size"):
+    # Sub-PR 2 (#2329) centralised this rejection in the validator and
+    # upgraded it to ``VRTUnsupportedError``; accept either today.
+    with pytest.raises(
+        (ValueError, VRTUnsupportedError),
+        match=r"SrcRect.*negative",
+    ):
         read_vrt(vrt)
 
 
@@ -850,7 +860,12 @@ def test_negative_dstrect_size_rejected(tmp_path):
     TODO(#2321): tighten to ``VRTUnsupportedError`` when PR 2 ships.
     """
     vrt = _write_bad_dstrect_vrt(tmp_path, x_size=-10)
-    with pytest.raises(ValueError, match=r"DstRect.*negative size"):
+    # Sub-PR 2 (#2329) centralised this rejection in the validator and
+    # upgraded it to ``VRTUnsupportedError``; accept either today.
+    with pytest.raises(
+        (ValueError, VRTUnsupportedError),
+        match=r"DstRect.*negative",
+    ):
         read_vrt(vrt)
 
 

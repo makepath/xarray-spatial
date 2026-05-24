@@ -91,7 +91,7 @@ class TestLERCWriteRoundTrip:
         path = str(tmp_path / 'lerc_1052_tiled_f32.tif')
         write(expected, path, compression='lerc', tiled=True, tile_size=8)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_tiled_uint8(self, tmp_path):
@@ -102,7 +102,7 @@ class TestLERCWriteRoundTrip:
         path = str(tmp_path / 'lerc_1052_tiled_u8.tif')
         write(expected, path, compression='lerc', tiled=True, tile_size=8)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_stripped_float32(self, tmp_path):
@@ -113,7 +113,7 @@ class TestLERCWriteRoundTrip:
         path = str(tmp_path / 'lerc_1052_stripped.tif')
         write(expected, path, compression='lerc', tiled=False)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_public_api_roundtrip(self, tmp_path):
@@ -131,7 +131,10 @@ class TestLERCWriteRoundTrip:
         to_geotiff(da, path, compression='lerc',
                    allow_experimental_codecs=True)
 
-        result = open_geotiff(path)
+        # PR 4 of epic #2340: the read side also gates the LERC codec
+        # on ``allow_experimental_codecs=True`` so the open here passes
+        # the same opt-in the writer required.
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, data)
 
 

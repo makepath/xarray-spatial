@@ -608,6 +608,22 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             stacklevel=2,
         )
 
+    # Reject ``gdal_metadata_xml`` / ``extra_tags`` pass-through writes
+    # unless the caller opted in via ``allow_experimental_codecs=True``.
+    # Both surfaces ride the Experimental tier in ``SUPPORTED_FEATURES``
+    # because the on-disk bytes are written verbatim and downstream
+    # interop with rasterio / libtiff / GDAL depends on the payload.
+    # PR 4 of epic #2340.
+    _data_attrs_for_optin = (
+        data.attrs if isinstance(data, xr.DataArray) else {}
+    )
+    from .._attrs import _validate_write_rich_tag_optin
+    _validate_write_rich_tag_optin(
+        _data_attrs_for_optin,
+        allow_experimental_codecs=allow_experimental_codecs,
+        entry_point="to_geotiff",
+    )
+
     # Issue #2312: ``cog=True`` requires a tiled internal layout per the
     # COG spec. The writer used to accept ``cog=True, tiled=False``, warn
     # that ``tile_size`` was ignored, and then write strips via

@@ -128,6 +128,8 @@ def read_vrt(source: str, *,
              missing_sources: str = 'raise',
              allow_rotated: bool = False,
              allow_unparseable_crs: bool = False,
+             allow_experimental_codecs: bool = False,
+             allow_internal_only_jpeg: bool = False,
              band_nodata: str | None = None,
              mask_nodata: bool = True) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
@@ -255,6 +257,16 @@ def read_vrt(source: str, *,
         #1929) raises ``UnparseableCRSError`` rather than carrying the
         unrecognised payload through. See ``open_geotiff`` for the
         full description.
+    allow_experimental_codecs : bool, default False
+        [advanced] Read-side opt-in for Tier 3 experimental codecs in
+        any source file referenced by the VRT. Forwarded to the
+        per-source reader for each ``<SourceFilename>``. See
+        ``open_geotiff`` for the full description (epic #2340 PR 4).
+    allow_internal_only_jpeg : bool, default False
+        [advanced] Read-side opt-in for JPEG-in-TIFF sources referenced
+        by the VRT. Forwarded to the per-source reader. See
+        ``open_geotiff`` for the full description (epic #2340 PR 4,
+        original writer gate #1845).
     overview_level : int or None
         [internal-only] Not supported for VRT sources. The VRT XML
         references its own source files, so overview selection would
@@ -426,6 +438,8 @@ def read_vrt(source: str, *,
             missing_sources=missing_sources,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg,
             band_nodata=band_nodata,
             mask_nodata=mask_nodata,
         )
@@ -498,6 +512,8 @@ def read_vrt(source: str, *,
         source, window=window, band=band, max_pixels=max_pixels,
         missing_sources=missing_sources, parsed=_parsed_vrt,
         mask_nodata=mask_nodata,
+        allow_experimental_codecs=allow_experimental_codecs,
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
     )
 
     if name is None:
@@ -707,7 +723,9 @@ def read_vrt(source: str, *,
 def _vrt_chunk_read(source, r0, c0, r1, c1, *,
                     band, max_pixels, missing_sources,
                     declared_dtype, gpu, parsed_vrt,
-                    mask_nodata: bool = True):
+                    mask_nodata: bool = True,
+                    allow_experimental_codecs: bool = False,
+                    allow_internal_only_jpeg: bool = False):
     """Decode a single chunk window from a VRT.
 
     Called by ``dask.delayed`` from :func:`_read_vrt_chunked`. The
@@ -739,6 +757,8 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
         source, window=(r0, c0, r1, c1), band=band,
         max_pixels=max_pixels, missing_sources=missing_sources,
         parsed=parsed_vrt, mask_nodata=mask_nodata,
+        allow_experimental_codecs=allow_experimental_codecs,
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
     )
 
     # Mirror the eager post-decode integer-sentinel masking via the
@@ -767,6 +787,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                       max_pixels, missing_sources,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
+                      allow_experimental_codecs: bool = False,
+                      allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
                       mask_nodata: bool = True):
     """Lazy ``read_vrt`` dispatch when ``chunks=`` is set (issue #1814).
@@ -1010,6 +1032,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                 gpu=gpu,
                 parsed_vrt=parsed_vrt_key,
                 mask_nodata=mask_nodata,
+                allow_experimental_codecs=allow_experimental_codecs,
+                allow_internal_only_jpeg=allow_internal_only_jpeg,
             )
             block = da.from_delayed(d, shape=block_shape,
                                     dtype=declared_dtype, meta=meta)
