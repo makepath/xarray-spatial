@@ -83,11 +83,16 @@ def read_geotiff_gpu(source: str, *,
                      ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
-    Tier: Experimental (issue #2137). Requires cupy + numba CUDA plus
-    optional nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
-    acceleration; cross-backend numerical parity with the CPU reader
-    is tested for the Tier 1 codec set only. See
-    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
+    Release-contract tier (epic #2340; see
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst``): the
+    entire entry point is [experimental]. The surface may shift
+    without a deprecation window and the CPU fallback is the canonical
+    reader. Requires cupy + numba CUDA plus optional nvCOMP / nvJPEG /
+    nvJPEG2K libraries for codec-specific acceleration; cross-backend
+    numerical parity with the CPU reader is tested for the Tier 1
+    codec set only. See :data:`xrspatial.geotiff.SUPPORTED_FEATURES`
+    for the full tier map (issue #2137).
 
     Decompresses all tiles in parallel on the GPU and returns a
     CuPy-backed DataArray that stays on device memory. No CPU->GPU
@@ -106,43 +111,45 @@ def read_geotiff_gpu(source: str, *,
     Parameters
     ----------
     source : str
-        Local file path, ``http://`` / ``https://`` URL, or fsspec URI
-        (``s3://``, ``gs://``, ``memory://``, ...). URL and fsspec sources
-        use a CPU decode + GPU upload internally (matching the chunked
-        path's HTTP/fsspec fallback); the result is still a CuPy-backed
-        DataArray.
+        [experimental] Local file path, ``http://`` / ``https://``
+        URL, or fsspec URI (``s3://``, ``gs://``, ``memory://``, ...).
+        URL and fsspec sources use a CPU decode + GPU upload
+        internally (matching the chunked path's HTTP/fsspec fallback);
+        the result is still a CuPy-backed DataArray.
     dtype : str, numpy.dtype, or None
-        Cast the result to this dtype after reading. None keeps the
-        file's native dtype. Float-to-int casts raise ValueError, mirroring
-        ``open_geotiff`` / ``read_geotiff_dask``.
+        [experimental] Cast the result to this dtype after reading.
+        None keeps the file's native dtype. Float-to-int casts raise
+        ValueError, mirroring ``open_geotiff`` / ``read_geotiff_dask``.
     overview_level : int or None
-        Overview level (0 = full resolution).
+        [experimental] Overview level (0 = full resolution).
     window : tuple or None
-        ``(row_start, col_start, row_stop, col_stop)`` for windowed
-        reading. None reads the full raster. The GPU pipeline currently
-        decodes all tiles and slices on device after assembly, so the
-        kwarg restores API parity with ``open_geotiff`` and
-        ``read_geotiff_dask`` but does not yet skip I/O for partial
-        windows. The returned coords, ``attrs['transform']``, and
-        shape match the eager numpy path.
+        [experimental] ``(row_start, col_start, row_stop, col_stop)``
+        for windowed reading. None reads the full raster. The GPU
+        pipeline currently decodes all tiles and slices on device
+        after assembly, so the kwarg restores API parity with
+        ``open_geotiff`` and ``read_geotiff_dask`` but does not yet
+        skip I/O for partial windows. The returned coords,
+        ``attrs['transform']``, and shape match the eager numpy path.
     band : int or None
-        Zero-based band index. None returns all bands (3D output for
-        multi-band files, 2D for single-band). Selecting a single band
-        yields a 2D DataArray.
+        [experimental] Zero-based band index. None returns all bands
+        (3D output for multi-band files, 2D for single-band).
+        Selecting a single band yields a 2D DataArray.
     chunks : int, tuple, or None
-        If set, return a Dask-chunked CuPy DataArray decoded one chunk
-        at a time. int for square chunks, (row, col) tuple for
-        rectangular. Each chunk task reads only the tiles overlapping
-        its window (CPU decode) and uploads the result to the device,
-        so peak GPU memory is bounded by chunk size. ``chunks=None``
-        (default) decodes the full raster on the GPU in one pass.
+        [experimental] If set, return a Dask-chunked CuPy DataArray
+        decoded one chunk at a time. int for square chunks,
+        (row, col) tuple for rectangular. Each chunk task reads only
+        the tiles overlapping its window (CPU decode) and uploads the
+        result to the device, so peak GPU memory is bounded by chunk
+        size. ``chunks=None`` (default) decodes the full raster on the
+        GPU in one pass.
     name : str or None
-        Name for the DataArray.
+        [experimental] Name for the DataArray.
     max_pixels : int or None
-        Maximum allowed pixel count (width * height * samples). None
-        uses the default (~1 billion).
+        [experimental] Maximum allowed pixel count
+        (width * height * samples). None uses the default (~1 billion).
     on_gpu_failure : {'auto', 'strict'}, default 'auto'
-        Behaviour when any GPU decode stage raises an exception.
+        [experimental] Behaviour when any GPU decode stage raises an
+        exception.
 
         The GPU pipeline has two stages: first ``gpu_decode_tiles_from_file``
         (GDS-style direct read), then ``gpu_decode_tiles`` over CPU-mmap
@@ -169,55 +176,60 @@ def read_geotiff_gpu(source: str, *,
         ``cupy.asarray(...)`` upload (e.g. device OOM) still propagate
         unchanged in both modes.
     gpu : str, optional
-        Deprecated alias for ``on_gpu_failure``. Emits ``DeprecationWarning``
-        when used. Passing both ``gpu`` and ``on_gpu_failure`` raises
-        ``TypeError``. The old name shipped with values ``'auto'`` /
-        ``'strict'`` and was easy to confuse with the boolean ``gpu=``
-        kwarg on ``open_geotiff`` / ``to_geotiff`` / ``read_vrt``.
+        [experimental] Deprecated alias for ``on_gpu_failure``. Emits
+        ``DeprecationWarning`` when used. Passing both ``gpu`` and
+        ``on_gpu_failure`` raises ``TypeError``. The old name shipped
+        with values ``'auto'`` / ``'strict'`` and was easy to confuse
+        with the boolean ``gpu=`` kwarg on ``open_geotiff`` /
+        ``to_geotiff`` / ``read_vrt``.
     mask_nodata : bool, default True
-        If True, replace the nodata sentinel with NaN (integer rasters
-        get promoted to ``float64`` first). If False, keep the source
-        dtype and leave the raw sentinel in the data. ``attrs['nodata']``
-        carries the sentinel either way. Pass ``mask_nodata=False``
-        together with ``dtype=<integer>`` to preserve an integer source
-        dtype on a file with a matching sentinel. See issue #2052.
+        [experimental] If True, replace the nodata sentinel with NaN
+        (integer rasters get promoted to ``float64`` first). If False,
+        keep the source dtype and leave the raw sentinel in the data.
+        ``attrs['nodata']`` carries the sentinel either way. Pass
+        ``mask_nodata=False`` together with ``dtype=<integer>`` to
+        preserve an integer source dtype on a file with a matching
+        sentinel. See issue #2052.
     allow_rotated : bool, default False
-        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
-        files. Forwarded through both GPU decode stages and the CPU
-        fallback so the rotated branch behaves the same regardless of
-        which stage produces the bytes. See ``open_geotiff`` for the
-        full contract; on the GPU path the result still lands as a
-        CuPy-backed DataArray.
+        [experimental] Read-side opt-in for rotated / sheared
+        ``ModelTransformationTag`` files. Forwarded through both GPU
+        decode stages and the CPU fallback so the rotated branch
+        behaves the same regardless of which stage produces the bytes.
+        See ``open_geotiff`` for the full contract; on the GPU path
+        the result still lands as a CuPy-backed DataArray.
     allow_unparseable_crs : bool, default False
-        Read-side opt-in for CRS strings that pyproj cannot resolve and
-        do not parse as WKT. ``False`` (the default since #1929) raises
-        ``UnparseableCRSError``; ``True`` keeps the pre-#1929 permissive
-        behaviour. See ``open_geotiff`` for the full description.
+        [experimental] Read-side opt-in for CRS strings that pyproj
+        cannot resolve and do not parse as WKT. ``False`` (the default
+        since #1929) raises ``UnparseableCRSError``; ``True`` keeps
+        the pre-#1929 permissive behaviour. See ``open_geotiff`` for
+        the full description.
     allow_experimental_codecs : bool, default False
-        Read-side opt-in for Tier 3 experimental codecs (``lerc``,
-        ``jpeg2000`` / ``j2k``, ``lz4``). The GPU read path mirrors the
-        CPU eager and dask paths so all three readers agree on the
-        opt-in contract. See ``open_geotiff`` for the full description
-        (epic #2340 PR 4).
+        [experimental] Read-side opt-in for Tier 3 experimental codecs
+        (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). The GPU read path
+        mirrors the CPU eager and dask paths so all three readers agree
+        on the opt-in contract. See ``open_geotiff`` for the full
+        description (epic #2340 PR 4).
     allow_internal_only_jpeg : bool, default False
-        Read-side opt-in for JPEG-in-TIFF sources. Not covered by
-        ``allow_experimental_codecs``. See ``open_geotiff`` for the
-        full description (epic #2340 PR 4, original writer gate #1845).
+        [internal-only] Read-side opt-in for JPEG-in-TIFF sources. Not
+        covered by ``allow_experimental_codecs``. See ``open_geotiff``
+        for the full description (epic #2340 PR 4, original writer gate
+        #1845).
     band_nodata : {'first', None}, optional
-        VRT-only. Accepted at the signature level for parity with
-        ``open_geotiff``; passing it to ``read_geotiff_gpu`` raises
-        ``ValueError`` because the GPU dispatcher rejects ``.vrt``
-        sources up front and the kwarg only applies to VRT. See
-        ``read_vrt`` for the kwarg's meaning.
+        [internal-only] VRT-only. Accepted at the signature level for
+        parity with ``open_geotiff``; passing it to ``read_geotiff_gpu``
+        raises ``ValueError`` because the GPU dispatcher rejects
+        ``.vrt`` sources up front and the kwarg only applies to VRT.
+        See ``read_vrt`` for the kwarg's meaning.
     missing_sources : {'raise', 'warn'}, optional
-        VRT-only. Same shape as ``band_nodata`` above: accepted for
-        signature parity, rejected at dispatch with ``ValueError`` for
-        non-VRT sources. See ``read_vrt`` for the full description.
+        [internal-only] VRT-only. Same shape as ``band_nodata`` above:
+        accepted for signature parity, rejected at dispatch with
+        ``ValueError`` for non-VRT sources. See ``read_vrt`` for the
+        full description.
     max_cloud_bytes : int or None, optional
-        Accepted for cross-backend signature symmetry only. The GPU
-        reader does not consume the cloud-byte budget; passing this
-        kwarg raises ``ValueError`` at dispatch (issue #1974). See
-        ``open_geotiff`` for the eager-path description.
+        [internal-only] Accepted for cross-backend signature symmetry
+        only. The GPU reader does not consume the cloud-byte budget;
+        passing this kwarg raises ``ValueError`` at dispatch (issue
+        #1974). See ``open_geotiff`` for the eager-path description.
 
     Returns
     -------
@@ -330,6 +342,7 @@ def read_geotiff_gpu(source: str, *,
     from .._header import parse_all_ifds, parse_header, select_overview_ifd, validate_tile_layout
     from .._reader import (MAX_PIXELS_DEFAULT, _check_dimensions, _FileSource, _is_fsspec_uri,
                            _max_tile_bytes_from_env, _resolve_masked_fill)
+    from .._sources import _is_http_source
 
     # ``source`` is already coerced above (before the dispatch
     # validator); no need to re-coerce here.
@@ -360,9 +373,8 @@ def read_geotiff_gpu(source: str, *,
     # whole image either way for the eager path; the trade-off is a CPU
     # decode instead of nvCOMP-on-GPU. Callers who want bounded GPU
     # memory should pass ``chunks=...``.
-    from .._reader import _is_http_url
     if isinstance(source, str) and (
-            _is_http_url(source)
+            _is_http_source(source)
             or _is_fsspec_uri(source)):
         return _read_geotiff_gpu_eager_via_cpu(
             source, dtype=dtype, window=window,
@@ -1115,9 +1127,9 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     # import failure would silently let an HTTP URL into the kvikio
     # branch (which opens the path as a local file and panics). The
     # canonical case-insensitive helper is a sibling module, so the
-    # import is safe at module load time (#2323).
-    from .._sources import _is_http_url
-    if _is_http_url(source):
+    # import is safe at module load time. Issues #2323 / #2332.
+    from .._sources import _is_http_source
+    if _is_http_source(source):
         return False
     try:
         from .._reader import _is_fsspec_uri

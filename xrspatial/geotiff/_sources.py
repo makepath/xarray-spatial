@@ -1452,32 +1452,45 @@ class _HTTPSource:
 _CLOUD_SCHEMES = ('s3://', 'gs://', 'az://', 'abfs://')
 
 
-def _is_http_url(path) -> bool:
-    """Return True if *path* is an ``http://`` or ``https://`` URL.
+def _is_http_source(source) -> bool:
+    """Return True if ``source`` is an HTTP(S) URL, case-insensitively.
 
-    Case-insensitive: URL schemes are case-insensitive per RFC 3986, so an
-    uppercase ``HTTP://`` or mixed-case ``Http://`` must dispatch to the
-    SSRF-validating :class:`_HTTPSource`, not to the fsspec branch. See
-    issue #2323.
+    Centralized so every routing call site in ``xrspatial/geotiff/``
+    classifies the scheme the same way. Before this helper existed,
+    each call site did ``source.startswith(('http://', 'https://'))``,
+    which is case-sensitive and let ``HTTP://example.internal/...``
+    (uppercase) slip past :class:`_HTTPSource` and the SSRF allow-list
+    in :func:`_validate_http_url`. Per RFC 3986 section 3.1 URI schemes
+    are case-insensitive, so any uppercase / mixed-case variant has to
+    route through the same validator as ``http`` / ``https``.
+
+    Non-string inputs (``None``, ``bytes``, ``os.PathLike``, file-like
+    objects) return ``False`` so callers can drop the surrounding
+    ``isinstance(_, str)`` check where they want to. Issues #2323 / #2332.
     """
-    if not isinstance(path, str):
+    if not isinstance(source, str) or not source:
         return False
-    try:
-        scheme = urlparse(path).scheme
-    except (ValueError, TypeError):
-        return False
-    return scheme.lower() in ('http', 'https')
+    # ``urlparse`` strips off the scheme cleanly even for unusual inputs
+    # (e.g. ``HTTP:`` with no ``//``) and avoids the prefix-tuple trap.
+    return urlparse(source).scheme.lower() in ('http', 'https')
+
+
+# Back-compat alias: earlier patches (#2323) shipped this same helper under
+# the name ``_is_http_url`` and downstream tests / re-exports still use that
+# name. Keep the alias so importers and the regression tests stay green.
+_is_http_url = _is_http_source
 
 
 def _is_fsspec_uri(path: str) -> bool:
     """Check if a path is a fsspec-compatible URI (not http/https/local).
 
     Excludes http(s) case-insensitively so uppercase URLs cannot dodge the
-    SSRF allow-list and pinned DNS in :class:`_HTTPSource` (issue #2323).
+    SSRF allow-list and pinned DNS in :class:`_HTTPSource` (issues #2323 /
+    #2332).
     """
     if not isinstance(path, str):
         return False
-    if _is_http_url(path):
+    if _is_http_source(path):
         return False
     return '://' in path
 
@@ -1658,7 +1671,7 @@ def _open_source(source):
         raise TypeError(
             f"source must be a str path/URL or a binary file-like object "
             f"with read+seek methods, got {type(source).__name__}")
-    if _is_http_url(source):
+    if _is_http_source(source):
         return _HTTPSource(source)
     if _is_fsspec_uri(source):
         return _CloudSource(source)

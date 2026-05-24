@@ -38,6 +38,12 @@ pytest.importorskip("yaml")
 pytest.importorskip("rasterio")
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
+
+# Golden-corpus fixtures span every codec/tier, including the
+# experimental and internal-only ones gated by epic #2340 PR 4. Opting
+# in here lets the parity check exercise the full corpus; the per-codec
+# release-contract tests pin the rejection shape separately.
+_OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
@@ -164,7 +170,7 @@ def test_http_cog_parity(fixture_id: str, allow_private_http) -> None:
     try:
         host, port = httpd.server_address
         url = f"http://{host}:{port}/{fixture_id}.tif"
-        candidate = open_geotiff(url)
+        candidate = open_geotiff(url, **_OPTIN)
         # COG fixtures with internal overviews exercise the
         # overview-IFD code path through the HTTP range-request reader.
         # The factory points at the same served URL, so each overview
@@ -176,7 +182,7 @@ def test_http_cog_parity(fixture_id: str, allow_private_http) -> None:
         )
         overviews = (entry or {}).get("overviews") or []
         factory = (
-            (lambda lvl, u=url: open_geotiff(u, overview_level=lvl))
+            (lambda lvl, u=url: open_geotiff(u, overview_level=lvl, **_OPTIN))
             if overviews
             else None
         )
