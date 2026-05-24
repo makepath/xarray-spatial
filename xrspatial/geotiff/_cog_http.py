@@ -296,6 +296,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                    window: tuple[int, int, int, int] | None = None,
                    *,
                    allow_rotated: bool = False,
+                   allow_experimental_codecs: bool = False,
+                   allow_internal_only_jpeg: bool = False,
                    ) -> tuple[np.ndarray, GeoInfo]:
     """Read a COG via HTTP range requests.
 
@@ -364,6 +366,22 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         if used_sidecar:
             source.close()
             source = _reader._HTTPSource(route_path)
+
+        # Reject experimental and internal-only codecs on the HTTP read
+        # path unless the caller opted in. Mirrors the gate in
+        # ``_read_to_array`` so HTTP and local reads agree on the
+        # opt-in contract. See PR 4 of epic #2340.
+        from ._attrs import _validate_read_codec_optin
+        try:
+            _validate_read_codec_optin(
+                ifd.compression,
+                allow_experimental_codecs=allow_experimental_codecs,
+                allow_internal_only_jpeg=allow_internal_only_jpeg,
+                entry_point="open_geotiff",
+            )
+        except ValueError:
+            source.close()
+            raise
 
         # Mirror the local-path orientation guard in ``read_to_array``: a
         # windowed read against a non-default Orientation tag (274) has

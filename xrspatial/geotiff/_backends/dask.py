@@ -42,6 +42,8 @@ def read_geotiff_dask(source: str, *,
                       missing_sources: str = _MISSING_SOURCES_SENTINEL,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
+                      allow_experimental_codecs: bool = False,
+                      allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
@@ -109,6 +111,15 @@ def read_geotiff_dask(source: str, *,
         the chunk task raises ``UnparseableCRSError`` instead of
         carrying the unrecognised payload through ``attrs['crs_wkt']``.
         See ``open_geotiff`` for the full description.
+    allow_experimental_codecs : bool, default False
+        Read-side opt-in for Tier 3 experimental codecs (``lerc``,
+        ``jpeg2000`` / ``j2k``, ``lz4``). Fires at graph build, before
+        any chunk task is scheduled. See ``open_geotiff`` for the full
+        description (epic #2340 PR 4).
+    allow_internal_only_jpeg : bool, default False
+        Read-side opt-in for JPEG-in-TIFF sources. Not covered by
+        ``allow_experimental_codecs``. See ``open_geotiff`` for the
+        full description (epic #2340 PR 4, original writer gate #1845).
     on_gpu_failure : str, optional
         Accepted for cross-backend signature symmetry only. The dask
         path runs CPU decoders, so passing this kwarg raises
@@ -295,6 +306,7 @@ def read_geotiff_dask(source: str, *,
         # Stash IFD photometric for the MinIsWhite nodata-inversion check below.
         geo_info._ifd_photometric = http_ifd.photometric
         geo_info._ifd_samples_per_pixel = http_ifd.samples_per_pixel
+        geo_info._ifd_compression = http_ifd.compression
     else:
         # Metadata-only read: O(1) memory via mmap, no pixel decompression.
         # Lazy import for the same circular-import reason as ``read_vrt``
@@ -303,6 +315,21 @@ def read_geotiff_dask(source: str, *,
         geo_info, full_h, full_w, file_dtype, n_bands = _read_geo_info(
             source, overview_level=overview_level,
             allow_rotated=allow_rotated)
+
+    # Reject experimental / internal-only codecs at graph build, before
+    # any chunk task is scheduled. The compression tag is stashed on
+    # ``geo_info`` by ``_read_geo_info`` (local / fsspec) and by the
+    # HTTP / fsspec branch above. PR 4 of epic #2340.
+    _compression_tag = getattr(geo_info, '_ifd_compression', None)
+    if _compression_tag is not None:
+        from .._attrs import _validate_read_codec_optin
+        _validate_read_codec_optin(
+            _compression_tag,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg,
+            entry_point="read_geotiff_dask",
+        )
+
     # PR-C #2226: centralize the nodata lifecycle in one value object.
     # ``raw_sentinel`` carries the pre-inversion sentinel that
     # ``attrs['nodata']`` must preserve; ``effective_sentinel`` is what
@@ -533,7 +560,11 @@ def read_geotiff_dask(source: str, *,
                                      target_dtype=target_dtype,
                                      http_meta_key=http_meta_key,
                                      max_pixels=max_pixels,
-                                     allow_rotated=allow_rotated),
+                                     allow_rotated=allow_rotated,
+                                     allow_experimental_codecs=(
+                                         allow_experimental_codecs),
+                                     allow_internal_only_jpeg=(
+                                         allow_internal_only_jpeg)),
                 shape=block_shape,
                 dtype=target_dtype,
             )
@@ -555,7 +586,9 @@ def read_geotiff_dask(source: str, *,
 
 def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                          band, *, target_dtype=None, http_meta_key=None,
-                         max_pixels=None, allow_rotated=False):
+                         max_pixels=None, allow_rotated=False,
+                         allow_experimental_codecs=False,
+                         allow_internal_only_jpeg=False):
     """Dask-delayed function to read a single window.
 
     *http_meta_key* is an optional ``Delayed[(TIFFHeader, IFD)]`` parsed
@@ -611,11 +644,14 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             _r2a_kwargs = {}
             if max_pixels is not None:
                 _r2a_kwargs['max_pixels'] = max_pixels
-            arr, _ = _read_to_array(source, window=(r0, c0, r1, c1),
-                                    overview_level=overview_level,
-                                    band=band,
-                                    allow_rotated=allow_rotated,
-                                    **_r2a_kwargs)
+            arr, _ = _read_to_array(
+                source, window=(r0, c0, r1, c1),
+                overview_level=overview_level,
+                band=band,
+                allow_rotated=allow_rotated,
+                allow_experimental_codecs=allow_experimental_codecs,
+                allow_internal_only_jpeg=allow_internal_only_jpeg,
+                **_r2a_kwargs)
         if nodata is not None:
             # ``arr`` was just decoded by ``_fetch_decode_cog_http_tiles``
             # or ``read_to_array``; both return freshly-allocated buffers

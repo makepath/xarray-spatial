@@ -109,6 +109,8 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
                    max_pixels: int = MAX_PIXELS_DEFAULT,
                    max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
                    allow_rotated: bool = False,
+                   allow_experimental_codecs: bool = False,
+                   allow_internal_only_jpeg: bool = False,
                    ) -> tuple[np.ndarray, GeoInfo]:
     """Read a GeoTIFF/COG to a numpy array (module-private).
 
@@ -143,9 +145,12 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
     """
     source = _coerce_path(source)
     if _is_http_url(source):
-        return _read_cog_http(source, overview_level=overview_level, band=band,
-                              max_pixels=max_pixels, window=window,
-                              allow_rotated=allow_rotated)
+        return _read_cog_http(
+            source, overview_level=overview_level, band=band,
+            max_pixels=max_pixels, window=window,
+            allow_rotated=allow_rotated,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg)
 
     # Local file, cloud storage, or file-like buffer: read all bytes then parse
     # Resolve the cloud byte budget once so both the base-file ``_CloudSource``
@@ -224,6 +229,19 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
 
         # Select IFD, skipping any mask IFDs
         ifd = select_overview_ifd(ifds, overview_level)
+
+        # Reject experimental and internal-only codecs on the read side
+        # unless the caller opted in. Mirrors the writer-side gate so the
+        # two surfaces stay consistent. Fires before any tile/strip work
+        # so the caller learns the missing flag from the rejection, not
+        # from a deeper decode-time failure. See PR 4 of epic #2340.
+        from ._attrs import _validate_read_codec_optin
+        _validate_read_codec_optin(
+            ifd.compression,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg,
+            entry_point="open_geotiff",
+        )
 
         # If the selected IFD came from the sidecar, swap the data /
         # header used for strip / tile reads below so byte offsets

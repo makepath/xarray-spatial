@@ -41,7 +41,7 @@ def test_streaming_extra_tags_miniswhite_override_rejected_2073(tmp_path):
 
     out = tmp_path / 'tmp_2073_streaming_miniswhite.tif'
     with pytest.raises(ValueError) as excinfo:
-        to_geotiff(arr, str(out))
+        to_geotiff(arr, str(out), allow_experimental_codecs=True)
 
     msg = str(excinfo.value)
     assert 'extra_tags' in msg
@@ -62,7 +62,7 @@ def test_streaming_extra_tags_minisblack_override_roundtrips_2073(tmp_path):
     arr.attrs['extra_tags'] = [(TAG_PHOTOMETRIC, TYPE_SHORT, 1, 1)]
 
     out = tmp_path / 'tmp_2073_streaming_minisblack.tif'
-    to_geotiff(arr, str(out))
+    to_geotiff(arr, str(out), allow_experimental_codecs=True)
     assert os.path.exists(out)
 
     back = open_geotiff(str(out))
@@ -102,5 +102,5 @@ def test_streaming_extra_tags_miniswhite_override_multiband_not_rejected_2073(
     # to prevent" set. If it raises for an unrelated reason
     # (e.g. RGB-requires-3-bands check elsewhere), let the test
     # surface that as a real failure rather than swallowing it.
-    to_geotiff(arr, str(out))
+    to_geotiff(arr, str(out), allow_experimental_codecs=True)
     assert os.path.exists(out)

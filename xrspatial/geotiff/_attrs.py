@@ -313,6 +313,151 @@ _EXPERIMENTAL_CODECS = frozenset(
 )
 
 
+# Map TIFF compression tag values to codec names so the read-side opt-in
+# gate (PR 4 of epic #2340) can name the codec in the rejection message
+# without each call site repeating the integer-to-name table. The keys
+# are the TIFF 6 Compression tag values (tag 259) used inside
+# ``_compression.py``; the values match the codec names that appear on
+# the ``SUPPORTED_FEATURES`` keys (``codec.<name>``).
+_COMPRESSION_TAG_TO_NAME = {
+    1: 'none',
+    5: 'lzw',
+    7: 'jpeg',
+    8: 'deflate',
+    32773: 'packbits',
+    32946: 'deflate',  # adobe deflate, same codec
+    34712: 'jpeg2000',
+    34887: 'lerc',
+    50000: 'zstd',
+    50004: 'lz4',
+}
+
+
+def _validate_read_codec_optin(
+    compression: int,
+    *,
+    allow_experimental_codecs: bool,
+    allow_internal_only_jpeg: bool,
+    entry_point: str = "open_geotiff",
+) -> None:
+    """Reject experimental / internal-only codecs on the read side.
+
+    Mirrors the writer-side gate in ``_writers/eager.py`` /
+    ``_writers/gpu.py`` so a caller cannot decode a file produced with
+    an experimental or internal-only codec without naming the matching
+    opt-in flag at the call site. The flag and feature both appear in
+    the rejection message so the caller learns the name from the error
+    rather than the docs.
+
+    Part of PR 4 of epic #2340 (the GeoTIFF release contract). The
+    writer side has carried these gates since #2137 / #1845; this
+    helper extends the same shape to the read entry points.
+
+    Parameters
+    ----------
+    compression : int
+        TIFF Compression tag value (tag 259) from the parsed IFD.
+    allow_experimental_codecs : bool
+        Opt-in for Tier 3 read paths (LERC, JPEG2000 / J2K, LZ4).
+    allow_internal_only_jpeg : bool
+        Opt-in for Tier 4 read path (JPEG-in-TIFF). Does not collapse
+        into ``allow_experimental_codecs`` for the same reason as on
+        the writer: internal-only is a stricter tier and keeps its own
+        dedicated flag.
+    entry_point : str
+        Name of the public read function for the rejection message.
+    """
+    codec_name = _COMPRESSION_TAG_TO_NAME.get(int(compression))
+    if codec_name is None:
+        # Unknown compression tags are validated separately by the
+        # decoder; the opt-in gate only fires for codecs the reader
+        # otherwise accepts.
+        return
+    if codec_name == 'jpeg' and not allow_internal_only_jpeg:
+        raise ValueError(
+            f"{entry_point}: source uses compression='jpeg' (TIFF "
+            "tag 259 = 7), which is internal-only: the encoder writes "
+            "self-contained JFIF tiles without the TIFF JPEGTables tag "
+            "(347), so the read path is not interoperable with libtiff "
+            "/ GDAL / rasterio. Pass allow_internal_only_jpeg=True to "
+            "opt in to the internal-reader-only decode path. See "
+            "SUPPORTED_FEATURES tier 'internal_only' for codec.jpeg "
+            "(epic #2340, original gate #1845).")
+    if codec_name in _EXPERIMENTAL_CODECS and not allow_experimental_codecs:
+        raise ValueError(
+            f"{entry_point}: source uses compression={codec_name!r} "
+            "which is experimental on the read side: cross-backend "
+            "numerical parity is not claimed and reader support across "
+            "GDAL versions is uneven. Pass allow_experimental_codecs="
+            "True to opt in, or re-encode the source with a stable "
+            "lossless codec ('deflate', 'zstd', or 'lzw'). See "
+            f"SUPPORTED_FEATURES tier 'experimental' for codec.{codec_name} "
+            "(epic #2340, original writer gate #2137).")
+
+
+# Writer rich-tag attrs that ride the Experimental tier (PR 4 of epic
+# #2340). ``writer.gdal_metadata_xml`` and ``writer.extra_tags`` carry
+# free-form payloads through to the on-disk TIFF; their interop with
+# other readers (rasterio, libtiff, GDAL) depends on the payload and is
+# not part of the release promise. The opt-in keeps the surface narrow
+# without removing the capability.
+#
+# Round-trip exemption: when the attrs carry the
+# ``_xrspatial_geotiff_contract`` marker, they came from a previous
+# xrspatial read. The reader populated ``gdal_metadata_xml`` /
+# ``extra_tags`` from the source file; gating the write would force
+# every read-then-write caller to opt in. Skip the gate on
+# round-tripped attrs so the canonical contract from #1984 stays a
+# no-flag operation. The gate still fires when a caller adds those
+# attrs to a fresh DataArray that did not come from a read.
+def _validate_write_rich_tag_optin(
+    attrs: dict,
+    *,
+    gdal_metadata_xml_kwarg: object = None,
+    extra_tags_kwarg: object = None,
+    allow_experimental_codecs: bool,
+    entry_point: str = "to_geotiff",
+) -> None:
+    """Reject writes that include ``gdal_metadata_xml`` or ``extra_tags``
+    unless the caller opted in via ``allow_experimental_codecs=True``.
+
+    Part of PR 4 of epic #2340. Mirrors the existing codec-flag shape
+    so the rejection names the same opt-in the caller already learned
+    from the LERC / J2K / LZ4 paths. Round-tripped attrs (carrying
+    the ``_xrspatial_geotiff_contract`` marker) are exempt so the
+    canonical attrs round-trip (#1984) stays a no-flag operation; the
+    gate fires only when a caller constructs a fresh DataArray with
+    one of the rich-tag attrs set.
+    """
+    if allow_experimental_codecs:
+        return
+    # Round-trip exemption: a DataArray that came from
+    # ``open_geotiff`` / ``read_geotiff_dask`` / ``read_geotiff_gpu``
+    # carries the contract marker. Writing it back is the canonical
+    # round-trip and should not require a new flag (issue #1984).
+    if '_xrspatial_geotiff_contract' in attrs:
+        return
+    triggered: list[str] = []
+    if attrs.get('gdal_metadata_xml') is not None:
+        triggered.append("attrs['gdal_metadata_xml']")
+    if attrs.get('extra_tags') is not None:
+        triggered.append("attrs['extra_tags']")
+    if gdal_metadata_xml_kwarg is not None:
+        triggered.append('gdal_metadata_xml kwarg')
+    if extra_tags_kwarg is not None:
+        triggered.append('extra_tags kwarg')
+    if not triggered:
+        return
+    raise ValueError(
+        f"{entry_point}: {', '.join(triggered)} pass-through is "
+        "experimental: the on-disk bytes are written verbatim and "
+        "interop with other readers (rasterio, libtiff, GDAL) depends "
+        "on the payload. Pass allow_experimental_codecs=True to opt "
+        "in to the rich-tag write path, or drop the attr before the "
+        "write. See SUPPORTED_FEATURES tier 'experimental' for "
+        "writer.gdal_metadata_xml / writer.extra_tags (epic #2340).")
+
+
 # TIFF type ids needed when synthesizing extra_tags entries from attrs.
 _TIFF_BYTE = 1
 _TIFF_ASCII = 2

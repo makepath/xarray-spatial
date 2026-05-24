@@ -239,6 +239,7 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # binding it into the chunk closure (#1809).
         geo_info._ifd_photometric = _ifd.photometric
         geo_info._ifd_samples_per_pixel = _ifd.samples_per_pixel
+        geo_info._ifd_compression = _ifd.compression
         return geo_info, _ifd.height, _ifd.width, file_dtype, n_bands
     if _is_file_like(source):
         # File-like: read its full bytes; we don't try to mmap arbitrary
@@ -314,6 +315,11 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # binding it into the chunk closure (#1809).
         geo_info._ifd_photometric = ifd.photometric
         geo_info._ifd_samples_per_pixel = ifd.samples_per_pixel
+        # Stash compression so the dask graph builder can fire the
+        # experimental / internal-only codec opt-in gate at graph build
+        # rather than waiting for the per-chunk task to fail (PR 4 of
+        # epic #2340).
+        geo_info._ifd_compression = ifd.compression
         return geo_info, ifd.height, ifd.width, file_dtype, n_bands
     finally:
         if close_data:
@@ -337,6 +343,8 @@ def open_geotiff(source: str | BinaryIO, *,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
                  allow_unparseable_crs: bool = False,
+                 allow_experimental_codecs: bool = False,
+                 allow_internal_only_jpeg: bool = False,
                  band_nodata: str | None = None,
                  mask_nodata: bool = True,
                  ) -> xr.DataArray:
@@ -500,6 +508,23 @@ def open_geotiff(source: str | BinaryIO, *,
         behaviour where the citation field passes through unchanged.
         Matches the same kwarg on ``to_geotiff`` / ``write_geotiff_gpu``
         so a value the reader accepted can survive a round-trip.
+    allow_experimental_codecs : bool, default False
+        Read-side opt-in for sources compressed with the Tier 3
+        experimental codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``).
+        Default ``False`` rejects the read with ``ValueError`` naming
+        the flag; cross-backend numerical parity is not claimed and
+        reader support across GDAL versions is uneven. Matches the
+        same kwarg on the writers so a round-trip through a Tier 3
+        codec stays opt-in on both sides. See SUPPORTED_FEATURES tier
+        ``'experimental'`` (epic #2340 PR 4).
+    allow_internal_only_jpeg : bool, default False
+        Read-side opt-in for JPEG-in-TIFF sources. The encoder writes
+        self-contained JFIF tiles without the TIFF JPEGTables tag
+        (347), so the read path is not interoperable with libtiff /
+        GDAL / rasterio. ``allow_experimental_codecs=True`` does NOT
+        cover this codec; the dedicated flag is its only gate. See
+        SUPPORTED_FEATURES tier ``'internal_only'`` for ``codec.jpeg``
+        (epic #2340 PR 4, original writer gate #1845).
 
     Returns
     -------
@@ -630,6 +655,8 @@ def open_geotiff(source: str | BinaryIO, *,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
                         allow_unparseable_crs=allow_unparseable_crs,
+                        allow_experimental_codecs=allow_experimental_codecs,
+                        allow_internal_only_jpeg=allow_internal_only_jpeg,
                         band_nodata=band_nodata,
                         mask_nodata=mask_nodata,
                         **vrt_kwargs)
@@ -650,6 +677,10 @@ def open_geotiff(source: str | BinaryIO, *,
                                 max_pixels=max_pixels,
                                 allow_rotated=allow_rotated,
                                 allow_unparseable_crs=allow_unparseable_crs,
+                                allow_experimental_codecs=(
+                                    allow_experimental_codecs),
+                                allow_internal_only_jpeg=(
+                                    allow_internal_only_jpeg),
                                 mask_nodata=mask_nodata,
                                 **gpu_kwargs)
 
@@ -661,6 +692,10 @@ def open_geotiff(source: str | BinaryIO, *,
                                  max_pixels=max_pixels, name=name,
                                  allow_rotated=allow_rotated,
                                  allow_unparseable_crs=allow_unparseable_crs,
+                                 allow_experimental_codecs=(
+                                     allow_experimental_codecs),
+                                 allow_internal_only_jpeg=(
+                                     allow_internal_only_jpeg),
                                  mask_nodata=mask_nodata)
 
     kwargs = {}
@@ -679,6 +714,8 @@ def open_geotiff(source: str | BinaryIO, *,
         source, window=window,
         overview_level=overview_level, band=band,
         allow_rotated=allow_rotated,
+        allow_experimental_codecs=allow_experimental_codecs,
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
         **kwargs,
     )
 

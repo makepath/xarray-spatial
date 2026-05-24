@@ -278,8 +278,11 @@ def test_lz4_bomb_rejected(tmp_path):
                                   width=_DECLARED_W, height=_DECLARED_H)
     path = tmp_path / "lz4_bomb.tif"
     path.write_bytes(tiff)
+    # LZ4 is the Experimental read tier (PR 4 of epic #2340); pass the
+    # opt-in so the test exercises the bomb cap rather than the codec
+    # gate.
     with pytest.raises(ValueError, match="exceed"):
-        read_to_array(str(path))
+        read_to_array(str(path), allow_experimental_codecs=True)
 
 
 def test_packbits_bomb_rejected(tmp_path):
