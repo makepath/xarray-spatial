@@ -196,7 +196,8 @@ def read_geotiff_dask(source: str, *,
     # fetching the whole remote object up front. See PR #1755 review.
     # Local imports: backend modules avoid eager-importing the reader /
     # sources layer at module load so the package can be imported without
-    # urllib3 in environments that only consume the dask path. Issue #2332.
+    # urllib3 in environments that only consume the dask path.
+    # Issues #2323 / #2332.
     from .._reader import _is_fsspec_uri
     from .._sources import _is_http_source
     is_http = _is_http_source(source)
@@ -577,8 +578,8 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
         # fsspec-addressable remotes (s3://, gs://, az://, memory://, ...).
         # Both source classes expose ``read_range``, which is all
         # ``_fetch_decode_cog_http_tiles`` needs.
-        _is_http_src = isinstance(source, str) and source.startswith(
-            ('http://', 'https://'))
+        from .._sources import _is_http_source as _ihs
+        _is_http_src = _ihs(source)
         _is_fsspec_src = False
         if http_meta is not None and isinstance(source, str) and \
                 not _is_http_src:

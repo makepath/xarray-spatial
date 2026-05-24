@@ -47,8 +47,8 @@ def _is_http_url(source: str) -> bool:
     """Case-insensitive HTTP(S) scheme test for sidecar routing.
 
     Delegates to :func:`xrspatial.geotiff._sources._is_http_source` so
-    the SSRF-relevant routing decision matches the rest of the package.
-    Issue #2332.
+    the SSRF-relevant routing decision matches the rest of the package
+    (issues #2323 / #2332).
     """
     return _is_http_source(source)
 

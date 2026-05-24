@@ -1466,7 +1466,7 @@ def _is_http_source(source) -> bool:
 
     Non-string inputs (``None``, ``bytes``, ``os.PathLike``, file-like
     objects) return ``False`` so callers can drop the surrounding
-    ``isinstance(_, str)`` check where they want to. Issue #2332.
+    ``isinstance(_, str)`` check where they want to. Issues #2323 / #2332.
     """
     if not isinstance(source, str) or not source:
         return False
@@ -1475,8 +1475,19 @@ def _is_http_source(source) -> bool:
     return urlparse(source).scheme.lower() in ('http', 'https')
 
 
+# Back-compat alias: earlier patches (#2323) shipped this same helper under
+# the name ``_is_http_url`` and downstream tests / re-exports still use that
+# name. Keep the alias so importers and the regression tests stay green.
+_is_http_url = _is_http_source
+
+
 def _is_fsspec_uri(path: str) -> bool:
-    """Check if a path is a fsspec-compatible URI (not http/https/local)."""
+    """Check if a path is a fsspec-compatible URI (not http/https/local).
+
+    Excludes http(s) case-insensitively so uppercase URLs cannot dodge the
+    SSRF allow-list and pinned DNS in :class:`_HTTPSource` (issues #2323 /
+    #2332).
+    """
     if not isinstance(path, str):
         return False
     if _is_http_source(path):

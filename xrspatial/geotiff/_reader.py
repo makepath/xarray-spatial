@@ -93,7 +93,8 @@ from ._sources import (_CLOUD_SCHEMES, _DEFAULT_MMAP_CACHE_SIZE,  # noqa: F401
                        _BytesIOSource, _CloudSource, _coerce_path, _FileSource, _get_http_pool,
                        _get_pinned_conn_classes, _http_allow_private_hosts, _http_connect_timeout,
                        _http_read_timeout, _http_timeout_from_env, _HTTPSource, _ip_is_private,
-                       _is_file_like, _is_fsspec_uri, _is_http_source, _make_pinned_pool,
+                       _is_file_like, _is_fsspec_uri, _is_http_source, _is_http_url,
+                       _make_pinned_pool,
                        _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env, _mmap_cache,
                        _mmap_cache_size_from_env, _MmapCache, _open_source,
                        _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
@@ -184,10 +185,18 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
                     f"read.")
     else:
         src = _FileSource(source)
-    data = src.read_all()
 
     sidecar = None
+    # Wrap source lifetime in the try/finally immediately after
+    # construction so ``src.close()`` runs even when ``read_all()``
+    # raises (e.g. a fsspec network failure mid-download, a transient
+    # S3 error, or a local I/O error). ``_CloudSource.close()`` is a
+    # no-op today, but the structural guard prevents a future
+    # resource-holding source from leaking state on the failure path.
+    # Mirrors the close-on-error contract that ``_read_cog_http``
+    # already enforces (issue #1816). See issue #2322.
     try:
+        data = src.read_all()
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
 

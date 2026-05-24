@@ -1246,7 +1246,7 @@ def _is_fsspec_uri(path) -> bool:
     the URL to fsspec. Uses :func:`_sources._is_http_source` so the
     HTTP detection is case-insensitive (RFC 3986); without that, an
     uppercase ``HTTP://...`` slipped past this check and into fsspec.
-    Issue #2332.
+    Issues #2323 / #2332.
     """
     if not isinstance(path, str):
         return False

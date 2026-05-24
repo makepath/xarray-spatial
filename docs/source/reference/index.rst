@@ -16,6 +16,7 @@ Reference
    focal
    geotiff
    geotiff_internals
+   release_gate_geotiff
    hydrology
    interpolation
    kde

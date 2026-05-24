@@ -139,6 +139,30 @@ def read_vrt(source: str, *,
     raises a typed error rather than silently flattening. See
     :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
 
+    Supported subset (issue #2321; see the "VRT support matrix" section
+    in ``docs/source/reference/geotiff.rst`` for the canonical
+    contract):
+
+    * Simple GDAL VRT mosaics whose ``<SourceFilename>`` entries point
+      at GeoTIFF files (sources must resolve under the VRT's own
+      directory or an ``XRSPATIAL_VRT_ALLOWED_ROOTS`` root; #1671).
+    * Sources that agree on CRS, transform orientation, pixel size,
+      dtype, and band count. Mismatch raises rather than flattening.
+    * Windowed reads via ``window=``; eager and dask paths shift
+      coords and ``attrs['transform']`` together.
+    * Lazy / dask reads via ``chunks=`` over the same subset, with a
+      parse-time missing-source sweep (#2265).
+    * Explicit ``nodata``; ``band_nodata=None`` (the default) rejects
+      disagreeing per-band sentinels with ``MixedBandMetadataError``
+      (#1987).
+    * ``missing_sources='raise'`` is the default (#1860).
+
+    Non-goals (intentionally unsupported, allowed to raise): warped /
+    reprojection VRTs, arbitrary resampling beyond the tested subset,
+    mixed CRS / resolution / dtype / band metadata without an opt-in,
+    nested VRTs, complex source / mask band / alpha band structures,
+    full GDAL VRT parity.
+
     The VRT's source GeoTIFFs are read via windowed reads and assembled
     into a single array.
 
@@ -270,6 +294,30 @@ def read_vrt(source: str, *,
     failures, which surface as per-task ``GeoTIFFFallbackWarning``
     instead. Each worker still emits ``GeoTIFFFallbackWarning`` for
     missing sources at execution time as well.
+
+    Examples
+    --------
+    Safe usage. Mosaic two compatible tiles and read with the
+    fail-closed defaults:
+
+    >>> from xrspatial.geotiff import open_geotiff, write_vrt
+    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    ...     'mosaic.vrt',
+    ...     source_files=['tile_west.tif', 'tile_east.tif'],
+    ... )
+    >>> da = read_vrt(vrt_path)  # doctest: +SKIP
+
+    Intentionally raises. A VRT whose source tiles disagree on their
+    per-band nodata sentinels is rejected by the default
+    ``band_nodata=None``:
+
+    >>> from xrspatial.geotiff import MixedBandMetadataError
+    >>> try:  # doctest: +SKIP
+    ...     read_vrt('mixed_nodata.vrt')
+    ... except MixedBandMetadataError:
+    ...     pass  # pass band_nodata='first' to opt back into the
+    ...           # legacy flatten-to-band-0 semantics, or fix the
+    ...           # source tiles.
     """
     from .._reader import _coerce_path
     from .._vrt import _apply_integer_sentinel_mask_with_presence as _vrt_mask_with_presence
