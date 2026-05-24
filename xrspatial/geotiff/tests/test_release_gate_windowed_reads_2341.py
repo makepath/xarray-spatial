@@ -32,6 +32,7 @@ and is self-contained against the four sibling PRs landing in parallel.
 """
 from __future__ import annotations
 
+import importlib.util
 import uuid
 from pathlib import Path
 
@@ -42,34 +43,47 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask, to_geotiff
 
 
+_HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
+_skip_no_tifffile = pytest.mark.skipif(
+    not _HAS_TIFFFILE, reason="tifffile required for MinIsWhite fixture")
+
+
 # ---------------------------------------------------------------------------
 # Window geometry under test
 # ---------------------------------------------------------------------------
 # Strictly interior to the 256x256 fixture so the test fails on any
 # off-by-one in row/col offsets and so a wrong window cannot silently
 # coincide with the full-extent read. Width != height so a swapped axis
-# also fails the shape assertion.
+# also fails the shape assertion. Two cases:
+#
+# * ``aligned``: offsets are a multiple of the dask ``chunks=32`` size,
+#   so the window starts on a chunk boundary.
+# * ``chunk-misaligned``: offsets are NOT a multiple of 32 and the
+#   window's height / width are also not chunk-aligned, so the dask
+#   reader has to split chunks. A reader that off-by-ones the
+#   chunk math at the window origin fails this case but not the
+#   aligned one.
 _FULL_H = 256
 _FULL_W = 256
-_WIN_ROW_OFF = 32
-_WIN_COL_OFF = 64
-_WIN_HEIGHT = 64
-_WIN_WIDTH = 128
 
 
-# Per the docstring on ``open_geotiff`` / ``read_geotiff_dask``, the
-# ``window=`` kwarg is ``(row_start, col_start, row_stop, col_stop)``.
-_WINDOW = (
-    _WIN_ROW_OFF,
-    _WIN_COL_OFF,
-    _WIN_ROW_OFF + _WIN_HEIGHT,
-    _WIN_COL_OFF + _WIN_WIDTH,
+# ``window=`` kwarg ordering (per the ``open_geotiff`` /
+# ``read_geotiff_dask`` docstrings): ``(row_start, col_start,
+# row_stop, col_stop)``.
+_WINDOWS = (
+    pytest.param((32, 64, 96, 192),
+                 id="aligned-row32-col64-h64-w128"),
+    pytest.param((33, 65, 95, 191),
+                 id="chunk-misaligned-row33-col65-h62-w126"),
 )
 
 
 # Pixel geometry pinned on every fixture. Non-square pixels and a
-# non-integer origin catch any window path that accidentally uses
-# integer arithmetic.
+# fractional origin catch any window path that accidentally uses
+# integer arithmetic or drops the fractional part of the origin when
+# shifting. ``_ORIGIN_X = 500123.5`` is intentionally fractional so a
+# windowed reader that internally rounds (or that re-derives the origin
+# from int pixel indices) fails the exact-tuple equality on transform.
 _PIXEL_WIDTH = 30.0
 _PIXEL_HEIGHT = -25.0
 _ORIGIN_X = 500123.5
@@ -156,12 +170,30 @@ def _write_float32_no_nodata(path: Path) -> None:
     to_geotiff(da, str(path), compression="none", tiled=False)
 
 
+def _write_uint8_miniswhite(path: Path) -> None:
+    """Write a MinIsWhite (photometric=0) uint8 stripped TIFF via tifffile.
+
+    Matches the miniswhite cell in ``test_backend_pixel_parity_matrix_1813.py``
+    so this release-gate row covers the same representative layout.
+    """
+    import tifffile  # local import: gated by ``_skip_no_tifffile``
+    rng = np.random.default_rng(2344)
+    arr = rng.integers(0, 256, size=(_FULL_H, _FULL_W), dtype=np.uint8)
+    tifffile.imwrite(
+        str(path), arr, photometric="miniswhite",
+        compression="none", metadata=None,
+    )
+
+
 _CORPUS = (
     pytest.param(_write_int16_with_nodata, id="int16-deflate-stripped-nodata"),
     pytest.param(_write_float32_with_nan_nodata,
                  id="float32-deflate-tiled-nan-nodata"),
     pytest.param(_write_float32_no_nodata,
                  id="float32-none-stripped-no-nodata"),
+    pytest.param(_write_uint8_miniswhite,
+                 id="uint8-miniswhite-stripped",
+                 marks=_skip_no_tifffile),
 )
 
 
@@ -282,8 +314,26 @@ def _assert_transform_shifted(windowed, full, *, col_off, row_off):
     any tolerance here would let a buggy windowed reader pass by
     re-deriving the origin from the y/x coord arrays (where floating
     rounding can creep in).
+
+    When the source has no georef tags, ``transform`` is absent from
+    both reads (see issue #1710 / ``_coords.py`` -- the reader drops the
+    synthesised unit transform on non-georef sources). In that case the
+    contract is that *neither* read has a transform; introducing one on
+    the windowed side would be the silent-wrongness this gate exists
+    to catch.
     """
+    if "transform" not in full.attrs:
+        assert "transform" not in windowed.attrs, (
+            f"release gate: source has no georef and the unwindowed read "
+            f"emits no ``transform``, but the windowed read invented one: "
+            f"{windowed.attrs.get('transform')!r}"
+        )
+        return
     t_full = tuple(full.attrs["transform"])
+    assert "transform" in windowed.attrs, (
+        f"release gate: unwindowed read carries ``transform`` "
+        f"({t_full!r}) but the windowed read dropped it"
+    )
     t_win = tuple(windowed.attrs["transform"])
     assert len(t_full) == 6, (
         f"release gate: full-read transform is not a 6-tuple: {t_full!r}"
@@ -322,8 +372,24 @@ def _assert_canonical_attrs_unchanged(windowed, full):
         )
         full_val = full.attrs[key]
         win_val = windowed.attrs[key]
-        if isinstance(full_val, float) and np.isnan(full_val):
-            assert isinstance(win_val, float) and np.isnan(win_val), (
+        # NaN-aware compare. Try ``np.isnan`` on a scalar before
+        # falling back to ``==``: a Python float NaN and a
+        # ``np.float32`` NaN both report True under ``np.isnan`` but
+        # only the Python float passes ``isinstance(x, float)``, and
+        # we don't want a future backend that returns a numpy-scalar
+        # nodata to silently slip into the ``==`` branch where
+        # NaN != NaN flips the test from "checked equal" to "always
+        # fails".
+        try:
+            full_is_nan = bool(np.isnan(full_val))
+        except (TypeError, ValueError):
+            full_is_nan = False
+        if full_is_nan:
+            try:
+                win_is_nan = bool(np.isnan(win_val))
+            except (TypeError, ValueError):
+                win_is_nan = False
+            assert win_is_nan, (
                 f"release gate: NaN-valued attrs[{key!r}] did not survive "
                 f"the windowed read: full={full_val!r} window={win_val!r}"
             )
@@ -352,47 +418,56 @@ def _assert_canonical_attrs_unchanged(windowed, full):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.release_gate
+@pytest.mark.parametrize("window", _WINDOWS)
 @pytest.mark.parametrize("corpus_file", _CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _READERS)
-def test_release_gate_windowed_read_shape(corpus_file, reader):
+def test_release_gate_windowed_read_shape(corpus_file, reader, window):
     """The returned shape equals the window's ``(height, width)``."""
-    out = reader(corpus_file, window=_WINDOW)
-    _assert_shape(out, expected_h=_WIN_HEIGHT, expected_w=_WIN_WIDTH)
+    row_off, col_off, row_stop, col_stop = window
+    out = reader(corpus_file, window=window)
+    _assert_shape(out,
+                  expected_h=row_stop - row_off,
+                  expected_w=col_stop - col_off)
 
 
 @pytest.mark.release_gate
+@pytest.mark.parametrize("window", _WINDOWS)
 @pytest.mark.parametrize("corpus_file", _CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _READERS)
-def test_release_gate_windowed_read_coords_slice(corpus_file, reader):
+def test_release_gate_windowed_read_coords_slice(corpus_file, reader, window):
     """``coords['y'/'x']`` equals the matching slice of the full coords."""
+    row_off, col_off, row_stop, col_stop = window
     full = reader(corpus_file)
-    out = reader(corpus_file, window=_WINDOW)
+    out = reader(corpus_file, window=window)
     _assert_coords_slice(
         out, full,
-        row_off=_WIN_ROW_OFF, col_off=_WIN_COL_OFF,
-        height=_WIN_HEIGHT, width=_WIN_WIDTH,
+        row_off=row_off, col_off=col_off,
+        height=row_stop - row_off, width=col_stop - col_off,
     )
 
 
 @pytest.mark.release_gate
+@pytest.mark.parametrize("window", _WINDOWS)
 @pytest.mark.parametrize("corpus_file", _CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _READERS)
-def test_release_gate_windowed_read_transform_shifted(corpus_file, reader):
+def test_release_gate_windowed_read_transform_shifted(
+    corpus_file, reader, window,
+):
     """``attrs['transform']`` equals ``T_full * translation(col, row)``."""
+    row_off, col_off, _row_stop, _col_stop = window
     full = reader(corpus_file)
-    out = reader(corpus_file, window=_WINDOW)
-    _assert_transform_shifted(
-        out, full, col_off=_WIN_COL_OFF, row_off=_WIN_ROW_OFF,
-    )
+    out = reader(corpus_file, window=window)
+    _assert_transform_shifted(out, full, col_off=col_off, row_off=row_off)
 
 
 @pytest.mark.release_gate
+@pytest.mark.parametrize("window", _WINDOWS)
 @pytest.mark.parametrize("corpus_file", _CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _READERS)
 def test_release_gate_windowed_read_canonical_attrs_unchanged(
-    corpus_file, reader,
+    corpus_file, reader, window,
 ):
     """The non-transform canonical attrs match the unwindowed read."""
     full = reader(corpus_file)
-    out = reader(corpus_file, window=_WINDOW)
+    out = reader(corpus_file, window=window)
     _assert_canonical_attrs_unchanged(out, full)
