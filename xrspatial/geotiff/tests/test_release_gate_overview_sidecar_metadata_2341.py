@@ -42,8 +42,9 @@ import xarray as xr
 # ``to_geotiff(cog=True, overview_levels=...)`` so it does not depend on
 # rasterio.
 rasterio = pytest.importorskip("rasterio")
-dask_array = pytest.importorskip("dask.array")
+pytest.importorskip("dask.array")
 
+from rasterio.enums import Resampling  # noqa: E402
 from xrspatial.geotiff import (  # noqa: E402
     open_geotiff,
     read_geotiff_dask,
@@ -58,7 +59,7 @@ from xrspatial.geotiff import (  # noqa: E402
 # Base raster is 64x64 so factors of 2 and 4 give clean 32x32 and 16x16
 # overviews.
 _BASE_SIZE = 64
-_OVERVIEW_FACTORS = [2, 4]
+_OVERVIEW_FACTORS = (2, 4)
 # Pixel size of 1 in projected units; origin at (-120, 45) so the test
 # also catches a regression where the origin is silently rewritten as the
 # overview is read.
@@ -108,7 +109,14 @@ def _unique_tmp_path(tmp_path, label: str) -> str:
 
 
 def _write_internal_overview_cog(path: str) -> None:
-    """Write a COG with base + internal overviews at factors 2 and 4."""
+    """Write a COG with base + internal overviews at factors 2 and 4.
+
+    Asserts the writer actually emitted the requested overview IFDs.
+    Without this guard, a regression where ``to_geotiff(cog=True,
+    overview_levels=[2, 4])`` silently drops the overview chain would
+    only surface downstream as a shape-mismatch in the reader, far
+    from the writer call that caused it.
+    """
     da = _make_raster()
     to_geotiff(
         da, path,
@@ -117,9 +125,14 @@ def _write_internal_overview_cog(path: str) -> None:
         compression="deflate",
         tiled=True,
         tile_size=16,
-        overview_levels=_OVERVIEW_FACTORS,
+        overview_levels=list(_OVERVIEW_FACTORS),
         overview_resampling="nearest",
     )
+    with rasterio.open(path) as ds:
+        assert ds.overviews(1) == list(_OVERVIEW_FACTORS), (
+            f"writer did not emit the requested overview IFDs: "
+            f"got {ds.overviews(1)}, expected {list(_OVERVIEW_FACTORS)}"
+        )
 
 
 def _write_external_sidecar(path: str) -> None:
@@ -145,10 +158,9 @@ def _write_external_sidecar(path: str) -> None:
             "base file must have no internal overviews before sidecar build"
         )
 
-    from rasterio.enums import Resampling
     with rasterio.Env(TIFF_USE_OVR="YES", COMPRESS_OVERVIEW="DEFLATE"):
         with rasterio.open(path, "r+") as ds:
-            ds.build_overviews(_OVERVIEW_FACTORS, Resampling.nearest)
+            ds.build_overviews(list(_OVERVIEW_FACTORS), Resampling.nearest)
     assert os.path.exists(path + ".ovr"), (
         "TIFF_USE_OVR=YES must produce a .ovr sidecar next to the base file"
     )
