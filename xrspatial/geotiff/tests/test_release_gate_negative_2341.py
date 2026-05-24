@@ -58,6 +58,7 @@ from xrspatial.geotiff._errors import (
     GeoTIFFAmbiguousMetadataError,
     RotatedTransformError,
 )
+from xrspatial.geotiff.tests.conftest import requires_gpu
 
 # --------------------------------------------------------------------------- #
 # Shared release-contract pointers.                                           #
@@ -88,15 +89,19 @@ def _msg_cites_release_contract(msg: str) -> bool:
     return any(hint in msg for hint in _RELEASE_CONTRACT_HINTS)
 
 
-def _tmp(tmp_path, label: str) -> str:
+def _tmp(tmp_path, label: str, *, suffix: str = ".tif") -> str:
     """Return a unique temp file path scoped to this test file.
 
     Sibling PRs of epic #2341 run in parallel against the same shared
     tmp dirs in CI. Including ``2341`` and a per-call UUID keeps file
     names from colliding across worktrees and across parametrized
-    cases inside the same test.
+    cases inside the same test. ``suffix`` lets callers pick ``.vrt``
+    or another extension without doing fragile string replacement on
+    the returned path.
     """
-    return str(tmp_path / f"release_gate_neg_2341_{label}_{uuid.uuid4().hex}.tif")
+    return str(
+        tmp_path / f"release_gate_neg_2341_{label}_{uuid.uuid4().hex}{suffix}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -109,6 +114,12 @@ def _tmp(tmp_path, label: str) -> str:
 # round-trip through xrspatial cannot reproduce one. The 30-degree
 # rotation matches ``test_allow_rotated_geotiff_2115.py`` so the gate
 # rejects the same input shape that test pins behaviourally.
+#
+# Canonical copy of the rotated-matrix constants and the TIFF builder
+# lives in ``test_allow_rotated_geotiff_2115.py``. The duplication here
+# is intentional -- the four sibling PRs of epic #2341 share no helper
+# module to avoid cross-PR symbol collisions. If the canonical copy
+# drifts, mirror the change here in a follow-up PR.
 
 _TAG_MODEL_TRANSFORMATION = 34264
 _COS30 = 0.8660254037844387
@@ -380,10 +391,12 @@ def _assert_rotated_message(msg: str) -> None:
         f"expected the error message to name the ``allow_rotated`` "
         f"opt-in; got: {msg!r}"
     )
-    # The tier word ``advanced`` is the live tier for this opt-in in
-    # SUPPORTED_FEATURES; if it ever moves to ``experimental`` the
-    # release-gate row in the checklist moves with it and this string
-    # check should be updated in the same PR.
+    # ``reader.allow_rotated`` is tagged ``experimental`` in
+    # SUPPORTED_FEATURES (see ``_attrs.py``). The check accepts any of
+    # the three promised tier strings so a future promotion or
+    # demotion in the same PR as the message edit does not break the
+    # gate; if the tier moves, update the message text in the same PR
+    # that moves the row in ``release_gate_geotiff.rst``.
     assert any(tier in msg for tier in ("advanced", "experimental", "stable")), (
         f"expected the error message to name the feature tier; "
         f"got: {msg!r}"
@@ -415,6 +428,23 @@ def test_release_gate_negative_rotated_windowed(rotated_geotiff_path) -> None:
     _assert_rotated_message(str(excinfo.value))
 
 
+@requires_gpu
+def test_release_gate_negative_rotated_gpu(rotated_geotiff_path) -> None:
+    """GPU read raises the same typed error as the CPU paths.
+
+    ``reader.gpu`` is the ``experimental`` tier in
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES`. The release promise
+    is loose for GPU (behaviour can change without a deprecation
+    window) but the rotated-transform refusal is upstream of the
+    GPU decode path -- the validator fires on the header read, before
+    any pixel buffer reaches the GPU -- so the same typed error
+    surfaces here regardless of the GPU tier.
+    """
+    with pytest.raises(RotatedTransformError) as excinfo:
+        open_geotiff(rotated_geotiff_path, gpu=True)
+    _assert_rotated_message(str(excinfo.value))
+
+
 # --------------------------------------------------------------------------- #
 # Case 4: mixed-tier VRT children when stable-only is requested.              #
 # --------------------------------------------------------------------------- #
@@ -437,11 +467,25 @@ def test_release_gate_negative_mixed_tier_vrt_children(tmp_path) -> None:
     rejects a VRT whose child uses an experimental-tier codec, names
     the offending child, and names the opt-in
     (``allow_experimental_codecs=True``) plus the feature tier.
+
+    XFAIL-to-PASS transition note
+    -----------------------------
+    Today this test fails with ``TypeError: unexpected keyword
+    argument 'stable_only'`` because epic #2342 has not landed the
+    kwarg yet. The strict=False xfail swallows that TypeError.
+    When #2342 lands, the test will start raising
+    :class:`GeoTIFFAmbiguousMetadataError` (or fail to raise) and
+    the xfail will report XPASS. Before removing the xfail marker,
+    confirm the new code path satisfies both inline assertions: the
+    error message must mention either ``stable_only`` or
+    ``allow_experimental_codecs``, and it must cite the release
+    contract docs. If either assertion would not pass, fix the
+    production message in the same PR that removes the xfail.
     """
     # The kwarg name is the contract that epic #2342 will land.
     # Until then this call fails for an unrelated reason (unknown
     # kwarg), which the strict=False xfail swallows.
-    path = _tmp(tmp_path, "case4_mixed_tier_vrt").replace(".tif", ".vrt")
+    path = _tmp(tmp_path, "case4_mixed_tier_vrt", suffix=".vrt")
     Path(path).write_text(
         '<VRTDataset rasterXSize="2" rasterYSize="2"></VRTDataset>\n',
         encoding="utf-8",
