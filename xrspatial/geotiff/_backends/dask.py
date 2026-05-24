@@ -320,6 +320,13 @@ def read_geotiff_dask(source: str, *,
     # any chunk task is scheduled. The compression tag is stashed on
     # ``geo_info`` by ``_read_geo_info`` (local / fsspec) and by the
     # HTTP / fsspec branch above. PR 4 of epic #2340.
+    #
+    # ``getattr(..., None)`` is intentional: a synthesised geo_info
+    # (non-TIFF source) carries no compression tag, so the gate must
+    # skip rather than reject. Every TIFF source path stashes
+    # ``_ifd_compression`` in lockstep with ``_ifd_photometric`` and
+    # ``_ifd_samples_per_pixel`` so the skip never silently bypasses
+    # a real TIFF read.
     _compression_tag = getattr(geo_info, '_ifd_compression', None)
     if _compression_tag is not None:
         from .._attrs import _validate_read_codec_optin

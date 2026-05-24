@@ -325,7 +325,14 @@ _COMPRESSION_TAG_TO_NAME = {
     7: 'jpeg',
     8: 'deflate',
     32773: 'packbits',
-    32946: 'deflate',  # adobe deflate, same codec
+    # Adobe Deflate (32946) decodes through the same zlib path as
+    # plain Deflate (8) and is collapsed onto the same codec name on
+    # purpose: both tags share the stable-tier classification in
+    # ``SUPPORTED_FEATURES`` (``codec.deflate``). A future Adobe-
+    # Deflate-specific tier would need its own ``codec.<name>`` entry
+    # AND its own mapping line here; the collapse is deliberate, not
+    # a passthrough.
+    32946: 'deflate',
     34712: 'jpeg2000',
     34887: 'lerc',
     50000: 'zstd',
@@ -435,6 +442,14 @@ def _validate_write_rich_tag_optin(
     # ``open_geotiff`` / ``read_geotiff_dask`` / ``read_geotiff_gpu``
     # carries the contract marker. Writing it back is the canonical
     # round-trip and should not require a new flag (issue #1984).
+    #
+    # This is a soft gate by design: a caller who hand-builds an
+    # attrs dict with the contract marker could bypass it. Forging
+    # the marker is a deliberate act, and the alternative (gating
+    # every read-then-write call) would break the canonical attrs
+    # round-trip that downstream code already depends on. The hard
+    # guarantee is "fresh DataArrays carrying these attrs need the
+    # opt-in"; the soft exemption keeps round-trips frictionless.
     if '_xrspatial_geotiff_contract' in attrs:
         return
     triggered: list[str] = []
