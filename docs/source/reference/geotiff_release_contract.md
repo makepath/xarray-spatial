@@ -1,4 +1,4 @@
-(reference-geotiff-release-contract)=
+(reference.geotiff_release_contract)=
 
 # GeoTIFF release contract
 
@@ -109,20 +109,27 @@ category. The `Key` column matches the runtime key.
 
 ### Unsupported for this release
 
-The following combinations are out of contract. They either fail with an
-actionable error or are documented as not supported. They will not move into
-the table above without a separate epic.
+The following combinations are out of contract. Each bullet is tagged
+**(fails loudly)** when the call raises an actionable error, or
+**(documented-only)** when the call returns without an error but does not
+do what a GDAL user might expect. These items will not move into the
+table above without a separate epic.
 
-- Full GDAL VRT parity. `reader.vrt` covers simple mosaics only.
-- Warped or reprojection VRTs. Reprojection lives in `xrspatial.reproject`;
-  the VRT reader does not interpret warp tags.
-- Rotated or sheared GeoTIFF *write*. Reads can opt into rotated transforms
-  (`reader.allow_rotated`), but `to_geotiff` does not yet emit
-  `ModelTransformationTag`.
-- Silent flattening of mixed metadata. Conflicting attrs across stacked
-  inputs are surfaced rather than collapsed without warning.
-- File-like destinations with `cog=True`. The COG writer requires an on-disk
-  path so the IFD-first layout invariant is checkable.
+- **(documented-only)** Full GDAL VRT parity. `reader.vrt` covers simple
+  mosaics only; unsupported VRT XML elements are ignored rather than
+  rejected.
+- **(documented-only)** Warped or reprojection VRTs. Reprojection lives in
+  `xrspatial.reproject`; the VRT reader does not interpret warp tags.
+- **(fails loudly)** Rotated or sheared GeoTIFF *write*. Reads can opt into
+  rotated transforms (`reader.allow_rotated`), but `to_geotiff` does not
+  yet emit `ModelTransformationTag`.
+- **(fails loudly)** Silent flattening of mixed metadata. Conflicting
+  attrs across stacked inputs are surfaced rather than collapsed without
+  warning.
+- **(fails loudly)** File-like destinations with `cog=True`. The COG
+  writer requires an on-disk path so the IFD-first layout invariant is
+  checkable; both the eager and GPU writers raise
+  `"cog=True is not supported for file-like destinations"` up front.
 
 ## Keeping this page honest
 

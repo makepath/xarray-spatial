@@ -6,7 +6,7 @@ GeoTIFF / COG
 
 .. seealso::
 
-   :ref:`reference-geotiff-release-contract` -- the user-facing release
+   :ref:`reference.geotiff_release_contract` -- the user-facing release
    contract that defines what each support tier promises and lists every
    feature in :data:`xrspatial.geotiff.SUPPORTED_FEATURES` against its
    tier.
