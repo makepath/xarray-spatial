@@ -46,84 +46,99 @@ def read_geotiff_dask(source: str, *,
                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
-    Tier: Stable for local-file reads on axis-aligned grids with the
-    Tier 1 codec set. ``allow_rotated`` / ``allow_unparseable_crs``
-    are Advanced (read-only opt-ins; round-trip semantics are listed
-    on the parameter docs). See
-    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map
-    (issue #2137).
+    Release-contract tier (epic #2340; see
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst``):
+
+    * [stable] Local-file dask reads on axis-aligned grids with the
+      Tier 1 codec set (``none`` / ``deflate`` / ``lzw`` /
+      ``packbits`` / ``zstd``). Cross-backend parity against the
+      eager reader is gated by CI for this surface.
+    * [advanced] HTTP / fsspec dask reads via windowed range GETs;
+      ``.vrt`` dispatch; ``overview_level=``; ``allow_rotated`` /
+      ``allow_unparseable_crs`` opt-ins.
+    * [experimental] Tier 3 codecs (LERC / JPEG2000 / J2K / LZ4) when
+      the file happens to use them. No cross-backend parity claim.
+
+    See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
+    map (issue #2137).
 
     Each chunk is loaded lazily via windowed reads.
 
     Parameters
     ----------
     source : str
-        File path.
+        [stable for local file paths; advanced for HTTP/fsspec URIs
+        and ``.vrt`` paths] File path.
     dtype : str, numpy.dtype, or None
-        Cast each chunk to this dtype after reading. None keeps the
-        file's native dtype. Float-to-int casts raise ValueError.
+        [stable] Cast each chunk to this dtype after reading. None
+        keeps the file's native dtype. Float-to-int casts raise
+        ValueError.
     chunks : int or (row_chunk, col_chunk) tuple
-        Chunk size in pixels. Default 512.
+        [stable] Chunk size in pixels. Default 512.
     overview_level : int or None
-        Overview level (0 = full resolution).
+        [advanced] Overview level (0 = full resolution).
     window : tuple or None
-        ``(row_start, col_start, row_stop, col_stop)`` to restrict
-        chunking to a sub-region of the file. Chunks are laid out
-        relative to the window origin. None reads the full raster.
+        [stable] ``(row_start, col_start, row_stop, col_stop)`` to
+        restrict chunking to a sub-region of the file. Chunks are laid
+        out relative to the window origin. None reads the full raster.
     band : int or None
-        Zero-based band index. None returns all bands (3D for
+        [stable] Zero-based band index. None returns all bands (3D for
         multi-band files, 2D for single-band). Selecting a single band
         produces a 2D DataArray.
     max_pixels : int or None
-        Maximum allowed pixel count (width * height * samples) for the
-        windowed region. None uses the reader default (~1 billion).
-        The cap is checked once up-front against the lazy region; each
-        chunk task also re-checks against ``max_pixels`` so windowed
-        reads stay bounded even when ``read_to_array`` is invoked
-        directly.
+        [stable] Maximum allowed pixel count (width * height *
+        samples) for the windowed region. None uses the reader default
+        (~1 billion). The cap is checked once up-front against the
+        lazy region; each chunk task also re-checks against
+        ``max_pixels`` so windowed reads stay bounded even when
+        ``read_to_array`` is invoked directly.
     name : str or None
-        Name for the DataArray.
+        [stable] Name for the DataArray.
     band_nodata : {'first', None}, optional
-        VRT-only opt-out for the fail-closed mixed-band-metadata check
-        (issue #1987 PR 5). Forwarded verbatim to ``read_vrt`` when the
-        source is a ``.vrt`` file. Passing it with a non-VRT GeoTIFF
-        source raises ``ValueError``.
+        [advanced] VRT-only opt-out for the fail-closed
+        mixed-band-metadata check (issue #1987 PR 5). Forwarded
+        verbatim to ``read_vrt`` when the source is a ``.vrt`` file.
+        Passing it with a non-VRT GeoTIFF source raises ``ValueError``.
     mask_nodata : bool, default True
-        If True, replace the nodata sentinel with NaN per chunk (integer
-        rasters get promoted to ``float64``). If False, skip the
-        sentinel-to-NaN step so the source dtype survives. The raw
-        sentinel is still carried on ``attrs['nodata']`` either way.
-        Pass ``mask_nodata=False`` together with ``dtype=<integer>`` to
-        keep an integer source dtype; the default promotes to
-        ``float64`` and the cast then raises. See issue #2052.
+        [stable] If True, replace the nodata sentinel with NaN per
+        chunk (integer rasters get promoted to ``float64``). If False,
+        skip the sentinel-to-NaN step so the source dtype survives.
+        The raw sentinel is still carried on ``attrs['nodata']``
+        either way. Pass ``mask_nodata=False`` together with
+        ``dtype=<integer>`` to keep an integer source dtype; the
+        default promotes to ``float64`` and the cast then raises. See
+        issue #2052.
     allow_rotated : bool, default False
-        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
-        files. Forwarded to every per-chunk read so a rotated source
-        yields an ungeoreferenced pixel grid instead of raising
-        ``NotImplementedError``. See ``open_geotiff`` for the full
-        contract; the dask path honours the same attrs (``crs`` /
-        ``crs_wkt`` dropped, ``rotated_affine`` set).
+        [advanced] Read-side opt-in for rotated / sheared
+        ``ModelTransformationTag`` files. Forwarded to every per-chunk
+        read so a rotated source yields an ungeoreferenced pixel grid
+        instead of raising ``NotImplementedError``. See
+        ``open_geotiff`` for the full contract; the dask path honours
+        the same attrs (``crs`` / ``crs_wkt`` dropped,
+        ``rotated_affine`` set).
     allow_unparseable_crs : bool, default False
-        Read-side opt-in for CRS strings that pyproj cannot resolve and
-        do not parse as WKT. When ``False`` (the default since #1929)
-        the chunk task raises ``UnparseableCRSError`` instead of
-        carrying the unrecognised payload through ``attrs['crs_wkt']``.
-        See ``open_geotiff`` for the full description.
+        [advanced] Read-side opt-in for CRS strings that pyproj cannot
+        resolve and do not parse as WKT. When ``False`` (the default
+        since #1929) the chunk task raises ``UnparseableCRSError``
+        instead of carrying the unrecognised payload through
+        ``attrs['crs_wkt']``. See ``open_geotiff`` for the full
+        description.
     on_gpu_failure : str, optional
-        Accepted for cross-backend signature symmetry only. The dask
-        path runs CPU decoders, so passing this kwarg raises
-        ``ValueError`` at dispatch. See ``read_geotiff_gpu`` for the
-        kwarg's meaning on the GPU reader.
+        [internal-only] Accepted for cross-backend signature symmetry
+        only. The dask path runs CPU decoders, so passing this kwarg
+        raises ``ValueError`` at dispatch. See ``read_geotiff_gpu`` for
+        the kwarg's meaning on the GPU reader.
     missing_sources : {'raise', 'warn'}, optional
-        VRT-only. Forwarded to ``read_vrt`` when the source ends in
-        ``.vrt``; otherwise raises ``ValueError`` at dispatch. See
-        ``read_vrt`` for the full description.
+        [advanced] VRT-only. Forwarded to ``read_vrt`` when the source
+        ends in ``.vrt``; otherwise raises ``ValueError`` at dispatch.
+        See ``read_vrt`` for the full description.
     max_cloud_bytes : int or None, optional
-        Accepted for cross-backend signature symmetry only. The dask
-        reader uses bounded range GETs and does not consume the
-        cloud-byte budget, so passing this kwarg raises ``ValueError``
-        at dispatch. See ``open_geotiff`` for the eager-path
-        description (issue #1974).
+        [internal-only] Accepted for cross-backend signature symmetry
+        only. The dask reader uses bounded range GETs and does not
+        consume the cloud-byte budget, so passing this kwarg raises
+        ``ValueError`` at dispatch. See ``open_geotiff`` for the
+        eager-path description (issue #1974).
 
     Returns
     -------

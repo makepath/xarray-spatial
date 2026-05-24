@@ -963,19 +963,34 @@ def read_vrt(vrt_path: str, *, window=None,
              ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
+    Do not call this symbol directly from external code. Release-contract
+    tier (epic #2340): this is the [internal-only] pixel-assembly
+    helper. The public surface lives in
+    ``xrspatial.geotiff.read_vrt`` (re-exported from
+    ``_backends/vrt.py``) and carries the [advanced] tier; this
+    function is what that public wrapper calls into. See
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst`` for the
+    contract. Direct calls into this symbol bypass the dispatcher-level
+    validation in ``_validate_dispatch_kwargs`` and are not part of the
+    public API.
+
     Parameters
     ----------
     vrt_path : str
-        Path to the .vrt file.
+        [internal-only] Path to the .vrt file.
     window : tuple or None
-        (row_start, col_start, row_stop, col_stop) for windowed read.
+        [internal-only] (row_start, col_start, row_stop, col_stop) for
+        windowed read.
     band : int or None
-        Band index (0-based). None returns all bands.
+        [internal-only] Band index (0-based). None returns all bands.
     max_pixels : int or None
-        Maximum allowed pixel count (width * height * samples) for the
-        assembled VRT region. None uses the reader default.
+        [internal-only] Maximum allowed pixel count
+        (width * height * samples) for the assembled VRT region. None
+        uses the reader default.
     missing_sources : {'raise', 'warn'}, default 'raise'
-        Policy for unreadable source files referenced by the VRT.
+        [internal-only] Policy for unreadable source files referenced
+        by the VRT.
         ``'raise'`` (the default) fails immediately on an unreadable
         source so a partial mosaic never surfaces silently. This matches
         the rest of the geotiff module's up-front rejection of malformed
@@ -991,14 +1006,16 @@ def read_vrt(vrt_path: str, *, window=None,
         ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
         module regardless of this kwarg (see issue #1662).
     parsed : VRTDataset or None
-        Pre-parsed VRT structure. When supplied, ``vrt_path`` is not
+        [internal-only] Pre-parsed VRT structure. When supplied,
+        ``vrt_path`` is not
         re-read or re-parsed and the source-path containment check is
         skipped (the supplied ``VRTDataset`` is assumed to have been
         produced by :func:`parse_vrt` already, which performs the check).
         Used by the chunked dask path (issue #1825) so each per-chunk
         task can skip the redundant XML parse and allowlist validation.
     mask_nodata : bool, default True
-        If True (the default), float source bands have their declared
+        [internal-only] If True (the default), float source bands have
+        their declared
         nodata sentinel rewritten to NaN inline during assembly, and
         integer sources feeding a float-dataType VRT have their
         sentinel rewritten to NaN as part of the int->float
@@ -1504,6 +1521,15 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
               nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
+    Do not call this symbol directly from external code. Release-contract
+    tier (epic #2340): this is the [internal-only] VRT XML emitter.
+    The public surface lives in ``xrspatial.geotiff.write_vrt``
+    (re-exported from ``_writers/vrt.py``) and carries the [advanced]
+    tier; this function is what that public wrapper calls into. See
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst`` for the
+    contract.
+
     Each source file is placed in the virtual raster based on its
     geo transform. All sources must share the same pixel size, dtype
     (sample format + bits-per-sample), band count, and CRS. Mismatches
@@ -1513,20 +1539,21 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     Parameters
     ----------
     vrt_path : str
-        Output .vrt file path.
+        [internal-only] Output .vrt file path.
     source_files : list of str
-        Paths to the source GeoTIFF files.
+        [internal-only] Paths to the source GeoTIFF files.
     relative : bool
-        Store source paths relative to the VRT file.
+        [internal-only] Store source paths relative to the VRT file.
     crs_wkt : str or None
-        CRS as WKT string. If None, taken from the first source.
+        [internal-only] CRS as WKT string. If None, taken from the
+        first source.
     nodata : float, int, or None
-        NoData value applied to every band of the mosaic. Caller-supplied
-        value takes precedence; when ``None``, the first source's
-        per-band nodata is used. Integer sentinels (e.g. ``65535`` for
-        uint16, ``-9999`` for int32) are accepted so the surface lines up
-        with the ``nodata`` kwarg on ``to_geotiff`` and
-        ``write_geotiff_gpu``.
+        [internal-only] NoData value applied to every band of the
+        mosaic. Caller-supplied value takes precedence; when ``None``,
+        the first source's per-band nodata is used. Integer sentinels
+        (e.g. ``65535`` for uint16, ``-9999`` for int32) are accepted
+        so the surface lines up with the ``nodata`` kwarg on
+        ``to_geotiff`` and ``write_geotiff_gpu``.
 
     Returns
     -------
