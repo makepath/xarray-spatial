@@ -214,7 +214,10 @@ def test_writer_filters_caller_supplied_newsubfiletype(tmp_path):
         },
     )
     out = tmp_path / 'with_dangerous_extra_tag.tif'
-    to_geotiff(da, str(out))
+    # Rich-tag extra_tags is the Experimental write surface (PR 4 of
+    # epic #2340); pass the opt-in so the filter logic this test
+    # exercises gets to run.
+    to_geotiff(da, str(out), allow_experimental_codecs=True)
     sft = _read_subfile_type(out)
     assert sft in (None, 0), (
         f"Writer accepted dangerous extra_tags[254]={sft}, expected None/0."
@@ -237,7 +240,10 @@ def test_writer_filters_caller_supplied_subifds(tmp_path):
         },
     )
     out = tmp_path / 'with_subifds.tif'
-    to_geotiff(da, str(out))
+    # Rich-tag extra_tags is the Experimental write surface (PR 4 of
+    # epic #2340); pass the opt-in so the filter logic this test
+    # exercises gets to run.
+    to_geotiff(da, str(out), allow_experimental_codecs=True)
     with tifffile.TiffFile(str(out)) as tf:
         sub = tf.pages[0].tags.get('SubIFDs')
         assert sub is None, (
@@ -264,7 +270,10 @@ def test_writer_keeps_benign_extra_tags(tmp_path):
         },
     )
     out = tmp_path / 'mixed_extra_tags.tif'
-    to_geotiff(da, str(out))
+    # Rich-tag extra_tags is the Experimental write surface (PR 4 of
+    # epic #2340); pass the opt-in so the filter logic this test
+    # exercises gets to run.
+    to_geotiff(da, str(out), allow_experimental_codecs=True)
     with tifffile.TiffFile(str(out)) as tf:
         page = tf.pages[0]
         assert page.tags.get('NewSubfileType') is None

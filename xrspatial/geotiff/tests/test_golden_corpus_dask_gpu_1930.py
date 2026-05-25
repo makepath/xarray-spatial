@@ -48,6 +48,12 @@ from xrspatial.geotiff import open_geotiff  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
+# Golden-corpus fixtures span every codec/tier, including the
+# experimental and internal-only ones gated by epic #2340 PR 4. Opting
+# in here lets the parity check exercise the full corpus; the per-codec
+# release-contract tests pin the rejection shape separately.
+_OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
+
 FIXTURES_DIR = (
     pathlib.Path(generate.__file__).resolve().parent / "fixtures"
 )
@@ -156,7 +162,8 @@ def test_dask_gpu_parity(manifest_entry: dict) -> None:
             f"to materialise the full corpus"
         )
     candidate = open_geotiff(
-        str(path), gpu=True, chunks=CHUNK_SIZE, on_gpu_failure="strict"
+        str(path), gpu=True, chunks=CHUNK_SIZE, on_gpu_failure="strict",
+        **_OPTIN,
     )
     # Wire the oracle's overview-IFD check when the fixture carries
     # overviews. The factory inherits the dask+GPU read options so each
@@ -223,6 +230,7 @@ def test_dask_gpu_candidate_is_chunked_and_on_device() -> None:
         gpu=True,
         chunks=CHUNK_SIZE,
         on_gpu_failure="strict",
+        **_OPTIN,
     )
     assert hasattr(da.data, "dask"), (
         f"expected a dask-backed DataArray for {entry['id']!r}, "

@@ -113,7 +113,7 @@ def test_to_geotiff_jpeg_opt_in_emits_warning_and_writes(tmp_path):
     assert os.path.exists(path)
     assert os.path.getsize(path) > 0
     # Internal reader still decodes the file.
-    decoded = open_geotiff(path)
+    decoded = open_geotiff(path, allow_internal_only_jpeg=True)
     assert decoded.shape == da.shape
 
 

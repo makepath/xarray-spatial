@@ -53,7 +53,7 @@ class TestLerclessLossless:
         to_geotiff(da, path, compression='lerc', max_z_error=0.0,
                    allow_experimental_codecs=True)
 
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, arr)
 
 
@@ -78,7 +78,7 @@ class TestLossyShrinksAndStaysWithinTolerance:
             f"expected lossy file to be smaller, "
             f"got lossless={lossless_size} lossy={lossy_size}")
 
-        result = open_geotiff(lossy_path).values
+        result = open_geotiff(lossy_path, allow_experimental_codecs=True).values
         max_err = float(np.max(np.abs(result - arr)))
         assert max_err <= 0.05 + 1e-7, f"per-pixel error {max_err} exceeds budget"
 
@@ -99,7 +99,7 @@ class TestStreamingDaskPath:
         to_geotiff(da, path, compression='lerc', max_z_error=0.05,
                    tile_size=32, allow_experimental_codecs=True)
 
-        result = open_geotiff(path).values
+        result = open_geotiff(path, allow_experimental_codecs=True).values
         max_err = float(np.max(np.abs(result - arr)))
         assert max_err <= 0.05 + 1e-7
 
@@ -128,5 +128,5 @@ class TestValidation:
         da = _make_dataarray(arr)
         path = str(tmp_path / 'zstd_default.tif')
         to_geotiff(da, path, compression='zstd', max_z_error=0.0)
-        result = open_geotiff(path).values
+        result = open_geotiff(path, allow_experimental_codecs=True).values
         np.testing.assert_array_equal(result, arr)

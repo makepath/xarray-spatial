@@ -4,6 +4,17 @@
 GeoTIFF / COG
 ***************
 
+.. seealso::
+
+   :ref:`reference.geotiff_release_contract` -- the user-facing release
+   contract that defines what each support tier promises and lists every
+   feature in :data:`xrspatial.geotiff.SUPPORTED_FEATURES` against its
+   tier.
+
+   :ref:`reference.geotiff_release_gate` -- the release gate / audit
+   checklist that lists every promised feature on this page, its tier,
+   its one-line acceptance, and the regression test that locks it.
+
 Stable COG contract
 ===================
 
@@ -187,48 +198,102 @@ with spatial coords on both axes but no explicit transform raises
 Multi-row / multi-column writes are unaffected. 1x1 inputs still
 require ``attrs['transform']`` because neither axis has a step.
 
-.. _reference.geotiff.vrt_support_contract:
+.. _reference.geotiff.vrt_support_matrix:
 
-VRT support contract
-====================
+VRT support matrix (issue #2321)
+================================
 
-The VRT path is a conservative advanced feature in this release. It
-covers simple GeoTIFF mosaics, not GDAL VRT in general. The reader
-fails closed on anything outside the documented subset rather than
-silently flattening mismatched metadata. See epic #2342 for the
-underlying discussion.
+VRT reads sit at the ``advanced`` tier in
+:data:`xrspatial.geotiff.SUPPORTED_FEATURES` (``reader.vrt``).
+``open_geotiff``, ``read_vrt``, and ``write_vrt`` all target the same
+narrow subset of GDAL's VRT spec. The reference below is the canonical
+contract; the three docstrings echo it.
 
 Supported
 ---------
 
-* Simple GDAL VRT mosaics backed by GeoTIFF sources.
-* Compatible source CRS, dtype, transform orientation, pixel size, band
-  count, and band layout across the backing GeoTIFFs.
-* Windowed reads where source and destination windows map cleanly.
-* Lazy / dask reads over the same supported subset.
-* Explicit nodata handling on each band.
-* Mixed-band nodata rejection by default. Opt-ins are documented on the
-  kwargs that enable them (e.g. ``band_nodata='first'`` on
-  ``open_geotiff``).
-* ``missing_sources='raise'`` is the default. ``'warn'`` is an explicit
-  opt-in for partial mosaics; see the "VRT missing sources" section
-  below.
+* Simple GDAL VRT mosaics whose ``<SourceFilename>`` entries point at
+  GeoTIFF files. The VRT XML must resolve to source paths under the
+  VRT's own directory (or under a root listed in
+  ``XRSPATIAL_VRT_ALLOWED_ROOTS``); see the source-path containment
+  note on ``read_vrt`` (#1671).
+* Sources that agree on CRS, transform orientation (axis-aligned,
+  same sign on the y step), pixel size, dtype, and band count. The
+  read rejects mismatch with ``MixedBandMetadataError`` /
+  ``ValueError`` rather than silently flattening.
+* Windowed reads via ``window=(row_start, col_start, row_stop,
+  col_stop)``. Eager and dask paths shift coords and
+  ``attrs['transform']`` together so a windowed eager read and a
+  windowed dask read agree on metadata.
+* Lazy / dask reads over the same subset via ``chunks=``. Construction
+  parses the VRT XML and runs a parse-time existence sweep over every
+  referenced source so a missing file is surfaced at graph build, not
+  at ``compute()`` time (#2265).
+* Explicit ``nodata``. The default (``band_nodata=None``) rejects a VRT
+  whose bands declare disagreeing per-band ``<NoDataValue>`` sentinels
+  with ``MixedBandMetadataError``. ``band_nodata='first'`` opts back
+  into the legacy flatten-to-band-0 behaviour explicitly (#1987).
+* ``missing_sources='raise'`` (the default since #1860). Pass
+  ``missing_sources='warn'`` to opt into the lenient partial-mosaic
+  path; see "VRT missing sources" below.
 
-Not promised
-------------
+Non-goals (intentionally unsupported)
+-------------------------------------
 
-The following are out of scope for this release. The reader rejects
-them up front rather than producing best-effort output:
+* Warped / reprojection VRTs (``<VRTDataset subClass="VRTWarpedDataset">``).
+* Arbitrary resampling beyond the tested subset. The VRT reader honours
+  only the small set of resampling rules its test corpus covers; other
+  modes raise rather than silently picking a default.
+* Mixed CRS, resolution, dtype, or band metadata across sources without
+  an explicit opt-in. The default behaviour is to fail closed.
+* Nested VRTs (a ``<SourceFilename>`` that itself points at a ``.vrt``).
+* Complex source / mask band / alpha band structures
+  (``<ComplexSource>`` with arbitrary scale and offset,
+  ``<MaskBand>``, ``<AlphaBand>``).
+* Full GDAL VRT parity. The contract above is the supported surface;
+  anything outside it is on a best-effort basis at most and is allowed
+  to raise.
 
-* Full GDAL VRT compatibility.
-* Warped or reprojection VRTs.
-* Nested VRTs.
-* Arbitrary resampling semantics beyond the implemented and tested
-  subset.
-* Mixed CRS, mixed dtype, mixed resolution, or mixed band metadata
-  unless an explicit opt-in covers the case.
-* Complex mask, alpha, or source semantics that are not represented in
-  the GeoTIFF attrs contract.
+Safe usage
+----------
+
+A simple mosaic over two compatible GeoTIFF tiles, read eagerly with
+the fail-closed defaults:
+
+.. code-block:: python
+
+    from xrspatial.geotiff import open_geotiff, write_vrt
+
+    # Write a VRT that mosaics two tiles. Both tiles share CRS,
+    # pixel size, dtype, and band count.
+    vrt_path = write_vrt(
+        'mosaic.vrt',
+        source_files=['tile_west.tif', 'tile_east.tif'],
+    )
+
+    # Read with the defaults: missing_sources='raise',
+    # band_nodata=None (fail closed on disagreeing per-band sentinels).
+    da = open_geotiff(vrt_path)
+
+Intentionally raises
+--------------------
+
+Pointing the read at a VRT whose source tiles disagree on their
+per-band nodata sentinels triggers the fail-closed check:
+
+.. code-block:: python
+
+    from xrspatial.geotiff import open_geotiff, MixedBandMetadataError
+
+    # tile_a.tif declares nodata=-9999, tile_b.tif declares nodata=0.
+    # The default band_nodata=None rejects the mosaic rather than
+    # flattening to one sentinel.
+    try:
+        open_geotiff('mixed_nodata.vrt')
+    except MixedBandMetadataError:
+        # Pass band_nodata='first' to opt back into the legacy
+        # flatten-to-band-0 semantics, or fix the source tiles.
+        pass
 
 VRT missing sources
 ===================

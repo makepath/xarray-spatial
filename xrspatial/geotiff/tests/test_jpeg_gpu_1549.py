@@ -156,7 +156,7 @@ def test_rgb_jpeg_gpu_no_crash(tmp_path, monkeypatch):
     path = str(tmp_path / "rgb_jpeg_1549.tif")
     _write_jpeg_rgb_tiff(path)
 
-    arr = read_geotiff_gpu(path, gpu='strict')
+    arr = read_geotiff_gpu(path, gpu='strict', allow_internal_only_jpeg=True)
     # Materialise the GPU buffer so any deferred kernel actually runs
     # and surface any sticky error from the decode pipeline.
     assert isinstance(arr.data, cupy.ndarray)
@@ -190,8 +190,8 @@ def test_rgb_jpeg_gpu_matches_cpu(tmp_path):
     path = str(tmp_path / "rgb_jpeg_match_1549.tif")
     _write_jpeg_rgb_tiff(path, noise=False)
 
-    cpu = open_geotiff(path)
-    gpu = open_geotiff(path, gpu=True)
+    cpu = open_geotiff(path, allow_internal_only_jpeg=True)
+    gpu = open_geotiff(path, gpu=True, allow_internal_only_jpeg=True)
     assert cpu.shape == gpu.shape == (256, 256, 3)
 
     cpu_arr = np.asarray(cpu.data)
@@ -216,8 +216,8 @@ def test_grayscale_jpeg_gpu_matches_cpu(tmp_path):
     path = str(tmp_path / "gray_jpeg_1549.tif")
     _write_jpeg_gray_tiff(path)
 
-    cpu = open_geotiff(path)
-    gpu = open_geotiff(path, gpu=True)
+    cpu = open_geotiff(path, allow_internal_only_jpeg=True)
+    gpu = open_geotiff(path, gpu=True, allow_internal_only_jpeg=True)
     assert cpu.shape == gpu.shape == (256, 256)
 
     cpu_arr = np.asarray(cpu.data)
@@ -248,7 +248,7 @@ def test_cuda_context_survives_after_jpeg_gpu_read(tmp_path):
     path = str(tmp_path / "rgb_ctx_1549.tif")
     _write_jpeg_rgb_tiff(path)
 
-    arr = open_geotiff(path, gpu=True)
+    arr = open_geotiff(path, gpu=True, allow_internal_only_jpeg=True)
     _ = arr.data.get()
 
     # Plain CuPy op -- this is the call that used to surface the sticky
@@ -261,6 +261,6 @@ def test_cuda_context_survives_after_jpeg_gpu_read(tmp_path):
     # "every later GPU call fails" symptom.
     other_path = str(tmp_path / "other_1549.tif")
     _write_jpeg_gray_tiff(other_path, seed=7)
-    other = open_geotiff(other_path, gpu=True)
+    other = open_geotiff(other_path, gpu=True, allow_internal_only_jpeg=True)
     assert other.shape == (256, 256)
     assert other.dtype == np.uint8

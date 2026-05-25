@@ -54,6 +54,12 @@ except Exception as exc:  # pragma: no cover - CI without CUDA
     )
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
+
+# Golden-corpus fixtures span every codec/tier, including the
+# experimental and internal-only ones gated by epic #2340 PR 4. Opting
+# in here lets the parity check exercise the full corpus; the per-codec
+# release-contract tests pin the rejection shape separately.
+_OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
@@ -176,7 +182,7 @@ def test_gpu_parity(manifest_entry: dict) -> None:
         "auto" if fixture_id in _GPU_CPU_FALLBACK else "strict"
     )
     candidate = open_geotiff(
-        str(path), gpu=True, on_gpu_failure=on_gpu_failure
+        str(path), gpu=True, on_gpu_failure=on_gpu_failure, **_OPTIN,
     )
     # Wire the oracle's overview-IFD check when the fixture carries
     # overviews. The factory inherits the GPU read options the base
@@ -186,6 +192,7 @@ def test_gpu_parity(manifest_entry: dict) -> None:
     factory = (
         (lambda lvl, p=path, on_fail=on_gpu_failure: open_geotiff(
             str(p), gpu=True, on_gpu_failure=on_fail, overview_level=lvl,
+            **_OPTIN,
         ))
         if overviews and fixture_id not in _OVERVIEW_READER_GAPS
         else None
@@ -235,7 +242,8 @@ def test_gpu_candidate_is_actually_on_device() -> None:
         pytest.skip("no eligible fixtures on disk")
     entry = plain_fixtures[0]
     da = open_geotiff(
-        str(_fixture_path(entry)), gpu=True, on_gpu_failure="strict"
+        str(_fixture_path(entry)), gpu=True, on_gpu_failure="strict",
+        **_OPTIN,
     )
     assert isinstance(da.data, cupy.ndarray), (
         f"expected a cupy.ndarray for {entry['id']!r}, "

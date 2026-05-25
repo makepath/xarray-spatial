@@ -59,7 +59,11 @@ fsspec = pytest.importorskip("fsspec")
 
 import numpy as np  # noqa: E402
 
-from xrspatial.geotiff import open_geotiff  # noqa: E402
+from xrspatial.geotiff import open_geotiff
+
+# PR 4 of epic #2340: corpus has experimental + jpeg entries.
+_OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
+  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
@@ -200,14 +204,14 @@ def test_fsspec_parity(manifest_entry: dict, memory_fs_clean) -> None:
         payload = f.read()
     url = _serve_via_memory(payload, fixture_id)
 
-    candidate = open_geotiff(url)
+    candidate = open_geotiff(url, **_OPTIN)
     # When the fixture carries pyramid overviews, hand the oracle a
     # factory it can use to fetch each overview level via the same
     # cloud-eager path. The overview-IFD scan also goes through
     # ``_CloudSource``, so any divergence there shows up here.
     overviews = manifest_entry.get("overviews") or []
     factory = (
-        (lambda level, u=url: open_geotiff(u, overview_level=level))
+        (lambda level, u=url: open_geotiff(u, overview_level=level, **_OPTIN))
         if overviews and fixture_id not in _OVERVIEW_READER_GAPS
         else None
     )
@@ -265,7 +269,7 @@ def test_fsspec_candidate_is_actually_numpy(memory_fs_clean) -> None:
     with open(path, "rb") as f:
         payload = f.read()
     url = _serve_via_memory(payload, entry["id"])
-    da = open_geotiff(url)
+    da = open_geotiff(url, **_OPTIN)
     assert isinstance(da.data, np.ndarray), (
         f"expected a numpy.ndarray for the fsspec eager path on "
         f"{entry['id']!r}, got {type(da.data).__name__}"

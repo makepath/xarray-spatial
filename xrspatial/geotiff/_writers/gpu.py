@@ -81,16 +81,21 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
-    Tier: Experimental (issue #2137). The GPU writer requires cupy +
-    numba CUDA plus optional nvCOMP / nvJPEG / nvJPEG2K libraries for
-    codec-specific acceleration; cross-backend numerical parity with
-    ``to_geotiff`` is tested for the Tier 1 codec set only. Tier 3
-    codecs (``'lerc'``, ``'jpeg2000'`` / ``'j2k'``, ``'lz4'``) require
-    the explicit ``allow_experimental_codecs=True`` opt-in; the
-    internal-only ``'jpeg'`` codec keeps its own dedicated
+    Release-contract tier (epic #2340; see
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst``): the
+    entire entry point is [experimental]. The surface may shift
+    without a deprecation window and ``to_geotiff`` is the canonical
+    writer. Requires cupy + numba CUDA plus optional nvCOMP / nvJPEG /
+    nvJPEG2K libraries for codec-specific acceleration; cross-backend
+    numerical parity with ``to_geotiff`` is tested for the Tier 1
+    codec set only. Tier 3 codecs (``'lerc'``, ``'jpeg2000'`` /
+    ``'j2k'``, ``'lz4'``) require the explicit
+    ``allow_experimental_codecs=True`` opt-in; the [internal-only]
+    ``'jpeg'`` codec keeps its own dedicated
     ``allow_internal_only_jpeg`` flag. See
-    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
-    map.
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map
+    (issue #2137).
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
     assembled into a TIFF file on CPU. The CuPy array stays on device
@@ -106,29 +111,34 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     Parameters
     ----------
     data : xr.DataArray (CuPy- or NumPy-backed), cupy.ndarray, or np.ndarray
-        2D or 3D raster. CuPy-backed inputs stay on device; NumPy/Dask
-        inputs are uploaded via ``cupy.asarray(np.asarray(data))``
-        before compression (matches ``to_geotiff`` parity).
+        [experimental] 2D or 3D raster. CuPy-backed inputs stay on
+        device; NumPy/Dask inputs are uploaded via
+        ``cupy.asarray(np.asarray(data))`` before compression (matches
+        ``to_geotiff`` parity).
     path : str or binary file-like
-        Output file path or any object with a ``write`` method
-        (e.g. ``io.BytesIO``). ``cog=True`` requires a string path:
-        the auto-dispatch path through ``to_geotiff(gpu=True, cog=True)``
-        rejects file-like destinations, and the explicit GPU writer
-        mirrors that rule (issue #1652).
+        [experimental] Output file path or any object with a ``write``
+        method (e.g. ``io.BytesIO``). ``cog=True`` requires a string
+        path: the auto-dispatch path through
+        ``to_geotiff(gpu=True, cog=True)`` rejects file-like
+        destinations, and the explicit GPU writer mirrors that rule
+        (issue #1652).
     crs : int, numpy.integer, str, or None
-        EPSG code (int or numpy integer scalar) or WKT string. EPSG
-        codes are strongly preferred for interop; the WKT-only path
-        emits a user-defined CRS (32767) with the WKT stored in
-        ``GTCitationGeoKey``, which many non-libgeotiff readers
-        ignore. A ``UserWarning`` is emitted when the WKT-only path
-        is taken. See issue #1768.
+        [experimental] EPSG code (int or numpy integer scalar) or WKT
+        string. EPSG codes are strongly preferred for interop; the
+        WKT-only path emits a user-defined CRS (32767) with the WKT
+        stored in ``GTCitationGeoKey``, which many non-libgeotiff
+        readers ignore. A ``UserWarning`` is emitted when the WKT-only
+        path is taken. See issue #1768.
     nodata : float, int, or None
-        NoData value.
+        [experimental] NoData value.
     compression : str
-        Codec name. Accepts the same set ``to_geotiff`` lists in its
-        own signature: ``'none'``, ``'deflate'``, ``'lzw'``, ``'jpeg'``,
-        ``'packbits'``, ``'zstd'``, ``'lz4'``, ``'jpeg2000'`` (alias
-        ``'j2k'``), or ``'lerc'``.
+        [experimental for Tier 1 codecs on this path; experimental
+        gated by ``allow_experimental_codecs=True`` for Tier 3 codecs;
+        internal-only gated by ``allow_internal_only_jpeg=True`` for
+        ``'jpeg'``] Codec name. Accepts the same set ``to_geotiff``
+        lists in its own signature: ``'none'``, ``'deflate'``,
+        ``'lzw'``, ``'jpeg'``, ``'packbits'``, ``'zstd'``, ``'lz4'``,
+        ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
 
         Routing per codec:
 
@@ -154,27 +164,31 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
           nvCOMP/CUDA accelerator, so these fall through to the CPU
           encoder for byte-stable parity with ``to_geotiff``.
     compression_level : int or None
-        Compression effort level. Accepted for API compatibility but
-        currently ignored -- nvCOMP does not expose level control.
+        [experimental] Compression effort level. Accepted for API
+        compatibility but currently ignored -- nvCOMP does not expose
+        level control.
     tiled : bool
-        Must be True (default). The GPU writer is tiled-only because
-        nvCOMP batch compression operates on per-tile streams; passing
-        ``tiled=False`` raises ``ValueError`` rather than silently
-        producing a tiled file. Accepted for API parity with
-        ``to_geotiff``.
+        [experimental] Must be True (default). The GPU writer is
+        tiled-only because nvCOMP batch compression operates on
+        per-tile streams; passing ``tiled=False`` raises ``ValueError``
+        rather than silently producing a tiled file. Accepted for API
+        parity with ``to_geotiff``.
     tile_size : int
-        Tile size in pixels (default 256). Must be a positive multiple
-        of 16; this is a TIFF 6 spec requirement on TileWidth and
-        TileLength for broad reader compatibility. ``write_geotiff_gpu``
-        is always tiled, so the check fires for every call.
+        [experimental] Tile size in pixels (default 256). Must be a
+        positive multiple of 16; this is a TIFF 6 spec requirement on
+        TileWidth and TileLength for broad reader compatibility.
+        ``write_geotiff_gpu`` is always tiled, so the check fires for
+        every call.
     predictor : bool or int
-        TIFF predictor. ``False``/``0``/``1`` -> none, ``True``/``2`` ->
-        horizontal differencing, ``3`` -> floating-point predictor
-        (float dtypes only).
+        [experimental] TIFF predictor. ``False``/``0``/``1`` -> none,
+        ``True``/``2`` -> horizontal differencing, ``3`` ->
+        floating-point predictor (float dtypes only).
     cog : bool
-        Write as Cloud Optimized GeoTIFF with overviews.
+        [experimental] Write as Cloud Optimized GeoTIFF with
+        overviews.
     overview_levels : list[int] or None
-        Overview decimation factors relative to full resolution.
+        [experimental] Overview decimation factors relative to full
+        resolution.
         Each entry must be a power-of-two integer >= 2, and the list
         must be strictly increasing (e.g. ``[2, 4, 8]`` writes
         overviews at 1/2, 1/4 and 1/8 of the full resolution).
@@ -182,33 +196,37 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         If None and ``cog=True``, auto-generates ``[2, 4, 8, ...]`` by
         halving until the smallest overview fits in a single tile.
     overview_resampling : str
-        Resampling method for overviews: 'mean' (default), 'nearest',
-        'min', 'max', 'median', 'mode', or 'cubic'. ``mode`` and
-        ``cubic`` fall back to the CPU implementation in
-        ``xrspatial.geotiff._writer`` so the GPU writer produces the
-        same overview bytes as the CPU writer.
+        [experimental] Resampling method for overviews: 'mean'
+        (default), 'nearest', 'min', 'max', 'median', 'mode', or
+        'cubic'. ``mode`` and ``cubic`` fall back to the CPU
+        implementation in ``xrspatial.geotiff._writer`` so the GPU
+        writer produces the same overview bytes as the CPU writer.
     bigtiff : bool or None
-        Force BigTIFF (64-bit offsets). None auto-promotes when the
-        estimated file size would exceed the classic-TIFF 4 GB limit.
+        [experimental] Force BigTIFF (64-bit offsets). None
+        auto-promotes when the estimated file size would exceed the
+        classic-TIFF 4 GB limit.
     streaming_buffer_bytes : int
-        Accepted for API parity with ``to_geotiff``. The GPU writer
-        materialises the entire array on device and has no streaming
-        concept, so this kwarg is a no-op. Default matches
+        [internal-only] Accepted for API parity with ``to_geotiff``.
+        The GPU writer materialises the entire array on device and has
+        no streaming concept, so this kwarg is a no-op. Default matches
         ``to_geotiff`` (256 MB) so callers passing the same kwargs to
         either entry point see the same default and the same type.
     max_z_error : float
-        Per-pixel error budget for LERC compression. The GPU writer
-        does not implement LERC (nvCOMP has no LERC backend), so any
-        non-zero value raises ``ValueError``. Accepted at the signature
-        level for API parity with ``to_geotiff``.
+        [internal-only] Per-pixel error budget for LERC compression.
+        The GPU writer does not implement LERC (nvCOMP has no LERC
+        backend), so any non-zero value raises ``ValueError``.
+        Accepted at the signature level for API parity with
+        ``to_geotiff``.
     photometric : str or int
-        Photometric interpretation for the TIFF Photometric tag (262).
-        See :func:`to_geotiff` for the full set of accepted values; the
-        GPU writer forwards this kwarg unchanged. Default ``'auto'``
-        writes MinIsBlack for any band count, so a 4-band raster is
-        not silently tagged as RGB+alpha (issue #1769).
+        [experimental] Photometric interpretation for the TIFF
+        Photometric tag (262). See :func:`to_geotiff` for the full set
+        of accepted values; the GPU writer forwards this kwarg
+        unchanged. Default ``'auto'`` writes MinIsBlack for any band
+        count, so a 4-band raster is not silently tagged as RGB+alpha
+        (issue #1769).
     allow_experimental_codecs : bool
-        Opt in to the Tier 3 experimental codecs ``'lerc'``,
+        [experimental] Opt in to the Tier 3 experimental codecs
+        ``'lerc'``,
         ``'jpeg2000'`` / ``'j2k'``, and ``'lz4'`` (default ``False``).
         Mirrors the same kwarg on ``to_geotiff`` so the two writers
         expose a consistent surface; the GPU dispatch path through
@@ -220,21 +238,21 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         the internal-only JPEG path keeps its own dedicated
         ``allow_internal_only_jpeg`` flag. See issue #2137.
     allow_internal_only_jpeg : bool
-        Opt in to the experimental ``compression='jpeg'`` encode path
-        (default ``False``). The encoder emits self-contained JFIF
-        tiles without the TIFF JPEGTables tag (347); the file decodes
-        through this library's reader but not through libtiff, GDAL,
-        or rasterio. With the flag set, the write proceeds and a
+        [internal-only] Opt in to the ``compression='jpeg'`` encode
+        path (default ``False``). The encoder emits self-contained
+        JFIF tiles without the TIFF JPEGTables tag (347); the file
+        decodes through this library's reader but not through libtiff,
+        GDAL, or rasterio. With the flag set, the write proceeds and a
         ``GeoTIFFFallbackWarning`` is emitted at call time. Without
         the flag, ``compression='jpeg'`` raises ``ValueError`` for
         parity with ``to_geotiff``. See issue #1845.
     allow_unparseable_crs : bool
-        Opt in to writing an unvalidatable CRS string into
-        ``GTCitationGeoKey`` (default ``False``). See
+        [experimental] Opt in to writing an unvalidatable CRS string
+        into ``GTCitationGeoKey`` (default ``False``). See
         :func:`to_geotiff` for the full description; the GPU writer
         applies the same fail-closed default. See issue #1929.
     drop_rotation : bool, default False
-        Opt in to writing a DataArray that carries
+        [experimental] Opt in to writing a DataArray that carries
         ``attrs['rotated_affine']``. Mirrors the same kwarg on
         ``to_geotiff`` so the two writers share one gate. Default
         ``False`` refuses the write with ``ValueError``; the GPU
@@ -368,6 +386,18 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _validate_writer_spatial_shape(
         getattr(data, 'shape', None),
         getattr(data, 'dims', None),
+        entry_point="write_geotiff_gpu",
+    )
+
+    # Reject ``gdal_metadata_xml`` / ``extra_tags`` pass-through writes
+    # unless the caller opted in via ``allow_experimental_codecs=True``.
+    # Mirrors ``to_geotiff`` so the two writers expose the same surface.
+    # PR 4 of epic #2340.
+    from .._attrs import _validate_write_rich_tag_optin
+    _attrs_for_optin = getattr(data, 'attrs', None) or {}
+    _validate_write_rich_tag_optin(
+        _attrs_for_optin,
+        allow_experimental_codecs=allow_experimental_codecs,
         entry_point="write_geotiff_gpu",
     )
 

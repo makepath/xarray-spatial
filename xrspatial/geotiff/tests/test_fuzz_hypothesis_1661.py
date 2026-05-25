@@ -152,7 +152,10 @@ def test_round_trip_property(tmp_path_factory, inputs):
         allow_experimental_codecs=True,
     )
 
-    got = open_geotiff(path, dtype=str(da.dtype))
+    # Mirror the write-side opt-in (PR 4 of epic #2340) so the read
+    # accepts the experimental codec.
+    got = open_geotiff(path, dtype=str(da.dtype),
+                       allow_experimental_codecs=True)
 
     # Reader may add a leading band axis; squeeze for the 2D comparison.
     got_arr = got.values

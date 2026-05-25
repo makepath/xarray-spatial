@@ -340,7 +340,8 @@ def test_write_lerc_lossless_round_trip(tmp_path):
     arr = _make_float32_band()
     out = str(tmp_path / "tmp_2138_lerc_lossless.tif")
     _write(arr, out, compression="lerc", max_z_error=0.0)
-    decoded, _ = _read_to_array(out)
+    # LERC is the Experimental read tier (PR 4 of epic #2340).
+    decoded, _ = _read_to_array(out, allow_experimental_codecs=True)
     np.testing.assert_array_equal(decoded, arr)
 
 

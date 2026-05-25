@@ -112,7 +112,7 @@ def test_eager_writer_round_trip_with_large_gdal_metadata(tmp_path):
     )
     da = _make_4x4_float32(gdal_metadata_xml=metadata_xml)
     path = str(tmp_path / "large_metadata_1905.tif")
-    to_geotiff(da, path)
+    to_geotiff(da, path, allow_experimental_codecs=True)
 
     rt = open_geotiff(path)
     np.testing.assert_array_equal(rt.values, da.values)
@@ -153,7 +153,7 @@ def test_eager_writer_promotes_to_bigtiff_when_overhead_dominates(
         writer_mod, "_compute_classic_ifd_overhead", _huge_overhead,
     )
 
-    to_geotiff(da, path)
+    to_geotiff(da, path, allow_experimental_codecs=True)
     with open(path, "rb") as f:
         head = f.read(8)
     assert head[:2] == b"II"
@@ -165,7 +165,7 @@ def test_eager_writer_keeps_classic_when_overhead_fits(tmp_path):
     """Sanity check: the default 4x4 file fits classic comfortably."""
     da = _make_4x4_float32()
     path = str(tmp_path / "classic_1905.tif")
-    to_geotiff(da, path)
+    to_geotiff(da, path, allow_experimental_codecs=True)
     with open(path, "rb") as f:
         head = f.read(8)
     magic = struct.unpack_from("<H", head, 2)[0]
@@ -179,7 +179,7 @@ def test_overhead_matches_actual_emitted_size_via_writer(tmp_path):
     metadata_xml = "<GDALMetadata><Item>" + ("z" * 1024) + "</Item></GDALMetadata>"
     da = _make_4x4_float32(gdal_metadata_xml=metadata_xml)
     path = str(tmp_path / "match_actual_1905.tif")
-    to_geotiff(da, path)
+    to_geotiff(da, path, allow_experimental_codecs=True)
 
     # Parse the file to find IFD offset, then measure the bytes between
     # IFD start and the first pixel-data offset to confirm the writer

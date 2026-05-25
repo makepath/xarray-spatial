@@ -683,7 +683,11 @@ def _extract_transform(ifd: IFD,
                         f"M[6]={m[6] if len(m) > 6 else 0.0!r}). "
                         "Only axis-aligned affine transforms are supported. "
                         "Pass ``allow_rotated=True`` to read the pixel grid "
-                        "without the geospatial assumption (issue #2115)."
+                        "without the geospatial assumption "
+                        "(``reader.allow_rotated`` is the experimental tier "
+                        "opt-in; see "
+                        "``docs/source/reference/release_gate_geotiff.rst`` "
+                        "for the release-contract row; issue #2115)."
                     )
                 # Opt-in: drop georef, stash the rotated matrix on the
                 # GeoTransform so the validator + attrs-roundtrip code

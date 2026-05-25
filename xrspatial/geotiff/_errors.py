@@ -103,6 +103,24 @@ class ConflictingNodataError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class VRTUnsupportedError(GeoTIFFAmbiguousMetadataError):
+    """A parsed VRT declares a feature the read pipeline does not honour (#2329).
+
+    Raised by the centralised VRT validator at graph-build / eager-read
+    setup time, before any source bytes are decoded. Covers CRS / dtype
+    / band / nodata / transform / pixel-size / source-window /
+    destination-window / resampling mismatches that the VRT read path
+    cannot serve correctly. The message names the offending source path
+    and field so a caller can locate the bad source without re-parsing
+    the VRT XML themselves.
+
+    Subclasses ``GeoTIFFAmbiguousMetadataError`` (and therefore
+    ``ValueError``) so existing ``except ValueError`` callers keep
+    catching VRT-capability failures alongside the older ambiguous-
+    metadata family.
+    """
+
+
 class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """Can't classify an EPSG as geographic or projected on write (#2277).
 
@@ -118,6 +136,22 @@ class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class UnsupportedGeoTIFFFeatureError(ValueError):
+    """Caller asked for a feature this release does not implement (#2349).
+
+    Raised at the read or write entry point when the input declares a
+    feature the GeoTIFF module does not support (warped / reprojection
+    VRTs, pansharpened / processed / derived VRT subclasses, unknown
+    VRT band children, source transforms with non-zero skew on a VRT
+    mosaic). The message names the feature and points the caller at
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` callers
+    keep catching the case; new code can ``except`` this class to
+    distinguish "we refuse this input" from "the input is malformed".
+    """
+
+
 __all__ = [
     "GeoTIFFAmbiguousMetadataError",
     "InvalidCRSCodeError",
@@ -127,5 +161,7 @@ __all__ = [
     "MixedBandMetadataError",
     "ConflictingCRSError",
     "ConflictingNodataError",
+    "VRTUnsupportedError",
     "UnknownCRSModelTypeError",
+    "UnsupportedGeoTIFFFeatureError",
 ]

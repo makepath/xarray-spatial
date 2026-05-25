@@ -160,7 +160,7 @@ class TestLercTiffRoundTripWithMask:
         write(arr, path, compression="lerc", tiled=True, tile_size=8,
               nodata=float("nan"))
 
-        out, _geo = read_to_array(path)
+        out, _geo = read_to_array(path, allow_experimental_codecs=True)
         for r in range(8):
             for c in range(8):
                 if (r, c) in invalid_positions:
@@ -188,7 +188,7 @@ class TestLercTiffRoundTripWithMask:
         write(arr, path, compression="lerc", tiled=True, tile_size=8,
               nodata=-9999.0)
 
-        out, _geo = read_to_array(path)
+        out, _geo = read_to_array(path, allow_experimental_codecs=True)
         for r in range(8):
             for c in range(8):
                 if (r, c) in invalid_positions:
@@ -215,7 +215,7 @@ class TestLercTiffRoundTripWithMask:
         write(arr, path, compression="lerc", tiled=True, tile_size=8,
               nodata=65535)
 
-        out, _geo = read_to_array(path)
+        out, _geo = read_to_array(path, allow_experimental_codecs=True)
         for r in range(8):
             for c in range(8):
                 if (r, c) in invalid_positions:
@@ -232,5 +232,5 @@ class TestLercTiffRoundTripWithMask:
         path = str(tmp_path / "lerc_no_mask.tif")
         write(arr, path, compression="lerc", tiled=True, tile_size=8)
 
-        out, _geo = read_to_array(path)
+        out, _geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(out, arr)

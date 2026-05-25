@@ -240,21 +240,34 @@ class _Backend:
     skips: dict[str, str] = field(default_factory=dict)
 
 
+# PR 4 of epic #2340: experimental and internal-only codecs require an
+# explicit opt-in on the read side. The full parity matrix tests every
+# fixture including ``compression_lerc_float32``; the gate's purpose is
+# orthogonal to the parity check, so pass both flags through every
+# opener. The matrix continues to test what it was meant to test.
+_OPTIN = {
+    "allow_experimental_codecs": True,
+    "allow_internal_only_jpeg": True,
+}
+
+
 def _read_eager_numpy(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
-    return open_geotiff(str(path))
+    return open_geotiff(str(path), **_OPTIN)
 
 
 def _read_dask_numpy(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
-    return open_geotiff(str(path), chunks=_CHUNK_SIZE)
+    return open_geotiff(str(path), chunks=_CHUNK_SIZE, **_OPTIN)
 
 
 def _read_gpu(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
-    return open_geotiff(str(path), gpu=True, on_gpu_failure="strict")
+    return open_geotiff(
+        str(path), gpu=True, on_gpu_failure="strict", **_OPTIN)
 
 
 def _read_dask_gpu(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
     return open_geotiff(
         str(path), gpu=True, chunks=_CHUNK_SIZE, on_gpu_failure="strict",
+        **_OPTIN,
     )
 
 
@@ -282,7 +295,7 @@ def _read_vrt_eager(path: pathlib.Path, fixture_id: str) -> xr.DataArray:
     vrt_path = cache_dir / f"{fixture_id}.vrt"
     if not vrt_path.exists():
         write_vrt(str(vrt_path), [str(local_src)])
-    return open_geotiff(str(vrt_path))
+    return open_geotiff(str(vrt_path), **_OPTIN)
 
 
 def _read_http_fsspec(path: pathlib.Path, fixture_id: str) -> xr.DataArray:
@@ -307,7 +320,7 @@ def _read_http_fsspec(path: pathlib.Path, fixture_id: str) -> xr.DataArray:
     with open(path, "rb") as f:
         fs.pipe(key, f.read())
     try:
-        da = open_geotiff(f"memory://{key}")
+        da = open_geotiff(f"memory://{key}", **_OPTIN)
     finally:
         # Best-effort cleanup; fsspec memory store deletions are
         # idempotent. The cloud-eager path has already pulled the
@@ -718,7 +731,7 @@ def _reference_for(
 ) -> xr.DataArray:
     fid = entry["id"]
     if fid not in cache:
-        cache[fid] = open_geotiff(str(_fixture_path(entry)))
+        cache[fid] = open_geotiff(str(_fixture_path(entry)), **_OPTIN)
     return cache[fid]
 
 

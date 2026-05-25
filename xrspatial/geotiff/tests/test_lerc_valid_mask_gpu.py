@@ -95,8 +95,10 @@ def _read_cpu_gpu(path):
     from xrspatial.geotiff import read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
-    cpu, _geo = read_to_array(path)
-    gpu_da = read_geotiff_gpu(path, gpu='strict')
+    cpu, _geo = read_to_array(path, allow_experimental_codecs=True)
+    gpu_da = read_geotiff_gpu(
+        path, gpu='strict', allow_experimental_codecs=True,
+    )
     gpu_host = gpu_da.data.get()
     return cpu, gpu_host
 

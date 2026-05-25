@@ -2785,6 +2785,12 @@ class TestPublicAPI:
             'RotatedTransformError',
             'UnknownCRSModelTypeError',
             'UnparseableCRSError',
+            # Epic #2340 / PR 5 (#2349): typed error raised at the read
+            # or write entry point when the caller asks for a feature
+            # the GeoTIFF module does not implement (warped /
+            # pansharpened / derived VRT subclasses, unknown VRT band
+            # children, rotated source transforms on a VRT mosaic).
+            'UnsupportedGeoTIFFFeatureError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
             # Canonical georef_status constants (issue #2136). Exposed

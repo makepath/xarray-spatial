@@ -15,7 +15,9 @@ Reference
    flood
    focal
    geotiff
+   geotiff_release_contract
    geotiff_internals
+   release_gate_geotiff
    hydrology
    interpolation
    kde

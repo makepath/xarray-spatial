@@ -62,16 +62,36 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                drop_rotation: bool = False) -> str | BinaryIO:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
-    Tier: Stable for local-file output with ``compression`` in
-    ``{'none', 'deflate', 'lzw', 'packbits', 'zstd'}`` on an axis-aligned
-    grid. ``cog=True`` / overviews / BigTIFF are Advanced (work, but the
-    caller should know the failure modes). GPU output, GDAL XML metadata
-    pass-through, and ``extra_tags`` are Experimental. ``compression`` in
-    ``{'lerc', 'jpeg2000', 'j2k', 'lz4'}`` is Experimental and requires
-    ``allow_experimental_codecs=True``. ``compression='jpeg'`` is
-    Internal-only and requires the dedicated ``allow_internal_only_jpeg``
-    flag. See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full
-    tier map (issue #2137).
+    Release-contract tier (epic #2340; see
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst``):
+
+    * [stable] Local-file output on an axis-aligned grid with
+      ``compression`` in ``{'none', 'deflate', 'lzw', 'packbits',
+      'zstd'}``; CRS / transform / nodata attrs round-trip; ``bigtiff``
+      auto-promotion.
+    * [advanced] ``cog=True`` and overview generation; explicit
+      ``bigtiff=True``; ``photometric=`` overrides; ``extra_tags``
+      pass-through.
+    * [experimental] GPU dispatch via ``gpu=True``;
+      ``compression`` in ``{'lerc', 'jpeg2000', 'j2k', 'lz4'}`` behind
+      the explicit ``allow_experimental_codecs=True`` opt-in;
+      ``allow_unparseable_crs=True``.
+    * [internal-only] ``compression='jpeg'`` behind
+      ``allow_internal_only_jpeg=True``. The produced files do not
+      round-trip through libtiff / GDAL / rasterio; the path exists for
+      xrspatial's own use and is not part of the externally
+      interoperable surface.
+    * Out of scope for this release (allowed to raise): rotated /
+      sheared write support (``ModelTransformationTag`` emit, tracked
+      separately in #2115); silent mixed-metadata flattening.
+
+    See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
+    map (issue #2137). Per-parameter tier markers below describe the
+    tier the parameter itself carries; a parameter's effective tier
+    is bounded by the function-level surface above (e.g. ``[stable]``
+    ``nodata`` is still only stable when combined with a ``[stable]``
+    codec and options).
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
     at a time, without materialising the full array into RAM.  Peak
@@ -89,13 +109,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     Parameters
     ----------
     data : xr.DataArray or np.ndarray
-        2D raster data.
+        [stable] 2D raster data.
     path : str or binary file-like
-        Output file path, or any object exposing a ``write`` method
-        (e.g. ``io.BytesIO``). When a file-like is passed, the encoded
-        TIFF bytes are written to that object once assembly completes.
-        ``cog=True`` and ``.vrt`` outputs require a string path.
+        [stable for local file paths; advanced for ``io.BytesIO`` and
+        other in-memory file-likes] Output file path, or any object
+        exposing a ``write`` method (e.g. ``io.BytesIO``). When a
+        file-like is passed, the encoded TIFF bytes are written to
+        that object once assembly completes. ``cog=True`` and ``.vrt``
+        outputs require a string path.
     crs : int, numpy.integer, str, or None
+        [stable for int EPSG codes; advanced for WKT/PROJ strings]
         EPSG code (int or numpy integer scalar), WKT string, or PROJ
         string. If None and data is a DataArray, tries to read from
         attrs ('crs' for EPSG, 'crs_wkt' for WKT).
@@ -108,11 +131,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``UserWarning`` is emitted when the WKT-only path is taken.
         See issue #1768.
     nodata : float, int, or None
-        NoData value.
+        [stable] NoData value.
     compression : str
-        Codec name. One of ``'none'``, ``'deflate'``, ``'lzw'``,
-        ``'jpeg'``, ``'packbits'``, ``'zstd'``, ``'lz4'``,
-        ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
+        [stable for ``{'none', 'deflate', 'lzw', 'packbits', 'zstd'}``;
+        experimental for ``{'lerc', 'jpeg2000', 'j2k', 'lz4'}`` behind
+        ``allow_experimental_codecs=True``; internal-only for
+        ``'jpeg'`` behind ``allow_internal_only_jpeg=True``] Codec
+        name. One of ``'none'``, ``'deflate'``, ``'lzw'``, ``'jpeg'``,
+        ``'packbits'``, ``'zstd'``, ``'lz4'``, ``'jpeg2000'`` (alias
+        ``'j2k'``), or ``'lerc'``.
 
         Stable codecs (Tier 1, lossless, byte-for-byte round-trip):
         ``'none'``, ``'deflate'``, ``'lzw'``, ``'packbits'``,
@@ -136,22 +163,23 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         internal-only is a stricter tier than experimental, and the two
         flags do not collapse into one switch.
     compression_level : int or None
-        Compression effort level. None uses each codec's default (6 for
-        deflate/zstd). Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
-        Codecs without a level concept (lzw, packbits, jpeg) accept any
-        value and ignore it.
+        [stable] Compression effort level. None uses each codec's
+        default (6 for deflate/zstd). Valid ranges: deflate 1-9,
+        zstd 1-22, lz4 0-16. Codecs without a level concept (lzw,
+        packbits, jpeg) accept any value and ignore it.
     tiled : bool
-        Use tiled layout (default True). Incompatible with ``cog=True``
-        because the COG specification requires a tiled internal layout;
-        passing ``cog=True, tiled=False`` raises ``ValueError`` (#2312).
+        [stable] Use tiled layout (default True). Incompatible with
+        ``cog=True`` because the COG specification requires a tiled
+        internal layout; passing ``cog=True, tiled=False`` raises
+        ``ValueError`` (#2312).
     tile_size : int
-        Tile size in pixels (default 256). Must be a positive multiple
-        of 16 when ``tiled=True``; this is a TIFF 6 spec requirement
-        on TileWidth and TileLength for broad reader compatibility.
-        Ignored when ``tiled=False``; a warning is emitted if a
-        non-default value is passed alongside strip mode.
+        [stable] Tile size in pixels (default 256). Must be a positive
+        multiple of 16 when ``tiled=True``; this is a TIFF 6 spec
+        requirement on TileWidth and TileLength for broad reader
+        compatibility. Ignored when ``tiled=False``; a warning is
+        emitted if a non-default value is passed alongside strip mode.
     predictor : bool or int
-        TIFF predictor. Accepted values:
+        [stable] TIFF predictor. Accepted values:
 
         * ``False``, ``0``, or ``1`` -> no predictor.
         * ``True`` or ``2`` -> horizontal differencing (good for integer
@@ -159,15 +187,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         * ``3`` -> floating-point predictor (float dtypes only; typically
           gives better deflate/zstd ratios on float data than predictor 2).
     cog : bool
-        Advanced: COG output materialises the full array because
-        overview pyramids need it, and the all-IFDs-at-file-start layout
-        only round-trips through readers that honour the COG layout
-        contract. Write as Cloud Optimized GeoTIFF. Requires
+        [advanced] COG output materialises the full array because
+        overview pyramids need it, and the all-IFDs-at-file-start
+        layout only round-trips through readers that honour the COG
+        layout contract. Write as Cloud Optimized GeoTIFF. Requires
         ``tiled=True`` (the default): the COG specification mandates a
         tiled internal layout, so ``cog=True, tiled=False`` raises
         ``ValueError`` (#2312).
     overview_levels : list[int] or None
-        Advanced: overview pyramids are an optional COG feature; the
+        [advanced] Overview pyramids are an optional COG feature; the
         decimation factors and resampling choice affect downstream
         analytics in ways that are not byte-for-byte reproducible
         across backends. Overview decimation factors relative to full
@@ -180,34 +208,40 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``[2, 4, 8, ...]`` until the next halving would fall below
         ``tile_size`` (capped at 8 levels).
     overview_resampling : str
-        Resampling method for overviews: 'mean' (default), 'nearest',
-        'min', 'max', 'median', 'mode', or 'cubic'.
+        [advanced] Resampling method for overviews: 'mean' (default),
+        'nearest', 'min', 'max', 'median', 'mode', or 'cubic'.
     bigtiff : bool or None
-        Advanced: BigTIFF uses 64-bit offsets; older readers that only
+        [advanced] BigTIFF uses 64-bit offsets; older readers that only
         speak classic TIFF cannot open the output. Force BigTIFF
         (64-bit offsets). None (default) auto-promotes when the
         estimated file size would exceed the classic-TIFF 4 GB limit.
         Matches the same kwarg on ``write_geotiff_gpu``.
     gpu : bool or None
-        Experimental: requires cupy + numba CUDA, plus the optional
+        [experimental] Requires cupy + numba CUDA, plus the optional
         nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
         acceleration; backend parity with the CPU writer is tested for
         the Tier 1 codec set only. Force GPU compression. None
         (default) auto-detects CuPy data.
     streaming_buffer_bytes : int
-        Soft cap on bytes materialised per dask compute call when
-        streaming a dask-backed DataArray. Defaults to 256 MB. Wide
-        rasters whose tile-row exceeds this budget are split into
-        horizontal segments. Ignored for numpy / CuPy / COG paths.
+        [stable] Soft cap on bytes materialised per dask compute call
+        when streaming a dask-backed DataArray. Defaults to 256 MB.
+        Wide rasters whose tile-row exceeds this budget are split into
+        horizontal segments. Only relevant for dask-backed inputs; the
+        kwarg is a no-op for numpy / CuPy / COG paths (the COG path
+        materialises the full array because the overview pyramid
+        needs it).
     max_z_error : float
-        Per-pixel error budget for LERC compression. ``0.0`` (default)
-        is lossless; larger values let the encoder approximate values
-        within the bound, producing smaller files at the cost of accuracy
-        bounded by ``abs(decoded - original) <= max_z_error``. Only used
-        when ``compression='lerc'``; passing a non-zero value with any
-        other codec raises ``ValueError``.
+        [experimental] Per-pixel error budget for LERC compression.
+        ``0.0`` (default) is lossless; larger values let the encoder
+        approximate values within the bound, producing smaller files
+        at the cost of accuracy bounded by
+        ``abs(decoded - original) <= max_z_error``. Only used when
+        ``compression='lerc'`` (which itself requires
+        ``allow_experimental_codecs=True``); passing a non-zero value
+        with any other codec raises ``ValueError``.
     photometric : str or int
-        Photometric interpretation for the TIFF Photometric tag (262).
+        [advanced] Photometric interpretation for the TIFF Photometric
+        tag (262).
 
         * ``'auto'`` (default) -- MinIsBlack (1) for any band count.
           ExtraSamples for every band beyond the first is tagged ``0``
@@ -238,7 +272,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         auto-emitted tags such as ``ImageWidth`` or ``StripOffsets``
         remain protected.
     allow_experimental_codecs : bool
-        Opt in to the Tier 3 experimental codecs ``'lerc'``,
+        [experimental] Opt in to the Tier 3 experimental codecs
+        ``'lerc'``,
         ``'jpeg2000'`` / ``'j2k'``, and ``'lz4'`` (default ``False``).
         Setting ``compression=`` to one of those codecs without this
         flag raises ``ValueError`` whose message names the flag. With
@@ -253,20 +288,23 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         unchanged to ``write_geotiff_gpu`` on the GPU dispatch path.
         See issue #2137.
     allow_internal_only_jpeg : bool
-        Opt in to the experimental ``compression='jpeg'`` encode path
-        (default ``False``). The encoder writes self-contained JFIF
-        tiles without the TIFF JPEGTables tag (347); the file decodes
-        through this library's reader but not through libtiff, GDAL,
-        or rasterio. With the flag set, the write proceeds and a
+        [internal-only] Opt in to the ``compression='jpeg'`` encode
+        path (default ``False``). The encoder writes self-contained
+        JFIF tiles without the TIFF JPEGTables tag (347); the file
+        decodes through this library's reader but not through libtiff,
+        GDAL, or rasterio. This codec is internal-only for the release
+        contract: it is not externally interoperable and the path
+        exists so xrspatial can round-trip its own JPEG output. With the flag set, the write proceeds and a
         ``GeoTIFFFallbackWarning`` is emitted at call time. Without
         the flag, ``compression='jpeg'`` raises ``ValueError``. The
         kwarg is forwarded unchanged to ``write_geotiff_gpu`` on the
         GPU dispatch path so callers can reach the same experimental
         encode via ``to_geotiff(..., gpu=True)``. See issue #1845.
     allow_unparseable_crs : bool
-        Opt in to writing an unvalidatable CRS string into
-        ``GTCitationGeoKey`` (default ``False``). When ``False`` (the
-        default since #1929), a ``crs=`` value that is neither an EPSG
+        [experimental] Opt in to writing an unvalidatable CRS string
+        into ``GTCitationGeoKey`` (default ``False``). When ``False``
+        (the default since #1929), a ``crs=`` value that is neither an
+        EPSG
         int nor a string that pyproj can resolve and is not
         structurally WKT (no ``PROJCS`` / ``GEOGCS`` / ``PROJCRS`` /
         ``GEOGCRS`` root) raises ``ValueError`` instead of landing
@@ -276,7 +314,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``"EPSG:4326"`` token on a host without pyproj produces a
         citation that most readers cannot interpret. See issue #1929.
     drop_rotation : bool, default False
-        Opt in to writing a DataArray that carries
+        [advanced] Opt in to writing a DataArray that carries
         ``attrs['rotated_affine']`` (issue #2216). The reader sets that
         attr when called with ``allow_rotated=True`` on a file whose
         ``ModelTransformationTag`` contains rotation, shear, or
@@ -569,6 +607,22 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             GeoTIFFFallbackWarning,
             stacklevel=2,
         )
+
+    # Reject ``gdal_metadata_xml`` / ``extra_tags`` pass-through writes
+    # unless the caller opted in via ``allow_experimental_codecs=True``.
+    # Both surfaces ride the Experimental tier in ``SUPPORTED_FEATURES``
+    # because the on-disk bytes are written verbatim and downstream
+    # interop with rasterio / libtiff / GDAL depends on the payload.
+    # PR 4 of epic #2340.
+    _data_attrs_for_optin = (
+        data.attrs if isinstance(data, xr.DataArray) else {}
+    )
+    from .._attrs import _validate_write_rich_tag_optin
+    _validate_write_rich_tag_optin(
+        _data_attrs_for_optin,
+        allow_experimental_codecs=allow_experimental_codecs,
+        entry_point="to_geotiff",
+    )
 
     # Issue #2312: ``cog=True`` requires a tiled internal layout per the
     # COG spec. The writer used to accept ``cog=True, tiled=False``, warn

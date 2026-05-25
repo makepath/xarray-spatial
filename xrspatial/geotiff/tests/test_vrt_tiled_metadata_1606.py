@@ -144,7 +144,9 @@ class TestVrtTiledRichTagCoverage:
             attrs={'crs': 4326, 'gdal_metadata_xml': xml},
         )
         vrt = str(tmp_path / 'gdal_xml.vrt')
-        to_geotiff(da, vrt, tile_size=16)
+        # Rich-tag write surface (PR 4 of epic #2340).
+        to_geotiff(da, vrt, tile_size=16,
+                   allow_experimental_codecs=True)
         tile_da = open_geotiff(_first_tile_path(vrt))
         # On read, the XML is re-parsed into a dict under
         # attrs['gdal_metadata']; the raw XML lands under
@@ -175,7 +177,9 @@ class TestVrtTiledRichTagCoverage:
             },
         )
         vrt = str(tmp_path / 'extra_tags.vrt')
-        to_geotiff(da, vrt, tile_size=16)
+        # Rich-tag write surface (PR 4 of epic #2340).
+        to_geotiff(da, vrt, tile_size=16,
+                   allow_experimental_codecs=True)
         tile_da = open_geotiff(_first_tile_path(vrt))
         et = tile_da.attrs.get('extra_tags') or []
         tag_ids = {entry[0] for entry in et}

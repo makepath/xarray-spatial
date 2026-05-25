@@ -40,7 +40,13 @@ pytest.importorskip("yaml")
 pytest.importorskip("rasterio")
 pytest.importorskip("dask")
 
-from xrspatial.geotiff import open_geotiff  # noqa: E402
+from xrspatial.geotiff import open_geotiff
+
+# PR 4 of epic #2340: the golden corpus has experimental-codec
+# and JPEG-in-TIFF entries; the parity check is orthogonal to the
+# read-side opt-in so pass both flags through every open.
+_OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
+  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
@@ -148,7 +154,7 @@ def test_dask_numpy_parity(manifest_entry: dict) -> None:
             f"`python -m xrspatial.geotiff.tests.golden_corpus.generate` "
             f"to materialise the full corpus"
         )
-    candidate = open_geotiff(str(path), chunks=CHUNK_SIZE)
+    candidate = open_geotiff(str(path), chunks=CHUNK_SIZE, **_OPTIN)
     # Wire the oracle's overview-IFD check when the fixture carries
     # overviews. The factory threads the dask backend's options through
     # so each overview level reads via the same windowed-decode path
@@ -211,7 +217,7 @@ def test_dask_candidate_is_actually_chunked() -> None:
             f"no eligible fixture is at least {2 * CHUNK_SIZE}x{2 * CHUNK_SIZE}"
         )
     entry = eligible[0]
-    da = open_geotiff(str(_fixture_path(entry)), chunks=CHUNK_SIZE)
+    da = open_geotiff(str(_fixture_path(entry)), chunks=CHUNK_SIZE, **_OPTIN)
     assert hasattr(da.data, "dask"), (
         f"expected a dask-backed DataArray for {entry['id']!r}, "
         f"got data of type {type(da.data).__name__}"

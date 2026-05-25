@@ -91,7 +91,7 @@ class TestJPEG2000WriteRoundTrip:
         path = str(tmp_path / 'j2k_1048_tiled_uint8.tif')
         write(expected, path, compression='jpeg2000', tiled=True, tile_size=8)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_tiled_uint16(self, tmp_path):
@@ -102,7 +102,7 @@ class TestJPEG2000WriteRoundTrip:
         path = str(tmp_path / 'j2k_1048_tiled_uint16.tif')
         write(expected, path, compression='jpeg2000', tiled=True, tile_size=8)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_stripped_uint8(self, tmp_path):
@@ -113,7 +113,7 @@ class TestJPEG2000WriteRoundTrip:
         path = str(tmp_path / 'j2k_1048_stripped.tif')
         write(expected, path, compression='jpeg2000', tiled=False)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
 
     def test_with_geo_info(self, tmp_path):
@@ -127,7 +127,7 @@ class TestJPEG2000WriteRoundTrip:
         write(expected, path, compression='jpeg2000', tiled=True, tile_size=8,
               geo_transform=gt, crs_epsg=4326, nodata=0)
 
-        arr, geo = read_to_array(path)
+        arr, geo = read_to_array(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(arr, expected)
         assert geo.crs_epsg == 4326
 
@@ -147,7 +147,7 @@ class TestJPEG2000WriteRoundTrip:
         to_geotiff(da, path, compression='jpeg2000',
                    allow_experimental_codecs=True)
 
-        result = open_geotiff(path)
+        result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, data)
 
 

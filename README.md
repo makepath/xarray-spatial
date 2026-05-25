@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD033 MD041 -->
 > [!IMPORTANT]
-> **xarray-spatial uses AI assistance more aggressively than most open-source projects.** Before opening a PR, read the [AI-Assisted Contribution Policy](AI_POLICY.md) and run your changes through the project's approved AI review workflow (see the slash-command suite in [`.claude/commands/`](.claude/commands)). PRs that ignore the workflow are likely to be rejected.
+> **xarray-spatial uses AI assistance more aggressively than other open-source projects.** Before opening a PR, read the [AI-Assisted Contribution Policy](AI_POLICY.md) and run your changes through the project's approved AI review workflow (see the slash-command suite in [`.claude/commands/`](.claude/commands)). PRs that ignore the workflow are likely to be rejected.
 >
 > **Feature freeze in effect.** The project is working toward its first major release (1.0.0). Until 1.0.0 ships, only bug fixes, test coverage, performance work, and documentation PRs will be considered. New feature proposals will be triaged but not implemented until after the release.
 > 
@@ -150,7 +150,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 
-VRT is supported as a conservative advanced feature for simple GeoTIFF mosaics, not as a full GDAL VRT replacement. See the [VRT support contract](docs/source/reference/geotiff.rst#vrt-support-contract) for the supported subset and what is out of scope.
+VRT is supported as a conservative advanced feature for simple GeoTIFF mosaics, not as a full GDAL VRT replacement. See the [VRT support matrix](docs/source/reference/geotiff.rst#vrt-support-matrix-issue-2321) for the supported subset and what is out of scope.
 
 | Name | Description | NumPy | Dask | CuPy GPU | Dask+CuPy GPU | Cloud |
 |:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
