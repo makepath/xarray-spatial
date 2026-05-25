@@ -50,8 +50,10 @@ What you can expect:
 What you should NOT rely on:
 
 * GPU support for every codec on the CPU path. ``allow_experimental_codecs``
-  does NOT widen GPU support; codecs outside the GPU-supported set fall
-  back to CPU even on a GPU read.
+  does NOT widen the GPU codec set; on the GPU writer, codecs outside the
+  GPU-supported set route through a CPU fallback inside
+  ``write_geotiff_gpu`` rather than executing on the GPU. Locked by
+  ``xrspatial/geotiff/tests/test_gpu_writer_cpu_fallback_codecs_2026_05_12.py``.
 * GPU promotion to ``stable`` inside this release cycle. See the GPU
   rows in :ref:`reference.geotiff_release_gate` for the current tier
   and the regression tests behind each row.
@@ -123,7 +125,7 @@ affine and writes an axis-aligned file from the coords. This is
 locked by ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``.
 A rotated or skewed 6-tuple supplied through ``attrs['transform']``
 or through a VRT source is also rejected; see
-``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``
+``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
 (``test_eager_writer_rejects_rotated_6tuple_transform`` and
 ``test_vrt_with_skewed_geotransform_rejected``).
 
@@ -532,18 +534,18 @@ regression test that locks the behaviour.
    * - Mixed per-band nodata across VRT sources (default
        ``band_nodata=None``)
      - ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``,
-       ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``
+       ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
        (``test_mixed_per_source_nodata_rejected``)
    * - Rotated read without ``allow_rotated=True``
      - ``xrspatial/geotiff/tests/test_release_gate_negative_2341.py``,
        ``xrspatial/geotiff/tests/test_rotated_typed_error_2267.py``
    * - Rotated write without ``drop_rotation=True``
      - ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``,
-       ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``
+       ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
        (``test_eager_writer_rejects_rotated_6tuple_transform``,
        ``test_eager_writer_rejects_rotated_affine_attr``)
    * - Skewed VRT geotransform
-     - ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``
+     - ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
        (``test_vrt_with_skewed_geotransform_rejected``)
    * - Complex source / mask band / alpha band in a VRT
      - ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``,
@@ -552,8 +554,8 @@ regression test that locks the behaviour.
      - ``xrspatial/geotiff/tests/test_vrt_path_containment_1671.py``
    * - 1xN / Nx1 write without ``attrs['transform']`` or
        ``assume_square_pixels_for_degenerate_axis=True``
-     - covered above under "Degenerate-axis writes"; locked by
-       the issue #2214 regression suite.
+     - ``xrspatial/geotiff/tests/test_degenerate_pixel_size_2214.py``;
+       see also "Degenerate-axis writes" above.
    * - HTTP read against a private / loopback / link-local host
        without ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1``
      - ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
