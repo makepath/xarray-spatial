@@ -170,7 +170,9 @@ def read_vrt(source: str, *,
     reprojection VRTs, arbitrary resampling beyond the tested subset,
     mixed CRS / resolution / dtype / band metadata without an opt-in,
     nested VRTs, complex source / mask band / alpha band structures,
-    full GDAL VRT parity.
+    full GDAL VRT parity. The conservative-feature framing is from epic
+    #2342; the canonical contract is the "VRT support matrix" section
+    in the geotiff reference docs.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
     into a single array.

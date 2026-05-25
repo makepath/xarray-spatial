@@ -198,6 +198,8 @@ with spatial coords on both axes but no explicit transform raises
 Multi-row / multi-column writes are unaffected. 1x1 inputs still
 require ``attrs['transform']`` because neither axis has a step.
 
+.. _reference.geotiff.vrt_support_matrix:
+
 VRT support matrix (issue #2321)
 ================================
 

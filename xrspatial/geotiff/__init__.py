@@ -389,8 +389,8 @@ def open_geotiff(source: str | BinaryIO, *,
     - Default: NumPy eager read
 
     VRT files are auto-detected by extension. The supported VRT subset
-    is narrow on purpose (issue #2321; epic #2340). See the "VRT
-    support matrix" section in ``docs/source/reference/geotiff.rst``
+    is narrow on purpose (issue #2321; epic #2340; epic #2342). See the
+    "VRT support matrix" section in ``docs/source/reference/geotiff.rst``
     and the audited matrix in
     ``docs/source/reference/release_gate_geotiff.rst`` for the
     canonical contract. In short:
