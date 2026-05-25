@@ -24,7 +24,8 @@ GeoTIFF release gate / audit checklist
    (COG promotion), ``#2321`` (VRT contract and release hardening),
    ``#2340`` (feature tiering), ``#2341`` (correctness and backend parity),
    ``#2342`` (conservative VRT subset), and ``#2344`` (remote / source
-   safety hardening).
+   safety hardening). The doc-readiness epic that owns this checklist
+   itself is ``#2345``.
 
 How a maintainer runs this gate
 ===============================
@@ -78,8 +79,10 @@ A skipped row is not the same as a passing row. Before signing off:
   tagged ``experimental``.
 * The ``xfail`` rows in ``test_release_gate_negative_2341.py`` are
   intentional pins for follow-up work (see that file's docstring). A
-  newly-passing ``xfail`` is also a signal: it means the linked
-  follow-up has landed and the row should be re-tiered in this PR.
+  newly-passing ``xfail`` is also a signal: the linked follow-up has
+  landed, the row should be re-tiered in this PR, and the
+  ``xfail`` marker on the test should be removed in the same commit
+  so the gate cannot silently regress.
 
 Promote / demote decision rule
 ------------------------------
@@ -108,6 +111,19 @@ Use this rule to decide what to do with a row after the gate suite runs:
 If a row's acceptance statement no longer matches the test (the test was
 amended without updating the row), fix the row in this PR before tagging.
 A row that lies about its own gate is worse than a missing row.
+
+A note on sub-gate rows
+-----------------------
+
+Some rows in the tables below are sub-gates of a broader feature key
+(for example ``reader.http`` -- SSRF defense, or ``writer.cog`` --
+tile-layout pre-flight). A sub-gate row can carry a stricter tier than
+its parent feature row. ``reader.http`` is ``advanced`` because the
+HTTP read surface as a whole still has unresolved questions (redirect
+handling, retry policy), but the SSRF fail-closed defense inside it is
+a hard gate at ``stable``: SSRF cannot regress, even on an ``advanced``
+read path. Sub-gate tier stricter than parent is intentional, not
+drift, and does not need to be reconciled in an audit pass.
 
 Cross-references
 ----------------
@@ -169,7 +185,7 @@ Local GeoTIFF read and write
      - ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``,
        ``xrspatial/geotiff/tests/test_backend_full_parity_2211.py``
      - `#2341`_
-   * - eager / dask parity (sub-gate of ``reader.dask``)
+   * - ``reader.dask`` -- eager / dask parity
      - stable
      - ``open_geotiff(path)`` and ``read_geotiff_dask(path)`` return the
        same pixels, ``dims``, ``coords``, and the seven release-attr
@@ -311,8 +327,8 @@ HTTP / fsspec reads
      - advanced
      - ``http://`` / ``https://`` URLs dispatch through ``_HTTPSource`` and
        apply the SSRF / private-host filter; uppercase schemes
-       (``HTTP://``, ``HTTPS://``) route the same way (see ``#2321``
-       sub-PR 5).
+       (``HTTP://``, ``HTTPS://``) route the same way (case-insensitive
+       scheme routing, ``#2326``).
      - ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``,
        ``xrspatial/geotiff/tests/test_golden_corpus_http_1930.py``,
        ``xrspatial/geotiff/tests/test_http_dask_allow_rotated_2130.py``
@@ -323,7 +339,7 @@ HTTP / fsspec reads
        fsspec; HTTP(S) schemes do not silently fall through.
      - ``xrspatial/geotiff/tests/test_golden_corpus_fsspec_1930.py``
      - `#2344`_
-   * - ``reader.http`` -- SSRF defense (sub-gate)
+   * - ``reader.http`` -- SSRF defense
      - stable
      - URLs resolving to loopback, link-local, or RFC1918 ranges raise
        :class:`xrspatial.geotiff.UnsafeURLError` unless
@@ -333,7 +349,7 @@ HTTP / fsspec reads
        ``xrspatial/geotiff/tests/test_release_gate_2321.py``
        (HTTP SSRF presence gate)
      - `#2344`_
-   * - ``reader.http_cog`` -- per-tile byte-count cap (sub-gate)
+   * - ``reader.http_cog`` -- per-tile byte-count cap
      - stable
      - Tile or strip declared sizes exceeding ``XRSPATIAL_COG_MAX_TILE_BYTES``
        (default 256 MiB) raise ``ValueError``.
