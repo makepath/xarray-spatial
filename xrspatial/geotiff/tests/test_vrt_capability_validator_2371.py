@@ -348,11 +348,14 @@ def test_use_mask_band_true_rejected_at_validator(tmp_path):
     assert src_path in msg
 
 
-@pytest.mark.parametrize('flag', ['true', 'True', 'TRUE', '1', 'yes'])
+@pytest.mark.parametrize('flag', ['true', 'True', 'TRUE', '1'])
 def test_use_mask_band_truthy_spellings_rejected(tmp_path, flag):
-    """``<UseMaskBand>`` accepts several truthy spellings (GDAL writes
-    lowercase ``true`` but the validator should not depend on case or
-    on the exact token)."""
+    """``<UseMaskBand>`` accepts the case-insensitive ``true`` and the
+    digit ``1`` -- GDAL writes lowercase ``true``, and the digit form
+    keeps the parser tolerant of XML emitters that normalise booleans
+    to ``1``. Anything else falls outside the truthy set and is
+    treated as not-mask (see ``test_use_mask_band_non_canonical_*``
+    below)."""
     src_path = _write_src(tmp_path, name=f'src_flag_{flag}_2371.tif')
     path, parsed = _parse(
         tmp_path, _use_mask_band_xml(src_path, flag=flag),
@@ -372,6 +375,22 @@ def test_use_mask_band_false_is_accepted(tmp_path):
         'use_mask_false_2371.vrt',
     )
     # Must not raise.
+    validate_parsed_vrt(parsed, source=path, mode='read')
+
+
+@pytest.mark.parametrize('flag', ['yes', 'on', 'Y'])
+def test_use_mask_band_non_canonical_truthy_accepted(tmp_path, flag):
+    """Tokens outside the canonical GDAL set (``true`` / ``1``) are
+    treated as not-mask. The parser deliberately narrows the truthy
+    set so a hand-edited VRT using a Python-truthy spelling does not
+    silently flip the read into the rejection path. If GDAL ever
+    starts emitting one of these, the set should be widened then."""
+    src_path = _write_src(tmp_path, name=f'src_ncf_{flag}_2371.tif')
+    path, parsed = _parse(
+        tmp_path, _use_mask_band_xml(src_path, flag=flag),
+        f'use_mask_ncf_{flag}_2371.vrt',
+    )
+    # Must not raise -- non-canonical token is treated as not-mask.
     validate_parsed_vrt(parsed, source=path, mode='read')
 
 

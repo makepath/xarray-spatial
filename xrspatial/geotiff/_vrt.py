@@ -705,12 +705,14 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
             # and would silently drop the per-pixel mask. Capture the
             # flags so ``validate_parsed_vrt`` can reject the VRT with
             # an actionable message that names the offending source.
-            # GDAL emits ``<UseMaskBand>true</UseMaskBand>`` (string)
-            # so accept any non-empty truthy spelling. See issue #2371.
+            # GDAL emits ``<UseMaskBand>true</UseMaskBand>`` exclusively;
+            # the truthy set is narrowed to ``('1', 'true')`` to match
+            # what real VRTs contain rather than every spelling Python
+            # would coerce to ``True``. See issue #2371.
             use_mask_band_str = _text(src_elem, 'UseMaskBand')
             use_mask_band = (
                 use_mask_band_str is not None
-                and use_mask_band_str.strip().lower() in ('1', 'true', 'yes')
+                and use_mask_band_str.strip().lower() in ('1', 'true')
             )
             has_mask_source = src_elem.find('MaskBand') is not None
 
@@ -1245,6 +1247,9 @@ def read_vrt(vrt_path: str, *, window=None,
     # entry point now get the same capability gate as the public
     # backend path. See issue #2371.
     if parsed is None:
+        # Lazy import: ``_vrt_validation`` imports ``_NEAREST_RESAMPLE_ALGS``
+        # from this module for the resample-alg check, so a top-level
+        # import here would close a circular import loop at module load.
         from ._vrt_validation import validate_parsed_vrt
         validate_parsed_vrt(vrt, source=vrt_path, mode='read')
     if missing_sources not in ('warn', 'raise'):
