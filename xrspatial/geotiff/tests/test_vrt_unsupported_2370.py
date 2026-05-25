@@ -463,6 +463,12 @@ def test_unsupported_resample_alg_open_geotiff(tmp_path):
     """The same rejection must fire through ``open_geotiff`` -- the
     public entry point shares the read path, so a regression there
     would mean only the low-level helper is safe.
+
+    Either exception type is acceptable: the legacy resample-site check
+    raises ``NotImplementedError`` (#1751), and the centralised
+    validator from #2329 raises ``VRTUnsupportedError`` (a
+    ``ValueError`` subclass) at parse time. Both are valid rejections
+    so long as the message names the offending algorithm.
     """
     src_path = _write_src_tif(tmp_path, name='res_og')
     body = f"""    <ComplexSource>
@@ -475,7 +481,7 @@ def test_unsupported_resample_alg_open_geotiff(tmp_path):
     xml = _vrt_xml(width=2, height=2, body=body)
     vrt_path = _write_vrt(tmp_path, xml, 'resample_og')
 
-    with pytest.raises(NotImplementedError, match='Cubic'):
+    with pytest.raises((NotImplementedError, ValueError), match='Cubic'):
         open_geotiff(vrt_path)
 
 
