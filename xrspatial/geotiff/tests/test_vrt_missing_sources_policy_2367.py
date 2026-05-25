@@ -176,15 +176,12 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
 
     def test_eager_warn_emits_and_fills(self, tmp_path):
         vrt_path, _, missing = _build_partial_vrt(str(tmp_path))
-        with pytest.warns(GeoTIFFFallbackWarning) as record:
+        # Use ``match=`` for the class + message check in one step,
+        # matching the sibling 1799 test's style.
+        with pytest.warns(
+            GeoTIFFFallbackWarning, match="missing_2367.tif",
+        ):
             da = read_vrt(vrt_path, missing_sources="warn")
-
-        # Warning message names the missing source.
-        msgs = [str(w.message) for w in record]
-        assert any("missing_2367.tif" in m for m in msgs), (
-            f"Expected GeoTIFFFallbackWarning naming the missing "
-            f"source; got messages: {msgs!r}"
-        )
 
         # vrt_holes attr is populated and points at the missing file.
         assert "vrt_holes" in da.attrs
