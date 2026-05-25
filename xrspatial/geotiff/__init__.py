@@ -357,7 +357,11 @@ def open_geotiff(source: str | BinaryIO, *,
     - ``gpu=True, chunks=N``: Dask+CuPy for out-of-core GPU pipelines
     - Default: NumPy eager read
 
-    VRT files are auto-detected by extension.
+    VRT files are auto-detected by extension. The VRT path is a
+    conservative advanced feature scoped to simple GeoTIFF mosaics; the
+    "VRT support contract" section of the geotiff reference docs (and
+    epic #2342) lists the supported subset and what is out of scope.
+    The ``read_vrt`` docstring repeats the same lists.
 
     Parameters
     ----------

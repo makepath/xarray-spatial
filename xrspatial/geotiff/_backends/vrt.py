@@ -139,6 +139,12 @@ def read_vrt(source: str, *,
     raises a typed error rather than silently flattening. See
     :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
 
+    The VRT path is scoped to simple GeoTIFF mosaics, not full GDAL VRT
+    compatibility. The "VRT support contract" section of the geotiff
+    reference docs (and epic #2342) lists the supported subset and what
+    is out of scope. The internal ``read_vrt`` docstring in
+    ``xrspatial.geotiff._vrt`` repeats the same lists.
+
     The VRT's source GeoTIFFs are read via windowed reads and assembled
     into a single array.
 

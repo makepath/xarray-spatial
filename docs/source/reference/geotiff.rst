@@ -187,6 +187,49 @@ with spatial coords on both axes but no explicit transform raises
 Multi-row / multi-column writes are unaffected. 1x1 inputs still
 require ``attrs['transform']`` because neither axis has a step.
 
+.. _reference.geotiff.vrt_support_contract:
+
+VRT support contract
+====================
+
+The VRT path is a conservative advanced feature in this release. It
+covers simple GeoTIFF mosaics, not GDAL VRT in general. The reader
+fails closed on anything outside the documented subset rather than
+silently flattening mismatched metadata. See epic #2342 for the
+underlying discussion.
+
+Supported
+---------
+
+* Simple GDAL VRT mosaics backed by GeoTIFF sources.
+* Compatible source CRS, dtype, transform orientation, pixel size, band
+  count, and band layout across the backing GeoTIFFs.
+* Windowed reads where source and destination windows map cleanly.
+* Lazy / dask reads over the same supported subset.
+* Explicit nodata handling on each band.
+* Mixed-band nodata rejection by default. Opt-ins are documented on the
+  kwargs that enable them (e.g. ``band_nodata='first'`` on
+  ``open_geotiff``).
+* ``missing_sources='raise'`` is the default. ``'warn'`` is an explicit
+  opt-in for partial mosaics; see the "VRT missing sources" section
+  below.
+
+Not promised
+------------
+
+The following are out of scope for this release. The reader rejects
+them up front rather than producing best-effort output:
+
+* Full GDAL VRT compatibility.
+* Warped or reprojection VRTs.
+* Nested VRTs.
+* Arbitrary resampling semantics beyond the implemented and tested
+  subset.
+* Mixed CRS, mixed dtype, mixed resolution, or mixed band metadata
+  unless an explicit opt-in covers the case.
+* Complex mask, alpha, or source semantics that are not represented in
+  the GeoTIFF attrs contract.
+
 VRT missing sources
 ===================
 

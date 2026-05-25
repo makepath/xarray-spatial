@@ -1008,6 +1008,41 @@ def read_vrt(vrt_path: str, *, window=None,
         opt-out symmetrically for float and integer source dtypes.
         See issue #2158.
 
+    Supported subset
+    ----------------
+    VRT here is a conservative advanced feature, scoped to simple
+    GeoTIFF mosaics rather than full GDAL VRT parity. See epic #2342
+    and the "VRT support contract" section of the geotiff docs.
+
+    Supported:
+
+    * Simple GDAL VRT mosaics backed by GeoTIFF sources.
+    * Compatible source CRS, dtype, transform orientation, pixel size,
+      band count, and band layout.
+    * Windowed reads where source and destination windows map cleanly.
+    * Lazy / dask reads over the same supported subset.
+    * Explicit nodata handling.
+    * Mixed-band nodata rejection by default. Opt-ins are documented on
+      the kwargs that enable them (e.g. ``band_nodata='first'`` on
+      ``open_geotiff``).
+    * ``missing_sources='raise'`` is the default. ``'warn'`` is an
+      explicit opt-in for partial mosaics.
+
+    Not supported
+    -------------
+    The reader fails closed (rather than silently flattening) on any of
+    the following:
+
+    * Full GDAL VRT compatibility.
+    * Warped / reprojection VRTs.
+    * Nested VRTs.
+    * Arbitrary resampling semantics beyond the implemented and tested
+      subset.
+    * Mixed CRS, mixed dtype, mixed resolution, or mixed band metadata
+      unless explicitly supported.
+    * Complex mask, alpha, or source semantics that are not represented
+      in the GeoTIFF attrs contract.
+
     Returns
     -------
     (np.ndarray, VRTDataset) tuple

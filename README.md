@@ -150,6 +150,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 
+VRT is supported as a conservative advanced feature for simple GeoTIFF mosaics, not as a full GDAL VRT replacement. See the [VRT support contract](docs/source/reference/geotiff.rst#vrt-support-contract) for the supported subset and what is out of scope.
+
 | Name | Description | NumPy | Dask | CuPy GPU | Dask+CuPy GPU | Cloud |
 |:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
 | [open_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
