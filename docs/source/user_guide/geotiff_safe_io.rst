@@ -32,12 +32,14 @@ the read and write paths:
    * - Entry point
      - What it does
    * - :func:`xrspatial.geotiff.open_geotiff`
-     - Single dispatch for reading. A path or a binary file-like is the
-       only required argument. Pass ``chunks=N`` for a dask-backed lazy
+     - The read entry point. A path or a binary file-like is the only
+       required argument. Pass ``chunks=N`` for a dask-backed lazy
        read; pass ``gpu=True`` for a CuPy-backed eager read; combine
        both for a dask + CuPy read. Returns a 2D
        :class:`xarray.DataArray` for single-band input and a 3D one for
-       multi-band input.
+       multi-band input. The binary file-like form is restricted to the
+       eager numpy reader; dask, GPU, VRT, and remote-URL paths require
+       a string.
    * - :func:`xrspatial.geotiff.read_vrt`
      - Dedicated entry point for reading a GDAL ``.vrt`` mosaic over a
        set of GeoTIFF sources. Tier: ``advanced``. The VRT path honours
@@ -48,7 +50,7 @@ the read and write paths:
        classes live in :mod:`xrspatial.geotiff._errors`.
    * - :func:`xrspatial.geotiff.to_geotiff`
      - Write a DataArray to a local path. Pass ``cog=True`` for a
-       Cloud-Optimised GeoTIFF layout. Pass ``allow_experimental_codecs=True``
+       Cloud-optimized GeoTIFF layout. Pass ``allow_experimental_codecs=True``
        to opt into ``lerc``, ``jpeg2000`` / ``j2k``, or ``lz4``; pass
        ``allow_internal_only_jpeg=True`` to opt into the
        internal-only ``jpeg`` codec.
@@ -110,7 +112,7 @@ Recommended codecs
 
 Five codecs are tagged ``stable`` and form the lossless contract:
 
-* ``none`` -- no compression.
+* ``none`` -- no compression (``COMPRESSION_NONE`` in the TIFF spec).
 * ``deflate`` -- DEFLATE.
 * ``lzw`` -- LZW.
 * ``packbits`` -- PackBits.
@@ -142,7 +144,7 @@ COG output
 ==========
 
 Pass ``cog=True`` to :func:`xrspatial.geotiff.to_geotiff` to write a
-Cloud-Optimised GeoTIFF. The writer emits an IFD-first, tiled layout
+Cloud-optimized GeoTIFF. The writer emits an IFD-first, tiled layout
 with internal overviews using a lossless codec.
 
 The stable COG contract covers:
@@ -181,9 +183,14 @@ Fail-closed errors
 
 The reader and writer raise typed errors instead of guessing when the
 input is ambiguous or unsupported. The hierarchy lives in
-:mod:`xrspatial.geotiff` and every entry below subclasses
+:mod:`xrspatial.geotiff`. Every entry below subclasses
 :class:`ValueError`, so existing ``except ValueError`` callers keep
-catching them.
+catching them. The first eight entries also subclass
+:class:`~xrspatial.geotiff.GeoTIFFAmbiguousMetadataError`, which catches
+the ambiguous-metadata family at once.
+:class:`~xrspatial.geotiff.UnsupportedGeoTIFFFeatureError` is a direct
+``ValueError`` subclass and sits outside that family on purpose --
+"we refuse this input" is distinct from "the input is malformed".
 
 .. list-table::
    :header-rows: 1
@@ -235,13 +242,6 @@ catching them.
      - No opt-in. The error message names the feature and the source
        that triggered it.
 
-All of these are subclasses of
-:class:`~xrspatial.geotiff.GeoTIFFAmbiguousMetadataError` except
-``UnsupportedGeoTIFFFeatureError``, which is a direct ``ValueError``
-subclass. Catch ``GeoTIFFAmbiguousMetadataError`` to handle the whole
-ambiguous-metadata family at once.
-
-
 Remote-read safety limits
 =========================
 
@@ -260,7 +260,8 @@ The reader caps the total bytes pulled from a remote source via the
 1. The ``max_cloud_bytes`` kwarg, if the caller passed one.
 2. The ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` env var, if it is set to a
    positive integer.
-3. The module default.
+3. The module default, 256 MiB. The constant lives at
+   :data:`xrspatial.geotiff._sources.MAX_CLOUD_BYTES_DEFAULT`.
 
 Pass ``max_cloud_bytes=None`` to disable the cap explicitly when the
 caller has another reason to trust the source. The cap is a guard
