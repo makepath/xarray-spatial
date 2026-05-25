@@ -1008,13 +1008,18 @@ def read_vrt(vrt_path: str, *, window=None,
         opt-out symmetrically for float and integer source dtypes.
         See issue #2158.
 
-    Supported subset
-    ----------------
-    VRT here is a conservative advanced feature, scoped to simple
-    GeoTIFF mosaics rather than full GDAL VRT parity. See epic #2342
-    and the "VRT support contract" section of the geotiff docs.
+    Returns
+    -------
+    (np.ndarray, VRTDataset) tuple
 
-    Supported:
+    Notes
+    -----
+    The VRT path is a conservative advanced feature scoped to simple
+    GeoTIFF mosaics rather than full GDAL VRT parity. See epic #2342
+    and the "VRT support contract" section of the geotiff reference
+    docs.
+
+    *Supported:*
 
     * Simple GDAL VRT mosaics backed by GeoTIFF sources.
     * Compatible source CRS, dtype, transform orientation, pixel size,
@@ -1028,10 +1033,8 @@ def read_vrt(vrt_path: str, *, window=None,
     * ``missing_sources='raise'`` is the default. ``'warn'`` is an
       explicit opt-in for partial mosaics.
 
-    Not supported
-    -------------
-    The reader fails closed (rather than silently flattening) on any of
-    the following:
+    *Not supported.* The reader fails closed (rather than silently
+    flattening) on any of the following:
 
     * Full GDAL VRT compatibility.
     * Warped / reprojection VRTs.
@@ -1042,10 +1045,6 @@ def read_vrt(vrt_path: str, *, window=None,
       unless explicitly supported.
     * Complex mask, alpha, or source semantics that are not represented
       in the GeoTIFF attrs contract.
-
-    Returns
-    -------
-    (np.ndarray, VRTDataset) tuple
     """
     from ._reader import PixelSafetyLimitError, read_to_array
 
