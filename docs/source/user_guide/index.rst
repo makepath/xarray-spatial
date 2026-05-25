@@ -18,4 +18,5 @@ User Guide
    surface
    zonal
    attrs_contract
+   geotiff_safe_io
    local-migration
