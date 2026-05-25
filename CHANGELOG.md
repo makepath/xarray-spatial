@@ -4,6 +4,46 @@
 
 ### Unreleased
 
+#### GeoTIFF release contract
+
+Tiers what the public GeoTIFF and COG surface promises for this release.
+`xrspatial.geotiff.SUPPORTED_FEATURES` is the source of truth; the bullets
+below mirror it. See the reference page at `docs/source/reference/geotiff.rst`
+for the per-tier semantics and the audit trail.
+
+**Stable**
+- Local-file GeoTIFF read (`open_geotiff`) on the eager numpy backend, including windowed reads via `window=`. Covered by the window-read suite in `xrspatial/geotiff/tests/`. (epic #2340)
+- Dask reads (`read_geotiff_dask`). Cross-backend parity against the eager numpy reader is gated by `test_backend_parity_matrix.py` and `test_backend_full_parity_2211.py`. (epic #2341)
+- Local-file GeoTIFF write (`to_geotiff`) on the CPU writer. (epic #2340)
+- Local COG read and write (`reader.local_cog`, `writer.cog`) for axis-aligned 2D / 3D rasters with the lossless codecs `none`, `deflate`, `lzw`, `zstd`, `packbits`, internal overviews only, and normal CRS / transform / dtype / nodata / band / pixel-is-area / pixel-is-point round-trip. Backed by the writer compliance suite (#2292), the cross-backend parity gate (#2293), and the per-tile byte-budget contract (#2294 / #2298). (epic #2286)
+- Lossless stable codecs: `none`, `deflate`, `lzw`, `zstd`, `packbits`. Integer and float byte-for-byte round-trip. (epic #2340)
+
+**Advanced**
+- fsspec-routed reads (`reader.fsspec`) and HTTPS reads (`reader.http`). The transport layer works but the redirect / retry / cache surface is not contracted at the stable bar. (epic #2344)
+- HTTP COG reads (`reader.http_cog`). Range fetching, range coalescing, the SSRF / private-host filter, and the per-tile byte cap are pinned by the byte-budget contract (#2294 / #2298), but the broader transport surface is tracked separately for stable promotion. (epic #2344)
+- VRT reads (`reader.vrt`). Limited to simple GDAL VRT mosaics over GeoTIFF sources that agree on CRS, transform orientation, pixel size, dtype, and band count. See the VRT support matrix in `docs/source/reference/geotiff.rst`. (epic #2342, PR #2321)
+- External `.tif.ovr` sidecar reads (`reader.sidecar_ovr`). (epic #2340)
+- Writer overviews and BigTIFF (`writer.overviews`, `writer.bigtiff`). (epic #2340)
+- BigTIFF COG writes (`writer.bigtiff_cog`). The external-interop gate lives in `test_bigtiff_cog_compliance_2286.py`; promotion to stable follows the same release-cycle soak rule as the rest of the COG surface. (epic #2286)
+
+**Experimental**
+- GPU reads and writes (`reader.gpu`, `writer.gpu`). Cross-backend numerical parity is not claimed at this tier. (epic #2341)
+- Experimental codecs: `lerc`, `jpeg2000`, `j2k`, `lz4`. Require `allow_experimental_codecs=True` on both read and write paths. Reader support across GDAL versions is uneven. (epic #2340)
+- Permissive read escape hatches: `allow_rotated=True` (`reader.allow_rotated`) and `allow_unparseable_crs=True` (`reader.allow_unparseable_crs`). Both bypass a read-side check that the writer normally rejects. (epic #2340)
+- Rich-tag writes: `writer.gdal_metadata_xml` and `writer.extra_tags`. Free-form payloads are written verbatim; interop with rasterio, libtiff, and GDAL depends on the payload. Gated by `allow_experimental_codecs=True` on writes from a fresh DataArray; round-tripped attrs from a previous read are exempt. (epic #2340)
+
+**Internal-only**
+- `codec.jpeg` (JPEG-in-TIFF). The encoder writes self-contained JFIF tiles without the TIFF JPEGTables tag (347), so the on-disk output is not interoperable with libtiff, GDAL, or rasterio. Reads and writes require the dedicated `allow_internal_only_jpeg=True` opt-in; `allow_experimental_codecs=True` does not unlock this path. (epic #2340)
+
+**Unsupported for this release** (these combinations fail closed: the writer or reader raises rather than silently producing a wrong result)
+- Warped VRTs (`<VRTDataset subClass="VRTWarpedDataset">`). (PR #2321)
+- Nested VRTs (a `<SourceFilename>` pointing at another `.vrt`). (PR #2321)
+- VRT mosaics whose sources disagree on CRS, pixel size, dtype, or band count without an explicit opt-in. The default raises `MixedBandMetadataError`. (PR #2321)
+- `to_geotiff(..., cog=True, tiled=False)`. COG output requires the tiled layout. (epic #2286)
+- Rotated transforms on the write path. The reader has an `allow_rotated=True` escape hatch in the experimental tier; the writer has no equivalent. (epic #2340)
+- 1xN / Nx1 writes without an explicit `attrs['transform']`. The writer used to borrow the non-degenerate axis's spacing and silently invent the wrong pixel size; the writer now raises. (epic #2340)
+
+
 #### Bug fixes and improvements
 - Reconcile `xrspatial.geotiff.SUPPORTED_FEATURES` with the GeoTIFF release-contract tiering proposed in epic #2340. Adds `reader.windowed` at `stable` (covered by the existing window-read suite) and `reader.dask` at `stable` (covered by the cross-backend parity matrix in `test_backend_parity_matrix.py` and `test_backend_full_parity_2211.py`). Demotes `reader.allow_rotated` and `reader.allow_unparseable_crs` from `advanced` to `experimental` to match the epic's placement of permissive read-side escape hatches in the Experimental tier. A new shape test (`test_supported_features_shape_2348.py`) pins the structural invariants of the mapping (every entry carries a tier label; the tier set is closed at `{stable, advanced, experimental, internal_only}`; the dict literal contains no duplicate keys) so future drift fails CI. Runtime behaviour of every read and write path is unchanged; this is metadata-only. Callers gating on the exact string value of these two demoted entries will need to update their checks. (#2348)
 - Promote the local COG read and write paths to the `stable` tier in `xrspatial.geotiff.SUPPORTED_FEATURES`. `SUPPORTED_FEATURES['writer.cog']` and `SUPPORTED_FEATURES['reader.local_cog']` now report `stable`; `reader.http_cog` stays `advanced` while the HTTP transport surface is contracted separately. The stable COG contract covers axis-aligned 2D / 3D rasters, the CPU writer and CPU reader, the lossless codecs (`none`, `deflate`, `lzw`, `zstd`, `packbits`), internal overviews, and normal CRS / transform / dtype / nodata / band / pixel-is-area / pixel-is-point round-trip. GPU COG paths, experimental codecs, rotated transforms, external `.tif.ovr` sidecars, file-like destinations with `cog=True`, BigTIFF COG, and HTTP COG remain outside the contract. Backed by the writer compliance suite (#2292), the cross-backend parity gate (#2293), and the per-tile byte-budget contract (#2294 / #2298). The reference docs (`docs/source/reference/geotiff.rst`) and the COG overview notebook spell out the full contract. (#2300)
