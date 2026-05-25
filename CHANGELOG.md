@@ -35,10 +35,7 @@ for the per-tier semantics and the audit trail.
 **Internal-only**
 - `codec.jpeg` (JPEG-in-TIFF). The encoder writes self-contained JFIF tiles without the TIFF JPEGTables tag (347), so the on-disk output is not interoperable with libtiff, GDAL, or rasterio. Reads and writes require the dedicated `allow_internal_only_jpeg=True` opt-in; `allow_experimental_codecs=True` does not unlock this path. (epic #2340)
 
-**Unsupported for this release**
-
-These combinations fail closed. The writer or reader raises rather than silently producing a wrong result.
-
+**Unsupported for this release** (these combinations fail closed: the writer or reader raises rather than silently producing a wrong result)
 - Warped VRTs (`<VRTDataset subClass="VRTWarpedDataset">`). (PR #2321)
 - Nested VRTs (a `<SourceFilename>` pointing at another `.vrt`). (PR #2321)
 - VRT mosaics whose sources disagree on CRS, pixel size, dtype, or band count without an explicit opt-in. The default raises `MixedBandMetadataError`. (PR #2321)
