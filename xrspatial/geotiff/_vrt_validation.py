@@ -295,9 +295,16 @@ def validate_parsed_vrt(
             # extension so ``.VRT`` (Windows-style) also trips the
             # rejection. See issue #2371.
             if src.filename.lower().endswith('.vrt'):
+                # Direct interpolation (not !r) for ``src.filename`` so
+                # Windows paths render with single backslashes rather
+                # than the doubled escapes ``repr`` emits, matching the
+                # ``parse_vrt`` pattern at the path-containment check.
+                # Without this, a callers ``in`` check against the raw
+                # Windows path would fail because ``repr`` doubles
+                # every backslash.
                 raise VRTUnsupportedError(
                     f"VRT '{source}' references another VRT as a source "
-                    f"({src.filename!r}, band {band.band_num}). Nested "
+                    f"('{src.filename}', band {band.band_num}). Nested "
                     f"VRTs are not a supported feature in this release; "
                     f"the mosaic reader assembles pixel data from "
                     f"GeoTIFF sources only. See "

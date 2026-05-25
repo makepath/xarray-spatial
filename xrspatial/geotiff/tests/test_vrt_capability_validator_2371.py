@@ -137,7 +137,12 @@ def test_nested_vrt_rejected_at_validator(tmp_path):
     # Outer path appears as the failing VRT.
     assert outer_path in msg
     # Inner path is named so the caller can locate the bad source.
-    assert inner_path in msg
+    # ``parse_vrt`` canonicalises source filenames via ``os.path.realpath``
+    # so the message carries the realpath form, not the raw string the
+    # test built. On Windows ``str(tmp_path / name)`` can produce a
+    # short-name path that differs from the realpath form, so compare
+    # the basename (the part that survives any normalisation).
+    assert os.path.basename(inner_path) in msg
     # Message names the failure mode.
     assert 'Nested' in msg or 'nested' in msg
 
