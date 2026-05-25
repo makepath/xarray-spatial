@@ -6,21 +6,19 @@
 
 #### GeoTIFF release contract
 
-This release locks down what the public GeoTIFF and COG surface promises.
-`xrspatial.geotiff.SUPPORTED_FEATURES` is the source of truth; the tiers
+Tiers what the public GeoTIFF and COG surface promises for this release.
+`xrspatial.geotiff.SUPPORTED_FEATURES` is the source of truth; the bullets
 below mirror it. See the reference page at `docs/source/reference/geotiff.rst`
 for the per-tier semantics and the audit trail.
 
-##### Stable
-
+**Stable**
 - Local-file GeoTIFF read (`open_geotiff`) on the eager numpy backend, including windowed reads via `window=`. Covered by the window-read suite in `xrspatial/geotiff/tests/`. (epic #2340)
 - Dask reads (`read_geotiff_dask`). Cross-backend parity against the eager numpy reader is gated by `test_backend_parity_matrix.py` and `test_backend_full_parity_2211.py`. (epic #2341)
 - Local-file GeoTIFF write (`to_geotiff`) on the CPU writer. (epic #2340)
 - Local COG read and write (`reader.local_cog`, `writer.cog`) for axis-aligned 2D / 3D rasters with the lossless codecs `none`, `deflate`, `lzw`, `zstd`, `packbits`, internal overviews only, and normal CRS / transform / dtype / nodata / band / pixel-is-area / pixel-is-point round-trip. Backed by the writer compliance suite (#2292), the cross-backend parity gate (#2293), and the per-tile byte-budget contract (#2294 / #2298). (epic #2286)
 - Lossless stable codecs: `none`, `deflate`, `lzw`, `zstd`, `packbits`. Integer and float byte-for-byte round-trip. (epic #2340)
 
-##### Advanced
-
+**Advanced**
 - fsspec-routed reads (`reader.fsspec`) and HTTPS reads (`reader.http`). The transport layer works but the redirect / retry / cache surface is not contracted at the stable bar. (epic #2344)
 - HTTP COG reads (`reader.http_cog`). Range fetching, range coalescing, the SSRF / private-host filter, and the per-tile byte cap are pinned by the byte-budget contract (#2294 / #2298), but the broader transport surface is tracked separately for stable promotion. (epic #2344)
 - VRT reads (`reader.vrt`). Limited to simple GDAL VRT mosaics over GeoTIFF sources that agree on CRS, transform orientation, pixel size, dtype, and band count. See the VRT support matrix in `docs/source/reference/geotiff.rst`. (epic #2342, PR #2321)
@@ -28,18 +26,16 @@ for the per-tier semantics and the audit trail.
 - Writer overviews and BigTIFF (`writer.overviews`, `writer.bigtiff`). (epic #2340)
 - BigTIFF COG writes (`writer.bigtiff_cog`). The external-interop gate lives in `test_bigtiff_cog_compliance_2286.py`; promotion to stable follows the same release-cycle soak rule as the rest of the COG surface. (epic #2286)
 
-##### Experimental
-
+**Experimental**
 - GPU reads and writes (`reader.gpu`, `writer.gpu`). Cross-backend numerical parity is not claimed at this tier. (epic #2341)
 - Experimental codecs: `lerc`, `jpeg2000`, `j2k`, `lz4`. Require `allow_experimental_codecs=True` on both read and write paths. Reader support across GDAL versions is uneven. (epic #2340)
 - Permissive read escape hatches: `allow_rotated=True` (`reader.allow_rotated`) and `allow_unparseable_crs=True` (`reader.allow_unparseable_crs`). Both bypass a read-side check that the writer normally rejects. (epic #2340)
 - Rich-tag writes: `writer.gdal_metadata_xml` and `writer.extra_tags`. Free-form payloads are written verbatim; interop with rasterio, libtiff, and GDAL depends on the payload. Gated by `allow_experimental_codecs=True` on writes from a fresh DataArray; round-tripped attrs from a previous read are exempt. (epic #2340)
 
-##### Internal-only
-
+**Internal-only**
 - `codec.jpeg` (JPEG-in-TIFF). The encoder writes self-contained JFIF tiles without the TIFF JPEGTables tag (347), so the on-disk output is not interoperable with libtiff, GDAL, or rasterio. Reads and writes require the dedicated `allow_internal_only_jpeg=True` opt-in; `allow_experimental_codecs=True` does not unlock this path. (epic #2340)
 
-##### Unsupported for this release
+**Unsupported for this release**
 
 These combinations fail closed. The writer or reader raises rather than silently producing a wrong result.
 
