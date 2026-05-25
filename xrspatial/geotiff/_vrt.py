@@ -225,6 +225,17 @@ class _Source:
     # matching rect sizes is a no-op and passes through.  Higher-quality
     # resamplers are tracked for follow-up.
     resample_alg: str | None = None
+    # True when the source element declared ``<UseMaskBand>true</UseMaskBand>``
+    # (GDAL writes this for ComplexSource entries that read through the
+    # source raster's per-band mask). The read pipeline ignores mask bands
+    # and would silently drop the per-pixel mask, so ``validate_parsed_vrt``
+    # rejects sources where this flag is set. See issue #2371.
+    use_mask_band: bool = False
+    # True when the source element declared a ``<MaskBand>`` child
+    # (per-source mask reference). Same disposition as ``use_mask_band`` --
+    # the read pipeline cannot serve the mask semantics and the validator
+    # rejects the VRT. See issue #2371.
+    has_mask_source: bool = False
 
 
 @dataclass
@@ -381,6 +392,12 @@ _UNSUPPORTED_BAND_TAGS = frozenset({
     'PixelFunctionType', 'PixelFunctionLanguage',
     'PixelFunctionCode', 'PixelFunctionArguments',
     'SourceTransferType', 'MaskBand', 'PansharpeningOptions',
+    # Defensive: a band-level ``<GDALWarpOptions>`` block is unusual
+    # (warp options usually sit at the dataset level or alongside the
+    # ``VRTWarpedRasterBand`` subClass marker), but catching it here as
+    # well keeps the parser symmetric with the dataset-level rejection
+    # in ``_UNSUPPORTED_DATASET_TAGS``. See issue #2371.
+    'GDALWarpOptions',
 })
 
 # Dataset-level (``<VRTDataset>`` children, sibling of ``<VRTRasterBand>``)
@@ -397,6 +414,14 @@ _UNSUPPORTED_DATASET_TAGS = frozenset({
     # Pansharpening setup at the dataset level (separate from the
     # band-level <PansharpeningOptions>).
     'PansharpeningOptions',
+    # GDAL ``<GDALWarpOptions>`` block. The ``VRTWarpedRasterBand`` subClass
+    # rejection above catches the band-level marker, but a warped VRT can
+    # also embed the warp configuration as a dataset-level sibling block
+    # (or as a child of a band that does not use the subClass attribute,
+    # depending on how the VRT was emitted). The mosaic reader does not
+    # implement reprojection; silently ignoring the block would dispatch
+    # on the raw source pixels and skip the warp step. See issue #2371.
+    'GDALWarpOptions',
 })
 
 
@@ -674,6 +699,21 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                 # #1694 and #1751.
                 resample_alg = _text(src_elem, 'ResampleAlg')
 
+            # ``<UseMaskBand>`` and ``<MaskBand>`` per-source markers
+            # request that the source's per-band mask drives the
+            # placement; the read pipeline does not honour mask bands
+            # and would silently drop the per-pixel mask. Capture the
+            # flags so ``validate_parsed_vrt`` can reject the VRT with
+            # an actionable message that names the offending source.
+            # GDAL emits ``<UseMaskBand>true</UseMaskBand>`` (string)
+            # so accept any non-empty truthy spelling. See issue #2371.
+            use_mask_band_str = _text(src_elem, 'UseMaskBand')
+            use_mask_band = (
+                use_mask_band_str is not None
+                and use_mask_band_str.strip().lower() in ('1', 'true', 'yes')
+            )
+            has_mask_source = src_elem.find('MaskBand') is not None
+
             sources.append(_Source(
                 filename=filename,
                 band=src_band,
@@ -683,6 +723,8 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                 scale=scale,
                 offset=offset,
                 resample_alg=resample_alg,
+                use_mask_band=use_mask_band,
+                has_mask_source=has_mask_source,
             ))
 
         bands.append(_VRTBand(
@@ -1193,6 +1235,18 @@ def read_vrt(vrt_path: str, *, window=None,
         xml_str = _read_vrt_xml(vrt_path)
         vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
         vrt = parse_vrt(xml_str, vrt_dir)
+
+    # Route every fresh parse through the centralised capability
+    # validator before any source read. When ``parsed`` is supplied the
+    # caller is responsible for having validated already (the chunked
+    # dask path threads a pre-validated instance in via #1825, and the
+    # ``_backends/vrt.read_vrt`` wrapper runs the validator on the
+    # eager parse before dispatching). Direct callers of this internal
+    # entry point now get the same capability gate as the public
+    # backend path. See issue #2371.
+    if parsed is None:
+        from ._vrt_validation import validate_parsed_vrt
+        validate_parsed_vrt(vrt, source=vrt_path, mode='read')
     if missing_sources not in ('warn', 'raise'):
         raise ValueError(
             f"missing_sources must be 'warn' or 'raise', got "

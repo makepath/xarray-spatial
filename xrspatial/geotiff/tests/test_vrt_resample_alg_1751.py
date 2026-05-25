@@ -17,8 +17,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff._vrt import read_vrt
 from xrspatial.geotiff._writer import write
+
+# Accept either the historical ``NotImplementedError`` raised by the
+# placement-site ``_check_resample_alg_supported`` gate or the newer
+# ``VRTUnsupportedError`` raised by the centralised
+# ``validate_parsed_vrt`` once it preempts the placement check (see
+# issue #2371). Both encode the same contract: nearest must not be
+# silently substituted for an unsupported alg.
+_UNSUPPORTED_RESAMPLE_EXC = (NotImplementedError, VRTUnsupportedError)
 
 
 def _write_src(tmp_path) -> str:
@@ -69,7 +78,7 @@ def test_unsupported_resample_alg_raises(tmp_path, alg):
                    alg_elem=f'<ResampleAlg>{alg}</ResampleAlg>')
     vrt_path = _write_vrt(tmp_path, xml, f'{alg.lower()}.vrt')
 
-    with pytest.raises(NotImplementedError) as excinfo:
+    with pytest.raises(_UNSUPPORTED_RESAMPLE_EXC) as excinfo:
         read_vrt(vrt_path)
     msg = str(excinfo.value)
     assert alg in msg
@@ -84,7 +93,7 @@ def test_unsupported_resample_alg_case_insensitive(tmp_path):
                    alg_elem='<ResampleAlg>bilinear</ResampleAlg>')
     vrt_path = _write_vrt(tmp_path, xml, 'lower.vrt')
 
-    with pytest.raises(NotImplementedError, match='bilinear'):
+    with pytest.raises(_UNSUPPORTED_RESAMPLE_EXC, match='bilinear'):
         read_vrt(vrt_path)
 
 

@@ -286,28 +286,85 @@ def validate_parsed_vrt(
             sr = src.src_rect
             dr = src.dst_rect
 
-            # Rule 7a: negative SrcRect size.
+            # Rule 6b: nested VRT. A SourceFilename ending in ``.vrt``
+            # would recurse the read pipeline through a second VRT
+            # parse, which the mosaic reader does not implement. Catch
+            # the case here (not at parse time) so the validator owns
+            # every capability rejection and the message names both
+            # outer and inner VRT paths. Case-insensitive on the
+            # extension so ``.VRT`` (Windows-style) also trips the
+            # rejection. See issue #2371.
+            if src.filename.lower().endswith('.vrt'):
+                raise VRTUnsupportedError(
+                    f"VRT '{source}' references another VRT as a source "
+                    f"({src.filename!r}, band {band.band_num}). Nested "
+                    f"VRTs are not a supported feature in this release; "
+                    f"the mosaic reader assembles pixel data from "
+                    f"GeoTIFF sources only. Materialise the inner VRT "
+                    f"to a GeoTIFF with ``gdal_translate`` (or "
+                    f"``xrspatial.geotiff.to_geotiff`` after reading "
+                    f"the inner VRT separately) and reference the "
+                    f"resulting GeoTIFF in the outer VRT instead."
+                )
+
+            # Rule 6c: complex mask / alpha source semantics.
+            # ``<UseMaskBand>true</UseMaskBand>`` and per-source
+            # ``<MaskBand>`` children declare that the source's
+            # per-band mask drives placement. The read pipeline ignores
+            # the mask, so the per-pixel mask would silently drop and
+            # the dispatched array would mis-label every masked pixel
+            # as valid. Reject with the source path and the offending
+            # flag. See issue #2371.
+            if src.use_mask_band:
+                raise VRTUnsupportedError(
+                    f"VRT '{source}' source '{src.filename}' (band "
+                    f"{band.band_num}) declares "
+                    f"<UseMaskBand>true</UseMaskBand>. The read "
+                    f"pipeline does not honour per-source mask bands "
+                    f"and would silently drop the per-pixel mask, "
+                    f"mis-labelling masked pixels as valid. Re-export "
+                    f"the source with the mask burned into the band's "
+                    f"nodata sentinel and drop the <UseMaskBand> flag."
+                )
+            if src.has_mask_source:
+                raise VRTUnsupportedError(
+                    f"VRT '{source}' source '{src.filename}' (band "
+                    f"{band.band_num}) declares a per-source <MaskBand> "
+                    f"child. The read pipeline does not honour mask "
+                    f"bands and would silently drop the per-pixel "
+                    f"mask. Re-export the source with the mask burned "
+                    f"into the band's nodata sentinel and drop the "
+                    f"<MaskBand> child."
+                )
+
+            # Rule 7a: negative SrcRect size. Keep the "SrcRect ...
+            # negative size" phrasing so the legacy regex pattern in
+            # ``test_geotiff_vrt_srcrect_validation_1784.py`` still
+            # matches now that the validator preempts the per-source
+            # check that originally raised this message.
             if sr.x_size < 0 or sr.y_size < 0:
                 raise VRTUnsupportedError(
                     f"VRT '{source}' SimpleSource '{src.filename}' "
-                    f"(band {band.band_num}) has negative SrcRect size "
+                    f"(band {band.band_num}) SrcRect has negative size "
                     f"(xSize={sr.x_size}, ySize={sr.y_size}); SrcRect "
                     f"sizes must be non-negative."
                 )
-            # Rule 7b: negative SrcRect offset.
+            # Rule 7b: negative SrcRect offset. Same phrasing rationale
+            # as Rule 7a (legacy regex match).
             if sr.x_off < 0 or sr.y_off < 0:
                 raise VRTUnsupportedError(
                     f"VRT '{source}' SimpleSource '{src.filename}' "
-                    f"(band {band.band_num}) has negative SrcRect offset "
+                    f"(band {band.band_num}) SrcRect has negative offset "
                     f"(xOff={sr.x_off}, yOff={sr.y_off}); SrcRect "
                     f"offsets must be non-negative."
                 )
 
-            # Rule 8a: negative DstRect size.
+            # Rule 8a: negative DstRect size. Same phrasing rationale
+            # as Rule 7a (legacy regex match).
             if dr.x_size < 0 or dr.y_size < 0:
                 raise VRTUnsupportedError(
                     f"VRT '{source}' SimpleSource '{src.filename}' "
-                    f"(band {band.band_num}) has negative DstRect size "
+                    f"(band {band.band_num}) DstRect has negative size "
                     f"(xSize={dr.x_size}, ySize={dr.y_size}); DstRect "
                     f"sizes must be non-negative."
                 )
@@ -355,8 +412,16 @@ def validate_parsed_vrt(
                     f"resampling; substituting nearest would silently "
                     f"mislabel the output. Re-export with "
                     f"<ResampleAlg>Nearest</ResampleAlg> or matching "
-                    f"SrcRect/DstRect sizes."
+                    f"SrcRect/DstRect sizes. See issue #1751."
                 )
 
 
-__all__ = ['validate_parsed_vrt']
+# Public alias matching the issue #2371 / epic #2342 naming. The
+# implementation continues to live under ``validate_parsed_vrt`` for
+# backward compatibility with the ``_backends/vrt.py`` call sites and
+# the existing test files; new call sites should prefer the
+# capability-validator spelling.
+validate_vrt_capability = validate_parsed_vrt
+
+
+__all__ = ['validate_parsed_vrt', 'validate_vrt_capability']
