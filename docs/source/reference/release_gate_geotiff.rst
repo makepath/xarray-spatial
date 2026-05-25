@@ -19,19 +19,118 @@ GeoTIFF release gate / audit checklist
    window. ``internal_only`` means the feature exists for one specific
    internal use case and is not part of the public surface.
 
-   See parent issue ``#2321`` for the release hardening epic. Sub-PRs 1
-   through 5 contribute the VRT contract, the centralized validator, the
-   metadata parity tests, the backend parity matrix, and the case-insensitive
-   HTTP scheme routing that this checklist references.
+   Each row also names the epic that owns the row so a reviewer can trace
+   any acceptance statement back to the issue that defined it: ``#2286``
+   (COG promotion), ``#2321`` (VRT contract and release hardening),
+   ``#2340`` (feature tiering), ``#2341`` (correctness and backend parity),
+   ``#2342`` (conservative VRT subset), and ``#2344`` (remote / source
+   safety hardening). The doc-readiness epic that owns this checklist
+   itself is ``#2345``.
 
-How to use this page
-====================
+How a maintainer runs this gate
+===============================
 
-* Before tagging a release, walk every row and confirm the cited regression
-  test still exists and still runs in CI.
-* When promoting a feature from ``advanced`` to ``stable``, add a row here
-  and update :data:`xrspatial.geotiff.SUPPORTED_FEATURES` in the same PR so
-  the docs and the runtime constant agree.
+This section is the operational entry point for the release review. Walk it
+once per release-tag candidate before signing off.
+
+Selecting the gate suite
+------------------------
+
+Every regression test cited in the rows below lives under
+``xrspatial/geotiff/tests/``. The gate is the union of those files. The
+shortest invocation is:
+
+.. code-block:: bash
+
+   pytest xrspatial/geotiff/tests/
+
+To run only the release-gate-tagged subset that backs this checklist (the
+files named ``test_release_gate_*.py``), use:
+
+.. code-block:: bash
+
+   pytest xrspatial/geotiff/tests/ -k release_gate
+
+GPU rows live behind the standard CUDA fixtures. They auto-skip when
+``cupy`` or a CUDA device is unavailable, so the same command runs on a
+CPU-only host. The GPU rows are tagged ``experimental``; their skip is not
+a release blocker (see the decision rule below).
+
+The cross-cutting meta-gates (``test_release_gate_2321.py``,
+``test_release_gate_negative_2341.py``,
+``test_supported_features_tiers_2137.py``) are part of the same suite. They
+fail if a row in this checklist names a feature key that is missing from
+:data:`xrspatial.geotiff.SUPPORTED_FEATURES` or a test file that does not
+exist.
+
+Handling skipped rows
+---------------------
+
+A skipped row is not the same as a passing row. Before signing off:
+
+* Confirm the skip reason is one of: GPU not present, optional codec
+  library not installed (``codec.lerc``, ``codec.jpeg2000``, ``codec.j2k``,
+  ``codec.lz4``), or the COG validator opt-in
+  (``XRSPATIAL_REQUIRE_COG_VALIDATOR=1``) is intentionally off in this
+  environment.
+* Anything skipped for a reason other than the three above is a blocker.
+  Treat ``ImportError``, ``ModuleNotFoundError``, or environment-error
+  skips inside the gate suite as failures unless the row is already
+  tagged ``experimental``.
+* The ``xfail`` rows in ``test_release_gate_negative_2341.py`` are
+  intentional pins for follow-up work (see that file's docstring). A
+  newly-passing ``xfail`` is also a signal: the linked follow-up has
+  landed, the row should be re-tiered in this PR, and the
+  ``xfail`` marker on the test should be removed in the same commit
+  so the gate cannot silently regress.
+
+Promote / demote decision rule
+------------------------------
+
+Use this rule to decide what to do with a row after the gate suite runs:
+
+* All rows for a tier pass and the row's acceptance statement still matches
+  the implementation: keep the tier. No edit required.
+* A row currently at ``stable`` regresses (the cited test fails on a fresh
+  ``main``-tracking checkout): the release is blocked. Either fix the
+  regression in this release or demote the row to ``advanced`` and update
+  :data:`xrspatial.geotiff.SUPPORTED_FEATURES` in the same PR. A ``stable``
+  row cannot ship red.
+* A row at ``advanced`` regresses: the release is not blocked, but the row
+  is demoted to ``experimental`` in the same PR. Release notes cannot keep
+  promising ``advanced`` while the regression is open.
+* A row at ``experimental`` regresses: note it in the release summary; no
+  tier change is required. ``experimental`` rows are explicitly not
+  release-blocking.
+* A row at ``experimental`` or ``advanced`` has been green for a full
+  release cycle and the cited test covers every supported backend: it is a
+  promotion candidate. The promotion edit goes in a PR that updates both
+  the row here and :data:`xrspatial.geotiff.SUPPORTED_FEATURES` together;
+  the two cannot drift.
+
+If a row's acceptance statement no longer matches the test (the test was
+amended without updating the row), fix the row in this PR before tagging.
+A row that lies about its own gate is worse than a missing row.
+
+A note on sub-gate rows
+-----------------------
+
+Some rows in the tables below are sub-gates of a broader feature key
+(for example ``reader.http`` -- SSRF defense, or ``writer.cog`` --
+tile-layout pre-flight). A sub-gate row can carry a stricter tier than
+its parent feature row. ``reader.http`` is ``advanced`` because the
+HTTP read surface as a whole still has unresolved questions (redirect
+handling, retry policy), but the SSRF fail-closed defense inside it is
+a hard gate at ``stable``: SSRF cannot regress, even on an ``advanced``
+read path. Sub-gate tier stricter than parent is intentional, not
+drift, and does not need to be reconciled in an audit pass.
+
+Cross-references
+----------------
+
+* Before promoting a feature from ``advanced`` to ``stable``, add a row
+  here and update :data:`xrspatial.geotiff.SUPPORTED_FEATURES` in the same
+  PR so the docs and the runtime constant agree.
 * When deprecating or removing a feature, update both the row here and the
   ``SUPPORTED_FEATURES`` entry in the same PR.
 * The parity gate in
@@ -44,18 +143,20 @@ Local GeoTIFF read and write
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 15 35 30
+   :widths: 18 12 30 28 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - ``reader.local_file``
      - stable
      - Round-trip a local GeoTIFF: pixel bytes, ``transform``, ``crs``, and
        ``nodata`` all survive read.
      - ``xrspatial/geotiff/tests/test_backend_pixel_parity_matrix_1813.py``,
        ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``
+     - `#2341`_
    * - ``reader.windowed``
      - stable
      - ``open_geotiff(window=(x0, y0, w, h))`` returns the requested
@@ -64,6 +165,7 @@ Local GeoTIFF read and write
        on georeferenced inputs match the eager full-read slice.
      - ``xrspatial/geotiff/tests/test_window_out_of_bounds_1634.py``,
        ``xrspatial/geotiff/tests/test_no_georef_windowed_coords_1710.py``
+     - `#2340`_
    * - ``reader.windowed`` -- shifted-transform parity (eager + dask)
      - stable
      - For each representative file, a window strictly interior to the
@@ -74,6 +176,7 @@ Local GeoTIFF read and write
        Covered for both ``open_geotiff(window=...)`` and
        ``read_geotiff_dask(window=...)``.
      - ``xrspatial/geotiff/tests/test_release_gate_windowed_reads_2341.py``
+     - `#2341`_
    * - ``reader.dask``
      - stable
      - ``open_geotiff(chunks=...)`` returns a Dask-backed
@@ -81,7 +184,8 @@ Local GeoTIFF read and write
        coords, and ``attrs`` as the eager numpy read.
      - ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``,
        ``xrspatial/geotiff/tests/test_backend_full_parity_2211.py``
-   * - ``reader.eager_dask_parity``
+     - `#2341`_
+   * - ``reader.dask`` -- eager / dask parity
      - stable
      - ``open_geotiff(path)`` and ``read_geotiff_dask(path)`` return the
        same pixels, ``dims``, ``coords``, and the seven release-attr
@@ -91,37 +195,44 @@ Local GeoTIFF read and write
        and the ``mask_nodata=False`` raw-sentinel branch of the
        nodata lifecycle.
      - ``xrspatial/geotiff/tests/test_release_gate_eager_dask_parity_2341.py``
+     - `#2341`_
    * - ``writer.local_file``
      - stable
      - ``to_geotiff`` writes a file that ``open_geotiff`` reads back
        bit-exact for every stable codec.
      - ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``,
        ``xrspatial/geotiff/tests/test_attrs_finalization_parity_2211.py``
+     - `#2341`_
    * - ``writer.overviews``
      - advanced
      - Internal overview IFDs round-trip; the reader can pick a level.
      - ``xrspatial/geotiff/tests/test_dask_overview_level.py``,
        ``xrspatial/geotiff/tests/test_cog_overview_nodata_1613.py``
+     - `#2286`_
    * - ``writer.bigtiff``
      - advanced
      - ``bigtiff=True`` (or auto-promotion above 4 GiB) writes a file with
        magic ``43``, 8-byte offsets, and 20-byte IFD entries.
      - ``xrspatial/geotiff/tests/test_eager_bigtiff_overhead_exact_1905.py``,
        ``xrspatial/geotiff/tests/test_to_geotiff_bigtiff_doc_1683.py``
+     - `#2340`_
    * - ``writer.gdal_metadata_xml``
      - experimental
      - ``attrs['gdal_metadata_xml']`` is escaped before serialization and
        does not corrupt the IFD when round-tripped.
      - ``xrspatial/geotiff/tests/test_gdal_metadata_xml_escape_1614.py``
+     - `#2340`_
    * - ``writer.extra_tags``
      - experimental
      - ``attrs['extra_tags']`` filters out reserved tag ids before write.
      - ``xrspatial/geotiff/tests/test_extra_tags_safe_filter_1657.py``
+     - `#2340`_
    * - Codec ``none`` / ``deflate`` / ``lzw`` / ``zstd`` / ``packbits``
      - stable
      - Lossless byte-for-byte round-trip on integer and float dtypes.
      - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
        ``xrspatial/geotiff/tests/test_compression.py``
+     - `#2340`_
    * - Stable codec round-trip (read / write / read)
      - stable
      - For every stable codec * promised dtype combination, a full
@@ -129,12 +240,14 @@ Local GeoTIFF read and write
        (NaN-aware for float) and the canonical release attrs. See
        the cited test for the codec, dtype, and attr-key matrix.
      - ``xrspatial/geotiff/tests/test_release_gate_codec_round_trip_2341.py``
+     - `#2341`_
    * - Codec ``lerc`` / ``jpeg2000`` / ``j2k`` / ``lz4``
      - experimental
      - Rejected by default; accepted with
        ``allow_experimental_codecs=True``; emits
        :class:`xrspatial.geotiff.GeoTIFFFallbackWarning` once per call.
      - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``
+     - `#2340`_
    * - Codec ``jpeg``
      - internal_only
      - Rejected by default; accepted only with
@@ -142,18 +255,20 @@ Local GeoTIFF read and write
        ``allow_experimental_codecs`` switch).
      - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
        ``xrspatial/geotiff/tests/test_to_geotiff_allow_internal_only_jpeg_parity.py``
+     - `#2340`_
 
 Cloud-optimized GeoTIFF (COG)
 =============================
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 15 35 30
+   :widths: 18 12 30 28 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - ``writer.cog``
      - stable
      - ``to_geotiff(cog=True)`` writes an IFD-first tiled file with internal
@@ -161,12 +276,14 @@ Cloud-optimized GeoTIFF (COG)
        ``XRSPATIAL_REQUIRE_COG_VALIDATOR=1``).
      - ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``,
        ``xrspatial/geotiff/tests/test_cog_parity_2286.py``
+     - `#2286`_
    * - ``reader.local_cog``
      - stable
      - Local COG with overview IFDs decodes byte-for-byte through eager and
        dask paths.
      - ``xrspatial/geotiff/tests/test_cog.py``,
        ``xrspatial/geotiff/tests/test_golden_corpus_overview_cog_1930.py``
+     - `#2286`_
    * - ``reader.http_cog``
      - advanced
      - Range-request COG read honours the per-tile byte-count cap and the
@@ -174,48 +291,55 @@ Cloud-optimized GeoTIFF (COG)
      - ``xrspatial/geotiff/tests/test_cog_http_concurrent.py``,
        ``xrspatial/geotiff/tests/test_cog_http_parallel_decode_2026_05_15.py``,
        ``xrspatial/geotiff/tests/test_cog_http_close_on_error_1816.py``
+     - `#2344`_
    * - ``writer.bigtiff_cog``
      - advanced
      - BigTIFF + COG combination passes the dedicated compliance suite
        (header magic, IFDs, tile and overview offset tables).
      - ``xrspatial/geotiff/tests/test_bigtiff_cog_compliance_2286.py``
-   * - ``to_geotiff(cog=True, tiled=False)``
-     - rejected at writer boundary
+     - `#2286`_
+   * - ``writer.cog`` -- tile-layout pre-flight (``cog=True, tiled=False``)
+     - stable
      - Raises ``ValueError`` at the writer entry point regardless of dtype
        or codec.
      - ``xrspatial/geotiff/tests/test_cog_requires_tiled_2312.py``
-   * - ``to_geotiff(cog=True, tile_size=<= 0>)``
-     - rejected at writer boundary
+     - `#2286`_
+   * - ``writer.cog`` -- tile-size pre-flight (non-positive ``tile_size``)
+     - stable
      - Non-positive tile sizes raise ``ValueError`` regardless of the
        ``tiled`` flag.
      - ``xrspatial/geotiff/tests/test_cog_tile_size_hang_2311.py``
+     - `#2286`_
 
 HTTP / fsspec reads
 ===================
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 15 35 30
+   :widths: 18 12 30 28 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - ``reader.http``
      - advanced
      - ``http://`` / ``https://`` URLs dispatch through ``_HTTPSource`` and
        apply the SSRF / private-host filter; uppercase schemes
-       (``HTTP://``, ``HTTPS://``) route the same way (see ``#2321``
-       sub-PR 5).
+       (``HTTP://``, ``HTTPS://``) route the same way (case-insensitive
+       scheme routing, ``#2323``).
      - ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``,
        ``xrspatial/geotiff/tests/test_golden_corpus_http_1930.py``,
        ``xrspatial/geotiff/tests/test_http_dask_allow_rotated_2130.py``
+     - `#2344`_
    * - ``reader.fsspec``
      - advanced
      - Non-HTTP schemes (``s3://``, ``gs://``, ``file://``) dispatch through
        fsspec; HTTP(S) schemes do not silently fall through.
      - ``xrspatial/geotiff/tests/test_golden_corpus_fsspec_1930.py``
-   * - HTTP SSRF defense
+     - `#2344`_
+   * - ``reader.http`` -- SSRF defense
      - stable
      - URLs resolving to loopback, link-local, or RFC1918 ranges raise
        :class:`xrspatial.geotiff.UnsafeURLError` unless
@@ -224,30 +348,34 @@ HTTP / fsspec reads
        ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``,
        ``xrspatial/geotiff/tests/test_release_gate_2321.py``
        (HTTP SSRF presence gate)
-   * - HTTP per-tile byte-count cap
+     - `#2344`_
+   * - ``reader.http_cog`` -- per-tile byte-count cap
      - stable
      - Tile or strip declared sizes exceeding ``XRSPATIAL_COG_MAX_TILE_BYTES``
        (default 256 MiB) raise ``ValueError``.
      - ``xrspatial/geotiff/tests/test_cloud_read_byte_limit_1928.py``,
        ``xrspatial/geotiff/tests/test_gpu_tile_byte_cap_2026_05_18.py``
+     - `#2344`_
    * - ``max_cloud_bytes`` dispatcher pass-through
      - stable
      - ``open_geotiff(max_cloud_bytes=...)`` forwards to every read backend
        (no silent drop).
      - ``xrspatial/geotiff/tests/test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py``,
        ``xrspatial/geotiff/tests/test_open_geotiff_max_cloud_bytes_annot_2106.py``
+     - `#2344`_
 
 Nodata lifecycle
 ================
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 15 35 25
+   :widths: 22 12 30 24 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - Nodata round-trip (read -> write)
      - stable
      - The sentinel survives read and write across every backend; integer
@@ -255,6 +383,7 @@ Nodata lifecycle
        only when ``mask_nodata=True``.
      - ``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py``,
        ``xrspatial/geotiff/tests/test_nodata_lifecycle_parity_2211.py``
+     - `#2341`_
    * - ``attrs['masked_nodata']`` lifecycle signal
      - stable
      - ``masked_nodata`` records whether the read produced NaN-masked output
@@ -262,63 +391,72 @@ Nodata lifecycle
        split.
      - ``xrspatial/geotiff/tests/test_vrt_masked_nodata_attr_2159.py``,
        ``xrspatial/geotiff/tests/test_mask_nodata_gpu_vrt_2052.py``
+     - `#2341`_
    * - Mixed-band metadata reject
      - stable
      - Mixed nodata across bands fails closed unless an explicit opt-in
        resolves the ambiguity.
      - ``xrspatial/geotiff/tests/test_ambiguous_metadata_hooks_1987.py``,
        ``xrspatial/geotiff/tests/test_conflicting_crs_write_1987.py``
-   * - VRT mixed-band nodata
-     - rejected
+     - `#2341`_
+   * - VRT mixed-band nodata fail-closed
+     - stable
      - VRT sources with conflicting per-band nodata raise rather than
        silently flatten.
      - ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``,
        ``xrspatial/geotiff/tests/test_vrt_int_nodata_1564.py``,
        ``xrspatial/geotiff/tests/test_vrt_multiband_int_nodata_1611.py``
+     - `#2342`_
 
 attrs contract
 ==============
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 15 35 25
+   :widths: 22 12 30 24 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - Contract version stamp
      - stable
      - Every read stamps ``attrs['_xrspatial_geotiff_contract']`` so
        downstream callers can branch on the version.
      - ``xrspatial/geotiff/tests/test_attrs_contract_version_1984.py``
+     - `#2341`_
    * - Canonical attrs after read
      - stable
      - ``transform``, ``crs``, ``crs_wkt``, ``nodata``, ``georef_status``,
        ``raster_type`` appear in canonical form on every backend.
      - ``xrspatial/geotiff/tests/test_attrs_contract_canonical_1984.py``,
        ``xrspatial/geotiff/tests/test_attrs_parity_1548.py``
+     - `#2341`_
    * - Attrs pass-through on write
      - stable
      - User-supplied attrs survive write round-trips; reserved keys are
        not silently dropped.
      - ``xrspatial/geotiff/tests/test_attrs_contract_passthrough_1984.py``,
        ``xrspatial/geotiff/tests/test_attrs_contract_aliases_1984.py``
+     - `#2341`_
    * - ``georef_status`` canonical signal
      - stable
      - ``attrs['georef_status']`` reports whether CRS and transform were
        both parsed, partially parsed, or absent.
      - ``xrspatial/geotiff/tests/test_attrs_contract_canonical_1984.py``
+     - `#2341`_
    * - ``reader.allow_rotated`` (``allow_rotated=True`` drops ``crs``)
-     - advanced
+     - experimental
      - Rotated reads surface ``rotated_affine`` and drop ``crs`` so
        downstream math cannot silently mix a rotated grid with an
        axis-aligned CRS.
      - ``xrspatial/geotiff/tests/test_allow_rotated_crs_drop_2126.py``,
        ``xrspatial/geotiff/tests/test_allow_rotated_no_crs_2122.py``,
        ``xrspatial/geotiff/tests/test_allow_rotated_geotiff_2115.py``
+     - `#2340`_
    * - ``reader.allow_unparseable_crs``
-     - advanced
+     - experimental
      - ``allow_unparseable_crs=True`` lets the reader return a DataArray
        when the CRS WKT does not parse; the missing CRS surfaces in
        ``attrs['georef_status']`` rather than silently as a corrupt
@@ -326,6 +464,7 @@ attrs contract
      - ``xrspatial/geotiff/tests/test_crs_fail_closed_1929.py``,
        ``xrspatial/geotiff/tests/test_crs_fail_closed_gpu_1929.py``,
        ``xrspatial/geotiff/tests/test_remaining_fail_closed_1987.py``
+     - `#2340`_
 
 VRT supported subset
 ====================
@@ -337,16 +476,17 @@ VRT supported subset
    dtype, and band count. Warped / reprojection VRTs, mixed CRS without an
    opt-in, nested VRTs, arbitrary resampling beyond the tested subset, and
    complex source / mask / alpha semantics are explicit non-goals (see
-   ``#2321`` and the VRT prose in :ref:`reference.geotiff`).
+   ``#2321``, ``#2342``, and the VRT prose in :ref:`reference.geotiff`).
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 15 30 25
+   :widths: 26 12 28 22 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - ``reader.vrt`` -- simple mosaic
      - advanced
      - VRT over compatible GeoTIFF sources returns the same pixels and
@@ -354,12 +494,14 @@ VRT supported subset
      - ``xrspatial/geotiff/tests/test_vrt_backend_coverage_2026_05_11.py``,
        ``xrspatial/geotiff/tests/test_golden_corpus_vrt_1930.py``,
        ``xrspatial/geotiff/tests/test_vrt_finalization_parity_2162.py``
+     - `#2342`_
    * - VRT default ``missing_sources='raise'``
      - stable
      - Missing source files fail at construction, not at compute.
      - ``xrspatial/geotiff/tests/test_vrt_missing_sources_default_raise_1843.py``,
        ``xrspatial/geotiff/tests/test_read_vrt_default_missing_sources_1860.py``,
        ``xrspatial/geotiff/tests/test_vrt_chunked_missing_raise_at_build_2265.py``
+     - `#2342`_
    * - VRT ``missing_sources='warn'`` opt-in
      - advanced
      - Holes surface as the band sentinel, ``attrs['vrt_holes']`` is set,
@@ -367,17 +509,20 @@ VRT supported subset
      - ``xrspatial/geotiff/tests/test_vrt_holes_attr_1734.py``,
        ``xrspatial/geotiff/tests/test_vrt_missing_sources_policy_1799.py``,
        ``xrspatial/geotiff/tests/test_vrt_chunked_missing_sources_1799.py``
+     - `#2342`_
    * - VRT source / dest rectangle validation
      - stable
      - Out-of-bounds source or destination rectangles raise at construction.
      - ``xrspatial/geotiff/tests/test_geotiff_vrt_srcrect_validation_1784.py``,
        ``xrspatial/geotiff/tests/test_vrt_scaled_rects_1694.py``,
        ``xrspatial/geotiff/tests/test_vrt_dstrect_resample_cap_1737.py``
+     - `#2342`_
    * - VRT path containment
      - stable
      - Relative source paths are constrained to the VRT's directory tree
        and cannot escape via ``..``.
      - ``xrspatial/geotiff/tests/test_vrt_path_containment_1671.py``
+     - `#2344`_
    * - VRT resampling algorithm allow-list
      - advanced
      - Unsupported resampling identifiers are rejected; supported ones
@@ -385,6 +530,7 @@ VRT supported subset
        eager and dask.
      - ``xrspatial/geotiff/tests/test_vrt_resample_alg_1751.py``,
        ``xrspatial/geotiff/tests/test_vrt_resample_window_inverse_1704.py``
+     - `#2342`_
    * - VRT dtype / band layout consistency
      - stable
      - Mixed dtype, mixed band count, or mismatched 12-bit-vs-16-bit
@@ -392,6 +538,7 @@ VRT supported subset
      - ``xrspatial/geotiff/tests/test_vrt_dtype_1783.py``,
        ``xrspatial/geotiff/tests/test_vrt_dtype_12bit_1914.py``,
        ``xrspatial/geotiff/tests/test_vrt_multiband_dtype_1696.py``
+     - `#2342`_
    * - VRT lazy / chunked read parity
      - advanced
      - Chunked VRT reads return the same shape, coords, attrs, and values
@@ -399,43 +546,50 @@ VRT supported subset
      - ``xrspatial/geotiff/tests/test_vrt_lazy_chunks_1814.py``,
        ``xrspatial/geotiff/tests/test_read_vrt_lazy_chunks_1798.py``,
        ``xrspatial/geotiff/tests/test_vrt_chunked_shared_dataset_1923.py``
+     - `#2342`_
    * - VRT single-parse contract
      - stable
      - VRT XML is parsed once per read; chunked callers do not re-parse
        per-chunk.
      - ``xrspatial/geotiff/tests/test_vrt_single_parse_1825.py``
+     - `#2321`_
    * - VRT narrow exception surface
      - stable
      - VRT-specific failures surface as typed exceptions rather than as
        generic ``Exception``.
      - ``xrspatial/geotiff/tests/test_vrt_narrow_except_1670.py``
+     - `#2321`_
    * - VRT presence gate
      - stable
      - At least one regression test exists for every promised VRT
        behaviour (this row is a meta-gate on the rows above).
      - ``xrspatial/geotiff/tests/test_release_gate_2321.py``
+     - `#2321`_
    * - ``write_vrt``
      - advanced
      - Writer rejects source-incompatibility cases at the writer boundary.
      - ``xrspatial/geotiff/tests/test_to_geotiff_vrt_tiled_validation_1862.py``
+     - `#2342`_
 
 Sidecar and overview interactions
 =================================
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 15 35 25
+   :widths: 22 12 30 24 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - ``reader.sidecar_ovr``
      - advanced
      - External ``.tif.ovr`` sidecars produce the same georef status and
        CRS attrs as inline-overview sources.
      - ``xrspatial/geotiff/tests/test_sidecar_ovr_2112.py``,
        ``xrspatial/geotiff/tests/test_sidecar_own_geokeys_2315.py``
+     - `#2286`_
    * - Overview metadata survival (internal COG and ``.ovr`` sidecar)
      - stable
      - For both internal-COG and external ``.ovr`` sources at factors
@@ -445,21 +599,25 @@ Sidecar and overview interactions
        factor with the origin preserved. Covered through the eager and
        dask read paths.
      - ``xrspatial/geotiff/tests/test_release_gate_overview_sidecar_metadata_2341.py``
+     - `#2341`_
    * - Remote sidecar byte order
      - stable
      - Sidecar ``.ovr`` files fetched over HTTP honour the sidecar's own
        header byte order, not the parent file's.
      - ``xrspatial/geotiff/tests/test_remote_sidecar_byte_order_2314.py``
+     - `#2344`_
    * - Remote sidecar chunked read
      - advanced
      - Chunked dask reads can resolve remote sidecars without
        materializing the full file.
      - ``xrspatial/geotiff/tests/test_remote_sidecar_chunked_2239.py``
+     - `#2344`_
    * - Sidecar ``max_cloud_bytes``
      - stable
      - The cloud byte budget applies to sidecar fetches, not just the
        parent file.
      - ``xrspatial/geotiff/tests/test_sidecar_max_cloud_bytes_2121.py``
+     - `#2344`_
 
 GPU paths (experimental)
 ========================
@@ -473,49 +631,55 @@ GPU paths (experimental)
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 15 35 25
+   :widths: 22 12 30 24 12
 
    * - Feature
      - Tier
      - One-line acceptance
      - Regression test
+     - Epic
    * - ``reader.gpu``
      - experimental
      - GPU read returns the same pixels and attrs as the CPU path on the
        golden corpus where the GPU path is exercised.
      - ``xrspatial/geotiff/tests/test_golden_corpus_gpu_1930.py``,
        ``xrspatial/geotiff/tests/test_golden_corpus_dask_gpu_1930.py``
-   * - GPU fallback warning
+     - `#2341`_
+   * - ``reader.gpu`` -- fallback warning
      - experimental
      - GPU read errors emit :class:`GeoTIFFFallbackWarning` and fall back
        to CPU unless ``on_gpu_failure='strict'`` or
        ``XRSPATIAL_GEOTIFF_STRICT=1`` is set.
      - ``xrspatial/geotiff/tests/test_gpu_strict_fallback_1516.py``,
        ``xrspatial/geotiff/tests/test_gpu_fallback_forwards_kwargs_2238.py``
+     - `#2340`_
    * - ``writer.gpu``
      - experimental
      - GPU write produces a file the CPU reader can decode bit-exact on
        the supported codec subset.
      - ``xrspatial/geotiff/tests/test_gpu_writer_attrs_1563.py``,
        ``xrspatial/geotiff/tests/test_to_geotiff_gpu_fallback_1674.py``
+     - `#2340`_
    * - GPU nodata handling
      - experimental
      - Integer and float nodata sentinels survive the GPU read / write
        round-trip.
      - ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``,
        ``xrspatial/geotiff/tests/test_apply_nodata_mask_gpu_inplace_1934.py``
+     - `#2341`_
 
 Internal-only surfaces (not promised)
 =====================================
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 15 35 25
+   :widths: 22 12 30 24 12
 
    * - Feature
      - Tier
-     - Note
+     - One-line acceptance
      - Regression test
+     - Epic
    * - Codec ``jpeg``
      - internal_only
      - Lossy 8-bit codec retained for one internal use case. Opt-in via
@@ -523,6 +687,7 @@ Internal-only surfaces (not promised)
        ``allow_experimental_codecs``.
      - ``xrspatial/geotiff/tests/test_to_geotiff_allow_internal_only_jpeg_parity.py``,
        ``xrspatial/geotiff/tests/test_gpu_jpeg_interop_reject_issue_D_1845.py``
+     - `#2340`_
 
 Cross-cutting CI gates
 ======================
@@ -532,35 +697,43 @@ These gates are not tier rows but they back the rest of the checklist.
 * ``test_supported_features_tiers_2137.py`` -- every codec in
   ``_VALID_COMPRESSIONS`` has a ``SUPPORTED_FEATURES`` tier, and the writer
   rejects experimental and internal-only codecs without their respective
-  opt-in flags.
+  opt-in flags. Owning epic: `#2340`_.
 * ``test_backend_parity_matrix.py`` and
   ``test_backend_pixel_parity_matrix_1813.py`` -- cross-backend pixel and
   metadata parity across the 4 read backends (numpy, cupy, dask+numpy,
-  dask+cupy) on the golden corpus.
+  dask+cupy) on the golden corpus. Owning epic: `#2341`_.
 * ``test_release_gate_2321.py`` -- meta-gate that asserts every promised
   VRT behaviour in this checklist resolves to a real test file and a real
-  ``SUPPORTED_FEATURES`` entry.
+  ``SUPPORTED_FEATURES`` entry. Owning epic: `#2321`_.
 * ``xrspatial/geotiff/tests/test_release_gate_negative_2341.py`` --
-  negative cross-cutting gate from epic #2341 PR 5. Pins that
-  ambiguous metadata fails closed at every promised read entry point:
-  conflicting CRS between header and ``.aux.xml`` PAM sidecar
-  (xfail until PAM sidecar support lands), integer nodata sentinel
-  that cannot be honoured on a float-promoted raster (xfail against
-  ``#1774`` follow-up), rotated transform without ``allow_rotated=True``
-  uniformly across eager / dask / windowed paths, and mixed-tier VRT
-  children when stable-only is requested (xfail against epic ``#2342``).
+  negative cross-cutting gate. Pins that ambiguous metadata fails closed
+  at every promised read entry point: conflicting CRS between header and
+  ``.aux.xml`` PAM sidecar (xfail until PAM sidecar support lands),
+  integer nodata sentinel that cannot be honoured on a float-promoted
+  raster (xfail against ``#1774`` follow-up), rotated transform without
+  ``allow_rotated=True`` uniformly across eager / dask / windowed paths,
+  and mixed-tier VRT children when stable-only is requested (xfail
+  against epic `#2342`_). Owning epic: `#2341`_.
 
-Placeholder PR cross-references
-===============================
+Owning epics
+============
 
-The sub-PRs of ``#2321`` cited in this checklist are listed below. When a
-sub-PR lands its number replaces the placeholder, both here and in the
-parent issue's tracking comment.
+The release gate rows above point at one of the following epics. Each
+link resolves on GitHub; the title is kept here so a reader walking the
+file does not need to leave the page to confirm scope.
 
-* Sub-PR 1 (publish the VRT contract): ``(see #2321)``
-* Sub-PR 2 (centralize VRT capability validation): ``(see #2321)``
-* Sub-PR 3 (VRT metadata parity tests): ``(see #2321)``
-* Sub-PR 4 (backend parity for VRT + sidecar / overview): ``(see #2321)``
-* Sub-PR 5 (case-insensitive HTTP(S) scheme routing): #2326
-* Sub-PR 6 (this release gate / audit checklist): tracked by sub-issue
-  ``#2331``.
+.. _#2286: https://github.com/xarray-contrib/xarray-spatial/issues/2286
+.. _#2321: https://github.com/xarray-contrib/xarray-spatial/issues/2321
+.. _#2340: https://github.com/xarray-contrib/xarray-spatial/issues/2340
+.. _#2341: https://github.com/xarray-contrib/xarray-spatial/issues/2341
+.. _#2342: https://github.com/xarray-contrib/xarray-spatial/issues/2342
+.. _#2344: https://github.com/xarray-contrib/xarray-spatial/issues/2344
+
+* `#2286`_ -- Promote COG support to ready / stable with compliance and
+  parity gates.
+* `#2321`_ -- GeoTIFF release hardening: define and lock down supported
+  VRT contract.
+* `#2340`_ -- GeoTIFF release contract and feature tiering.
+* `#2341`_ -- GeoTIFF correctness and backend parity release gate.
+* `#2342`_ -- Conservative VRT support contract for GeoTIFF release.
+* `#2344`_ -- GeoTIFF remote / source safety hardening.
