@@ -185,7 +185,8 @@ The reader and writer raise typed errors instead of guessing when the
 input is ambiguous or unsupported. The hierarchy lives in
 :mod:`xrspatial.geotiff`. Every entry below subclasses
 :class:`ValueError`, so existing ``except ValueError`` callers keep
-catching them. The first eight entries also subclass
+catching them. Every entry except
+:class:`~xrspatial.geotiff.UnsupportedGeoTIFFFeatureError` also subclasses
 :class:`~xrspatial.geotiff.GeoTIFFAmbiguousMetadataError`, which catches
 the ambiguous-metadata family at once.
 :class:`~xrspatial.geotiff.UnsupportedGeoTIFFFeatureError` is a direct
