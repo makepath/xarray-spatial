@@ -28,6 +28,12 @@ this PR can land independently.
 Coverage spans both ``read_vrt`` and ``open_geotiff(... .vrt ...)``
 entry points -- a missing rejection at either path leaves a release
 loophole.
+
+Note on overlap: the resample-algorithm tests intentionally duplicate
+the cases in ``test_vrt_resample_alg_1751.py``. That file is the
+regression anchor for the original bug; this file is the
+rejection-contract anchor for the release. Keeping them separate
+makes the intent of each test file legible to future readers.
 """
 from __future__ import annotations
 
@@ -76,24 +82,18 @@ def _write_vrt(tmp_path, xml: str, name: str) -> str:
     return path
 
 
-def _simple_source_xml(src_path: str, *, band: int = 1,
-                       x_size: int = 4, y_size: int = 4,
-                       dst_x_size: int | None = None,
-                       dst_y_size: int | None = None,
-                       extra_inner: str = '') -> str:
-    """Render a single ``<SimpleSource>`` block.
+def _simple_source_xml(src_path: str, *, band: int = 1) -> str:
+    """Render a single ``<SimpleSource>`` block over a 4x4 source.
 
-    ``extra_inner`` is spliced verbatim into the ``<SimpleSource>``
-    element so callers can add ``<ResampleAlg>``, ``<NODATA>``, etc.
+    All callers in this file use the matched 4x4 SrcRect/DstRect
+    geometry; specialised geometry (size-changing rects, ResampleAlg)
+    is built inline by the few tests that need it.
     """
-    dst_x = x_size if dst_x_size is None else dst_x_size
-    dst_y = y_size if dst_y_size is None else dst_y_size
     return f"""    <SimpleSource>
       <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>
       <SourceBand>{band}</SourceBand>
-      <SrcRect xOff="0" yOff="0" xSize="{x_size}" ySize="{y_size}"/>
-      <DstRect xOff="0" yOff="0" xSize="{dst_x}" ySize="{dst_y}"/>
-      {extra_inner}
+      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>
+      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>
     </SimpleSource>"""
 
 
@@ -113,11 +113,6 @@ def _vrt_xml(*, width: int = 4, height: int = 4,
 </VRTDataset>"""
 
 
-# ---------------------------------------------------------------------------
-# Group 1 -- Warped VRT
-# ---------------------------------------------------------------------------
-
-
 def _assert_raises_or_xfail(exc_types: tuple[type[BaseException], ...],
                             keywords: tuple[str, ...],
                             call):
@@ -128,6 +123,10 @@ def _assert_raises_or_xfail(exc_types: tuple[type[BaseException], ...],
     missing, mark the test ``xfail`` with the PR1 dependency reason --
     so PR1 lands the validator and this test starts passing without an
     edit here.
+
+    ``except Exception`` (not ``BaseException``) on the diagnostic
+    branch keeps ``KeyboardInterrupt`` and ``SystemExit`` propagating
+    so a test runner can still be interrupted cleanly.
     """
     try:
         call()
@@ -138,11 +137,16 @@ def _assert_raises_or_xfail(exc_types: tuple[type[BaseException], ...],
         pytest.xfail(
             f"{PR1_XFAIL}: raised {type(exc).__name__} but message "
             f"did not name expected keyword ({keywords!r}): {msg!r}")
-    except BaseException as exc:  # pragma: no cover -- diagnostic
+    except Exception as exc:  # pragma: no cover -- diagnostic
         pytest.xfail(
             f"{PR1_XFAIL}: raised unexpected {type(exc).__name__}: {exc!r}")
     else:
         pytest.xfail(f"{PR1_XFAIL}: call did not raise")
+
+
+# ---------------------------------------------------------------------------
+# Group 1 -- Warped VRT
+# ---------------------------------------------------------------------------
 
 
 def test_warped_vrt_subclass_raises(tmp_path):
