@@ -25,7 +25,6 @@ already used in ``test_vrt_lazy_chunks_1814.py``.
 from __future__ import annotations
 
 import os
-import tempfile
 
 import dask.array as da
 import numpy as np
@@ -108,14 +107,16 @@ def _make_multiband_tile(
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def mosaic_2x1():
+def mosaic_2x1(tmp_path):
     """Two 32x32 float32 tiles side-by-side, west and east.
 
     Yields ``(vrt_path, expected_array, origin_x, origin_y)``. The
     expected array is the horizontal concatenation of the two source
     arrays.
     """
-    td = tempfile.mkdtemp(prefix='tmp_2369_2x1_')
+    td = tmp_path / 'tmp_2369_2x1'
+    td.mkdir()
+    td = str(td)
     height, width = 32, 32
     left_data = np.arange(height * width, dtype=np.float32).reshape(height, width)
     right_data = (
@@ -137,13 +138,15 @@ def mosaic_2x1():
 
 
 @pytest.fixture
-def mosaic_2x2():
+def mosaic_2x2(tmp_path):
     """Four 32x32 float32 tiles arranged 2 rows by 2 cols.
 
     Yields ``(vrt_path, expected_array, origin_x, origin_y)`` with the
     expected array stitched in (row, col) order.
     """
-    td = tempfile.mkdtemp(prefix='tmp_2369_2x2_')
+    td = tmp_path / 'tmp_2369_2x2'
+    td.mkdir()
+    td = str(td)
     h, w = 32, 32
     # Use distinct constant values per tile so any swap shows up loudly
     # in the assertion diff.
@@ -179,9 +182,11 @@ def mosaic_2x2():
 
 
 @pytest.fixture
-def mosaic_multiband_2x1():
+def mosaic_multiband_2x1(tmp_path):
     """Two 3-band 32x32 float32 tiles side-by-side."""
-    td = tempfile.mkdtemp(prefix='tmp_2369_mb_2x1_')
+    td = tmp_path / 'tmp_2369_mb_2x1'
+    td.mkdir()
+    td = str(td)
     h, w, b = 32, 32, 3
     rng = np.random.default_rng(2369)
     left_data = rng.random((h, w, b), dtype=np.float32)
@@ -216,11 +221,20 @@ def mosaic_multiband_2x1():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _assert_attrs_ok(result, *, expected_nodata=None):
+def _assert_attrs_ok(
+    result,
+    *,
+    expected_nodata=None,
+    expected_origin_x=None,
+    expected_origin_y=None,
+):
     """Common attr assertions for VRT reads in this module.
 
     Checks that ``crs`` and ``transform`` are present and consistent
     with the fixture constants, and optionally that ``nodata`` matches.
+    When ``expected_origin_x`` / ``expected_origin_y`` are passed, the
+    transform's origin entries are checked too -- pixel size alone is
+    not enough to catch a translation bug.
     """
     assert 'crs' in result.attrs, (
         f"crs missing from attrs; have {sorted(result.attrs)}"
@@ -252,6 +266,16 @@ def _assert_attrs_ok(result, *, expected_nodata=None):
     assert transform[4] == pytest.approx(_PIXEL_H), (
         f"transform pixel height = {transform[4]}, expected {_PIXEL_H}"
     )
+    if expected_origin_x is not None:
+        assert transform[2] == pytest.approx(expected_origin_x), (
+            f"transform origin_x = {transform[2]}, "
+            f"expected {expected_origin_x}"
+        )
+    if expected_origin_y is not None:
+        assert transform[5] == pytest.approx(expected_origin_y), (
+            f"transform origin_y = {transform[5]}, "
+            f"expected {expected_origin_y}"
+        )
 
     if expected_nodata is not None:
         assert 'nodata' in result.attrs, (
@@ -294,7 +318,12 @@ def test_eager_2x1_mosaic_values_coords_attrs(mosaic_2x1):
     )
     np.testing.assert_array_equal(result.values, expected)
     _assert_coords_monotonic(result, expected_origin_x=ox, expected_origin_y=oy)
-    _assert_attrs_ok(result, expected_nodata=_NODATA)
+    _assert_attrs_ok(
+        result,
+        expected_nodata=_NODATA,
+        expected_origin_x=ox,
+        expected_origin_y=oy,
+    )
 
 
 def test_eager_2x2_mosaic_values_coords_attrs(mosaic_2x2):
@@ -313,7 +342,12 @@ def test_eager_2x2_mosaic_values_coords_attrs(mosaic_2x2):
     )
     np.testing.assert_array_equal(result.values, expected)
     _assert_coords_monotonic(result, expected_origin_x=ox, expected_origin_y=oy)
-    _assert_attrs_ok(result, expected_nodata=_NODATA)
+    _assert_attrs_ok(
+        result,
+        expected_nodata=_NODATA,
+        expected_origin_x=ox,
+        expected_origin_y=oy,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +364,7 @@ def test_windowed_read_aligned_with_source_boundary(mosaic_2x1):
     "request lines up with source pixels" case from the issue.
     """
     vrt_path, expected, ox, oy = mosaic_2x1
-    h, w_total = expected.shape  # (32, 64)
+    h = expected.shape[0]  # 32
 
     # Window: full height, last 16 cols of left tile through first
     # 16 cols of right tile. 32 / 2 = 16 keeps each side aligned to
@@ -352,7 +386,16 @@ def test_windowed_read_aligned_with_source_boundary(mosaic_2x1):
         np.asarray(result['y'].values),
         np.asarray(full['y'].values)[r0:r1],
     )
-    _assert_attrs_ok(result, expected_nodata=_NODATA)
+    # Windowed transform origin shifts by the row / col offset times
+    # pixel size. (r0=0 keeps origin_y at the fixture's oy.)
+    expected_window_ox = ox + _PIXEL_W * c0
+    expected_window_oy = oy + _PIXEL_H * r0
+    _assert_attrs_ok(
+        result,
+        expected_nodata=_NODATA,
+        expected_origin_x=expected_window_ox,
+        expected_origin_y=expected_window_oy,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +422,12 @@ def test_dask_2x1_mosaic_multi_chunk_matches_eager(mosaic_2x1):
     computed = chunked.compute()
     np.testing.assert_array_equal(computed.values, expected)
     _assert_coords_monotonic(computed, expected_origin_x=ox, expected_origin_y=oy)
-    _assert_attrs_ok(computed, expected_nodata=_NODATA)
+    _assert_attrs_ok(
+        computed,
+        expected_nodata=_NODATA,
+        expected_origin_x=ox,
+        expected_origin_y=oy,
+    )
 
 
 def test_dask_2x2_mosaic_multi_chunk_matches_eager(mosaic_2x2):
@@ -400,7 +448,12 @@ def test_dask_2x2_mosaic_multi_chunk_matches_eager(mosaic_2x2):
     computed = chunked.compute()
     np.testing.assert_array_equal(computed.values, expected)
     _assert_coords_monotonic(computed, expected_origin_x=ox, expected_origin_y=oy)
-    _assert_attrs_ok(computed, expected_nodata=_NODATA)
+    _assert_attrs_ok(
+        computed,
+        expected_nodata=_NODATA,
+        expected_origin_x=ox,
+        expected_origin_y=oy,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -428,4 +481,38 @@ def test_eager_multiband_2x1_mosaic(mosaic_multiband_2x1):
     # Coords use the same x/y dims as the single-band case; only the
     # number of bands changed.
     _assert_coords_monotonic(result, expected_origin_x=ox, expected_origin_y=oy)
-    _assert_attrs_ok(result)
+    _assert_attrs_ok(
+        result, expected_origin_x=ox, expected_origin_y=oy,
+    )
+
+
+def test_dask_multiband_2x1_mosaic_matches_eager(mosaic_multiband_2x1):
+    """Dask read of the multi-band 2x1 mosaic with sub-tile chunks must
+    match the eager read pixel-for-pixel across every band.
+
+    Chunking exercises per-block band handling: a bug that loses a
+    band on one chunk but not another would not appear in the eager
+    test above.
+    """
+    vrt_path, expected, ox, oy = mosaic_multiband_2x1
+
+    eager = read_vrt(vrt_path)
+    chunked = read_vrt(vrt_path, chunks=(16, 16))
+
+    # The chunked array should be dask-backed; the band axis may or
+    # may not be split depending on the implementation, but the
+    # spatial axes must be.
+    assert isinstance(chunked.data, da.Array), (
+        f"expected dask Array, got {type(chunked.data).__name__}"
+    )
+
+    computed = chunked.compute()
+    assert computed.shape == eager.shape
+    np.testing.assert_array_equal(computed.values, eager.values)
+    np.testing.assert_array_equal(computed.values, expected)
+    _assert_coords_monotonic(
+        computed, expected_origin_x=ox, expected_origin_y=oy,
+    )
+    _assert_attrs_ok(
+        computed, expected_origin_x=ox, expected_origin_y=oy,
+    )
