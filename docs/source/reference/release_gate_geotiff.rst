@@ -56,6 +56,41 @@ Local GeoTIFF read and write
        ``nodata`` all survive read.
      - ``xrspatial/geotiff/tests/test_backend_pixel_parity_matrix_1813.py``,
        ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``
+   * - ``reader.windowed``
+     - stable
+     - ``open_geotiff(window=(x0, y0, w, h))`` returns the requested
+       pixel sub-rectangle for tiled and stripped layouts; out-of-bounds
+       and zero-area windows raise rather than silently clamp; coords
+       on georeferenced inputs match the eager full-read slice.
+     - ``xrspatial/geotiff/tests/test_window_out_of_bounds_1634.py``,
+       ``xrspatial/geotiff/tests/test_no_georef_windowed_coords_1710.py``
+   * - ``reader.windowed`` -- shifted-transform parity (eager + dask)
+     - stable
+     - For each representative file, a window strictly interior to the
+       raster returns the expected shape, coords that are a bit-exact
+       slice of the unwindowed read, an ``attrs['transform']`` equal to
+       ``T_full * Affine.translation(col_off, row_off)`` (no float
+       drift), and the canonical non-transform release attrs unchanged.
+       Covered for both ``open_geotiff(window=...)`` and
+       ``read_geotiff_dask(window=...)``.
+     - ``xrspatial/geotiff/tests/test_release_gate_windowed_reads_2341.py``
+   * - ``reader.dask``
+     - stable
+     - ``open_geotiff(chunks=...)`` returns a Dask-backed
+       :class:`xarray.DataArray` that computes to the same pixels,
+       coords, and ``attrs`` as the eager numpy read.
+     - ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``,
+       ``xrspatial/geotiff/tests/test_backend_full_parity_2211.py``
+   * - ``reader.eager_dask_parity``
+     - stable
+     - ``open_geotiff(path)`` and ``read_geotiff_dask(path)`` return the
+       same pixels, ``dims``, ``coords``, and the seven release-attr
+       keys (``transform``, ``crs``, ``crs_wkt``, ``nodata``,
+       ``masked_nodata``, ``georef_status``, ``raster_type``) across
+       four scenarios: integer-nodata, float-NaN-nodata, MinIsWhite,
+       and the ``mask_nodata=False`` raw-sentinel branch of the
+       nodata lifecycle.
+     - ``xrspatial/geotiff/tests/test_release_gate_eager_dask_parity_2341.py``
    * - ``writer.local_file``
      - stable
      - ``to_geotiff`` writes a file that ``open_geotiff`` reads back
@@ -87,6 +122,13 @@ Local GeoTIFF read and write
      - Lossless byte-for-byte round-trip on integer and float dtypes.
      - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
        ``xrspatial/geotiff/tests/test_compression.py``
+   * - Stable codec round-trip (read / write / read)
+     - stable
+     - For every stable codec * promised dtype combination, a full
+       write / read / write / read cycle preserves byte-exact pixels
+       (NaN-aware for float) and the canonical release attrs. See
+       the cited test for the codec, dtype, and attr-key matrix.
+     - ``xrspatial/geotiff/tests/test_release_gate_codec_round_trip_2341.py``
    * - Codec ``lerc`` / ``jpeg2000`` / ``j2k`` / ``lz4``
      - experimental
      - Rejected by default; accepted with
@@ -394,6 +436,15 @@ Sidecar and overview interactions
        CRS attrs as inline-overview sources.
      - ``xrspatial/geotiff/tests/test_sidecar_ovr_2112.py``,
        ``xrspatial/geotiff/tests/test_sidecar_own_geokeys_2315.py``
+   * - Overview metadata survival (internal COG and ``.ovr`` sidecar)
+     - stable
+     - For both internal-COG and external ``.ovr`` sources at factors
+       ``[2, 4]``, every overview level agrees with the base on ``crs``,
+       ``crs_wkt``, ``georef_status``, ``raster_type``, ``nodata``, and
+       ``masked_nodata``; ``transform`` scales pixel size by the level
+       factor with the origin preserved. Covered through the eager and
+       dask read paths.
+     - ``xrspatial/geotiff/tests/test_release_gate_overview_sidecar_metadata_2341.py``
    * - Remote sidecar byte order
      - stable
      - Sidecar ``.ovr`` files fetched over HTTP honour the sidecar's own
@@ -489,6 +540,15 @@ These gates are not tier rows but they back the rest of the checklist.
 * ``test_release_gate_2321.py`` -- meta-gate that asserts every promised
   VRT behaviour in this checklist resolves to a real test file and a real
   ``SUPPORTED_FEATURES`` entry.
+* ``xrspatial/geotiff/tests/test_release_gate_negative_2341.py`` --
+  negative cross-cutting gate from epic #2341 PR 5. Pins that
+  ambiguous metadata fails closed at every promised read entry point:
+  conflicting CRS between header and ``.aux.xml`` PAM sidecar
+  (xfail until PAM sidecar support lands), integer nodata sentinel
+  that cannot be honoured on a float-promoted raster (xfail against
+  ``#1774`` follow-up), rotated transform without ``allow_rotated=True``
+  uniformly across eager / dask / windowed paths, and mixed-tier VRT
+  children when stable-only is requested (xfail against epic ``#2342``).
 
 Placeholder PR cross-references
 ===============================
