@@ -328,7 +328,7 @@ HTTP / fsspec reads
      - ``http://`` / ``https://`` URLs dispatch through ``_HTTPSource`` and
        apply the SSRF / private-host filter; uppercase schemes
        (``HTTP://``, ``HTTPS://``) route the same way (case-insensitive
-       scheme routing, ``#2326``).
+       scheme routing, ``#2323``).
      - ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``,
        ``xrspatial/geotiff/tests/test_golden_corpus_http_1930.py``,
        ``xrspatial/geotiff/tests/test_http_dask_allow_rotated_2130.py``
