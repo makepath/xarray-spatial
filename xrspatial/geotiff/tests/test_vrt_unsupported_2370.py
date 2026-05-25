@@ -433,11 +433,14 @@ def test_complex_mask_source_raises(tmp_path):
 @pytest.mark.parametrize('alg', ['Bilinear', 'Cubic', 'Lanczos',
                                  'Average', 'Mode'])
 def test_unsupported_resample_alg_raises(tmp_path, alg):
-    """Already enforced by issue #1751: a ``<ResampleAlg>`` value
-    outside the implemented nearest subset, paired with size-changing
-    SrcRect/DstRect rects, raises ``NotImplementedError`` with the
-    algorithm name in the message. Lock that contract in here so the
-    rejection survives any future refactor.
+    """A ``<ResampleAlg>`` value outside the implemented nearest subset,
+    paired with size-changing SrcRect/DstRect rects, is rejected with
+    the algorithm name in the message. The legacy resample-site check
+    (#1751) raises ``NotImplementedError``; the centralised validator
+    (#2329) raises ``VRTUnsupportedError`` (a ``ValueError`` subclass)
+    at parse time. Either is a valid rejection so long as the message
+    names the offending algorithm -- matches the dual-type contract in
+    ``test_unsupported_resample_alg_open_geotiff``.
     """
     src_path = _write_src_tif(tmp_path, name=f'res_{alg.lower()}')
     inner = f'<ResampleAlg>{alg}</ResampleAlg>'
@@ -453,7 +456,7 @@ def test_unsupported_resample_alg_raises(tmp_path, alg):
     xml = _vrt_xml(width=2, height=2, body=body)
     vrt_path = _write_vrt(tmp_path, xml, f'resample_{alg.lower()}')
 
-    with pytest.raises(NotImplementedError) as excinfo:
+    with pytest.raises((NotImplementedError, ValueError)) as excinfo:
         read_vrt(vrt_path)
     msg = str(excinfo.value)
     assert alg in msg, f"error must name the rejected algorithm: {msg!r}"
