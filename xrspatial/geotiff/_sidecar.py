@@ -26,6 +26,7 @@ from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
 # ``_reader`` imports ``_sidecar`` lazily (inside functions), so this
 # top-level import does not form a cycle at module load time.
 from ._reader import _is_fsspec_uri
+from ._sources import _is_http_source
 
 #: Type of the bytes-like buffer a sidecar carries: an mmap for local
 #: files, bytes for HTTP / fsspec downloads. Narrowed from ``object``
@@ -43,7 +44,13 @@ class SidecarOverviews(NamedTuple):
 
 
 def _is_http_url(source: str) -> bool:
-    return source.startswith(("http://", "https://"))
+    """Case-insensitive HTTP(S) scheme test for sidecar routing.
+
+    Delegates to :func:`xrspatial.geotiff._sources._is_http_source` so
+    the SSRF-relevant routing decision matches the rest of the package
+    (issues #2323 / #2332).
+    """
+    return _is_http_source(source)
 
 
 def find_sidecar(source) -> str | None:

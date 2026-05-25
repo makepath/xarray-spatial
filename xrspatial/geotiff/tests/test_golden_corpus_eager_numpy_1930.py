@@ -68,7 +68,13 @@ import pytest
 pytest.importorskip("yaml")
 pytest.importorskip("rasterio")
 
-from xrspatial.geotiff import open_geotiff  # noqa: E402
+from xrspatial.geotiff import open_geotiff
+
+# PR 4 of epic #2340: the golden corpus has experimental-codec
+# and JPEG-in-TIFF entries; the parity check is orthogonal to the
+# read-side opt-in so pass both flags through every open.
+_OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
+  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
@@ -156,7 +162,7 @@ def test_eager_numpy_parity(manifest_entry: dict) -> None:
             f"`python -m xrspatial.geotiff.tests.golden_corpus.generate` "
             f"to materialise the full corpus"
         )
-    candidate = open_geotiff(str(path))
+    candidate = open_geotiff(str(path), **_OPTIN)
     # When the fixture carries pyramid overviews, hand the oracle a
     # factory it can use to fetch each overview level via the same
     # backend (eager numpy). The oracle introspects the rasterio source
@@ -168,7 +174,7 @@ def test_eager_numpy_parity(manifest_entry: dict) -> None:
     # base-IFD comparison still runs.
     overviews = manifest_entry.get("overviews") or []
     factory = (
-        (lambda lvl, p=path: open_geotiff(str(p), overview_level=lvl))
+        (lambda lvl, p=path: open_geotiff(str(p), overview_level=lvl, **_OPTIN))
         if overviews and fixture_id not in _OVERVIEW_READER_GAPS
         else None
     )

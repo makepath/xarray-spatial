@@ -38,6 +38,12 @@ _CANONICAL_ORDER = (
     "missing_sources",
     "allow_rotated",
     "allow_unparseable_crs",
+    # PR 4 of epic #2340 added the experimental / internal-only codec
+    # opt-ins on the read side, mirroring the writer surface from #2137
+    # / #1845. They sit after the other ``allow_*`` flags so the
+    # canonical order keeps the policy / typed-error gates grouped.
+    "allow_experimental_codecs",
+    "allow_internal_only_jpeg",
     "band_nodata",
     "mask_nodata",
 )

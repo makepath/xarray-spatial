@@ -71,7 +71,10 @@ def test_dtype_codec_roundtrip_stripped(tmp_path, dtype, codec):
     except (ImportError, ModuleNotFoundError) as e:
         pytest.skip(f"codec {codec} not available: {e}")
 
-    arr, _geo = read_to_array(path)
+    # Codecs in the experimental tier (LERC / J2K / LZ4) need the
+    # read-side opt-in too (PR 4 of epic #2340). Tier 1 codecs ignore
+    # the kwarg, so passing it unconditionally keeps the loop simple.
+    arr, _geo = read_to_array(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(arr, expected)
     assert arr.dtype == expected.dtype
 
@@ -91,7 +94,7 @@ def test_dtype_codec_roundtrip_tiled(tmp_path, dtype, codec):
     except (ImportError, ModuleNotFoundError) as e:
         pytest.skip(f"codec {codec} not available: {e}")
 
-    arr, _geo = read_to_array(path)
+    arr, _geo = read_to_array(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(arr, expected)
     assert arr.dtype == expected.dtype
 

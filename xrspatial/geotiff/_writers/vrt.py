@@ -24,47 +24,76 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
               nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
-    Tier: Advanced (issue #2137). VRT mosaic output is supported but
-    the caller should know the failure modes on the read side: a
-    consumer reading the resulting ``.vrt`` may hit cross-source
-    nodata mismatch, missing backing files, or per-band metadata
-    disagreement. See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for
-    the full tier map.
+    Release-contract tier (epic #2340; see
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst``): the
+    entry point is [advanced]. VRT mosaic output is supported but
+    targets a narrow subset of GDAL's VRT spec; the caller should
+    know the failure modes on the read side. A consumer reading the
+    resulting ``.vrt`` may hit cross-source nodata mismatch, missing
+    backing files, or per-band metadata disagreement. Full GDAL VRT
+    parity, warped / reprojection VRTs, and nested VRTs are out of
+    scope for this release. See
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map
+    (issue #2137).
+
+    Output targets the same narrow subset of GDAL's VRT spec that the
+    reader supports (issue #2321; see the "VRT support matrix" section
+    in ``docs/source/reference/geotiff.rst`` and the audited matrix in
+    ``docs/source/reference/release_gate_geotiff.rst`` for the
+    canonical contract):
+
+    * Supported: simple GDAL VRT mosaics over GeoTIFF sources;
+      compatible CRS, transform orientation, pixel size, dtype, and
+      band count across sources; clean windowed reads on the
+      consumer side; lazy / dask reads over the same subset on the
+      consumer side; explicit nodata; ``missing_sources='raise'`` as
+      the read-side default.
+    * Non-goals (the writer does not emit these and the reader is
+      allowed to raise on them): warped / reprojection VRTs,
+      arbitrary resampling beyond the tested subset, mixed CRS /
+      resolution / dtype / band metadata without an opt-in, nested
+      VRTs, complex source / mask band / alpha band structures, full
+      GDAL VRT parity.
 
     Parameters
     ----------
     path : str
-        Output .vrt file path. Mirrors the ``path`` kwarg on
-        ``to_geotiff`` and ``write_geotiff_gpu`` so the writer trio
+        [advanced] Output .vrt file path. Mirrors the ``path`` kwarg
+        on ``to_geotiff`` and ``write_geotiff_gpu`` so the writer trio
         shares a single destination-arg name (issue #1946).
     source_files : list of str
-        Paths to the source GeoTIFF files.
+        [advanced] Paths to the source GeoTIFF files.
     vrt_path : str, optional
-        Deprecated alias for ``path``. Emits ``DeprecationWarning`` when
-        supplied; passing both ``path`` and ``vrt_path`` raises
-        ``TypeError``. Kept so existing callers (``write_vrt(vrt_path,
-        sources)`` positional or ``write_vrt(vrt_path=...)`` keyword)
-        keep working through the deprecation window. New code should
-        use ``path``. See issue #1946.
+        [internal-only] Deprecated alias for ``path``. Emits
+        ``DeprecationWarning`` when supplied; passing both ``path``
+        and ``vrt_path`` raises ``TypeError``. Kept so existing
+        callers (``write_vrt(vrt_path, sources)`` positional or
+        ``write_vrt(vrt_path=...)`` keyword) keep working through the
+        deprecation window. New code should use ``path``. See issue
+        #1946.
     relative : bool, optional
-        Store source paths relative to the VRT file (default True).
+        [advanced] Store source paths relative to the VRT file
+        (default True).
     crs : int, str, or None, optional
-        EPSG code (int), WKT string, or PROJ string. If None, the CRS
-        is taken from the first source GeoTIFF. Mirrors the ``crs``
-        kwarg on ``to_geotiff`` and ``write_geotiff_gpu`` so the same
-        value can be forwarded to whichever writer the caller picked
-        without per-writer special-casing (issue #1715).
+        [advanced] EPSG code (int), WKT string, or PROJ string. If
+        None, the CRS is taken from the first source GeoTIFF. Mirrors
+        the ``crs`` kwarg on ``to_geotiff`` and ``write_geotiff_gpu``
+        so the same value can be forwarded to whichever writer the
+        caller picked without per-writer special-casing (issue #1715).
     crs_wkt : str or None, optional
-        Deprecated alias for ``crs``. Emits ``DeprecationWarning`` when
-        supplied (including ``crs_wkt=None``); passing both ``crs`` and
-        ``crs_wkt`` raises ``TypeError``. The value is forwarded through
-        the same ``_resolve_crs_to_wkt`` path as ``crs``, so any string
-        the resolver accepts (WKT root keyword, PROJ string,
+        [internal-only] Deprecated alias for ``crs``. Emits
+        ``DeprecationWarning`` when supplied (including
+        ``crs_wkt=None``); passing both ``crs`` and ``crs_wkt`` raises
+        ``TypeError``. The value is forwarded through the same
+        ``_resolve_crs_to_wkt`` path as ``crs``, so any string the
+        resolver accepts (WKT root keyword, PROJ string,
         ``"EPSG:NNNN"``) and ``None`` work here. The historic
-        ``str | None`` surface is preserved; new code should use ``crs``
-        instead, which additionally accepts ``int`` EPSG codes.
+        ``str | None`` surface is preserved; new code should use
+        ``crs`` instead, which additionally accepts ``int`` EPSG codes.
     nodata : float, int, or None, optional
-        NoData value. If None, taken from the first source GeoTIFF.
+        [advanced] NoData value. If None, taken from the first source
+        GeoTIFF.
         Integer sentinels (e.g. ``65535`` for uint16, ``-9999`` for
         int32) are accepted so the surface lines up with the
         ``nodata`` kwarg on ``to_geotiff`` and ``write_geotiff_gpu``.
@@ -73,6 +102,38 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     -------
     str
         Path to the written VRT file.
+
+    Examples
+    --------
+    Safe usage. Mosaic two compatible tiles; the consumer can then
+    read the resulting VRT with the fail-closed defaults. Paths
+    below are illustrative; replace with paths to real GeoTIFF
+    files on disk:
+
+    >>> from xrspatial.geotiff import write_vrt, open_geotiff
+    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    ...     'mosaic.vrt',
+    ...     source_files=['tile_west.tif', 'tile_east.tif'],
+    ... )
+    >>> da = open_geotiff(vrt_path)  # doctest: +SKIP
+
+    Intentionally raises (on the read side). If the source tiles
+    disagree on their per-band nodata sentinels, the default
+    ``band_nodata=None`` on ``open_geotiff`` / ``read_vrt`` rejects
+    the mosaic with ``MixedBandMetadataError``. The writer does not
+    pre-validate cross-tile metadata; the failure mode lives on the
+    read side:
+
+    >>> from xrspatial.geotiff import MixedBandMetadataError
+    >>> # tile_a.tif declares nodata=-9999; tile_b.tif declares nodata=0
+    >>> bad_path = write_vrt(  # doctest: +SKIP
+    ...     'mixed_nodata.vrt',
+    ...     source_files=['tile_a.tif', 'tile_b.tif'],
+    ... )
+    >>> try:  # doctest: +SKIP
+    ...     open_geotiff(bad_path)
+    ... except MixedBandMetadataError:
+    ...     pass  # fix the source tiles or pass band_nodata='first'.
     """
     # Explicit signature (previously ``**kwargs``) so ``inspect.signature``,
     # IDE autocomplete, and ``mypy --strict`` can see the accepted kwargs

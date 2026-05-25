@@ -128,16 +128,49 @@ def read_vrt(source: str, *,
              missing_sources: str = 'raise',
              allow_rotated: bool = False,
              allow_unparseable_crs: bool = False,
+             allow_experimental_codecs: bool = False,
+             allow_internal_only_jpeg: bool = False,
              band_nodata: str | None = None,
              mask_nodata: bool = True) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
-    Tier: Advanced (issue #2137). VRT mosaics work and are tested, but
-    the caller should know the failure modes: cross-source nodata can
-    disagree (gated by ``band_nodata``), backing files can be missing
-    (gated by ``missing_sources``), and per-band metadata mismatch
-    raises a typed error rather than silently flattening. See
-    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
+    Release-contract tier (epic #2340; see
+    ``docs/source/reference/release_gate_geotiff.rst`` and
+    ``docs/source/reference/geotiff_release_contract.rst``): the
+    entry point is [advanced]. VRT mosaics work and are tested for a
+    narrow subset, but the caller should know the failure modes:
+    cross-source nodata can disagree (gated by ``band_nodata``),
+    backing files can be missing (gated by ``missing_sources``), and
+    per-band metadata mismatch raises a typed error rather than
+    silently flattening. Full GDAL VRT parity, warped / reprojection
+    VRTs, and arbitrary resampling are out of scope for this release.
+    See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
+    map (issue #2137).
+
+    Supported subset (issue #2321; see the "VRT support matrix" section
+    in ``docs/source/reference/geotiff.rst`` and the audited matrix in
+    ``docs/source/reference/release_gate_geotiff.rst`` for the
+    canonical contract):
+
+    * Simple GDAL VRT mosaics whose ``<SourceFilename>`` entries point
+      at GeoTIFF files (sources must resolve under the VRT's own
+      directory or an ``XRSPATIAL_VRT_ALLOWED_ROOTS`` root; #1671).
+    * Sources that agree on CRS, transform orientation, pixel size,
+      dtype, and band count. Mismatch raises rather than flattening.
+    * Windowed reads via ``window=``; eager and dask paths shift
+      coords and ``attrs['transform']`` together.
+    * Lazy / dask reads via ``chunks=`` over the same subset, with a
+      parse-time missing-source sweep (#2265).
+    * Explicit ``nodata``; ``band_nodata=None`` (the default) rejects
+      disagreeing per-band sentinels with ``MixedBandMetadataError``
+      (#1987).
+    * ``missing_sources='raise'`` is the default (#1860).
+
+    Non-goals (intentionally unsupported, allowed to raise): warped /
+    reprojection VRTs, arbitrary resampling beyond the tested subset,
+    mixed CRS / resolution / dtype / band metadata without an opt-in,
+    nested VRTs, complex source / mask band / alpha band structures,
+    full GDAL VRT parity.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
     into a single array.
@@ -145,28 +178,34 @@ def read_vrt(source: str, *,
     Parameters
     ----------
     source : str
-        Path to the .vrt file.
+        [advanced] Path to the .vrt file.
     dtype : str, numpy.dtype, or None
-        Cast the result to this dtype after reading. None keeps the
-        file's native dtype. Float-to-int casts raise ValueError.
+        [advanced] Cast the result to this dtype after reading. None
+        keeps the file's native dtype. Float-to-int casts raise
+        ValueError.
     window : tuple or None
-        (row_start, col_start, row_stop, col_stop) for windowed reading.
+        [advanced] (row_start, col_start, row_stop, col_stop) for
+        windowed reading.
     band : int or None
-        Band index (0-based). None returns all bands.
+        [advanced] Band index (0-based). None returns all bands.
     name : str or None
-        Name for the DataArray.
+        [advanced] Name for the DataArray.
     chunks : int, tuple, or None
-        If set, return a Dask-chunked DataArray. int for square chunks,
-        (row, col) tuple for rectangular.
+        [advanced] If set, return a Dask-chunked DataArray. int for
+        square chunks, (row, col) tuple for rectangular.
     gpu : bool
-        If True, return a CuPy-backed DataArray on GPU.
+        [experimental] If True, return a CuPy-backed DataArray on GPU.
+        Carries the same caveats as ``gpu=True`` on ``open_geotiff``:
+        cross-backend numerical parity is tested for the Tier 1 codec
+        set only.
     max_pixels : int or None
-        Maximum allowed pixel count (width * height * samples) for the
-        assembled VRT region. None uses the reader default (~1 billion).
-        Matches ``open_geotiff`` / ``read_geotiff_dask`` /
-        ``read_geotiff_gpu``.
+        [advanced] Maximum allowed pixel count
+        (width * height * samples) for the assembled VRT region. None
+        uses the reader default (~1 billion). Matches ``open_geotiff``
+        / ``read_geotiff_dask`` / ``read_geotiff_gpu``.
     missing_sources : {'raise', 'warn'}, default 'raise'
-        Policy for unreadable source files referenced by the VRT.
+        [advanced] Policy for unreadable source files referenced by
+        the VRT.
         ``'raise'`` (the default since #1860) fails immediately on an
         unreadable backing source so a partial mosaic never surfaces
         silently. This matches the internal ``_vrt.read_vrt`` default
@@ -186,8 +225,9 @@ def read_vrt(source: str, *,
         ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
         module regardless of this kwarg.
     band_nodata : {'first', None}, optional
-        Opt-out for the fail-closed mixed-band-metadata check (issue
-        #1987 PR 5). ``None`` (the default) rejects a VRT whose bands
+        [advanced] Opt-out for the fail-closed mixed-band-metadata
+        check (issue #1987 PR 5). ``None`` (the default) rejects a VRT
+        whose bands
         declare disagreeing per-band ``<NoDataValue>`` sentinels with
         ``MixedBandMetadataError``; flattening to one value would
         otherwise let one band's valid pixels collide with another
@@ -196,9 +236,9 @@ def read_vrt(source: str, *,
         other value raises ``ValueError`` at the boundary so typos
         surface up front instead of degrading silently into strict mode.
     mask_nodata : bool, default True
-        If True, run the integer-sentinel-to-NaN promotion on the
-        assembled mosaic. If False, skip it and keep the source dtype
-        with the raw sentinel still in the data. ``attrs['nodata']``
+        [advanced] If True, run the integer-sentinel-to-NaN promotion
+        on the assembled mosaic. If False, skip it and keep the source
+        dtype with the raw sentinel still in the data. ``attrs['nodata']``
         carries the sentinel either way. Pass ``mask_nodata=False``
         together with ``dtype=<integer>`` when you need to preserve an
         integer source dtype on a VRT whose declared sentinel matches
@@ -206,32 +246,44 @@ def read_vrt(source: str, *,
         by virtue of how the internal reader handles them, so this kwarg
         is most useful for integer-dtype mosaics.
     allow_rotated : bool, default False
-        Read-side opt-in for rotated / sheared ``ModelTransformationTag``
-        files referenced by the VRT. Forwarded to the per-source reader
-        for each ``<SourceFilename>``. See ``open_geotiff`` for the full
+        [advanced] Read-side opt-in for rotated / sheared
+        ``ModelTransformationTag`` files referenced by the VRT.
+        Forwarded to the per-source reader for each
+        ``<SourceFilename>``. See ``open_geotiff`` for the full
         contract.
     allow_unparseable_crs : bool, default False
-        Read-side opt-in for CRS strings that pyproj cannot resolve and
-        do not parse as WKT. ``False`` (the default since #1929) raises
-        ``UnparseableCRSError`` rather than carrying the unrecognised
-        payload through. See ``open_geotiff`` for the full description.
+        [advanced] Read-side opt-in for CRS strings that pyproj cannot
+        resolve and do not parse as WKT. ``False`` (the default since
+        #1929) raises ``UnparseableCRSError`` rather than carrying the
+        unrecognised payload through. See ``open_geotiff`` for the
+        full description.
+    allow_experimental_codecs : bool, default False
+        [advanced] Read-side opt-in for Tier 3 experimental codecs in
+        any source file referenced by the VRT. Forwarded to the
+        per-source reader for each ``<SourceFilename>``. See
+        ``open_geotiff`` for the full description (epic #2340 PR 4).
+    allow_internal_only_jpeg : bool, default False
+        [advanced] Read-side opt-in for JPEG-in-TIFF sources referenced
+        by the VRT. Forwarded to the per-source reader. See
+        ``open_geotiff`` for the full description (epic #2340 PR 4,
+        original writer gate #1845).
     overview_level : int or None
-        Not supported for VRT sources. The VRT XML references its own
-        source files, so overview selection would need to apply to each
-        of them. Accepted at the signature level for cross-backend
-        symmetry; any value other than ``None`` or ``0`` raises
-        ``ValueError`` (issue #1685).
+        [internal-only] Not supported for VRT sources. The VRT XML
+        references its own source files, so overview selection would
+        need to apply to each of them. Accepted at the signature level
+        for cross-backend symmetry; any value other than ``None`` or
+        ``0`` raises ``ValueError`` (issue #1685).
     on_gpu_failure : str, optional
-        Accepted for cross-backend signature symmetry only. VRT reads
-        do not go through the GPU decoder pipeline, so passing this
-        kwarg raises ``ValueError`` at dispatch. See
+        [internal-only] Accepted for cross-backend signature symmetry
+        only. VRT reads do not go through the GPU decoder pipeline, so
+        passing this kwarg raises ``ValueError`` at dispatch. See
         ``read_geotiff_gpu`` for the kwarg's meaning on the GPU
         reader.
     max_cloud_bytes : int or None, optional
-        Accepted for cross-backend signature symmetry only. The VRT
-        reader does not consume the cloud-byte budget; passing this
-        kwarg raises ``ValueError`` at dispatch (issue #1974). See
-        ``open_geotiff`` for the eager-path description.
+        [internal-only] Accepted for cross-backend signature symmetry
+        only. The VRT reader does not consume the cloud-byte budget;
+        passing this kwarg raises ``ValueError`` at dispatch (issue
+        #1974). See ``open_geotiff`` for the eager-path description.
 
     Returns
     -------
@@ -270,6 +322,30 @@ def read_vrt(source: str, *,
     failures, which surface as per-task ``GeoTIFFFallbackWarning``
     instead. Each worker still emits ``GeoTIFFFallbackWarning`` for
     missing sources at execution time as well.
+
+    Examples
+    --------
+    Safe usage. Mosaic two compatible tiles and read with the
+    fail-closed defaults:
+
+    >>> from xrspatial.geotiff import open_geotiff, write_vrt
+    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    ...     'mosaic.vrt',
+    ...     source_files=['tile_west.tif', 'tile_east.tif'],
+    ... )
+    >>> da = read_vrt(vrt_path)  # doctest: +SKIP
+
+    Intentionally raises. A VRT whose source tiles disagree on their
+    per-band nodata sentinels is rejected by the default
+    ``band_nodata=None``:
+
+    >>> from xrspatial.geotiff import MixedBandMetadataError
+    >>> try:  # doctest: +SKIP
+    ...     read_vrt('mixed_nodata.vrt')
+    ... except MixedBandMetadataError:
+    ...     pass  # pass band_nodata='first' to opt back into the
+    ...           # legacy flatten-to-band-0 semantics, or fix the
+    ...           # source tiles.
     """
     from .._reader import _coerce_path
     from .._vrt import _apply_integer_sentinel_mask_with_presence as _vrt_mask_with_presence
@@ -362,6 +438,8 @@ def read_vrt(source: str, *,
             missing_sources=missing_sources,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg,
             band_nodata=band_nodata,
             mask_nodata=mask_nodata,
         )
@@ -384,9 +462,27 @@ def read_vrt(source: str, *,
     from .._validation import validate_read_metadata
     from .._vrt import _read_vrt_xml
     from .._vrt import parse_vrt as _parse_vrt
+    from .._vrt_validation import validate_parsed_vrt as _validate_parsed_vrt
     _xml_str = _read_vrt_xml(source)
     _vrt_dir = _os.path.dirname(_os.path.abspath(source))
     _parsed_vrt = _parse_vrt(_xml_str, _vrt_dir)
+    # Centralised VRT capability validator (issue #2329). Runs before
+    # ``validate_read_metadata`` so capability mismatches (negative
+    # SrcRect / DstRect, unsupported resampling, zero pixel size, etc.)
+    # surface with the typed ``VRTUnsupportedError`` and a message that
+    # names the offending source path and field. The validator overlaps
+    # ``validate_read_metadata`` on rotated-transform / unparseable-CRS
+    # / mixed-band-nodata; running the centralised one first keeps the
+    # ``VRTUnsupportedError`` type at the entry-point boundary for the
+    # capability checks added in #2329.
+    _validate_parsed_vrt(
+        _parsed_vrt,
+        source=source,
+        mode='read',
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+        band_nodata=band_nodata,
+    )
     _band_nodata_values = (
         [b.nodata for b in _parsed_vrt.bands]
         if _parsed_vrt.bands else None
@@ -416,6 +512,8 @@ def read_vrt(source: str, *,
         source, window=window, band=band, max_pixels=max_pixels,
         missing_sources=missing_sources, parsed=_parsed_vrt,
         mask_nodata=mask_nodata,
+        allow_experimental_codecs=allow_experimental_codecs,
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
     )
 
     if name is None:
@@ -625,7 +723,9 @@ def read_vrt(source: str, *,
 def _vrt_chunk_read(source, r0, c0, r1, c1, *,
                     band, max_pixels, missing_sources,
                     declared_dtype, gpu, parsed_vrt,
-                    mask_nodata: bool = True):
+                    mask_nodata: bool = True,
+                    allow_experimental_codecs: bool = False,
+                    allow_internal_only_jpeg: bool = False):
     """Decode a single chunk window from a VRT.
 
     Called by ``dask.delayed`` from :func:`_read_vrt_chunked`. The
@@ -657,6 +757,8 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
         source, window=(r0, c0, r1, c1), band=band,
         max_pixels=max_pixels, missing_sources=missing_sources,
         parsed=parsed_vrt, mask_nodata=mask_nodata,
+        allow_experimental_codecs=allow_experimental_codecs,
+        allow_internal_only_jpeg=allow_internal_only_jpeg,
     )
 
     # Mirror the eager post-decode integer-sentinel masking via the
@@ -685,6 +787,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                       max_pixels, missing_sources,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
+                      allow_experimental_codecs: bool = False,
+                      allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
                       mask_nodata: bool = True):
     """Lazy ``read_vrt`` dispatch when ``chunks=`` is set (issue #1814).
@@ -736,6 +840,22 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # the ``band`` / window / ``max_pixels`` validators below so the
     # error ordering matches the eager path.
     from .._validation import validate_read_metadata
+    from .._vrt_validation import validate_parsed_vrt as _validate_parsed_vrt
+    # Centralised VRT capability validator (issue #2329). Run at graph
+    # build time so capability mismatches surface here, not inside a
+    # per-chunk decode task. ``read_vrt(..., chunks=)`` previously let
+    # unsupported features ride through the graph build and raised
+    # deep in a ``compute()`` chunk function (an opaque user
+    # experience); the validator moves the rejection back to where the
+    # caller stands.
+    _validate_parsed_vrt(
+        vrt,
+        source=source,
+        mode='read',
+        allow_rotated=allow_rotated,
+        allow_unparseable_crs=allow_unparseable_crs,
+        band_nodata=band_nodata,
+    )
     band_nodata_values = (
         [b.nodata for b in vrt.bands] if vrt.bands else None
     )
@@ -912,6 +1032,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                 gpu=gpu,
                 parsed_vrt=parsed_vrt_key,
                 mask_nodata=mask_nodata,
+                allow_experimental_codecs=allow_experimental_codecs,
+                allow_internal_only_jpeg=allow_internal_only_jpeg,
             )
             block = da.from_delayed(d, shape=block_shape,
                                     dtype=declared_dtype, meta=meta)

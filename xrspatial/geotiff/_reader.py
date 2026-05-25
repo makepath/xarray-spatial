@@ -93,7 +93,8 @@ from ._sources import (_CLOUD_SCHEMES, _DEFAULT_MMAP_CACHE_SIZE,  # noqa: F401
                        _BytesIOSource, _CloudSource, _coerce_path, _FileSource, _get_http_pool,
                        _get_pinned_conn_classes, _http_allow_private_hosts, _http_connect_timeout,
                        _http_read_timeout, _http_timeout_from_env, _HTTPSource, _ip_is_private,
-                       _is_file_like, _is_fsspec_uri, _make_pinned_pool,
+                       _is_file_like, _is_fsspec_uri, _is_http_source, _is_http_url,
+                       _make_pinned_pool,
                        _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env, _mmap_cache,
                        _mmap_cache_size_from_env, _MmapCache, _open_source,
                        _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
@@ -109,6 +110,8 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
                    max_pixels: int = MAX_PIXELS_DEFAULT,
                    max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
                    allow_rotated: bool = False,
+                   allow_experimental_codecs: bool = False,
+                   allow_internal_only_jpeg: bool = False,
                    ) -> tuple[np.ndarray, GeoInfo]:
     """Read a GeoTIFF/COG to a numpy array (module-private).
 
@@ -142,10 +145,13 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
     (np.ndarray, GeoInfo) tuple
     """
     source = _coerce_path(source)
-    if isinstance(source, str) and source.startswith(('http://', 'https://')):
-        return _read_cog_http(source, overview_level=overview_level, band=band,
-                              max_pixels=max_pixels, window=window,
-                              allow_rotated=allow_rotated)
+    if _is_http_source(source):
+        return _read_cog_http(
+            source, overview_level=overview_level, band=band,
+            max_pixels=max_pixels, window=window,
+            allow_rotated=allow_rotated,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg)
 
     # Local file, cloud storage, or file-like buffer: read all bytes then parse
     # Resolve the cloud byte budget once so both the base-file ``_CloudSource``
@@ -184,10 +190,18 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
                     f"read.")
     else:
         src = _FileSource(source)
-    data = src.read_all()
 
     sidecar = None
+    # Wrap source lifetime in the try/finally immediately after
+    # construction so ``src.close()`` runs even when ``read_all()``
+    # raises (e.g. a fsspec network failure mid-download, a transient
+    # S3 error, or a local I/O error). ``_CloudSource.close()`` is a
+    # no-op today, but the structural guard prevents a future
+    # resource-holding source from leaking state on the failure path.
+    # Mirrors the close-on-error contract that ``_read_cog_http``
+    # already enforces (issue #1816). See issue #2322.
     try:
+        data = src.read_all()
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
 
@@ -216,6 +230,19 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
 
         # Select IFD, skipping any mask IFDs
         ifd = select_overview_ifd(ifds, overview_level)
+
+        # Reject experimental and internal-only codecs on the read side
+        # unless the caller opted in. Mirrors the writer-side gate so the
+        # two surfaces stay consistent. Fires before any tile/strip work
+        # so the caller learns the missing flag from the rejection, not
+        # from a deeper decode-time failure. See PR 4 of epic #2340.
+        from ._attrs import _validate_read_codec_optin
+        _validate_read_codec_optin(
+            ifd.compression,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg,
+            entry_point="open_geotiff",
+        )
 
         # If the selected IFD came from the sidecar, swap the data /
         # header used for strip / tile reads below so byte offsets
