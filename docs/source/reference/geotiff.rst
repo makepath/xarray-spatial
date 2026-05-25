@@ -15,6 +15,49 @@ GeoTIFF / COG
    checklist that lists every promised feature on this page, its tier,
    its one-line acceptance, and the regression test that locks it.
 
+   :ref:`user_guide.attrs_contract` -- the user-guide page that defines
+   which attrs keys are canonical, which are aliases, and which are
+   pass-through, and the round-trip guarantees that apply to each
+   tier.
+
+GPU support (experimental)
+==========================
+
+The GPU read and write paths are tagged ``experimental`` in
+:data:`xrspatial.geotiff.SUPPORTED_FEATURES`. Both
+``SUPPORTED_FEATURES['reader.gpu']`` and
+``SUPPORTED_FEATURES['writer.gpu']`` report ``experimental``: the paths
+work and are covered by tests, but the surface can shift without a
+deprecation window. The GPU paths are not a release blocker -- a
+regression on a GPU row does not fail the build the way a regression
+on the stable CPU surface does.
+
+What you can expect:
+
+* GPU read and write produce the same pixels and the same canonical
+  attrs as the CPU path on the supported codec subset. The eager and
+  dask GPU readers are covered by
+  ``xrspatial/geotiff/tests/test_golden_corpus_gpu_1930.py`` and
+  ``xrspatial/geotiff/tests/test_golden_corpus_dask_gpu_1930.py``.
+* Integer and float nodata sentinels survive the GPU round-trip; see
+  ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``.
+* On GPU failure the reader emits
+  :class:`xrspatial.geotiff.GeoTIFFFallbackWarning` and falls back to
+  CPU unless ``on_gpu_failure='strict'`` or
+  ``XRSPATIAL_GEOTIFF_STRICT=1`` is set; see
+  ``xrspatial/geotiff/tests/test_gpu_strict_fallback_1516.py``.
+
+What you should NOT rely on:
+
+* GPU support for every codec on the CPU path. ``allow_experimental_codecs``
+  does NOT widen the GPU codec set; on the GPU writer, codecs outside the
+  GPU-supported set route through a CPU fallback inside
+  ``write_geotiff_gpu`` rather than executing on the GPU. Locked by
+  ``xrspatial/geotiff/tests/test_gpu_writer_cpu_fallback_codecs_2026_05_12.py``.
+* GPU promotion to ``stable`` inside this release cycle. See the GPU
+  rows in :ref:`reference.geotiff_release_gate` for the current tier
+  and the regression tests behind each row.
+
 Stable COG contract
 ===================
 
@@ -57,6 +100,85 @@ the corresponding caveats:
 * BigTIFF COG (tracked separately).
 * HTTP / range COG (tracked separately; see the byte-budget contract in
   #2298).
+
+Rotated and sheared transforms
+==============================
+
+Read posture. ``open_geotiff`` rejects a file whose affine transform
+has non-zero rotation or shear coefficients by default. Pass
+``allow_rotated=True`` to opt in: the read then surfaces the rotated
+6-tuple on ``attrs['rotated_affine']`` and drops ``attrs['crs']`` so
+downstream math cannot silently mix a rotated grid with an
+axis-aligned CRS. The dropped-CRS rule is locked by
+``xrspatial/geotiff/tests/test_allow_rotated_crs_drop_2126.py``,
+``xrspatial/geotiff/tests/test_allow_rotated_no_crs_2122.py``, and
+``xrspatial/geotiff/tests/test_allow_rotated_geotiff_2115.py``. The
+HTTP dask path honours the same opt-in via
+``xrspatial/geotiff/tests/test_http_dask_allow_rotated_2130.py``.
+Without ``allow_rotated=True`` the read raises a typed error; see
+``xrspatial/geotiff/tests/test_rotated_typed_error_2267.py``.
+
+Write posture. ``to_geotiff`` rejects a DataArray carrying
+``attrs['rotated_affine']`` unless the caller also passes
+``drop_rotation=True``. With the opt-in, the writer drops the rotated
+affine and writes an axis-aligned file from the coords. This is
+locked by ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``.
+A rotated or skewed 6-tuple supplied through ``attrs['transform']``
+or through a VRT source is also rejected; see
+``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+(``test_eager_writer_rejects_rotated_6tuple_transform`` and
+``test_vrt_with_skewed_geotransform_rejected``).
+
+Failure-closed combinations. The following inputs raise rather than
+silently emit a mislabeled raster:
+
+* Rotated read without ``allow_rotated=True`` -- raises across eager,
+  dask, and windowed paths
+  (``xrspatial/geotiff/tests/test_release_gate_negative_2341.py``).
+* Rotated write without ``drop_rotation=True`` -- raises ``ValueError``
+  (``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``).
+* Rotated or skewed source inside a VRT -- raises at parse
+  (``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``).
+
+Nodata lifecycle
+================
+
+This page summarises the read / write contract. The full lifecycle
+of every attrs key, including which keys are canonical, which are
+aliases, and which are pass-through, lives in
+:ref:`user_guide.attrs_contract`. Do not duplicate that page here;
+this section is the brief.
+
+* Integer nodata. The on-disk sentinel survives the read bit-exact
+  and is preserved on the next write. ``attrs['nodata']`` carries
+  the sentinel as a Python ``int``. Out-of-range sentinels for the
+  band dtype are rejected at write
+  (``xrspatial/geotiff/tests/test_nodata_out_of_range_1581.py``).
+* Float nodata. The on-disk sentinel is recorded on
+  ``attrs['nodata']`` and surfaces as NaN in pixel data only when the
+  read promotes via ``mask_nodata=True`` (the default for float
+  outputs). With ``mask_nodata=False`` the raw float sentinel passes
+  through, so downstream callers can branch on the exact value;
+  ``xrspatial/geotiff/tests/test_mask_nodata_kwarg_2052.py`` pins this
+  split.
+* NaN nodata. A file that declares ``nodata=NaN`` is read with NaN in
+  both ``attrs['nodata']`` and pixel data (NaN propagates either way).
+* ``attrs['masked_nodata']``. Every read sets a boolean lifecycle
+  signal: ``True`` when the read produced NaN-masked output distinct
+  from the on-disk sentinel, ``False`` when pixel data carries the
+  raw sentinel. The signal is part of the canonical attrs contract;
+  ``xrspatial/geotiff/tests/test_masked_nodata_attr_2092.py`` pins
+  the canonical form and
+  ``xrspatial/geotiff/tests/test_vrt_masked_nodata_attr_2159.py``
+  covers the VRT mosaic case.
+* Mixed-band nodata. A VRT whose sources declare disagreeing per-band
+  nodata sentinels raises ``MixedBandMetadataError`` by default. Pass
+  ``band_nodata='first'`` to opt back into the legacy flatten-to-band-0
+  behaviour; see ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``.
+
+The lifecycle is locked end-to-end by
+``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py`` and
+``xrspatial/geotiff/tests/test_nodata_lifecycle_parity_2211.py``.
 
 Reading
 =======
@@ -146,6 +268,49 @@ If you run an integration test against a local HTTP server (e.g.
 ``http.server`` bound to ``127.0.0.1``), set
 ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` for the duration of the
 test.
+
+Remote-read safety limits and env vars
+--------------------------------------
+
+The reader applies a layered budget to every remote ``http://`` or
+``https://`` read so a single hostile file cannot exhaust memory or
+turn the process into a port scanner. The knobs are:
+
+* ``max_cloud_bytes`` (kwarg) / ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES``
+  (env). Per-call total byte budget for a remote read. The kwarg wins
+  over the env var; the env var wins over the built-in default. Pass
+  ``max_cloud_bytes=None`` to disable the cap on a single call. Locked
+  by ``xrspatial/geotiff/tests/test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py``,
+  ``xrspatial/geotiff/tests/test_open_geotiff_max_cloud_bytes_annot_2106.py``,
+  and ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``.
+* ``XRSPATIAL_COG_MAX_TILE_BYTES``. Per-tile / per-strip compressed
+  byte cap (default 256 MiB). Locked by
+  ``xrspatial/geotiff/tests/test_local_tile_byte_cap_1664.py``,
+  ``xrspatial/geotiff/tests/test_cloud_read_byte_limit_1928.py``, and
+  ``xrspatial/geotiff/tests/test_gpu_tile_byte_cap_2026_05_18.py``.
+* ``XRSPATIAL_GEOTIFF_HTTP_CONNECT_TIMEOUT`` and
+  ``XRSPATIAL_GEOTIFF_HTTP_READ_TIMEOUT``. Per-request connect / read
+  timeouts in seconds. Positive floats only; other values fall back
+  to the defaults (10 s and 30 s). Range coalescing inside one read
+  shares a single connection so the connect timeout applies once per
+  host, not once per range.
+* ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS``. Set to ``1`` (or
+  ``true`` / ``yes``) to disable the private-host reject. Off by
+  default; locked by
+  ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
+  ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``,
+  and ``xrspatial/geotiff/tests/test_uppercase_scheme_ssrf_2323.py``.
+* ``XRSPATIAL_VRT_ALLOWED_ROOTS``. Colon-separated list of additional
+  directory roots that a VRT is allowed to reference. The default
+  containment rule (sources must live under the VRT's directory) is
+  locked by ``xrspatial/geotiff/tests/test_vrt_path_containment_1671.py``.
+* ``XRSPATIAL_GEOTIFF_STRICT``. Promotes the fallback warnings into
+  raised exceptions, including the GPU-fallback path; see the next
+  section.
+
+The same byte budget applies to sidecar fetches, not just the parent
+file
+(``xrspatial/geotiff/tests/test_sidecar_max_cloud_bytes_2121.py``).
 
 Strict mode (``XRSPATIAL_GEOTIFF_STRICT``)
 ==========================================
@@ -336,3 +501,70 @@ single-band and 3-band, one overview level, plus an auto-promotion row
 that drives the threshold via the IFD-overhead helper rather than
 allocating a multi-gigabyte buffer. Promotion to ``stable`` follows the
 same release-cycle soak rule as the rest of the COG surface.
+
+Known unsupported combinations
+==============================
+
+The combinations below fail closed today: they raise a typed error
+rather than emit a possibly-wrong raster. Each row names the
+regression test that locks the behaviour.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Combination
+     - Regression test
+   * - ``to_geotiff(cog=True, tiled=False)``
+     - ``xrspatial/geotiff/tests/test_cog_requires_tiled_2312.py``
+   * - ``to_geotiff(cog=True, tile_size <= 0)``
+     - ``xrspatial/geotiff/tests/test_cog_tile_size_hang_2311.py``
+   * - Warped VRT
+       (``<VRTDataset subClass="VRTWarpedDataset">`` or
+       ``<VRTRasterBand subClass="VRTWarpedRasterBand">``)
+     - ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``,
+       ``xrspatial/geotiff/tests/test_vrt_capability_validator_2371.py``
+   * - Nested VRT (a ``<SourceFilename>`` that resolves to a ``.vrt``)
+     - ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``
+       (``test_nested_vrt_source_raises``,
+       ``test_nested_vrt_open_geotiff_raises``)
+   * - Mixed-CRS VRT (sources disagree on CRS without an opt-in)
+     - ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``,
+       ``xrspatial/geotiff/tests/test_vrt_capability_validator_2371.py``
+   * - Mixed per-band nodata across VRT sources (default
+       ``band_nodata=None``)
+     - ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``,
+       ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+       (``test_mixed_per_source_nodata_rejected``)
+   * - Rotated read without ``allow_rotated=True``
+     - ``xrspatial/geotiff/tests/test_release_gate_negative_2341.py``,
+       ``xrspatial/geotiff/tests/test_rotated_typed_error_2267.py``
+   * - Rotated write without ``drop_rotation=True``
+     - ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``,
+       ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+       (``test_eager_writer_rejects_rotated_6tuple_transform``,
+       ``test_eager_writer_rejects_rotated_affine_attr``)
+   * - Skewed VRT geotransform
+     - ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+       (``test_vrt_with_skewed_geotransform_rejected``)
+   * - Complex source / mask band / alpha band in a VRT
+     - ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``,
+       ``xrspatial/geotiff/tests/test_vrt_capability_validator_2371.py``
+   * - VRT source path escapes the VRT directory tree
+     - ``xrspatial/geotiff/tests/test_vrt_path_containment_1671.py``
+   * - 1xN / Nx1 write without ``attrs['transform']`` or
+       ``assume_square_pixels_for_degenerate_axis=True``
+     - ``xrspatial/geotiff/tests/test_degenerate_pixel_size_2214.py``;
+       see also "Degenerate-axis writes" above.
+   * - HTTP read against a private / loopback / link-local host
+       without ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1``
+     - ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
+       ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``
+   * - Unsupported feature flags more broadly (codec, layout, and
+       writer combos that ``SUPPORTED_FEATURES`` does not promise)
+     - ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+
+This list is the prose mirror of the negative rows in
+:ref:`reference.geotiff_release_gate`. When a row gets promoted or
+removed, update both pages in the same PR so the docs and the runtime
+constant stay in sync.
