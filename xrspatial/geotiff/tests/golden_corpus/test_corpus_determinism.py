@@ -102,6 +102,15 @@ def _nodata_equal(a, b) -> bool:
     return af == bf
 
 
+# Lossy cells (today: JPEG-YCbCr) can't compare pixels bit-exactly across
+# libjpeg versions, but a per-band mean drift much beyond a few intensity
+# units points at a real generator regression (wrong input array, swapped
+# band order before encode) rather than codec noise. 4.0 on a 0-255 scale
+# leaves several stops of headroom for libjpeg/YCbCr churn while still
+# catching the kind of bug the rest of the test is meant to flag.
+_LOSSY_PIXEL_MEAN_TOL = 4.0
+
+
 def _assert_semantic_equal(
     committed: pathlib.Path,
     regenerated: pathlib.Path,
@@ -111,11 +120,14 @@ def _assert_semantic_equal(
 
     Used for ``cog`` and ``jpeg`` fixtures where the on-disk encoding
     is toolchain-coupled but the readable content is stable.
-    Lossy cells (``tolerance.lossy: true`` in the manifest, today the
-    JPEG-YCbCr entry) skip pixel equality and check only shape, dtype,
-    georeferencing, and nodata.
+    Lossless cells assert bit-exact pixels at the base IFD and at
+    every overview level the file declares. Lossy cells
+    (``tolerance.lossy: true`` in the manifest, today the JPEG-YCbCr
+    entry) drop to a coarse per-band mean tolerance instead of a
+    bit-exact compare.
     """
     lossy = bool(entry.get("tolerance", {}).get("lossy", False))
+    fid = entry["id"]
     with rasterio.open(committed) as ref, rasterio.open(regenerated) as cand:
         assert ref.count == cand.count, (
             f"band count differs: committed={ref.count}, "
@@ -140,18 +152,84 @@ def _assert_semantic_equal(
             f"nodata differs: committed={ref.nodata!r}, "
             f"regenerated={cand.nodata!r}"
         )
-        assert ref.overviews(1) == cand.overviews(1), (
+        ref_overviews = ref.overviews(1)
+        assert ref_overviews == cand.overviews(1), (
             f"overview decimation factors differ: "
-            f"committed={ref.overviews(1)}, regenerated={cand.overviews(1)}"
+            f"committed={ref_overviews}, regenerated={cand.overviews(1)}"
         )
-        if lossy:
-            return
-        ref_pixels = ref.read()
-        cand_pixels = cand.read()
-        assert np.array_equal(ref_pixels, cand_pixels, equal_nan=True), (
-            f"pixel arrays differ for {entry['id']!r}; the generator output "
-            f"no longer round-trips to the committed fixture's pixels"
-        )
+
+    if lossy:
+        _assert_pixels_close_lossy(committed, regenerated, fid)
+        return
+    _assert_pixels_exact(committed, regenerated, fid)
+    # Overview pixels are part of the determinism contract for fixtures
+    # that ship them (the COG cell today). rasterio's OVERVIEW_LEVEL
+    # is 0-indexed against the overview chain, hence range(len(...)).
+    for level in range(len(ref_overviews)):
+        _assert_overview_pixels_exact(committed, regenerated, level, fid)
+
+
+def _read_all(path: pathlib.Path, *, overview_level: int | None = None) -> np.ndarray:
+    """Open ``path`` with rasterio and return ``src.read()`` for the
+    requested IFD. ``overview_level=None`` reads the base IFD.
+    """
+    if overview_level is None:
+        with rasterio.open(path) as src:
+            return src.read()
+    with rasterio.open(path, OVERVIEW_LEVEL=overview_level) as src:
+        return src.read()
+
+
+def _assert_pixels_exact(
+    committed: pathlib.Path, regenerated: pathlib.Path, fid: str,
+) -> None:
+    ref_pixels = _read_all(committed)
+    cand_pixels = _read_all(regenerated)
+    assert np.array_equal(ref_pixels, cand_pixels, equal_nan=True), (
+        f"pixel arrays differ for {fid!r}; the generator output "
+        f"no longer round-trips to the committed fixture's pixels"
+    )
+
+
+def _assert_overview_pixels_exact(
+    committed: pathlib.Path,
+    regenerated: pathlib.Path,
+    overview_level: int,
+    fid: str,
+) -> None:
+    ref_pixels = _read_all(committed, overview_level=overview_level)
+    cand_pixels = _read_all(regenerated, overview_level=overview_level)
+    assert np.array_equal(ref_pixels, cand_pixels, equal_nan=True), (
+        f"overview level {overview_level} pixels differ for {fid!r}; "
+        f"the generator's overview pyramid no longer matches the "
+        f"committed fixture"
+    )
+
+
+def _assert_pixels_close_lossy(
+    committed: pathlib.Path, regenerated: pathlib.Path, fid: str,
+) -> None:
+    """Coarse per-band mean comparison for lossy (JPEG) cells.
+
+    Bit-exact comparison would re-introduce the libjpeg coupling this
+    PR removed, but the per-band mean is stable enough across libjpeg
+    versions to catch a real content regression (a swapped input
+    array, a band-permutation bug) while tolerating ordinary codec
+    drift.
+    """
+    ref_pixels = _read_all(committed).astype(np.float64)
+    cand_pixels = _read_all(regenerated).astype(np.float64)
+    # rasterio always returns (bands, H, W), so axis=(1, 2) collapses
+    # to one mean per band.
+    ref_means = ref_pixels.mean(axis=(1, 2))
+    cand_means = cand_pixels.mean(axis=(1, 2))
+    diff = np.abs(ref_means - cand_means)
+    assert np.all(diff <= _LOSSY_PIXEL_MEAN_TOL), (
+        f"per-band mean drift exceeds {_LOSSY_PIXEL_MEAN_TOL} for {fid!r}: "
+        f"committed_means={ref_means.tolist()}, "
+        f"regenerated_means={cand_means.tolist()}, "
+        f"abs_diff={diff.tolist()}"
+    )
 
 
 def _load_entries() -> list[dict]:
@@ -175,7 +253,7 @@ def regenerated_dir(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     Module-scoped so the (few-second) write cost is paid once per
     test session rather than per parametrised case.
     """
-    out = tmp_path_factory.mktemp("regen_corpus_1930")
+    out = tmp_path_factory.mktemp("regen_corpus_determinism")
     generate.generate(output_dir=out)
     return out
 
@@ -255,6 +333,69 @@ def test_external_overview_sidecar_is_deterministic(
         f"{sidecar_name!r} drifted from the committed bytes; rerun the "
         f"generator and recommit, or revert the on-disk edit"
     )
+
+
+def _write_doctored_copy(
+    src: pathlib.Path, dst: pathlib.Path, *, delta: int = 1
+) -> None:
+    """Copy ``src`` to ``dst`` and flip one pixel by ``delta``.
+
+    Used by the negative-path tests below: the resulting file has the
+    same georeferencing and overview chain as the source but differs
+    in pixel content, so a working semantic check must reject it.
+    """
+    with rasterio.open(src) as r:
+        profile = r.profile
+        data = r.read()
+        overview_factors = r.overviews(1)
+    data = data.copy()
+    data[0, 0, 0] = (int(data[0, 0, 0]) + delta) & np.iinfo(data.dtype).max
+    with rasterio.open(dst, "w", **profile) as w:
+        w.write(data)
+        if overview_factors:
+            # Match the source's overview chain so the decimation check
+            # passes and the comparison falls through to pixel reads.
+            w.build_overviews(overview_factors)
+
+
+def test_semantic_equal_rejects_lossless_pixel_drift(tmp_path) -> None:
+    """A doctored lossless fixture with one flipped pixel must fail
+    ``_assert_semantic_equal``. Locks the drift-detection path that the
+    PR refactor depends on.
+    """
+    src = FIXTURES_DIR / "cog_internal_overview_uint16.tif"
+    if not src.exists():
+        pytest.skip("cog fixture not committed; cannot exercise drift path")
+    doctored = tmp_path / "cog_doctored_2299.tif"
+    _write_doctored_copy(src, doctored)
+    entry = _ENTRY_BY_ID["cog_internal_overview_uint16"]
+    with pytest.raises(AssertionError, match=r"pixels? .* differ"):
+        _assert_semantic_equal(src, doctored, entry)
+
+
+def test_semantic_equal_rejects_lossy_mean_drift(tmp_path) -> None:
+    """A doctored lossy fixture with a large constant offset must fail
+    the per-band mean check. Catches the case where the JPEG path
+    would otherwise silently accept anything since pixel equality is
+    skipped.
+    """
+    src = FIXTURES_DIR / "compression_jpeg_uint8_ycbcr.tif"
+    if not src.exists():
+        pytest.skip("jpeg fixture not committed; cannot exercise drift path")
+    # Read the source, add a constant offset well past the mean
+    # tolerance, then re-encode through the same profile so the
+    # resulting file is still a valid JPEG-YCbCr TIFF.
+    with rasterio.open(src) as r:
+        profile = r.profile
+        data = r.read()
+    doctored = tmp_path / "jpeg_doctored_2299.tif"
+    offset = int(_LOSSY_PIXEL_MEAN_TOL * 4) + 1
+    shifted = np.clip(data.astype(np.int32) + offset, 0, 255).astype(data.dtype)
+    with rasterio.open(doctored, "w", **profile) as w:
+        w.write(shifted)
+    entry = _ENTRY_BY_ID["compression_jpeg_uint8_ycbcr"]
+    with pytest.raises(AssertionError, match="per-band mean drift"):
+        _assert_semantic_equal(src, doctored, entry)
 
 
 def test_no_orphan_fixtures_on_disk() -> None:
