@@ -169,7 +169,7 @@ Local GeoTIFF read and write
        pixel sub-rectangle for tiled and stripped layouts; out-of-bounds
        and zero-area windows raise rather than silently clamp; coords
        on georeferenced inputs match the eager full-read slice.
-     - ``xrspatial/geotiff/tests/test_window_out_of_bounds_1634.py``,
+     - ``xrspatial/geotiff/tests/unit/test_input_validation.py``,
        ``xrspatial/geotiff/tests/test_no_georef_windowed_coords_1710.py``
      - `#2340`_
    * - ``reader.windowed`` -- shifted-transform parity (eager + dask)
