@@ -164,7 +164,8 @@ import xarray as xr
 from ._coords import coords_from_geo_info as _coords_from_geo_info
 from ._coords import resolve_georef as _resolve_georef
 from ._coords import transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry
-from ._geotags import _NO_GEOREF_KEY, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
+from ._geotags import (_NO_GEOREF_KEY, GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_MODEL_TYPE,
+                       GEOKEY_PROJECTED_CS_TYPE, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT)
 
 # Per-codec valid compression-level ranges, used by ``to_geotiff`` for
 # friendly up-front validation. Codecs not listed here either reject any
@@ -1111,9 +1112,9 @@ def _validate_read_geo_info(
     # than as a default-zero, which would otherwise look like
     # ``ModelType = undefined`` instead of "no model type tag at all".
     raw_geokeys = getattr(geo_info, 'geokeys', None) or {}
-    model_type_ctx = raw_geokeys.get(1024)  # GEOKEY_MODEL_TYPE
-    proj_cs_ctx = raw_geokeys.get(3072)     # GEOKEY_PROJECTED_CS_TYPE
-    geog_ctx = raw_geokeys.get(2048)        # GEOKEY_GEOGRAPHIC_TYPE
+    model_type_ctx = raw_geokeys.get(GEOKEY_MODEL_TYPE)
+    proj_cs_ctx = raw_geokeys.get(GEOKEY_PROJECTED_CS_TYPE)
+    geog_ctx = raw_geokeys.get(GEOKEY_GEOGRAPHIC_TYPE)
     validate_read_metadata({
         'allow_rotated': allow_rotated,
         'allow_unparseable_crs': allow_unparseable_crs,

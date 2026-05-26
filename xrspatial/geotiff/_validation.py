@@ -1263,6 +1263,15 @@ def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
     the actual CRS is defined by sibling keys (``GeogGeodeticDatumGeoKey``
     et al.) rather than the type-code slot itself.
 
+    ModelType enum values per the GeoTIFF spec:
+
+    * ``_MODEL_TYPE_UNDEFINED`` (0): no ModelTypeGeoKey present.
+    * ``_MODEL_TYPE_PROJECTED`` (1): projected CRS.
+    * ``_MODEL_TYPE_GEOGRAPHIC`` (2): geographic CRS.
+    * ``_MODEL_TYPE_GEOCENTRIC`` (3): geocentric CRS (not used by
+      xrspatial readers today; passes through with no contradiction
+      against either type-code slot).
+
     Context keys consumed:
 
     * ``allow_inconsistent_geokeys`` -- caller opt-out kwarg.
@@ -1285,12 +1294,18 @@ def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
         return
 
     # Coerce ints. The reader stashes raw GeoKey ints, but a caller could
-    # plausibly pass floats; tolerate both and ignore the rest.
+    # plausibly pass floats; tolerate both and ignore the rest. NaN and
+    # inf would make ``int()`` raise (ValueError / OverflowError) on a
+    # caller hand-building a garbage context dict; catch them and treat
+    # as "not declared" rather than crash the validator.
     def _as_int(v):
         if isinstance(v, bool):
             return None
         if isinstance(v, (int, float)):
-            return int(v)
+            try:
+                return int(v)
+            except (ValueError, OverflowError):
+                return None
         return None
 
     model_type_i = _as_int(model_type)

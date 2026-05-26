@@ -261,12 +261,13 @@ def read_vrt(source: str, *,
         unrecognised payload through. See ``open_geotiff`` for the
         full description.
     allow_inconsistent_geokeys : bool, default False
-        [advanced] Read-side opt-in for per-source GeoTIFF files
-        referenced by the VRT whose GeoKey directory is internally
-        contradictory. Forwarded to the per-source reader. VRT
-        capability validation itself does not parse GeoKeys (it
-        consumes the GDAL ``<SRS>`` field), so this kwarg only affects
-        the per-source decode. See ``open_geotiff`` for the full
+        [advanced] Read-side opt-in for sources whose GeoKey directory
+        is internally contradictory. Accepted for signature symmetry
+        with ``open_geotiff`` and the GeoTIFF readers; VRT capability
+        validation itself does not parse GeoKeys (it consumes the GDAL
+        ``<SRS>`` field), and the legacy VRT internal reader does not
+        thread per-GeoTIFF-source kwargs, so this kwarg is currently a
+        no-op on the VRT path. See ``open_geotiff`` for the full
         description (issue #2417).
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs in

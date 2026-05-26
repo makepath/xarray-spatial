@@ -203,6 +203,46 @@ def test_validate_ignores_non_numeric_geokey_values():
     })
 
 
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        float('nan'),
+        float('inf'),
+        float('-inf'),
+    ],
+    ids=["nan", "inf", "-inf"],
+)
+def test_validate_tolerates_nan_or_inf_geokey_values(bad_value):
+    """Hand-built context dicts with NaN / inf floats in a GeoKey slot
+    must not crash the validator. ``int(float('nan'))`` raises
+    ValueError and ``int(float('inf'))`` raises OverflowError; the
+    check catches both and treats the slot as 'not declared'.
+
+    The reader never produces these for type-code GeoKeys (those parse
+    as TIFF SHORT ints), but ``validate_read_metadata`` is a public-ish
+    helper that takes an arbitrary dict, so the validator stays robust
+    against garbage callers. See PR review follow-up on issue #2417.
+    """
+    # bad model_type with an otherwise-conflict-looking projected slot.
+    validate_read_metadata({
+        'model_type': bad_value,
+        'projected_cs_type': 4326,
+        'geographic_type': None,
+    })
+    # bad projected_cs_type alongside a valid geographic slot.
+    validate_read_metadata({
+        'model_type': 2,
+        'projected_cs_type': bad_value,
+        'geographic_type': 4326,
+    })
+    # bad geographic_type.
+    validate_read_metadata({
+        'model_type': 1,
+        'projected_cs_type': 32633,
+        'geographic_type': bad_value,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Full-stack integration: the bug's exact reproducer through open_geotiff().
 # ---------------------------------------------------------------------------
