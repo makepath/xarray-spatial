@@ -463,13 +463,17 @@ def validate_parsed_vrt(
     # path) via the existing call sites in ``_backends/vrt.py``, so a
     # mixed-CRS VRT is refused at the same boundary as the other
     # capability checks above.
-    _check_mixed_source_crs(parsed, _unique_source_paths, source=source)
+    _check_mixed_source_crs(
+        _unique_source_paths,
+        vrt_crs_wkt=parsed.crs_wkt,
+        source=source,
+    )
 
 
 def _check_mixed_source_crs(
-    parsed: 'VRTDataset',
     source_paths: list[str],
     *,
+    vrt_crs_wkt: str | None,
     source: str,
 ) -> None:
     """Rule 10: reject a VRT whose sources disagree on CRS.
@@ -477,8 +481,8 @@ def _check_mixed_source_crs(
     Walks ``source_paths`` (already deduplicated by the caller), opens
     each one for metadata-only IFD parsing, and pulls
     ``crs_wkt`` / ``crs_epsg`` via :func:`extract_geo_info`. Compares
-    each source CRS to the VRT-declared ``parsed.crs_wkt`` after pyproj
-    canonicalisation. When ``parsed.crs_wkt`` is empty / None, the
+    each source CRS to the VRT-declared ``vrt_crs_wkt`` after pyproj
+    canonicalisation. When ``vrt_crs_wkt`` is empty / None, the
     sources are required to agree with each other (the first parseable
     source becomes the reference).
 
@@ -526,7 +530,7 @@ def _check_mixed_source_crs(
     # then becomes the first parseable source.
     vrt_crs = None
     vrt_crs_display: str | None = None
-    raw_vrt_srs = parsed.crs_wkt
+    raw_vrt_srs = vrt_crs_wkt
     if raw_vrt_srs:
         try:
             vrt_crs = _PyProjCRS.from_user_input(raw_vrt_srs)
@@ -641,11 +645,17 @@ def _format_crs_for_message(raw: str, crs) -> str:
     EPSG code (the common case for a well-formed source TIFF). Falls
     back to a truncated excerpt of the raw text otherwise so the
     message stays readable for hand-built or non-EPSG WKT strings.
+
+    ``CRS.to_epsg()`` is documented to return ``None`` on failure
+    rather than raise, so the call is unguarded; we still defend
+    against a ``crs`` that does not expose ``to_epsg`` at all (the
+    helper accepts an untyped ``crs`` because tests and future callers
+    may pass a mock or a parsed-but-not-pyproj CRS shim).
     """
-    try:
-        epsg = crs.to_epsg()
-    except Exception:
-        epsg = None
+    epsg = None
+    to_epsg = getattr(crs, 'to_epsg', None)
+    if callable(to_epsg):
+        epsg = to_epsg()
     if epsg is not None:
         return f"EPSG:{epsg}"
     raw = raw.strip()
