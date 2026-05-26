@@ -507,7 +507,7 @@ VRT supported subset
      - Holes surface as the band sentinel, ``attrs['vrt_holes']`` is set,
        and a :class:`GeoTIFFFallbackWarning` is emitted.
      - ``xrspatial/geotiff/tests/test_vrt_holes_attr_1734.py``,
-       ``xrspatial/geotiff/tests/test_vrt_missing_sources_policy_1799.py``,
+       ``xrspatial/geotiff/tests/vrt/test_missing_sources.py``,
        ``xrspatial/geotiff/tests/test_vrt_chunked_missing_sources_1799.py``
      - `#2342`_
    * - VRT source / dest rectangle validation

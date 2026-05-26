@@ -30,7 +30,7 @@ import xarray as xr
 
 from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
-from ._tiff_surgery import patch_byte_counts as _patch_byte_counts
+from ._helpers.tiff_surgery import patch_byte_counts as _patch_byte_counts
 
 
 def _cupy_available() -> bool:
