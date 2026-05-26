@@ -130,6 +130,7 @@ def read_vrt(source: str, *,
              allow_unparseable_crs: bool = False,
              allow_inconsistent_geokeys: bool = False,
              allow_invalid_nodata: bool = False,
+             stable_only: bool = False,
              allow_experimental_codecs: bool = False,
              allow_internal_only_jpeg: bool = False,
              band_nodata: str | None = None,
@@ -276,6 +277,17 @@ def read_vrt(source: str, *,
         the per-source GeoTIFF reads built by the VRT planner. See
         ``open_geotiff`` for the full description (#1774 follow-up,
         #2441).
+    stable_only : bool, default False
+        [advanced] Read-side opt-in for stable-tier sources only. When
+        ``True``, ``read_vrt`` raises :class:`VRTStableSourcesOnlyError`
+        before any pixel decode because ``reader.vrt`` itself sits at
+        the ``advanced`` tier in :data:`SUPPORTED_FEATURES` and VRT
+        child sources can declare any codec the GeoTIFF reader supports
+        (including experimental and internal-only tiers). The message
+        names the file path and the ``allow_experimental_codecs``
+        unlock so the caller can opt into the broader tier set
+        explicitly. See epic #2342 and
+        ``docs/source/reference/release_gate_geotiff.rst``.
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs in
         any source file referenced by the VRT. Forwarded to the
@@ -372,6 +384,22 @@ def read_vrt(source: str, *,
     from .._vrt import read_vrt as _read_vrt_internal
 
     source = _coerce_path(source)
+
+    # Epic #2342: reject the read up front when the caller asked for
+    # stable-only sources. ``reader.vrt`` sits at the ``advanced`` tier
+    # and VRT children can declare any codec the GeoTIFF reader
+    # supports, so a stable-only request cannot be served from a VRT
+    # mosaic without the documented ``allow_experimental_codecs``
+    # unlock. Runs before the dispatcher-kwarg validator so the typed
+    # error surfaces before any other validation noise (a malformed VRT
+    # path, an unsupported ``overview_level``, etc.) competes for the
+    # raise site.
+    from .._validation import _validate_stable_only_vrt
+    _validate_stable_only_vrt(
+        source,
+        stable_only=stable_only,
+        allow_experimental_codecs=allow_experimental_codecs,
+    )
 
     # Shared dispatcher-kwarg validator so direct callers see the same
     # rejections as ``open_geotiff`` (issue #2175 / parent #2162). For

@@ -44,6 +44,7 @@ def read_geotiff_dask(source: str, *,
                       allow_unparseable_crs: bool = False,
                       allow_inconsistent_geokeys: bool = False,
                       allow_invalid_nodata: bool = False,
+                      stable_only: bool = False,
                       allow_experimental_codecs: bool = False,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
@@ -142,6 +143,13 @@ def read_geotiff_dask(source: str, *,
         ``InvalidIntegerNodataError`` at graph-build time. See
         ``open_geotiff`` for the full description (#1774 follow-up,
         #2441).
+    stable_only : bool, default False
+        [advanced] Read-side opt-in for stable-tier sources only.
+        Forwarded to ``read_vrt`` when the source ends in ``.vrt`` so
+        the rejection fires at graph-build time. Non-VRT sources on
+        this entry point already ride the stable ``reader.local_file``
+        path, so the flag is a no-op for them. See ``open_geotiff`` for
+        the full description (epic #2342).
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). Fires at graph
@@ -227,6 +235,9 @@ def read_geotiff_dask(source: str, *,
             allow_unparseable_crs=allow_unparseable_crs,
             allow_inconsistent_geokeys=allow_inconsistent_geokeys,
             allow_invalid_nodata=allow_invalid_nodata,
+            stable_only=stable_only,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg,
             band_nodata=band_nodata,
             mask_nodata=mask_nodata,
             **vrt_kwargs,
