@@ -25,6 +25,7 @@ with the offending source path and field embedded in the message.
 """
 from __future__ import annotations
 
+import struct
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -281,6 +282,15 @@ def validate_parsed_vrt(
     # Rule 7 / 8: SrcRect and DstRect sanity, plus the supported
     # resampling set. Walk every source on every band so the message
     # names the offending source path and field.
+    #
+    # Rule 10 (source CRS mismatch) needs the file metadata of every
+    # source, but only for sources that survive the cheaper rect/mask/
+    # resample rejects below. We collect the unique source paths during
+    # this walk and probe them in a single deduplicated pass afterwards
+    # so a multi-band VRT that references the same TIFF on each band
+    # opens the file once rather than per-band.
+    _unique_source_paths: list[str] = []
+    _seen_source_paths: set[str] = set()
     for band in parsed.bands:
         for src in band.sources:
             sr = src.src_rect
@@ -423,6 +433,225 @@ def validate_parsed_vrt(
                     f"<ResampleAlg>Nearest</ResampleAlg> or matching "
                     f"SrcRect/DstRect sizes. See issue #1751."
                 )
+
+            # Collect the source for the Rule 10 CRS sweep below. We
+            # only reach this line after every cheaper rule has accepted
+            # the source, so a bad rect / mask / resample still raises
+            # before we open any file for metadata. Path is the parsed
+            # ``_Source.filename``, which ``parse_vrt`` has already
+            # resolved to an absolute / VRT-relative path that survived
+            # the directory-containment check.
+            if src.filename not in _seen_source_paths:
+                _seen_source_paths.add(src.filename)
+                _unique_source_paths.append(src.filename)
+
+    # Rule 10: per-source CRS agreement (#2321 mixed-CRS gap, #2444).
+    #
+    # The VRT mosaic reader has no reprojection step: every source's
+    # pixels are placed by integer offset into a single output buffer
+    # whose CRS is taken from the VRT-declared ``<SRS>`` (or, when the
+    # VRT carries no ``<SRS>``, the first source's CRS). If a source
+    # carries a CRS that disagrees with the VRT-declared SRS, the read
+    # path silently composites those pixels into a mosaic whose
+    # ``attrs['crs']`` advertises one CRS while some pixels actually
+    # come from another. The output is no longer geospatially
+    # meaningful, but nothing in the eager or chunked path objects.
+    #
+    # Move the rejection here so the typed error fires before any
+    # decode, with the offending source path and CRS named. The check
+    # runs at graph build (chunked path) and eager-read setup (eager
+    # path) via the existing call sites in ``_backends/vrt.py``, so a
+    # mixed-CRS VRT is refused at the same boundary as the other
+    # capability checks above.
+    _check_mixed_source_crs(parsed, _unique_source_paths, source=source)
+
+
+def _check_mixed_source_crs(
+    parsed: 'VRTDataset',
+    source_paths: list[str],
+    *,
+    source: str,
+) -> None:
+    """Rule 10: reject a VRT whose sources disagree on CRS.
+
+    Walks ``source_paths`` (already deduplicated by the caller), opens
+    each one for metadata-only IFD parsing, and pulls
+    ``crs_wkt`` / ``crs_epsg`` via :func:`extract_geo_info`. Compares
+    each source CRS to the VRT-declared ``parsed.crs_wkt`` after pyproj
+    canonicalisation. When ``parsed.crs_wkt`` is empty / None, the
+    sources are required to agree with each other (the first parseable
+    source becomes the reference).
+
+    Skip conditions (no raise):
+
+    * pyproj is not installed. Mirrors the disposition of
+      ``_check_write_conflicting_crs`` in ``_validation.py``: a string
+      compare would false-positive on equivalent representations (e.g.
+      ``"EPSG:4326"`` vs. the canonical WGS84 WKT), and a host without
+      pyproj cannot prove inequality, so we cannot fail closed.
+    * A source is unreadable, has no parseable header, or carries no
+      CRS at all. The first two land on the existing ``missing_sources``
+      / ``parse_header`` rejection paths during the real read; the
+      third is the "VRT inherits its CRS from the source" case that the
+      reader has always handled.
+    * A source CRS string is non-empty but pyproj cannot canonicalise
+      it. Conservative: we can prove the string is broken but cannot
+      prove inequality against the VRT-declared SRS, and the read path
+      will surface its own typed error on the unparseable CRS.
+
+    Raises
+    ------
+    VRTUnsupportedError
+        On the first source CRS that pyproj resolves to a different
+        :class:`pyproj.CRS` than the reference. Message names the
+        source path, the source CRS (EPSG when available, else a
+        truncated WKT excerpt), and the VRT-declared SRS for contrast.
+    """
+    if not source_paths:
+        return
+
+    # pyproj is the only way to canonicalise. Mirror the
+    # ``_check_write_conflicting_crs`` skip-on-missing disposition so
+    # the validator does not regress hosts without pyproj.
+    try:
+        from pyproj import CRS as _PyProjCRS
+        from pyproj.exceptions import CRSError as _PyProjCRSError
+    except ImportError:
+        return
+
+    # Parse the VRT-declared SRS into a pyproj CRS if it is non-empty.
+    # ``parsed.crs_wkt`` carries the raw ``<SRS>`` text, which may be a
+    # WKT block or a short token like ``"EPSG:4326"`` / ``"+proj=..."``.
+    # An empty / None value means "no VRT-level SRS"; the reference CRS
+    # then becomes the first parseable source.
+    vrt_crs = None
+    vrt_crs_display: str | None = None
+    raw_vrt_srs = parsed.crs_wkt
+    if raw_vrt_srs:
+        try:
+            vrt_crs = _PyProjCRS.from_user_input(raw_vrt_srs)
+            vrt_crs_display = _format_crs_for_message(raw_vrt_srs, vrt_crs)
+        except _PyProjCRSError:
+            # The unparseable-SRS case is already handled by Rule 6
+            # above (with the ``allow_unparseable_crs`` opt-in). If we
+            # got here, either the caller opted in or the string passed
+            # the ``_looks_like_wkt`` cheap check but pyproj still
+            # rejects it. Either way, we cannot canonicalise the VRT
+            # side, so we cannot prove a source disagrees with it.
+            return
+
+    # Lazy imports of the on-disk metadata extractors. Keep them inside
+    # this helper so the module stays a leaf with no eager dependency
+    # on the reader / header parsers; the centralised validator pays
+    # the import cost only when it actually needs to open sources.
+    from ._geotags import extract_geo_info
+    from ._header import parse_all_ifds, parse_header
+    from ._sources import _FileSource
+
+    reference_crs = vrt_crs
+    reference_display = vrt_crs_display
+    reference_source: str | None = None  # None == VRT-declared
+
+    for src_path in source_paths:
+        src_handle = None
+        try:
+            try:
+                src_handle = _FileSource(src_path)
+                data = src_handle.read_all()
+                header = parse_header(data)
+                ifds = parse_all_ifds(data, header)
+                if not ifds:
+                    continue
+                geo = extract_geo_info(ifds[0], data, header.byte_order)
+            except (OSError, ValueError, struct.error):
+                # Unreadable / malformed source. The real read path
+                # surfaces this via the ``missing_sources`` contract
+                # (default ``'raise'``); the validator deliberately
+                # stays quiet so the canonical error fires from there
+                # with the existing message and code path.
+                continue
+
+            src_crs_raw = geo.crs_wkt
+            if not src_crs_raw and geo.crs_epsg is not None:
+                src_crs_raw = f"EPSG:{geo.crs_epsg}"
+            if not src_crs_raw:
+                # Source has no CRS at all. The VRT can legitimately
+                # provide one in this case (reader inherits the
+                # VRT-declared SRS), so skip.
+                continue
+
+            try:
+                src_crs = _PyProjCRS.from_user_input(src_crs_raw)
+            except _PyProjCRSError:
+                # Cannot canonicalise the source CRS; cannot prove
+                # disagreement. The decode path will surface its own
+                # error if the broken CRS matters.
+                continue
+
+            if reference_crs is None:
+                # No VRT-level SRS and this is the first source we
+                # could read; use it as the reference for the rest.
+                reference_crs = src_crs
+                reference_display = _format_crs_for_message(
+                    src_crs_raw, src_crs,
+                )
+                reference_source = src_path
+                continue
+
+            if src_crs.equals(reference_crs):
+                continue
+
+            src_display = _format_crs_for_message(src_crs_raw, src_crs)
+            if reference_source is None:
+                # Disagreement against the VRT-declared SRS.
+                raise VRTUnsupportedError(
+                    f"VRT '{source}' source '{src_path}' carries CRS "
+                    f"{src_display}, which does not match the "
+                    f"VRT-declared <SRS> ({reference_display}). The "
+                    f"mosaic reader has no reprojection step, so the "
+                    f"two sets of pixels cannot be composited into a "
+                    f"single CRS without misplacing one of them. "
+                    f"Reproject the source to the VRT-declared CRS "
+                    f"(e.g. ``gdalwarp -t_srs``) before referencing it, "
+                    f"or split the mosaic into per-CRS VRTs. See issue "
+                    f"#2321."
+                )
+            # Disagreement among sources (no VRT-level SRS).
+            raise VRTUnsupportedError(
+                f"VRT '{source}' has no <SRS> and its sources disagree "
+                f"on CRS: '{reference_source}' carries "
+                f"{reference_display} but '{src_path}' carries "
+                f"{src_display}. The mosaic reader has no reprojection "
+                f"step, so the sources cannot be composited into a "
+                f"single CRS. Reproject every source to a common CRS "
+                f"(e.g. ``gdalwarp -t_srs``) before assembling the VRT, "
+                f"or declare an authoritative <SRS> at the VRT level "
+                f"and use sources whose CRS already matches it. See "
+                f"issue #2321."
+            )
+        finally:
+            if src_handle is not None:
+                src_handle.close()
+
+
+def _format_crs_for_message(raw: str, crs) -> str:
+    """Render a CRS for inclusion in a ``VRTUnsupportedError`` message.
+
+    Prefers ``EPSG:<code>`` when pyproj resolves the input to a known
+    EPSG code (the common case for a well-formed source TIFF). Falls
+    back to a truncated excerpt of the raw text otherwise so the
+    message stays readable for hand-built or non-EPSG WKT strings.
+    """
+    try:
+        epsg = crs.to_epsg()
+    except Exception:
+        epsg = None
+    if epsg is not None:
+        return f"EPSG:{epsg}"
+    raw = raw.strip()
+    if len(raw) <= 60:
+        return repr(raw)
+    return repr(raw[:57] + '...')
 
 
 # Public alias matching the issue #2371 / epic #2342 naming. The
