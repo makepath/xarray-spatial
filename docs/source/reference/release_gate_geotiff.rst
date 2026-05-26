@@ -585,8 +585,8 @@ Sidecar and overview interactions
      - advanced
      - External ``.tif.ovr`` sidecars produce the same georef status and
        CRS attrs as inline-overview sources.
-     - ``xrspatial/geotiff/tests/test_sidecar_ovr_2112.py``,
-       ``xrspatial/geotiff/tests/test_sidecar_own_geokeys_2315.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (sidecar_ovr and sidecar_own_geokeys sections)
      - `#2286`_
    * - Overview metadata survival (internal COG and ``.ovr`` sidecar)
      - stable
@@ -603,19 +603,22 @@ Sidecar and overview interactions
      - stable
      - Sidecar ``.ovr`` files fetched over HTTP honour the sidecar's own
        header byte order, not the parent file's.
-     - ``xrspatial/geotiff/tests/test_remote_sidecar_byte_order_2314.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (remote_sidecar_byte_order section)
      - `#2344`_
    * - Remote sidecar chunked read
      - advanced
      - Chunked dask reads can resolve remote sidecars without
        materializing the full file.
-     - ``xrspatial/geotiff/tests/test_remote_sidecar_chunked_2239.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (remote_sidecar_chunked section)
      - `#2344`_
    * - Sidecar ``max_cloud_bytes``
      - stable
      - The cloud byte budget applies to sidecar fetches, not just the
        parent file.
-     - ``xrspatial/geotiff/tests/test_sidecar_max_cloud_bytes_2121.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (sidecar_max_cloud_bytes section)
      - `#2344`_
 
 GPU paths (experimental)

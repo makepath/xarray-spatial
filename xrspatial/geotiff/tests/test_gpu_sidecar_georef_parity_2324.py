@@ -14,9 +14,10 @@ when cupy / CUDA is unavailable so the test runs on CI without a GPU
 and still guards the metadata code on a real GPU box.
 
 Test fixture helpers (sidecar writer, NewSubfileType insertion, georef
-tag stripping) are shared with ``test_sidecar_own_geokeys_2315.py`` --
-imported rather than duplicated so a fixture-format change there does
-not silently desync this file.
+tag stripping) are shared with the consolidated
+``integration/test_sidecar.py`` (own-geokeys section, ex
+``test_sidecar_own_geokeys_2315.py``) -- imported rather than duplicated
+so a fixture-format change there does not silently desync this file.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ import pytest
 
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask
 
-from .test_sidecar_own_geokeys_2315 import _write_pair
+from .integration.test_sidecar import _write_pair
 
 
 def _gpu_available() -> bool:
