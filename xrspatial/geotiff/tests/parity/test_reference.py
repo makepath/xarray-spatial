@@ -1,26 +1,24 @@
-"""Cross-library accuracy test (issue #1961).
+"""Backend parity for degenerate shapes and external-reference round trips.
 
-Read the same GeoTIFF three ways and assert the results agree:
+Sibling to ``parity/test_backend_matrix.py``. Two sections, each a former
+top-level file:
 
-1. ``rasterio.open(path)`` -> numpy array, transform, CRS, nodata.
-2. ``xrspatial.geotiff.open_geotiff(path)`` -> ``xr.DataArray``.
-3. Write the xarray-spatial DataArray with ``.to_zarr(...)``, reopen with
-   ``xr.open_zarr(...)``.
+Section 1 -- Degenerate shapes and special floats across backends
+    (2026-05-11 coverage sweep)
+    The eager numpy path covers 1x1 / 1xN / Nx1 rasters plus all-NaN /
+    Inf inputs (``test_edge_cases.py``). This section adds the same
+    coverage for the GPU, dask+numpy, and dask+cupy backends, plus the
+    GPU writer's degenerate-shape path and the dask float-sentinel mask.
 
-The point of this file is to pin the GeoTIFF reader against an external
-reference (rasterio) and against a round-trip through a different on-disk
-format (Zarr). A regression in header parsing, georef extraction, coord
-generation, nodata handling, or Zarr metadata propagation can pass every
-existing test and only surface when a user files a bug.
+Section 2 -- rasterio / Zarr round-trip parity (#1961)
+    Read the same GeoTIFF three ways -- rasterio, ``open_geotiff``, and a
+    Zarr round trip of the xarray-spatial result -- and assert pixels,
+    coords, transform, CRS, and nodata agree. Pins the reader against an
+    external reference and a different on-disk format.
 
-Each input file covers a case that has drifted before:
-
-- single-band float32 with a non-NaN nodata sentinel
-- multi-band uint16 with a single dataset-level nodata sentinel
-- north-up and south-up rasters (negative vs positive ``pixel_height``)
-- 1xN / Nx1 stripe (#1945)
-- tiled COG, no overviews
-- no-georef raster with integer coords (#1949)
+GPU rows skip when cupy + CUDA are absent via the shared ``requires_gpu``
+marker. The rasterio / Zarr section skips when those optional deps are
+missing.
 """
 from __future__ import annotations
 
@@ -30,17 +28,363 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, to_geotiff,
+                               write_geotiff_gpu)
+
+from .._helpers.markers import requires_gpu
+
+# ===========================================================================
+# Section 1 -- Degenerate shapes and special floats across backends
+# ===========================================================================
+#
+# A regression that broke any backend for a 1-pixel row, 1-column strip,
+# or all-NaN input would not surface until a user hit the production-traffic
+# mosaic that triggered it. This section closes the geometric-edge-case and
+# NaN / Inf gaps for the non-eager backends.
+
+
+class TestSinglePixelRead:
+    """1x1 rasters round-trip through every read backend.
+
+    The eager numpy path covers this in ``test_edge_cases.py``. A 1x1
+    raster has degenerate stride and tile geometry; the dask path's
+    chunk-tile alignment and the GPU path's grid sizing both have
+    code that assumes >1 pixel without crashing -- but a future
+    refactor could regress either.
+    """
+
+    @pytest.fixture
+    def single_pixel_path(self, tmp_path):
+        arr = np.array([[42.0]], dtype=np.float32)
+        p = tmp_path / "single_pixel.tif"
+        to_geotiff(arr, str(p))
+        return str(p), arr
+
+    def test_dask_numpy_backend(self, single_pixel_path):
+        path, arr = single_pixel_path
+        # chunks larger than the raster is the documented behaviour
+        # (dask collapses to a single chunk that matches the data).
+        result = open_geotiff(path, chunks=64)
+        assert result.shape == (1, 1)
+        computed = result.compute()
+        np.testing.assert_array_equal(computed.values, arr)
+
+    def test_read_geotiff_dask_direct(self, single_pixel_path):
+        """The explicit ``read_geotiff_dask`` entry point matches dispatch."""
+        path, arr = single_pixel_path
+        result = read_geotiff_dask(path, chunks=8)
+        assert result.shape == (1, 1)
+        np.testing.assert_array_equal(result.compute().values, arr)
+
+    @requires_gpu
+    def test_gpu_backend(self, single_pixel_path):
+        path, arr = single_pixel_path
+        result = open_geotiff(path, gpu=True)
+        assert result.shape == (1, 1)
+        np.testing.assert_array_equal(result.data.get(), arr)
+
+    @requires_gpu
+    def test_read_geotiff_gpu_direct(self, single_pixel_path):
+        """The explicit ``read_geotiff_gpu`` entry point matches dispatch."""
+        path, arr = single_pixel_path
+        result = read_geotiff_gpu(path)
+        assert result.shape == (1, 1)
+        np.testing.assert_array_equal(result.data.get(), arr)
+
+    @requires_gpu
+    def test_dask_cupy_backend(self, single_pixel_path):
+        """dask+cupy must also handle a 1x1 raster.
+
+        The dask graph here has exactly one block (chunks larger than
+        the raster) and that block carries a cupy buffer.
+        """
+        import cupy
+        path, arr = single_pixel_path
+        result = open_geotiff(path, gpu=True, chunks=64)
+        assert result.shape == (1, 1)
+        computed = result.compute()
+        assert isinstance(computed.data, cupy.ndarray)
+        np.testing.assert_array_equal(computed.data.get(), arr)
+
+
+class TestSingleRowRead:
+    """1xN rasters round-trip through every read backend.
+
+    Single-row tiles trigger the strip-fallback path in the GPU decoder
+    when there is no tiled layout, and a 1-row chunk in the dask graph.
+    """
+
+    @pytest.fixture
+    def single_row_path(self, tmp_path):
+        arr = np.arange(10, dtype=np.float32).reshape(1, 10)
+        p = tmp_path / "single_row.tif"
+        to_geotiff(arr, str(p))
+        return str(p), arr
+
+    def test_dask_numpy_backend(self, single_row_path):
+        path, arr = single_row_path
+        result = open_geotiff(path, chunks=4)
+        assert result.shape == (1, 10)
+        np.testing.assert_array_equal(result.compute().values, arr)
+
+    @requires_gpu
+    def test_gpu_backend(self, single_row_path):
+        path, arr = single_row_path
+        result = open_geotiff(path, gpu=True)
+        assert result.shape == (1, 10)
+        np.testing.assert_array_equal(result.data.get(), arr)
+
+    @requires_gpu
+    def test_dask_cupy_backend(self, single_row_path):
+        import cupy
+        path, arr = single_row_path
+        result = open_geotiff(path, gpu=True, chunks=4)
+        assert result.shape == (1, 10)
+        computed = result.compute()
+        assert isinstance(computed.data, cupy.ndarray)
+        np.testing.assert_array_equal(computed.data.get(), arr)
+
+
+class TestSingleColumnRead:
+    """Nx1 rasters round-trip through every read backend.
+
+    Single-column tiles are the mirror case of single-row, and exercise
+    the row-major iteration order in the dask block-builder and the
+    GPU's window-band slice path.
+    """
+
+    @pytest.fixture
+    def single_column_path(self, tmp_path):
+        arr = np.arange(10, dtype=np.float32).reshape(10, 1)
+        p = tmp_path / "single_column.tif"
+        to_geotiff(arr, str(p))
+        return str(p), arr
+
+    def test_dask_numpy_backend(self, single_column_path):
+        path, arr = single_column_path
+        result = open_geotiff(path, chunks=4)
+        assert result.shape == (10, 1)
+        np.testing.assert_array_equal(result.compute().values, arr)
+
+    @requires_gpu
+    def test_gpu_backend(self, single_column_path):
+        path, arr = single_column_path
+        result = open_geotiff(path, gpu=True)
+        assert result.shape == (10, 1)
+        np.testing.assert_array_equal(result.data.get(), arr)
+
+    @requires_gpu
+    def test_dask_cupy_backend(self, single_column_path):
+        import cupy
+        path, arr = single_column_path
+        result = open_geotiff(path, gpu=True, chunks=4)
+        assert result.shape == (10, 1)
+        computed = result.compute()
+        assert isinstance(computed.data, cupy.ndarray)
+        np.testing.assert_array_equal(computed.data.get(), arr)
+
+
+@requires_gpu
+class TestGpuWriterDegenerateShapes:
+    """``write_geotiff_gpu`` must accept 1-pixel, 1-row, and 1-column inputs.
+
+    The GPU writer's tile-encoding path uses an internal grid sizing
+    helper that fell back to host code for shapes smaller than the
+    default tile. The fallback exists but had no regression test that
+    would catch a future "fast-path only" refactor.
+    """
+
+    def test_single_pixel_round_trip(self, tmp_path):
+        import cupy
+        arr = cupy.array([[42.0]], dtype=cupy.float32)
+        da_gpu = xr.DataArray(arr, dims=["y", "x"])
+        p = str(tmp_path / "gpu_1x1.tif")
+        write_geotiff_gpu(da_gpu, p)
+
+        result = open_geotiff(p)
+        assert result.shape == (1, 1)
+        assert result.values[0, 0] == 42.0
+
+    def test_single_row_round_trip(self, tmp_path):
+        import cupy
+        arr_np = np.arange(10, dtype=np.float32).reshape(1, 10)
+        arr = cupy.asarray(arr_np)
+        da_gpu = xr.DataArray(arr, dims=["y", "x"])
+        p = str(tmp_path / "gpu_1xN.tif")
+        write_geotiff_gpu(da_gpu, p)
+
+        result = open_geotiff(p)
+        assert result.shape == (1, 10)
+        np.testing.assert_array_equal(result.values, arr_np)
+
+    def test_single_column_round_trip(self, tmp_path):
+        import cupy
+        arr_np = np.arange(10, dtype=np.float32).reshape(10, 1)
+        arr = cupy.asarray(arr_np)
+        da_gpu = xr.DataArray(arr, dims=["y", "x"])
+        p = str(tmp_path / "gpu_Nx1.tif")
+        write_geotiff_gpu(da_gpu, p)
+
+        result = open_geotiff(p)
+        assert result.shape == (10, 1)
+        np.testing.assert_array_equal(result.values, arr_np)
+
+
+class TestAllNanRead:
+    """All-NaN raster (boundary of the algorithm) reads cleanly on every
+    backend.
+
+    The eager path covers this in ``test_edge_cases.TestWriteSpecialValues``.
+    Without a matching GPU/dask test, a regression in the GPU nodata
+    masker or dask graph builder would only surface in production.
+    """
+
+    @pytest.fixture
+    def all_nan_path(self, tmp_path):
+        arr = np.full((8, 8), np.nan, dtype=np.float32)
+        p = tmp_path / "all_nan.tif"
+        to_geotiff(arr, str(p), nodata=float("nan"))
+        return str(p), arr
+
+    def test_dask_numpy_backend(self, all_nan_path):
+        path, _ = all_nan_path
+        result = open_geotiff(path, chunks=4)
+        computed = result.compute()
+        assert np.all(np.isnan(computed.values))
+
+    @requires_gpu
+    def test_gpu_backend(self, all_nan_path):
+        path, _ = all_nan_path
+        result = open_geotiff(path, gpu=True)
+        assert np.all(np.isnan(result.data.get()))
+
+    @requires_gpu
+    def test_dask_cupy_backend(self, all_nan_path):
+        path, _ = all_nan_path
+        result = open_geotiff(path, gpu=True, chunks=4)
+        computed = result.compute()
+        assert np.all(np.isnan(computed.data.get()))
+
+
+class TestInfRead:
+    """+Inf and -Inf are valid float values in TIFF; they must survive
+    every read backend without being masked or clipped.
+
+    The eager path's ``test_edge_cases.TestWriteSpecialValues::test_nan_and_inf``
+    is a write-then-CPU-read test. The GPU and dask backends were
+    unexercised on Inf input.
+    """
+
+    @pytest.fixture
+    def inf_path(self, tmp_path):
+        arr = np.array(
+            [
+                [np.inf, -np.inf, 1.0, 2.0],
+                [3.0, np.inf, -np.inf, 4.0],
+                [-np.inf, 5.0, 6.0, np.inf],
+                [7.0, 8.0, np.inf, 9.0],
+            ],
+            dtype=np.float32,
+        )
+        p = tmp_path / "inf.tif"
+        # Do not set nodata: we want Inf to survive, not be remapped.
+        to_geotiff(arr, str(p))
+        return str(p), arr
+
+    def test_dask_numpy_backend(self, inf_path):
+        path, arr = inf_path
+        result = open_geotiff(path, chunks=2).compute()
+        assert np.isposinf(result.values[0, 0])
+        assert np.isneginf(result.values[0, 1])
+        np.testing.assert_array_equal(result.values, arr)
+
+    @requires_gpu
+    def test_gpu_backend(self, inf_path):
+        path, arr = inf_path
+        result = open_geotiff(path, gpu=True)
+        host = result.data.get()
+        assert np.isposinf(host[0, 0])
+        assert np.isneginf(host[0, 1])
+        np.testing.assert_array_equal(host, arr)
+
+    @requires_gpu
+    def test_dask_cupy_backend(self, inf_path):
+        path, arr = inf_path
+        result = open_geotiff(path, gpu=True, chunks=2)
+        host = result.compute().data.get()
+        assert np.isposinf(host[0, 0])
+        assert np.isneginf(host[0, 1])
+        np.testing.assert_array_equal(host, arr)
+
+
+class TestNanSentinelDaskRead:
+    """Float raster with a finite ``nodata`` sentinel (``-9999.0``) is
+    masked to NaN consistently across backends on read.
+
+    The integer-sentinel equivalent is pinned by issue #1597. The
+    float path has no such per-chunk dtype divergence (the input is
+    already float), but the dask graph still has to forward the
+    sentinel substitution. A regression in the float branch of
+    ``_delayed_read_window`` would silently break this.
+    """
+
+    @pytest.fixture
+    def nan_sentinel_path(self, tmp_path):
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        arr[2:4, 2:4] = -9999.0
+        arr[6, 0] = -9999.0
+        p = tmp_path / "nan_sentinel_float.tif"
+        to_geotiff(arr, str(p), nodata=-9999.0)
+        return str(p), arr
+
+    def test_eager_path_baseline(self, nan_sentinel_path):
+        """Baseline: eager path replaces the sentinel with NaN."""
+        path, _ = nan_sentinel_path
+        result = open_geotiff(path)
+        assert np.isnan(result.values[2, 2])
+        assert np.isnan(result.values[6, 0])
+        assert result.values[0, 0] == 0.0  # non-sentinel survives
+
+    def test_dask_numpy_matches_eager(self, nan_sentinel_path):
+        """dask compute reproduces the eager mask exactly."""
+        path, _ = nan_sentinel_path
+        eager = open_geotiff(path)
+        dk = open_geotiff(path, chunks=4).compute()
+        np.testing.assert_array_equal(np.isnan(dk.values), np.isnan(eager.values))
+        finite = ~np.isnan(eager.values)
+        np.testing.assert_array_equal(dk.values[finite], eager.values[finite])
+
+    def test_dask_numpy_chunks_smaller_than_sentinel_block(self, nan_sentinel_path):
+        """Sentinels split across two chunks still mask correctly.
+
+        The 2x2 sentinel block at rows 2-3 cols 2-3 lands in a single
+        chunk for chunks=4 (rows 0-3) but straddles a chunk boundary
+        for chunks=2 (rows 2-3 split between chunks 1 and 2). This
+        exercises the per-block sentinel comparison.
+        """
+        path, _ = nan_sentinel_path
+        dk = open_geotiff(path, chunks=2).compute()
+        assert np.isnan(dk.values[2, 2])
+        assert np.isnan(dk.values[3, 3])
+        assert np.isnan(dk.values[6, 0])
+
+
+# ===========================================================================
+# Section 2 -- rasterio / Zarr round-trip parity (#1961)
+# ===========================================================================
+#
+# Read the same GeoTIFF three ways and assert the results agree:
+#   1. ``rasterio.open(path)`` -> numpy array, transform, CRS, nodata.
+#   2. ``open_geotiff(path)`` -> ``xr.DataArray``.
+#   3. Write the DataArray with ``.to_zarr``, reopen with ``xr.open_zarr``.
+# Each input file covers a case that has drifted before.
+
 rasterio = pytest.importorskip('rasterio', exc_type=ImportError)
 zarr = pytest.importorskip('zarr', exc_type=ImportError)
 
 from rasterio.transform import Affine, from_origin  # noqa: E402
 
-from xrspatial.geotiff import open_geotiff  # noqa: E402
 from xrspatial.geotiff._crs import _resolve_crs_to_wkt  # noqa: E402
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
 
 ATOL_FLOAT32 = 0.0          # exact equality for float32 round trips
 ATOL_COORD = 1e-9            # coord tolerance (cells are O(1) - O(1e6))
@@ -167,10 +511,6 @@ def _build_rasterio_coords(transform: Affine, height: int, width: int):
     return y, x
 
 
-# ---------------------------------------------------------------------------
-# parity checks shared across cases
-# ---------------------------------------------------------------------------
-
 def _parity_check_single_band(
     path,
     *,
@@ -260,10 +600,6 @@ def _parity_check_single_band(
                 assert stored == xrs.attrs[key], (
                     f'{key!r} value drifted: {stored!r} vs {xrs.attrs[key]!r}')
 
-
-# ---------------------------------------------------------------------------
-# test cases
-# ---------------------------------------------------------------------------
 
 class TestSingleBandFloat32NodataSentinel:
     def test_round_trip(self, tmp_path):
