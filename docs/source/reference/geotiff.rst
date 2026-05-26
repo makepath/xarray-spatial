@@ -167,12 +167,12 @@ this section is the brief.
   raw sentinel. The signal is part of the canonical attrs contract;
   ``xrspatial/geotiff/tests/test_masked_nodata_attr_2092.py`` pins
   the canonical form and
-  ``xrspatial/geotiff/tests/test_vrt_masked_nodata_attr_2159.py``
+  ``xrspatial/geotiff/tests/vrt/test_metadata.py``
   covers the VRT mosaic case.
 * Mixed-band nodata. A VRT whose sources declare disagreeing per-band
   nodata sentinels raises ``MixedBandMetadataError`` by default. Pass
   ``band_nodata='first'`` to opt back into the legacy flatten-to-band-0
-  behaviour; see ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``.
+  behaviour; see ``xrspatial/geotiff/tests/vrt/test_metadata.py``.
 
 The lifecycle is locked end-to-end by
 ``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py`` and
@@ -531,7 +531,7 @@ regression test that locks the behaviour.
        ``xrspatial/geotiff/tests/test_vrt_capability_validator_2371.py``
    * - Mixed per-band nodata across VRT sources (default
        ``band_nodata=None``)
-     - ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``,
+     - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
        ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
        (``test_mixed_per_source_nodata_rejected``)
    * - Rotated read without ``allow_rotated=True``

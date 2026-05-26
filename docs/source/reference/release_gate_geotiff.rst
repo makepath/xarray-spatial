@@ -389,7 +389,7 @@ Nodata lifecycle
      - ``masked_nodata`` records whether the read produced NaN-masked output
        distinct from the on-disk sentinel; mixed-band VRT inputs honour the
        split.
-     - ``xrspatial/geotiff/tests/test_vrt_masked_nodata_attr_2159.py``,
+     - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
        ``xrspatial/geotiff/tests/test_mask_nodata_gpu_vrt_2052.py``
      - `#2341`_
    * - Mixed-band metadata reject
@@ -403,9 +403,8 @@ Nodata lifecycle
      - stable
      - VRT sources with conflicting per-band nodata raise rather than
        silently flatten.
-     - ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``,
-       ``xrspatial/geotiff/tests/test_vrt_int_nodata_1564.py``,
-       ``xrspatial/geotiff/tests/test_vrt_multiband_int_nodata_1611.py``
+     - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
+       ``xrspatial/geotiff/tests/vrt/test_dtype_conversion.py``
      - `#2342`_
 
 attrs contract
@@ -504,7 +503,7 @@ VRT supported subset
      - advanced
      - Holes surface as the band sentinel, ``attrs['vrt_holes']`` is set,
        and a :class:`GeoTIFFFallbackWarning` is emitted.
-     - ``xrspatial/geotiff/tests/test_vrt_holes_attr_1734.py``,
+     - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
        ``xrspatial/geotiff/tests/vrt/test_missing_sources.py``,
        ``xrspatial/geotiff/tests/test_vrt_chunked_missing_sources_1799.py``
      - `#2342`_
@@ -512,8 +511,7 @@ VRT supported subset
      - stable
      - Out-of-bounds source or destination rectangles raise at construction.
      - ``xrspatial/geotiff/tests/test_geotiff_vrt_srcrect_validation_1784.py``,
-       ``xrspatial/geotiff/tests/test_vrt_scaled_rects_1694.py``,
-       ``xrspatial/geotiff/tests/test_vrt_dstrect_resample_cap_1737.py``
+       ``xrspatial/geotiff/tests/vrt/test_window.py``
      - `#2342`_
    * - VRT path containment
      - stable
@@ -526,30 +524,27 @@ VRT supported subset
      - Unsupported resampling identifiers are rejected; supported ones
        (``nearest``, ``bilinear``, ``cubic``) round-trip pixels through
        eager and dask.
-     - ``xrspatial/geotiff/tests/test_vrt_resample_alg_1751.py``,
-       ``xrspatial/geotiff/tests/test_vrt_resample_window_inverse_1704.py``
+     - ``xrspatial/geotiff/tests/vrt/test_dtype_conversion.py``,
+       ``xrspatial/geotiff/tests/vrt/test_window.py``
      - `#2342`_
    * - VRT dtype / band layout consistency
      - stable
      - Mixed dtype, mixed band count, or mismatched 12-bit-vs-16-bit
        sources raise rather than coerce.
-     - ``xrspatial/geotiff/tests/test_vrt_dtype_1783.py``,
-       ``xrspatial/geotiff/tests/test_vrt_dtype_12bit_1914.py``,
-       ``xrspatial/geotiff/tests/test_vrt_multiband_dtype_1696.py``
+     - ``xrspatial/geotiff/tests/vrt/test_dtype_conversion.py``
      - `#2342`_
    * - VRT lazy / chunked read parity
      - advanced
      - Chunked VRT reads return the same shape, coords, attrs, and values
        as eager reads on the supported subset.
-     - ``xrspatial/geotiff/tests/test_vrt_lazy_chunks_1814.py``,
-       ``xrspatial/geotiff/tests/test_read_vrt_lazy_chunks_1798.py``,
-       ``xrspatial/geotiff/tests/test_vrt_chunked_shared_dataset_1923.py``
+     - ``xrspatial/geotiff/tests/vrt/test_window.py``,
+       ``xrspatial/geotiff/tests/test_read_vrt_lazy_chunks_1798.py``
      - `#2342`_
    * - VRT single-parse contract
      - stable
      - VRT XML is parsed once per read; chunked callers do not re-parse
        per-chunk.
-     - ``xrspatial/geotiff/tests/test_vrt_single_parse_1825.py``
+     - ``xrspatial/geotiff/tests/vrt/test_metadata.py``
      - `#2321`_
    * - VRT narrow exception surface
      - stable
