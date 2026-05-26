@@ -43,7 +43,7 @@ experimental features require an explicit opt-in flag
 they do not get used by accident. Treat experimental features as something to
 evaluate, not depend on.
 
-### internal-only
+### internal_only
 
 An `internal_only` feature exists for one specific xrspatial use case. It is not
 interoperable with the wider GeoTIFF ecosystem (GDAL, libtiff, rasterio) and is
@@ -77,7 +77,7 @@ category. The `Key` column matches the runtime key.
 | `codec.jpeg2000` | experimental | Requires `allow_experimental_codecs=True`. |
 | `codec.j2k` | experimental | Alias for `jpeg2000`; same opt-in. |
 | `codec.lz4` | experimental | Requires `allow_experimental_codecs=True`; level 0-16. |
-| `codec.jpeg` | internal-only | Requires `allow_internal_only_jpeg=True`. Not externally readable as GeoTIFF. |
+| `codec.jpeg` | internal_only | Requires `allow_internal_only_jpeg=True`. Not externally readable as GeoTIFF. |
 
 ### Readers
 
@@ -90,8 +90,8 @@ category. The `Key` column matches the runtime key.
 | `reader.http_cog` | advanced | HTTP COG with range-request fetching. The transport surface (redirects, retries) is not yet contracted at the stable bar. |
 | `reader.vrt` | advanced | Simple VRT mosaics. Full GDAL VRT parity is out of scope. |
 | `reader.sidecar_ovr` | advanced | External `.tif.ovr` sidecar overviews. |
-| `reader.allow_rotated` | advanced | Opt-in `allow_rotated=True`; drops the axis-aligned `transform` attr in favour of `rotated_affine`. |
-| `reader.allow_unparseable_crs` | advanced | Opt-in escape hatch for CRS strings pyproj cannot parse. |
+| `reader.allow_rotated` | experimental | Opt-in `allow_rotated=True`; drops the axis-aligned `transform` attr in favour of `rotated_affine`. |
+| `reader.allow_unparseable_crs` | experimental | Opt-in escape hatch for CRS strings pyproj cannot parse. |
 | `reader.gpu` | experimental | GPU read path; no cross-backend numerical parity claim. |
 
 ### Writers
