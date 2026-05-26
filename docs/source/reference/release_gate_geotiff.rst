@@ -160,8 +160,8 @@ Local GeoTIFF read and write
      - stable
      - Round-trip a local GeoTIFF: pixel bytes, ``transform``, ``crs``, and
        ``nodata`` all survive read.
-     - ``xrspatial/geotiff/tests/test_backend_pixel_parity_matrix_1813.py``,
-       ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``
+     - ``xrspatial/geotiff/tests/parity/test_pixel_equality.py``,
+       ``xrspatial/geotiff/tests/parity/test_backend_matrix.py``
      - `#2341`_
    * - ``reader.windowed``
      - stable
@@ -189,8 +189,8 @@ Local GeoTIFF read and write
      - ``open_geotiff(chunks=...)`` returns a Dask-backed
        :class:`xarray.DataArray` that computes to the same pixels,
        coords, and ``attrs`` as the eager numpy read.
-     - ``xrspatial/geotiff/tests/test_backend_parity_matrix.py``,
-       ``xrspatial/geotiff/tests/test_backend_full_parity_2211.py``
+     - ``xrspatial/geotiff/tests/parity/test_backend_matrix.py``,
+       ``xrspatial/geotiff/tests/parity/test_pixel_equality.py``
      - `#2341`_
    * - ``reader.dask`` -- eager / dask parity
      - stable
@@ -209,7 +209,7 @@ Local GeoTIFF read and write
      - ``to_geotiff`` writes a file that ``open_geotiff`` reads back
        bit-exact for every stable codec.
      - ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``,
-       ``xrspatial/geotiff/tests/test_attrs_finalization_parity_2211.py``
+       ``xrspatial/geotiff/tests/parity/test_backend_matrix.py``
      - `#2341`_
    * - ``writer.overviews``
      - advanced
@@ -439,7 +439,7 @@ attrs contract
      - ``transform``, ``crs``, ``crs_wkt``, ``nodata``, ``georef_status``,
        ``raster_type`` appear in canonical form on every backend.
      - ``xrspatial/geotiff/tests/attrs/test_contract.py``,
-       ``xrspatial/geotiff/tests/test_attrs_parity_1548.py``
+       ``xrspatial/geotiff/tests/parity/test_backend_matrix.py``
      - `#2341`_
    * - Attrs pass-through on write
      - stable
@@ -701,8 +701,8 @@ These gates are not tier rows but they back the rest of the checklist.
   ``_VALID_COMPRESSIONS`` has a ``SUPPORTED_FEATURES`` tier, and the writer
   rejects experimental and internal-only codecs without their respective
   opt-in flags. Owning epic: `#2340`_.
-* ``test_backend_parity_matrix.py`` and
-  ``test_backend_pixel_parity_matrix_1813.py`` -- cross-backend pixel and
+* ``parity/test_backend_matrix.py`` and
+  ``parity/test_pixel_equality.py`` -- cross-backend pixel and
   metadata parity across the 4 read backends (numpy, cupy, dask+numpy,
   dask+cupy) on the golden corpus. Owning epic: `#2341`_.
 * ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
