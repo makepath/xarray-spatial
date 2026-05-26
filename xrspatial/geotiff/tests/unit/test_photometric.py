@@ -274,10 +274,7 @@ def test_eager_numpy_miniswhite_nodata(tmp_path, case_factory, nodata_str,
     arr = open_geotiff(path)
 
     assert arr.attrs["nodata"] == sentinel
-    if stored.dtype.kind == "f":
-        np.testing.assert_array_equal(arr.values, expected)
-    else:
-        np.testing.assert_array_equal(arr.values, expected)
+    np.testing.assert_array_equal(arr.values, expected)
 
 
 @pytest.mark.parametrize(
