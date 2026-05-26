@@ -1452,6 +1452,25 @@ def _model_type_from_epsg(crs_epsg: int) -> int:
                 "known EPSG or installing a current pyproj database will "
                 "resolve this."
             ) from e
+        # Defense in depth (#2418): the stable-EPSG path can only emit
+        # GeographicTypeGeoKey or ProjectedCSTypeGeoKey, both of which
+        # are specified to hold a 2D horizontal CRS. A compound CRS
+        # (horizontal + vertical) reports ``is_geographic`` or
+        # ``is_projected`` for its horizontal sub-CRS but is not
+        # representable in either slot -- rasterio / GDAL reads the
+        # output back as the wrong CRS. ``_validate_crs_arg`` should
+        # have rejected this already; trip the same error here so a
+        # direct call into ``build_geo_tags`` cannot bypass the check.
+        if getattr(crs, "is_compound", False):
+            from ._errors import NonRepresentableEPSGCRSError
+            raise NonRepresentableEPSGCRSError(
+                f"EPSG:{crs_epsg} is a compound CRS ({crs.name!r}); "
+                "the GeoTIFF integer-EPSG writer path only emits 2D "
+                "horizontal GeoKeys. Pass the compound CRS as WKT "
+                "(``crs=<wkt>``) for the user-defined CRS fallback, "
+                "or pass the horizontal sub-CRS EPSG directly. "
+                "See issue #2418."
+            )
         if crs.is_geographic:
             return MODEL_TYPE_GEOGRAPHIC
         return MODEL_TYPE_PROJECTED

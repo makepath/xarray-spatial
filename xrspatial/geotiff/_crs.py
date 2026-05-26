@@ -15,7 +15,7 @@ from __future__ import annotations
 import numbers
 import warnings
 
-from ._errors import UnparseableCRSError
+from ._errors import NonRepresentableEPSGCRSError, UnparseableCRSError
 from ._runtime import GeoTIFFFallbackWarning, _geotiff_strict_mode
 
 #: WKT root keywords. A string that starts with one of these (after
@@ -43,6 +43,49 @@ def _looks_like_wkt(s: str) -> bool:
     if not isinstance(s, str):
         return False
     return s.lstrip().upper().startswith(_WKT_ROOT_KEYWORDS)
+
+
+def _reject_non_representable_epsg(crs_int: int, crs_obj) -> None:
+    """Refuse compound EPSG codes that the stable EPSG writer cannot
+    round-trip through rasterio / GDAL (#2418).
+
+    The GeoTIFF writer's stable-path emits only two EPSG-carrying
+    GeoKeys: ``GeographicTypeGeoKey`` (2048) and
+    ``ProjectedCSTypeGeoKey`` (3072). Both are spec'd to hold a 2D
+    horizontal CRS code. When the caller passes a compound EPSG code
+    (horizontal + vertical, e.g. EPSG:6349 = "NAD83(2011) + NAVD88
+    height"), pyproj reports the compound CRS as ``is_geographic`` or
+    ``is_projected`` based on its horizontal sub-CRS, and the writer
+    stores the compound code in the horizontal-CRS slot. The resulting
+    GeoTIFF either reads back through GDAL as the wrong CRS (the
+    horizontal sub-CRS, with the vertical component silently dropped)
+    or as no CRS at all, because the GeoKey value claims to be a 2D
+    horizontal CRS but the EPSG database registers it as compound.
+
+    Reject the code at validation time so the failure surfaces at the
+    write call instead of after the file is on disk. Callers who need
+    to preserve the compound semantics can pass the full WKT (which
+    takes the user-defined / citation path -- see issue #1768) or
+    pass the horizontal sub-CRS code directly.
+
+    pyproj exposes ``is_compound`` on every CRS object since 2.x;
+    callers without pyproj never reach this function (the caller
+    site short-circuits on ``ImportError``).
+    """
+    if getattr(crs_obj, "is_compound", False):
+        raise NonRepresentableEPSGCRSError(
+            f"EPSG:{crs_int} is a compound CRS ({crs_obj.name!r}) and "
+            "cannot be written through the integer-EPSG path: the "
+            "GeoTIFF writer only emits GeographicTypeGeoKey / "
+            "ProjectedCSTypeGeoKey, which are specified to carry a 2D "
+            "horizontal CRS code. Storing a compound EPSG there "
+            "produces a file that rasterio / GDAL reads back as the "
+            "horizontal sub-CRS (vertical component lost) or as no "
+            "CRS at all. Pass the full compound WKT as crs= to take "
+            "the user-defined CRS path (see issue #1768), or pass the "
+            "horizontal sub-CRS EPSG directly if the vertical "
+            "component is not needed."
+        )
 
 
 def _validate_crs_arg(crs) -> None:
@@ -90,7 +133,7 @@ def _validate_crs_arg(crs) -> None:
         except ImportError:
             return
         try:
-            CRS.from_epsg(crs_int)
+            crs_obj = CRS.from_epsg(crs_int)
         except Exception as e:
             if _geotiff_strict_mode():
                 raise
@@ -99,6 +142,7 @@ def _validate_crs_arg(crs) -> None:
                 f"(pyproj: {type(e).__name__}: {e}). Pass a valid "
                 f"EPSG integer, a WKT string, or None."
             ) from e
+        _reject_non_representable_epsg(crs_int, crs_obj)
         return
     if isinstance(crs, str):
         return
@@ -122,6 +166,15 @@ def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
         from pyproj import CRS
         crs = CRS.from_user_input(wkt_or_proj)
         epsg = crs.to_epsg()
+        # Issue #2418: ``epsg`` is set when pyproj recognises the WKT,
+        # but if the resolved CRS is compound (horizontal + vertical),
+        # the integer-EPSG writer path cannot represent it -- the GeoKey
+        # slots only carry 2D horizontal codes. Return None so the
+        # caller routes through the WKT / citation fallback instead of
+        # writing a compound EPSG into a horizontal slot. The original
+        # WKT is preserved on the fallback path.
+        if epsg is not None and getattr(crs, "is_compound", False):
+            return None
         return epsg
     except Exception as e:
         if _geotiff_strict_mode():

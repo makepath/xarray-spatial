@@ -2781,6 +2781,11 @@ class TestPublicAPI:
             'GeoTIFFAmbiguousMetadataError',
             'InvalidCRSCodeError',
             'MixedBandMetadataError',
+            # Issue #2418: writer rejects compound EPSG codes that cannot
+            # be represented in a single GeographicType / ProjectedCSType
+            # GeoKey, surfacing the corruption instead of silently writing
+            # a compound EPSG into a horizontal-CRS slot.
+            'NonRepresentableEPSGCRSError',
             'NonUniformCoordsError',
             'RotatedTransformError',
             'UnknownCRSModelTypeError',
