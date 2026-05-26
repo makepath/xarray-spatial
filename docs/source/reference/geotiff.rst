@@ -208,7 +208,7 @@ COG validator CI gate
 on every PR. A dedicated Linux job (``pytest-cog-validator``)
 installs rio-cogeo and the GDAL Python bindings from conda-forge,
 sets ``XRSPATIAL_REQUIRE_COG_VALIDATOR=1``, and runs the compliance
-suite in ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``.
+suite in ``xrspatial/geotiff/tests/write/test_cog.py``.
 With the env var set, a missing validator dependency is a hard
 failure instead of a silent skip, so a misconfigured install step
 cannot quietly let the gate pass. Contributors without rio-cogeo
@@ -494,7 +494,7 @@ is a plain GeoTIFF or a COG.
 
 ``SUPPORTED_FEATURES['writer.bigtiff_cog']`` is currently ``advanced``.
 The external-interop gate lives in
-``xrspatial/geotiff/tests/test_bigtiff_cog_compliance_2286.py`` and
+``xrspatial/geotiff/tests/write/test_bigtiff.py`` and
 covers the BigTIFF-specific layout (header, IFDs, tile and overview
 offset tables), one lossless integer codec, one lossless float codec,
 single-band and 3-band, one overview level, plus an auto-promotion row
@@ -516,9 +516,9 @@ regression test that locks the behaviour.
    * - Combination
      - Regression test
    * - ``to_geotiff(cog=True, tiled=False)``
-     - ``xrspatial/geotiff/tests/test_cog_requires_tiled_2312.py``
+     - ``xrspatial/geotiff/tests/write/test_cog.py``
    * - ``to_geotiff(cog=True, tile_size <= 0)``
-     - ``xrspatial/geotiff/tests/test_cog_tile_size_hang_2311.py``
+     - ``xrspatial/geotiff/tests/write/test_cog.py``
    * - Warped VRT
        (``<VRTDataset subClass="VRTWarpedDataset">`` or
        ``<VRTRasterBand subClass="VRTWarpedRasterBand">``)

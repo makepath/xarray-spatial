@@ -200,14 +200,14 @@ Local GeoTIFF read and write
      - stable
      - ``to_geotiff`` writes a file that ``open_geotiff`` reads back
        bit-exact for every stable codec.
-     - ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``,
+     - ``xrspatial/geotiff/tests/write/test_cog.py``,
        ``xrspatial/geotiff/tests/test_attrs_finalization_parity_2211.py``
      - `#2341`_
    * - ``writer.overviews``
      - advanced
      - Internal overview IFDs round-trip; the reader can pick a level.
      - ``xrspatial/geotiff/tests/test_dask_overview_level.py``,
-       ``xrspatial/geotiff/tests/test_cog_overview_nodata_1613.py``
+       ``xrspatial/geotiff/tests/write/test_overview.py``
      - `#2286`_
    * - ``writer.bigtiff``
      - advanced
@@ -274,14 +274,13 @@ Cloud-optimized GeoTIFF (COG)
      - ``to_geotiff(cog=True)`` writes an IFD-first tiled file with internal
        overviews that ``rio-cogeo`` accepts (CI-gated by
        ``XRSPATIAL_REQUIRE_COG_VALIDATOR=1``).
-     - ``xrspatial/geotiff/tests/test_cog_writer_compliance.py``,
-       ``xrspatial/geotiff/tests/test_cog_parity_2286.py``
+     - ``xrspatial/geotiff/tests/write/test_cog.py``
      - `#2286`_
    * - ``reader.local_cog``
      - stable
      - Local COG with overview IFDs decodes byte-for-byte through eager and
        dask paths.
-     - ``xrspatial/geotiff/tests/test_cog.py``,
+     - ``xrspatial/geotiff/tests/write/test_cog.py``,
        ``xrspatial/geotiff/tests/test_golden_corpus_overview_cog_1930.py``
      - `#2286`_
    * - ``reader.http_cog``
@@ -296,19 +295,19 @@ Cloud-optimized GeoTIFF (COG)
      - advanced
      - BigTIFF + COG combination passes the dedicated compliance suite
        (header magic, IFDs, tile and overview offset tables).
-     - ``xrspatial/geotiff/tests/test_bigtiff_cog_compliance_2286.py``
+     - ``xrspatial/geotiff/tests/write/test_bigtiff.py``
      - `#2286`_
    * - ``writer.cog`` -- tile-layout pre-flight (``cog=True, tiled=False``)
      - stable
      - Raises ``ValueError`` at the writer entry point regardless of dtype
        or codec.
-     - ``xrspatial/geotiff/tests/test_cog_requires_tiled_2312.py``
+     - ``xrspatial/geotiff/tests/write/test_cog.py``
      - `#2286`_
    * - ``writer.cog`` -- tile-size pre-flight (non-positive ``tile_size``)
      - stable
      - Non-positive tile sizes raise ``ValueError`` regardless of the
        ``tiled`` flag.
-     - ``xrspatial/geotiff/tests/test_cog_tile_size_hang_2311.py``
+     - ``xrspatial/geotiff/tests/write/test_cog.py``
      - `#2286`_
 
 HTTP / fsspec reads
