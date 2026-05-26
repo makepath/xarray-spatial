@@ -76,7 +76,7 @@ from ._errors import (ConflictingCRSError, ConflictingNodataError, GeoTIFFAmbigu
                       RotatedTransformError, UnknownCRSModelTypeError, UnparseableCRSError,
                       UnsupportedGeoTIFFFeatureError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
-from ._reader import _MAX_CLOUD_BYTES_SENTINEL, UnsafeURLError
+from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
 from ._runtime import (_CRS_WKT_DEPRECATED_SENTINEL, _GPU_DEPRECATED_SENTINEL,  # noqa: F401
                        _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, GeoTIFFFallbackWarning,
@@ -275,22 +275,52 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list
         # so ``overview_level`` indexes both internal and external
         # overviews (issue #2112). Local file paths only.
+        #
+        # A broken sidecar must not break the base read. The release
+        # contract puts ``reader.local_file`` at the stable tier and
+        # ``reader.sidecar_ovr`` at advanced; a stale or corrupt
+        # ``.ovr`` written by an external tool falls back to base-only
+        # behaviour with a warning. Mirrors the eager CPU path in
+        # ``_reader._read_to_array`` and the dask metadata helper
+        # ``_sidecar.discover_remote_sidecar``. Issue #2416.
         from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
-            sidecar = load_sidecar(sidecar_path)
-            # The origin mapping is consumed below for georef extraction
-            # only -- strip/tile bytes are sliced by ``read_to_array`` on
-            # the actual read. A sidecar IFD that carries its own
-            # GeoKeyDirectory / ModelPixelScale / ModelTiepoint /
-            # ModelTransformation needs the sidecar's byte order to
-            # parse cleanly; without the mapping the helper falls back
-            # to the base file's bytes (today's default, correct under
-            # the usual GDAL convention). See issue #2315.
-            sidecar_origin = attach_sidecar_origin(
-                sidecar.ifds, sidecar.data, sidecar.header)
-            ifds = ifds + sidecar.ifds
+            try:
+                sidecar = load_sidecar(sidecar_path)
+            except CloudSizeLimitError:
+                # Re-raised for symmetry with ``_reader._read_to_array``;
+                # the byte budget is a caller-set contract. In practice
+                # this branch is local-file-only (the cloud / HTTP cases
+                # are handled in the earlier ``_parse_cog_http_meta`` /
+                # ``_CloudSource`` branch above) so the exception cannot
+                # fire from a local mmap today, but keeping the explicit
+                # re-raise prevents the symmetry breaking if a future
+                # patch routes a cloud-source path through here.
+                raise
+            except Exception as exc:
+                warnings.warn(
+                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
+                    f"{type(exc).__name__}: {exc}. Falling back to "
+                    f"base-file-only read. Delete the .ovr file or pass "
+                    f"overview_level>=1 to surface the parse error.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+                sidecar = None
+            if sidecar is not None:
+                # The origin mapping is consumed below for georef extraction
+                # only -- strip/tile bytes are sliced by ``read_to_array`` on
+                # the actual read. A sidecar IFD that carries its own
+                # GeoKeyDirectory / ModelPixelScale / ModelTiepoint /
+                # ModelTransformation needs the sidecar's byte order to
+                # parse cleanly; without the mapping the helper falls back
+                # to the base file's bytes (today's default, correct under
+                # the usual GDAL convention). See issue #2315.
+                sidecar_origin = attach_sidecar_origin(
+                    sidecar.ifds, sidecar.data, sidecar.header)
+                ifds = ifds + sidecar.ifds
         ifd = select_overview_ifd(ifds, overview_level)
         # Inherit georef from the level-0 IFD when the overview itself
         # has no geokeys (issue #1640). Pass-through for level 0. The

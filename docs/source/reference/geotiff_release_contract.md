@@ -89,7 +89,7 @@ category. The `Key` column matches the runtime key.
 | `reader.http` | advanced | Plain HTTP/HTTPS reads; SSRF and private-host filters apply. |
 | `reader.http_cog` | advanced | HTTP COG with range-request fetching. The transport surface (redirects, retries) is not yet contracted at the stable bar. |
 | `reader.vrt` | advanced | Simple VRT mosaics. Full GDAL VRT parity is out of scope. |
-| `reader.sidecar_ovr` | advanced | External `.tif.ovr` sidecar overviews. |
+| `reader.sidecar_ovr` | advanced | External `.tif.ovr` sidecar overviews. A stale or malformed sidecar does not break a base read: the eager CPU, eager GPU, and dask metadata paths warn and fall through to base-file-only behaviour for `overview_level=None`/`0`. Requesting a specific external level surfaces the underlying parse error. Caller-set `max_cloud_bytes` breaches still raise `CloudSizeLimitError` either way. See issue #2416. |
 | `reader.allow_rotated` | experimental | Opt-in `allow_rotated=True`; drops the axis-aligned `transform` attr in favour of `rotated_affine`. |
 | `reader.allow_unparseable_crs` | experimental | Opt-in escape hatch for CRS strings pyproj cannot parse. |
 | `reader.gpu` | experimental | GPU read path; no cross-backend numerical parity claim. |
