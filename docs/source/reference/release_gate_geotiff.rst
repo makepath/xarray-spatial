@@ -170,7 +170,7 @@ Local GeoTIFF read and write
        and zero-area windows raise rather than silently clamp; coords
        on georeferenced inputs match the eager full-read slice.
      - ``xrspatial/geotiff/tests/unit/test_input_validation.py``,
-       ``xrspatial/geotiff/tests/test_no_georef_windowed_coords_1710.py``
+       ``xrspatial/geotiff/tests/read/test_georef.py``
      - `#2340`_
    * - ``reader.windowed`` -- shifted-transform parity (eager + dask)
      - stable
