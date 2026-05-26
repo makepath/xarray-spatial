@@ -24,7 +24,6 @@ this module's surface.
 """
 from __future__ import annotations
 
-import os
 import warnings
 
 import numpy as np
@@ -49,7 +48,7 @@ PRESENT_FILL = 7.0
 #
 # * ``byte_missing_vrt`` -- a 2x2 ``Byte`` VRT whose only source does not
 #   exist on disk. The smallest case that exercises the missing-source
-#   guard. Inherited from the old _1799 smoke checks.
+#   guard. Inherited from the old eager-only smoke checks.
 # * ``partial_float_vrt`` -- an 8x4 ``Float32`` VRT split across two
 #   sources. The left half points at a real GeoTIFF written through
 #   ``to_geotiff``; the right half points at a missing file. Exercises
@@ -81,8 +80,7 @@ def _write_partial_float_vrt(tmp_path) -> tuple[str, str, str]:
 
     Returns ``(vrt_path, present_src_path, missing_path)`` as strings.
     """
-    tmp_str = str(tmp_path)
-    src = os.path.join(tmp_str, "src_present.tif")
+    src = str(tmp_path / "src_present.tif")
     arr = np.full((4, 4), PRESENT_FILL, dtype=np.float32)
     da = xr.DataArray(
         arr, dims=("y", "x"),
@@ -90,29 +88,28 @@ def _write_partial_float_vrt(tmp_path) -> tuple[str, str, str]:
     )
     to_geotiff(da, src)
 
-    missing = os.path.join(tmp_str, "missing_source.tif")
-    vrt_path = os.path.join(tmp_str, "partial.vrt")
-    with open(vrt_path, "w") as f:
-        f.write(
-            '<VRTDataset rasterXSize="8" rasterYSize="4">\n'
-            '<GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n'
-            '<VRTRasterBand dataType="Float32" band="1">\n'
-            '<SimpleSource>\n'
-            f'<SourceFilename relativeToVRT="0">{src}</SourceFilename>\n'
-            '<SourceBand>1</SourceBand>\n'
-            '<SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
-            '<DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
-            '</SimpleSource>\n'
-            '<SimpleSource>\n'
-            f'<SourceFilename relativeToVRT="0">{missing}</SourceFilename>\n'
-            '<SourceBand>1</SourceBand>\n'
-            '<SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
-            '<DstRect xOff="4" yOff="0" xSize="4" ySize="4"/>\n'
-            '</SimpleSource>\n'
-            '</VRTRasterBand>\n'
-            '</VRTDataset>\n'
-        )
-    return vrt_path, src, missing
+    missing = str(tmp_path / "missing_source.tif")
+    vrt_path = tmp_path / "partial.vrt"
+    vrt_path.write_text(
+        '<VRTDataset rasterXSize="8" rasterYSize="4">\n'
+        '  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n'
+        '  <VRTRasterBand dataType="Float32" band="1">\n'
+        '    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n'
+        '      <SourceBand>1</SourceBand>\n'
+        '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        '    </SimpleSource>\n'
+        '    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="0">{missing}</SourceFilename>\n'
+        '      <SourceBand>1</SourceBand>\n'
+        '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        '      <DstRect xOff="4" yOff="0" xSize="4" ySize="4"/>\n'
+        '    </SimpleSource>\n'
+        '  </VRTRasterBand>\n'
+        '</VRTDataset>\n'
+    )
+    return str(vrt_path), src, missing
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +163,7 @@ class TestDefaultPolicyRaises:
 
     def test_eager_byte_default_raises(self, tmp_path):
         """Smoke check for the byte-band path with no real source on
-        disk. Inherited from the old _1799 file."""
+        disk."""
         vrt = _write_byte_missing_vrt(tmp_path)
         with pytest.raises((OSError, ValueError)):
             read_vrt(vrt)
@@ -266,8 +263,7 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
 
     def test_eager_byte_warn_records_hole(self, tmp_path):
         """Byte-band warn path: warning fires and ``vrt_holes`` is
-        populated even when there is no present half. Inherited from
-        the old _1799 file."""
+        populated even when there is no present half."""
         vrt = _write_byte_missing_vrt(tmp_path)
         with pytest.warns(GeoTIFFFallbackWarning, match="could not be read"):
             da = read_vrt(vrt, missing_sources="warn")
@@ -312,10 +308,10 @@ class TestInvalidPolicyRejected:
         )
 
     def test_eager_byte_invalid_policy(self, tmp_path):
-        """Smoke check carried over from the old _1799 file. The
-        parametrised matrix above covers more bad values across both
-        reader paths; this stays as a literal copy of the original
-        assertion so the byte-band code path stays exercised."""
+        """Byte-band smoke check. The parametrised matrix above covers
+        more bad values across both reader paths; this stays as a
+        literal copy of the original assertion so the byte-band code
+        path stays exercised."""
         vrt = _write_byte_missing_vrt(tmp_path)
         with pytest.raises(ValueError, match="missing_sources"):
             read_vrt(vrt, missing_sources="ignore")

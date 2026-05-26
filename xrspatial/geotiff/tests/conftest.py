@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 
 from ._helpers.markers import (
-    _HAS_LOOPBACK,
     gpu_available,
     loopback_available,
     requires_gpu,
@@ -45,7 +44,7 @@ def pytest_collection_modifyitems(config, items):
     a local-file GPU test) keep their non-HTTP coverage in restricted
     sandboxes.
     """
-    if _HAS_LOOPBACK:
+    if loopback_available():
         return
 
     import inspect
