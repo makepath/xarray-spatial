@@ -72,6 +72,10 @@ requires_rasterio = pytest.mark.skipif(
 if _HAS_RASTERIO:
     import rasterio
 else:  # pragma: no cover - exercised only when rasterio is unavailable
+    # ``rasterio`` stays defined at module scope so the sparse-fixture
+    # helpers below (``_write_sparse_*``) parse at import time without
+    # ``NameError``. They are only called from tests gated by
+    # ``@requires_rasterio``, which skip before any helper runs.
     rasterio = None
 
 # ---------------------------------------------------------------------------
