@@ -17,6 +17,7 @@ import pytest
 
 from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, VRTStableSourcesOnlyError,
                                open_geotiff, read_geotiff_dask, read_vrt)
+from xrspatial.geotiff._errors import VRTUnsupportedError
 
 
 _MINIMAL_VRT_XML = '<VRTDataset rasterXSize="2" rasterYSize="2"></VRTDataset>\n'
@@ -47,18 +48,14 @@ def test_open_geotiff_vrt_stable_only_rejected_by_default(tmp_path):
 def test_open_geotiff_vrt_stable_only_default_false_does_not_reject(tmp_path):
     """The default ``stable_only=False`` does not fire the new gate.
 
-    The minimal-VRT body has no ``<VRTRasterBand>`` children so the read
-    still raises a downstream validator error, but it must NOT be the
-    new typed :class:`VRTStableSourcesOnlyError` -- that one is gated on
-    the explicit opt-in.
+    The minimal-VRT body has no ``<VRTRasterBand>`` children so the
+    read still raises the downstream :class:`VRTUnsupportedError`
+    band-count check; pinning the exact class confirms the new gate is
+    not stealing the raise site at the default flag value.
     """
     path = _write_minimal_vrt(tmp_path, "open_geotiff_default_false")
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(VRTUnsupportedError):
         open_geotiff(path)
-    assert not isinstance(excinfo.value, VRTStableSourcesOnlyError), (
-        f"stable_only default should not fire VRTStableSourcesOnlyError; "
-        f"got: {excinfo.value!r}"
-    )
 
 
 def test_open_geotiff_vrt_stable_only_with_experimental_unlock(tmp_path):
@@ -66,21 +63,18 @@ def test_open_geotiff_vrt_stable_only_with_experimental_unlock(tmp_path):
 
     When the caller passes both ``stable_only=True`` and
     ``allow_experimental_codecs=True`` the gate is a no-op (the per-source
-    codec gate downstream handles the rest). The read still raises a
-    downstream "no <VRTRasterBand>" rejection on this minimal-VRT
-    fixture, but it must NOT be the new typed error.
+    codec gate downstream handles the rest). The read still raises the
+    downstream "no <VRTRasterBand>" :class:`VRTUnsupportedError` on
+    this minimal-VRT fixture; pinning the exact downstream class keeps
+    a future refactor from silently broadening the unlock past intent.
     """
     path = _write_minimal_vrt(tmp_path, "open_geotiff_unlock")
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(VRTUnsupportedError):
         open_geotiff(
             path,
             stable_only=True,
             allow_experimental_codecs=True,
         )
-    assert not isinstance(excinfo.value, VRTStableSourcesOnlyError), (
-        f"allow_experimental_codecs=True must unlock the gate; "
-        f"got: {excinfo.value!r}"
-    )
 
 
 def test_read_vrt_stable_only_rejected_by_default(tmp_path):
@@ -112,9 +106,9 @@ def test_read_vrt_stable_only_no_op_on_default(tmp_path):
     """``stable_only=False`` (the default) is a no-op on the direct VRT path.
 
     Same fixture as the rejection test, but the absence of the flag
-    means the read proceeds to the existing band-count validator.
+    means the read proceeds to the existing band-count validator and
+    raises :class:`VRTUnsupportedError`.
     """
     path = _write_minimal_vrt(tmp_path, "read_vrt_default")
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(VRTUnsupportedError):
         read_vrt(path)
-    assert not isinstance(excinfo.value, VRTStableSourcesOnlyError)

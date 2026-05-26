@@ -693,9 +693,15 @@ def _validate_stable_only_vrt(
     source : str
         Path to the ``.vrt`` file. Embedded in the rejection message so
         the caller can locate the offending file without re-parsing.
+        Non-string sources (eager file-like buffers) and string paths
+        that do not end in ``.vrt`` are silently passed through; the
+        gate only fires for sources the caller could reasonably have
+        intended as a VRT mosaic, so a future call site that routes a
+        non-VRT path through this helper does not mislabel the failure.
     stable_only : bool
         Caller's opt-in for stable-only sources. ``False`` is a no-op;
-        ``True`` raises :class:`VRTStableSourcesOnlyError`.
+        ``True`` raises :class:`VRTStableSourcesOnlyError` (provided
+        ``source`` looks like a VRT path).
     allow_experimental_codecs : bool, default False
         Companion opt-in. When the caller passes both ``stable_only=True``
         and ``allow_experimental_codecs=True`` the request is internally
@@ -707,14 +713,21 @@ def _validate_stable_only_vrt(
     Raises
     ------
     VRTStableSourcesOnlyError
-        When ``stable_only=True`` and the source is a VRT and the
-        caller did not pass ``allow_experimental_codecs=True``. The
-        message names the offending VRT path, both flags, and cites the
-        release-contract document plus epic #2342.
+        When ``stable_only=True`` and the source path ends in ``.vrt``
+        (case-insensitive) and the caller did not pass
+        ``allow_experimental_codecs=True``. The message names the
+        offending VRT path, both flags, and cites the release-contract
+        document plus epic #2342.
     """
     if not stable_only:
         return
     if allow_experimental_codecs:
+        return
+    # Defensive extension check: every public-API call site routes only
+    # ``.vrt`` paths into this helper, but a future call site could
+    # forward a non-VRT path. Pass through silently in that case so the
+    # rejection message never mislabels a non-VRT source as a VRT.
+    if not (isinstance(source, str) and source.lower().endswith('.vrt')):
         return
     raise VRTStableSourcesOnlyError(
         f"VRT source '{source}' cannot be opened under stable_only=True. "
