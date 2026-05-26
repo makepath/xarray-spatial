@@ -29,6 +29,7 @@ import os
 import pytest
 import tempfile
 import uuid
+import warnings
 import xarray as xr
 from pathlib import Path
 from unittest import mock
@@ -1148,3 +1149,132 @@ def test_vrt_tiled_threaded_write_is_deterministic():
     assert set(tiles1) == set(tiles2), f'Tile file set differs between runs: {set(tiles1) ^ set(tiles2)}'
     for name, blob1 in tiles1.items():
         assert blob1 == tiles2[name], f'Tile {name} differs between runs (race condition?)'
+
+
+# ---------------------------------------------------------------------------
+# VRT-tail window / chunking folds (cluster 13, #2437)
+# ---------------------------------------------------------------------------
+#
+# Two originally-standalone files folded here, both exercising the
+# windowed / chunked read paths this module already covers:
+#
+# * read_vrt(chunks=...) lazy-window construction (#1798): chunk layout
+#   matches eager values, build does not decode sources, and an
+#   excessive task count is rejected.
+# * read_geotiff_dask('.vrt') kwarg forwarding (#1795): the direct dask
+#   entry point forwards window / band / max_pixels through to read_vrt.
+
+
+def _vrttail_write_single_band_vrt(vrt_path, source_name):
+    """One-band 6x4 Float32 VRT wrapping ``source_name`` (relative)."""
+    vrt_path.write_text(
+        '<VRTDataset rasterXSize="6" rasterYSize="4">\n'
+        '  <VRTRasterBand dataType="Float32" band="1">\n'
+        '    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="1">{source_name}'
+        '</SourceFilename>\n'
+        '      <SourceBand>1</SourceBand>\n'
+        '      <SrcRect xOff="0" yOff="0" xSize="6" ySize="4"/>\n'
+        '      <DstRect xOff="0" yOff="0" xSize="6" ySize="4"/>\n'
+        '    </SimpleSource>\n'
+        '  </VRTRasterBand>\n'
+        '</VRTDataset>\n'
+    )
+
+
+def _vrttail_write_multi_band_vrt(vrt_path, source_name, *, bands):
+    """``bands``-band 6x4 Float32 VRT wrapping ``source_name`` (relative)."""
+    band_xml = []
+    for i in range(bands):
+        band_xml.append(
+            f'  <VRTRasterBand dataType="Float32" band="{i + 1}">\n'
+            '    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{source_name}'
+            '</SourceFilename>\n'
+            f'      <SourceBand>{i + 1}</SourceBand>\n'
+            '      <SrcRect xOff="0" yOff="0" xSize="6" ySize="4"/>\n'
+            '      <DstRect xOff="0" yOff="0" xSize="6" ySize="4"/>\n'
+            '    </SimpleSource>\n'
+            '  </VRTRasterBand>\n'
+        )
+    vrt_path.write_text(
+        '<VRTDataset rasterXSize="6" rasterYSize="4">\n'
+        + ''.join(band_xml)
+        + '</VRTDataset>\n'
+    )
+
+
+class TestVrtTailLazyChunks:
+    """read_vrt(chunks=...) builds lazy window tasks (#1798)."""
+
+    def test_chunks_matches_eager_values(self, tmp_path):
+        arr = np.arange(24, dtype=np.float32).reshape(4, 6)
+        src = tmp_path / "tmp_1798_source.tif"
+        to_geotiff(arr, str(src), compression='none')
+        vrt = tmp_path / "tmp_1798_source.vrt"
+        _vrttail_write_single_band_vrt(vrt, os.path.basename(src))
+
+        eager = read_vrt(str(vrt))
+        lazy = read_vrt(str(vrt), chunks=2)
+
+        assert lazy.data.chunks == ((2, 2), (2, 2, 2))
+        np.testing.assert_array_equal(lazy.compute().values, eager.values)
+
+    def test_chunks_does_not_read_sources_during_construction(self, tmp_path):
+        """The chunked path runs a cheap ``os.path.exists`` sweep at build
+        but must not open or decode any source file.
+
+        Pairing the missing source with ``missing_sources='warn'`` lets
+        the build succeed; the assertion is that no decode-time warnings
+        (which would only fire if a source were actually read) leak out
+        during construction.
+        """
+        vrt = tmp_path / "tmp_1798_missing_source.vrt"
+        _vrttail_write_single_band_vrt(vrt, "missing.tif")
+
+        with warnings.catch_warnings(record=True) as caught:
+            lazy = read_vrt(str(vrt), chunks=2, missing_sources="warn")
+
+        assert caught == []
+        assert hasattr(lazy.data, 'compute')
+
+    def test_chunks_rejects_excessive_task_count(self, tmp_path):
+        vrt = tmp_path / "tmp_1798_huge_extent.vrt"
+        vrt.write_text(
+            '<VRTDataset rasterXSize="100000" rasterYSize="100000">\n'
+            '  <VRTRasterBand dataType="Byte" band="1"/>\n'
+            '</VRTDataset>\n'
+        )
+        with pytest.raises(ValueError, match="task cap"):
+            read_vrt(str(vrt), chunks=1, max_pixels=20_000_000_000)
+
+
+class TestVrtTailDirectDaskKwargs:
+    """read_geotiff_dask('.vrt') forwards VRT kwargs (#1795)."""
+
+    def test_forwards_window_and_band(self, tmp_path):
+        from xrspatial.geotiff import read_geotiff_dask
+
+        arr = np.arange(4 * 6 * 2, dtype=np.float32).reshape(4, 6, 2)
+        src = tmp_path / "tmp_1797_source.tif"
+        to_geotiff(arr, str(src), compression='none')
+        vrt = tmp_path / "tmp_1797_source.vrt"
+        _vrttail_write_multi_band_vrt(vrt, os.path.basename(src), bands=2)
+
+        got = read_geotiff_dask(
+            str(vrt), chunks=2, window=(1, 2, 4, 6), band=1,
+        )
+        assert got.shape == (3, 4)
+        np.testing.assert_array_equal(got.values, arr[1:4, 2:6, 1])
+
+    def test_forwards_max_pixels(self, tmp_path):
+        from xrspatial.geotiff import read_geotiff_dask
+
+        arr = np.arange(24, dtype=np.float32).reshape(4, 6)
+        src = tmp_path / "tmp_1797_source_cap.tif"
+        to_geotiff(arr, str(src), compression='none')
+        vrt = tmp_path / "tmp_1797_source_cap.vrt"
+        _vrttail_write_single_band_vrt(vrt, os.path.basename(src))
+
+        with pytest.raises(ValueError, match="exceed"):
+            read_geotiff_dask(str(vrt), chunks=2, max_pixels=10)
