@@ -1,50 +1,24 @@
-"""Coverage for the Dask+CuPy combined read backend (issue #1543).
+"""Combined dask+cupy GPU pipeline integration tests.
 
-``open_geotiff(source, gpu=True, chunks=N)`` and the equivalent
-``read_geotiff_gpu(source, chunks=N)`` produce a Dask-wrapped CuPy
-array: lazy task graph on top, GPU memory underneath. The path is
-documented in both function docstrings ("Dask+CuPy for out-of-core
-GPU pipelines") but no tests were exercising it before this module --
-``read_geotiff_gpu`` was tested only without ``chunks``, and the
-chunked Dask reader (``read_geotiff_dask``) only on the CPU side.
-
-Each test asserts:
-- the returned ``DataArray.data`` is a Dask array (lazy)
-- its ``_meta`` is a CuPy ndarray (so downstream Dask graph
-  optimisation routes through CuPy, not NumPy)
-- requested chunk sizes survive the wrap
-- ``.compute()`` returns a CuPy-backed result still on the device
-- pixel values match the eager NumPy read of the same file bit-for-bit
-
-Tests skip cleanly when CuPy or CUDA are unavailable.
+Consolidated from the issue-numbered files mapped in
+``CLUSTER_AUDIT_PR9.md``. The ``requires_gpu`` marker comes from
+``_helpers/markers.py`` per the epic's single-source-of-truth rule.
 """
 from __future__ import annotations
-
-import importlib.util
 
 import numpy as np
 import pytest
 
+from .._helpers.markers import requires_gpu
 
-def _gpu_available() -> bool:
-    """True when cupy imports and CUDA is initialised."""
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
+pytestmark = requires_gpu
 
 
-_HAS_GPU = _gpu_available()
-_gpu_only = pytest.mark.skipif(
-    not _HAS_GPU, reason="cupy + CUDA required",
-)
-
-
-def _assert_dask_cupy(da_arr, expected_chunks, expected_dtype):
+# ----------------------------------------------------------
+# Section: dask_cupy_combined
+# Source: test_dask_cupy_combined.py
+# ----------------------------------------------------------
+def _assert_dask_cupy_dask_cupy_combined(da_arr, expected_chunks, expected_dtype):
     """Common shape/type checks for a dask-wrapped cupy DataArray.
 
     Returns the computed DataArray so callers can reuse it for pixel
@@ -85,7 +59,6 @@ def _assert_dask_cupy(da_arr, expected_chunks, expected_dtype):
     return computed
 
 
-@_gpu_only
 def test_open_geotiff_gpu_chunks_int_round_trip(tmp_path):
     """`open_geotiff(gpu=True, chunks=N)` returns dask+cupy with int chunk."""
     from xrspatial.geotiff import open_geotiff, to_geotiff
@@ -99,7 +72,7 @@ def test_open_geotiff_gpu_chunks_int_round_trip(tmp_path):
 
     da_arr = open_geotiff(path, gpu=True, chunks=64)
 
-    computed = _assert_dask_cupy(
+    computed = _assert_dask_cupy_dask_cupy_combined(
         da_arr,
         expected_chunks=((64, 64, 64, 64), (64, 64, 64, 64)),
         expected_dtype=np.dtype(np.float32),
@@ -109,7 +82,6 @@ def test_open_geotiff_gpu_chunks_int_round_trip(tmp_path):
     np.testing.assert_array_equal(got, eager)
 
 
-@_gpu_only
 def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
     """`read_geotiff_gpu(chunks=(rh, cw))` accepts tuple chunk specs."""
     from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
@@ -123,7 +95,7 @@ def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
 
     da_arr = read_geotiff_gpu(path, chunks=(96, 128))
 
-    computed = _assert_dask_cupy(
+    computed = _assert_dask_cupy_dask_cupy_combined(
         da_arr,
         expected_chunks=((96, 96), (128, 128)),
         expected_dtype=np.dtype(np.uint16),
@@ -133,7 +105,6 @@ def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
     np.testing.assert_array_equal(got, eager)
 
 
-@_gpu_only
 def test_open_geotiff_gpu_chunks_multiband(tmp_path):
     """Combined backend round-trips a 3-band tiled raster.
 
@@ -154,7 +125,7 @@ def test_open_geotiff_gpu_chunks_multiband(tmp_path):
 
     # Multi-band wraps as ('y', 'x', 'band') and chunking only applies to
     # spatial axes; the band axis becomes a single chunk.
-    computed = _assert_dask_cupy(
+    computed = _assert_dask_cupy_dask_cupy_combined(
         da_arr,
         expected_chunks=((64, 64), (64, 64, 64), (3,)),
         expected_dtype=np.dtype(np.uint8),
@@ -164,7 +135,6 @@ def test_open_geotiff_gpu_chunks_multiband(tmp_path):
     np.testing.assert_array_equal(got, eager)
 
 
-@_gpu_only
 def test_open_geotiff_gpu_chunks_partial_last_chunk(tmp_path):
     """Image dimensions not a multiple of `chunks=` keeps the partial chunk."""
     from xrspatial.geotiff import open_geotiff, to_geotiff
@@ -177,7 +147,7 @@ def test_open_geotiff_gpu_chunks_partial_last_chunk(tmp_path):
 
     da_arr = open_geotiff(path, gpu=True, chunks=64)
 
-    computed = _assert_dask_cupy(
+    computed = _assert_dask_cupy_dask_cupy_combined(
         da_arr,
         expected_chunks=((64, 36), (64, 64, 22)),
         expected_dtype=np.dtype(np.float32),
@@ -187,7 +157,6 @@ def test_open_geotiff_gpu_chunks_partial_last_chunk(tmp_path):
     np.testing.assert_array_equal(got, eager)
 
 
-@_gpu_only
 def test_open_geotiff_gpu_chunks_preserves_geo_attrs(tmp_path):
     """CRS + transform attrs survive the dask wrap on the gpu+chunks path."""
     from xrspatial.geotiff import open_geotiff, to_geotiff
