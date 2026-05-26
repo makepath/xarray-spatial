@@ -35,18 +35,19 @@ import pytest
 import tempfile
 import warnings
 import xarray as xr
-from xrspatial.geotiff import GeoTIFFFallbackWarning, MixedBandMetadataError, open_geotiff, read_vrt, to_geotiff
-from xrspatial.geotiff import GeoTIFFFallbackWarning, read_vrt
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask
-from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt
-from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff import read_vrt
-from xrspatial.geotiff import read_vrt, to_geotiff
-from xrspatial.geotiff import to_geotiff
+from xrspatial.geotiff import (
+    GeoTIFFFallbackWarning,
+    MixedBandMetadataError,
+    open_geotiff,
+    read_geotiff_dask,
+    read_vrt,
+    to_geotiff,
+    write_vrt,
+)
 from xrspatial.geotiff._attrs import GEOREF_STATUS_FULL, GEOREF_STATUS_TRANSFORM_ONLY
 from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff._geotags import GeoTransform
-from xrspatial.geotiff._vrt import parse_vrt, write_vrt
+from xrspatial.geotiff._vrt import parse_vrt
 from xrspatial.geotiff._vrt import read_vrt as _source_nodata_zero_read_vrt_internal
 from xrspatial.geotiff._vrt import read_vrt as _xml_size_cap_read_vrt_internal
 from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
@@ -1125,7 +1126,7 @@ def test_crs_wkt_with_xml_special_chars_round_trips(xml_escape_sample_tif, tmp_p
     decoded on the way in)."""
     nasty_wkt = 'GEOGCS["spec & <chars> with "quotes" and \'apostrophes\'"]'
     vrt_path = str(tmp_path / 'mosaic.vrt')
-    write_vrt(vrt_path, [xml_escape_sample_tif], crs_wkt=nasty_wkt)
+    _write_vrt_internal(vrt_path, [xml_escape_sample_tif], crs_wkt=nasty_wkt)
     with open(vrt_path, 'r') as fh:
         text = fh.read()
     parsed = parse_vrt(text, vrt_dir=str(tmp_path))
@@ -1138,7 +1139,7 @@ def test_crs_wkt_injection_does_not_change_raster_type(xml_escape_sample_tif, tm
     must NOT change ``raster_type`` from its default 'area' value."""
     injection = '</SRS><Metadata><MDI key="AREA_OR_POINT">Point</MDI></Metadata><SRS>'
     vrt_path = str(tmp_path / 'evil.vrt')
-    write_vrt(vrt_path, [xml_escape_sample_tif], crs_wkt=injection)
+    _write_vrt_internal(vrt_path, [xml_escape_sample_tif], crs_wkt=injection)
     with open(vrt_path, 'r') as fh:
         text = fh.read()
     parsed = parse_vrt(text, vrt_dir=str(tmp_path))
@@ -1155,7 +1156,7 @@ def test_source_filename_with_ampersand_round_trips(tmp_path):
     src = str(tmp_path / 'a&b.tif')
     to_geotiff(da, src)
     vrt_path = str(tmp_path / 'mosaic.vrt')
-    write_vrt(vrt_path, [src])
+    _write_vrt_internal(vrt_path, [src])
     with open(vrt_path, 'r') as fh:
         text = fh.read()
     assert '&amp;' in text
@@ -1171,7 +1172,7 @@ def test_written_vrt_is_well_formed_xml(xml_escape_sample_tif, tmp_path):
     as XML, even when crs_wkt carries every XML predefined entity."""
     nasty = '< & > " \''
     vrt_path = str(tmp_path / 'wf.vrt')
-    write_vrt(vrt_path, [xml_escape_sample_tif], crs_wkt=nasty)
+    _write_vrt_internal(vrt_path, [xml_escape_sample_tif], crs_wkt=nasty)
     import xml.etree.ElementTree as ET
     with open(vrt_path, 'r') as fh:
         ET.fromstring(fh.read())
@@ -1565,11 +1566,6 @@ def _metadata_parity_write_mixed_crs_vrt(tmp_path: pathlib.Path) -> str:
     the VRT-declared SRS. See the xfail on
     ``test_mixed_crs_vrt_does_not_silently_flatten`` for the
     consumer-side pin and the gap PR 2 must close.
-
-    TODO(#2321): when sub-PR 2 (`VRTUnsupportedError`) lands, the
-    centralised validator must reject the mixed-CRS VRT up front with
-    a typed error; switch the ``pytest.raises`` on the consumer test
-    to that type and drop the broad ``Exception`` fallback.
     """
     import xarray as xr
     src0 = tmp_path / 'tmp_2321_mix_crs_src0.tif'
@@ -1595,11 +1591,6 @@ def test_mixed_crs_vrt_does_not_silently_flatten(tmp_path):
     the reader hands back a single ``attrs['crs']`` as if everything
     were homogeneous. The pixel content is no longer geospatially
     meaningful once the underlying CRSs disagree, but no error fires.
-
-    TODO(#2321): drop the xfail once sub-PR 2's validator rejects the
-    mixed-CRS input with ``VRTUnsupportedError`` at graph build time
-    (or eager-read setup). The expected assertion will be
-    ``pytest.raises(VRTUnsupportedError)`` around ``read_vrt(vrt)``.
 
     ``strict=True`` so the test flips to XPASS the moment the gap is
     fixed -- CI will fail loudly, prompting the upgrade to a proper
@@ -1640,10 +1631,6 @@ def test_mixed_nodata_vrt_fails_closed_by_default(tmp_path, reader_label, reader
     sweep runs before dask materialises any chunk). The eager path
     raises during the dispatcher's metadata validation. Both must
     refuse rather than flattening to band 0's sentinel.
-
-    TODO(#2321): if sub-PR 2 reroutes this through
-    ``VRTUnsupportedError``, accept either type here (subclassing or
-    composition).
     """
     vrt = _metadata_parity_write_mixed_nodata_vrt(tmp_path)
     with pytest.raises(MixedBandMetadataError):
@@ -1689,13 +1676,12 @@ def test_unsupported_resample_alg_raises(tmp_path):
     The ``match=`` clause pins the algorithm name and the issue number
     so an unrelated ``NotImplementedError`` from some other VRT code
     path cannot keep the test green. See ``_vrt.py`` for the existing
-    raise that names both fields.
-
-    TODO(#2321): when sub-PR 2 lands the typed ``VRTUnsupportedError``
-    should be raised here instead; accept either today.
+    raise that names both fields. Sub-PR 2 (#2329) added
+    ``VRTUnsupportedError`` to the centralised validator; the
+    assertion below accepts either type.
     """
     vrt = _metadata_parity_write_unsupported_resample_vrt(tmp_path)
-    with pytest.raises((NotImplementedError, VRTUnsupportedError), match='Bilinear|1751'):
+    with pytest.raises((NotImplementedError, VRTUnsupportedError), match='Bilinear'):
         read_vrt(vrt)
 
 
@@ -1715,11 +1701,9 @@ def _metadata_parity_write_bad_srcrect_vrt(tmp_path: pathlib.Path, *, x_size: in
 
 
 def test_negative_srcrect_size_rejected(tmp_path):
-    """Malformed ``SrcRect`` rejected with a ``ValueError`` that names
-    the offending field.
-
-    TODO(#2321): centralise this rejection in PR 2's validator and
-    upgrade to ``VRTUnsupportedError``.
+    """Malformed ``SrcRect`` rejected with a ``ValueError`` (legacy
+    path) or ``VRTUnsupportedError`` (centralised validator from
+    sub-PR 2 of #2321) that names the offending field.
     """
     vrt = _metadata_parity_write_bad_srcrect_vrt(tmp_path, x_size=-50)
     with pytest.raises((ValueError, VRTUnsupportedError), match='SrcRect.*negative'):
@@ -1750,9 +1734,8 @@ def test_negative_dstrect_size_rejected(tmp_path):
     (...)`` before any pixel work begins). The ``match=`` clause pins
     the field name and the rejection reason so an unrelated
     ``ValueError`` from some other VRT code path cannot silently keep
-    the test green.
-
-    TODO(#2321): tighten to ``VRTUnsupportedError`` when PR 2 ships.
+    the test green. The centralised validator from sub-PR 2 of #2321
+    raises ``VRTUnsupportedError`` for the same case; both are accepted.
     """
     vrt = _metadata_parity_write_bad_dstrect_vrt(tmp_path, x_size=-10)
     with pytest.raises((ValueError, VRTUnsupportedError), match='DstRect.*negative'):

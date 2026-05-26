@@ -25,12 +25,14 @@ import os
 import pytest
 import uuid
 import xarray as xr
-from xrspatial.geotiff import read_vrt
 from xrspatial.geotiff import read_vrt, to_geotiff
-from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._errors import VRTUnsupportedError
-from xrspatial.geotiff._vrt import _NP_TO_VRT_DTYPE, _vrt_dtype_name_for, write_vrt
-from xrspatial.geotiff._vrt import _parse_band_nodata, parse_vrt
+from xrspatial.geotiff._vrt import (
+    _NP_TO_VRT_DTYPE,
+    _parse_band_nodata,
+    _vrt_dtype_name_for,
+    parse_vrt,
+)
 from xrspatial.geotiff._vrt import read_vrt as _resample_alg_read_vrt_internal
 from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
 from xrspatial.geotiff._writer import write
@@ -457,7 +459,7 @@ def test_uint16_source_writes_uint16_vrt_datatype(tmp_path):
     _dtype_12bit_write_uint16_tif(a)
     _dtype_12bit_write_uint16_tif(b, origin_x=4.0)
     vrt = os.path.join(d, 'out.vrt')
-    write_vrt(vrt, [a, b])
+    _write_vrt_internal(vrt, [a, b])
     with open(vrt) as f:
         xml = f.read()
     assert 'dataType="UInt16"' in xml
@@ -473,7 +475,7 @@ def test_int16_source_writes_int16_vrt_datatype(tmp_path):
     da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': y, 'x': x}, attrs={'crs': 4326})
     to_geotiff(da, a, compression='none')
     vrt = os.path.join(d, 'out.vrt')
-    write_vrt(vrt, [a])
+    _write_vrt_internal(vrt, [a])
     with open(vrt) as f:
         xml = f.read()
     assert 'dataType="Int16"' in xml

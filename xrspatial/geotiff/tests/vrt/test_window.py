@@ -34,9 +34,7 @@ from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 from xrspatial.geotiff import read_vrt, to_geotiff
-from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._reader import PixelSafetyLimitError
-from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff._reader import PixelSafetyLimitError, read_to_array
 from xrspatial.geotiff._vrt import _resample_nearest, read_vrt as _scaled_rects_read_vrt_internal
 from xrspatial.geotiff._vrt import read_vrt as _dstrect_cap_read_vrt_internal
 from xrspatial.geotiff._vrt import read_vrt as _resample_window_inverse_read_vrt_internal
