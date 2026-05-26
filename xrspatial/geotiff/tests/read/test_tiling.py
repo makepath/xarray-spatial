@@ -32,7 +32,7 @@ import socket
 import struct
 import tempfile
 import threading
-from unittest.mock import patch
+from unittest.mock import patch  # used by section 9 parallel-strip tests
 
 import numpy as np
 import pytest
@@ -48,7 +48,7 @@ from xrspatial.geotiff._dtypes import (
     tiff_dtype_to_numpy,
 )
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._reader import _read_tiles, read_to_array
+from xrspatial.geotiff._reader import read_to_array
 
 from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.markers import requires_loopback
@@ -262,6 +262,66 @@ class TestGpuChunkedTileByteCap:
 # ---------------------------------------------------------------------------
 
 
+def _finalize_minimal_ifd(
+        tags: list[tuple[int, int, int, bytes]],
+        pixel_bytes: bytes,
+        bo: str = '<') -> bytes:
+    """Serialise a tag list + pixel block into a one-IFD TIFF.
+
+    Patches the StripOffsets tag (273, single-entry) to point at the
+    pixel block. Shared by the BPS and SampleFormat builders so the
+    layout logic only lives once.
+    """
+    tags.sort(key=lambda t: t[0])
+
+    num_entries = len(tags)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+    overflow_start = ifd_start + ifd_size
+
+    overflow_buf = bytearray()
+    tag_overflow_offsets: dict[int, int | None] = {}
+    for tag, _typ, _count, raw in tags:
+        if len(raw) > 4:
+            tag_overflow_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_overflow_offsets[tag] = None
+
+    pixel_start = overflow_start + len(overflow_buf)
+
+    # Patch StripOffsets to point at the pixel block
+    patched = []
+    for tag, typ, count, raw in tags:
+        if tag == 273:
+            patched.append((tag, 4, 1, struct.pack(f'{bo}I', pixel_start)))
+        else:
+            patched.append((tag, typ, count, raw))
+    tags = patched
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+    for tag, typ, count, raw in tags:
+        out.extend(struct.pack(f'{bo}H', tag))
+        out.extend(struct.pack(f'{bo}H', typ))
+        out.extend(struct.pack(f'{bo}I', count))
+        if len(raw) <= 4:
+            payload = raw + b'\x00' * (4 - len(raw))
+            out.extend(payload)
+        else:
+            out.extend(struct.pack(f'{bo}I',
+                                   overflow_start + tag_overflow_offsets[tag]))
+    out.extend(struct.pack(f'{bo}I', 0))
+    out.extend(overflow_buf)
+    out.extend(pixel_bytes)
+    return bytes(out)
+
+
 def _build_multi_band_tiff_bps(
     width: int,
     height: int,
@@ -355,66 +415,6 @@ def _build_multi_band_tiff_sf(
     return _finalize_minimal_ifd(tags, pixel_bytes, bo)
 
 
-def _finalize_minimal_ifd(
-        tags: list[tuple[int, int, int, bytes]],
-        pixel_bytes: bytes,
-        bo: str = '<') -> bytes:
-    """Serialise a tag list + pixel block into a one-IFD TIFF.
-
-    Patches the StripOffsets tag (273, single-entry) to point at the
-    pixel block. Shared by the BPS and SampleFormat builders so the
-    layout logic only lives once.
-    """
-    tags.sort(key=lambda t: t[0])
-
-    num_entries = len(tags)
-    ifd_start = 8
-    ifd_size = 2 + 12 * num_entries + 4
-    overflow_start = ifd_start + ifd_size
-
-    overflow_buf = bytearray()
-    tag_overflow_offsets: dict[int, int | None] = {}
-    for tag, _typ, _count, raw in tags:
-        if len(raw) > 4:
-            tag_overflow_offsets[tag] = len(overflow_buf)
-            overflow_buf.extend(raw)
-            if len(overflow_buf) % 2:
-                overflow_buf.append(0)
-        else:
-            tag_overflow_offsets[tag] = None
-
-    pixel_start = overflow_start + len(overflow_buf)
-
-    # Patch StripOffsets to point at the pixel block
-    patched = []
-    for tag, typ, count, raw in tags:
-        if tag == 273:
-            patched.append((tag, 4, 1, struct.pack(f'{bo}I', pixel_start)))
-        else:
-            patched.append((tag, typ, count, raw))
-    tags = patched
-
-    out = bytearray()
-    out.extend(b'II')
-    out.extend(struct.pack(f'{bo}H', 42))
-    out.extend(struct.pack(f'{bo}I', ifd_start))
-    out.extend(struct.pack(f'{bo}H', num_entries))
-    for tag, typ, count, raw in tags:
-        out.extend(struct.pack(f'{bo}H', tag))
-        out.extend(struct.pack(f'{bo}H', typ))
-        out.extend(struct.pack(f'{bo}I', count))
-        if len(raw) <= 4:
-            payload = raw + b'\x00' * (4 - len(raw))
-            out.extend(payload)
-        else:
-            out.extend(struct.pack(f'{bo}I',
-                                   overflow_start + tag_overflow_offsets[tag]))
-    out.extend(struct.pack(f'{bo}I', 0))
-    out.extend(overflow_buf)
-    out.extend(pixel_bytes)
-    return bytes(out)
-
-
 # ---------------------------------------------------------------------------
 # Section 3: mixed BitsPerSample dispatch (issue #1505)
 # ---------------------------------------------------------------------------
@@ -430,12 +430,12 @@ class TestResolveBitsPerSample:
         assert resolve_bits_per_sample((8,)) == 8
 
     @pytest.mark.parametrize(
-        "vals",
-        [(16, 16, 16), [32, 32, 32, 32]],
+        "vals,expected",
+        [((16, 16, 16), 16), ([32, 32, 32, 32], 32)],
         ids=["tuple", "list"],
     )
-    def test_resolve_bps_uniform(self, vals):
-        assert resolve_bits_per_sample(vals) == vals[0]
+    def test_resolve_bps_uniform(self, vals, expected):
+        assert resolve_bits_per_sample(vals) == expected
 
     def test_resolve_bps_mixed_tuple_raises(self):
         with pytest.raises(ValueError, match=r"Mixed BitsPerSample"):
@@ -536,12 +536,12 @@ class TestResolveSampleFormat:
         assert resolve_sample_format((1,)) == 1
 
     @pytest.mark.parametrize(
-        "vals",
-        [(3, 3, 3), [2, 2, 2, 2]],
+        "vals,expected",
+        [((3, 3, 3), 3), ([2, 2, 2, 2], 2)],
         ids=["tuple", "list"],
     )
-    def test_resolve_sf_uniform(self, vals):
-        assert resolve_sample_format(vals) == vals[0]
+    def test_resolve_sf_uniform(self, vals, expected):
+        assert resolve_sample_format(vals) == expected
 
     def test_resolve_sf_mixed_tuple_raises(self):
         with pytest.raises(ValueError, match=r"Mixed SampleFormat"):
@@ -1243,7 +1243,7 @@ def _decode_tiled(data: bytes) -> np.ndarray:
     ifds = parse_all_ifds(data, header)
     ifd = ifds[0]
     dtype = tiff_dtype_to_numpy(ifd.bits_per_sample, ifd.sample_format)
-    return _read_tiles(data, ifd, header, dtype)
+    return _reader_mod._read_tiles(data, ifd, header, dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -1334,8 +1334,9 @@ def test_parallel_tile_decode_sequential_when_only_one_tile(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _make_stripped_uint16(height: int, width: int, *,
-                          compression: str = "deflate"):
+def _make_stripped_uint16(
+        height: int, width: int, *,
+        compression: str = "deflate") -> tuple[np.ndarray, bytes]:
     """Build a stripped TIFF in memory; return (numpy_array, file_bytes)."""
     rng = np.random.default_rng(seed=12345)
     arr = rng.integers(0, 256, size=(height, width), dtype=np.uint16)
