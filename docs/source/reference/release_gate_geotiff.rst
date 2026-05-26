@@ -239,7 +239,7 @@ Local GeoTIFF read and write
      - stable
      - Lossless byte-for-byte round-trip on integer and float dtypes.
      - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
-       ``xrspatial/geotiff/tests/test_compression.py``
+       ``xrspatial/geotiff/tests/read/test_compression.py``
      - `#2340`_
    * - Stable codec round-trip (read / write / read)
      - stable
@@ -362,7 +362,7 @@ HTTP / fsspec reads
      - Tile or strip declared sizes exceeding ``XRSPATIAL_COG_MAX_TILE_BYTES``
        (default 256 MiB) raise ``ValueError``.
      - ``xrspatial/geotiff/tests/test_cloud_read_byte_limit_1928.py``,
-       ``xrspatial/geotiff/tests/test_gpu_tile_byte_cap_2026_05_18.py``
+       ``xrspatial/geotiff/tests/read/test_tiling.py``
      - `#2344`_
    * - ``max_cloud_bytes`` dispatcher pass-through
      - stable
@@ -667,7 +667,7 @@ GPU paths (experimental)
      - Integer and float nodata sentinels survive the GPU read / write
        round-trip.
      - ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``,
-       ``xrspatial/geotiff/tests/test_apply_nodata_mask_gpu_inplace_1934.py``
+       ``xrspatial/geotiff/tests/read/test_nodata.py``
      - `#2341`_
 
 Internal-only surfaces (not promised)
