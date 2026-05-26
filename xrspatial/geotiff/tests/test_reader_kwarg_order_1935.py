@@ -38,6 +38,10 @@ _CANONICAL_ORDER = (
     "missing_sources",
     "allow_rotated",
     "allow_unparseable_crs",
+    # Issue #2417 added the GeoKey-shape fail-closed opt-out. Sits
+    # alongside the other ambiguous-metadata opt-outs so the canonical
+    # order keeps the typed-error gates grouped.
+    "allow_inconsistent_geokeys",
     # PR 4 of epic #2340 added the experimental / internal-only codec
     # opt-ins on the read side, mirroring the writer surface from #2137
     # / #1845. They sit after the other ``allow_*`` flags so the

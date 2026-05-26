@@ -2779,6 +2779,10 @@ class TestPublicAPI:
             'ConflictingCRSError',
             'ConflictingNodataError',
             'GeoTIFFAmbiguousMetadataError',
+            # Issue #2417: read-side fail-closed on contradictory
+            # ModelType / ProjectedCSType / GeographicType GeoKey
+            # combinations.
+            'InconsistentGeoKeysError',
             'InvalidCRSCodeError',
             'MixedBandMetadataError',
             # Issue #2418: writer rejects compound EPSG codes that cannot

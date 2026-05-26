@@ -128,6 +128,7 @@ def read_vrt(source: str, *,
              missing_sources: str = 'raise',
              allow_rotated: bool = False,
              allow_unparseable_crs: bool = False,
+             allow_inconsistent_geokeys: bool = False,
              allow_experimental_codecs: bool = False,
              allow_internal_only_jpeg: bool = False,
              band_nodata: str | None = None,
@@ -259,6 +260,15 @@ def read_vrt(source: str, *,
         #1929) raises ``UnparseableCRSError`` rather than carrying the
         unrecognised payload through. See ``open_geotiff`` for the
         full description.
+    allow_inconsistent_geokeys : bool, default False
+        [advanced] Read-side opt-in for sources whose GeoKey directory
+        is internally contradictory. Accepted for signature symmetry
+        with ``open_geotiff`` and the GeoTIFF readers; VRT capability
+        validation itself does not parse GeoKeys (it consumes the GDAL
+        ``<SRS>`` field), and the legacy VRT internal reader does not
+        thread per-GeoTIFF-source kwargs, so this kwarg is currently a
+        no-op on the VRT path. See ``open_geotiff`` for the full
+        description (issue #2417).
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs in
         any source file referenced by the VRT. Forwarded to the
@@ -440,6 +450,7 @@ def read_vrt(source: str, *,
             missing_sources=missing_sources,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
+            allow_inconsistent_geokeys=allow_inconsistent_geokeys,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
             band_nodata=band_nodata,
@@ -702,6 +713,7 @@ def read_vrt(source: str, *,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
         band_nodata=band_nodata,
         band_nodata_values=_band_nodata_values,
         attrs_in=attrs_seed,
@@ -789,6 +801,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                       max_pixels, missing_sources,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
+                      allow_inconsistent_geokeys: bool = False,
                       allow_experimental_codecs: bool = False,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
@@ -1221,6 +1234,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         window=helper_window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
         band_nodata=band_nodata,
         band_nodata_values=band_nodata_values,
         attrs_in=attrs_seed,

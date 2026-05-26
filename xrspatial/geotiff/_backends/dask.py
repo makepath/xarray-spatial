@@ -42,6 +42,7 @@ def read_geotiff_dask(source: str, *,
                       missing_sources: str = _MISSING_SOURCES_SENTINEL,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
+                      allow_inconsistent_geokeys: bool = False,
                       allow_experimental_codecs: bool = False,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
@@ -126,6 +127,14 @@ def read_geotiff_dask(source: str, *,
         instead of carrying the unrecognised payload through
         ``attrs['crs_wkt']``. See ``open_geotiff`` for the full
         description.
+    allow_inconsistent_geokeys : bool, default False
+        [advanced] Read-side opt-in for sources whose GeoKey directory
+        is internally contradictory (``ModelTypeGeoKey`` disagrees
+        with the populated type-specific keys, or
+        ``ProjectedCSTypeGeoKey`` and ``GeographicTypeGeoKey`` resolve
+        to different EPSG codes). The default raises
+        ``InconsistentGeoKeysError``. See ``open_geotiff`` for the
+        full description (issue #2417).
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). Fires at graph
@@ -209,6 +218,7 @@ def read_geotiff_dask(source: str, *,
             chunks=chunks, max_pixels=max_pixels,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
+            allow_inconsistent_geokeys=allow_inconsistent_geokeys,
             band_nodata=band_nodata,
             mask_nodata=mask_nodata,
             **vrt_kwargs,
@@ -499,6 +509,7 @@ def read_geotiff_dask(source: str, *,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
     if isinstance(chunks, int):

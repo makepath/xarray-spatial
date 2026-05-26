@@ -21,7 +21,8 @@ Hierarchy::
         ├── NonUniformCoordsError      (PR 4)
         ├── MixedBandMetadataError     (PR 5)
         ├── ConflictingCRSError        (PR 6, blocked on #1984)
-        └── ConflictingNodataError     (PR 7, blocked on #1988)
+        ├── ConflictingNodataError     (PR 7, blocked on #1988)
+        └── InconsistentGeoKeysError   (#2417)
 """
 from __future__ import annotations
 
@@ -121,6 +122,31 @@ class VRTUnsupportedError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class InconsistentGeoKeysError(GeoTIFFAmbiguousMetadataError):
+    """GeoKey set is internally contradictory on read (#2417).
+
+    Raised when a GeoTIFF source ships a GeoKey directory whose
+    ``ModelTypeGeoKey`` does not agree with the type-specific keys
+    actually populated, or whose ``ProjectedCSTypeGeoKey`` and
+    ``GeographicTypeGeoKey`` resolve to different EPSG codes.
+
+    The legacy reader took ``ProjectedCSTypeGeoKey`` first, then fell
+    back to ``GeographicTypeGeoKey``, without ever cross-checking
+    either against ``ModelTypeGeoKey``. A malformed or hostile input
+    could declare ``ModelTypeGeoKey = geographic`` while stashing an
+    EPSG under the projected key (or vice versa) and the reader would
+    publish a trustworthy-looking ``attrs['crs']`` / ``attrs['crs_wkt']``
+    built from inconsistent inputs. Silent acceptance of contradictory
+    geospatial metadata is the failure mode the rest of the #1987
+    series already rejects; this check extends the same contract to
+    the GeoKey shape itself.
+
+    Pass ``allow_inconsistent_geokeys=True`` on the public read entry
+    points to keep the legacy permissive behaviour for files known to
+    carry quirky-but-trusted GeoKey layouts.
+    """
+
+
 class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """Can't classify an EPSG as geographic or projected on write (#2277).
 
@@ -176,6 +202,7 @@ class UnsupportedGeoTIFFFeatureError(ValueError):
 
 __all__ = [
     "GeoTIFFAmbiguousMetadataError",
+    "InconsistentGeoKeysError",
     "InvalidCRSCodeError",
     "UnparseableCRSError",
     "RotatedTransformError",
