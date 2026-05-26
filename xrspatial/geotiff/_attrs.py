@@ -336,7 +336,7 @@ SUPPORTED_FEATURES = {
     # the BigTIFF + COG combination has its own external-interop surface
     # (8-byte offsets in tile/overview tables, BigTIFF-form IFDs, COG
     # layout invariants). Stays ``advanced`` even when every row of
-    # ``tests/test_bigtiff_cog_compliance_2286.py`` passes -- promotion
+    # ``tests/write/test_bigtiff.py`` passes -- promotion
     # to ``stable`` happens after the gate has lived in CI for a release
     # cycle. See the BigTIFF COG section in
     # ``docs/source/reference/geotiff.rst``.

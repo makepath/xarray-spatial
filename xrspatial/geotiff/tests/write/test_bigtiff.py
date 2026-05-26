@@ -1,48 +1,27 @@
-"""External-interop compliance suite for BigTIFF COG output.
+"""BigTIFF threshold and COG compliance for big files.
 
-Issue #2303 (part of #2286 -- production-readiness wave D). Sibling of
-``test_cog_writer_compliance.py`` (issue #2292): same shape, same
-assertions, but the matrix is scoped to the BigTIFF-specific layout
-rather than re-validating every codec.
+Covers the BigTIFF-specific layout (header magic, 8-byte offsets,
+20-byte IFD entries, tile and overview offset tables) for the
+codec / dtype / band-count matrix, plus the auto-promotion row that
+drives the threshold via the IFD-overhead helper.
 
-Scope
------
-
-These tests force BigTIFF via ``bigtiff=True`` on a small raster so the
-output exercises:
-
-- The BigTIFF header (magic ``43`` + 8-byte offsets).
-- BigTIFF IFD entry layout (8-byte counts, 20-byte entry stride,
-  8-byte next-IFD pointer).
-- Tile / overview offset and byte-count arrays in LONG8 form.
-
-A small raster is enough because the on-disk layout machinery flips
-the same switches whether the file is 50 KB or 5 GB. Allocating a true
-multi-gigabyte buffer is out of scope here -- the auto-BigTIFF threshold
-is exercised separately by monkeypatching the IFD-overhead helper, so
-the decision logic gets coverage without the allocation.
-
-Tier decision rationale
------------------------
-
-Promotion of ``writer.bigtiff_cog`` to ``stable`` is deliberately out
-of scope for this PR. ``SUPPORTED_FEATURES['writer.bigtiff_cog']`` is
-set to ``advanced`` and stays there even when every row of this suite
-passes -- promotion happens after the gate has lived in CI for a
-release cycle (same rule the rest of the #2286 wave follows). If a row
-uncovers a real BigTIFF COG bug, mark that row ``xfail`` with a linked
-follow-up issue rather than fixing the writer here.
+Tests-only restructure for epic #2390.
 """
+
 from __future__ import annotations
 
 import struct
-
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
+
+
+# -------------------------------------------------------------------------
+# Section: BigTIFF + COG compliance matrix
+# -------------------------------------------------------------------------
 
 rasterio = pytest.importorskip(
     "rasterio",
