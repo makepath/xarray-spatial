@@ -263,7 +263,7 @@ Local GeoTIFF read and write
        ``allow_internal_only_jpeg=True`` (does NOT collapse into the
        ``allow_experimental_codecs`` switch).
      - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
-       ``xrspatial/geotiff/tests/test_to_geotiff_allow_internal_only_jpeg_parity.py``
+       ``xrspatial/geotiff/tests/unit/test_photometric.py``
      - `#2340`_
 
 Cloud-optimized GeoTIFF (COG)
@@ -684,7 +684,7 @@ Internal-only surfaces (not promised)
      - Lossy 8-bit codec retained for one internal use case. Opt-in via
        ``allow_internal_only_jpeg=True``; not covered by
        ``allow_experimental_codecs``.
-     - ``xrspatial/geotiff/tests/test_to_geotiff_allow_internal_only_jpeg_parity.py``,
+     - ``xrspatial/geotiff/tests/unit/test_photometric.py``,
        ``xrspatial/geotiff/tests/test_gpu_jpeg_interop_reject_issue_D_1845.py``
      - `#2340`_
 
