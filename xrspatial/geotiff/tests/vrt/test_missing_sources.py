@@ -1,33 +1,29 @@
-"""Consolidated VRT ``missing_sources`` policy matrix (#2367, work item of #2342).
+"""VRT ``missing_sources`` policy matrix.
 
-This file complements ``test_vrt_missing_sources_policy_1799.py`` and
-``test_vrt_chunked_missing_sources_1799.py`` by covering the full
-release contract in one place: every policy value (default,
-``'raise'``, ``'warn'``, invalid) is exercised against both read paths
-(eager ``read_vrt`` and dask ``open_geotiff(..., chunks=...)``), with
-assertions on the exception or warning type, the message text, and the
-actual output array values where applicable.
-
-The existing 1799 / 1843 / 2265 tests pin individual cases. This file
-keeps the four-by-two matrix together so a future kwarg refactor that
-silently drops parity between the eager and chunked paths regresses a
-single, focused test file.
+Consolidates the eager-only smoke checks that previously lived in
+``test_vrt_missing_sources_policy_1799.py`` with the eager-plus-chunked
+matrix from ``test_vrt_missing_sources_policy_2367.py``.
 
 Release contract (see ``_backends/vrt.py:206`` docstring):
 
-* ``'raise'`` is the default since #1860.
-* ``'raise'`` fails fast with ``FileNotFoundError`` naming the missing
-  source path. The chunked path raises at build time (#2265) so a
+* ``'raise'`` is the default. The eager and chunked paths both fail
+  fast with ``FileNotFoundError`` naming the missing source path so a
   partial mosaic never surfaces silently from a delayed compute.
-* ``'warn'`` is the explicit opt-in. It emits
-  ``GeoTIFFFallbackWarning`` naming the missing source and returns the
-  mosaic with NaN (or the band's nodata sentinel) in the corresponding
-  region. ``attrs['vrt_holes']`` records the affected source(s).
-* Any other value raises ``ValueError`` naming the bad kwarg.
+* ``'warn'`` is the explicit opt-in. It emits ``GeoTIFFFallbackWarning``
+  naming the missing source and returns the mosaic with NaN (or the
+  band's nodata sentinel) in the corresponding region.
+  ``attrs['vrt_holes']`` records the affected source(s).
+* Any other value raises ``ValueError`` naming the bad kwarg and
+  echoing the bad value via ``repr()``.
+
+The companion file ``test_vrt_missing_sources_default_raise_1843.py``
+stays in place for now: it exercises the internal
+``xrspatial.geotiff._vrt.read_vrt`` entry point and the
+``XRSPATIAL_GEOTIFF_STRICT=1`` env-var override, neither of which is in
+this module's surface.
 """
 from __future__ import annotations
 
-import os
 import warnings
 
 import numpy as np
@@ -45,15 +41,46 @@ from xrspatial.geotiff import (
 PRESENT_FILL = 7.0
 
 
-def _build_partial_vrt(tmp_path) -> tuple[str, str, str]:
-    """Build a 2-source VRT: left half is real, right half points at a
-    non-existent file.
+# ---------------------------------------------------------------------------
+# VRT fixtures.
+#
+# Two shapes:
+#
+# * ``byte_missing_vrt`` -- a 2x2 ``Byte`` VRT whose only source does not
+#   exist on disk. The smallest case that exercises the missing-source
+#   guard. Inherited from the old eager-only smoke checks.
+# * ``partial_float_vrt`` -- an 8x4 ``Float32`` VRT split across two
+#   sources. The left half points at a real GeoTIFF written through
+#   ``to_geotiff``; the right half points at a missing file. Exercises
+#   the NaN-fill / vrt_holes contract that the chunked path also has to
+#   honour at compute time.
+# ---------------------------------------------------------------------------
 
-    Returns ``(vrt_path, present_src_path, missing_path)``. Filenames
-    embed issue #2367 to keep parallel test runs from colliding on
-    shared tmp roots.
+def _write_byte_missing_vrt(tmp_path) -> str:
+    """All-missing 2x2 Byte VRT. Returns the VRT path as ``str``."""
+    vrt = tmp_path / "byte_missing.vrt"
+    vrt.write_text(
+        '<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+        '  <VRTRasterBand dataType="Byte" band="1">\n'
+        '    <SimpleSource>\n'
+        '      <SourceFilename relativeToVRT="1">missing.tif'
+        '</SourceFilename>\n'
+        '      <SourceBand>1</SourceBand>\n'
+        '      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+        '      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+        '    </SimpleSource>\n'
+        '  </VRTRasterBand>\n'
+        '</VRTDataset>\n'
+    )
+    return str(vrt)
+
+
+def _write_partial_float_vrt(tmp_path) -> tuple[str, str, str]:
+    """Two-source partial mosaic.
+
+    Returns ``(vrt_path, present_src_path, missing_path)`` as strings.
     """
-    src = os.path.join(tmp_path, "src_2367_present.tif")
+    src = str(tmp_path / "src_present.tif")
     arr = np.full((4, 4), PRESENT_FILL, dtype=np.float32)
     da = xr.DataArray(
         arr, dims=("y", "x"),
@@ -61,33 +88,32 @@ def _build_partial_vrt(tmp_path) -> tuple[str, str, str]:
     )
     to_geotiff(da, src)
 
-    missing = os.path.join(tmp_path, "missing_2367.tif")
-    vrt_path = os.path.join(tmp_path, "partial_2367.vrt")
-    with open(vrt_path, "w") as f:
-        f.write(
-            '<VRTDataset rasterXSize="8" rasterYSize="4">\n'
-            '<GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n'
-            '<VRTRasterBand dataType="Float32" band="1">\n'
-            '<SimpleSource>\n'
-            f'<SourceFilename relativeToVRT="0">{src}</SourceFilename>\n'
-            '<SourceBand>1</SourceBand>\n'
-            '<SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
-            '<DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
-            '</SimpleSource>\n'
-            '<SimpleSource>\n'
-            f'<SourceFilename relativeToVRT="0">{missing}</SourceFilename>\n'
-            '<SourceBand>1</SourceBand>\n'
-            '<SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
-            '<DstRect xOff="4" yOff="0" xSize="4" ySize="4"/>\n'
-            '</SimpleSource>\n'
-            '</VRTRasterBand>\n'
-            '</VRTDataset>\n'
-        )
-    return vrt_path, src, missing
+    missing = str(tmp_path / "missing_source.tif")
+    vrt_path = tmp_path / "partial.vrt"
+    vrt_path.write_text(
+        '<VRTDataset rasterXSize="8" rasterYSize="4">\n'
+        '  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n'
+        '  <VRTRasterBand dataType="Float32" band="1">\n'
+        '    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n'
+        '      <SourceBand>1</SourceBand>\n'
+        '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        '    </SimpleSource>\n'
+        '    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="0">{missing}</SourceFilename>\n'
+        '      <SourceBand>1</SourceBand>\n'
+        '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        '      <DstRect xOff="4" yOff="0" xSize="4" ySize="4"/>\n'
+        '    </SimpleSource>\n'
+        '  </VRTRasterBand>\n'
+        '</VRTDataset>\n'
+    )
+    return str(vrt_path), src, missing
 
 
 # ---------------------------------------------------------------------------
-# Reader-path fixtures. Each "reader" callable accepts ``(source,
+# Reader-path parametrisation. Each ``reader`` callable takes ``(source,
 # **kwargs)`` and returns a DataArray. The eager reader returns a numpy-
 # backed array; the dask reader returns a chunked DataArray that still
 # needs ``.compute()`` to materialise values.
@@ -106,8 +132,8 @@ def _dask_reader(source, **kwargs):
 
 
 READERS = [
-    pytest.param(_eager_reader, id="eager_read_vrt"),
-    pytest.param(_dask_reader, id="dask_open_geotiff_chunks"),
+    pytest.param(_eager_reader, id="eager"),
+    pytest.param(_dask_reader, id="dask"),
 ]
 
 
@@ -117,25 +143,30 @@ READERS = [
 
 class TestDefaultPolicyRaises:
     """No ``missing_sources`` kwarg -> ``FileNotFoundError`` naming the
-    missing source. This is the public default since #1860 and the
-    release matrix in #2342 calls it out as a hard contract."""
+    missing source. The public default since the lenient-by-default
+    behaviour was removed."""
 
     @pytest.mark.parametrize("reader", READERS)
     def test_default_raises_filenotfound_naming_source(
         self, reader, tmp_path,
     ):
-        vrt_path, _, missing = _build_partial_vrt(str(tmp_path))
+        vrt_path, _, missing = _write_partial_float_vrt(tmp_path)
         with pytest.raises(FileNotFoundError) as excinfo:
             reader(vrt_path)
         # The basename of the missing source must appear in the
-        # message. The chunked path quotes the full path; the eager
-        # path may quote just the source filename or the resolved
-        # absolute path depending on which guard fires first. Match on
-        # the basename to stay portable across both.
-        assert "missing_2367.tif" in str(excinfo.value), (
+        # message. Different code paths quote the full path vs just the
+        # filename; matching on the basename keeps this portable.
+        assert "missing_source.tif" in str(excinfo.value), (
             f"Default policy raise must name the missing source. "
             f"Got: {excinfo.value!r}"
         )
+
+    def test_eager_byte_default_raises(self, tmp_path):
+        """Smoke check for the byte-band path with no real source on
+        disk."""
+        vrt = _write_byte_missing_vrt(tmp_path)
+        with pytest.raises((OSError, ValueError)):
+            read_vrt(vrt)
 
 
 # ---------------------------------------------------------------------------
@@ -149,14 +180,19 @@ class TestExplicitRaisePolicy:
 
     @pytest.mark.parametrize("reader", READERS)
     def test_explicit_raise_matches_default(self, reader, tmp_path):
-        vrt_path, _, _ = _build_partial_vrt(str(tmp_path))
+        vrt_path, _, _ = _write_partial_float_vrt(tmp_path)
         with pytest.raises(FileNotFoundError) as excinfo:
             reader(vrt_path, missing_sources="raise")
-        assert "missing_2367.tif" in str(excinfo.value)
+        assert "missing_source.tif" in str(excinfo.value)
+
+    def test_eager_byte_explicit_raise(self, tmp_path):
+        vrt = _write_byte_missing_vrt(tmp_path)
+        with pytest.raises((OSError, ValueError)):
+            read_vrt(vrt, missing_sources="raise")
 
 
 # ---------------------------------------------------------------------------
-# Warn opt-in: warning class, message, and output values all pinned.
+# Warn opt-in: warning class, message, vrt_holes, and array values pinned.
 # ---------------------------------------------------------------------------
 
 class TestWarnPolicyEmitsWarningAndFillsNodata:
@@ -175,20 +211,16 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
     """
 
     def test_eager_warn_emits_and_fills(self, tmp_path):
-        vrt_path, _, missing = _build_partial_vrt(str(tmp_path))
-        # Use ``match=`` for the class + message check in one step,
-        # matching the sibling 1799 test's style.
+        vrt_path, _, missing = _write_partial_float_vrt(tmp_path)
         with pytest.warns(
-            GeoTIFFFallbackWarning, match="missing_2367.tif",
+            GeoTIFFFallbackWarning, match="missing_source.tif",
         ):
             da = read_vrt(vrt_path, missing_sources="warn")
 
-        # vrt_holes attr is populated and points at the missing file.
         assert "vrt_holes" in da.attrs
         sources = [h["source"] for h in da.attrs["vrt_holes"]]
-        assert any(s.endswith("missing_2367.tif") for s in sources)
+        assert any(s.endswith("missing_source.tif") for s in sources)
 
-        # Output values: present half == 7.0, missing half == NaN.
         out = np.asarray(da)
         np.testing.assert_array_equal(
             out[:, :4], np.full((4, 4), PRESENT_FILL, dtype=np.float32),
@@ -199,9 +231,9 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
         )
 
     def test_dask_warn_emits_at_compute_and_fills(self, tmp_path):
-        vrt_path, _, missing = _build_partial_vrt(str(tmp_path))
-        # Build the lazy DataArray. The parse-time sweep populates
-        # ``vrt_holes`` here without forcing a decode.
+        vrt_path, _, missing = _write_partial_float_vrt(tmp_path)
+        # The parse-time sweep populates ``vrt_holes`` at build so
+        # callers can branch on partial mosaics without computing.
         da = open_geotiff(
             vrt_path, chunks=4, missing_sources="warn",
         )
@@ -218,7 +250,7 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
             str(w.message) for w in caught
             if isinstance(w.message, GeoTIFFFallbackWarning)
         ]
-        assert any("missing_2367.tif" in m for m in msgs), (
+        assert any("missing_source.tif" in m for m in msgs), (
             f"Chunked warn path must emit GeoTIFFFallbackWarning at "
             f"compute naming the missing source; got: {msgs!r}"
         )
@@ -228,6 +260,15 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
             out[:, :4], np.full((4, 4), PRESENT_FILL, dtype=np.float32),
         )
         assert np.all(np.isnan(out[:, 4:]))
+
+    def test_eager_byte_warn_records_hole(self, tmp_path):
+        """Byte-band warn path: warning fires and ``vrt_holes`` is
+        populated even when there is no present half."""
+        vrt = _write_byte_missing_vrt(tmp_path)
+        with pytest.warns(GeoTIFFFallbackWarning, match="could not be read"):
+            da = read_vrt(vrt, missing_sources="warn")
+        assert "vrt_holes" in da.attrs
+        assert da.attrs["vrt_holes"][0]["source"].endswith("missing.tif")
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +291,7 @@ class TestInvalidPolicyRejected:
     def test_invalid_policy_raises_value_error_naming_value(
         self, reader, bad_value, tmp_path,
     ):
-        vrt_path, _, _ = _build_partial_vrt(str(tmp_path))
+        vrt_path, _, _ = _write_partial_float_vrt(tmp_path)
         with pytest.raises(ValueError) as excinfo:
             reader(vrt_path, missing_sources=bad_value)
         msg = str(excinfo.value)
@@ -265,3 +306,12 @@ class TestInvalidPolicyRejected:
             f"ValueError must echo the bad value back to the caller; "
             f"got {msg!r}"
         )
+
+    def test_eager_byte_invalid_policy(self, tmp_path):
+        """Byte-band smoke check. The parametrised matrix above covers
+        more bad values across both reader paths; this stays as a
+        literal copy of the original assertion so the byte-band code
+        path stays exercised."""
+        vrt = _write_byte_missing_vrt(tmp_path)
+        with pytest.raises(ValueError, match="missing_sources"):
+            read_vrt(vrt, missing_sources="ignore")

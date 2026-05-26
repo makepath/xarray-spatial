@@ -19,7 +19,7 @@ import xarray as xr
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
-from ._tiff_surgery import patch_byte_counts as _patch_byte_counts  # noqa: E402
+from ._helpers.tiff_surgery import patch_byte_counts as _patch_byte_counts  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers -- patch in-place IFD entries for tile / strip byte counts
