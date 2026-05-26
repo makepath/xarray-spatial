@@ -8,14 +8,11 @@ accessor IO surface.
 """
 from __future__ import annotations
 
-from __future__ import annotations
 import numpy as np
 import pytest
 import xarray as xr
 import xrspatial
-from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask
-from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, to_geotiff
 from xrspatial.geotiff._writer import write
 
 

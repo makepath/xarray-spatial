@@ -9,7 +9,6 @@ skipped on sandboxes that deny loopback bind once the hack is gone.
 """
 from __future__ import annotations
 
-from __future__ import annotations
 import http.server
 import inspect
 import math
@@ -22,23 +21,11 @@ import threading
 import time
 from xrspatial.geotiff import UnsafeURLError
 from xrspatial.geotiff import _reader as _reader_mod
-from xrspatial.geotiff import _reader as reader_mod
 from xrspatial.geotiff import _sources as _sources_mod
-from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask
-from xrspatial.geotiff import read_geotiff_dask
 from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._reader import INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES, _HTTPSource, _parse_cog_http_meta, _read_cog_http
-from xrspatial.geotiff._reader import PixelSafetyLimitError, _HTTPSource, _read_cog_http
-from xrspatial.geotiff._reader import _FULL_IMAGE_BUDGET_HEADER_SLACK, _compute_full_image_byte_budget, _HTTPSource, _read_cog_http
-from xrspatial.geotiff._reader import _HTTPSource
-from xrspatial.geotiff._reader import _HTTPSource, _read_cog_http, coalesce_ranges, split_coalesced_bytes
-from xrspatial.geotiff._reader import _HTTPSource, _read_cog_http, read_to_array
-from xrspatial.geotiff._reader import _HTTPSource, coalesce_ranges, split_coalesced_bytes
-from xrspatial.geotiff._reader import _read_cog_http
-from xrspatial.geotiff._reader import _read_cog_http, read_to_array
-from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff._reader import INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES, PixelSafetyLimitError, _FULL_IMAGE_BUDGET_HEADER_SLACK, _HTTPSource, _compute_full_image_byte_budget, _parse_cog_http_meta, _read_cog_http, coalesce_ranges, read_to_array, split_coalesced_bytes
 from xrspatial.geotiff._sources import MAX_COALESCED_RANGE_BYTES_DEFAULT
 from xrspatial.geotiff._writer import write
 
@@ -920,7 +907,7 @@ def test_windowed_tile_read_bounded_bytes_and_range_count(
     """
     buf, expected, _ = small_tiled_cog_http_cog_range_contract
     src = _RecordingHTTPSource_http_cog_range_contract(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     window = (32, 32, 64, 64)  # one whole 32x32 tile (tile [1, 1])
     arr, _ = _read_cog_http('http://mock/cog.tif', window=window)
@@ -967,7 +954,7 @@ def test_windowed_multi_tile_read_range_count_bounded(
     """
     buf, expected, _ = small_tiled_cog_http_cog_range_contract
     src = _RecordingHTTPSource_http_cog_range_contract(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     # Cover tiles (0,0), (0,1), (1,0), (1,1) -- top-left 2x2 block.
     window = (0, 0, 64, 64)
@@ -1006,12 +993,12 @@ def test_overview_read_does_not_fetch_full_resolution_pixels(
     buf, _expected, _ = cog_with_overviews_http_cog_range_contract
 
     src_base = _RecordingHTTPSource_http_cog_range_contract(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src_base)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src_base)
     base_arr, _ = _read_cog_http('http://mock/cog.tif', overview_level=0)
     assert base_arr.shape == (256, 256)
 
     src_ovr = _RecordingHTTPSource_http_cog_range_contract(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src_ovr)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src_ovr)
     ovr_arr, _ = _read_cog_http('http://mock/cog.tif', overview_level=1)
     # Overview decimation factor 2 -> 128x128 output.
     assert ovr_arr.shape == (128, 128)
@@ -1052,11 +1039,10 @@ def test_band_selection_multiband_chunky_bounded_reads(
     buf, _expected, path = multiband_chunky_cog_http_cog_range_contract
 
     # Reference via the local-file path on the same buffer.
-    from xrspatial.geotiff import open_geotiff
     local = open_geotiff(path, band=1)
 
     src = _RecordingHTTPSource_http_cog_range_contract(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
     remote, _ = _read_cog_http('http://mock/cog.tif', band=1)
     np.testing.assert_array_equal(remote, np.asarray(local))
     assert remote.ndim == 2
@@ -1079,12 +1065,11 @@ def test_band_selection_with_window_bounded_range_count(
     local path, range count is bounded by the window footprint.
     """
     buf, _expected, path = multiband_chunky_cog_http_cog_range_contract
-    from xrspatial.geotiff import open_geotiff
     window = (0, 0, 32, 32)
     local = open_geotiff(path, window=window, band=2)
 
     src = _RecordingHTTPSource_http_cog_range_contract(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
     remote, _ = _read_cog_http('http://mock/cog.tif',
                                window=window, band=2)
     np.testing.assert_array_equal(remote, np.asarray(local))
@@ -1123,7 +1108,7 @@ def test_dask_read_parses_ifds_once_across_chunks(
         src_holder.append(s)
         return s
 
-    monkeypatch.setattr(reader_mod, '_HTTPSource', _fake_http_source)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', _fake_http_source)
 
     # 256x256 image; 32x32 chunks -> 64 chunks. If header parsing happens
     # per chunk task we should see ~64 header GETs. The contract says
@@ -1170,7 +1155,7 @@ def test_dask_header_gets_independent_of_chunk_count(
             src_holder.append(s)
             return s
 
-        monkeypatch.setattr(reader_mod, '_HTTPSource', _fake)
+        monkeypatch.setattr(_reader_mod, '_HTTPSource', _fake)
         out = read_geotiff_dask('http://mock/cog.tif', chunks=chunks).compute()
         np.testing.assert_array_equal(np.asarray(out), expected)
         return sum(
@@ -1238,7 +1223,7 @@ def test_truncated_cog_closes_http_source(monkeypatch):
     """
     bad = b'II\x2a\x00' + b'\x00' * 28  # valid magic, IFD pointer = 0
     src = _CloseCountingSource_http_cog_range_contract(bad)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     with pytest.raises((ValueError, OSError)):
         _read_cog_http('http://mock/bad.tif')
@@ -1263,7 +1248,7 @@ def test_malformed_ifd_chain_closes_http_source(monkeypatch):
     # cap is hit; we just need the close-on-error contract to fire.
     payload = b'II\x2a\x00' + (0xFFFFFFF0).to_bytes(4, 'little') + b'\x00' * 64
     src = _CloseCountingSource_http_cog_range_contract(payload)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     with pytest.raises((ValueError, OSError)):
         _read_cog_http('http://mock/bad.tif')
@@ -1330,7 +1315,7 @@ def test_short_body_during_pixel_fetch_closes_source(
     url = f'http://127.0.0.1:{port}/cog.tif'
 
     trackers: list = []
-    real_cls = reader_mod._HTTPSource
+    real_cls = _reader_mod._HTTPSource
 
     class _Tracker:
         def __init__(self, real):
@@ -1349,7 +1334,7 @@ def test_short_body_during_pixel_fetch_closes_source(
         trackers.append(t)
         return t
 
-    monkeypatch.setattr(reader_mod, '_HTTPSource', factory)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', factory)
 
     # ``urllib3.exceptions.ProtocolError`` is the underlying class
     # raised when the server short-bodies a chunked response. Newer
@@ -3353,7 +3338,7 @@ def test_windowed_stripped_http_fetches_only_intersecting_strips(
     buf, expected, _ = _make_stripped_cog_http_stripped_window_max_pixels(tmp_path)
     src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
 
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     # Pick a window that covers exactly one row range. We don't know the
     # writer-picked rows_per_strip until we open the file once, so peek
@@ -3425,7 +3410,7 @@ def test_windowed_max_pixels_honoured_for_stripped_http_read(
     full image is 65,536 pixels (well above the caller's cap)."""
     buf, expected, _ = _make_stripped_cog_http_stripped_window_max_pixels(tmp_path)
     src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     arr, _ = _read_cog_http(
         'http://mock/stripped.tif',
@@ -3440,7 +3425,7 @@ def test_windowed_max_pixels_too_small_raises(tmp_path, monkeypatch):
     """``max_pixels`` below the window size must raise even on the windowed path."""
     buf, _expected, _ = _make_stripped_cog_http_stripped_window_max_pixels(tmp_path)
     src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     with pytest.raises(PixelSafetyLimitError):
         _read_cog_http(
@@ -3460,7 +3445,7 @@ def test_full_stripped_http_read_honours_caller_max_pixels(
     """``window=None`` must apply ``max_pixels`` to the full image, not 1B."""
     buf, _, _ = _make_stripped_cog_http_stripped_window_max_pixels(tmp_path)
     src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     # File is 1024x64 = 65,536 pixels; cap at 100 must reject.
     with pytest.raises(PixelSafetyLimitError):
@@ -3490,7 +3475,7 @@ def test_windowed_stripped_http_matches_full_read(
         tmp_path, monkeypatch, window):
     buf, expected, _ = _make_stripped_cog_http_stripped_window_max_pixels(tmp_path)
     src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     arr, _ = _read_cog_http('http://mock/stripped.tif', window=window)
     r0, c0, r1, c1 = window
@@ -3559,7 +3544,7 @@ def test_windowed_strip_byte_cap_skips_unrelated_oversized_strip(
 
     monkeypatch.setattr(_r, '_parse_cog_http_meta', fake_meta)
     src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     # Aim at strip 1 only.
     peek_src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
@@ -3618,7 +3603,7 @@ def test_windowed_strip_decoded_dim_guard_rejects_oversized_strip(
 
     monkeypatch.setattr(_r, '_parse_cog_http_meta', fake_meta)
     src = _RecordingHTTPSource_http_stripped_window_max_pixels(buf)
-    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', lambda url: src)
 
     # Tiny window inside the (fake) huge image. Caller's max_pixels is
     # comfortably large so the output-budget check passes; only the
@@ -4325,14 +4310,14 @@ def _install_tracker_cog_http_close_on_error(monkeypatch):
     list so the test can inspect them afterwards.
     """
     trackers: list[_CloseTracker_cog_http_close_on_error] = []
-    real_cls = reader_mod._HTTPSource
+    real_cls = _reader_mod._HTTPSource
 
     def factory(url, *args, **kwargs):
         tracker = _CloseTracker_cog_http_close_on_error(real_cls(url, *args, **kwargs))
         trackers.append(tracker)
         return tracker
 
-    monkeypatch.setattr(reader_mod, '_HTTPSource', factory)
+    monkeypatch.setattr(_reader_mod, '_HTTPSource', factory)
     return trackers
 
 
@@ -4397,7 +4382,7 @@ def test_http_source_closed_when_tile_fetch_raises(
         raise OSError("simulated tile fetch failure")
 
     monkeypatch.setattr(
-        reader_mod, '_fetch_decode_cog_http_tiles', boom)
+        _reader_mod, '_fetch_decode_cog_http_tiles', boom)
 
     url, httpd, _ = _serve_cog_http_close_on_error(payload)
     try:
@@ -4431,7 +4416,7 @@ def test_http_source_closed_when_post_processing_raises(
         raise RuntimeError("simulated photometric failure")
 
     monkeypatch.setattr(
-        reader_mod, '_apply_photometric_miniswhite', boom)
+        _reader_mod, '_apply_photometric_miniswhite', boom)
 
     url, httpd, _ = _serve_cog_http_close_on_error(payload)
     try:

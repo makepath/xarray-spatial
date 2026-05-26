@@ -20,6 +20,12 @@ Issue-number suffixes on test names (`_2266`, `_2026_05_15`, `_issue_A`)
 are stripped per epic convention. Issue numbers are preserved in git log
 and PR descriptions.
 
+For parametrised tests, the "New `file::test_id`" column lists the first
+collected parametrize variant. A single row in this table can therefore
+cover several parametrize variants of the same test function -- the
+original test moved as one unit and pytest expands the matrix from the
+preserved `@pytest.mark.parametrize` decorators.
+
 ## HTTP sources -> `integration/test_http_sources.py`
 
 | Old `file::test` | New `file::test_id` | Notes |
