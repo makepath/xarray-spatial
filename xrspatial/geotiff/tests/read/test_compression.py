@@ -8,6 +8,15 @@ Consolidates:
 * ``test_decompression_caps.py`` -- decompression-bomb defenses
   (security finding S1) across deflate, ZSTD, LZ4, PackBits, LERC,
   JPEG 2000, and JPEG.
+
+Several classes here (``TestDeflate``, ``TestLZW``, ``TestPredictor``,
+``TestDispatch``, the ``Test*Direct`` codec bomb classes, and the JPEG
+SOF cap class) call the codec functions directly rather than going
+through ``open_geotiff`` / ``read_to_array``. They live under ``read/``
+because the reader is the only consumer of those decode entry points;
+the writer side of the same codecs is exercised from PR 7's writer
+cluster. Future maintainers scanning ``read/`` should treat these as
+reader-internal codec coverage rather than end-to-end read paths.
 """
 from __future__ import annotations
 

@@ -14,22 +14,11 @@ import importlib.util
 import numpy as np
 import pytest
 
+from .._helpers.markers import gpu_available
 
-def _gpu_available() -> bool:
-    """True if cupy is importable and CUDA is initialised."""
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _gpu_available()
 _HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 _gpu_only = pytest.mark.skipif(
-    not (_HAS_GPU and _HAS_TIFFFILE),
+    not (gpu_available() and _HAS_TIFFFILE),
     reason="cupy + CUDA + tifffile required",
 )
 

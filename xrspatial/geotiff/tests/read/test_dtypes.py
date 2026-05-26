@@ -11,8 +11,6 @@ Consolidates:
 """
 from __future__ import annotations
 
-import importlib.util
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -21,21 +19,7 @@ from xrspatial.geotiff import open_geotiff, read_geotiff_dask, to_geotiff
 from xrspatial.geotiff._dtypes import (SAMPLE_FORMAT_FLOAT, SAMPLE_FORMAT_INT, SAMPLE_FORMAT_UINT,
                                        tiff_dtype_to_numpy, tiff_storage_dtype)
 
-
-def _gpu_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _gpu_available()
-_gpu_only = pytest.mark.skipif(
-    not _HAS_GPU, reason="cupy + CUDA required",
-)
+from .._helpers.markers import requires_gpu as _gpu_only
 
 
 # ---------------------------------------------------------------------------

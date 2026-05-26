@@ -9,8 +9,6 @@ Consolidates:
 """
 from __future__ import annotations
 
-import importlib.util
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -18,23 +16,8 @@ import xarray as xr
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
 
+from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.tiff_surgery import patch_byte_counts as _patch_byte_counts
-
-
-def _gpu_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _gpu_available()
-_gpu_only = pytest.mark.skipif(
-    not _HAS_GPU, reason="cupy + CUDA required for the GPU read path",
-)
 
 
 # ---------------------------------------------------------------------------

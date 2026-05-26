@@ -181,12 +181,13 @@ PR's surface. They are left in place for their natural cluster:
 
 - 134 tests collected in `xrspatial/geotiff/tests/read/` after PR 8 (8
   modules, including PR 3's `test_crs.py` once that PR lands).
-- Net file delta inside `xrspatial/geotiff/tests/`: 12 old files
-  deleted, 8 new files added under `read/` (plus `__init__.py`). 12
-  removed `test_*.py` and 8 added under `read/` -> net -4 in
-  `geotiff/tests` `test_*.py` count.
-- Net file delta in `xrspatial/tests/`: 1 file removed
-  (`test_geotiff_streaming_bigtiff_threshold_1785.py`). Total
-  cross-directory PR delta: -5 `test_*.py` files.
-- `find xrspatial/geotiff/tests -name 'test_*.py' | wc -l` goes from
-  352 to 348 inside `geotiff/tests`.
+- Total `test_*.py` files removed across the PR: 13 (12 inside
+  `geotiff/tests/`, plus the one cross-directory move from
+  `xrspatial/tests/test_geotiff_streaming_bigtiff_threshold_1785.py`).
+- New `test_*.py` files added under `read/`: 8 (plus the empty
+  `__init__.py`).
+- Net delta inside `geotiff/tests/`: -12 + 8 = -4 `test_*.py` files
+  (`find xrspatial/geotiff/tests -name 'test_*.py' | wc -l` goes from
+  352 to 348).
+- Net delta inside `xrspatial/tests/`: -1 `test_*.py` file.
+- Total PR-wide `test_*.py` delta: -5.
