@@ -1,26 +1,33 @@
-"""Regression tests for issue #1774.
+"""Regression tests for issue #1774 (under the #2441 opt-in).
 
-Reading an integer GeoTIFF whose ``GDAL_NODATA`` tag holds a non-finite
-string (``"NaN"`` / ``"nan"`` / ``"Inf"`` / ``"-Inf"``) used to crash with
-``ValueError: cannot convert float NaN to integer`` at three call sites in
-``xrspatial/geotiff/__init__.py``:
+History: reading an integer GeoTIFF whose ``GDAL_NODATA`` tag held a
+non-finite string (``"NaN"`` / ``"nan"`` / ``"Inf"`` / ``"-Inf"``) used
+to crash with ``ValueError: cannot convert float NaN to integer`` at
+three call sites in ``xrspatial/geotiff/__init__.py``:
 
 * ``open_geotiff`` eager numpy path
 * ``_apply_nodata_mask_gpu`` (GPU)
 * ``_delayed_read_window`` (dask)
 
-The fix gates each ``int(nodata)`` cast on ``np.isfinite(nodata)``, mirroring
-the ``_resolve_masked_fill`` / ``_sparse_fill_value`` helpers in
-``_reader.py``. A non-finite sentinel on an integer file cannot match any
-pixel value, so the mask is a no-op and the file dtype is preserved.
-``attrs['nodata']`` still carries the raw sentinel so a write round-trip
-keeps the original GDAL_NODATA tag.
+The first fix gated each ``int(nodata)`` cast on ``np.isfinite(nodata)``,
+mirroring the ``_resolve_masked_fill`` / ``_sparse_fill_value`` helpers
+in ``_reader.py``. A non-finite sentinel on an integer file cannot match
+any pixel value, so the mask was a no-op and the file dtype was
+preserved. ``attrs['nodata']`` still carried the raw sentinel so a write
+round-trip kept the original GDAL_NODATA tag.
 
-The same gate is paired with ``float(nodata).is_integer()`` so that a
+The same gate was paired with ``float(nodata).is_integer()`` so that a
 fractional ``GDAL_NODATA`` string (e.g. ``"3.5"`` on a ``uint16`` file)
-also stays a no-op rather than truncating to ``int(3.5) == 3`` and
-silently masking real pixel value 3. This mirrors the
+also stayed a no-op rather than truncating to ``int(3.5) == 3`` and
+silently masking real pixel value 3. This mirrored the
 ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616.
+
+Follow-up (#2441): the release contract upgrades the silent no-op to a
+typed ``InvalidIntegerNodataError`` at the read boundary so callers
+cannot quietly mismask such files. The legacy no-op behaviour is still
+available via ``allow_invalid_nodata=True``; the tests below cover that
+opt-in path. The default-rejection path lives in
+``test_invalid_int_nodata_rejection_2441.py``.
 """
 from __future__ import annotations
 
@@ -132,9 +139,11 @@ def _build_uint16_tiff(nodata_str: str, tmp_path) -> str:
 
 @pytest.mark.parametrize('nodata_str', ['nan', 'NaN', 'NAN'])
 def test_open_geotiff_eager_int_nodata_nan(tmp_path, nodata_str):
-    """Eager numpy path: NaN nodata on uint16 file is a no-op (#1774)."""
+    """Eager numpy path: NaN nodata on uint16 file is a no-op under the
+    #2441 opt-in.
+    """
     path = _build_uint16_tiff(nodata_str, tmp_path)
-    da = open_geotiff(path)
+    da = open_geotiff(path, allow_invalid_nodata=True)
     # No pixel can match NaN, so the dtype stays uint16
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.values, [[10, 20], [30, 40]])
@@ -146,9 +155,11 @@ def test_open_geotiff_eager_int_nodata_nan(tmp_path, nodata_str):
 @pytest.mark.parametrize('nodata_str', ['inf', 'Inf', 'INF',
                                         '-inf', '-Inf', '-INF'])
 def test_open_geotiff_eager_int_nodata_inf(tmp_path, nodata_str):
-    """Eager numpy path: +/-Inf nodata on uint16 file is a no-op (#1774)."""
+    """Eager numpy path: +/-Inf nodata on uint16 file is a no-op under
+    the #2441 opt-in.
+    """
     path = _build_uint16_tiff(nodata_str, tmp_path)
-    da = open_geotiff(path)
+    da = open_geotiff(path, allow_invalid_nodata=True)
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.values, [[10, 20], [30, 40]])
     assert 'nodata' in da.attrs
@@ -168,9 +179,11 @@ def test_open_geotiff_eager_int_nodata_finite_still_masks(tmp_path):
 
 
 def test_read_geotiff_dask_int_nodata_nan(tmp_path):
-    """Dask path: NaN nodata on uint16 file is a no-op (#1774)."""
+    """Dask path: NaN nodata on uint16 file is a no-op under the #2441
+    opt-in.
+    """
     path = _build_uint16_tiff('nan', tmp_path)
-    da = read_geotiff_dask(path, chunks=2)
+    da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     # effective_dtype stays uint16 because the sentinel is non-finite
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.compute().values, [[10, 20], [30, 40]])
@@ -179,9 +192,11 @@ def test_read_geotiff_dask_int_nodata_nan(tmp_path):
 
 
 def test_read_geotiff_dask_int_nodata_inf(tmp_path):
-    """Dask path: Inf nodata on uint16 file is a no-op (#1774)."""
+    """Dask path: Inf nodata on uint16 file is a no-op under the #2441
+    opt-in.
+    """
     path = _build_uint16_tiff('inf', tmp_path)
-    da = read_geotiff_dask(path, chunks=2)
+    da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.compute().values, [[10, 20], [30, 40]])
     assert np.isinf(da.attrs['nodata'])
@@ -241,9 +256,11 @@ def test_apply_nodata_mask_gpu_int_finite_still_masks():
 
 @pytest.mark.parametrize('nodata_str', ['3.5', '29.5', '0.5'])
 def test_open_geotiff_eager_int_nodata_fractional_noop(tmp_path, nodata_str):
-    """Eager numpy path: fractional nodata on uint16 is a no-op."""
+    """Eager numpy path: fractional nodata on uint16 is a no-op under the
+    #2441 opt-in.
+    """
     path = _build_uint16_tiff(nodata_str, tmp_path)
-    da = open_geotiff(path)
+    da = open_geotiff(path, allow_invalid_nodata=True)
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.values, [[10, 20], [30, 40]])
     assert da.attrs['nodata'] == float(nodata_str)
@@ -254,10 +271,10 @@ def test_open_geotiff_eager_int_nodata_fractional_does_not_alias_truncation(
 ):
     """A ``"30.5"`` sentinel must not mask the real pixel value 30
     (which is in the test image). ``int(30.5)`` would truncate to 30
-    without the integerness gate.
+    without the integerness gate. Runs under the #2441 opt-in.
     """
     path = _build_uint16_tiff('30.5', tmp_path)
-    da = open_geotiff(path)
+    da = open_geotiff(path, allow_invalid_nodata=True)
     assert da.dtype == np.uint16
     # pixel @[1,0] is 30; the fractional sentinel must NOT have masked it
     assert da.values[1, 0] == 30
@@ -265,9 +282,11 @@ def test_open_geotiff_eager_int_nodata_fractional_does_not_alias_truncation(
 
 
 def test_read_geotiff_dask_int_nodata_fractional_noop(tmp_path):
-    """Dask path: fractional nodata on uint16 is a no-op."""
+    """Dask path: fractional nodata on uint16 is a no-op under the #2441
+    opt-in.
+    """
     path = _build_uint16_tiff('30.5', tmp_path)
-    da = read_geotiff_dask(path, chunks=2)
+    da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     # effective_dtype stays uint16 because the sentinel is fractional
     assert da.dtype == np.uint16
     computed = da.compute().values

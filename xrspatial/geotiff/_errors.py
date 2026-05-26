@@ -147,6 +147,25 @@ class InconsistentGeoKeysError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class InvalidIntegerNodataError(GeoTIFFAmbiguousMetadataError):
+    """Integer-dtype source carries a non-finite or fractional GDAL_NODATA (#1774 follow-up).
+
+    Raised when a GeoTIFF whose pixel buffer is an integer dtype declares
+    a ``GDAL_NODATA`` value the integer buffer cannot represent: NaN, +Inf,
+    -Inf, or a fractional float such as ``"3.5"`` on a ``uint16`` file.
+    The original #1774 fix parsed the sentinel into ``attrs['nodata']``
+    and silently skipped the masking step, so callers had no way to tell
+    a silently-ignored sentinel from a missing one. The release contract
+    (see ``test_release_gate_negative_integer_nodata_float_promoted``)
+    upgrades that no-op to a typed rejection so the silent-coercion risk
+    surfaces at the read boundary.
+
+    Pass ``allow_invalid_nodata=True`` on the public read entry points to
+    restore the pre-rejection no-op behaviour for files known to carry
+    such sentinels.
+    """
+
+
 class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """Can't classify an EPSG as geographic or projected on write (#2277).
 
@@ -210,6 +229,7 @@ __all__ = [
     "MixedBandMetadataError",
     "ConflictingCRSError",
     "ConflictingNodataError",
+    "InvalidIntegerNodataError",
     "VRTUnsupportedError",
     "UnknownCRSModelTypeError",
     "NonRepresentableEPSGCRSError",

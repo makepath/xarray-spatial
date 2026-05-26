@@ -2784,6 +2784,10 @@ class TestPublicAPI:
             # combinations.
             'InconsistentGeoKeysError',
             'InvalidCRSCodeError',
+            # Issue #2441 (the #1774 follow-up): read-side fail-closed
+            # on non-finite / fractional GDAL_NODATA against an integer
+            # source dtype, replacing the legacy silent no-op.
+            'InvalidIntegerNodataError',
             'MixedBandMetadataError',
             # Issue #2418: writer rejects compound EPSG codes that cannot
             # be represented in a single GeographicType / ProjectedCSType
