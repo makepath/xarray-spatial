@@ -841,6 +841,17 @@ _BACKENDS = [
 ]
 
 
+def _gpu_dask_available() -> bool:
+    """Runtime GPU probe for the conditional cross-backend assertions.
+
+    The ``requires_gpu`` marker handles the skip on the parametrised GPU
+    rows; this helper gates the inline ``if`` branches that compare CPU
+    against GPU inside an otherwise CPU-only test.
+    """
+    from .._helpers.markers import gpu_available
+    return gpu_available()
+
+
 # --- Fixture builders, mirroring the per-state fixtures in test_georef_status_2136 ---
 
 
@@ -1089,14 +1100,3 @@ def test_dtype_cast_records_integer_target(tmp_path, opener):
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_dtype_cast') == 'int32'
     assert 'nodata_pixels_present' not in out.attrs
-
-
-def _gpu_dask_available() -> bool:
-    """Runtime GPU probe for the conditional cross-backend assertions.
-
-    The ``requires_gpu`` marker handles the skip on the parametrised GPU
-    rows; this helper gates the inline ``if`` branches that compare CPU
-    against GPU inside an otherwise CPU-only test.
-    """
-    from .._helpers.markers import gpu_available
-    return gpu_available()
