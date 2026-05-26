@@ -85,6 +85,14 @@ def _gpu_available() -> bool:
 _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
+# tifffile needs imagecodecs for the predictor=3 decode path; the
+# predictor=3 read section skips cleanly when the optional dep is
+# missing.
+imagecodecs_required = pytest.mark.skipif(
+    importlib.util.find_spec("imagecodecs") is None,
+    reason="imagecodecs is required for tifffile predictor=3 round-trips",
+)
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -106,7 +114,16 @@ def _smooth_float(shape, dtype):
 
 
 def _da_xy(arr: np.ndarray) -> xr.DataArray:
-    """Wrap a 2D / 3D ndarray as a ``to_geotiff``-compatible DataArray."""
+    """Wrap a 2D / 3D ndarray as a ``to_geotiff``-compatible DataArray.
+
+    Note: all callers in this module pass 2D arrays. The 3D branch is
+    here for safety and intentionally indexes the trailing two axes
+    (``arr.shape[-2:]``) so the (band, y, x) layout maps the right
+    sizes to the y/x coords. The pre-consolidation helper used
+    ``arr.shape[:2]`` which would have given (band, y) on a 3D input;
+    that path was never exercised, but leaving the latent bug in
+    place felt worse than quietly fixing it.
+    """
     h, w = arr.shape[:2] if arr.ndim == 2 else arr.shape[-2:]
     coords = {
         "x": np.arange(w, dtype=np.float64) * 10.0,
@@ -381,10 +398,14 @@ def _build_predictor3_stripped_tiff(arr: np.ndarray) -> bytes:
         (np.int32, "<"),
         (np.int32, ">"),
     ],
-    ids=lambda v: (
-        v if isinstance(v, str)
-        else np.dtype(v).name
-    ),
+    ids=[
+        "uint8-le", "uint8-be",
+        "int8-le", "int8-be",
+        "uint16-le", "uint16-be",
+        "int16-le", "int16-be",
+        "uint32-le", "uint32-be",
+        "int32-le", "int32-be",
+    ],
 )
 def test_predictor2_round_trip_stripped(tmp_path, dtype, byteorder):
     """predictor=2 stripped layout decodes back to the original array.
@@ -472,7 +493,7 @@ def test_gpu_predictor2_int8_matches_cpu(tmp_path, tiled):
 
 
 @pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32", "int32"],
-                         ids=lambda v: f"pred2-libtiff[{v}]")
+                         ids=lambda v: f"pred2-libtiff-{v}")
 def test_predictor2_reads_libtiff_multibyte_correctly(tmp_path, dtype_str):
     """xrspatial reads predictor=2 TIFFs with multi-byte samples correctly."""
     dtype = np.dtype(dtype_str)
@@ -500,7 +521,7 @@ def test_predictor2_reads_libtiff_multiband_uint16(tmp_path):
 
 
 @pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32", "int32"],
-                         ids=lambda v: f"pred2-writer[{v}]")
+                         ids=lambda v: f"pred2-writer-{v}")
 def test_predictor2_writer_interops_with_libtiff(tmp_path, dtype_str):
     """xrspatial-written predictor=2 TIFFs decode correctly under tifffile.
 
@@ -594,7 +615,7 @@ def test_gpu_predictor2_multisample_uneven_tiles(tmp_path):
 
 @_gpu_only
 @pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32"],
-                         ids=lambda v: f"gpu-pred2[{v}]")
+                         ids=lambda v: f"gpu-pred2-{v}")
 def test_gpu_predictor2_multibyte_matches_cpu(tmp_path, dtype_str):
     """GPU decode of predictor=2 with multi-byte samples matches CPU."""
     dtype = np.dtype(dtype_str)
@@ -617,7 +638,7 @@ def test_gpu_predictor2_multibyte_matches_cpu(tmp_path, dtype_str):
 
 @_gpu_only
 @pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32"],
-                         ids=lambda v: f"gpu-pred2-writer[{v}]")
+                         ids=lambda v: f"gpu-pred2-writer-{v}")
 def test_gpu_predictor2_multibyte_writer_round_trip(tmp_path, dtype_str):
     """xrspatial writer + GPU reader round-trip for multi-byte predictor=2."""
     dtype = np.dtype(dtype_str)
@@ -655,7 +676,7 @@ def test_gpu_predictor2_multiband_uint16_matches_cpu(tmp_path):
 
 @_gpu_only
 @pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32"],
-                         ids=lambda v: f"gpu-pred2-encoder[{v}]")
+                         ids=lambda v: f"gpu-pred2-encoder-{v}")
 def test_gpu_predictor2_writer_round_trip(tmp_path, dtype_str):
     """xrspatial writer + GPU encode path round-trip for multi-byte predictor=2.
 
@@ -696,14 +717,6 @@ def test_gpu_predictor2_writer_round_trip(tmp_path, dtype_str):
 # they came back as a clean float array (no error, just wrong numbers).
 
 
-# tifffile needs imagecodecs for the predictor=3 decode path; bail out of
-# the section cleanly if it is not installed.
-imagecodecs_required = pytest.mark.skipif(
-    importlib.util.find_spec("imagecodecs") is None,
-    reason="imagecodecs is required for tifffile predictor=3 round-trips",
-)
-
-
 @imagecodecs_required
 @pytest.mark.parametrize(
     "dtype,byteorder",
@@ -713,7 +726,7 @@ imagecodecs_required = pytest.mark.skipif(
         (np.float64, "<"),
         (np.float64, ">"),
     ],
-    ids=lambda v: v if isinstance(v, str) else np.dtype(v).name,
+    ids=["float32-le", "float32-be", "float64-le", "float64-be"],
 )
 def test_predictor3_round_trip_stripped(tmp_path, dtype, byteorder):
     """predictor=3 stripped layout decodes back to the original array."""

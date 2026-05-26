@@ -12,24 +12,24 @@ Deleted on the pre-merge commit so it does not land on `main`.
 
 | Old test_id                                              | New test_id                                                                     |
 |----------------------------------------------------------|---------------------------------------------------------------------------------|
-| `test_big_endian_predictor2_round_trip[uint16]`          | `test_predictor2_round_trip_stripped[uint16->]`                                 |
-| `test_big_endian_predictor2_round_trip[int16]`           | `test_predictor2_round_trip_stripped[int16->]`                                  |
-| `test_big_endian_predictor2_round_trip[uint32]`          | `test_predictor2_round_trip_stripped[uint32->]`                                 |
-| `test_big_endian_predictor2_round_trip[int32]`           | `test_predictor2_round_trip_stripped[int32->]`                                  |
-| `test_little_endian_predictor2_still_round_trips`        | `test_predictor2_round_trip_stripped[uint16-<]` (covers same path with uint16)  |
-| `test_big_endian_predictor2_uint8_unaffected`            | `test_predictor2_round_trip_stripped[uint8->]`                                  |
+| `test_big_endian_predictor2_round_trip[uint16]`          | `test_predictor2_round_trip_stripped[uint16-be]`                                |
+| `test_big_endian_predictor2_round_trip[int16]`           | `test_predictor2_round_trip_stripped[int16-be]`                                 |
+| `test_big_endian_predictor2_round_trip[uint32]`          | `test_predictor2_round_trip_stripped[uint32-be]`                                |
+| `test_big_endian_predictor2_round_trip[int32]`           | `test_predictor2_round_trip_stripped[int32-be]`                                 |
+| `test_little_endian_predictor2_still_round_trips`        | `test_predictor2_round_trip_stripped[uint16-le]` (covers same path with uint16) |
+| `test_big_endian_predictor2_uint8_unaffected`            | `test_predictor2_round_trip_stripped[uint8-be]`                                 |
 
-The new parametrise matrix also adds `uint8-<`, `int8-<`, `int8->`,
-`uint16-<`, `int16-<`, `uint32-<`, `int32-<` -- not coverage loss,
-coverage gain. The pre-fix bug only fires on multi-byte BE, but the LE
-sanity case from the old file generalises to all dtypes cheaply.
+The new parametrise matrix also adds `uint8-le`, `int8-le`, `int8-be`,
+`int16-le`, `uint32-le`, `int32-le` -- not coverage loss, coverage
+gain. The pre-fix bug only fires on multi-byte BE, but the LE sanity
+case from the old file generalises to all dtypes cheaply.
 
 ### `test_predictor2_int8.py`
 
 | Old test_id                                              | New test_id                                          |
 |----------------------------------------------------------|------------------------------------------------------|
-| `test_cpu_predictor2_int8_round_trip[<]`                 | `test_predictor2_round_trip_stripped[int8-<]`        |
-| `test_cpu_predictor2_int8_round_trip[>]`                 | `test_predictor2_round_trip_stripped[int8->]`        |
+| `test_cpu_predictor2_int8_round_trip[<]`                 | `test_predictor2_round_trip_stripped[int8-le]`       |
+| `test_cpu_predictor2_int8_round_trip[>]`                 | `test_predictor2_round_trip_stripped[int8-be]`       |
 | `test_cpu_predictor2_int8_tiled`                         | `test_predictor2_round_trip_tiled_int8`              |
 | `test_gpu_predictor2_int8_tiled_matches_cpu`             | `test_gpu_predictor2_int8_matches_cpu[tiled]`        |
 | `test_gpu_predictor2_int8_stripped_matches_cpu`          | `test_gpu_predictor2_int8_matches_cpu[stripped]`     |
@@ -40,13 +40,13 @@ The new int8 grid generator is the same `_signed_int8_grid` helper.
 
 | Old test_id                                              | New test_id                                            |
 |----------------------------------------------------------|--------------------------------------------------------|
-| `test_big_endian_predictor3_round_trip[float32]`         | `test_predictor3_round_trip_stripped[float32->]`       |
-| `test_big_endian_predictor3_round_trip[float64]`         | `test_predictor3_round_trip_stripped[float64->]`       |
-| `test_little_endian_predictor3_still_round_trips`        | `test_predictor3_round_trip_stripped[float32-<]`       |
+| `test_big_endian_predictor3_round_trip[float32]`         | `test_predictor3_round_trip_stripped[float32-be]`      |
+| `test_big_endian_predictor3_round_trip[float64]`         | `test_predictor3_round_trip_stripped[float64-be]`      |
+| `test_little_endian_predictor3_still_round_trips`        | `test_predictor3_round_trip_stripped[float32-le]`      |
 | `test_big_endian_predictor3_tiled`                       | `test_predictor3_round_trip_tiled_big_endian`          |
 | `test_big_endian_predictor3_gpu`                         | `test_gpu_predictor3_big_endian_matches_cpu`           |
 
-`float64-<` is added by the parametrise expansion.
+`float64-le` is added by the parametrise expansion.
 
 ### `test_predictor3_int_dtype_1933.py`
 
@@ -61,7 +61,7 @@ The new int8 grid generator is the same `_signed_int8_grid` helper.
 | `TestPredictor3IntegerSampleFormatRejected::test_helper_normalizes_tuple_predictor`                | `TestPredictor3IntegerSampleFormatRejected::test_helper_normalizes_tuple_predictor`                    |
 | `TestEagerReadRejectsMalformedFile::test_open_geotiff_eager_raises`                                | `TestEagerReadRejectsMalformedFile::test_open_geotiff_eager_raises`                                    |
 | `TestEagerReadRejectsMalformedFile::test_open_geotiff_dask_raises`                                 | `TestEagerReadRejectsMalformedFile::test_open_geotiff_dask_raises`                                     |
-| `TestValidPredictor3StillWorks::test_predictor3_float32_round_trip`                                | covered by `test_predictor3_round_trip_stripped[float32-<]` + `test_predictor3_writer_round_trip[*]`   |
+| `TestValidPredictor3StillWorks::test_predictor3_float32_round_trip`                                | covered by `test_predictor3_round_trip_stripped[float32-le]` + `test_predictor3_writer_round_trip[*]`  |
 
 Class names preserved; helper / validator test bodies preserved
 verbatim.
@@ -103,25 +103,25 @@ verbatim.
 | `test_cpu_predictor3_multisample_reads_correctly_1247[2-float32]`          | `test_cpu_predictor3_multisample_reads_correctly[s2-float32]`                |
 | `test_cpu_predictor3_single_sample_still_works_1247`                       | `test_cpu_predictor3_single_sample_still_works`                              |
 | `test_apply_predictor3_matches_tn3_reference_1247`                         | `test_apply_predictor3_matches_tn3_reference`                                |
-| `test_predictor2_reads_libtiff_multibyte_correctly[uint16]`                | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff[uint16]]`   |
-| `test_predictor2_reads_libtiff_multibyte_correctly[int16]`                 | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff[int16]]`    |
-| `test_predictor2_reads_libtiff_multibyte_correctly[uint32]`                | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff[uint32]]`   |
-| `test_predictor2_reads_libtiff_multibyte_correctly[int32]`                 | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff[int32]]`    |
+| `test_predictor2_reads_libtiff_multibyte_correctly[uint16]`                | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff-uint16]`   |
+| `test_predictor2_reads_libtiff_multibyte_correctly[int16]`                 | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff-int16]`    |
+| `test_predictor2_reads_libtiff_multibyte_correctly[uint32]`                | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff-uint32]`   |
+| `test_predictor2_reads_libtiff_multibyte_correctly[int32]`                 | `test_predictor2_reads_libtiff_multibyte_correctly[pred2-libtiff-int32]`    |
 | `test_predictor2_reads_libtiff_multiband_uint16`                           | `test_predictor2_reads_libtiff_multiband_uint16`                             |
-| `test_predictor2_writer_interops_with_libtiff[uint16]`                     | `test_predictor2_writer_interops_with_libtiff[pred2-writer[uint16]]`         |
-| `test_predictor2_writer_interops_with_libtiff[int16]`                      | `test_predictor2_writer_interops_with_libtiff[pred2-writer[int16]]`          |
-| `test_predictor2_writer_interops_with_libtiff[uint32]`                     | `test_predictor2_writer_interops_with_libtiff[pred2-writer[uint32]]`         |
-| `test_predictor2_writer_interops_with_libtiff[int32]`                      | `test_predictor2_writer_interops_with_libtiff[pred2-writer[int32]]`          |
-| `test_gpu_predictor2_multibyte_matches_cpu[uint16]`                        | `test_gpu_predictor2_multibyte_matches_cpu[gpu-pred2[uint16]]`               |
-| `test_gpu_predictor2_multibyte_matches_cpu[int16]`                         | `test_gpu_predictor2_multibyte_matches_cpu[gpu-pred2[int16]]`                |
-| `test_gpu_predictor2_multibyte_matches_cpu[uint32]`                        | `test_gpu_predictor2_multibyte_matches_cpu[gpu-pred2[uint32]]`               |
-| `test_gpu_predictor2_multibyte_writer_round_trip[uint16]`                  | `test_gpu_predictor2_multibyte_writer_round_trip[gpu-pred2-writer[uint16]]`  |
-| `test_gpu_predictor2_multibyte_writer_round_trip[int16]`                   | `test_gpu_predictor2_multibyte_writer_round_trip[gpu-pred2-writer[int16]]`   |
-| `test_gpu_predictor2_multibyte_writer_round_trip[uint32]`                  | `test_gpu_predictor2_multibyte_writer_round_trip[gpu-pred2-writer[uint32]]`  |
+| `test_predictor2_writer_interops_with_libtiff[uint16]`                     | `test_predictor2_writer_interops_with_libtiff[pred2-writer-uint16]`         |
+| `test_predictor2_writer_interops_with_libtiff[int16]`                      | `test_predictor2_writer_interops_with_libtiff[pred2-writer-int16]`          |
+| `test_predictor2_writer_interops_with_libtiff[uint32]`                     | `test_predictor2_writer_interops_with_libtiff[pred2-writer-uint32]`         |
+| `test_predictor2_writer_interops_with_libtiff[int32]`                      | `test_predictor2_writer_interops_with_libtiff[pred2-writer-int32]`          |
+| `test_gpu_predictor2_multibyte_matches_cpu[uint16]`                        | `test_gpu_predictor2_multibyte_matches_cpu[gpu-pred2-uint16]`               |
+| `test_gpu_predictor2_multibyte_matches_cpu[int16]`                         | `test_gpu_predictor2_multibyte_matches_cpu[gpu-pred2-int16]`                |
+| `test_gpu_predictor2_multibyte_matches_cpu[uint32]`                        | `test_gpu_predictor2_multibyte_matches_cpu[gpu-pred2-uint32]`               |
+| `test_gpu_predictor2_multibyte_writer_round_trip[uint16]`                  | `test_gpu_predictor2_multibyte_writer_round_trip[gpu-pred2-writer-uint16]`  |
+| `test_gpu_predictor2_multibyte_writer_round_trip[int16]`                   | `test_gpu_predictor2_multibyte_writer_round_trip[gpu-pred2-writer-int16]`   |
+| `test_gpu_predictor2_multibyte_writer_round_trip[uint32]`                  | `test_gpu_predictor2_multibyte_writer_round_trip[gpu-pred2-writer-uint32]`  |
 | `test_gpu_predictor2_multiband_uint16_matches_cpu`                         | `test_gpu_predictor2_multiband_uint16_matches_cpu`                           |
-| `test_gpu_predictor2_writer_round_trip[uint16]`                            | `test_gpu_predictor2_writer_round_trip[gpu-pred2-encoder[uint16]]`           |
-| `test_gpu_predictor2_writer_round_trip[int16]`                             | `test_gpu_predictor2_writer_round_trip[gpu-pred2-encoder[int16]]`            |
-| `test_gpu_predictor2_writer_round_trip[uint32]`                            | `test_gpu_predictor2_writer_round_trip[gpu-pred2-encoder[uint32]]`           |
+| `test_gpu_predictor2_writer_round_trip[uint16]`                            | `test_gpu_predictor2_writer_round_trip[gpu-pred2-encoder-uint16]`           |
+| `test_gpu_predictor2_writer_round_trip[int16]`                             | `test_gpu_predictor2_writer_round_trip[gpu-pred2-encoder-int16]`            |
+| `test_gpu_predictor2_writer_round_trip[uint32]`                            | `test_gpu_predictor2_writer_round_trip[gpu-pred2-encoder-uint32]`           |
 | `test_gpu_predictor3_multisample_matches_cpu_1479[3-float32]`              | `test_gpu_predictor3_multisample_matches_cpu[s3-float32]`                    |
 | `test_gpu_predictor3_multisample_matches_cpu_1479[4-float32]`              | `test_gpu_predictor3_multisample_matches_cpu[s4-float32]`                    |
 | `test_gpu_predictor3_multisample_matches_cpu_1479[3-float64]`              | `test_gpu_predictor3_multisample_matches_cpu[s3-float64]`                    |
@@ -142,9 +142,12 @@ photometric cluster (PR #2451) which kept its GPU regressions.
 
 - Old test count (collected): 77 (76 passed + 1 skipped perf gate).
 - New test count (collected): 81 (80 passed + 1 skipped perf gate).
-- Net delta: +4 cases from filling out the BE x LE x dtype matrix for
-  predictor=2 (uint8-<, int8-<, plus the four LE multi-byte cases that
-  were only LE-uint16 before).
+- Net delta: +4 cases from filling out the BE x LE x dtype matrix.
+  Predictor=2 gains `uint8-le`, `int16-le`, `uint32-le`, `int32-le`
+  (the old LE sanity case only covered uint16-le); predictor=3 gains
+  `float64-le` (the old LE sanity only covered float32-le). One pair
+  collapses back -- `int8-le` and `int8-be` already lived in the old
+  int8 file -- so the arithmetic lands at +4.
 
 ## File delta
 
