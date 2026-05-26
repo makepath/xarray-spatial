@@ -1,20 +1,29 @@
-"""End-to-end pixel-byte-parity matrix across read backends and entry points.
+"""Strict pixel-equality and kwarg-threading parity across read backends.
 
-Locks in the no-regression contract for issue #1813's multi-PR refactor of
-``xrspatial/geotiff/__init__.py``. Every read entry point (``open_geotiff``,
-``read_geotiff_dask``, ``read_geotiff_gpu``, ``read_vrt``) must produce
-byte-identical pixels, bitwise-equal coords, and matching ``attrs`` across
-the four backends (numpy, dask+numpy, cupy, dask+cupy) for a representative
-matrix of dtypes, compressions, and layouts (stripped, tiled, COG,
-BigTIFF, MinIsWhite, VRT).
+The strictest mode of backend parity. Three concerns share the file
+because they fail in the same ways:
 
-When a subsequent PR in #1813 moves an entry-point body to a new module,
-this matrix is the first thing that breaks if the move drops a kwarg,
-inverts a photometric, or reorders an attrs-population step.
+* Pixel-byte parity across (numpy / dask+numpy / cupy / dask+cupy) on a
+  representative dtype + compression + layout matrix, plus VRT, COG,
+  BigTIFF, and MinIsWhite fixtures.
+* Cross-entry-point parity: ``read_geotiff_dask``, ``read_geotiff_gpu``,
+  and ``read_vrt`` agree with ``open_geotiff`` for the same source.
+* Kwarg threading through the dispatcher: ``open_geotiff`` and
+  ``to_geotiff`` forward window / band / max_pixels / tiled / etc. to
+  the backend-specific entry points instead of silently dropping them.
+* MinIsWhite photometric handling: local / dask / HTTP / GPU read
+  paths agree on the inverted pixel domain.
+
+If a refactor moves an entry-point body to a new module, this file is
+the first thing that breaks when the move drops a kwarg, inverts a
+photometric, or reorders an attrs-population step.
 """
 from __future__ import annotations
 
+import http.server
 import importlib.util
+import socketserver
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -24,22 +33,13 @@ import xarray as xr
 from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
                                to_geotiff, write_vrt)
 
+from .._helpers.markers import gpu_available
+
 # ---------------------------------------------------------------------------
 # Environment gating
 # ---------------------------------------------------------------------------
 
-
-def _gpu_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _gpu_available()
+_HAS_GPU = gpu_available()
 _HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 
 _skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
@@ -396,3 +396,262 @@ def test_fixture_builders_produce_readable_files(fixture_factory, fix_id):
     da = open_geotiff(str(path))
     assert da.ndim in (2, 3)
     assert da.size > 0
+
+
+# ===========================================================================
+# Kwarg threading through the dispatcher (originally test_backend_kwarg_parity)
+# ===========================================================================
+#
+# ``open_geotiff`` and ``to_geotiff`` route to backend-specific entry
+# points (``read_geotiff_dask``, ``write_geotiff_gpu``) whose kwarg sets
+# were narrower than the dispatcher's. The dispatcher silently dropped
+# the missing kwargs when it routed to the smaller-API backend; the
+# fix pins them through. These tests gate that contract.
+
+
+@pytest.fixture
+def small_tiff_path(tmp_path):
+    """4x6 single-band tiled tiff with a small CRS+transform."""
+    arr = np.arange(24, dtype=np.float32).reshape(4, 6)
+    da = xr.DataArray(
+        arr,
+        dims=['y', 'x'],
+        coords={
+            'y': np.array([0.5, 1.5, 2.5, 3.5]),
+            'x': np.array([0.5, 1.5, 2.5, 3.5, 4.5, 5.5]),
+        },
+        attrs={'crs': 4326},
+    )
+    p = tmp_path / 'kwarg_parity_small.tif'
+    to_geotiff(da, str(p), tile_size=16)
+    return str(p), arr
+
+
+@pytest.fixture
+def small_multiband_tiff_path(tmp_path):
+    """4x6 three-band tiled tiff."""
+    arr = np.arange(72, dtype=np.float32).reshape(4, 6, 3)
+    da = xr.DataArray(
+        arr,
+        dims=['y', 'x', 'band'],
+        coords={
+            'y': np.array([0.5, 1.5, 2.5, 3.5]),
+            'x': np.array([0.5, 1.5, 2.5, 3.5, 4.5, 5.5]),
+            'band': [0, 1, 2],
+        },
+        attrs={'crs': 4326},
+    )
+    p = tmp_path / 'kwarg_parity_mb.tif'
+    to_geotiff(da, str(p), tile_size=16)
+    return str(p), arr
+
+
+def test_read_geotiff_dask_window_clips_region(small_tiff_path):
+    """``window=`` restricts the lazy region; chunks span only the window."""
+    path, arr = small_tiff_path
+    da = read_geotiff_dask(path, chunks=2, window=(1, 2, 4, 6))
+    assert da.shape == (3, 4)
+    np.testing.assert_array_equal(da.values, arr[1:4, 2:6])
+
+
+def test_read_geotiff_dask_window_via_dispatcher(small_tiff_path):
+    """``open_geotiff(window=..., chunks=...)`` keeps the window."""
+    path, arr = small_tiff_path
+    da = open_geotiff(path, window=(0, 1, 3, 4), chunks=2)
+    assert da.shape == (3, 3)
+    np.testing.assert_array_equal(da.values, arr[0:3, 1:4])
+
+
+def test_read_geotiff_dask_band_selects_single_band(small_multiband_tiff_path):
+    """``band=`` produces a 2D DataArray with the selected band."""
+    path, arr = small_multiband_tiff_path
+    da = read_geotiff_dask(path, chunks=4, band=1)
+    assert da.ndim == 2
+    np.testing.assert_array_equal(da.values, arr[:, :, 1])
+
+
+def test_read_geotiff_dask_band_via_dispatcher(small_multiband_tiff_path):
+    """``open_geotiff(band=..., chunks=...)`` keeps the band."""
+    path, arr = small_multiband_tiff_path
+    da = open_geotiff(path, band=2, chunks=4)
+    assert da.ndim == 2
+    np.testing.assert_array_equal(da.values, arr[:, :, 2])
+
+
+def test_read_geotiff_dask_max_pixels_rejects_oversized(small_tiff_path):
+    """``max_pixels=`` rejects the windowed region up front."""
+    path, _ = small_tiff_path
+    with pytest.raises(ValueError, match="exceeds max_pixels"):
+        read_geotiff_dask(path, chunks=2, max_pixels=10)
+
+
+def test_read_geotiff_dask_window_band_combined(small_multiband_tiff_path):
+    """``window`` and ``band`` cooperate."""
+    path, arr = small_multiband_tiff_path
+    da = read_geotiff_dask(path, chunks=2, window=(1, 1, 4, 5), band=0)
+    assert da.shape == (3, 4)
+    np.testing.assert_array_equal(da.values, arr[1:4, 1:5, 0])
+
+
+def test_read_geotiff_dask_invalid_window_raises(small_tiff_path):
+    """Out-of-bounds windows fail loudly instead of silently clipping."""
+    path, _ = small_tiff_path
+    with pytest.raises(ValueError, match="window=.* is outside"):
+        read_geotiff_dask(path, chunks=2, window=(0, 0, 100, 100))
+
+
+def test_read_geotiff_dask_invalid_band_raises(small_multiband_tiff_path):
+    """Out-of-range band indexes fail with IndexError."""
+    path, _ = small_multiband_tiff_path
+    with pytest.raises(IndexError, match="band=5 out of range"):
+        read_geotiff_dask(path, chunks=4, band=5)
+
+
+def test_write_geotiff_gpu_rejects_tiled_false(tmp_path):
+    """The GPU writer is tiled-only; ``tiled=False`` must fail loudly."""
+    from xrspatial.geotiff import write_geotiff_gpu
+
+    dummy = np.zeros((2, 2), dtype=np.float32)
+    with pytest.raises(ValueError, match="tiled=True"):
+        write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), tiled=False)
+
+
+def test_write_geotiff_gpu_rejects_nonzero_max_z_error(tmp_path):
+    """LERC budget is not implementable on the GPU path."""
+    from xrspatial.geotiff import write_geotiff_gpu
+
+    dummy = np.zeros((2, 2), dtype=np.float32)
+    with pytest.raises(ValueError, match="max_z_error is not supported"):
+        write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), max_z_error=1.0)
+
+
+@_skip_no_gpu
+def test_write_geotiff_gpu_accepts_streaming_buffer_bytes_as_noop(tmp_path):
+    """``streaming_buffer_bytes`` is accepted for API parity (no-op)."""
+    import cupy
+
+    from xrspatial.geotiff import write_geotiff_gpu
+
+    arr = cupy.arange(16, dtype=cupy.float32).reshape(4, 4)
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      coords={'y': np.arange(4, dtype=np.float64),
+                              'x': np.arange(4, dtype=np.float64)})
+    p = tmp_path / 'kwarg_parity_streaming.tif'
+    write_geotiff_gpu(da, str(p), streaming_buffer_bytes=4096, tile_size=16)
+    rd = open_geotiff(str(p))
+    np.testing.assert_array_equal(rd.values, arr.get())
+
+
+@_skip_no_gpu
+def test_to_geotiff_threads_tiled_false_into_gpu_dispatcher(tmp_path):
+    """``to_geotiff(..., gpu=True, tiled=False)`` rejects, no silent flip."""
+    import cupy
+
+    arr = cupy.zeros((2, 2), dtype=cupy.float32)
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      coords={'y': [0.0, 1.0], 'x': [0.0, 1.0]})
+    with pytest.raises(ValueError, match="tiled=False"):
+        to_geotiff(da, str(tmp_path / 'never.tif'),
+                   gpu=True, tiled=False)
+
+
+# ===========================================================================
+# MinIsWhite photometric backend parity (originally test_miniswhite_backend_parity)
+# ===========================================================================
+#
+# MinIsWhite (photometric=0) inverts pixel intensity at decode time.
+# The local, dask, HTTP, and GPU read paths must all agree on the
+# inverted pixel domain.
+
+
+class _MwRangeHandler(http.server.BaseHTTPRequestHandler):
+    payload: bytes = b''
+
+    def do_GET(self):  # noqa: N802
+        rng = self.headers.get('Range')
+        if rng and rng.startswith('bytes='):
+            spec = rng[len('bytes='):]
+            start_s, _, end_s = spec.partition('-')
+            start = int(start_s)
+            end = int(end_s) if end_s else len(self.payload) - 1
+            chunk = self.payload[start:end + 1]
+            self.send_response(206)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header(
+                'Content-Range',
+                f'bytes {start}-{start + len(chunk) - 1}/{len(self.payload)}',
+            )
+            self.send_header('Content-Length', str(len(chunk)))
+            self.end_headers()
+            self.wfile.write(chunk)
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/octet-stream')
+        self.send_header('Content-Length', str(len(self.payload)))
+        self.end_headers()
+        self.wfile.write(self.payload)
+
+    def log_message(self, *_args, **_kwargs):
+        pass
+
+
+def _mw_serve(payload: bytes):
+    handler_cls = type(
+        'MwRangeHandler', (_MwRangeHandler,), {'payload': payload}
+    )
+    httpd = socketserver.TCPServer(('127.0.0.1', 0), handler_cls)
+    port = httpd.server_address[1]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, port
+
+
+@pytest.fixture
+def miniswhite_http_url(tmp_path, monkeypatch):
+    tifffile = pytest.importorskip("tifffile")
+    monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
+    stored = np.array([[0, 1, 2], [10, 128, 255]], dtype=np.uint8)
+    path = tmp_path / "tmp_miniswhite.tif"
+    tifffile.imwrite(str(path), stored, photometric='miniswhite')
+    httpd, port = _mw_serve(path.read_bytes())
+    try:
+        yield f'http://127.0.0.1:{port}/tmp_miniswhite.tif', stored
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_miniswhite_http_matches_local_reader(miniswhite_http_url):
+    """HTTP read of a MinIsWhite TIFF returns the inverted pixel domain."""
+    url, stored = miniswhite_http_url
+    got = open_geotiff(url)
+    np.testing.assert_array_equal(got.values, np.iinfo(stored.dtype).max - stored)
+
+
+def test_miniswhite_http_dask_matches_local_reader(miniswhite_http_url):
+    """Dask HTTP read agrees with the eager HTTP read on inversion."""
+    url, stored = miniswhite_http_url
+    got = open_geotiff(url, chunks=2).compute()
+    np.testing.assert_array_equal(got.values, np.iinfo(stored.dtype).max - stored)
+
+
+@_skip_no_gpu
+def test_miniswhite_gpu_matches_cpu_reader(tmp_path):
+    """GPU MinIsWhite read agrees with the CPU reader.
+
+    The writer pre-inverts MinIsWhite pixels so the reader's
+    unconditional inversion restores the user-domain values; the
+    round-trip is the identity for both backends.
+    """
+    from xrspatial.geotiff._writer import write
+
+    stored = np.array([[0, 1, 2], [10, 128, 255]], dtype=np.uint8)
+    path = str(tmp_path / "tmp_miniswhite_gpu.tif")
+    write(stored, path, compression='deflate', tiled=True, tile_size=16,
+          photometric='miniswhite')
+
+    cpu = open_geotiff(path)
+    gpu = open_geotiff(path, gpu=True)
+
+    np.testing.assert_array_equal(cpu.values, stored)
+    np.testing.assert_array_equal(gpu.data.get(), cpu.values)
