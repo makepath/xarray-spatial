@@ -40,7 +40,8 @@ from xrspatial.geotiff._coords import _NO_GEOREF_KEY
 
 tifffile = pytest.importorskip("tifffile")
 
-from xrspatial.geotiff.tests.test_allow_rotated_geotiff_2115 import \
+# Rotated-TIFF writer relocated to ``read/test_crs.py`` by epic #2390 PR 3.
+from xrspatial.geotiff.tests.read.test_crs import \
     _write_rotated_tiff  # noqa: E402
 
 

@@ -110,9 +110,7 @@ has non-zero rotation or shear coefficients by default. Pass
 6-tuple on ``attrs['rotated_affine']`` and drops ``attrs['crs']`` so
 downstream math cannot silently mix a rotated grid with an
 axis-aligned CRS. The dropped-CRS rule is locked by
-``xrspatial/geotiff/tests/test_allow_rotated_crs_drop_2126.py``,
-``xrspatial/geotiff/tests/test_allow_rotated_no_crs_2122.py``, and
-``xrspatial/geotiff/tests/test_allow_rotated_geotiff_2115.py``. The
+``xrspatial/geotiff/tests/read/test_crs.py``. The
 HTTP dask path honours the same opt-in via
 ``xrspatial/geotiff/tests/test_http_dask_allow_rotated_2130.py``.
 Without ``allow_rotated=True`` the read raises a typed error; see
@@ -134,7 +132,8 @@ silently emit a mislabeled raster:
 
 * Rotated read without ``allow_rotated=True`` -- raises across eager,
   dask, and windowed paths
-  (``xrspatial/geotiff/tests/test_release_gate_negative_2341.py``).
+  (``xrspatial/geotiff/tests/release_gates/test_stable_features.py``,
+  ``Negative cases`` section).
 * Rotated write without ``drop_rotation=True`` -- raises ``ValueError``
   (``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``).
 * Rotated or skewed source inside a VRT -- raises at parse
@@ -169,12 +168,12 @@ this section is the brief.
   raw sentinel. The signal is part of the canonical attrs contract;
   ``xrspatial/geotiff/tests/test_masked_nodata_attr_2092.py`` pins
   the canonical form and
-  ``xrspatial/geotiff/tests/test_vrt_masked_nodata_attr_2159.py``
+  ``xrspatial/geotiff/tests/vrt/test_metadata.py``
   covers the VRT mosaic case.
 * Mixed-band nodata. A VRT whose sources declare disagreeing per-band
   nodata sentinels raises ``MixedBandMetadataError`` by default. Pass
   ``band_nodata='first'`` to opt back into the legacy flatten-to-band-0
-  behaviour; see ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``.
+  behaviour; see ``xrspatial/geotiff/tests/vrt/test_metadata.py``.
 
 The lifecycle is locked end-to-end by
 ``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py`` and
@@ -533,11 +532,12 @@ regression test that locks the behaviour.
        ``xrspatial/geotiff/tests/test_vrt_capability_validator_2371.py``
    * - Mixed per-band nodata across VRT sources (default
        ``band_nodata=None``)
-     - ``xrspatial/geotiff/tests/test_vrt_band_nodata_1598.py``,
+     - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
        ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
        (``test_mixed_per_source_nodata_rejected``)
    * - Rotated read without ``allow_rotated=True``
-     - ``xrspatial/geotiff/tests/test_release_gate_negative_2341.py``,
+     - ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
+       (``Negative cases`` section),
        ``xrspatial/geotiff/tests/test_rotated_typed_error_2267.py``
    * - Rotated write without ``drop_rotation=True``
      - ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``,
