@@ -7,8 +7,6 @@
 > **Contributors Wanted!.** xarray-spatial is currently looking for contributors to help run pre-defined AI-assisted workflows as we approach v1.0.0.  If you are interested, please add an issue and flag @brendancol and we can chat.
 >
 
-<img src="img/Xarray-Spatial-logo.svg"/>
-
 <table>
 <tr>
   <td>Latest Release</td>
