@@ -406,14 +406,32 @@ def read_geotiff_gpu(source: str, *,
         # the sidecar's buffers, and we skip the GDS fast path -- GDS
         # reads the source file path, which would point at the base
         # file rather than the sidecar.
+        #
+        # A broken sidecar must not break a base read here either. The
+        # release contract puts ``reader.local_file`` at the stable tier
+        # and ``reader.sidecar_ovr`` at advanced; matches the eager CPU
+        # path in ``_reader._read_to_array`` and the dask metadata
+        # helper ``_sidecar.discover_remote_sidecar``. Issue #2416.
         from .._sidecar import attach_sidecar_origin, close_sidecar, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
-            sidecar = load_sidecar(sidecar_path)
-            sidecar_origin = attach_sidecar_origin(
-                sidecar.ifds, sidecar.data, sidecar.header)
-            ifds = ifds + sidecar.ifds
+            try:
+                sidecar = load_sidecar(sidecar_path)
+            except Exception as exc:
+                warnings.warn(
+                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
+                    f"{type(exc).__name__}: {exc}. Falling back to "
+                    f"base-file-only read. Request a specific external "
+                    f"overview level to surface the error instead.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                sidecar = None
+            if sidecar is not None:
+                sidecar_origin = attach_sidecar_origin(
+                    sidecar.ifds, sidecar.data, sidecar.header)
+                ifds = ifds + sidecar.ifds
 
         # Skip mask IFDs (NewSubfileType bit 2)
         ifd = select_overview_ifd(ifds, overview_level)

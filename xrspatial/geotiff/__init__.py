@@ -275,22 +275,42 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list
         # so ``overview_level`` indexes both internal and external
         # overviews (issue #2112). Local file paths only.
+        #
+        # A broken sidecar must not break the base read. The release
+        # contract puts ``reader.local_file`` at the stable tier and
+        # ``reader.sidecar_ovr`` at advanced; a stale or corrupt
+        # ``.ovr`` written by an external tool falls back to base-only
+        # behaviour with a warning. Mirrors the eager CPU path in
+        # ``_reader._read_to_array`` and the dask metadata helper
+        # ``_sidecar.discover_remote_sidecar``. Issue #2416.
         from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
-            sidecar = load_sidecar(sidecar_path)
-            # The origin mapping is consumed below for georef extraction
-            # only -- strip/tile bytes are sliced by ``read_to_array`` on
-            # the actual read. A sidecar IFD that carries its own
-            # GeoKeyDirectory / ModelPixelScale / ModelTiepoint /
-            # ModelTransformation needs the sidecar's byte order to
-            # parse cleanly; without the mapping the helper falls back
-            # to the base file's bytes (today's default, correct under
-            # the usual GDAL convention). See issue #2315.
-            sidecar_origin = attach_sidecar_origin(
-                sidecar.ifds, sidecar.data, sidecar.header)
-            ifds = ifds + sidecar.ifds
+            try:
+                sidecar = load_sidecar(sidecar_path)
+            except Exception as exc:
+                warnings.warn(
+                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
+                    f"{type(exc).__name__}: {exc}. Falling back to "
+                    f"base-file-only read. Request a specific external "
+                    f"overview level to surface the error instead.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                sidecar = None
+            if sidecar is not None:
+                # The origin mapping is consumed below for georef extraction
+                # only -- strip/tile bytes are sliced by ``read_to_array`` on
+                # the actual read. A sidecar IFD that carries its own
+                # GeoKeyDirectory / ModelPixelScale / ModelTiepoint /
+                # ModelTransformation needs the sidecar's byte order to
+                # parse cleanly; without the mapping the helper falls back
+                # to the base file's bytes (today's default, correct under
+                # the usual GDAL convention). See issue #2315.
+                sidecar_origin = attach_sidecar_origin(
+                    sidecar.ifds, sidecar.data, sidecar.header)
+                ifds = ifds + sidecar.ifds
         ifd = select_overview_ifd(ifds, overview_level)
         # Inherit georef from the level-0 IFD when the overview itself
         # has no geokeys (issue #1640). Pass-through for level 0. The

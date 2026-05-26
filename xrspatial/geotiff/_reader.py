@@ -17,6 +17,8 @@ internal call sites that pre-date the rename.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 # ``urllib3`` is kept as a top-level import here even though the HTTP
 # source moved to ``_sources`` in #2228. ``test_http_no_stdlib_fallback_2050``
@@ -218,15 +220,43 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # enforces (#2121). The sidecar must be loaded before IFD
         # selection so ``overview_level`` indexes into a unified
         # pyramid list.
+        #
+        # Sidecar load failures must not break a base read. The release
+        # contract classifies ``reader.local_file`` as stable and
+        # ``reader.sidecar_ovr`` as advanced (see
+        # ``docs/source/reference/geotiff_release_contract.md``); a
+        # stale, truncated, or malformed ``.ovr`` written by an external
+        # tool should not be able to take the stable surface down.
+        # ``CloudSizeLimitError`` is the one exception: that signals a
+        # caller-set byte budget breach which the caller asked to hear
+        # about. Everything else (bad TIFF header, I/O error, fsspec
+        # failure) falls back to base-only behaviour with a warning so
+        # the user can still investigate. Mirrors the contract that
+        # ``discover_remote_sidecar`` already uses on the dask metadata
+        # path. Issue #2416.
         from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
-            sidecar = load_sidecar(sidecar_path,
-                                   max_cloud_bytes=cloud_budget)
-            sidecar_origin = attach_sidecar_origin(
-                sidecar.ifds, sidecar.data, sidecar.header)
-            ifds = ifds + sidecar.ifds
+            try:
+                sidecar = load_sidecar(sidecar_path,
+                                       max_cloud_bytes=cloud_budget)
+            except CloudSizeLimitError:
+                raise
+            except Exception as exc:
+                warnings.warn(
+                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
+                    f"{type(exc).__name__}: {exc}. Falling back to "
+                    f"base-file-only read. Request a specific external "
+                    f"overview level to surface the error instead.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                sidecar = None
+            if sidecar is not None:
+                sidecar_origin = attach_sidecar_origin(
+                    sidecar.ifds, sidecar.data, sidecar.header)
+                ifds = ifds + sidecar.ifds
 
         # Select IFD, skipping any mask IFDs
         ifd = select_overview_ifd(ifds, overview_level)
