@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import http.server
+import importlib.util
 import socket
 import struct
 import threading
@@ -40,7 +41,10 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import to_geotiff
+from xrspatial.geotiff import _decode as _decode_mod
+from xrspatial.geotiff import _header
+from xrspatial.geotiff import _reader as _reader_mod
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._dtypes import DOUBLE, LONG, SHORT
 from xrspatial.geotiff._header import (
     MAX_IFD_ENTRY_BYTES,
@@ -54,7 +58,21 @@ from xrspatial.geotiff._header import (
     parse_header,
     parse_ifd,
 )
-from xrspatial.geotiff import _header
+from xrspatial.geotiff._reader import read_to_array
+
+from .._helpers.markers import requires_loopback
+
+_HAS_RASTERIO = importlib.util.find_spec("rasterio") is not None
+_HAS_CUPY = importlib.util.find_spec("cupy") is not None
+
+requires_rasterio = pytest.mark.skipif(
+    not _HAS_RASTERIO, reason="rasterio required to write sparse fixtures"
+)
+
+if _HAS_RASTERIO:
+    import rasterio
+else:  # pragma: no cover - exercised only when rasterio is unavailable
+    rasterio = None
 
 # ---------------------------------------------------------------------------
 # Shared TIFF byte builders
@@ -241,66 +259,50 @@ def _build_single_ifd_with_next_offset(
 
 _ENTRY_TABLE_BOUND_CASES = [
     pytest.param(
-        "classic", "num_entries-truncated", 1, lambda full: full[:9],
-        "num_entries",
+        "classic", 1, lambda full: full[:9], "num_entries",
         id="entry_table[classic-num_entries-truncated]",
     ),
     pytest.param(
-        "classic", "num_entries-zero-buffer", 1, lambda full: full[:8],
-        "num_entries",
+        "classic", 1, lambda full: full[:8], "num_entries",
         id="entry_table[classic-num_entries-zero-buffer]",
     ),
     pytest.param(
-        "classic", "entry-table-truncated", 3,
-        lambda full: full[: 8 + 2 + 3 * 12 - 1],
+        "classic", 3, lambda full: full[: 8 + 2 + 3 * 12 - 1],
         "entry table",
         id="entry_table[classic-entry-table-truncated]",
     ),
     pytest.param(
-        "classic", "next_ifd-truncated", 1,
-        lambda full: full[: 8 + 2 + 12],
-        "next-IFD",
+        "classic", 1, lambda full: full[: 8 + 2 + 12], "next-IFD",
         id="entry_table[classic-next_ifd-truncated]",
     ),
     pytest.param(
-        "classic", "next_ifd-one-short", 1,
-        lambda full: full[: 8 + 2 + 12 + 3],
-        "next-IFD",
+        "classic", 1, lambda full: full[: 8 + 2 + 12 + 3], "next-IFD",
         id="entry_table[classic-next_ifd-one-short]",
     ),
     pytest.param(
-        "bigtiff", "num_entries-truncated", 1, lambda full: full[:23],
-        "num_entries",
+        "bigtiff", 1, lambda full: full[:23], "num_entries",
         id="entry_table[bigtiff-num_entries-truncated]",
     ),
     pytest.param(
-        "bigtiff", "entry-table-truncated", 2,
-        lambda full: full[: 16 + 8 + 2 * 20 - 1],
+        "bigtiff", 2, lambda full: full[: 16 + 8 + 2 * 20 - 1],
         "entry table",
         id="entry_table[bigtiff-entry-table-truncated]",
     ),
     pytest.param(
-        "bigtiff", "next_ifd-truncated", 1,
-        lambda full: full[: 16 + 8 + 20],
-        "next-IFD",
+        "bigtiff", 1, lambda full: full[: 16 + 8 + 20], "next-IFD",
         id="entry_table[bigtiff-next_ifd-truncated]",
     ),
     pytest.param(
-        "bigtiff", "next_ifd-one-short", 1,
-        lambda full: full[: 16 + 8 + 20 + 7],
-        "next-IFD",
+        "bigtiff", 1, lambda full: full[: 16 + 8 + 20 + 7], "next-IFD",
         id="entry_table[bigtiff-next_ifd-one-short]",
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    "flavour, case, num_entries, slicer, match",
-    _ENTRY_TABLE_BOUND_CASES,
+    "flavour, num_entries, slicer, match", _ENTRY_TABLE_BOUND_CASES,
 )
-def test_entry_table_bounds_rejected(
-    flavour, case, num_entries, slicer, match
-):
+def test_entry_table_bounds_rejected(flavour, num_entries, slicer, match):
     """Buffers that end mid-read across the three entry-table reads
     must raise ``ValueError`` (not ``struct.error``)."""
     if flavour == "classic":
@@ -607,7 +609,9 @@ def test_chain_cap_legitimate_cog_with_overviews_passes(tmp_path):
 
     Real-world COGs have well under ``MAX_IFDS`` IFDs even with many
     overview levels and per-band masks; the cap should never get in
-    their way.
+    their way. Unlike the other Section 3 tests, this one stands up
+    the public ``to_geotiff`` writer to produce the COG fixture; the
+    assertion is still on the parsed IFD chain.
     """
     arr = np.arange(256 * 256, dtype=np.float32).reshape(256, 256)
     path = str(tmp_path / 'real_cog_2426.tif')
@@ -694,11 +698,9 @@ def test_chain_next_ifd_offset_past_eof_rejected(big_endian):
         parse_all_ifds(data, header)
     msg = str(excinfo.value)
     assert "malformed" in msg
-    if not big_endian:
-        # On big-endian builds the offset bytes still pack to the same
-        # value; assert the numeric appears on the little-endian path
-        # where the messaging contract was originally written.
-        assert str(0xDEADBEEF) in msg
+    # The offset value is decoded to the same integer regardless of
+    # byte order, so the message contract holds on both branches.
+    assert str(0xDEADBEEF) in msg
 
 
 def test_chain_next_ifd_offset_at_file_length_rejected():
@@ -727,7 +729,11 @@ def test_first_ifd_offset_past_eof_rejected():
     assert header.first_ifd_offset == first_ifd_offset
     with pytest.raises(ValueError) as excinfo:
         parse_all_ifds(data, header)
-    assert str(first_ifd_offset) in str(excinfo.value)
+    msg = str(excinfo.value)
+    assert str(first_ifd_offset) in msg
+    # The phrase comes from _header.py and lets operators diagnose
+    # truncation vs corruption at a glance.
+    assert "past end of file" in msg
 
 
 def test_first_ifd_offset_past_eof_rejected_synthetic_header():
@@ -757,16 +763,9 @@ def test_chain_valid_terminator_still_parses():
 # These exercise the reader's handling of the IFD-level sparse encoding
 # (TileByteCounts == 0 / StripByteCounts == 0). They depend on the
 # rasterio GDAL bridge to write the sparse fixture; the reader-side
-# code under test is pure xrspatial.
-
-rasterio = pytest.importorskip("rasterio")
-
-from .._helpers.markers import requires_loopback  # noqa: E402
-
-from xrspatial.geotiff import _decode as _decode_mod  # noqa: E402
-from xrspatial.geotiff import _reader as _reader_mod  # noqa: E402
-from xrspatial.geotiff import open_geotiff  # noqa: E402
-from xrspatial.geotiff._reader import read_to_array  # noqa: E402
+# code under test is pure xrspatial. Sections 1-5 above do not need
+# rasterio, so the dependency is scoped per-class via
+# ``@requires_rasterio`` rather than a module-level ``importorskip``.
 
 
 def _write_sparse_tiled(
@@ -802,6 +801,7 @@ def _write_sparse_stripped_small(path, *, dtype='uint16', nodata=0):
         dst.write(fill, 1, window=rasterio.windows.Window(0, 0, 128, 32))
 
 
+@requires_rasterio
 class TestSparseTiles:
 
     def test_sparse_tile_with_nodata_round_trips(self, tmp_path):
@@ -837,6 +837,7 @@ class TestSparseTiles:
         assert np.all(arr[64:, :] == 255)
 
 
+@requires_rasterio
 class TestSparseStrips:
 
     def test_sparse_strip_with_nodata(self, tmp_path):
@@ -849,10 +850,8 @@ class TestSparseStrips:
         assert np.all(np.isnan(arr_np[32:, :]))
 
 
-@pytest.mark.skipif(
-    not pytest.importorskip('cupy', reason='cupy required'),
-    reason='cupy required',
-)
+@requires_rasterio
+@pytest.mark.skipif(not _HAS_CUPY, reason="cupy required")
 class TestSparseTilesGPU:
 
     def test_sparse_tile_gpu_round_trip(self, tmp_path):
@@ -989,6 +988,7 @@ def _start_server(blob: bytes):
     return server, port
 
 
+@requires_rasterio
 def test_sparse_strips_full_image_parallel_matches_serial(tmp_path):
     """Sparse + non-sparse strips: parallel and serial paths return
     bit-identical output, and sparse rows carry the nodata sentinel."""
@@ -1010,6 +1010,7 @@ def test_sparse_strips_full_image_parallel_matches_serial(tmp_path):
     assert np.all(par[256:, :] == 0)
 
 
+@requires_rasterio
 def test_sparse_strips_parallel_pool_engages_on_multi_strip(tmp_path):
     """A multi-strip sparse fixture must engage the parallel pool.
 
@@ -1038,6 +1039,7 @@ def test_sparse_strips_parallel_pool_engages_on_multi_strip(tmp_path):
     assert np.all(out[256:, :] == 0)
 
 
+@requires_rasterio
 def test_sparse_strips_windowed_across_boundary(tmp_path):
     """A window that straddles the filled/sparse boundary returns the
     filled rows on top and sparse rows below, parallel == serial."""
@@ -1057,6 +1059,7 @@ def test_sparse_strips_windowed_across_boundary(tmp_path):
     assert np.all(par[128:, :] == 0)
 
 
+@requires_rasterio
 def test_sparse_strips_all_sparse_image_returns_fill(tmp_path):
     """An image with zero filled rows: every strip sparse, the job
     list is empty, and the parallel branch's ``n_strips > 1`` gate
@@ -1077,6 +1080,7 @@ def test_sparse_strips_all_sparse_image_returns_fill(tmp_path):
     assert np.all(out == 0)
 
 
+@requires_rasterio
 def test_sparse_strips_planar2_parallel_matches_serial(tmp_path):
     """``_read_strips`` planar=2 branch with sparse strips.
 
@@ -1111,6 +1115,7 @@ def test_sparse_strips_planar2_parallel_matches_serial(tmp_path):
         assert np.all(par[128:, :, b] == 0)
 
 
+@requires_rasterio
 @requires_loopback
 class TestHttpStripsSparseParallel:
     """``_fetch_decode_cog_http_strips`` with sparse strips.

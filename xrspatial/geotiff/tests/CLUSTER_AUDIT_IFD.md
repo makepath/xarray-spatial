@@ -58,10 +58,12 @@ malformed). Tests-only -- no source changes.
 | `test_classic_num_entries_truncated_raises_valueerror` | `test_entry_table_bounds_rejected[entry_table[classic-num_entries-truncated]]` |
 | `test_classic_num_entries_zero_buffer_raises_valueerror` | `test_entry_table_bounds_rejected[entry_table[classic-num_entries-zero-buffer]]` |
 | `test_classic_entry_table_truncated_raises_valueerror` | `test_entry_table_bounds_rejected[entry_table[classic-entry-table-truncated]]` |
-| `test_classic_next_ifd_truncated_raises_valueerror` | `test_entry_table_bounds_rejected[entry_table[classic-next_ifd-truncated]]` and `[entry_table[classic-next_ifd-one-short]]` |
+| `test_classic_next_ifd_truncated_raises_valueerror` (zero-byte slice) | `test_entry_table_bounds_rejected[entry_table[classic-next_ifd-truncated]]` |
+| `test_classic_next_ifd_truncated_raises_valueerror` (3-byte slice) | `test_entry_table_bounds_rejected[entry_table[classic-next_ifd-one-short]]` |
 | `test_bigtiff_num_entries_truncated_raises_valueerror` | `test_entry_table_bounds_rejected[entry_table[bigtiff-num_entries-truncated]]` |
 | `test_bigtiff_entry_table_truncated_raises_valueerror` | `test_entry_table_bounds_rejected[entry_table[bigtiff-entry-table-truncated]]` |
-| `test_bigtiff_next_ifd_truncated_raises_valueerror` | `test_entry_table_bounds_rejected[entry_table[bigtiff-next_ifd-truncated]]` and `[entry_table[bigtiff-next_ifd-one-short]]` |
+| `test_bigtiff_next_ifd_truncated_raises_valueerror` (zero-byte slice) | `test_entry_table_bounds_rejected[entry_table[bigtiff-next_ifd-truncated]]` |
+| `test_bigtiff_next_ifd_truncated_raises_valueerror` (7-byte slice) | `test_entry_table_bounds_rejected[entry_table[bigtiff-next_ifd-one-short]]` |
 | `test_classic_complete_buffer_parses_ok` | `test_entry_table_complete_buffer_parses[entry_table[classic-complete]]` |
 | `test_bigtiff_complete_buffer_parses_ok` | `test_entry_table_complete_buffer_parses[entry_table[bigtiff-complete]]` |
 | `test_offset_past_eof_raises_valueerror` | `test_entry_table_offset_past_eof_rejected` |
