@@ -285,9 +285,9 @@ turn the process into a port scanner. The knobs are:
   and ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``.
 * ``XRSPATIAL_COG_MAX_TILE_BYTES``. Per-tile / per-strip compressed
   byte cap (default 256 MiB). Locked by
-  ``xrspatial/geotiff/tests/test_local_tile_byte_cap_1664.py``,
+  ``xrspatial/geotiff/tests/read/test_tiling.py``,
   ``xrspatial/geotiff/tests/test_cloud_read_byte_limit_1928.py``, and
-  ``xrspatial/geotiff/tests/test_gpu_tile_byte_cap_2026_05_18.py``.
+  ``xrspatial/geotiff/tests/read/test_tiling.py``.
 * ``XRSPATIAL_GEOTIFF_HTTP_CONNECT_TIMEOUT`` and
   ``XRSPATIAL_GEOTIFF_HTTP_READ_TIMEOUT``. Per-request connect / read
   timeouts in seconds. Positive floats only; other values fall back
