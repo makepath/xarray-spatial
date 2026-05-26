@@ -5,8 +5,7 @@ parameter-coverage gaps closed here.
 
 Cat 4 HIGH #1 -- ``write_geotiff_gpu(predictor=)``. The CPU writer has
 dense coverage of ``predictor=True``/``2``/``3`` via
-``test_predictor_fp_write_1313.py``, ``test_predictor_multisample.py``,
-and ``test_predictor2_big_endian.py``. The GPU writer threads
+``unit/test_predictor.py``. The GPU writer threads
 ``predictor=`` through ``normalize_predictor`` and
 ``gpu_compress_tiles`` into the five CUDA encode kernels
 (``_predictor_encode_kernel_u8``/``_u16``/``_u32``/``_u64`` for
@@ -18,7 +17,7 @@ predictor tag but contain un-differenced bytes, breaking decode
 through this library's own reader, GDAL, rasterio, and libtiff. A
 correctness bug in any of the five CUDA encode kernels would likewise
 ship undetected because the only existing GPU-predictor tests cover
-the *decode* kernels (see ``test_predictor_multisample.py``,
+the *decode* kernels (see ``unit/test_predictor.py``,
 ``test_predictor2_big_endian_gpu_1517.py``).
 
 Cat 4 HIGH #2 -- ``read_vrt(window=)``. The public ``read_vrt``
