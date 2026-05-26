@@ -40,13 +40,16 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff._compression import (
+    # Compression tag constants
     COMPRESSION_JPEG,
     COMPRESSION_JPEG2000,
     COMPRESSION_LERC,
     COMPRESSION_LZ4,
+    # Availability flags
     JPEG2000_AVAILABLE,
     LERC_AVAILABLE,
     LZ4_AVAILABLE,
+    # Codec functions (dispatcher + per-codec compress/decompress)
     _splice_jpeg_tables,
     compress,
     decompress,
@@ -78,8 +81,16 @@ def _make_da(seed: int = 0, shape: tuple = (64, 64)) -> xr.DataArray:
     return xr.DataArray(arr, dims=["y", "x"])
 
 
-def _make_compressible(shape: tuple = (128, 128)) -> xr.DataArray:
-    """Smooth gradient + small noise; level differences move the needle."""
+def _make_compressible_smooth_small(shape: tuple = (128, 128)) -> xr.DataArray:
+    """Smooth gradient + small noise on a 128x128 surface.
+
+    Used by ``TestLz4CompressionLevel.test_lz4_higher_level_not_larger``
+    where lz4's level effect shows up at modest size. The
+    ``TestCompressionLevelEffect._make_compressible_large`` (512x512,
+    no noise) helper sits on the test class because zstd / deflate
+    need a larger smooth surface for the level gap to dominate codec
+    heuristic noise.
+    """
     rng = np.random.default_rng(42)
     y, x = np.mgrid[0: shape[0], 0: shape[1]]
     arr = ((y + x).astype(np.float32)
@@ -843,6 +854,11 @@ class TestLercTiffRoundTripWithMask:
         else:
             arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
 
+        # ``positions=invalid_positions`` binds the parametrise value at
+        # function-definition time. Without the default-arg bind, the
+        # closure would resolve ``invalid_positions`` lazily from the
+        # surrounding scope, which is a classic late-binding bug if the
+        # test is ever refactored to share the predicate between cases.
         def invalid_pred(a, positions=invalid_positions):
             m = np.zeros(a.shape[:2], dtype=bool)
             for r, c in positions:
@@ -1065,7 +1081,7 @@ class TestLz4CompressionLevel:
     def test_lz4_higher_level_not_larger(self, tmp_path):
         from xrspatial.geotiff import to_geotiff
 
-        da = _make_compressible()
+        da = _make_compressible_smooth_small()
         path_lo = str(tmp_path / "lz4_lo.tif")
         path_hi = str(tmp_path / "lz4_hi.tif")
         to_geotiff(da, path_lo, compression="lz4", compression_level=0,
@@ -1093,7 +1109,7 @@ class TestLz4CompressionLevel:
         from xrspatial.geotiff import to_geotiff
 
         da = _make_da()
-        path = str(tmp_path / "lz4_bad.tif")
+        path = str(tmp_path / f"lz4_bad_{level}.tif")
         with pytest.raises(ValueError, match="compression_level"):
             to_geotiff(da, path, compression="lz4",
                        compression_level=level,
@@ -1105,7 +1121,7 @@ class TestLz4CompressionLevel:
         from xrspatial.geotiff import to_geotiff
 
         da = _make_da()
-        path = str(tmp_path / "lz4_bad.tif")
+        path = str(tmp_path / "lz4_bad_range_msg.tif")
         with pytest.raises(ValueError, match=r"lz4.*\(valid:\s*0-16\)"):
             to_geotiff(da, path, compression="lz4",
                        compression_level=999,
@@ -1160,7 +1176,7 @@ class TestLz4CompressionLevelDask:
         from xrspatial.geotiff import to_geotiff
 
         dask_da, _ = self._make_dask_da()
-        path = str(tmp_path / "lz4_dask_bad.tif")
+        path = str(tmp_path / f"lz4_dask_bad_{level}.tif")
         with pytest.raises(ValueError, match="compression_level"):
             to_geotiff(dask_da, path, compression="lz4",
                        compression_level=level, tile_size=16,
@@ -1280,7 +1296,7 @@ class TestCompressionLevelOutOfRange:
         from xrspatial.geotiff import to_geotiff
 
         da = _make_da()
-        path = str(tmp_path / "bad.tif")
+        path = str(tmp_path / f"{codec}_bad_{level}.tif")
         with pytest.raises(ValueError, match="compression_level"):
             to_geotiff(da, path, compression=codec, compression_level=level)
 
@@ -1307,9 +1323,10 @@ _gpu_only = pytest.mark.skipif(
 
 # Codecs to exercise end-to-end through the GPU writer. ``jpeg`` is
 # excluded here because (a) ``to_geotiff`` rejects it at runtime and
-# (b) the JPEG round-trip is covered with appropriate uint8 RGB data
-# elsewhere; keeping it out of this parametrize avoids exercising the
-# JPEG path on dtype/shape combinations that aren't representative.
+# (b) the JPEG round-trip is covered by the GPU codec cluster
+# (issue #2438) with appropriate uint8 RGB data; keeping it out of
+# this parametrize avoids exercising the JPEG path on dtype/shape
+# combinations that aren't representative.
 _GPU_FALLBACK_CODECS = (
     "lzw", "packbits", "lz4", "lerc", "jpeg2000", "j2k",
 )
