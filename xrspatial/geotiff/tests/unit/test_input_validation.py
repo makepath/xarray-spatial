@@ -35,37 +35,19 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    to_geotiff,
-    write_geotiff_gpu,
-)
-from xrspatial.geotiff import _header
+from xrspatial.geotiff import (_header, open_geotiff, read_geotiff_dask, to_geotiff,
+                               write_geotiff_gpu)
 from xrspatial.geotiff._coords import coords_to_transform
 from xrspatial.geotiff._dtypes import LONG, SHORT
-from xrspatial.geotiff._header import (
-    MAX_PIXEL_ARRAY_COUNT,
-    TAG_BITS_PER_SAMPLE,
-    TAG_COLORMAP,
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_PLANAR_CONFIG,
-    TAG_ROWS_PER_STRIP,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_STRIP_OFFSETS,
-    TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS,
-    TAG_TILE_WIDTH,
-    parse_header,
-    parse_ifd,
-)
+from xrspatial.geotiff._header import (MAX_PIXEL_ARRAY_COUNT, TAG_BITS_PER_SAMPLE, TAG_COLORMAP,
+                                       TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_PLANAR_CONFIG,
+                                       TAG_ROWS_PER_STRIP, TAG_SAMPLES_PER_PIXEL,
+                                       TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS, TAG_TILE_LENGTH,
+                                       TAG_TILE_OFFSETS, TAG_TILE_WIDTH, parse_header, parse_ifd)
 from xrspatial.geotiff._reader import _check_source_dimensions, read_to_array
 from xrspatial.geotiff._validation import _validate_3d_writer_dims
 
 from .._helpers.markers import requires_gpu
-
 
 # ===========================================================================
 # Section 1: band type / bool rejection (#1786, #1910)
@@ -781,10 +763,7 @@ class TestWindowedEmptyStillAllowed:
 
     def test_windowed_outside_image_returns_empty_not_error(self, tmp_path):
         buf, path = _make_valid_stripped(tmp_path, height=16, width=8)
-        from xrspatial.geotiff._dtypes import (
-            resolve_bits_per_sample,
-            tiff_dtype_to_numpy,
-        )
+        from xrspatial.geotiff._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
         from xrspatial.geotiff._header import parse_all_ifds
         from xrspatial.geotiff._reader import _read_strips
 
