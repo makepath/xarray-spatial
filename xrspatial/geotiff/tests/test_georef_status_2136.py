@@ -40,10 +40,12 @@ from xrspatial.geotiff._geotags import GeoInfo, GeoTransform
 
 tifffile = pytest.importorskip("tifffile")
 
-# Reuse the rotated-TIFF writer from the #2115 test rather than copying
-# the byte layout. The function is private to that test module but
-# the test runner sees the package directory so the import succeeds.
-from xrspatial.geotiff.tests.test_allow_rotated_geotiff_2115 import \
+# Reuse the rotated-TIFF writer from the consolidated CRS suite rather
+# than copying the byte layout. The function is private to that test
+# module but the test runner sees the package directory so the import
+# succeeds. (Previously lived in ``test_allow_rotated_geotiff_2115.py``;
+# moved under ``read/test_crs.py`` by epic #2390 PR 3.)
+from xrspatial.geotiff.tests.read.test_crs import \
     _write_rotated_tiff  # noqa: E402
 
 _STATUS_KEY = 'georef_status'
