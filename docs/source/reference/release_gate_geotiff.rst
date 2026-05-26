@@ -432,27 +432,26 @@ attrs contract
      - stable
      - Every read stamps ``attrs['_xrspatial_geotiff_contract']`` so
        downstream callers can branch on the version.
-     - ``xrspatial/geotiff/tests/test_attrs_contract_version_1984.py``
+     - ``xrspatial/geotiff/tests/attrs/test_contract.py``
      - `#2341`_
    * - Canonical attrs after read
      - stable
      - ``transform``, ``crs``, ``crs_wkt``, ``nodata``, ``georef_status``,
        ``raster_type`` appear in canonical form on every backend.
-     - ``xrspatial/geotiff/tests/test_attrs_contract_canonical_1984.py``,
+     - ``xrspatial/geotiff/tests/attrs/test_contract.py``,
        ``xrspatial/geotiff/tests/test_attrs_parity_1548.py``
      - `#2341`_
    * - Attrs pass-through on write
      - stable
      - User-supplied attrs survive write round-trips; reserved keys are
        not silently dropped.
-     - ``xrspatial/geotiff/tests/test_attrs_contract_passthrough_1984.py``,
-       ``xrspatial/geotiff/tests/test_attrs_contract_aliases_1984.py``
+     - ``xrspatial/geotiff/tests/attrs/test_contract.py``
      - `#2341`_
    * - ``georef_status`` canonical signal
      - stable
      - ``attrs['georef_status']`` reports whether CRS and transform were
        both parsed, partially parsed, or absent.
-     - ``xrspatial/geotiff/tests/test_attrs_contract_canonical_1984.py``
+     - ``xrspatial/geotiff/tests/attrs/test_contract.py``
      - `#2341`_
    * - ``reader.allow_rotated`` (``allow_rotated=True`` drops ``crs``)
      - experimental
