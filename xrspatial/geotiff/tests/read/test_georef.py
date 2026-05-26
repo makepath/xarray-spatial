@@ -78,7 +78,7 @@ from xrspatial.geotiff._writers.eager import _write_vrt_tiled
 from .._helpers.markers import gpu_available, requires_gpu as _gpu_only
 from .._helpers.tiff_builders import make_minimal_tiff
 # Share the rotated-TIFF byte layout with the CRS suite (epic #2390 PR 3).
-from .test_crs import _write_rotated_tiff as _write_rotated_tiff_crs  # noqa: E402
+from .test_crs import _write_rotated_tiff as _write_rotated_tiff_crs
 
 tifffile = pytest.importorskip("tifffile")
 
