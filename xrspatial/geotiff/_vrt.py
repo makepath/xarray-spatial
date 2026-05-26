@@ -1961,7 +1961,14 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
         ifd = ifds[0]
-        geo = extract_geo_info(ifd, data, header.byte_order)
+        # The writer is reading source metadata to populate the VRT XML;
+        # it does not decode pixels or run the masking step that the
+        # new #2441 default-rejection guards against. Pass the opt-in
+        # so a source TIFF with a non-finite / fractional ``GDAL_NODATA``
+        # value can still be referenced by a VRT (the read-side default
+        # still rejects it when the resulting VRT is later opened).
+        geo = extract_geo_info(ifd, data, header.byte_order,
+                               allow_invalid_nodata=True)
         src.close()
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)

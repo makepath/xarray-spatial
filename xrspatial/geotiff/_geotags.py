@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ._dtypes import resolve_bits_per_sample
+from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
 from ._errors import NonRepresentableEPSGCRSError, RotatedTransformError, UnknownCRSModelTypeError
 from ._header import (IFD, TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES,
                       TAG_GDAL_METADATA, TAG_GDAL_NODATA, TAG_GEO_ASCII_PARAMS,
@@ -826,7 +826,8 @@ def _parse_nodata_str(text: str | None) -> int | float | None:
 def extract_geo_info(ifd: IFD, data: bytes | memoryview,
                      byte_order: str,
                      *,
-                     allow_rotated: bool = False) -> GeoInfo:
+                     allow_rotated: bool = False,
+                     allow_invalid_nodata: bool = False) -> GeoInfo:
     """Extract full geographic metadata from a parsed IFD.
 
     Parameters
@@ -842,6 +843,13 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         ``ModelTransformationTag`` is read as an ungeoreferenced pixel
         grid instead of raising ``RotatedTransformError`` (issue #2115,
         #2267).
+    allow_invalid_nodata : bool, optional
+        When False (default), reject integer-dtype sources whose
+        ``GDAL_NODATA`` tag is non-finite (NaN / Inf) or fractional
+        with :class:`InvalidIntegerNodataError`. When True, restore the
+        pre-rejection silent no-op behaviour. See issue #2441 (the
+        #1774 follow-up) and the release contract document for the full
+        rationale.
 
     Returns
     -------
@@ -967,6 +975,31 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     nodata_str = ifd.nodata_str
     if nodata_str is not None:
         nodata = _parse_nodata_str(nodata_str)
+        # Reject non-finite / fractional GDAL_NODATA on integer sources
+        # (#1774 follow-up, #2441). Default behaviour raises
+        # :class:`InvalidIntegerNodataError`; ``allow_invalid_nodata=True``
+        # restores the legacy silent no-op for callers whose files
+        # legitimately carry such sentinels. Derive the source dtype
+        # from the IFD's BitsPerSample + SampleFormat; the validator
+        # is a no-op on float dtypes and on ``None`` sentinels.
+        try:
+            src_dtype = tiff_dtype_to_numpy(
+                resolve_bits_per_sample(ifd.bits_per_sample),
+                ifd.sample_format,
+            )
+        except (KeyError, ValueError):
+            # Unsupported / sub-byte BPS combos slip through to the
+            # downstream decode-time error so the user sees the right
+            # diagnostic; skip the nodata gate here.
+            src_dtype = None
+        if src_dtype is not None:
+            # Lazy import: ``_validation`` imports ``_coords`` which
+            # imports ``_geotags``; a top-level import would loop.
+            from ._validation import _validate_int_nodata_for_dtype
+            _validate_int_nodata_for_dtype(
+                nodata, src_dtype,
+                allow_invalid_nodata=allow_invalid_nodata,
+            )
 
     # Parse GDALMetadata XML (tag 42112)
     gdal_metadata = None
@@ -1125,6 +1158,7 @@ def extract_geo_info_with_overview_inheritance(
     byte_order: str,
     *,
     allow_rotated: bool = False,
+    allow_invalid_nodata: bool = False,
     sidecar_origin: dict | None = None,
 ) -> GeoInfo:
     """Extract geo metadata, inheriting from level 0 when the IFD lacks it.
@@ -1205,7 +1239,8 @@ def extract_geo_info_with_overview_inheritance(
             sel_data, sel_byte_order = origin
 
     info = extract_geo_info(ifd, sel_data, sel_byte_order,
-                            allow_rotated=allow_rotated)
+                            allow_rotated=allow_rotated,
+                            allow_invalid_nodata=allow_invalid_nodata)
 
     # Overview IFDs have NewSubfileType bit 0 set; mask IFDs (bit 2) and
     # page IFDs (bit 1) are filtered out by ``select_overview_ifd``
@@ -1242,7 +1277,8 @@ def extract_geo_info_with_overview_inheritance(
             base_data, base_byte_order = base_origin
 
     base_info = extract_geo_info(base_ifd, base_data, base_byte_order,
-                                 allow_rotated=allow_rotated)
+                                 allow_rotated=allow_rotated,
+                                 allow_invalid_nodata=allow_invalid_nodata)
 
     # Inherit the per-IFD metadata that the COG writer emits only on the
     # level-0 IFD: GDAL_NODATA, GDAL_METADATA, x/y resolution, colormap,

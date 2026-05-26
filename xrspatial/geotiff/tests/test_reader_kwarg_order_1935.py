@@ -42,6 +42,11 @@ _CANONICAL_ORDER = (
     # alongside the other ambiguous-metadata opt-outs so the canonical
     # order keeps the typed-error gates grouped.
     "allow_inconsistent_geokeys",
+    # Issue #2441 (the #1774 follow-up) added the integer-nodata fail-
+    # closed opt-out. Sits alongside the other ambiguous-metadata
+    # opt-outs so the canonical order keeps the typed-error gates
+    # grouped.
+    "allow_invalid_nodata",
     # PR 4 of epic #2340 added the experimental / internal-only codec
     # opt-ins on the read side, mirroring the writer surface from #2137
     # / #1845. They sit after the other ``allow_*`` flags so the

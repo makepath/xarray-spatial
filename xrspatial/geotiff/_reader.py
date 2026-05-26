@@ -112,6 +112,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
                    max_pixels: int = MAX_PIXELS_DEFAULT,
                    max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
                    allow_rotated: bool = False,
+                   allow_invalid_nodata: bool = False,
                    allow_experimental_codecs: bool = False,
                    allow_internal_only_jpeg: bool = False,
                    ) -> tuple[np.ndarray, GeoInfo]:
@@ -152,6 +153,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
             source, overview_level=overview_level, band=band,
             max_pixels=max_pixels, window=window,
             allow_rotated=allow_rotated,
+            allow_invalid_nodata=allow_invalid_nodata,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg)
 
@@ -301,6 +303,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order,
             allow_rotated=allow_rotated,
+            allow_invalid_nodata=allow_invalid_nodata,
             sidecar_origin=georef_origin)
 
         # Orientation tag (274): values 2-8 mean the stored pixel order
