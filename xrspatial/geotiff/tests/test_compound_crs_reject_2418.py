@@ -151,31 +151,66 @@ def test_compound_wkt_takes_user_defined_path(tmp_path):
     assert 'COMPOUND' in da.attrs['crs_wkt'].upper()
 
 
-def test_compound_epsg_does_not_round_trip_via_integer_path(tmp_path, monkeypatch):
-    """Document the bug: bypassing validation produces broken metadata.
+def test_compound_epsg_corruption_surfaces_when_validator_bypassed(
+    tmp_path, monkeypatch,
+):
+    """If the validator is bypassed, the file IS corrupted (regression).
 
-    This test pins the corruption the fix prevents. It bypasses
-    ``_validate_crs_arg`` by writing directly via ``build_geo_tags``
-    with the defense-in-depth check disabled, so it demonstrates what
-    the file *would* look like without the fix and asserts that
-    rasterio cannot recover the original EPSG.
-
-    The test exists so a future refactor that drops either guard
-    surfaces immediately.
+    Monkey-patches ``_validate_crs_arg`` and
+    ``_model_type_from_epsg``'s compound check to no-ops, then writes
+    EPSG:6349 through the integer path. Asserts the file rasterio
+    reads back is not EPSG:6349 -- the exact corruption the fix
+    prevents. If a future refactor drops either guard, this test
+    starts failing instead of the writer silently corrupting files.
     """
-    # Quickest way to demonstrate the bug surface: prove that EPSG:6349
-    # would round-trip through rasterio AS A DIFFERENT CRS if we wrote
-    # it via the horizontal-EPSG path. The fix is to refuse the write;
-    # if validation is removed, we want a regression test that detects
-    # the resulting corruption.
-    from pyproj import CRS
-    crs_obj = CRS.from_epsg(6349)
-    # Sanity: this is the structural mismatch the fix addresses.
-    assert crs_obj.is_compound is True
-    # pyproj's ``is_geographic`` reports the horizontal sub-CRS, which is
-    # exactly why the old writer mis-tagged compound codes as plain
-    # geographic.
-    assert crs_obj.is_geographic is True
+    from xrspatial.geotiff import _crs as _crs_mod
+    from xrspatial.geotiff import _geotags as _geotags_mod
+
+    # Bypass the validator at both gates so we exercise the broken
+    # write path the production code now refuses.
+    monkeypatch.setattr(
+        _crs_mod, "_reject_non_representable_epsg", lambda *a, **kw: None
+    )
+    original_model_type = _geotags_mod._model_type_from_epsg
+
+    def _model_type_without_compound_check(crs_epsg):
+        # Reproduce the pre-fix behaviour: only branch on is_geographic.
+        from pyproj import CRS
+        crs = CRS.from_epsg(crs_epsg)
+        if crs.is_geographic:
+            return _geotags_mod.MODEL_TYPE_GEOGRAPHIC
+        return _geotags_mod.MODEL_TYPE_PROJECTED
+
+    monkeypatch.setattr(
+        _geotags_mod, "_model_type_from_epsg", _model_type_without_compound_check
+    )
+
+    arr = xr.DataArray(
+        np.zeros((4, 4), dtype=np.float32),
+        coords={'y': np.array([3.5, 2.5, 1.5, 0.5]),
+                'x': np.array([0.5, 1.5, 2.5, 3.5])},
+        dims=('y', 'x'),
+    )
+    path = tmp_path / "tmp_2418_bypass_demo.tif"
+    to_geotiff(arr, str(path), crs=6349)
+
+    # Pin the corruption: rasterio either fails to recover the EPSG
+    # entirely (``to_epsg() is None``) or recovers the wrong one
+    # (the horizontal sub-CRS, with the vertical component dropped).
+    # Both outcomes are caught by ``rasterio_epsg != 6349``.
+    with rasterio.open(str(path)) as src:
+        rasterio_epsg = src.crs.to_epsg() if src.crs is not None else None
+    assert rasterio_epsg != 6349, (
+        f"rasterio recovered EPSG:6349 from a write that bypassed the "
+        f"validator: got {rasterio_epsg}. Either the writer is now "
+        "correctly emitting compound GeoKeys (good, drop the test) or "
+        "the bypass no longer reaches the broken path (unlikely)."
+    )
+
+    # Sanity: when validation is back in place, the same write raises.
+    monkeypatch.undo()
+    with pytest.raises(NonRepresentableEPSGCRSError):
+        to_geotiff(arr, str(path), crs=6349)
 
 
 def test_geographic_3d_crs_still_works(tmp_path):
