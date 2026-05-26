@@ -1,7 +1,11 @@
 """BigTIFF threshold and COG compliance for big files.
 
-Consolidates ``test_bigtiff_cog_compliance_2286.py`` into the BigTIFF
-writer cluster. Tests-only restructure for epic #2390.
+Covers the BigTIFF-specific layout (header magic, 8-byte offsets,
+20-byte IFD entries, tile and overview offset tables) for the
+codec / dtype / band-count matrix, plus the auto-promotion row that
+drives the threshold via the IFD-overhead helper.
+
+Tests-only restructure for epic #2390.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from xrspatial.geotiff._header import parse_all_ifds, parse_header
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_bigtiff_cog_compliance_2286.py
+# Section: BigTIFF + COG compliance matrix
 # -------------------------------------------------------------------------
 
 rasterio = pytest.importorskip(

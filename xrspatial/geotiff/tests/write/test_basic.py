@@ -1,14 +1,14 @@
-"""Generic writer paths: compression, tiling, kwarg order, return path, layout.
+"""Generic writer paths.
 
-Consolidates ``test_writer.py``, ``test_writer_matrix.py``,
-``test_writer_kwarg_order_1922.py``, ``test_writer_return_path_1938.py``,
-``test_writer_uncompressed_tiled_no_dead_alloc_1736.py``,
-``test_write_layout_monkeypatch_contract_2248.py``,
-``test_write_vrt_path_kwarg_1946.py``, ``test_write_vrt_crs_1715.py``,
-``test_write_vrt_bool_nodata_1921.py``, ``test_write_vrt_int_nodata_1684.py``,
-``test_vrt_writer_int64_1833.py``, ``test_vrt_writer_photometric_1861.py``,
-``test_vrt_writer_source_compat_1733.py``, and ``test_vrt_write.py``
-into one writer-side module. Tests-only restructure for epic #2390.
+Covers the eager ``to_geotiff`` / ``write_geotiff_gpu`` / ``write_vrt``
+surface: round-trip basics, dtype x compression matrix, kwarg order
+and return-path contracts, the uncompressed-tiled no-dead-alloc gate,
+the writer layout monkeypatch contract, and the VRT writer surface
+(path kwarg, CRS, bool / int nodata, int64, photometric, source
+compatibility, tiled output).
+
+Section banners below mark the topical sub-areas. Tests-only restructure
+for epic #2390.
 """
 
 from __future__ import annotations
@@ -28,28 +28,30 @@ import typing
 import re
 import glob
 
-from xrspatial.geotiff._geotags import GeoTransform
-from xrspatial.geotiff._reader import read_to_array
-from xrspatial.geotiff._writer import _make_overview, write
-from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._writer import write
-from xrspatial.geotiff import to_geotiff, write_geotiff_gpu
-from xrspatial.geotiff import to_geotiff, write_geotiff_gpu, write_vrt
+from xrspatial.geotiff import (
+    _vrt as _vrt_module,
+    _writer as writer_mod,
+    open_geotiff,
+    read_vrt,
+    to_geotiff,
+    write_geotiff_gpu,
+    write_vrt,
+)
 from xrspatial.geotiff._compression import COMPRESSION_NONE
-from xrspatial.geotiff._writer import _write_tiled
-from xrspatial.geotiff import _writer as writer_mod
-from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff import read_vrt, to_geotiff, write_geotiff_gpu, write_vrt
-from xrspatial.geotiff import read_vrt, to_geotiff, write_vrt
-from xrspatial.geotiff import to_geotiff, write_vrt
-from xrspatial.geotiff.tests.conftest import requires_gpu
-from xrspatial.geotiff import _vrt as _vrt_module
+from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, parse_header, parse_ifd
+from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff._writer import _make_overview, _write_tiled, write
+# ``write_vrt`` here is the private internal binding, aliased so it does
+# not shadow the public re-export above. The only section that needs
+# the private form is the writer-source-compat fold (see PR
+# description for the why).
 from xrspatial.geotiff._vrt import write_vrt as _priv_write_vrt
+from xrspatial.geotiff.tests.conftest import requires_gpu
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_writer.py
+# Section: writer round-trip basics
 # -------------------------------------------------------------------------
 
 class TestMakeOverview:
@@ -153,7 +155,7 @@ class TestWriteInvalidInput:
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_writer_matrix.py
+# Section: writer dtype x compression matrix
 # -------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -311,11 +313,6 @@ def test_nodata_uint8_sentinel(tmp_path):
 # T-7: COG validity (rasterio-dependent)
 # ---------------------------------------------------------------------------
 
-rasterio = pytest.importorskip(
-    'rasterio',
-    reason='rasterio is optional; COG validity test skipped when missing',
-)
-
 
 def test_cog_layout_and_overviews(tmp_path):
     """A cog=True file is tiled, carries overviews, and (when rio-cogeo is
@@ -325,6 +322,10 @@ def test_cog_layout_and_overviews(tmp_path):
     tag, so we don't assert that. Structural COG properties (tiled, overviews
     present, GDAL-readable) are what the writer actually guarantees.
     """
+    rasterio = pytest.importorskip(
+        'rasterio',
+        reason='rasterio is optional; COG validity test skipped when missing',
+    )
     h = w = 1024
     arr = np.arange(h * w, dtype=np.float32).reshape(h, w) % 1000.0
     path = str(tmp_path / '1483_t7_cog.tif')
@@ -388,7 +389,7 @@ def test_write_to_readonly_dir_raises_oserror(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_writer_kwarg_order_1922.py
+# Section: kwarg order / signature parity
 # -------------------------------------------------------------------------
 
 def test_writer_kwarg_order_matches_to_geotiff():
@@ -446,19 +447,10 @@ def test_writer_kwarg_defaults_match_to_geotiff():
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_writer_return_path_1938.py
+# Section: return-path contract
 # -------------------------------------------------------------------------
 
-def _gpu_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
+from .._helpers.markers import gpu_available as _gpu_available  # noqa: E402
 
 _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(
@@ -606,7 +598,7 @@ def test_writer_returns_are_not_none(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_writer_uncompressed_tiled_no_dead_alloc_1736.py
+# Section: uncompressed tiled: no dead allocation
 # -------------------------------------------------------------------------
 
 # Peak ``tracemalloc`` size, in multiples of the input raster size, that
@@ -712,7 +704,7 @@ def test_uncompressed_tiled_peak_memory_multiband():
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_write_layout_monkeypatch_contract_2248.py
+# Section: writer layout monkeypatch contract
 # -------------------------------------------------------------------------
 
 def _make_float32(h: int = 8, w: int = 8) -> xr.DataArray:
@@ -778,7 +770,7 @@ def test_assemble_tiff_resolves_helper_through_writer_module(
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_write_vrt_path_kwarg_1946.py
+# Section: write_vrt path kwarg contract
 # -------------------------------------------------------------------------
 
 def _build_source_tif(tmp_path, name='src.tif'):
@@ -963,7 +955,7 @@ def test_write_vrt_path_round_trip_matches_old(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_write_vrt_crs_1715.py
+# Section: write_vrt CRS propagation
 # -------------------------------------------------------------------------
 
 
@@ -1149,7 +1141,7 @@ def test_write_vrt_crs_unparseable_string_rejected(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_write_vrt_bool_nodata_1921.py
+# Section: write_vrt bool nodata
 # -------------------------------------------------------------------------
 
 @pytest.fixture
@@ -1271,7 +1263,7 @@ def test_to_geotiff_gpu_dispatch_rejects_bool_nodata(uint8_da, tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_write_vrt_int_nodata_1684.py
+# Section: write_vrt int nodata
 # -------------------------------------------------------------------------
 
 def _nodata_annotation(fn):
@@ -1340,7 +1332,7 @@ def test_write_vrt_int_nodata_round_trips(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_vrt_writer_int64_1833.py
+# Section: VRT writer: int64 source
 # -------------------------------------------------------------------------
 
 def _da(arr: np.ndarray) -> xr.DataArray:
@@ -1400,7 +1392,7 @@ def test_int64_vrt_round_trip(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_vrt_writer_photometric_1861.py
+# Section: VRT writer: photometric tag
 # -------------------------------------------------------------------------
 
 def _read_primary_ifd(path: str):
@@ -1458,7 +1450,7 @@ def test_vrt_writer_default_photometric_minisblack_1861(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_vrt_writer_source_compat_1733.py
+# Section: VRT writer: source compatibility
 # -------------------------------------------------------------------------
 
 def _unique_dir(tmp_path, label: str) -> str:
@@ -1627,7 +1619,7 @@ def test_both_missing_crs_succeeds(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_vrt_write.py
+# Section: VRT writer: tiled output
 # -------------------------------------------------------------------------
 
 @pytest.fixture

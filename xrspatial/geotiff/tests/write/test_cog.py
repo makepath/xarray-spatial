@@ -1,10 +1,12 @@
 """COG writer compliance and overview/nodata combinations.
 
-Consolidates ``test_cog.py``, ``test_cog_writer_compliance.py``,
-``test_cog_invalid_input_errors_2286.py``, ``test_cog_parity_2286.py``,
-``test_cog_requires_tiled_2312.py``, and ``test_cog_tile_size_hang_2311.py``
-into one COG writer module. HTTP-side COG tests stay separate
-(integration cluster, PR 9). Tests-only restructure for epic #2390.
+Covers the COG public API, the external-interop compliance suite
+(rasterio / rio-cogeo / GDAL validator), invalid-input errors, the
+parity rows that exercise xrspatial-write -> external-read and the
+mirror direction, and the tile-layout / tile-size pre-flight gates.
+
+HTTP-side COG tests stay separate (integration cluster, PR 9).
+Tests-only restructure for epic #2390.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import xarray as xr
-from ..conftest import gpu_available
+from .._helpers.markers import gpu_available
 import os
 import importlib.util
 import io
@@ -26,16 +28,14 @@ import contextlib
 import signal
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff._errors import ConflictingCRSError
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._writer import write
-from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._errors import ConflictingCRSError
-from xrspatial.geotiff._writer import write as _array_write
+from xrspatial.geotiff._writer import write, write as _array_write
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog.py
+# Section: COG writer (public API)
 # -------------------------------------------------------------------------
 
 class TestCOGWriter:
@@ -404,13 +404,11 @@ def read_to_array_local(path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_writer_compliance.py
+# Section: COG external-interop compliance suite
 # -------------------------------------------------------------------------
 
-rasterio = pytest.importorskip(
-    "rasterio",
-    reason="rasterio is required for the external compliance suite",
-)
+# rasterio is imported per-test below so tests that do not need it are
+# still collected when rasterio is absent.
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +627,7 @@ def test_codec_dtype_bands_roundtrip(tmp_path, codec, dtype, bands):
     - CRS and transform survive.
     - IFDs sit before any tile data block (COG layout).
     """
+    rasterio = pytest.importorskip("rasterio")
     arr = _make_data(dtype, bands=bands, height=64, width=64)
     da = _build_da(arr, raster_type="area", crs=4326)
 
@@ -685,6 +684,7 @@ def test_codec_dtype_bands_roundtrip(tmp_path, codec, dtype, bands):
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_nodata_sentinel_survives(tmp_path, dtype):
     """Integer and float sentinels survive write -> rasterio.open."""
+    rasterio = pytest.importorskip("rasterio")
     arr = _make_data(dtype, bands=1, height=64, width=64)
     sentinel = _pick_sentinel(dtype)
     # Mark a couple of cells as nodata.
@@ -713,6 +713,7 @@ def test_nodata_sentinel_survives(tmp_path, dtype):
 
 def test_nodata_nan_survives(tmp_path):
     """NaN nodata: NaN positions round-trip as NaN through rasterio."""
+    rasterio = pytest.importorskip("rasterio")
     arr = _make_data(np.float32, bands=1, height=64, width=64)
     arr[0, 0] = np.nan
     arr[3, 9] = np.nan
@@ -743,6 +744,7 @@ def test_nodata_nan_survives(tmp_path):
 @pytest.mark.parametrize("raster_type", GEOREF_MODES)
 def test_raster_type_tag_survives(tmp_path, raster_type):
     """AREA_OR_POINT tag survives to rasterio.tags()."""
+    rasterio = pytest.importorskip("rasterio")
     arr = _make_data(np.float32, bands=1, height=32, width=32)
     da = _build_da(arr, raster_type=raster_type, crs=4326)
 
@@ -771,6 +773,7 @@ def test_raster_type_tag_survives(tmp_path, raster_type):
 
 def test_overviews_explicit_levels(tmp_path):
     """``overview_levels=[2, 4, 8]`` produces exactly those decimations."""
+    rasterio = pytest.importorskip("rasterio")
     arr = _make_data(np.float32, bands=1, height=128, width=128)
     da = _build_da(arr, raster_type="area", crs=4326)
 
@@ -807,6 +810,7 @@ def test_overview_pixels_match_expected(tmp_path, resampling):
     overviews that match within float tolerance (lossless codec on the
     base, deterministic block reducer on the overview).
     """
+    rasterio = pytest.importorskip("rasterio")
     base = _make_data(np.float32, bands=1, height=64, width=64)
     da = _build_da(base, raster_type="area", crs=4326)
 
@@ -845,6 +849,7 @@ def test_overview_pixels_match_expected(tmp_path, resampling):
 
 def test_overviews_auto_generated(tmp_path):
     """``overview_levels=None`` with cog=True auto-generates a pyramid."""
+    rasterio = pytest.importorskip("rasterio")
     arr = _make_data(np.float32, bands=1, height=128, width=128)
     da = _build_da(arr, raster_type="area", crs=4326)
 
@@ -879,6 +884,7 @@ def test_overviews_auto_generated(tmp_path):
 
 def test_layout_is_cog_shaped(tmp_path):
     """A cog=True file is tiled, has overview IFDs, and IFDs precede data."""
+    rasterio = pytest.importorskip("rasterio")
     arr = _make_data(np.uint16, bands=1, height=128, width=128)
     da = _build_da(arr, raster_type="area", crs=4326)
 
@@ -1046,7 +1052,7 @@ def test_require_validator_env_non_truthy_values(monkeypatch, val):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_invalid_input_errors_2286.py
+# Section: COG invalid-input errors
 # -------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -1390,13 +1396,9 @@ def test_crs_kwarg_overrides_attrs_silently(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_parity_2286.py
+# Section: COG parity rows
 # -------------------------------------------------------------------------
 
-pytest.importorskip("rasterio")
-
-from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
-from xrspatial.geotiff._writer import write  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1948,7 +1950,7 @@ def test_row6_golden_cog_xrspatial_dask_http(golden_cog_http):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_requires_tiled_2312.py
+# Section: COG: tile-layout pre-flight
 # -------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -2100,7 +2102,7 @@ def test_strip_layout_without_cog_still_works(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_tile_size_hang_2311.py
+# Section: COG: tile-size pre-flight
 # -------------------------------------------------------------------------
 
 @contextlib.contextmanager

@@ -110,7 +110,7 @@ def test_cog_overview_block_order_three_levels_2308():
 def _rio_cogeo_or_skip():
     """Skip the rio-cogeo gate when the dependency isn't installed.
 
-    Mirrors the skip semantics used in ``test_cog_writer_compliance``:
+    Mirrors the skip semantics used in ``write/test_cog.py``:
     contributor laptops without rio-cogeo see a skip, CI with rio-cogeo
     runs the strict check.
     """

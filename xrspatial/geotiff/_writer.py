@@ -137,7 +137,7 @@ _TILE_POOL_THREAD_PREFIX = 'xrspatial-geotiff-tile-compress'
 # the array-level ``_write`` defense-in-depth gate. Keeping the message
 # string in one place stops the two raise sites from drifting if one
 # ever gets reworded. The substring assertions in
-# ``test_cog_requires_tiled_2312.py`` pin the actionable tokens
+# ``tests/write/test_cog.py`` pin the actionable tokens
 # (``tiled=True``, ``cog=False``, ``COG``) so a future rewrite still
 # has to satisfy the same contract.
 _COG_REQUIRES_TILED_MSG = (

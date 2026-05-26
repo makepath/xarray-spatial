@@ -9,11 +9,11 @@ and (when declared) nodata preserved across every stable codec.
 This gate parametrizes the codec axis so a single regression in any
 stable codec on the COG path fails noisily. The COG layout itself
 (IFD-first, tiled, internal overviews) is exhaustively pinned by
-``test_cog_writer_compliance.py`` and ``test_cog_parity_2286.py``; the
+``write/test_cog.py``; the
 release-gate gate is the small end-to-end shape every release needs.
 
 Out of scope here:
-* COG spec compliance details -- see ``test_cog_writer_compliance.py``.
+* COG spec compliance details -- see ``write/test_cog.py``.
 * HTTP COG range reads -- ``reader.http_cog`` is ``advanced`` (not
   stable), so it is not part of this gate.
 * BigTIFF COG -- ``writer.bigtiff_cog`` is ``advanced``.

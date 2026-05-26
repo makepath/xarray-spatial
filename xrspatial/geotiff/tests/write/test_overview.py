@@ -1,11 +1,11 @@
 """Overview-level and nodata-aware overview tests.
 
-Consolidates ``test_cog_overview_ceil_2105.py``,
-``test_cog_overview_nodata_1613.py``,
-``test_cog_cubic_overview_nodata_1623.py``,
-``test_cog_cubic_int_overview_nodata_1975.py``, and
-``test_cog_int_overview_nodata_2026_05_12.py`` into one overview-policy
-module. Tests-only restructure for epic #2390.
+Covers the overview shape-ceiling contract, the mean / min / max /
+median / mode resampling matrix with int and float nodata, the cubic
+resampling cases for both float and integer dtypes, and the
+block-reduce sentinel-masking gate for int sentinels.
+
+Tests-only restructure for epic #2390.
 """
 
 from __future__ import annotations
@@ -18,20 +18,12 @@ import xarray as xr
 from xrspatial.geotiff._writer import _block_reduce_2d
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
+from .._helpers.markers import gpu_available as _gpu_available
+
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_overview_ceil_2105.py
+# Section: ceil-shape overview tests
 # -------------------------------------------------------------------------
-
-def _gpu_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
 
 _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
@@ -336,7 +328,7 @@ def test_gpu_block_reduce_int_5x5_with_nodata():
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_overview_nodata_1613.py
+# Section: nodata-aware overview tests
 # -------------------------------------------------------------------------
 
 
@@ -606,7 +598,7 @@ def test_gpu_cog_overview_matches_cpu(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_cubic_overview_nodata_1623.py
+# Section: cubic resampling, float nodata
 # -------------------------------------------------------------------------
 
 
@@ -854,7 +846,7 @@ def test_gpu_cpu_cubic_overview_bytes_match(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_cubic_int_overview_nodata_1975.py
+# Section: cubic resampling, int nodata
 # -------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -1065,7 +1057,7 @@ def test_gpu_int_cubic_overview_matches_cpu(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Folded from: test_cog_int_overview_nodata_2026_05_12.py
+# Section: block-reduce int sentinel masking
 # -------------------------------------------------------------------------
 
 
