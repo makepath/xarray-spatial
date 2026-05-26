@@ -101,4 +101,4 @@ jobs:
       # missing rio-cogeo / GDAL install fail the suite instead of
       # skipping it -- the whole point of this gate.
       run: |
-        pytest xrspatial/geotiff/tests/test_cog_writer_compliance.py xrspatial/geotiff/tests/test_cog_parity_2286.py -x
+        pytest xrspatial/geotiff/tests/write/test_cog.py -x
