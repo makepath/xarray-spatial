@@ -142,7 +142,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 Each cell shows the **feature tier** for that function on that backend (see [issue #2415](https://github.com/xarray-contrib/xarray-spatial/issues/2415)). A blank cell means no implementation on that backend; a path that was previously documented as a CPU fallback is reported here as `advanced` (it works as a documented execution mode, but is not native-parity tested).
 
-✅ stable &nbsp;&nbsp; 🔼 advanced &nbsp;&nbsp; 🧪 experimental &nbsp;&nbsp; 🔧 internal &nbsp;&nbsp; 🚫 unsupported
+✅ stable · 🔼 advanced · 🧪 experimental · 🔧 internal · 🚫 unsupported
 
 [GeoTIFF / COG I/O](#geotiff--cog-io) · [Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [MCDA](#multi-criteria-decision-analysis-mcda) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
 
@@ -277,7 +277,7 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 | [Cumulative Viewshed](xrspatial/visibility.py) | Counts how many observers can see each cell | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
 | [Visibility Frequency](xrspatial/visibility.py) | Fraction of observers with line-of-sight to each cell | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
 | [Line of Sight](xrspatial/visibility.py) | Elevation profile and visibility along a point-to-point transect | Custom | 🔼 | 🔼 | 🔼 | 🔼 |
-| [Min Observable Height](xrspatial/experimental/min_observable_height.py) | Finds the minimum observer height needed to see each cell *(experimental)* | Custom | 🧪 |  |  |  |
+| [Min Observable Height](xrspatial/experimental/min_observable_height.py) | Finds the minimum observer height needed to see each cell | Custom | 🧪 |  |  |  |
 | [Perlin Noise](xrspatial/perlin.py) | Generates smooth continuous random noise for procedural textures | Perlin 1985 | ✅ | ✅ | ✅ | ✅ |
 | [Worley Noise](xrspatial/worley.py) | Generates cellular (Voronoi) noise returning distance to the nearest feature point | Worley 1996 | ✅ | ✅ | ✅ | ✅ |
 | [Hydraulic Erosion](xrspatial/erosion.py) | Simulates particle-based water erosion to carve valleys and deposit sediment | Custom | ✅ | ✅ | ✅ | ✅ |
@@ -500,15 +500,15 @@ For a broader catalog of spectral indices and sensor-specific band combinations,
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Standardize](xrspatial/mcda/standardize.py) | Converts criterion rasters to 0-1 suitability scale (linear, sigmoidal, gaussian, triangular, piecewise, categorical) | Standard | ✅ | ✅ | ✅ | ✅ |
-| [AHP Weights](xrspatial/mcda/weights.py) | Derives criterion weights from pairwise comparisons using the Saaty eigenvector method with consistency ratio | Saaty 1980 | ✅ | 🔼 | 🔼 | 🔼 |
-| [Rank Weights](xrspatial/mcda/weights.py) | Derives weights from a rank ordering (ROC, rank sum, reciprocal) | Standard | ✅ | 🔼 | 🔼 | 🔼 |
+| [AHP Weights](xrspatial/mcda/weights.py) | Derives criterion weights from pairwise comparisons using the Saaty eigenvector method with consistency ratio | Saaty 1980 | ✅ | 🚫 | 🚫 | 🚫 |
+| [Rank Weights](xrspatial/mcda/weights.py) | Derives weights from a rank ordering (ROC, rank sum, reciprocal) | Standard | ✅ | 🚫 | 🚫 | 🚫 |
 | [WLC](xrspatial/mcda/combine.py) | Weighted Linear Combination (fully compensatory weighted sum) | Malczewski 2006 | ✅ | ✅ | 🧪 | 🧪 |
 | [WPM](xrspatial/mcda/combine.py) | Weighted Product Model (multiplicative, penalizes low scores) | Standard | ✅ | ✅ | 🧪 | 🧪 |
 | [OWA](xrspatial/mcda/combine.py) | Ordered Weighted Averaging with tunable risk attitude | Yager 1988 | ✅ | 🔼 | 🧪 | 🧪 |
 | [Fuzzy Overlay](xrspatial/mcda/combine.py) | Combines criteria using fuzzy set operators (AND, OR, sum, product, gamma) | Eastman 1999 | ✅ | ✅ | 🧪 | 🧪 |
 | [Boolean Overlay](xrspatial/mcda/combine.py) | Combines binary criterion masks using AND/OR logic | Standard | ✅ | ✅ | 🧪 | 🧪 |
 | [Constrain](xrspatial/mcda/constrain.py) | Masks exclusion zones from a suitability surface | Standard | ✅ | ✅ | 🧪 | 🧪 |
-| [Sensitivity](xrspatial/mcda/sensitivity.py) | Assesses weight stability via one-at-a-time or Monte Carlo perturbation | Standard | ✅ | 🔼 | 🔼 | 🔼 |
+| [Sensitivity](xrspatial/mcda/sensitivity.py) | Assesses weight stability via one-at-a-time or Monte Carlo perturbation | Standard | ✅ | 🔼 | 🚫 | 🚫 |
 
 -------
 
@@ -535,7 +535,7 @@ For a broader catalog of spectral indices and sensor-specific band combinations,
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Disaggregate](xrspatial/dasymetric.py) | Redistributes zonal totals to pixels using an ancillary weight surface | Mennis 2003 | ✅ | ✅ | 🔼 | 🔼 |
-| [Pycnophylactic](xrspatial/dasymetric.py) | Tobler's pycnophylactic interpolation preserving zone totals via Laplacian smoothing | Tobler 1979 | ✅ |  | 🔼 |  |
+| [Pycnophylactic](xrspatial/dasymetric.py) | Tobler's pycnophylactic interpolation preserving zone totals via Laplacian smoothing | Tobler 1979 | ✅ | 🚫 | 🔼 | 🚫 |
 | [Validate Disaggregation](xrspatial/dasymetric.py) | Checks that disaggregated pixel sums match the original zone totals | Standard | ✅ | ✅ | 🔼 | 🔼 |
 
 -----------
