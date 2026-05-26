@@ -1570,3 +1570,300 @@ class TestPathContainmentAllowlist:
         monkeypatch.setenv('XRSPATIAL_VRT_ALLOWED_ROOTS', value)
         arr, _ = _internal_read_vrt(vrt_path)
         assert arr.shape == (4, 4)
+
+
+# ===========================================================================
+# VRT-tail validation folds (cluster 13, #2437)
+# ===========================================================================
+#
+# Three originally-standalone validation files folded here:
+#
+# * SrcRect negative-size / negative-offset rejection (was
+#   ``test_geotiff_vrt_srcrect_validation_1784.py``).
+# * ``open_geotiff('.vrt')`` rejecting kwargs it silently dropped:
+#   ``overview_level`` and ``on_gpu_failure`` (was
+#   ``test_open_geotiff_vrt_kwarg_drop_1685.py``).
+# * ``to_geotiff(..., '.vrt')`` rejecting ``tiled=False`` and validating
+#   ``tile_size`` up front instead of crashing in the writer (was
+#   ``test_to_geotiff_vrt_tiled_validation_1862.py``).
+
+
+# ---------------------------------------------------------------------------
+# SrcRect negative-size / negative-offset rejection (#1784)
+# ---------------------------------------------------------------------------
+#
+# A malformed ``<SrcRect xSize="-100"/>`` (or negative offset) must surface
+# as a ``ValueError`` naming the offending field, in both lenient and
+# strict modes -- never get swallowed by the missing-source fallback.
+
+
+def _srcrect_write_source(td: str, name: str = 'src.tif') -> str:
+    """Write a 10x10 uint8 source GeoTIFF and return its path."""
+    src_path = os.path.join(td, name)
+    to_geotiff(np.zeros((10, 10), dtype=np.uint8), src_path,
+               compression='none')
+    return src_path
+
+
+def _srcrect_write_vrt(td: str, *,
+                       src_x_off: int = 0, src_y_off: int = 0,
+                       src_x_size: int = 10, src_y_size: int = 10,
+                       src_filename: str = 'src.tif',
+                       raster_x: int = 100, raster_y: int = 100) -> str:
+    """Write a VRT with a single SimpleSource using the given SrcRect."""
+    vrt_path = os.path.join(td, 'mosaic.vrt')
+    vrt_xml = (
+        f'<VRTDataset rasterXSize="{raster_x}" rasterYSize="{raster_y}">\n'
+        f'  <VRTRasterBand dataType="Byte" band="1">\n'
+        f'    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="1">{src_filename}'
+        f'</SourceFilename>\n'
+        f'      <SourceBand>1</SourceBand>\n'
+        f'      <SrcRect xOff="{src_x_off}" yOff="{src_y_off}" '
+        f'xSize="{src_x_size}" ySize="{src_y_size}"/>\n'
+        f'      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n'
+        f'    </SimpleSource>\n'
+        f'  </VRTRasterBand>\n'
+        f'</VRTDataset>\n'
+    )
+    with open(vrt_path, 'w') as f:
+        f.write(vrt_xml)
+    return vrt_path
+
+
+class TestSrcRectRejection:
+    """Malformed ``<SrcRect>`` geometry rejected before the lenient
+    missing-source fallback can swallow it."""
+
+    def test_negative_x_size_rejected(self, tmp_path):
+        td = str(tmp_path)
+        _srcrect_write_source(td)
+        vrt_path = _srcrect_write_vrt(td, src_x_size=-50)
+        with pytest.raises(ValueError, match=r"SrcRect.*negative size"):
+            _internal_read_vrt(vrt_path)
+
+    def test_negative_y_size_rejected(self, tmp_path):
+        td = str(tmp_path)
+        _srcrect_write_source(td)
+        vrt_path = _srcrect_write_vrt(td, src_y_size=-50)
+        with pytest.raises(ValueError, match=r"SrcRect.*negative size"):
+            _internal_read_vrt(vrt_path)
+
+    def test_negative_x_off_rejected(self, tmp_path):
+        td = str(tmp_path)
+        _srcrect_write_source(td)
+        vrt_path = _srcrect_write_vrt(td, src_x_off=-10)
+        with pytest.raises(ValueError, match=r"SrcRect.*negative offset"):
+            _internal_read_vrt(vrt_path)
+
+    def test_negative_y_off_rejected(self, tmp_path):
+        td = str(tmp_path)
+        _srcrect_write_source(td)
+        vrt_path = _srcrect_write_vrt(td, src_y_off=-10)
+        with pytest.raises(ValueError, match=r"SrcRect.*negative offset"):
+            _internal_read_vrt(vrt_path)
+
+    def test_message_names_bad_values(self, tmp_path):
+        """The error message names the malformed field and its value so
+        the caller can find the offending ``<SrcRect>`` in the VRT."""
+        td = str(tmp_path)
+        _srcrect_write_source(td)
+        vrt_path = _srcrect_write_vrt(td, src_x_size=-7, src_y_size=-3)
+        with pytest.raises(ValueError) as excinfo:
+            _internal_read_vrt(vrt_path)
+        msg = str(excinfo.value)
+        assert "SrcRect" in msg
+        assert "-7" in msg
+        assert "-3" in msg
+
+    def test_missing_source_still_takes_lenient_warning_path(self, tmp_path):
+        """A *valid* SrcRect with a missing source file still hits the
+        lenient warning path -- the SrcRect check must not swallow the
+        missing-file case. ``missing_sources='warn'`` opts into the
+        lenient branch since the default is now ``'raise'``."""
+        td = str(tmp_path)
+        # No source file written; SrcRect itself is well-formed.
+        vrt_path = _srcrect_write_vrt(td, src_filename='does_not_exist.tif')
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            arr, _ = _internal_read_vrt(vrt_path, missing_sources='warn')
+        fallback = [w for w in caught
+                    if issubclass(w.category, GeoTIFFFallbackWarning)]
+        assert fallback, (
+            "expected a GeoTIFFFallbackWarning for the missing source"
+        )
+        assert arr.shape == (100, 100)
+
+    def test_valid_srcrect_reads_normally(self, tmp_path):
+        """A well-formed SrcRect with a real source succeeds -- no false
+        positives on valid VRTs."""
+        td = str(tmp_path)
+        _srcrect_write_source(td)
+        vrt_path = _srcrect_write_vrt(td, raster_x=10, raster_y=10)
+        arr, _ = _internal_read_vrt(vrt_path)
+        assert arr.shape == (10, 10)
+        assert np.all(arr == 0)
+
+    def test_negative_srcrect_raises_under_strict_mode(
+        self, tmp_path, monkeypatch,
+    ):
+        """The check runs before the lenient try/except, so strict mode
+        and lenient mode both raise."""
+        monkeypatch.setenv('XRSPATIAL_GEOTIFF_STRICT', '1')
+        td = str(tmp_path)
+        _srcrect_write_source(td)
+        vrt_path = _srcrect_write_vrt(td, src_x_size=-50)
+        with pytest.raises(ValueError, match=r"SrcRect.*negative size"):
+            _internal_read_vrt(vrt_path)
+
+
+# ---------------------------------------------------------------------------
+# open_geotiff('.vrt') kwarg-drop rejection (#1685)
+# ---------------------------------------------------------------------------
+#
+# ``open_geotiff`` documents ``overview_level`` and ``on_gpu_failure`` but
+# the VRT dispatch branch routes to ``read_vrt`` whose signature accepts
+# neither, so the kwargs were silently dropped. The fix refuses the
+# unsupported combinations up front.
+
+
+@pytest.fixture
+def _kwarg_drop_small_vrt(tmp_path):
+    """Two-tile uint16 VRT for the kwarg-drop rejection cases."""
+    arr_a = np.arange(16, dtype=np.uint16).reshape(4, 4)
+    da_a = xr.DataArray(
+        arr_a, dims=["y", "x"],
+        coords={
+            "y": np.array([0.5, 1.5, 2.5, 3.5]),
+            "x": np.array([0.5, 1.5, 2.5, 3.5]),
+        },
+        attrs={"crs": 4326},
+    )
+    tile_a = tmp_path / "tile_a.tif"
+    to_geotiff(da_a, str(tile_a))
+
+    arr_b = np.arange(16, 32, dtype=np.uint16).reshape(4, 4)
+    da_b = xr.DataArray(
+        arr_b, dims=["y", "x"],
+        coords={
+            "y": np.array([0.5, 1.5, 2.5, 3.5]),
+            "x": np.array([4.5, 5.5, 6.5, 7.5]),
+        },
+        attrs={"crs": 4326},
+    )
+    tile_b = tmp_path / "tile_b.tif"
+    to_geotiff(da_b, str(tile_b))
+
+    from xrspatial.geotiff import write_vrt
+    vrt_path = tmp_path / "mosaic.vrt"
+    write_vrt(str(vrt_path), [str(tile_a), str(tile_b)])
+    return str(vrt_path)
+
+
+class TestOpenGeotiffVrtKwargRejection:
+    """``open_geotiff('.vrt')`` rejects kwargs it used to silently drop."""
+
+    def test_rejects_overview_level(self, _kwarg_drop_small_vrt):
+        """``overview_level`` plus ``.vrt`` raises, not a silent drop."""
+        with pytest.raises(
+            ValueError, match="overview_level is not supported",
+        ):
+            open_geotiff(_kwarg_drop_small_vrt, overview_level=1)
+
+    def test_accepts_overview_level_zero(self, _kwarg_drop_small_vrt):
+        """``overview_level=0`` is full resolution (the default), so it is
+        equivalent to omitting the kwarg and must not raise."""
+        da = open_geotiff(_kwarg_drop_small_vrt, overview_level=0)
+        assert da.shape == (4, 8)
+
+    def test_rejects_on_gpu_failure_with_gpu_true(self, _kwarg_drop_small_vrt):
+        """``on_gpu_failure='strict'`` plus ``.vrt`` (gpu=True) is refused.
+
+        The check fires before any GPU code runs; no CUDA needed."""
+        with pytest.raises(
+            ValueError, match="on_gpu_failure is not supported",
+        ):
+            open_geotiff(
+                _kwarg_drop_small_vrt, gpu=True, on_gpu_failure="strict",
+            )
+
+    def test_without_unsupported_kwargs_still_works(self, _kwarg_drop_small_vrt):
+        """The previously-accepted kwargs still flow through to
+        ``read_vrt``."""
+        da = open_geotiff(_kwarg_drop_small_vrt)
+        assert da.shape == (4, 8)
+
+    def test_with_window_still_works(self, _kwarg_drop_small_vrt):
+        """``window`` was already forwarded; the fix must not break it."""
+        da = open_geotiff(_kwarg_drop_small_vrt, window=(0, 1, 4, 5))
+        assert da.shape == (4, 4)
+
+    def test_non_vrt_still_accepts_overview_level(self, tmp_path):
+        """The fix is VRT-specific; ``.tif`` sources keep accepting
+        ``overview_level``."""
+        arr = np.arange(64, dtype=np.uint16).reshape(8, 8)
+        da = xr.DataArray(
+            arr, dims=["y", "x"],
+            coords={
+                "y": np.arange(8, dtype=np.float64),
+                "x": np.arange(8, dtype=np.float64),
+            },
+            attrs={"crs": 4326},
+        )
+        tif_path = tmp_path / "with_ovr.tif"
+        to_geotiff(
+            da, str(tif_path), cog=True, tile_size=16, overview_levels=[2],
+        )
+        open_geotiff(str(tif_path), overview_level=0)
+        open_geotiff(str(tif_path), overview_level=1)
+
+
+# ---------------------------------------------------------------------------
+# to_geotiff('.vrt') tiled / tile_size validation (#1862)
+# ---------------------------------------------------------------------------
+#
+# ``to_geotiff(..., '.vrt', tiled=False)`` used to warn then crash with
+# ``ZeroDivisionError`` inside the always-tiling VRT writer. The fix
+# refuses ``tiled=False`` for ``.vrt`` and validates ``tile_size``
+# unconditionally so callers get a clear ``ValueError`` up front.
+
+
+def _tiled_validation_make_da(shape=(64, 64)):
+    arr = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    return xr.DataArray(arr, dims=['y', 'x'])
+
+
+class TestVrtTiledValidation:
+    """VRT writer rejects ``tiled=False`` and bad ``tile_size`` up front."""
+
+    def test_rejects_tiled_false(self, tmp_path):
+        """``tiled=False`` is not a valid request for VRT output."""
+        da = _tiled_validation_make_da()
+        out = os.path.join(str(tmp_path), 'vrt_tiled_false.vrt')
+        with pytest.raises(ValueError, match='tiled=False is not compatible'):
+            to_geotiff(da, out, tiled=False)
+
+    def test_tiled_false_zero_tile_size_raises_value_error(self, tmp_path):
+        """``tiled=False`` plus ``tile_size=0`` raises ``ValueError``, not
+        the previous ``ZeroDivisionError`` from inside the writer."""
+        da = _tiled_validation_make_da()
+        out = os.path.join(str(tmp_path), 'vrt_tiled_false_zero.vrt')
+        with pytest.raises(ValueError) as exc:
+            to_geotiff(da, out, tiled=False, tile_size=0)
+        assert not isinstance(exc.value, ZeroDivisionError)
+
+    def test_zero_tile_size_default_tiled_raises_value_error(self, tmp_path):
+        """With the default ``tiled=True``, ``tile_size=0`` surfaces from
+        the shared ``_validate_tile_size`` check, not a deep
+        ``ZeroDivisionError``."""
+        da = _tiled_validation_make_da()
+        out = os.path.join(str(tmp_path), 'vrt_default_tiled_zero.vrt')
+        with pytest.raises(ValueError, match='tile_size'):
+            to_geotiff(da, out, tile_size=0)
+
+    def test_default_args_still_succeeds(self, tmp_path):
+        """The default-args VRT write path is unaffected by the fix."""
+        da = _tiled_validation_make_da()
+        out = os.path.join(str(tmp_path), 'vrt_default.vrt')
+        to_geotiff(da, out)
+        assert os.path.exists(out)
