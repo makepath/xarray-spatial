@@ -1,6 +1,6 @@
 """Strict pixel-equality and kwarg-threading parity across read backends.
 
-The strictest mode of backend parity. Three concerns share the file
+The strictest mode of backend parity. Four concerns share the file
 because they fail in the same ways:
 
 * Pixel-byte parity across (numpy / dask+numpy / cupy / dask+cupy) on a
@@ -33,7 +33,7 @@ import xarray as xr
 from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
                                to_geotiff, write_vrt)
 
-from .._helpers.markers import gpu_available
+from .._helpers.markers import gpu_available, requires_gpu
 
 # ---------------------------------------------------------------------------
 # Environment gating
@@ -42,7 +42,8 @@ from .._helpers.markers import gpu_available
 _HAS_GPU = gpu_available()
 _HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 
-_skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+# Use the shared marker from ``_helpers/markers.py`` for the GPU gate.
+_skip_no_gpu = requires_gpu
 _skip_no_tifffile = pytest.mark.skipif(
     not _HAS_TIFFFILE, reason="tifffile required for MinIsWhite fixture")
 

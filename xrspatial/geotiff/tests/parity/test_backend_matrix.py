@@ -1,16 +1,19 @@
 """Matrix-style backend parity across high-risk fixtures.
 
 Single source of truth for "does backend X still match the eager-numpy
-reference on fixture Z." Covers three layers of parity:
+reference on fixture Z." Four sections:
 
-* The high-risk fixture matrix: every (backend, fixture) cell runs
-  through ``assert_parity`` plus an error sub-matrix.
-* Full-fixture parity over the golden corpus, using the manifest as
+* High-risk fixture matrix plus an error sub-matrix: every
+  (backend, fixture) cell runs through ``assert_parity``.
+* Full-corpus parity over the golden corpus, using the manifest as
   the fixture set and the same ``open_geotiff`` entry-point across
   every backend.
-* Attrs-key parity: the set of attrs emitted by each backend agrees
-  with the eager-numpy baseline, with a documented carve-out for
+* Canonical-attrs parity: each backend stamps the same canonical
+  attrs for the same fixture, with a documented carve-out for
   backend-specific keys.
+* Pass-through TIFF tag parity: ``x_resolution``, ``y_resolution``,
+  ``resolution_unit``, ``image_description``, and ``extra_samples``
+  agree across the four core backends.
 
 Harness contract
 ----------------
@@ -62,8 +65,10 @@ import pathlib
 import socketserver
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable
+
+# Alias so existing base-section signatures that say ``Path`` keep working.
+Path = pathlib.Path
 
 import numpy as np
 import pytest
@@ -72,7 +77,7 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt
 from xrspatial.geotiff._errors import RotatedTransformError
 
-from .._helpers.markers import gpu_available
+from .._helpers.markers import gpu_available, requires_gpu
 
 # ---------------------------------------------------------------------------
 # Environment gating
@@ -83,7 +88,8 @@ _HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 _HAS_FSSPEC = importlib.util.find_spec("fsspec") is not None
 _HAS_DASK = importlib.util.find_spec("dask") is not None
 
-_skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+# Use the shared marker from ``_helpers/markers.py`` for the GPU gate.
+_skip_no_gpu = requires_gpu
 _skip_no_tifffile = pytest.mark.skipif(
     not _HAS_TIFFFILE, reason="tifffile required for MinIsWhite fixture")
 _skip_no_fsspec = pytest.mark.skipif(
@@ -1048,22 +1054,15 @@ if _HAS_YAML and _HAS_RASTERIO:
     _FP_FIXTURES_DIR = (
         pathlib.Path(_fp_generate.__file__).resolve().parent / "fixtures"
     )
+else:
+    # Defined so attribute access in gated paths never raises NameError
+    # under static analysis or a future refactor that drops a guard.
+    _FP_FIXTURES_DIR = None
 
 # Chunk size for the dask rows. Most corpus fixtures are 64x64 or
 # smaller, so 32 produces either a 2x2 chunk grid or a single chunk.
 _FP_CHUNK_SIZE = 32
 
-
-_FP_GEOREF_KEYS: tuple[str, ...] = (
-    "transform",
-    "crs",
-    "crs_wkt",
-)
-
-_FP_NODATA_KEYS: tuple[str, ...] = (
-    "nodata",
-    "masked_nodata",
-)
 
 _FP_CANONICAL_METADATA_KEYS: tuple[str, ...] = (
     "raster_type",
@@ -1137,20 +1136,20 @@ _FP_OPTIN = {
 }
 
 
-def _fp_read_eager_numpy(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
+def _fp_read_eager_numpy(path: pathlib.Path, *_: object) -> xr.DataArray:
     return open_geotiff(str(path), **_FP_OPTIN)
 
 
-def _fp_read_dask_numpy(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
+def _fp_read_dask_numpy(path: pathlib.Path, *_: object) -> xr.DataArray:
     return open_geotiff(str(path), chunks=_FP_CHUNK_SIZE, **_FP_OPTIN)
 
 
-def _fp_read_gpu(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
+def _fp_read_gpu(path: pathlib.Path, *_: object) -> xr.DataArray:
     return open_geotiff(
         str(path), gpu=True, on_gpu_failure="strict", **_FP_OPTIN)
 
 
-def _fp_read_dask_gpu(path: pathlib.Path, _fixture_id: str) -> xr.DataArray:
+def _fp_read_dask_gpu(path: pathlib.Path, *_: object) -> xr.DataArray:
     return open_geotiff(
         str(path), gpu=True, chunks=_FP_CHUNK_SIZE,
         on_gpu_failure="strict", **_FP_OPTIN,
