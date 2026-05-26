@@ -206,7 +206,7 @@ Local GeoTIFF read and write
    * - ``writer.overviews``
      - advanced
      - Internal overview IFDs round-trip; the reader can pick a level.
-     - ``xrspatial/geotiff/tests/test_dask_overview_level.py``,
+     - ``xrspatial/geotiff/tests/integration/test_dask_pipeline.py``,
        ``xrspatial/geotiff/tests/test_cog_overview_nodata_1613.py``
      - `#2286`_
    * - ``writer.bigtiff``
@@ -288,9 +288,7 @@ Cloud-optimized GeoTIFF (COG)
      - advanced
      - Range-request COG read honours the per-tile byte-count cap and the
        SSRF / private-host filter.
-     - ``xrspatial/geotiff/tests/test_cog_http_concurrent.py``,
-       ``xrspatial/geotiff/tests/test_cog_http_parallel_decode_2026_05_15.py``,
-       ``xrspatial/geotiff/tests/test_cog_http_close_on_error_1816.py``
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
      - `#2344`_
    * - ``writer.bigtiff_cog``
      - advanced
@@ -329,9 +327,8 @@ HTTP / fsspec reads
        apply the SSRF / private-host filter; uppercase schemes
        (``HTTP://``, ``HTTPS://``) route the same way (case-insensitive
        scheme routing, ``#2323``).
-     - ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``,
-       ``xrspatial/geotiff/tests/test_golden_corpus_http_1930.py``,
-       ``xrspatial/geotiff/tests/test_http_dask_allow_rotated_2130.py``
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``,
+       ``xrspatial/geotiff/tests/test_golden_corpus_http_1930.py``
      - `#2344`_
    * - ``reader.fsspec``
      - advanced
@@ -353,7 +350,7 @@ HTTP / fsspec reads
      - stable
      - Tile or strip declared sizes exceeding ``XRSPATIAL_COG_MAX_TILE_BYTES``
        (default 256 MiB) raise ``ValueError``.
-     - ``xrspatial/geotiff/tests/test_cloud_read_byte_limit_1928.py``,
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``,
        ``xrspatial/geotiff/tests/test_gpu_tile_byte_cap_2026_05_18.py``
      - `#2344`_
    * - ``max_cloud_bytes`` dispatcher pass-through
