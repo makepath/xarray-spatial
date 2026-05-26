@@ -1,16 +1,11 @@
-"""Regression test for issue #1508.
+"""Big-endian / little-endian GeoTIFF reader paths.
 
-Big-endian multi-byte TIFFs read via ``read_geotiff_gpu`` used to crash
-inside the GPU decode pipeline with::
-
-    AttributeError: 'ndarray' object has no attribute 'byteswap'
-
-because ``cupy.ndarray`` (as of cupy 13.x) does not expose ``byteswap()``.
-The dispatcher in ``read_geotiff_gpu`` caught the error and silently fell
-back to CPU, so results stayed correct but the GPU fast path was lost.
-
-These tests confirm the GPU path now decodes BE multi-byte data directly
-(result is a CuPy array, not a NumPy fallback) and matches the CPU read.
+Consolidates the GPU byteswap regression coverage formerly in
+``test_gpu_byteswap_1508.py``. Pre-fix big-endian multi-byte TIFFs read
+via ``read_geotiff_gpu`` crashed inside the GPU decode pipeline because
+``cupy.ndarray`` does not expose ``byteswap()``. The dispatcher caught
+the error and silently fell back to CPU, so results stayed correct but
+the GPU fast path was lost.
 """
 from __future__ import annotations
 
@@ -19,22 +14,11 @@ import importlib.util
 import numpy as np
 import pytest
 
+from .._helpers.markers import gpu_available
 
-def _gpu_available() -> bool:
-    """True if cupy is importable and CUDA is initialised."""
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _gpu_available()
 _HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 _gpu_only = pytest.mark.skipif(
-    not (_HAS_GPU and _HAS_TIFFFILE),
+    not (gpu_available() and _HAS_TIFFFILE),
     reason="cupy + CUDA + tifffile required",
 )
 
@@ -69,20 +53,12 @@ def test_read_geotiff_gpu_big_endian_multibyte(tmp_path, dtype):
 
     gpu_da = read_geotiff_gpu(str(path))
 
-    # The GPU path was actually exercised (no silent CPU fallback masking
-    # a crash inside gpu_decode_tiles_from_file).
     assert isinstance(gpu_da.data, cupy.ndarray), (
         "expected cupy-backed DataArray, got "
         f"{type(gpu_da.data).__name__} -- the GPU path likely fell back "
         "to CPU again"
     )
 
-    # The fix must preserve the native dtype contract. An earlier version
-    # used ``arr.view(arr.dtype.newbyteorder()).copy()`` which produced an
-    # array tagged with non-native byteorder (``>u2`` instead of ``<u2``).
-    # That is values-correct but breaks downstream consumers that expect
-    # native dtypes (numba ``@ngjit`` rejects non-native arrays -- this is
-    # the same class of bug PR #1507 fixed for predictor=2 BE).
     assert gpu_da.data.dtype == np.dtype(dtype), (
         f"GPU result dtype {gpu_da.data.dtype} drifted from native "
         f"{np.dtype(dtype)}"

@@ -1,4 +1,11 @@
-"""Regression tests for issue #1785.
+"""Streaming / chunked read paths.
+
+Folds in the streaming-BigTIFF threshold tests from
+``xrspatial/tests/test_geotiff_streaming_bigtiff_threshold_1785.py``
+per the epic #2390 PR 8 directive. The cluster covers the
+streaming-decision helper that the chunked write/read pipeline uses to
+pick classic vs. BigTIFF, plus the integration check that the user's
+``bigtiff=`` override still wins on the streaming code path.
 
 The streaming writer's auto-BigTIFF decision used to compare only the
 uncompressed pixel-data size against ``UINT32_MAX``. For rasters just
@@ -6,16 +13,15 @@ under 4 GiB the IFD plus the strip/tile-offset table pushed the actual
 file past the classic-TIFF uint32 offset ceiling, and the write failed
 late with ``struct.error``.
 
-These tests pin the corrected decision:
+The pinned contract:
 
 * The helper takes an actual ``ifd_overhead_bytes`` value (computed from
   the real tag list via ``_compute_classic_ifd_overhead``) rather than a
   200-byte fudge constant; large ``gdal_metadata_xml`` or ``extra_tags``
-  payloads must not silently undercount overhead. See the Copilot review
-  on PR #1787.
+  payloads must not silently undercount overhead.
 * The comparison is ``> UINT32_MAX``, matching the eager
-  ``_assemble_tiff`` decision (``estimated_file_size > UINT32_MAX``). A
-  file that is exactly ``UINT32_MAX`` bytes still fits classic.
+  ``_assemble_tiff`` decision. A file that is exactly ``UINT32_MAX``
+  bytes still fits classic.
 * The explicit ``bigtiff=True``/``False`` user override still wins.
 """
 from __future__ import annotations
@@ -29,22 +35,12 @@ import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._dtypes import ASCII, LONG, SHORT
-from xrspatial.geotiff._header import (
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-    TAG_GDAL_METADATA,
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_PHOTOMETRIC,
-    TAG_SAMPLE_FORMAT,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_STRIP_OFFSETS,
-)
-from xrspatial.geotiff._writer import (
-    _compute_classic_ifd_overhead,
-    _should_use_bigtiff_streaming,
-)
+from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_GDAL_METADATA,
+                                       TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC,
+                                       TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL,
+                                       TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS)
+from xrspatial.geotiff._writer import (_compute_classic_ifd_overhead,
+                                       _should_use_bigtiff_streaming)
 
 
 UINT32_MAX = 0xFFFFFFFF
@@ -79,11 +75,7 @@ def _minimal_tag_list(n_entries: int, gdal_metadata_size: int = 0) -> list:
 
 class TestShouldUseBigTIFFStreaming:
     def test_just_under_uint32_max_promotes(self):
-        """uncompressed = UINT32_MAX - 50 with non-trivial overhead promotes.
-
-        Even ~50 bytes of slack disappears once IFD + strip-table overhead
-        is added, so this case must promote to BigTIFF.
-        """
+        """uncompressed = UINT32_MAX - 50 with non-trivial overhead promotes."""
         # 1024 entries: strip table contributes 8 * 1024 = 8 KiB.
         tags = _minimal_tag_list(n_entries=1024)
         overhead = _compute_classic_ifd_overhead(tags)
@@ -104,14 +96,7 @@ class TestShouldUseBigTIFFStreaming:
         ) is False
 
     def test_exactly_uint32_max_stays_classic(self):
-        """Boundary: total file size == UINT32_MAX bytes still fits classic.
-
-        Eager ``_assemble_tiff`` uses ``estimated_file_size > UINT32_MAX``;
-        the streaming helper must match. A file of exactly ``UINT32_MAX``
-        bytes has its last byte at offset ``UINT32_MAX - 1``, which is a
-        valid classic-TIFF offset.
-        """
-        # Construct uncompressed_bytes so total = exactly UINT32_MAX.
+        """Boundary: total file size == UINT32_MAX bytes still fits classic."""
         tags = _minimal_tag_list(n_entries=1)
         overhead = _compute_classic_ifd_overhead(tags)
         header = 8
@@ -139,15 +124,7 @@ class TestShouldUseBigTIFFStreaming:
         ) is False
 
     def test_large_strip_table_alone_can_promote(self):
-        """Even a small pixel payload can need BigTIFF if n_entries is huge.
-
-        Documents the strip-table contribution: ~536 M entries puts the
-        table itself near 4 GiB and forces BigTIFF with no pixel data.
-        Driven through the ``n_entries`` parameter (8 bytes per entry)
-        to avoid allocating a 536 M-element Python list at test time;
-        the ``ifd_overhead_bytes`` path is exercised by
-        ``test_overhead_pushes_just_under_threshold_over``.
-        """
+        """Even a small pixel payload can need BigTIFF if n_entries is huge."""
         n_entries = (UINT32_MAX // 8) + 1
         assert _should_use_bigtiff_streaming(
             uncompressed_bytes=0,
@@ -156,13 +133,12 @@ class TestShouldUseBigTIFFStreaming:
         ) is True
 
     def test_overhead_pushes_just_under_threshold_over(self):
-        """Regression: a payload that fits classic by raw bytes but not
-        once header + IFD + strip table is added must promote.
+        """A payload that fits classic by raw bytes but not once header +
+        IFD + strip table is added must promote.
         """
         n_entries = 100_000  # ~800 KB strip table
         tags = _minimal_tag_list(n_entries=n_entries)
         overhead = _compute_classic_ifd_overhead(tags)
-        # Choose uncompressed so the total equals exactly UINT32_MAX + 1.
         header = 8
         uncompressed = UINT32_MAX + 1 - header - overhead
         assert _should_use_bigtiff_streaming(
@@ -178,13 +154,7 @@ class TestShouldUseBigTIFFStreaming:
         ) is False
 
     def test_large_gdal_metadata_flips_decision(self):
-        """A 5000-byte gdal_metadata blob must flip a borderline case.
-
-        Under the old 200-byte fudge, ``uncompressed + 200 < UINT32_MAX``
-        could stay classic even when a multi-KB gdal_metadata overflow
-        pushed real overhead well past 200 bytes. With the actual
-        overhead computed from the tag list, the decision flips.
-        """
+        """A 5000-byte gdal_metadata blob must flip a borderline case."""
         n_entries = 1024
         big_blob = 5000  # ASCII overflow heap entry
         plain_tags = _minimal_tag_list(n_entries=n_entries)
@@ -193,21 +163,15 @@ class TestShouldUseBigTIFFStreaming:
 
         plain_overhead = _compute_classic_ifd_overhead(plain_tags)
         meta_overhead = _compute_classic_ifd_overhead(meta_tags)
-        # Metadata blob really does increase computed overhead.
         assert meta_overhead - plain_overhead >= big_blob
 
-        # Pick uncompressed so plain_overhead path stays classic but
-        # the metadata path tips over.
         header = 8
         uncompressed = UINT32_MAX - header - plain_overhead
-        # Plain: total == UINT32_MAX -> classic.
         assert _should_use_bigtiff_streaming(
             uncompressed_bytes=uncompressed,
             n_entries=0,
             ifd_overhead_bytes=plain_overhead,
         ) is False
-        # With the large metadata blob folded into the real overhead,
-        # the total now exceeds UINT32_MAX and we must promote.
         assert _should_use_bigtiff_streaming(
             uncompressed_bytes=uncompressed,
             n_entries=0,
@@ -216,6 +180,7 @@ class TestShouldUseBigTIFFStreaming:
 
 
 # -- Integration tests against the writer ------------------------------------
+
 
 def _read_tiff_magic(path: str) -> int:
     """Return the TIFF version field: 42 (0x002A) classic, 43 (0x002B) BigTIFF."""
@@ -246,18 +211,18 @@ def small_dask_raster():
 class TestStreamingBigTIFFUserOverride:
     def test_bigtiff_true_forces_bigtiff_on_small_raster(
             self, small_dask_raster, tmp_path):
-        path = str(tmp_path / 'force_bigtiff_1785.tif')
+        path = str(tmp_path / 'force_bigtiff.tif')
         to_geotiff(small_dask_raster, path, bigtiff=True)
         assert _read_tiff_magic(path) == 43
 
     def test_bigtiff_false_forces_classic_on_small_raster(
             self, small_dask_raster, tmp_path):
-        path = str(tmp_path / 'force_classic_1785.tif')
+        path = str(tmp_path / 'force_classic.tif')
         to_geotiff(small_dask_raster, path, bigtiff=False)
         assert _read_tiff_magic(path) == 42
 
     def test_bigtiff_none_small_raster_stays_classic(
             self, small_dask_raster, tmp_path):
-        path = str(tmp_path / 'auto_classic_1785.tif')
+        path = str(tmp_path / 'auto_classic.tif')
         to_geotiff(small_dask_raster, path, bigtiff=None)
         assert _read_tiff_magic(path) == 42
