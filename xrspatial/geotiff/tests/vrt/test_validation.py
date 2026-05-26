@@ -41,7 +41,7 @@ from xrspatial.geotiff import (
     open_geotiff,
     to_geotiff,
 )
-from xrspatial.geotiff._backends.vrt import read_vrt as _public_read_vrt
+from xrspatial.geotiff._backends.vrt import read_vrt as _package_read_vrt
 from xrspatial.geotiff._errors import (
     GeoTIFFAmbiguousMetadataError,
     MixedBandMetadataError,
@@ -58,12 +58,10 @@ from xrspatial.geotiff._vrt_validation import (
 )
 from xrspatial.geotiff._writer import write
 
-# ``xrspatial.geotiff.read_vrt`` is the public alias re-exported from the
-# package init; the backend module ``_backends.vrt.read_vrt`` is the same
-# callable. The 2321 fixtures used the package alias; the 2371 fixtures
-# imported the backend module directly. Use one name for the rest of the
-# module so the parametrise IDs stay legible.
-_package_read_vrt = _public_read_vrt
+# ``xrspatial.geotiff.read_vrt`` (re-exported from the package init) is the
+# same callable as ``_backends.vrt.read_vrt``; the parametrise IDs below
+# label the backend-module path as the "package" entry point because that
+# is what the public alias resolves to.
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +592,10 @@ def test_warp_options_dataset_rejected_via_entry_points(tmp_path, reader):
 def test_warped_subclass_band_rejected_via_open_geotiff(tmp_path):
     """``subClass="VRTWarpedRasterBand"`` is the band-level warped
     marker; ``open_geotiff`` must reject it too so callers cannot slip
-    a warped VRT through the public accessor."""
+    a warped VRT through the public accessor. The message has to name
+    the failure mode (``warp`` or ``vrtwarped``) so a regression that
+    raises a generic ``ValueError`` without identifying the cause does
+    not slip past the gate."""
     src_path = _write_src_float32_geotiff(tmp_path)
     warped_xml = f"""<VRTDataset rasterXSize="4" rasterYSize="4" subClass="VRTWarpedDataset">
   <SRS>EPSG:4326</SRS>
@@ -605,8 +606,12 @@ def test_warped_subclass_band_rejected_via_open_geotiff(tmp_path):
 </VRTDataset>"""
     vrt_path = _write_vrt(tmp_path, warped_xml)
     with pytest.raises((ValueError, NotImplementedError, RuntimeError,
-                        UnsupportedGeoTIFFFeatureError)):
+                        UnsupportedGeoTIFFFeatureError)) as excinfo:
         open_geotiff(vrt_path)
+    msg = str(excinfo.value).lower()
+    assert any(k in msg for k in ('warp', 'vrtwarped')), (
+        f"warped-VRT rejection must name 'warp' or 'vrtwarped'; got: {msg!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1033,19 +1038,6 @@ def _has_zstandard():
     return True
 
 
-def _zstd_error_or_skip():
-    """Resolve the ``zstandard.ZstdError`` class or skip the case.
-
-    Used at test-collection time. The wrapper path that raises this
-    exception is unreachable when ``zstandard`` is not installed, so
-    skipping is the right behaviour rather than synthesising a stub.
-    """
-    if not _has_zstandard():
-        pytest.skip("zstandard not installed")
-    from zstandard import ZstdError
-    return ZstdError("synthetic zstd")
-
-
 _NARROW_EXCEPT_IO_OR_PARSE_CASES = [
     pytest.param(
         FileNotFoundError("synthetic missing"),
@@ -1235,7 +1227,7 @@ def clear_allowlist_env(monkeypatch):
 
 def _unique_dir(tmp_path, label: str) -> str:
     """Sub-directory carrying a uuid so parallel workers cannot collide."""
-    d = tmp_path / f"{label}_{uuid.uuid4().hex[:8]}"
+    d = tmp_path / _uniq(label)
     d.mkdir()
     return str(d)
 
