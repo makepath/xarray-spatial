@@ -519,7 +519,7 @@ VRT supported subset
      - stable
      - Relative source paths are constrained to the VRT's directory tree
        and cannot escape via ``..``.
-     - ``xrspatial/geotiff/tests/test_vrt_path_containment_1671.py``
+     - ``xrspatial/geotiff/tests/vrt/test_validation.py``
      - `#2344`_
    * - VRT resampling algorithm allow-list
      - advanced
@@ -555,7 +555,7 @@ VRT supported subset
      - stable
      - VRT-specific failures surface as typed exceptions rather than as
        generic ``Exception``.
-     - ``xrspatial/geotiff/tests/test_vrt_narrow_except_1670.py``
+     - ``xrspatial/geotiff/tests/vrt/test_validation.py``
      - `#2321`_
    * - VRT presence gate
      - stable
