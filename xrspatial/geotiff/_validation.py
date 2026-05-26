@@ -26,8 +26,9 @@ from typing import Any, Callable, Iterable, Mapping
 import numpy as np
 
 from ._coords import _BAND_DIM_NAMES
-from ._errors import (ConflictingCRSError, ConflictingNodataError, MixedBandMetadataError,
-                      NonUniformCoordsError, RotatedTransformError, UnparseableCRSError)
+from ._errors import (ConflictingCRSError, ConflictingNodataError, InconsistentGeoKeysError,
+                      MixedBandMetadataError, NonUniformCoordsError, RotatedTransformError,
+                      UnparseableCRSError)
 from ._runtime import (_MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, _TIME_DIM_NAMES,
                        _X_DIM_NAMES, _Y_DIM_NAMES)
 
@@ -1213,3 +1214,134 @@ def _same_nodata(a: float, b: float) -> bool:
 # ``read_geotiff_dask``; the explicit opt-in surfaces the per-band
 # ambiguity at the call site instead of papering over it silently.
 register_read_metadata_check(_check_read_mixed_band_metadata)
+
+
+# ---------------------------------------------------------------------------
+# Inconsistent GeoKey read check (issue #2417)
+# ---------------------------------------------------------------------------
+
+
+# Mirrors the GeoTIFF spec ModelType enum values. Re-declared here so the
+# validator does not pull a runtime import from ``_geotags`` (which would
+# otherwise create a circular dep at module load time -- ``_geotags``
+# already lives below ``_validation`` in the import order).
+_MODEL_TYPE_UNDEFINED = 0
+_MODEL_TYPE_PROJECTED = 1
+_MODEL_TYPE_GEOGRAPHIC = 2
+_MODEL_TYPE_GEOCENTRIC = 3
+_GEOKEY_USER_DEFINED = 32767
+
+
+def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
+    """Refuse reads whose GeoKey shape is internally contradictory (#2417).
+
+    The legacy reader took ``ProjectedCSTypeGeoKey`` first, fell back to
+    ``GeographicTypeGeoKey``, and never cross-checked either against
+    ``ModelTypeGeoKey``. A TIFF declaring::
+
+        ModelTypeGeoKey       = 2 (geographic)
+        ProjectedCSTypeGeoKey = 4326
+        GeographicTypeGeoKey  = absent
+
+    is internally contradictory -- 4326 is a geographic CRS but appears
+    under the projected key while ``ModelTypeGeoKey`` declares the
+    model is geographic. The legacy path published the EPSG verbatim
+    in ``attrs['crs']`` and synthesised a matching ``attrs['crs_wkt']``,
+    handing downstream callers trustworthy-looking spatial metadata
+    fabricated from inconsistent inputs.
+
+    The check rejects three structurally bad combinations:
+
+    1. ``ModelTypeGeoKey = projected`` with ``GeographicTypeGeoKey``
+       populated but ``ProjectedCSTypeGeoKey`` absent.
+    2. ``ModelTypeGeoKey = geographic`` with ``ProjectedCSTypeGeoKey``
+       populated (the geographic model may not stash a projected code).
+    3. Both ``ProjectedCSTypeGeoKey`` and ``GeographicTypeGeoKey``
+       populated with different non-user-defined EPSG codes.
+
+    ``32767`` (user-defined) is treated as "no resolved code" because
+    the actual CRS is defined by sibling keys (``GeogGeodeticDatumGeoKey``
+    et al.) rather than the type-code slot itself.
+
+    Context keys consumed:
+
+    * ``allow_inconsistent_geokeys`` -- caller opt-out kwarg.
+    * ``model_type`` -- value of ``ModelTypeGeoKey`` (0 if absent).
+    * ``projected_cs_type`` -- value of ``ProjectedCSTypeGeoKey`` (None
+      if absent).
+    * ``geographic_type`` -- value of ``GeographicTypeGeoKey`` (None
+      if absent).
+
+    All context keys are optional. With no GeoKey context the check is
+    a no-op, so callers that did not (or could not) parse a GeoKey
+    directory at all still pass through unchanged.
+    """
+    if context.get('allow_inconsistent_geokeys'):
+        return
+    proj_cs = context.get('projected_cs_type')
+    geog = context.get('geographic_type')
+    model_type = context.get('model_type')
+    if model_type is None and proj_cs is None and geog is None:
+        return
+
+    # Coerce ints. The reader stashes raw GeoKey ints, but a caller could
+    # plausibly pass floats; tolerate both and ignore the rest.
+    def _as_int(v):
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return int(v)
+        return None
+
+    model_type_i = _as_int(model_type)
+    proj_cs_i = _as_int(proj_cs)
+    geog_i = _as_int(geog)
+
+    # ``32767`` (user-defined) is treated as "no resolved code" for
+    # consistency checks; the EPSG slot is intentionally a placeholder
+    # in that case.
+    proj_resolved = (
+        proj_cs_i is not None and proj_cs_i != _GEOKEY_USER_DEFINED)
+    geog_resolved = (
+        geog_i is not None and geog_i != _GEOKEY_USER_DEFINED)
+
+    # Case 1: ModelType = projected but only GeographicTypeGeoKey set.
+    if (model_type_i == _MODEL_TYPE_PROJECTED
+            and not proj_resolved and geog_resolved):
+        raise InconsistentGeoKeysError(
+            f"GeoTIFF source declares ModelTypeGeoKey=projected (1) "
+            f"but carries only GeographicTypeGeoKey={geog_i!r} with no "
+            f"resolved ProjectedCSTypeGeoKey. A projected model must "
+            f"declare the projected CRS code in ProjectedCSTypeGeoKey; "
+            f"the geographic key on its own cannot identify the "
+            f"projection. Pass allow_inconsistent_geokeys=True to keep "
+            f"the legacy behaviour of treating the geographic code as "
+            f"the file's CRS. See issue #2417."
+        )
+
+    # Case 2: ModelType = geographic but ProjectedCSTypeGeoKey set.
+    if model_type_i == _MODEL_TYPE_GEOGRAPHIC and proj_resolved:
+        raise InconsistentGeoKeysError(
+            f"GeoTIFF source declares ModelTypeGeoKey=geographic (2) "
+            f"but populates ProjectedCSTypeGeoKey={proj_cs_i!r}. The "
+            f"geographic model may not carry a projected CRS code; the "
+            f"legacy reader would publish EPSG {proj_cs_i!r} verbatim "
+            f"in attrs['crs'] from contradictory inputs. Pass "
+            f"allow_inconsistent_geokeys=True to keep the legacy "
+            f"behaviour. See issue #2417."
+        )
+
+    # Case 3: both type keys resolved to different EPSG codes.
+    if proj_resolved and geog_resolved and proj_cs_i != geog_i:
+        raise InconsistentGeoKeysError(
+            f"GeoTIFF source populates both ProjectedCSTypeGeoKey="
+            f"{proj_cs_i!r} and GeographicTypeGeoKey={geog_i!r} with "
+            f"different EPSG codes. The legacy reader took the "
+            f"projected code first and silently dropped the geographic "
+            f"one. Pass allow_inconsistent_geokeys=True to keep that "
+            f"behaviour, or fix the source's GeoKey directory. See "
+            f"issue #2417."
+        )
+
+
+register_read_metadata_check(_check_read_inconsistent_geokeys)

@@ -72,9 +72,9 @@ from ._coords import \
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry  # noqa: F401
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, GeoTIFFAmbiguousMetadataError,
-                      InvalidCRSCodeError, MixedBandMetadataError, NonUniformCoordsError,
-                      RotatedTransformError, UnknownCRSModelTypeError, UnparseableCRSError,
-                      UnsupportedGeoTIFFFeatureError)
+                      InconsistentGeoKeysError, InvalidCRSCodeError, MixedBandMetadataError,
+                      NonUniformCoordsError, RotatedTransformError, UnknownCRSModelTypeError,
+                      UnparseableCRSError, UnsupportedGeoTIFFFeatureError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
@@ -108,6 +108,7 @@ __all__ = [
     'GEOREF_STATUS_ROTATED_DROPPED',
     'GEOREF_STATUS_TRANSFORM_ONLY',
     'GEOREF_STATUS_VALUES',
+    'InconsistentGeoKeysError',
     'InvalidCRSCodeError',
     'MixedBandMetadataError',
     'NonUniformCoordsError',
@@ -345,6 +346,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
                  allow_unparseable_crs: bool = False,
+                 allow_inconsistent_geokeys: bool = False,
                  allow_experimental_codecs: bool = False,
                  allow_internal_only_jpeg: bool = False,
                  band_nodata: str | None = None,
@@ -543,6 +545,18 @@ def open_geotiff(source: str | BinaryIO, *,
         behaviour where the citation field passes through unchanged.
         Matches the same kwarg on ``to_geotiff`` / ``write_geotiff_gpu``
         so a value the reader accepted can survive a round-trip.
+    allow_inconsistent_geokeys : bool, default False
+        [advanced] Read-side opt-in for GeoTIFF sources whose GeoKey
+        directory is internally contradictory: ``ModelTypeGeoKey``
+        disagrees with the type-specific keys actually populated, or
+        ``ProjectedCSTypeGeoKey`` and ``GeographicTypeGeoKey`` resolve
+        to different EPSG codes. The legacy reader took the projected
+        code first and silently fabricated an
+        ``attrs['crs']`` / ``attrs['crs_wkt']`` from contradictory
+        inputs (issue #2417). When ``False`` (the default), the read
+        raises ``InconsistentGeoKeysError``. Set to ``True`` to keep
+        the legacy permissive behaviour for files known to carry
+        quirky-but-trusted GeoKey layouts.
     allow_experimental_codecs : bool, default False
         Read-side opt-in for sources compressed with the Tier 3
         experimental codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``).
@@ -690,6 +704,8 @@ def open_geotiff(source: str | BinaryIO, *,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
                         allow_unparseable_crs=allow_unparseable_crs,
+                        allow_inconsistent_geokeys=(
+                            allow_inconsistent_geokeys),
                         allow_experimental_codecs=allow_experimental_codecs,
                         allow_internal_only_jpeg=allow_internal_only_jpeg,
                         band_nodata=band_nodata,
@@ -712,6 +728,8 @@ def open_geotiff(source: str | BinaryIO, *,
                                 max_pixels=max_pixels,
                                 allow_rotated=allow_rotated,
                                 allow_unparseable_crs=allow_unparseable_crs,
+                                allow_inconsistent_geokeys=(
+                                    allow_inconsistent_geokeys),
                                 allow_experimental_codecs=(
                                     allow_experimental_codecs),
                                 allow_internal_only_jpeg=(
@@ -727,6 +745,8 @@ def open_geotiff(source: str | BinaryIO, *,
                                  max_pixels=max_pixels, name=name,
                                  allow_rotated=allow_rotated,
                                  allow_unparseable_crs=allow_unparseable_crs,
+                                 allow_inconsistent_geokeys=(
+                                     allow_inconsistent_geokeys),
                                  allow_experimental_codecs=(
                                      allow_experimental_codecs),
                                  allow_internal_only_jpeg=(
@@ -783,6 +803,7 @@ def open_geotiff(source: str | BinaryIO, *,
         name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
 

@@ -222,6 +222,13 @@ the ambiguous-metadata family at once.
      - ``attrs['crs']`` and ``attrs['crs_wkt']`` do not canonicalise to
        the same WKT on write.
      - Resolve the conflict in caller code before writing.
+   * - :class:`~xrspatial.geotiff.InconsistentGeoKeysError`
+     - The source's GeoKey directory is internally contradictory:
+       ``ModelTypeGeoKey`` disagrees with the type-specific keys
+       actually populated, or ``ProjectedCSTypeGeoKey`` and
+       ``GeographicTypeGeoKey`` resolve to different EPSG codes.
+     - ``allow_inconsistent_geokeys=True`` to keep the legacy silent
+       acceptance for known-quirky historical files.
    * - :class:`~xrspatial.geotiff.ConflictingNodataError`
      - ``attrs['nodata']`` and ``attrs['nodatavals']`` disagree on
        write.

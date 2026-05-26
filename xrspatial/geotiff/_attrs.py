@@ -1051,6 +1051,7 @@ def _validate_read_geo_info(
     window=None,
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
+    allow_inconsistent_geokeys: bool = False,
     band_nodata: str | None = None,
     band_nodata_values: list | None = None,
 ) -> None:
@@ -1102,11 +1103,26 @@ def _validate_read_geo_info(
             and getattr(geo_info, 'has_georef', True))
         else None
     )
+    # Pull the GeoKey shape onto the context so
+    # ``_check_read_inconsistent_geokeys`` (issue #2417) can audit
+    # ModelType / ProjectedCSType / GeographicType for contradictions.
+    # ``geo_info.geokeys`` is the parsed dict; missing keys map to
+    # ``None`` so the check treats the slot as "not declared" rather
+    # than as a default-zero, which would otherwise look like
+    # ``ModelType = undefined`` instead of "no model type tag at all".
+    raw_geokeys = getattr(geo_info, 'geokeys', None) or {}
+    model_type_ctx = raw_geokeys.get(1024)  # GEOKEY_MODEL_TYPE
+    proj_cs_ctx = raw_geokeys.get(3072)     # GEOKEY_PROJECTED_CS_TYPE
+    geog_ctx = raw_geokeys.get(2048)        # GEOKEY_GEOGRAPHIC_TYPE
     validate_read_metadata({
         'allow_rotated': allow_rotated,
         'allow_unparseable_crs': allow_unparseable_crs,
+        'allow_inconsistent_geokeys': allow_inconsistent_geokeys,
         'transform': transform_for_check,
         'crs_wkt': geo_info.crs_wkt,
+        'model_type': model_type_ctx,
+        'projected_cs_type': proj_cs_ctx,
+        'geographic_type': geog_ctx,
         'band_nodata': band_nodata,
         'band_nodata_values': band_nodata_values,
     })
@@ -1500,6 +1516,7 @@ def _finalize_eager_read(
     name,
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
+    allow_inconsistent_geokeys: bool = False,
     attrs_in: dict | None = None,
 ):
     """Validate, populate attrs, mask, cast, and build an eager DataArray.
@@ -1546,6 +1563,7 @@ def _finalize_eager_read(
         geo_info, window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
     # Step 2: populate attrs from geo_info onto a fresh dict (or onto a
@@ -1613,6 +1631,7 @@ def _finalize_lazy_read_attrs(
     window,
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
+    allow_inconsistent_geokeys: bool = False,
     band_nodata: str | None = None,
     band_nodata_values: list | None = None,
     attrs_in: dict | None = None,
@@ -1685,6 +1704,7 @@ def _finalize_lazy_read_attrs(
         geo_info, window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
         band_nodata=band_nodata,
         band_nodata_values=band_nodata_values,
     )
