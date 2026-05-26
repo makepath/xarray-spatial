@@ -55,6 +55,29 @@ import numpy as np
 import pytest
 import xarray as xr
 
+# Optional-dependency gates. Each section below decorates only the
+# tests that actually touch the optional backend, instead of
+# module-level ``importorskip`` which would skip the entire 159-test
+# file (including pure-numpy gates) on a minimal install.
+_HAS_DASK = importlib.util.find_spec("dask") is not None
+_HAS_DASK_ARRAY = importlib.util.find_spec("dask.array") is not None
+_HAS_RASTERIO = importlib.util.find_spec("rasterio") is not None
+_HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
+
+_requires_dask = pytest.mark.skipif(
+    not _HAS_DASK, reason="dask is required for this release gate",
+)
+_requires_rasterio = pytest.mark.skipif(
+    not _HAS_RASTERIO,
+    reason="rasterio is required for the overview / sidecar gate",
+)
+_requires_rasterio_and_dask = pytest.mark.skipif(
+    not (_HAS_RASTERIO and _HAS_DASK_ARRAY),
+    reason=(
+        "rasterio and dask.array are required for the overview / sidecar gate"
+    ),
+)
+
 from xrspatial.geotiff import (
     SUPPORTED_FEATURES,
     UnsafeURLError,
@@ -739,8 +762,8 @@ def test_release_gate_windowed_read_full_extent_matches_unwindowed(
 # Dask reads of a local GeoTIFF must return the same pixels and canonical
 # attrs as the eager (numpy) read. The small one-shot gate below is the
 # release-engineer-facing test; the wider parity matrix lives elsewhere.
-
-pytest.importorskip("dask")
+# Per-test ``_requires_dask`` skip so a minimal install still runs the
+# pure-numpy gates above.
 
 
 def _dask_parity_write_known_good(path: str) -> np.ndarray:
@@ -765,6 +788,7 @@ def _dask_parity_write_known_good(path: str) -> np.ndarray:
 
 
 @pytest.mark.release_gate
+@_requires_dask
 def test_release_gate_dask_read_matches_eager_pixels(tmp_path) -> None:
     """The dask backend returns the same pixels as the eager backend."""
     path = str(tmp_path / "release_gate_dask_parity_pixels.tif")
@@ -795,6 +819,7 @@ def test_release_gate_dask_read_matches_eager_pixels(tmp_path) -> None:
 
 
 @pytest.mark.release_gate
+@_requires_dask
 def test_release_gate_dask_read_matches_eager_attrs(tmp_path) -> None:
     """The dask backend produces the same canonical attrs as eager."""
     path = str(tmp_path / "release_gate_dask_parity_attrs.tif")
@@ -831,6 +856,7 @@ def test_release_gate_dask_read_matches_eager_attrs(tmp_path) -> None:
 
 
 @pytest.mark.release_gate
+@_requires_dask
 def test_release_gate_dask_read_is_lazy(tmp_path) -> None:
     """A ``chunks=`` read produces a dask-backed DataArray.
 
@@ -1000,6 +1026,7 @@ def _eager_dask_assert_release_attrs_equal(
 
 
 @pytest.mark.release_gate
+@_requires_dask
 @pytest.mark.parametrize("fixture_id, open_kwargs", _EAGER_DASK_CORPUS)
 def test_release_gate_eager_dask_full_parity(
     fixture_id: str, open_kwargs: dict,
@@ -1397,10 +1424,10 @@ def test_release_gate_codec_round_trip_stable_set_matches_supported_features() -
 # metadata set, and ``transform`` scales pixel size by the level factor
 # while keeping the origin fixed.
 
-rasterio = pytest.importorskip("rasterio")
-pytest.importorskip("dask.array")
-
-from rasterio.enums import Resampling  # noqa: E402
+# rasterio and dask.array are required only by this section; the
+# imports live inside the helpers so a minimal install still runs the
+# pure-numpy gates above. ``_requires_rasterio`` / ``_requires_rasterio_and_dask``
+# skip the affected tests cleanly.
 
 _OVERVIEW_BASE_SIZE = 64
 _OVERVIEW_FACTORS = (2, 4)
@@ -1440,6 +1467,8 @@ def _overview_unique_tmp_path(tmp_path, label: str) -> str:
 
 def _overview_write_internal_cog(path: str) -> None:
     """Write a COG with base + internal overviews at factors 2 and 4."""
+    import rasterio  # gated by ``_requires_rasterio`` on every caller
+
     da = _overview_make_raster()
     to_geotiff(
         da, path,
@@ -1460,6 +1489,9 @@ def _overview_write_internal_cog(path: str) -> None:
 
 def _overview_write_external_sidecar(path: str) -> None:
     """Write a tiled TIFF + ``.ovr`` sidecar at factors 2 and 4."""
+    import rasterio  # gated by ``_requires_rasterio`` on every caller
+    from rasterio.enums import Resampling
+
     da = _overview_make_raster()
     to_geotiff(
         da, path,
@@ -1554,6 +1586,7 @@ def _overview_factors_by_level() -> dict:
 
 
 @pytest.mark.release_gate
+@_requires_rasterio_and_dask
 @pytest.mark.parametrize("reader", ["eager", "dask"])
 def test_release_gate_cog_internal_overview_metadata_survives(
     tmp_path, reader,
@@ -1579,6 +1612,7 @@ def test_release_gate_cog_internal_overview_metadata_survives(
 
 
 @pytest.mark.release_gate
+@_requires_rasterio_and_dask
 @pytest.mark.parametrize("reader", ["eager", "dask"])
 def test_release_gate_cog_internal_overview_transform_scales(
     tmp_path, reader,
@@ -1599,6 +1633,7 @@ def test_release_gate_cog_internal_overview_transform_scales(
 
 
 @pytest.mark.release_gate
+@_requires_rasterio
 def test_release_gate_cog_internal_overview_shape_matches_factors(
     tmp_path,
 ) -> None:
@@ -1618,6 +1653,7 @@ def test_release_gate_cog_internal_overview_shape_matches_factors(
 
 
 @pytest.mark.release_gate
+@_requires_rasterio_and_dask
 @pytest.mark.parametrize("reader", ["eager", "dask"])
 def test_release_gate_sidecar_overview_metadata_survives(
     tmp_path, reader,
@@ -1645,6 +1681,7 @@ def test_release_gate_sidecar_overview_metadata_survives(
 
 
 @pytest.mark.release_gate
+@_requires_rasterio_and_dask
 @pytest.mark.parametrize("reader", ["eager", "dask"])
 def test_release_gate_sidecar_overview_transform_scales(
     tmp_path, reader,
@@ -1665,6 +1702,7 @@ def test_release_gate_sidecar_overview_transform_scales(
 
 
 @pytest.mark.release_gate
+@_requires_rasterio
 def test_release_gate_sidecar_overview_shape_matches_factors(
     tmp_path,
 ) -> None:
@@ -1684,6 +1722,7 @@ def test_release_gate_sidecar_overview_shape_matches_factors(
 
 
 @pytest.mark.release_gate
+@_requires_rasterio_and_dask
 @pytest.mark.parametrize("reader", ["eager", "dask"])
 def test_release_gate_internal_vs_sidecar_metadata_agree(
     tmp_path, reader,
@@ -1738,9 +1777,8 @@ def test_release_gate_internal_vs_sidecar_metadata_agree(
 # row_off)`` exactly, and the canonical non-transform release attrs
 # unchanged.
 
-_WSP_HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 _wsp_skip_no_tifffile = pytest.mark.skipif(
-    not _WSP_HAS_TIFFFILE,
+    not _HAS_TIFFFILE,
     reason="tifffile required for MinIsWhite fixture",
 )
 
@@ -1856,7 +1894,7 @@ _WSP_CORPUS = (
 
 
 @pytest.fixture
-def _wsp_corpus_file(tmp_path, request):
+def wsp_corpus_file(tmp_path, request):
     """Write a single fixture file and return its on-disk path."""
     builder = request.param
     tag = uuid.uuid4().hex[:8]
@@ -1887,7 +1925,7 @@ def _wsp_open_dask(path, *, window=None):
 
 _WSP_READERS = (
     pytest.param(_wsp_open_eager, id="eager"),
-    pytest.param(_wsp_open_dask, id="dask"),
+    pytest.param(_wsp_open_dask, id="dask", marks=_requires_dask),
 )
 
 
@@ -2005,12 +2043,12 @@ def _wsp_assert_canonical_attrs_unchanged(windowed, full):
 
 @pytest.mark.release_gate
 @pytest.mark.parametrize("window", _WSP_WINDOWS)
-@pytest.mark.parametrize("_wsp_corpus_file", _WSP_CORPUS, indirect=True)
+@pytest.mark.parametrize("wsp_corpus_file", _WSP_CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _WSP_READERS)
-def test_release_gate_windowed_read_shape(_wsp_corpus_file, reader, window):
+def test_release_gate_windowed_read_shape(wsp_corpus_file, reader, window):
     """The returned shape equals the window's ``(height, width)``."""
     row_off, col_off, row_stop, col_stop = window
-    out = reader(_wsp_corpus_file, window=window)
+    out = reader(wsp_corpus_file, window=window)
     _wsp_assert_shape(
         out,
         expected_h=row_stop - row_off,
@@ -2020,15 +2058,15 @@ def test_release_gate_windowed_read_shape(_wsp_corpus_file, reader, window):
 
 @pytest.mark.release_gate
 @pytest.mark.parametrize("window", _WSP_WINDOWS)
-@pytest.mark.parametrize("_wsp_corpus_file", _WSP_CORPUS, indirect=True)
+@pytest.mark.parametrize("wsp_corpus_file", _WSP_CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _WSP_READERS)
 def test_release_gate_windowed_read_coords_slice(
-    _wsp_corpus_file, reader, window,
+    wsp_corpus_file, reader, window,
 ):
     """``coords['y'/'x']`` equals the matching slice of the full coords."""
     row_off, col_off, row_stop, col_stop = window
-    full = reader(_wsp_corpus_file)
-    out = reader(_wsp_corpus_file, window=window)
+    full = reader(wsp_corpus_file)
+    out = reader(wsp_corpus_file, window=window)
     _wsp_assert_coords_slice(
         out, full,
         row_off=row_off, col_off=col_off,
@@ -2038,15 +2076,15 @@ def test_release_gate_windowed_read_coords_slice(
 
 @pytest.mark.release_gate
 @pytest.mark.parametrize("window", _WSP_WINDOWS)
-@pytest.mark.parametrize("_wsp_corpus_file", _WSP_CORPUS, indirect=True)
+@pytest.mark.parametrize("wsp_corpus_file", _WSP_CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _WSP_READERS)
 def test_release_gate_windowed_read_transform_shifted(
-    _wsp_corpus_file, reader, window,
+    wsp_corpus_file, reader, window,
 ):
     """``attrs['transform']`` equals ``T_full * translation(col, row)``."""
     row_off, col_off, _row_stop, _col_stop = window
-    full = reader(_wsp_corpus_file)
-    out = reader(_wsp_corpus_file, window=window)
+    full = reader(wsp_corpus_file)
+    out = reader(wsp_corpus_file, window=window)
     _wsp_assert_transform_shifted(
         out, full, col_off=col_off, row_off=row_off,
     )
@@ -2054,14 +2092,14 @@ def test_release_gate_windowed_read_transform_shifted(
 
 @pytest.mark.release_gate
 @pytest.mark.parametrize("window", _WSP_WINDOWS)
-@pytest.mark.parametrize("_wsp_corpus_file", _WSP_CORPUS, indirect=True)
+@pytest.mark.parametrize("wsp_corpus_file", _WSP_CORPUS, indirect=True)
 @pytest.mark.parametrize("reader", _WSP_READERS)
 def test_release_gate_windowed_read_canonical_attrs_unchanged(
-    _wsp_corpus_file, reader, window,
+    wsp_corpus_file, reader, window,
 ):
     """The non-transform canonical attrs match the unwindowed read."""
-    full = reader(_wsp_corpus_file)
-    out = reader(_wsp_corpus_file, window=window)
+    full = reader(wsp_corpus_file)
+    out = reader(wsp_corpus_file, window=window)
     _wsp_assert_canonical_attrs_unchanged(out, full)
 
 
@@ -2349,6 +2387,7 @@ def test_release_gate_negative_rotated_eager(
 
 
 @pytest.mark.release_gate
+@_requires_dask
 def test_release_gate_negative_rotated_dask(
     _neg_rotated_geotiff_path,
 ) -> None:
@@ -2541,19 +2580,13 @@ def test_release_gate_http_ssrf_rejects_loopback() -> None:
 
 
 @pytest.mark.release_gate
-@pytest.mark.xfail(
-    reason=(
-        "Locks in once sub-PR 5 of #2321 (PR #2326) lands. Until then, "
-        "uppercase HTTP slips past the SSRF check and falls through to "
-        "fsspec, which raises a generic ValueError. Once #2326 is merged, "
-        "remove this xfail marker so the release gate enforces the "
-        "promise."
-    ),
-    strict=False,
-    raises=(ValueError, UnsafeURLError),
-)
 def test_release_gate_http_ssrf_rejects_loopback_uppercase_scheme() -> None:
-    """Uppercase HTTP scheme must take the same SSRF path."""
+    """Uppercase HTTP scheme must take the same SSRF path.
+
+    PR #2326 (sub-PR 5 of #2321) made the SSRF check case-insensitive,
+    so the xfail this test originally carried is gone: uppercase HTTP
+    now raises :class:`UnsafeURLError` like its lowercase sibling.
+    """
     with pytest.raises(UnsafeURLError):
         open_geotiff("HTTP://127.0.0.1/does-not-matter.tif")
 
