@@ -76,7 +76,8 @@ from ._errors import (ConflictingCRSError, ConflictingNodataError, GeoTIFFAmbigu
                       MixedBandMetadataError,
                       NonRepresentableEPSGCRSError, NonUniformCoordsError, RotatedTransformError,
                       UnknownCRSModelTypeError,
-                      UnparseableCRSError, UnsupportedGeoTIFFFeatureError)
+                      UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
+                      VRTStableSourcesOnlyError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
@@ -122,6 +123,7 @@ __all__ = [
     'UnparseableCRSError',
     'UnsafeURLError',
     'UnsupportedGeoTIFFFeatureError',
+    'VRTStableSourcesOnlyError',
     'open_geotiff',
     'read_geotiff_gpu',
     'read_geotiff_dask',
@@ -389,6 +391,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  allow_unparseable_crs: bool = False,
                  allow_inconsistent_geokeys: bool = False,
                  allow_invalid_nodata: bool = False,
+                 stable_only: bool = False,
                  allow_experimental_codecs: bool = False,
                  allow_internal_only_jpeg: bool = False,
                  band_nodata: str | None = None,
@@ -611,6 +614,19 @@ def open_geotiff(source: str | BinaryIO, *,
         pre-rejection no-op behaviour for files known to carry such
         sentinels (e.g. external tooling that writes ``"nan"`` on
         integer outputs). See issue #2441 (#1774 follow-up).
+    stable_only : bool, default False
+        [advanced] Read-side opt-in for stable-tier sources only. When
+        ``True``, a ``.vrt`` source raises
+        :class:`VRTStableSourcesOnlyError` because ``reader.vrt`` and
+        the VRT child-source pipeline sit at the ``advanced`` /
+        ``experimental`` tiers in
+        :data:`xrspatial.geotiff.SUPPORTED_FEATURES`. Non-VRT sources
+        on this entry point already ride the stable ``reader.local_file``
+        path and the per-source codec gate, so the flag is a no-op for
+        them. The rejection names the file path and the
+        ``allow_experimental_codecs`` opt-in so the caller can unlock
+        the broader tier set explicitly when needed. See epic #2342
+        and ``docs/source/reference/release_gate_geotiff.rst``.
     allow_experimental_codecs : bool, default False
         Read-side opt-in for sources compressed with the Tier 3
         experimental codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``).
@@ -761,6 +777,7 @@ def open_geotiff(source: str | BinaryIO, *,
                         allow_inconsistent_geokeys=(
                             allow_inconsistent_geokeys),
                         allow_invalid_nodata=allow_invalid_nodata,
+                        stable_only=stable_only,
                         allow_experimental_codecs=allow_experimental_codecs,
                         allow_internal_only_jpeg=allow_internal_only_jpeg,
                         band_nodata=band_nodata,
@@ -786,6 +803,7 @@ def open_geotiff(source: str | BinaryIO, *,
                                 allow_inconsistent_geokeys=(
                                     allow_inconsistent_geokeys),
                                 allow_invalid_nodata=allow_invalid_nodata,
+                                stable_only=stable_only,
                                 allow_experimental_codecs=(
                                     allow_experimental_codecs),
                                 allow_internal_only_jpeg=(
@@ -804,6 +822,7 @@ def open_geotiff(source: str | BinaryIO, *,
                                  allow_inconsistent_geokeys=(
                                      allow_inconsistent_geokeys),
                                  allow_invalid_nodata=allow_invalid_nodata,
+                                 stable_only=stable_only,
                                  allow_experimental_codecs=(
                                      allow_experimental_codecs),
                                  allow_internal_only_jpeg=(

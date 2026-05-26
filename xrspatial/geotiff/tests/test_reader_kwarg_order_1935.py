@@ -47,6 +47,12 @@ _CANONICAL_ORDER = (
     # opt-outs so the canonical order keeps the typed-error gates
     # grouped.
     "allow_invalid_nodata",
+    # Issue #2443 (epic #2342) added the stable-tier-only read-side
+    # gate. Sits alongside the other ambiguous-metadata opt-outs and
+    # immediately before the experimental-codec unlock it pairs with
+    # in the rejection message, so the canonical order tracks the
+    # release-contract grouping.
+    "stable_only",
     # PR 4 of epic #2340 added the experimental / internal-only codec
     # opt-ins on the read side, mirroring the writer surface from #2137
     # / #1845. They sit after the other ``allow_*`` flags so the

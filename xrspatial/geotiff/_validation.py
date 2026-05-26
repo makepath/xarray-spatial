@@ -28,7 +28,7 @@ import numpy as np
 from ._coords import _BAND_DIM_NAMES
 from ._errors import (ConflictingCRSError, ConflictingNodataError, InconsistentGeoKeysError,
                       InvalidIntegerNodataError, MixedBandMetadataError, NonUniformCoordsError,
-                      RotatedTransformError, UnparseableCRSError)
+                      RotatedTransformError, UnparseableCRSError, VRTStableSourcesOnlyError)
 from ._runtime import (_MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, _TIME_DIM_NAMES,
                        _X_DIM_NAMES, _Y_DIM_NAMES)
 
@@ -665,6 +665,83 @@ def _validate_int_nodata_for_dtype(
         f"with a finite in-range integer sentinel. See "
         f"docs/source/reference/release_gate_geotiff.rst for the "
         f"release contract on nodata handling (#1774 / #2341)."
+    )
+
+
+def _validate_stable_only_vrt(
+    source: str,
+    *,
+    stable_only: bool,
+    allow_experimental_codecs: bool = False,
+) -> None:
+    """Reject a VRT source when the caller asks for stable-only sources.
+
+    Implements the read-side gate the release-contract test
+    ``test_release_gate_negative_mixed_tier_vrt_children`` pins from
+    epic #2342. The ``reader.vrt`` entry point sits at the ``advanced``
+    tier in :data:`xrspatial.geotiff.SUPPORTED_FEATURES`, and VRT child
+    sources can declare any codec / capability the underlying GeoTIFF
+    reader supports (including the ``experimental`` and ``internal_only``
+    tiers). A caller who asks for stable-only sources via
+    ``stable_only=True`` therefore cannot be served from a VRT mosaic
+    without naming the broader-tier opt-in (``allow_experimental_codecs``).
+    Reject up front at graph-build / eager-read setup time so the
+    failure surfaces before any pixel decode work.
+
+    Parameters
+    ----------
+    source : str
+        Path to the ``.vrt`` file. Embedded in the rejection message so
+        the caller can locate the offending file without re-parsing.
+        Non-string sources (eager file-like buffers) and string paths
+        that do not end in ``.vrt`` are silently passed through; the
+        gate only fires for sources the caller could reasonably have
+        intended as a VRT mosaic, so a future call site that routes a
+        non-VRT path through this helper does not mislabel the failure.
+    stable_only : bool
+        Caller's opt-in for stable-only sources. ``False`` is a no-op;
+        ``True`` raises :class:`VRTStableSourcesOnlyError` (provided
+        ``source`` looks like a VRT path).
+    allow_experimental_codecs : bool, default False
+        Companion opt-in. When the caller passes both ``stable_only=True``
+        and ``allow_experimental_codecs=True`` the request is internally
+        contradictory, but ``allow_experimental_codecs=True`` is the
+        documented unlock so we honour it: the gate becomes a no-op and
+        the per-source codec gate downstream handles the rest. Pure
+        ``stable_only=True`` (without the unlock) raises.
+
+    Raises
+    ------
+    VRTStableSourcesOnlyError
+        When ``stable_only=True`` and the source path ends in ``.vrt``
+        (case-insensitive) and the caller did not pass
+        ``allow_experimental_codecs=True``. The message names the
+        offending VRT path, both flags, and cites the release-contract
+        document plus epic #2342.
+    """
+    if not stable_only:
+        return
+    if allow_experimental_codecs:
+        return
+    # Defensive extension check: every public-API call site routes only
+    # ``.vrt`` paths into this helper, but a future call site could
+    # forward a non-VRT path. Pass through silently in that case so the
+    # rejection message never mislabels a non-VRT source as a VRT.
+    if not (isinstance(source, str) and source.lower().endswith('.vrt')):
+        return
+    raise VRTStableSourcesOnlyError(
+        f"VRT source '{source}' cannot be opened under stable_only=True. "
+        f"The VRT reader (``reader.vrt``) sits at the advanced tier in "
+        f"SUPPORTED_FEATURES, and VRT child sources can declare any "
+        f"codec or capability the GeoTIFF reader supports, including "
+        f"the experimental and internal-only tiers. The stable-only "
+        f"request cannot be served from a VRT mosaic without an "
+        f"explicit broader-tier opt-in. Pass "
+        f"allow_experimental_codecs=True to opt in to the advanced / "
+        f"experimental tiers, or drop stable_only=True to keep the "
+        f"default behaviour. See "
+        f"docs/source/reference/release_gate_geotiff.rst for the "
+        f"release contract and epic #2342 for the tracking issue."
     )
 
 
