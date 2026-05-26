@@ -99,6 +99,7 @@ def _parse_cog_http_meta(
     overview_level: int | None = None,
     *,
     allow_rotated: bool = False,
+    allow_invalid_nodata: bool = False,
     source_path: str | None = None,
     max_cloud_bytes: int | None = None,
     return_sidecar: bool = False,
@@ -260,7 +261,8 @@ def _parse_cog_http_meta(
     # its own geokeys is parsed against the sidecar bytes too.
     geo_info = extract_geo_info_with_overview_inheritance(
         ifd, ifds, header_bytes, header.byte_order,
-        allow_rotated=allow_rotated)
+        allow_rotated=allow_rotated,
+        allow_invalid_nodata=allow_invalid_nodata)
     # When the chosen IFD lives in the sidecar, return the sidecar's own
     # ``TIFFHeader`` so the per-chunk / eager decode step sees the byte
     # order of the file the bytes actually came from. A big-endian
@@ -296,6 +298,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                    window: tuple[int, int, int, int] | None = None,
                    *,
                    allow_rotated: bool = False,
+                   allow_invalid_nodata: bool = False,
                    allow_experimental_codecs: bool = False,
                    allow_internal_only_jpeg: bool = False,
                    ) -> tuple[np.ndarray, GeoInfo]:
@@ -355,6 +358,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
          ) = _reader._parse_cog_http_meta(
             source, overview_level=overview_level,
             allow_rotated=allow_rotated,
+            allow_invalid_nodata=allow_invalid_nodata,
             source_path=url,
             return_sidecar=True,
         )

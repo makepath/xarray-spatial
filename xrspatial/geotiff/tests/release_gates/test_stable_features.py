@@ -2319,16 +2319,6 @@ def test_release_gate_negative_conflicting_aux_xml_crs(tmp_path) -> None:
 
 
 @pytest.mark.release_gate
-@pytest.mark.xfail(
-    reason=(
-        "Issue #1774 currently treats a non-finite or fractional integer "
-        "nodata sentinel as a silent no-op rather than a hard error. The "
-        "release promise is to upgrade the no-op to a typed rejection so "
-        "the caller sees the silent-coercion risk; this xfail flips to a "
-        "pass when the upgrade lands."
-    ),
-    strict=False,
-)
 def test_release_gate_negative_integer_nodata_float_promoted(
     tmp_path,
 ) -> None:

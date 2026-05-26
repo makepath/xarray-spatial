@@ -129,6 +129,7 @@ def read_vrt(source: str, *,
              allow_rotated: bool = False,
              allow_unparseable_crs: bool = False,
              allow_inconsistent_geokeys: bool = False,
+             allow_invalid_nodata: bool = False,
              allow_experimental_codecs: bool = False,
              allow_internal_only_jpeg: bool = False,
              band_nodata: str | None = None,
@@ -269,6 +270,12 @@ def read_vrt(source: str, *,
         thread per-GeoTIFF-source kwargs, so this kwarg is currently a
         no-op on the VRT path. See ``open_geotiff`` for the full
         description (issue #2417).
+    allow_invalid_nodata : bool, default False
+        [advanced] Read-side opt-in for integer-dtype source files whose
+        ``GDAL_NODATA`` tag is non-finite or fractional. Forwarded to
+        the per-source GeoTIFF reads built by the VRT planner. See
+        ``open_geotiff`` for the full description (#1774 follow-up,
+        #2441).
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs in
         any source file referenced by the VRT. Forwarded to the
@@ -451,6 +458,7 @@ def read_vrt(source: str, *,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
             allow_inconsistent_geokeys=allow_inconsistent_geokeys,
+            allow_invalid_nodata=allow_invalid_nodata,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
             band_nodata=band_nodata,
@@ -802,6 +810,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
                       allow_inconsistent_geokeys: bool = False,
+                      allow_invalid_nodata: bool = False,
                       allow_experimental_codecs: bool = False,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
