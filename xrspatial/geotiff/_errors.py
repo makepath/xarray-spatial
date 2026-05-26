@@ -147,6 +147,45 @@ class InconsistentGeoKeysError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class InvalidIntegerNodataError(GeoTIFFAmbiguousMetadataError):
+    """Integer-dtype source carries a non-finite or fractional GDAL_NODATA (#1774 follow-up).
+
+    Raised when a GeoTIFF whose pixel buffer is an integer dtype declares
+    a ``GDAL_NODATA`` value the integer buffer cannot represent: NaN, +Inf,
+    -Inf, or a fractional float such as ``"3.5"`` on a ``uint16`` file.
+    The original #1774 fix parsed the sentinel into ``attrs['nodata']``
+    and silently skipped the masking step, so callers had no way to tell
+    a silently-ignored sentinel from a missing one. The release contract
+    (see ``test_release_gate_negative_integer_nodata_float_promoted``)
+    upgrades that no-op to a typed rejection so the silent-coercion risk
+    surfaces at the read boundary.
+
+    Pass ``allow_invalid_nodata=True`` on the public read entry points to
+    restore the pre-rejection no-op behaviour for files known to carry
+    such sentinels.
+    """
+
+
+class VRTStableSourcesOnlyError(GeoTIFFAmbiguousMetadataError):
+    """VRT source opened under ``stable_only=True`` (epic #2342).
+
+    Raised when a caller opens a ``.vrt`` file with ``stable_only=True``.
+    The VRT reader (``reader.vrt``) and its child sources sit at the
+    ``advanced`` / ``experimental`` tiers in
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES`, so a request for
+    stable-only sources cannot be served from a VRT mosaic without an
+    explicit opt-in. The message names the offending VRT path and the
+    matching opt-in flag (``allow_experimental_codecs``) so the caller
+    learns the unlock at the boundary rather than from the docs.
+
+    Pass ``stable_only=False`` (the default) to keep the legacy
+    behaviour, or pass ``allow_experimental_codecs=True`` to opt into
+    the broader tier set explicitly. See the release contract document
+    at ``docs/source/reference/release_gate_geotiff.rst`` and epic
+    #2342 for the full rationale.
+    """
+
+
 class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """Can't classify an EPSG as geographic or projected on write (#2277).
 
@@ -210,6 +249,8 @@ __all__ = [
     "MixedBandMetadataError",
     "ConflictingCRSError",
     "ConflictingNodataError",
+    "InvalidIntegerNodataError",
+    "VRTStableSourcesOnlyError",
     "VRTUnsupportedError",
     "UnknownCRSModelTypeError",
     "NonRepresentableEPSGCRSError",

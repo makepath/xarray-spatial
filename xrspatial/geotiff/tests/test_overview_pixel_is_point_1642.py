@@ -205,7 +205,7 @@ def test_helper_pixel_is_point_origin_shift_unit(monkeypatch):
 
     calls = {'count': 0}
 
-    def fake_extract(ifd, data, byte_order, *, allow_rotated=False):
+    def fake_extract(ifd, data, byte_order, *, allow_rotated=False, allow_invalid_nodata=False):
         calls['count'] += 1
         if ifd is base_ifd:
             return base_info
@@ -241,7 +241,7 @@ def test_helper_pixel_is_area_no_origin_shift_unit(monkeypatch):
     )
     ov_info = GeoInfo(has_georef=False, raster_type=RASTER_PIXEL_IS_AREA)
 
-    def fake_extract(ifd, data, byte_order, *, allow_rotated=False):
+    def fake_extract(ifd, data, byte_order, *, allow_rotated=False, allow_invalid_nodata=False):
         return base_info if ifd is base_ifd else ov_info
 
     monkeypatch.setattr(_gt, 'extract_geo_info', fake_extract)
@@ -274,7 +274,7 @@ def test_helper_point_overview_with_own_geokeys_not_shifted(monkeypatch):
         has_georef=True, raster_type=RASTER_PIXEL_IS_POINT, crs_epsg=32610,
     )
 
-    def fake_extract(ifd, data, byte_order, *, allow_rotated=False):
+    def fake_extract(ifd, data, byte_order, *, allow_rotated=False, allow_invalid_nodata=False):
         return base_info if ifd is base_ifd else own_ov_info
 
     monkeypatch.setattr(_gt, 'extract_geo_info', fake_extract)

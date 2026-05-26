@@ -43,6 +43,8 @@ def read_geotiff_dask(source: str, *,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
                       allow_inconsistent_geokeys: bool = False,
+                      allow_invalid_nodata: bool = False,
+                      stable_only: bool = False,
                       allow_experimental_codecs: bool = False,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
@@ -135,6 +137,19 @@ def read_geotiff_dask(source: str, *,
         to different EPSG codes). The default raises
         ``InconsistentGeoKeysError``. See ``open_geotiff`` for the
         full description (issue #2417).
+    allow_invalid_nodata : bool, default False
+        [advanced] Read-side opt-in for integer-dtype sources whose
+        ``GDAL_NODATA`` tag is non-finite or fractional. Default raises
+        ``InvalidIntegerNodataError`` at graph-build time. See
+        ``open_geotiff`` for the full description (#1774 follow-up,
+        #2441).
+    stable_only : bool, default False
+        [advanced] Read-side opt-in for stable-tier sources only.
+        Forwarded to ``read_vrt`` when the source ends in ``.vrt`` so
+        the rejection fires at graph-build time. Non-VRT sources on
+        this entry point already ride the stable ``reader.local_file``
+        path, so the flag is a no-op for them. See ``open_geotiff`` for
+        the full description (epic #2342).
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). Fires at graph
@@ -219,6 +234,10 @@ def read_geotiff_dask(source: str, *,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
             allow_inconsistent_geokeys=allow_inconsistent_geokeys,
+            allow_invalid_nodata=allow_invalid_nodata,
+            stable_only=stable_only,
+            allow_experimental_codecs=allow_experimental_codecs,
+            allow_internal_only_jpeg=allow_internal_only_jpeg,
             band_nodata=band_nodata,
             mask_nodata=mask_nodata,
             **vrt_kwargs,
@@ -284,6 +303,7 @@ def read_geotiff_dask(source: str, *,
              ) = _parse_cog_http_meta(
                 _src, overview_level=overview_level,
                 allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata,
                 source_path=source,
                 return_sidecar=True,
             )
@@ -345,7 +365,8 @@ def read_geotiff_dask(source: str, *,
         from .. import _read_geo_info
         geo_info, full_h, full_w, file_dtype, n_bands = _read_geo_info(
             source, overview_level=overview_level,
-            allow_rotated=allow_rotated)
+            allow_rotated=allow_rotated,
+            allow_invalid_nodata=allow_invalid_nodata)
 
     # Reject experimental / internal-only codecs at graph build, before
     # any chunk task is scheduled. The compression tag is stashed on
@@ -600,6 +621,8 @@ def read_geotiff_dask(source: str, *,
                                      http_meta_key=http_meta_key,
                                      max_pixels=max_pixels,
                                      allow_rotated=allow_rotated,
+                                     allow_invalid_nodata=(
+                                         allow_invalid_nodata),
                                      allow_experimental_codecs=(
                                          allow_experimental_codecs),
                                      allow_internal_only_jpeg=(
@@ -626,6 +649,7 @@ def read_geotiff_dask(source: str, *,
 def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                          band, *, target_dtype=None, http_meta_key=None,
                          max_pixels=None, allow_rotated=False,
+                         allow_invalid_nodata=False,
                          allow_experimental_codecs=False,
                          allow_internal_only_jpeg=False):
     """Dask-delayed function to read a single window.
@@ -688,6 +712,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                 overview_level=overview_level,
                 band=band,
                 allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata,
                 allow_experimental_codecs=allow_experimental_codecs,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
                 **_r2a_kwargs)

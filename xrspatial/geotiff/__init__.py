@@ -72,10 +72,12 @@ from ._coords import \
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry  # noqa: F401
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, GeoTIFFAmbiguousMetadataError,
-                      InconsistentGeoKeysError, InvalidCRSCodeError, MixedBandMetadataError,
+                      InconsistentGeoKeysError, InvalidCRSCodeError, InvalidIntegerNodataError,
+                      MixedBandMetadataError,
                       NonRepresentableEPSGCRSError, NonUniformCoordsError, RotatedTransformError,
                       UnknownCRSModelTypeError,
-                      UnparseableCRSError, UnsupportedGeoTIFFFeatureError)
+                      UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
+                      VRTStableSourcesOnlyError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
@@ -111,6 +113,7 @@ __all__ = [
     'GEOREF_STATUS_VALUES',
     'InconsistentGeoKeysError',
     'InvalidCRSCodeError',
+    'InvalidIntegerNodataError',
     'MixedBandMetadataError',
     'NonRepresentableEPSGCRSError',
     'NonUniformCoordsError',
@@ -120,6 +123,7 @@ __all__ = [
     'UnparseableCRSError',
     'UnsafeURLError',
     'UnsupportedGeoTIFFFeatureError',
+    'VRTStableSourcesOnlyError',
     'open_geotiff',
     'read_geotiff_gpu',
     'read_geotiff_dask',
@@ -169,7 +173,8 @@ from ._attrs import SUPPORTED_FEATURES  # noqa: E402
 
 
 def _read_geo_info(source, *, overview_level: int | None = None,
-                   allow_rotated: bool = False):
+                   allow_rotated: bool = False,
+                   allow_invalid_nodata: bool = False):
     """Read only the geographic metadata and image dimensions from a GeoTIFF.
 
     Returns (geo_info, height, width, dtype, n_bands) without reading pixel
@@ -188,6 +193,10 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         ``ModelTransformationTag`` reads as an ungeoreferenced pixel
         grid instead of raising ``RotatedTransformError`` (issues #2115,
         #2267).
+    allow_invalid_nodata : bool, optional
+        Forwarded to the geotag parser. When True, restores the legacy
+        no-op handling of non-finite / fractional ``GDAL_NODATA`` on
+        integer sources (#1774 follow-up, #2441).
     """
     # ``_parse_cog_http_meta`` is imported from ``_cog_http`` directly
     # rather than re-routed through ``_reader`` because the
@@ -230,6 +239,7 @@ def _read_geo_info(source, *, overview_level: int | None = None,
             _header, _ifd, geo_info, _ = _parse_cog_http_meta(
                 _src, overview_level=overview_level,
                 allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata,
                 source_path=source)
         finally:
             _src.close()
@@ -340,6 +350,7 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order,
             allow_rotated=allow_rotated,
+            allow_invalid_nodata=allow_invalid_nodata,
             sidecar_origin=georef_origin)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
@@ -379,6 +390,8 @@ def open_geotiff(source: str | BinaryIO, *,
                  allow_rotated: bool = False,
                  allow_unparseable_crs: bool = False,
                  allow_inconsistent_geokeys: bool = False,
+                 allow_invalid_nodata: bool = False,
+                 stable_only: bool = False,
                  allow_experimental_codecs: bool = False,
                  allow_internal_only_jpeg: bool = False,
                  band_nodata: str | None = None,
@@ -589,6 +602,31 @@ def open_geotiff(source: str | BinaryIO, *,
         raises ``InconsistentGeoKeysError``. Set to ``True`` to keep
         the legacy permissive behaviour for files known to carry
         quirky-but-trusted GeoKey layouts.
+    allow_invalid_nodata : bool, default False
+        [advanced] Read-side opt-in for integer-dtype sources whose
+        ``GDAL_NODATA`` tag is non-finite (``"NaN"``, ``"Inf"``,
+        ``"-Inf"``) or fractional (e.g. ``"3.5"`` on a ``uint16``
+        file). The legacy reader (#1774) parsed the value into
+        ``attrs['nodata']`` and silently skipped the masking step, so
+        callers had no way to tell a silently-ignored sentinel from a
+        missing one. When ``False`` (the default), the read raises
+        ``InvalidIntegerNodataError``. Set to ``True`` to keep the
+        pre-rejection no-op behaviour for files known to carry such
+        sentinels (e.g. external tooling that writes ``"nan"`` on
+        integer outputs). See issue #2441 (#1774 follow-up).
+    stable_only : bool, default False
+        [advanced] Read-side opt-in for stable-tier sources only. When
+        ``True``, a ``.vrt`` source raises
+        :class:`VRTStableSourcesOnlyError` because ``reader.vrt`` and
+        the VRT child-source pipeline sit at the ``advanced`` /
+        ``experimental`` tiers in
+        :data:`xrspatial.geotiff.SUPPORTED_FEATURES`. Non-VRT sources
+        on this entry point already ride the stable ``reader.local_file``
+        path and the per-source codec gate, so the flag is a no-op for
+        them. The rejection names the file path and the
+        ``allow_experimental_codecs`` opt-in so the caller can unlock
+        the broader tier set explicitly when needed. See epic #2342
+        and ``docs/source/reference/release_gate_geotiff.rst``.
     allow_experimental_codecs : bool, default False
         Read-side opt-in for sources compressed with the Tier 3
         experimental codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``).
@@ -738,6 +776,8 @@ def open_geotiff(source: str | BinaryIO, *,
                         allow_unparseable_crs=allow_unparseable_crs,
                         allow_inconsistent_geokeys=(
                             allow_inconsistent_geokeys),
+                        allow_invalid_nodata=allow_invalid_nodata,
+                        stable_only=stable_only,
                         allow_experimental_codecs=allow_experimental_codecs,
                         allow_internal_only_jpeg=allow_internal_only_jpeg,
                         band_nodata=band_nodata,
@@ -762,6 +802,8 @@ def open_geotiff(source: str | BinaryIO, *,
                                 allow_unparseable_crs=allow_unparseable_crs,
                                 allow_inconsistent_geokeys=(
                                     allow_inconsistent_geokeys),
+                                allow_invalid_nodata=allow_invalid_nodata,
+                                stable_only=stable_only,
                                 allow_experimental_codecs=(
                                     allow_experimental_codecs),
                                 allow_internal_only_jpeg=(
@@ -779,6 +821,8 @@ def open_geotiff(source: str | BinaryIO, *,
                                  allow_unparseable_crs=allow_unparseable_crs,
                                  allow_inconsistent_geokeys=(
                                      allow_inconsistent_geokeys),
+                                 allow_invalid_nodata=allow_invalid_nodata,
+                                 stable_only=stable_only,
                                  allow_experimental_codecs=(
                                      allow_experimental_codecs),
                                  allow_internal_only_jpeg=(
@@ -801,6 +845,7 @@ def open_geotiff(source: str | BinaryIO, *,
         source, window=window,
         overview_level=overview_level, band=band,
         allow_rotated=allow_rotated,
+        allow_invalid_nodata=allow_invalid_nodata,
         allow_experimental_codecs=allow_experimental_codecs,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
         **kwargs,

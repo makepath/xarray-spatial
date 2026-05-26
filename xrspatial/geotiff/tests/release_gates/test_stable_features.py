@@ -2319,16 +2319,6 @@ def test_release_gate_negative_conflicting_aux_xml_crs(tmp_path) -> None:
 
 
 @pytest.mark.release_gate
-@pytest.mark.xfail(
-    reason=(
-        "Issue #1774 currently treats a non-finite or fractional integer "
-        "nodata sentinel as a silent no-op rather than a hard error. The "
-        "release promise is to upgrade the no-op to a typed rejection so "
-        "the caller sees the silent-coercion risk; this xfail flips to a "
-        "pass when the upgrade lands."
-    ),
-    strict=False,
-)
 def test_release_gate_negative_integer_nodata_float_promoted(
     tmp_path,
 ) -> None:
@@ -2425,31 +2415,16 @@ def test_release_gate_negative_rotated_gpu(
 
 
 @pytest.mark.release_gate
-@pytest.mark.xfail(
-    reason=(
-        "The VRT stable-only knob is owned by epic #2342 and has not "
-        "landed yet. The release promise: when the caller asks for "
-        "stable-only sources and a VRT child uses an experimental codec, "
-        "the reader names the offending child and the opt-in flag. This "
-        "xfail flips to a pass when #2342 ships the knob."
-    ),
-    strict=False,
-)
 def test_release_gate_negative_mixed_tier_vrt_children(tmp_path) -> None:
     """The reader must refuse mixed-tier VRT children when stable-only is asked.
 
-    XFAIL-to-PASS transition note
-    -----------------------------
-    Today this test fails with ``TypeError: unexpected keyword argument
-    'stable_only'`` because epic #2342 has not landed the kwarg yet. The
-    strict=False xfail swallows that TypeError. When #2342 lands, the
-    test will start raising :class:`GeoTIFFAmbiguousMetadataError` (or
-    fail to raise) and the xfail will report XPASS. Before removing the
-    xfail marker, confirm the new code path satisfies both inline
-    assertions: the error message must mention either ``stable_only`` or
-    ``allow_experimental_codecs``, and it must cite the release contract
-    docs. If either assertion would not pass, fix the production message
-    in the same PR that removes the xfail.
+    Pinned by epic #2342 / issue #2443: when the caller asks for
+    stable-only sources via ``stable_only=True`` and the source is a
+    VRT, the read raises :class:`VRTStableSourcesOnlyError` (a
+    :class:`GeoTIFFAmbiguousMetadataError` subclass) before any pixel
+    decode. The message must name either ``stable_only`` or
+    ``allow_experimental_codecs`` and cite the release-contract docs
+    or the tracking issue.
     """
     path = _neg_tmp(tmp_path, "case4_mixed_tier_vrt", suffix=".vrt")
     Path(path).write_text(

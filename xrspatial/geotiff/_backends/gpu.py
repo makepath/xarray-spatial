@@ -76,6 +76,8 @@ def read_geotiff_gpu(source: str, *,
                      allow_rotated: bool = False,
                      allow_unparseable_crs: bool = False,
                      allow_inconsistent_geokeys: bool = False,
+                     allow_invalid_nodata: bool = False,
+                     stable_only: bool = False,
                      allow_experimental_codecs: bool = False,
                      allow_internal_only_jpeg: bool = False,
                      band_nodata: str | None = None,
@@ -210,6 +212,19 @@ def read_geotiff_gpu(source: str, *,
         raises ``InconsistentGeoKeysError``; ``True`` restores the
         legacy silent acceptance. See ``open_geotiff`` for the full
         description (issue #2417).
+    allow_invalid_nodata : bool, default False
+        [experimental] Read-side opt-in for integer-dtype sources whose
+        ``GDAL_NODATA`` tag is non-finite or fractional. Mirrors the CPU
+        eager and dask paths; default raises
+        ``InvalidIntegerNodataError``. See ``open_geotiff`` for the full
+        description (#1774 follow-up, #2441).
+    stable_only : bool, default False
+        [experimental] Read-side opt-in for stable-tier sources only.
+        The GPU read path does not consume VRT sources directly (VRT
+        routing happens in ``open_geotiff``), so this kwarg is accepted
+        for cross-backend signature symmetry and is a no-op on the GPU
+        eager / chunked paths. See ``open_geotiff`` for the full
+        description (epic #2342).
     allow_experimental_codecs : bool, default False
         [experimental] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). The GPU read path
@@ -338,6 +353,7 @@ def read_geotiff_gpu(source: str, *,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
             allow_inconsistent_geokeys=allow_inconsistent_geokeys,
+            allow_invalid_nodata=allow_invalid_nodata,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
             mask_nodata=mask_nodata,
@@ -390,6 +406,7 @@ def read_geotiff_gpu(source: str, *,
             max_pixels=max_pixels, allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
             allow_inconsistent_geokeys=allow_inconsistent_geokeys,
+            allow_invalid_nodata=allow_invalid_nodata,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
             mask_nodata=mask_nodata,
@@ -494,6 +511,7 @@ def read_geotiff_gpu(source: str, *,
         geo_info = extract_geo_info_with_overview_inheritance(
             ifd, ifds, data, header.byte_order,
             allow_rotated=allow_rotated,
+            allow_invalid_nodata=allow_invalid_nodata,
             sidecar_origin=georef_origin)
         # Capture the Orientation tag (274) once so the post-decode flip
         # below picks it up for both the stripped fallback and the tiled
@@ -589,6 +607,7 @@ def read_geotiff_gpu(source: str, *,
                 source, overview_level=overview_level,
                 window=window, band=band, max_pixels=max_pixels,
                 allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata,
                 allow_experimental_codecs=allow_experimental_codecs,
                 allow_internal_only_jpeg=allow_internal_only_jpeg)
             arr_gpu = cupy.asarray(arr_cpu)
@@ -794,6 +813,7 @@ def read_geotiff_gpu(source: str, *,
                     source, overview_level=overview_level,
                     window=window, band=band, max_pixels=max_pixels,
                     allow_rotated=allow_rotated,
+                    allow_invalid_nodata=allow_invalid_nodata,
                     allow_experimental_codecs=allow_experimental_codecs,
                     allow_internal_only_jpeg=allow_internal_only_jpeg)
                 arr_gpu = cupy.asarray(arr_cpu)
@@ -812,6 +832,7 @@ def read_geotiff_gpu(source: str, *,
                 source, overview_level=overview_level,
                 window=window, band=band, max_pixels=max_pixels,
                 allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata,
                 allow_experimental_codecs=allow_experimental_codecs,
                 allow_internal_only_jpeg=allow_internal_only_jpeg)
             arr_gpu = cupy.asarray(arr_cpu)
@@ -892,6 +913,7 @@ def read_geotiff_gpu(source: str, *,
                     source, overview_level=overview_level,
                     window=window, band=band, max_pixels=max_pixels,
                     allow_rotated=allow_rotated,
+                    allow_invalid_nodata=allow_invalid_nodata,
                     allow_experimental_codecs=allow_experimental_codecs,
                     allow_internal_only_jpeg=allow_internal_only_jpeg)
                 arr_gpu = cupy.asarray(arr_cpu)
@@ -1056,6 +1078,7 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
                                     allow_rotated: bool = False,
                                     allow_unparseable_crs: bool = False,
                                     allow_inconsistent_geokeys: bool = False,
+                                    allow_invalid_nodata: bool = False,
                                     allow_experimental_codecs: bool = False,
                                     allow_internal_only_jpeg: bool = False,
                                     mask_nodata: bool = True):
@@ -1098,6 +1121,7 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
     arr_cpu, geo_info = _read_to_array(
         source, window=window, overview_level=overview_level,
         band=band, max_pixels=max_pixels, allow_rotated=allow_rotated,
+        allow_invalid_nodata=allow_invalid_nodata,
         allow_experimental_codecs=allow_experimental_codecs,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
     )
@@ -1290,6 +1314,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                               allow_rotated: bool = False,
                               allow_unparseable_crs: bool = False,
                               allow_inconsistent_geokeys: bool = False,
+                              allow_invalid_nodata: bool = False,
                               allow_experimental_codecs: bool = False,
                               allow_internal_only_jpeg: bool = False,
                               mask_nodata: bool = True):
@@ -1390,6 +1415,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
             geo_info = extract_geo_info_with_overview_inheritance(
                 ifd, ifds, raw, header.byte_order,
                 allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata,
                 sidecar_origin=None,
             )
             orientation = ifd.orientation
@@ -1407,6 +1433,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                     allow_unparseable_crs=allow_unparseable_crs,
                     allow_inconsistent_geokeys=(
                         allow_inconsistent_geokeys),
+                    allow_invalid_nodata=allow_invalid_nodata,
                     mask_nodata=mask_nodata,
                 )
     except Exception:
@@ -1422,6 +1449,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
         allow_inconsistent_geokeys=allow_inconsistent_geokeys,
+        allow_invalid_nodata=allow_invalid_nodata,
         allow_experimental_codecs=allow_experimental_codecs,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
         mask_nodata=mask_nodata,
@@ -1450,6 +1478,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
                                   allow_rotated: bool = False,
                                   allow_unparseable_crs: bool = False,
                                   allow_inconsistent_geokeys: bool = False,
+                                  allow_invalid_nodata: bool = False,
                                   mask_nodata: bool = True):
     """Build a Dask+CuPy graph that decodes each chunk disk->GPU.
 

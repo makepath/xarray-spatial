@@ -894,16 +894,13 @@ def test_dataset_level_mask_band_rejected(tmp_path):
 # passing them without an edit here.
 
 
-@pytest.mark.xfail(
-    reason="mixed source CRS rejection awaits a validator pass that "
-           "opens each source TIFF",
-    strict=False,
-)
 def test_mixed_source_crs_rejected(tmp_path):
     """Two band sources with disagreeing CRS (EPSG:4326 vs EPSG:3857)
-    cannot mosaic correctly without reprojection. The VRT XML carries
-    only a dataset-level ``<SRS>``, so the mismatch only surfaces when
-    the validator opens each source TIFF."""
+    cannot mosaic correctly without reprojection. Closed by #2444: the
+    validator opens each source TIFF and raises
+    ``VRTUnsupportedError`` when the source CRS disagrees with the
+    VRT-declared ``<SRS>``. The error message names the offending
+    source path and CRS."""
     src_4326 = _write_src_float32_geotiff(tmp_path, crs='EPSG:4326')
     arr = np.arange(16, dtype=np.float32).reshape(4, 4)
     y = np.linspace(1.0, 0.0, 4)
@@ -919,10 +916,124 @@ def test_mixed_source_crs_rejected(tmp_path):
     xml = _vrt_xml(body=body, srs='EPSG:4326')
     vrt_path = _write_vrt(tmp_path, xml)
 
-    with pytest.raises((ValueError, NotImplementedError)) as excinfo:
+    with pytest.raises(VRTUnsupportedError) as excinfo:
         _package_read_vrt(vrt_path)
     msg = str(excinfo.value).lower()
     assert any(k in msg for k in ('crs', 'srs', 'projection', 'epsg'))
+
+
+def test_mixed_source_crs_message_names_offending_source(tmp_path):
+    """The validator must embed the source path and CRS in the error
+    message so a caller can locate the bad source without re-parsing
+    the VRT. Locked in addition to ``test_mixed_source_crs_rejected``
+    so a future refactor that strips the source name from the message
+    still trips a guard."""
+    src_4326 = _write_src_float32_geotiff(tmp_path, crs='EPSG:4326')
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    y = np.linspace(1.0, 0.0, 4)
+    x = np.linspace(0.0, 1.0, 4)
+    da_3857 = xr.DataArray(
+        arr, dims=['y', 'x'], coords={'y': y, 'x': x},
+        attrs={'nodata': -9999.0, 'crs': 'EPSG:3857'},
+    )
+    src_3857 = str(tmp_path / f"{_uniq('src_3857_named')}.tif")
+    to_geotiff(da_3857, src_3857)
+
+    body = _simple_source_xml(src_4326) + "\n" + _simple_source_xml(src_3857)
+    xml = _vrt_xml(body=body, srs='EPSG:4326')
+    vrt_path = _write_vrt(tmp_path, xml)
+
+    with pytest.raises(VRTUnsupportedError) as excinfo:
+        _package_read_vrt(vrt_path)
+    msg = str(excinfo.value)
+    # The offending source path must appear verbatim in the message,
+    # along with both CRS labels for contrast.
+    assert src_3857 in msg
+    assert '3857' in msg
+    assert '4326' in msg
+
+
+def test_mixed_source_crs_chunked_path_also_rejects(tmp_path):
+    """The chunked VRT read path runs the same validator at graph build
+    time, so a mixed-CRS VRT must surface ``VRTUnsupportedError``
+    before any per-chunk task executes. Without this pin the eager
+    path could carry the fix while the dask path silently rode the bad
+    mosaic into a ``compute()`` failure."""
+    src_4326 = _write_src_float32_geotiff(tmp_path, crs='EPSG:4326')
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    y = np.linspace(1.0, 0.0, 4)
+    x = np.linspace(0.0, 1.0, 4)
+    da_3857 = xr.DataArray(
+        arr, dims=['y', 'x'], coords={'y': y, 'x': x},
+        attrs={'nodata': -9999.0, 'crs': 'EPSG:3857'},
+    )
+    src_3857 = str(tmp_path / f"{_uniq('src_3857_chunked')}.tif")
+    to_geotiff(da_3857, src_3857)
+
+    body = _simple_source_xml(src_4326) + "\n" + _simple_source_xml(src_3857)
+    xml = _vrt_xml(body=body, srs='EPSG:4326')
+    vrt_path = _write_vrt(tmp_path, xml)
+
+    # ``chunks=`` routes through ``_read_vrt_chunked`` rather than the
+    # eager dispatcher; the validator must fire here too.
+    with pytest.raises(VRTUnsupportedError):
+        _package_read_vrt(vrt_path, chunks=(2, 2))
+
+
+def test_matching_source_crs_passes_validator(tmp_path):
+    """Positive pin: a VRT whose source CRS matches the VRT-declared
+    SRS must not be rejected by the new per-source CRS check. Catches
+    a regression where the validator started raising on a homogeneous
+    mosaic (e.g. by reading ``crs_wkt`` for one side and ``crs_epsg``
+    for the other and failing to canonicalise)."""
+    src_a = _write_src_float32_geotiff(tmp_path, crs='EPSG:4326')
+    src_b = _write_src_float32_geotiff(tmp_path, crs='EPSG:4326')
+    body = _simple_source_xml(src_a) + "\n" + _simple_source_xml(src_b)
+    xml = _vrt_xml(body=body, srs='EPSG:4326')
+    vrt_path = _write_vrt(tmp_path, xml)
+
+    # No raise: validator accepts. The reader returns a DataArray
+    # regardless of mosaic correctness, which the existing parity
+    # tests cover separately.
+    da = _package_read_vrt(vrt_path)
+    assert da is not None
+
+
+def test_mixed_source_crs_no_vrt_srs_rejects(tmp_path):
+    """When the VRT carries no ``<SRS>``, the reader inherits the CRS
+    from the first source. Sources that disagree among themselves are
+    still a silent-correctness gap and must be rejected. The validator
+    uses the first parseable source as the reference."""
+    src_4326 = _write_src_float32_geotiff(tmp_path, crs='EPSG:4326')
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    y = np.linspace(1.0, 0.0, 4)
+    x = np.linspace(0.0, 1.0, 4)
+    da_3857 = xr.DataArray(
+        arr, dims=['y', 'x'], coords={'y': y, 'x': x},
+        attrs={'nodata': -9999.0, 'crs': 'EPSG:3857'},
+    )
+    src_3857 = str(tmp_path / f"{_uniq('src_3857_no_srs')}.tif")
+    to_geotiff(da_3857, src_3857)
+
+    body = _simple_source_xml(src_4326) + "\n" + _simple_source_xml(src_3857)
+    # No ``<SRS>`` element: build the XML inline rather than through
+    # ``_vrt_xml`` (which always emits one).
+    xml = f"""<VRTDataset rasterXSize="4" rasterYSize="4">
+  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
+  <VRTRasterBand dataType="Float32" band="1">
+{body}
+  </VRTRasterBand>
+</VRTDataset>"""
+    vrt_path = _write_vrt(tmp_path, xml)
+
+    with pytest.raises(VRTUnsupportedError) as excinfo:
+        _package_read_vrt(vrt_path)
+    msg = str(excinfo.value).lower()
+    # Message must surface the "no <SRS>" reasoning so the caller
+    # understands why their VRT was rejected even though they did not
+    # declare a top-level CRS.
+    assert 'no <srs>' in msg or 'no srs' in msg
+    assert src_3857 in str(excinfo.value)
 
 
 @pytest.mark.xfail(

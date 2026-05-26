@@ -1581,24 +1581,18 @@ def _metadata_parity_write_mixed_crs_vrt(tmp_path: pathlib.Path) -> str:
     return str(vrt_path)
 
 
-@pytest.mark.xfail(reason="Mixed-CRS VRT currently silently flattens to the VRT-declared SRS (#2321 gap). The validator from sub-PR 2 must reject this with a typed error at graph build / eager-read setup; once that lands, drop the xfail and tighten the assertion to VRTUnsupportedError. Today the read produces a mosaic whose attrs['crs'] reports only the VRT-declared CRS while the second source's UTM data has been silently incorporated.", strict=True)
 def test_mixed_crs_vrt_does_not_silently_flatten(tmp_path):
     """A mixed-CRS VRT must not return a mosaic that silently inherits
     one source's CRS while pixels came from a CRS-incompatible source.
 
-    This is the gap that motivates sub-PR 2 of the parent epic: the
-    VRT XML declares one SRS, the underlying sources disagree, and
-    the reader hands back a single ``attrs['crs']`` as if everything
-    were homogeneous. The pixel content is no longer geospatially
-    meaningful once the underlying CRSs disagree, but no error fires.
-
-    ``strict=True`` so the test flips to XPASS the moment the gap is
-    fixed -- CI will fail loudly, prompting the upgrade to a proper
-    raise assertion. That is the desired posture: a finding pinned in
-    test form, not silently passing.
+    Closed by #2444: ``validate_parsed_vrt`` now opens each source
+    TIFF and raises ``VRTUnsupportedError`` when any source CRS
+    disagrees with the VRT-declared ``<SRS>``. The error message names
+    both the offending source and the disagreeing CRS so the caller
+    can locate the bad source without re-parsing the VRT XML.
     """
     vrt = _metadata_parity_write_mixed_crs_vrt(tmp_path)
-    with pytest.raises(Exception):
+    with pytest.raises(VRTUnsupportedError):
         read_vrt(vrt)
 
 

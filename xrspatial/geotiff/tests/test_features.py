@@ -2784,6 +2784,10 @@ class TestPublicAPI:
             # combinations.
             'InconsistentGeoKeysError',
             'InvalidCRSCodeError',
+            # Issue #2441 (the #1774 follow-up): read-side fail-closed
+            # on non-finite / fractional GDAL_NODATA against an integer
+            # source dtype, replacing the legacy silent no-op.
+            'InvalidIntegerNodataError',
             'MixedBandMetadataError',
             # Issue #2418: writer rejects compound EPSG codes that cannot
             # be represented in a single GeographicType / ProjectedCSType
@@ -2800,6 +2804,11 @@ class TestPublicAPI:
             # pansharpened / derived VRT subclasses, unknown VRT band
             # children, rotated source transforms on a VRT mosaic).
             'UnsupportedGeoTIFFFeatureError',
+            # Issue #2443 (epic #2342): typed rejection when a caller
+            # opens a VRT under ``stable_only=True``. The VRT reader
+            # itself is advanced-tier so the request cannot be served
+            # without naming the broader-tier opt-in.
+            'VRTStableSourcesOnlyError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
             # Canonical georef_status constants (issue #2136). Exposed
