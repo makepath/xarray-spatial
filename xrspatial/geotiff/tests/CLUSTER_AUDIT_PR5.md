@@ -59,7 +59,7 @@ File count delta: `-4 +1 = -3`.
 | `test_attrs_contract_passthrough_1984.py::test_passthrough_does_not_promote_to_canonical` | `attrs/test_contract.py::test_passthrough_does_not_promote_to_canonical` | Verbatim. |
 | `test_attrs_contract_passthrough_1984.py::test_removed_attrs_not_emitted` | `attrs/test_contract.py::test_passthrough_removed_attrs_not_emitted` | Renamed for prefix. |
 | `test_attrs_contract_passthrough_1984.py::test_removed_attrs_absent_after_roundtrip` | `attrs/test_contract.py::test_passthrough_removed_attrs_absent_after_roundtrip` | Renamed. |
-| `test_attrs_contract_passthrough_1984.py::test_contract_version_is_current` | `attrs/test_contract.py::test_passthrough_contract_version_is_current` | Renamed; assertion unchanged. |
+| `test_attrs_contract_passthrough_1984.py::test_contract_version_is_current` | dropped | Redundant with `canonical[contract_version]` (which exercises the same stamp on a richer fixture) and the per-backend version-section tests. Removed during review-round fixes. |
 
 ## Version tier mapping
 
@@ -87,9 +87,12 @@ Old surface (deduplicated functions/params):
 New surface:
 - Canonical: 1 + 10 (parametrize) + 4 (parametrize) + 2 = 17 cases.
 - Aliases: 2 (parametrize) + 4 = 6 cases.
-- Passthrough: 1 + 3 (parametrize) + 5 = 9 cases.
+- Passthrough: 1 + 3 (parametrize) + 4 = 8 cases. (The redundant
+  contract-version stamp test was dropped during review; the same
+  assertion is exercised by `canonical[contract_version]` and the
+  per-backend version section.)
 - Version: 2 + 4 (parametrize) + 2 (parametrize) = 8 cases.
-- Total new: 40 cases. **No coverage drop.**
+- Total new: 39 cases. One intentional drop documented above.
 
 ## Out of scope (intentionally untouched)
 
@@ -112,3 +115,12 @@ reconstruction) and is exercised inside that tier's section. Adding a
 standalone `test_roundtrip.py` now would duplicate the canonical
 fixture without adding coverage. Leaving for a follow-up so it can be
 designed against a real coverage gap.
+
+The natural shape for the deferred file would be a single fixture that
+writes every canonical key (plus the two aliases and the three
+reconstructible passthrough keys), reads it back, and asserts
+structural equality of the read-back attrs dict against a golden
+expected dict. The current per-key value checks would stay where they
+are (one failure points at one key); the roundtrip file would catch
+dict-shape drift (extra keys leaking in, ordering issues in tuple-valued
+attrs, etc.). Worth picking up alongside any future contract bump.

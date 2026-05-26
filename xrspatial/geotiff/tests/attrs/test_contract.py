@@ -294,11 +294,13 @@ def test_canonical_value_roundtrip(canonical_roundtrip, check):
 # Per-backend coverage for canonical-key *presence*.
 #
 # Read-time backends share ``_populate_attrs_from_geo_info``, so per-key
-# value round-trips are pinned once (above) on the eager numpy path.
-# What the per-backend check guards against is a backend skipping the
-# shared helper or building its attrs dict independently. The version
-# stamp test does this for one canonical key, and the loop below does
-# it for the rest.
+# value round-trips are pinned once (above) on the eager numpy path
+# only -- value equality on the canonical fixture (which carries
+# ``extra_tags`` + the experimental-codec opt-in) is exercised by the
+# eager parametrize case at ``canonical[contract_version]``. The
+# per-backend loop below guards against a backend that bypasses the
+# shared attrs helper, not against a backend that emits the wrong
+# value.
 
 
 def _open_eager(path):
@@ -317,16 +319,22 @@ def _open_dask_gpu(path):
     return open_geotiff(path, gpu=True, chunks=2)
 
 
+# Each entry: (opener, label). The label is the suffix used in the
+# parametrize id AND in the tmp_path filename, so a failing case names
+# its backend in both places without leaking the leading-underscore
+# function name into the filename.
 _BACKEND_OPENERS = [
-    pytest.param(_open_eager, id='canonical[eager-numpy]'),
-    pytest.param(_open_dask, id='canonical[dask-numpy]'),
-    pytest.param(_open_gpu, id='canonical[gpu]', marks=requires_gpu),
-    pytest.param(_open_dask_gpu, id='canonical[dask-gpu]', marks=requires_gpu),
+    pytest.param(_open_eager, 'eager-numpy', id='canonical[eager-numpy]'),
+    pytest.param(_open_dask, 'dask-numpy', id='canonical[dask-numpy]'),
+    pytest.param(_open_gpu, 'gpu', id='canonical[gpu]', marks=requires_gpu),
+    pytest.param(
+        _open_dask_gpu, 'dask-gpu',
+        id='canonical[dask-gpu]', marks=requires_gpu),
 ]
 
 
-@pytest.mark.parametrize('opener', _BACKEND_OPENERS)
-def test_canonical_keys_present_per_backend(tmp_path, opener):
+@pytest.mark.parametrize('opener,label', _BACKEND_OPENERS)
+def test_canonical_keys_present_per_backend(tmp_path, opener, label):
     """Each read backend emits the full canonical key set.
 
     Writes the canonical fixture once with the eager writer (only the
@@ -337,7 +345,7 @@ def test_canonical_keys_present_per_backend(tmp_path, opener):
     ``_populate_attrs_from_geo_info``.
     """
     da, _ = _make_canonical_da()
-    path = str(tmp_path / f'canonical_{opener.__name__}.tif')
+    path = str(tmp_path / f'canonical_{label}.tif')
     # Fresh DataArray with ``extra_tags`` -> rich-tag opt-in required
     # (see ``canonical_roundtrip`` fixture for details).
     to_geotiff(da, path, allow_experimental_codecs=True)
@@ -345,7 +353,7 @@ def test_canonical_keys_present_per_backend(tmp_path, opener):
     rd = opener(path)
     missing = sorted(k for k in _CANONICAL_KEYS if k not in rd.attrs)
     assert missing == [], (
-        f"{opener.__name__}: canonical attrs missing after round-trip: "
+        f"{label}: canonical attrs missing after round-trip: "
         f"{missing}. attrs keys present: {sorted(rd.attrs.keys())}"
     )
 
@@ -797,27 +805,11 @@ def test_passthrough_removed_attrs_absent_after_roundtrip(tmp_path):
     )
 
 
-def test_passthrough_contract_version_is_current(tmp_path):
-    """``attrs['_xrspatial_geotiff_contract']`` matches the constant on
-    every read.
-
-    The contract version is the user-visible signal that a tier change
-    landed. Issue #2016 bumped it to 2 (removal of deprecated GeoKey
-    attrs); issue #2136 bumped it to 3 (addition of
-    ``attrs['georef_status']``). Pinning against
-    ``_ATTRS_CONTRACT_VERSION`` means the next bump only has to touch
-    the constant and the bump-specific tests, not every "is the stamp
-    set" assertion.
-    """
-    da = _make_passthrough_da(crs=4326)
-    rd = _passthrough_roundtrip(
-        tmp_path, da, name='contract_version_signal.tif')
-
-    assert rd.attrs.get(_CONTRACT_KEY) == _ATTRS_CONTRACT_VERSION, (
-        f"contract version stamp on a fresh read is "
-        f"{rd.attrs.get(_CONTRACT_KEY)!r}; expected "
-        f"{_ATTRS_CONTRACT_VERSION}."
-    )
+# Note: the ``passthrough[contract_version]`` stamp check that the old
+# source file held is intentionally dropped here. The canonical fixture
+# already exercises a stamped round-trip
+# (``test_canonical_value_roundtrip[canonical[contract_version]]``) and
+# the version section below owns per-backend stamp coverage.
 
 
 # ===========================================================================
@@ -932,18 +924,22 @@ def _v_dask_gpu(path):
     return open_geotiff(path, gpu=True, chunks=32)
 
 
+# Each entry: (opener, label). Same shape as ``_BACKEND_OPENERS`` above
+# so the filename matches the parametrize id.
 _VERSION_TIFF_OPENERS = [
-    pytest.param(_v_eager, id='version[eager-numpy]'),
-    pytest.param(_v_dask, id='version[dask-numpy]'),
-    pytest.param(_v_gpu, id='version[gpu]', marks=requires_gpu),
-    pytest.param(_v_dask_gpu, id='version[dask-gpu]', marks=requires_gpu),
+    pytest.param(_v_eager, 'eager-numpy', id='version[eager-numpy]'),
+    pytest.param(_v_dask, 'dask-numpy', id='version[dask-numpy]'),
+    pytest.param(_v_gpu, 'gpu', id='version[gpu]', marks=requires_gpu),
+    pytest.param(
+        _v_dask_gpu, 'dask-gpu',
+        id='version[dask-gpu]', marks=requires_gpu),
 ]
 
 
-@pytest.mark.parametrize('opener', _VERSION_TIFF_OPENERS)
-def test_version_stamp_present_per_tiff_backend(tmp_path, opener):
+@pytest.mark.parametrize('opener,label', _VERSION_TIFF_OPENERS)
+def test_version_stamp_present_per_tiff_backend(tmp_path, opener, label):
     """Each TIFF read backend stamps the contract version."""
-    path = str(tmp_path / f"contract_{opener.__name__}.tif")
+    path = str(tmp_path / f"contract_{label}.tif")
     _write_small_tiff(path)
 
     da = opener(path)
@@ -959,17 +955,17 @@ def _v_vrt_chunked(path):
 
 
 _VERSION_VRT_OPENERS = [
-    pytest.param(_v_vrt_eager, id='version[vrt-eager]'),
-    pytest.param(_v_vrt_chunked, id='version[vrt-chunked]'),
+    pytest.param(_v_vrt_eager, 'vrt-eager', id='version[vrt-eager]'),
+    pytest.param(_v_vrt_chunked, 'vrt-chunked', id='version[vrt-chunked]'),
 ]
 
 
-@pytest.mark.parametrize('opener', _VERSION_VRT_OPENERS)
-def test_version_stamp_present_per_vrt_backend(tmp_path, opener):
+@pytest.mark.parametrize('opener,label', _VERSION_VRT_OPENERS)
+def test_version_stamp_present_per_vrt_backend(tmp_path, opener, label):
     """Both VRT read paths stamp the contract version."""
-    src = tmp_path / f"contract_{opener.__name__}_source.tif"
+    src = tmp_path / f"contract_{label}_source.tif"
     _write_small_tiff(str(src))
-    vrt = tmp_path / f"contract_{opener.__name__}.vrt"
+    vrt = tmp_path / f"contract_{label}.vrt"
     _write_minimal_vrt(vrt, os.path.basename(src), height=64, width=64)
 
     da = opener(str(vrt))
