@@ -451,9 +451,7 @@ attrs contract
      - Rotated reads surface ``rotated_affine`` and drop ``crs`` so
        downstream math cannot silently mix a rotated grid with an
        axis-aligned CRS.
-     - ``xrspatial/geotiff/tests/test_allow_rotated_crs_drop_2126.py``,
-       ``xrspatial/geotiff/tests/test_allow_rotated_no_crs_2122.py``,
-       ``xrspatial/geotiff/tests/test_allow_rotated_geotiff_2115.py``
+     - ``xrspatial/geotiff/tests/read/test_crs.py``
      - `#2340`_
    * - ``reader.allow_unparseable_crs``
      - experimental

@@ -110,9 +110,7 @@ has non-zero rotation or shear coefficients by default. Pass
 6-tuple on ``attrs['rotated_affine']`` and drops ``attrs['crs']`` so
 downstream math cannot silently mix a rotated grid with an
 axis-aligned CRS. The dropped-CRS rule is locked by
-``xrspatial/geotiff/tests/test_allow_rotated_crs_drop_2126.py``,
-``xrspatial/geotiff/tests/test_allow_rotated_no_crs_2122.py``, and
-``xrspatial/geotiff/tests/test_allow_rotated_geotiff_2115.py``. The
+``xrspatial/geotiff/tests/read/test_crs.py``. The
 HTTP dask path honours the same opt-in via
 ``xrspatial/geotiff/tests/test_http_dask_allow_rotated_2130.py``.
 Without ``allow_rotated=True`` the read raises a typed error; see
