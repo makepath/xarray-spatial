@@ -162,6 +162,28 @@ class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class NonRepresentableEPSGCRSError(GeoTIFFAmbiguousMetadataError):
+    """EPSG code resolves, but the GeoTIFF writer cannot represent it (#2418).
+
+    Raised by the GeoTIFF writer when the caller supplies an integer
+    EPSG code that pyproj resolves to a compound CRS (horizontal +
+    vertical). The writer can only emit ``GeographicTypeGeoKey`` (2048)
+    or ``ProjectedCSTypeGeoKey`` (3072); storing a compound EPSG in
+    either slot produces a GeoTIFF that rasterio / GDAL reads back as
+    a different CRS (or no CRS at all), because the GeoKey value
+    declares "this is a 2D horizontal CRS" but the EPSG database
+    registers it as compound.
+
+    Callers who need to preserve a compound CRS should either pass the
+    horizontal sub-CRS as the integer EPSG (the vertical component is
+    not representable in a single GeoTIFF without additional GeoKeys
+    that this release does not emit), or pass the full compound WKT as
+    ``crs=`` so the writer takes the ``ProjectedCSType=32767`` /
+    ``GTCitationGeoKey`` fallback path. The WKT fallback path round-trips
+    through libgeotiff and GDAL but not all readers; see issue #1768.
+    """
+
+
 class UnsupportedGeoTIFFFeatureError(ValueError):
     """Caller asked for a feature this release does not implement (#2349).
 
@@ -190,5 +212,6 @@ __all__ = [
     "ConflictingNodataError",
     "VRTUnsupportedError",
     "UnknownCRSModelTypeError",
+    "NonRepresentableEPSGCRSError",
     "UnsupportedGeoTIFFFeatureError",
 ]

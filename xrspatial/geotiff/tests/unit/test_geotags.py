@@ -12,7 +12,7 @@ from xrspatial.geotiff._geotags import (GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_PROJECTED
                                         build_geo_tags, extract_geo_info)
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 
-from .conftest import make_minimal_tiff
+from ..conftest import make_minimal_tiff
 
 
 class TestGeoTransform:

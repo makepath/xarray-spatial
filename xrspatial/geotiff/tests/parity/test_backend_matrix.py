@@ -77,7 +77,7 @@ import xarray as xr
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt
 from xrspatial.geotiff._errors import RotatedTransformError
 
-from .._helpers.markers import gpu_available, requires_gpu
+from .._helpers.markers import gpu_available, requires_gpu, requires_loopback
 
 # ---------------------------------------------------------------------------
 # Environment gating
@@ -841,6 +841,7 @@ def _resolve_source(
 # The single matrix test entry point
 # ---------------------------------------------------------------------------
 
+@requires_loopback
 @pytest.mark.parametrize("spec", _fixture_params())
 @pytest.mark.parametrize("backend", _backend_params())
 def test_backend_parity_matrix(
@@ -997,6 +998,7 @@ def error_parity_fixture(_parity_matrix_dir):
     return _resolve
 
 
+@requires_loopback
 @pytest.mark.parametrize("error_spec", _ERROR_FIXTURES,
                          ids=lambda s: s.fix_id)
 @pytest.mark.parametrize("backend", _backend_params())

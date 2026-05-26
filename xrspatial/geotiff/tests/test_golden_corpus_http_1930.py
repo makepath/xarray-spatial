@@ -39,6 +39,10 @@ pytest.importorskip("rasterio")
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 
+from ._helpers.markers import requires_loopback  # noqa: E402
+
+pytestmark = requires_loopback
+
 # Golden-corpus fixtures span every codec/tier, including the
 # experimental and internal-only ones gated by epic #2340 PR 4. Opting
 # in here lets the parity check exercise the full corpus; the per-codec

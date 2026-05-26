@@ -242,6 +242,13 @@ the ambiguous-metadata family at once.
      - The writer cannot classify an EPSG code as geographic or
        projected.
      - Pass a code pyproj can resolve, or install pyproj.
+   * - :class:`~xrspatial.geotiff.NonRepresentableEPSGCRSError`
+     - The integer EPSG code resolves to a compound (horizontal +
+       vertical) CRS, which the writer cannot represent in a single
+       ``GeographicTypeGeoKey`` or ``ProjectedCSTypeGeoKey`` slot.
+     - Pass the full compound CRS as WKT to take the user-defined CRS
+       fallback path, or pass the horizontal sub-CRS EPSG directly if
+       the vertical component is not needed.
    * - :class:`~xrspatial.geotiff.UnsupportedGeoTIFFFeatureError`
      - The input declares a feature the GeoTIFF module does not
        implement (warped / reprojection VRTs, pansharpened or derived

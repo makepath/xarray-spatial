@@ -30,6 +30,8 @@ import pytest
 from xrspatial.geotiff._reader import CloudSizeLimitError
 from xrspatial.geotiff._sidecar import load_sidecar
 
+from ._helpers.markers import requires_loopback
+
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parent
     / "golden_corpus"
@@ -134,6 +136,7 @@ def test_fsspec_sidecar_max_cloud_bytes_none_is_unbounded(tmp_path):
 # HTTP: load_sidecar translates the underlying budget OSError into
 # CloudSizeLimitError so both cloud transports raise the same type.
 # ---------------------------------------------------------------------------
+@requires_loopback
 def test_http_sidecar_rejects_when_exceeds_max_cloud_bytes(
         tmp_path, monkeypatch):
     """Streaming download aborts when the body exceeds ``max_cloud_bytes``."""
@@ -160,6 +163,7 @@ def test_http_sidecar_rejects_when_exceeds_max_cloud_bytes(
         httpd.shutdown()
 
 
+@requires_loopback
 def test_http_sidecar_succeeds_when_under_max_cloud_bytes(
         tmp_path, monkeypatch):
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
@@ -176,6 +180,7 @@ def test_http_sidecar_succeeds_when_under_max_cloud_bytes(
         httpd.shutdown()
 
 
+@requires_loopback
 def test_http_sidecar_max_cloud_bytes_none_is_unbounded(
         tmp_path, monkeypatch):
     """``max_cloud_bytes=None`` preserves the pre-#2121 unbounded read."""
