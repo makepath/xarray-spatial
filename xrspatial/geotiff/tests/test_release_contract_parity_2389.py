@@ -8,11 +8,12 @@ GeoTIFF feature with its tier and claims:
     The tier strings here match the strings in
     ``xrspatial.geotiff.SUPPORTED_FEATURES`` at runtime.
 
-Before this test, nothing in CI checked that claim. The sibling
-``test_release_gate_2321.py`` parses ``release_gate_geotiff.rst``, not
-this ``.md`` contract page, so the contract could (and did) silently
-drift the next time a key was re-tiered in ``_attrs.py`` --
-twice in two releases (#2381 and #2389).
+Before this test, nothing in CI checked that claim. The sibling release
+gate registry (``release_gates/test_stable_features.py``,
+``Cross-cutting meta-gates`` section) parses
+``release_gate_geotiff.rst``, not this ``.md`` contract page, so the
+contract could (and did) silently drift the next time a key was
+re-tiered in ``_attrs.py`` -- twice in two releases (#2381 and #2389).
 
 What this test pins
 -------------------
@@ -29,7 +30,7 @@ Out of scope
   those are human-readable labels, not runtime tier strings.
 * Locking the contract page against ``release_gate_geotiff.rst`` --
   the gate page only enumerates ``stable`` and ``advanced`` tiers
-  (``test_release_gate_2321.py`` already covers that side).
+  (``release_gates/test_stable_features.py`` already covers that side).
 """
 from __future__ import annotations
 

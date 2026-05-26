@@ -132,7 +132,8 @@ silently emit a mislabeled raster:
 
 * Rotated read without ``allow_rotated=True`` -- raises across eager,
   dask, and windowed paths
-  (``xrspatial/geotiff/tests/test_release_gate_negative_2341.py``).
+  (``xrspatial/geotiff/tests/release_gates/test_stable_features.py``,
+  ``Negative cases`` section).
 * Rotated write without ``drop_rotation=True`` -- raises ``ValueError``
   (``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``).
 * Rotated or skewed source inside a VRT -- raises at parse
@@ -535,7 +536,8 @@ regression test that locks the behaviour.
        ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
        (``test_mixed_per_source_nodata_rejected``)
    * - Rotated read without ``allow_rotated=True``
-     - ``xrspatial/geotiff/tests/test_release_gate_negative_2341.py``,
+     - ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
+       (``Negative cases`` section),
        ``xrspatial/geotiff/tests/test_rotated_typed_error_2267.py``
    * - Rotated write without ``drop_rotation=True``
      - ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``,
