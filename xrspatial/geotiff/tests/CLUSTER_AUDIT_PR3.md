@@ -18,8 +18,8 @@ in place; it belongs to PR 9 (integration).
 | `test_allow_rotated_geotiff_2115.py::test_open_geotiff_rotated_allow_rotated_reads_pixels` | `read/test_crs.py::test_open_geotiff_rotated_no_crs_optin_reads_pixels[eager]` | parametrized |
 | `test_allow_rotated_geotiff_2115.py::test_open_geotiff_rotated_default_raises_with_dask` | `read/test_crs.py::test_open_geotiff_rotated_no_crs_default_raises[dask]` | parametrized |
 | `test_allow_rotated_geotiff_2115.py::test_open_geotiff_rotated_allow_rotated_with_dask` | `read/test_crs.py::test_open_geotiff_rotated_no_crs_optin_reads_pixels[dask]` | parametrized |
-| `test_allow_rotated_geotiff_2115.py::test_open_geotiff_http_rotated_default_raises` | -- | DROPPED. HTTP rotated coverage already exists in `test_http_dask_allow_rotated_2130.py` (PR 9 integration cluster). Local-file rotated raise is pinned by `test_open_geotiff_rotated_no_crs_default_raises[eager]`. |
-| `test_allow_rotated_geotiff_2115.py::test_open_geotiff_http_rotated_allow_rotated_reads_pixels` | -- | DROPPED. Same rationale as above; PR 9 integration cluster owns end-to-end HTTP rotated reads. |
+| `test_allow_rotated_geotiff_2115.py::test_open_geotiff_http_rotated_default_raises` | -- | DROPPED. Superseded by `test_http_dask_allow_rotated_2130.py::test_http_dask_rotated_default_raises` (PR 9 integration cluster), which pins the same default-raise behaviour through the HTTP+dask metadata path. Local-file rotated raise is pinned by `test_open_geotiff_rotated_no_crs_default_raises[eager]`. |
+| `test_allow_rotated_geotiff_2115.py::test_open_geotiff_http_rotated_allow_rotated_reads_pixels` | -- | DROPPED. Superseded by `test_http_dask_allow_rotated_2130.py::test_http_dask_rotated_allow_rotated_reads` (PR 9 integration cluster), which exercises the HTTP+dask `allow_rotated=True` path end-to-end. |
 
 ## `test_allow_rotated_crs_drop_2126.py`
 

@@ -425,6 +425,15 @@ def test_populate_attrs_axis_aligned_keeps_crs_and_transform():
 # ===========================================================================
 
 
+def _chunks_label(chunks) -> str:
+    """Filename-friendly label matching the pytest test ID for ``chunks``.
+
+    Keeps ``tmp_path`` trees readable: ``..._eager.tif`` / ``..._dask.tif``
+    instead of ``..._None.tif`` / ``..._2.tif``.
+    """
+    return "eager" if chunks is None else "dask"
+
+
 def _build_rotated_no_crs(tmp_path, name):
     src = tmp_path / name
     arr = np.arange(20, dtype='<u2').reshape(4, 5)
@@ -454,7 +463,7 @@ def test_open_geotiff_rotated_no_crs_default_raises(tmp_path, chunks):
     opt-out keeps the safety net.
     """
     src, _ = _build_rotated_no_crs(
-        tmp_path, f"rotated_no_crs_default_{chunks}.tif"
+        tmp_path, f"rotated_no_crs_default_{_chunks_label(chunks)}.tif"
     )
     kwargs = {} if chunks is None else {"chunks": chunks}
     with pytest.raises(RotatedTransformError, match="rotation"):
@@ -465,7 +474,7 @@ def test_open_geotiff_rotated_no_crs_default_raises(tmp_path, chunks):
 def test_open_geotiff_rotated_no_crs_optin_reads_pixels(tmp_path, chunks):
     """``allow_rotated=True`` reads the pixel grid on eager and dask."""
     src, arr = _build_rotated_no_crs(
-        tmp_path, f"rotated_no_crs_optin_{chunks}.tif"
+        tmp_path, f"rotated_no_crs_optin_{_chunks_label(chunks)}.tif"
     )
     kwargs = {"allow_rotated": True}
     if chunks is not None:
@@ -484,7 +493,7 @@ def test_open_geotiff_rotated_with_crs_drops_crs(tmp_path, chunks):
     """``allow_rotated=True`` drops ``crs`` / ``crs_wkt`` together with
     the transform when the source carries an embedded CRS."""
     src, arr = _build_rotated_with_crs(
-        tmp_path, f"rotated_with_crs_{chunks}.tif"
+        tmp_path, f"rotated_with_crs_{_chunks_label(chunks)}.tif"
     )
     kwargs = {"allow_rotated": True}
     if chunks is not None:
@@ -510,7 +519,7 @@ def test_open_geotiff_rotated_with_crs_geokey_only_drops_crs(tmp_path, chunks):
     surfaced the CRS, which mismatched the docstring and misled callers
     that gated on ``"crs" in da.attrs`` to mean "spatially meaningful".
     """
-    src = tmp_path / f"rotated_with_crs_geokey_{chunks}.tif"
+    src = tmp_path / f"rotated_with_crs_geokey_{_chunks_label(chunks)}.tif"
     arr = np.arange(20, dtype='<u2').reshape(4, 5)
     _write_rotated_tiff_with_geokeys_via_tifffile(str(src), arr, epsg=4326)
     kwargs = {"allow_rotated": True}
@@ -562,7 +571,9 @@ def test_open_geotiff_rotated_with_crs_drops_crs_gpu(tmp_path, chunks):
     ``allow_rotated`` correctly even before the eager fix landed; both
     are pinned here.
     """
-    src, _ = _build_rotated_with_crs(tmp_path, f"rotated_gpu_{chunks}.tif")
+    src, _ = _build_rotated_with_crs(
+        tmp_path, f"rotated_gpu_{_chunks_label(chunks)}.tif"
+    )
     kwargs = {"allow_rotated": True, "gpu": True}
     if chunks is not None:
         kwargs["chunks"] = chunks
@@ -587,9 +598,10 @@ def test_vrt_rotated_with_crs_drops_crs(tmp_path, chunks):
     round-trip treats the array as a no-georef pixel grid rather than a
     user-authored integer-coord raster.
     """
-    src = tmp_path / f"vrt_src_{chunks}.tif"
+    label = _chunks_label(chunks)
+    src = tmp_path / f"vrt_src_{label}.tif"
     _write_minimal_aligned_tiff(src)
-    vrt = tmp_path / f"vrt_rotated_{chunks}.vrt"
+    vrt = tmp_path / f"vrt_rotated_{label}.vrt"
     _write_rotated_vrt(vrt, src.name)
 
     kwargs = {"allow_rotated": True}
