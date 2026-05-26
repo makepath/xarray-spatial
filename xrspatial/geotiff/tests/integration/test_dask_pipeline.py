@@ -824,7 +824,7 @@ class TestStreamingWriteAllInf_dask_streaming_write_degenerate:
 class TestStreamingWriteFloatPredictor_dask_streaming_write_degenerate:
     """``predictor=3`` (TIFF float predictor) on small dask rasters.
 
-    ``test_predictor_fp_write_1313.test_predictor3_streaming_dask``
+    ``unit/test_predictor.py::test_predictor3_streaming_dask``
     already covers a dask-backed streaming write with ``predictor=3``
     on a 128x192 raster and pins the Predictor tag. The tests below
     extend coverage with smaller chunk geometries (16x16) and lock the
