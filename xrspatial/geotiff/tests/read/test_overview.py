@@ -80,7 +80,7 @@ def _write_tiff_with_mask(path, full_res, mask, overview):
     All IFDs are tiled so that the xrspatial reader exercises its
     tiled-COG path. Tiles are 16x16 to keep the test files small.
     """
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
 
     with tifffile.TiffWriter(str(path)) as tw:
         # IFD 0: full resolution (subfiletype=0 implicit).
@@ -103,7 +103,7 @@ def _write_tiff_with_mask(path, full_res, mask, overview):
 
 def _write_normal_cog(path, full_res, overviews):
     """Write a typical COG: full-res then a chain of overviews (subfiletype=1)."""
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
 
     with tifffile.TiffWriter(str(path)) as tw:
         tw.write(full_res, tile=(16, 16), photometric='minisblack')
@@ -197,7 +197,7 @@ class TestSelectOverviewIFD:
         coexist with overviews. ``overview_level`` should index the
         pyramid only and ignore page IFDs the same way it ignores masks.
         """
-        import tifffile
+        tifffile = pytest.importorskip("tifffile")
 
         from xrspatial.geotiff._header import select_overview_ifd
 
@@ -230,7 +230,7 @@ class TestSelectOverviewIFD:
         The presence of the mask bit dominates -- this is a mask, even if
         it happens to be a reduced-resolution one.
         """
-        import tifffile
+        tifffile = pytest.importorskip("tifffile")
 
         from xrspatial.geotiff._header import select_overview_ifd
 
@@ -593,7 +593,7 @@ def test_overview_level_0_path_unchanged(tmp_path):
 
 def _write_cog_one_overview_2074(path: str) -> np.ndarray:
     """Write a 64x64 single-band TIFF with one half-resolution overview."""
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
 
     rng = np.random.RandomState(0x2074)
     arr = rng.randint(0, 256, size=(64, 64), dtype=np.uint8)
@@ -692,7 +692,7 @@ def test_overview_level_typeerror_names_value(cog_with_overview_2074):
 
 def _write_cog_one_overview_2160(path: str) -> np.ndarray:
     """Write a 64x64 single-band TIFF with one half-resolution overview."""
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
 
     rng = np.random.RandomState(0x2160)
     arr = rng.randint(0, 256, size=(64, 64), dtype=np.uint8)
