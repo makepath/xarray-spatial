@@ -33,7 +33,7 @@ import xarray as xr
 from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
                                to_geotiff, write_vrt)
 
-from .._helpers.markers import gpu_available, requires_gpu
+from .._helpers.markers import gpu_available, requires_gpu, requires_loopback
 
 # ---------------------------------------------------------------------------
 # Environment gating
@@ -622,6 +622,7 @@ def miniswhite_http_url(tmp_path, monkeypatch):
         httpd.server_close()
 
 
+@requires_loopback
 def test_miniswhite_http_matches_local_reader(miniswhite_http_url):
     """HTTP read of a MinIsWhite TIFF returns the inverted pixel domain."""
     url, stored = miniswhite_http_url
@@ -629,6 +630,7 @@ def test_miniswhite_http_matches_local_reader(miniswhite_http_url):
     np.testing.assert_array_equal(got.values, np.iinfo(stored.dtype).max - stored)
 
 
+@requires_loopback
 def test_miniswhite_http_dask_matches_local_reader(miniswhite_http_url):
     """Dask HTTP read agrees with the eager HTTP read on inversion."""
     url, stored = miniswhite_http_url

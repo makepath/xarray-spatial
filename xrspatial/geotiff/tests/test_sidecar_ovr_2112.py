@@ -31,6 +31,8 @@ from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._sidecar import find_sidecar, load_sidecar
 
+from ._helpers.markers import requires_loopback
+
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parent
     / "golden_corpus"
@@ -252,6 +254,7 @@ def _start_http_server(directory):
     return httpd, httpd.server_address[1]
 
 
+@requires_loopback
 def test_find_sidecar_http_probe_returns_url_when_present(
         tmp_path, monkeypatch):
     # The sidecar probe now routes through ``_HTTPSource``, which
@@ -272,6 +275,7 @@ def test_find_sidecar_http_probe_returns_url_when_present(
         httpd.shutdown()
 
 
+@requires_loopback
 def test_find_sidecar_http_probe_returns_none_when_missing(
         tmp_path, monkeypatch):
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
@@ -286,6 +290,7 @@ def test_find_sidecar_http_probe_returns_none_when_missing(
         httpd.shutdown()
 
 
+@requires_loopback
 def test_find_sidecar_http_probe_rejects_loopback_without_env_override(
         tmp_path):
     """Without ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1``, the SSRF
@@ -303,6 +308,7 @@ def test_find_sidecar_http_probe_rejects_loopback_without_env_override(
         httpd.shutdown()
 
 
+@requires_loopback
 def test_load_sidecar_http_returns_ifds(tmp_path, monkeypatch):
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     src = _fixture_or_skip()

@@ -49,6 +49,8 @@ import pytest
 # under test do not depend on rasterio at runtime.
 rasterio = pytest.importorskip("rasterio")
 
+from ._helpers.markers import requires_loopback  # noqa: E402
+
 from xrspatial.geotiff import _decode as _decode_mod  # noqa: E402
 from xrspatial.geotiff import _reader as _reader_mod  # noqa: E402
 from xrspatial.geotiff._reader import read_to_array  # noqa: E402
@@ -291,6 +293,7 @@ class TestReadStripsSparsePlanar2:
 
 # HTTP COG strip sparse coverage -------------------------------------------
 
+@requires_loopback
 class TestHttpStripsSparseParallel:
     """``_fetch_decode_cog_http_strips`` with sparse strips.
 

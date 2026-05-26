@@ -228,7 +228,7 @@ Local GeoTIFF read and write
      - experimental
      - ``attrs['gdal_metadata_xml']`` is escaped before serialization and
        does not corrupt the IFD when round-tripped.
-     - ``xrspatial/geotiff/tests/test_gdal_metadata_xml_escape_1614.py``
+     - ``xrspatial/geotiff/tests/unit/test_safe_xml.py``
      - `#2340`_
    * - ``writer.extra_tags``
      - experimental
