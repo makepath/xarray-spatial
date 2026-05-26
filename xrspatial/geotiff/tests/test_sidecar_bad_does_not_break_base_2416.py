@@ -179,6 +179,30 @@ def test_read_geo_info_base_survives_unreadable_sidecar(tmp_path):
     assert geo is not None
 
 
+def test_read_geo_info_cloud_size_limit_error_is_not_silenced(
+    tmp_path, monkeypatch
+):
+    """Symmetry with the eager CPU path: the metadata-only helper must
+    re-raise ``CloudSizeLimitError`` rather than swallow it as a generic
+    sidecar failure. Cannot fire on a local mmap source today, but the
+    contract should not silently regress if a future patch widens the
+    helper to a cloud source."""
+    from xrspatial.geotiff import _read_geo_info
+    from xrspatial.geotiff import _sidecar as _sidecar_mod
+    from xrspatial.geotiff._reader import CloudSizeLimitError
+
+    path, _ = _make_base(tmp_path)
+    _make_corrupt_sidecar(path, b"\x00")
+
+    def _budget_breach(_path, *, max_cloud_bytes=None):
+        raise CloudSizeLimitError("sidecar too big for budget")
+
+    monkeypatch.setattr(_sidecar_mod, "load_sidecar", _budget_breach)
+
+    with pytest.raises(CloudSizeLimitError):
+        _read_geo_info(str(path))
+
+
 # ---------------------------------------------------------------------------
 # GPU eager path: same contract.
 # ---------------------------------------------------------------------------

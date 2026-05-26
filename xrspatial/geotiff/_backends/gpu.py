@@ -23,7 +23,7 @@ import xarray as xr
 from .._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
 from .._coords import coords_from_geo_info as _coords_from_geo_info
 from .._nodata import NodataLifecycle as _NL
-from .._reader import _MAX_CLOUD_BYTES_SENTINEL, _coerce_path
+from .._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, _coerce_path
 from .._reader import read_to_array as _read_to_array
 from .._runtime import (_GPU_DEPRECATED_SENTINEL, _MISSING_SOURCES_SENTINEL,
                         _ON_GPU_FAILURE_SENTINEL, _geotiff_strict_mode)
@@ -418,14 +418,22 @@ def read_geotiff_gpu(source: str, *,
         if sidecar_path is not None:
             try:
                 sidecar = load_sidecar(sidecar_path)
+            except CloudSizeLimitError:
+                # Re-raised for symmetry with ``_reader._read_to_array``;
+                # the byte budget is a caller-set contract. The GPU eager
+                # path operates on a local mmap source today so the
+                # exception cannot fire here, but keeping the explicit
+                # re-raise prevents the symmetry breaking if a future
+                # patch routes a cloud-source path through here.
+                raise
             except Exception as exc:
                 warnings.warn(
                     f"Ignoring unreadable sidecar {sidecar_path!r}: "
                     f"{type(exc).__name__}: {exc}. Falling back to "
-                    f"base-file-only read. Request a specific external "
-                    f"overview level to surface the error instead.",
+                    f"base-file-only read. Delete the .ovr file or pass "
+                    f"overview_level>=1 to surface the parse error.",
                     RuntimeWarning,
-                    stacklevel=2,
+                    stacklevel=3,
                 )
                 sidecar = None
             if sidecar is not None:

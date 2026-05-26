@@ -247,10 +247,10 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
                 warnings.warn(
                     f"Ignoring unreadable sidecar {sidecar_path!r}: "
                     f"{type(exc).__name__}: {exc}. Falling back to "
-                    f"base-file-only read. Request a specific external "
-                    f"overview level to surface the error instead.",
+                    f"base-file-only read. Delete the .ovr file or pass "
+                    f"overview_level>=1 to surface the parse error.",
                     RuntimeWarning,
-                    stacklevel=2,
+                    stacklevel=3,
                 )
                 sidecar = None
             if sidecar is not None:
