@@ -23,7 +23,6 @@ read.
 """
 from __future__ import annotations
 
-import io
 import os
 import uuid
 
@@ -31,6 +30,8 @@ import numpy as np
 import pytest
 
 tifffile = pytest.importorskip("tifffile")
+
+from ._helpers.markers import requires_loopback  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +157,7 @@ def test_local_eager_mixed_endian_sidecar(tmp_path, base_bo, side_bo):
 # sidecar URL. The fix returns the sidecar's header from
 # ``_parse_cog_http_meta`` when ``used_sidecar=True``.
 # ---------------------------------------------------------------------------
+@requires_loopback
 @pytest.mark.parametrize("base_bo,side_bo", [
     ('<', '>'),
     ('>', '<'),
@@ -189,6 +191,7 @@ def test_http_eager_mixed_endian_sidecar(tmp_path, monkeypatch,
 # ``_parse_cog_http_meta``: when the sidecar is in use, ``http_header``
 # is the sidecar's header.
 # ---------------------------------------------------------------------------
+@requires_loopback
 @pytest.mark.parametrize("base_bo,side_bo", [
     ('<', '>'),
     ('>', '<'),
@@ -262,6 +265,7 @@ def test_fsspec_chunked_mixed_endian_sidecar(tmp_path, base_bo, side_bo):
 # Run one parametrized case here so a future regression that decouples
 # the two paths gets caught.
 # ---------------------------------------------------------------------------
+@requires_loopback
 @pytest.mark.parametrize("base_bo,side_bo", [
     ('<', '>'),
     ('>', '<'),
@@ -297,6 +301,7 @@ def test_http_eager_mixed_endian_sidecar_tiled(tmp_path, monkeypatch,
 # different field could silently regress without tripping the
 # end-to-end tests above.
 # ---------------------------------------------------------------------------
+@requires_loopback
 @pytest.mark.parametrize("base_bo,side_bo", [
     ('<', '>'),
     ('>', '<'),

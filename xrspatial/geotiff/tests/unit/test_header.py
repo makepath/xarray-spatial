@@ -10,7 +10,7 @@ from xrspatial.geotiff._dtypes import RATIONAL, SRATIONAL
 from xrspatial.geotiff._header import (IFD, TAG_IMAGE_WIDTH, TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
                                        _read_value, parse_all_ifds, parse_header, parse_ifd)
 
-from .conftest import make_minimal_tiff
+from ..conftest import make_minimal_tiff
 
 
 class TestParseHeader:

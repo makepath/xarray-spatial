@@ -28,6 +28,8 @@ import pathlib
 import numpy as np
 import pytest
 
+from ._helpers.markers import requires_loopback
+
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parent
     / "golden_corpus"
@@ -183,6 +185,7 @@ def test_fsspec_chunked_open_resolves_sidecar_overview(
 # fsspec test, but exercises the HTTP discovery + load + tile-fetch path
 # in ``_read_cog_http`` and ``_backends/dask.py``.
 # ---------------------------------------------------------------------------
+@requires_loopback
 @pytest.mark.parametrize("overview_level", [1, 2])
 def test_http_chunked_open_resolves_sidecar_overview(
         _http_with_sidecar, overview_level):
@@ -195,6 +198,7 @@ def test_http_chunked_open_resolves_sidecar_overview(
     np.testing.assert_array_equal(chunked.values, eager.values)
 
 
+@requires_loopback
 def test_http_eager_reads_sidecar_overview(_http_with_sidecar):
     """The eager HTTP path also needs to honour sidecars (issue #2239)."""
     from xrspatial.geotiff import open_geotiff
@@ -208,6 +212,7 @@ def test_http_eager_reads_sidecar_overview(_http_with_sidecar):
     assert da16.shape == (16, 16)
 
 
+@requires_loopback
 def test_http_eager_vs_local_parity(_http_with_sidecar):
     """Eager HTTP reads should match the eager local read byte-for-byte."""
     from xrspatial.geotiff import open_geotiff
@@ -258,6 +263,7 @@ def test_fsspec_chunked_open_rejects_overview_past_sidecar(
         open_geotiff(uri, chunks=16, overview_level=3)
 
 
+@requires_loopback
 def test_http_chunked_open_rejects_overview_past_sidecar(_http_with_sidecar):
     from xrspatial.geotiff import open_geotiff
     url = _http_with_sidecar

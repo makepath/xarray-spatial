@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import xarray as xr
-from .._helpers.markers import gpu_available
+from .._helpers.markers import gpu_available, requires_loopback
 import os
 import importlib.util
 import io
@@ -1851,6 +1851,7 @@ def test_row4_golden_cog_xrspatial_local():
 # Row 5: golden/rasterio COG fixture -> xrspatial HTTP range read
 # ---------------------------------------------------------------------------
 
+@requires_loopback
 def test_row5_golden_cog_xrspatial_http(golden_cog_http):
     """xrspatial's HTTP range reader returns the same pixels as the local read.
 
@@ -1900,6 +1901,7 @@ def test_row5_golden_cog_xrspatial_http(golden_cog_http):
 # Row 6: golden/rasterio COG fixture -> xrspatial dask HTTP range read
 # ---------------------------------------------------------------------------
 
+@requires_loopback
 def test_row6_golden_cog_xrspatial_dask_http(golden_cog_http):
     """The dask HTTP path returns the same pixels as the local read.
 

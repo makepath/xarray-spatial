@@ -29,6 +29,8 @@ import threading
 import numpy as np
 import pytest
 
+from ._helpers.markers import requires_loopback
+
 
 def _gpu_available() -> bool:
     if importlib.util.find_spec("cupy") is None:
@@ -129,6 +131,7 @@ def test_local_path_still_returns_cupy(small_tif_bytes_2161):
 # ---------------------------------------------------------------------------
 
 @_gpu_only
+@requires_loopback
 def test_http_url_returns_cupy_matching_cpu(small_tif_bytes_2161,
                                             monkeypatch):
     """HTTP URLs route through the CPU decode + GPU upload helper; the
@@ -204,6 +207,7 @@ def test_memory_fsspec_uri_returns_cupy_matching_cpu(small_tif_bytes_2161):
 # ---------------------------------------------------------------------------
 
 @_gpu_only
+@requires_loopback
 def test_unreachable_http_url_does_not_raise_filenotfound(monkeypatch):
     """Before the fix, ``read_geotiff_gpu("https://example.invalid/x.tif")``
     raised ``FileNotFoundError`` whose message was the URL itself
@@ -264,6 +268,7 @@ def test_unreachable_http_url_does_not_raise_filenotfound(monkeypatch):
 # ---------------------------------------------------------------------------
 
 @_gpu_only
+@requires_loopback
 def test_chunked_url_path_still_uses_chunked_helper(small_tif_bytes_2161,
                                                     monkeypatch):
     """``chunks=`` on a URL must still go through

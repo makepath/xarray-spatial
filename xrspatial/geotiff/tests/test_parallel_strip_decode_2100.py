@@ -25,6 +25,8 @@ from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._reader import read_to_array
 
+from ._helpers.markers import requires_loopback
+
 
 def _make_stripped_uint16(height: int, width: int, *,
                           compression: str = "deflate") -> bytes:
@@ -179,6 +181,7 @@ def _start_server(blob: bytes):
     return server, port
 
 
+@requires_loopback
 class TestHttpStripParallelDecode:
     def test_parallel_decode_matches_serial(self, monkeypatch):
         monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
@@ -323,6 +326,7 @@ class TestPlanar2MultibandStripParallel:
         expected = np.moveaxis(arr, 0, -1)[100:900, 100:900]
         np.testing.assert_array_equal(par, expected)
 
+    @requires_loopback
     def test_http_windowed_planar2_parallel(self, monkeypatch):
         """HTTP windowed strip path on planar=2 multi-band: pins the
         per-band strip-job loop inside
