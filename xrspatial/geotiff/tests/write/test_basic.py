@@ -9,10 +9,17 @@ compatibility, tiled output).
 
 Section banners below mark the topical sub-areas. Tests-only restructure
 for epic #2390.
+
+Cluster 9 of long-tail epic #2424 folded the writer-tail kwarg / shape
+validation files into the trailing sections: array-level ``_write`` /
+``_write_streaming`` push-down + byte parity (#2138), 3D dim validation
+(#1812), temporal-trailing 3D rejection (#1972), empty-spatial-dim
+rejection (#2075), and zero-band-axis rejection (#2095).
 """
 
 from __future__ import annotations
 
+import dask.array as dsk
 import numpy as np
 import pytest
 import os
@@ -40,8 +47,15 @@ from xrspatial.geotiff import (
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, parse_header, parse_ifd
-from xrspatial.geotiff._reader import read_to_array
-from xrspatial.geotiff._writer import _make_overview, _write_tiled, write
+from xrspatial.geotiff._reader import _read_to_array, read_to_array
+from xrspatial.geotiff._validation import _validate_3d_writer_dims
+from xrspatial.geotiff._writer import (
+    _make_overview,
+    _write,
+    _write_streaming,
+    _write_tiled,
+    write,
+)
 # ``write_vrt`` here is the private internal binding, aliased so it does
 # not shadow the public re-export above. The only section that needs
 # the private form is the writer-source-compat fold (see PR
@@ -1725,3 +1739,804 @@ class TestVrtEdgeCases:
         vrt_path = str(tmp_path / 'empty_1083.vrt')
         to_geotiff(sample_raster, vrt_path)
         assert os.path.exists(vrt_path)
+
+
+# =========================================================================
+# Folded from top-level writer-tail tests (cluster 9, epic #2424).
+# Sub-PR A: kwarg / shape validation paths.
+# =========================================================================
+
+
+# -------------------------------------------------------------------------
+# Section: array-level write push-down + byte parity (#2138)
+# -------------------------------------------------------------------------
+
+def _codec_available_2138(name: str) -> bool:
+    """Optional codecs (``lz4``, ``lerc``, ``imagecodecs``-backed JPEG2000)
+    are not installed in every CI matrix slot. Probe the import the way
+    ``_compression`` itself does so tests skip cleanly rather than
+    failing on a missing dependency."""
+    if name in ("none", "deflate", "lzw", "packbits", "zstd"):
+        # Built into the bundled compression module; always present.
+        return True
+    if name == "lz4":
+        try:
+            import lz4  # noqa: F401
+        except ImportError:
+            return False
+        return True
+    if name == "lerc":
+        try:
+            import lerc  # noqa: F401
+        except ImportError:
+            return False
+        return True
+    if name in ("jpeg", "jpeg2000", "j2k"):
+        try:
+            import imagecodecs  # noqa: F401
+        except ImportError:
+            return False
+        return True
+    return True
+
+
+def _make_uint8_band_2138(seed: int = 2138, shape=(32, 32)) -> np.ndarray:
+    """Deterministic 2D uint8 array used by the byte-parity tests."""
+    rng = np.random.RandomState(seed)
+    return rng.randint(0, 256, shape, dtype=np.uint8)
+
+
+def _make_float32_band_2138(seed: int = 2138, shape=(32, 32)) -> np.ndarray:
+    """Deterministic 2D float32 array for codecs that require floats (LERC)."""
+    rng = np.random.RandomState(seed)
+    return rng.rand(*shape).astype(np.float32)
+
+
+def _file_bytes_2138(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+class TestCompressionNamePushdown:
+    """``_write`` must reject unknown compression names with the canonical
+    list, the same way ``to_geotiff`` does. Before #2138 the array-level
+    entry point relied on ``_compression_tag`` which raised but without
+    the canonical list."""
+
+    def test_write_rejects_unknown_compression(self, tmp_path):
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2138_unknown_comp.tif")
+        with pytest.raises(ValueError) as excinfo:
+            _write(arr, out, compression="zstandard")
+        msg = str(excinfo.value)
+        assert "zstandard" in msg
+        # Canonical list is part of the new wording.
+        assert "zstd" in msg
+
+    def test_write_streaming_rejects_unknown_compression(self, tmp_path):
+        arr = dsk.from_array(_make_uint8_band_2138(), chunks=(16, 16))
+        out = str(tmp_path / "tmp_2138_unknown_comp_streaming.tif")
+        with pytest.raises(ValueError, match="zstandard"):
+            _write_streaming(arr, out, compression="zstandard")
+
+
+class TestJpegOptInPushdown:
+    """``_write`` must refuse ``compression='jpeg'`` unless the caller
+    opts in, mirroring ``to_geotiff``'s gate. Before #2138 direct
+    callers could silently produce a JFIF-tile file that other readers
+    reject."""
+
+    def test_write_rejects_jpeg_without_opt_in(self, tmp_path):
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2138_jpeg_no_optin.tif")
+        with pytest.raises(ValueError, match="allow_internal_only_jpeg"):
+            _write(arr, out, compression="jpeg")
+
+    def test_write_accepts_jpeg_with_opt_in(self, tmp_path):
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2138_jpeg_optin.tif")
+        _write(arr, out, compression="jpeg",
+               allow_internal_only_jpeg=True)
+        assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    def test_write_streaming_rejects_jpeg_without_opt_in(self, tmp_path):
+        arr = dsk.from_array(_make_uint8_band_2138(), chunks=(16, 16))
+        out = str(tmp_path / "tmp_2138_jpeg_streaming.tif")
+        with pytest.raises(ValueError, match="allow_internal_only_jpeg"):
+            _write_streaming(arr, out, compression="jpeg")
+
+
+class TestMaxZErrorPushdown:
+    def test_write_rejects_negative_max_z_error(self, tmp_path):
+        arr = _make_float32_band_2138()
+        out = str(tmp_path / "tmp_2138_negative_mze.tif")
+        with pytest.raises(ValueError, match="max_z_error"):
+            _write(arr, out, compression="lerc", max_z_error=-0.01)
+
+    def test_write_rejects_max_z_error_on_non_lerc(self, tmp_path):
+        arr = _make_float32_band_2138()
+        out = str(tmp_path / "tmp_2138_mze_zstd.tif")
+        with pytest.raises(ValueError, match="max_z_error"):
+            _write(arr, out, compression="zstd", max_z_error=0.05)
+
+    def test_write_streaming_rejects_negative_max_z_error(self, tmp_path):
+        arr = dsk.from_array(_make_float32_band_2138(), chunks=(16, 16))
+        out = str(tmp_path / "tmp_2138_streaming_neg_mze.tif")
+        with pytest.raises(ValueError, match="max_z_error"):
+            _write_streaming(arr, out, compression="lerc",
+                             max_z_error=-0.01)
+
+
+class TestCrsEpsgBoolPushdown:
+    """``crs_epsg=True`` would otherwise be written as ``EPSG=1`` because
+    ``bool`` is an ``int`` subclass in Python. Both the public wrapper
+    and the array-level entry points must reject it."""
+
+    def test_write_rejects_bool_crs_epsg(self, tmp_path):
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2138_bool_crs.tif")
+        with pytest.raises(ValueError, match="bool"):
+            _write(arr, out, crs_epsg=True)
+
+    def test_write_rejects_false_crs_epsg(self, tmp_path):
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2138_false_crs.tif")
+        with pytest.raises(ValueError, match="bool"):
+            _write(arr, out, crs_epsg=False)
+
+    def test_write_streaming_rejects_bool_crs_epsg(self, tmp_path):
+        arr = dsk.from_array(_make_uint8_band_2138(), chunks=(16, 16))
+        out = str(tmp_path / "tmp_2138_streaming_bool_crs.tif")
+        with pytest.raises(ValueError, match="bool"):
+            _write_streaming(arr, out, crs_epsg=True)
+
+
+class TestNanToSentinelDefensiveCopy:
+    """``to_geotiff`` rewrites NaN pixels to the nodata sentinel via
+    ``arr.copy()`` so the caller's buffer is never mutated. Direct
+    callers of ``_write`` used to skip this and write NaN bytes to
+    disk. Push the rewrite (and the defensive copy) down so the
+    invariant holds at every entry point."""
+
+    def test_write_does_not_mutate_caller_buffer(self, tmp_path):
+        # Float32 array with a real NaN and a non-NaN nodata sentinel.
+        arr = np.full((8, 8), 1.5, dtype=np.float32)
+        arr[2, 3] = np.nan
+        original = arr.copy()
+        out = str(tmp_path / "tmp_2138_no_mutate.tif")
+        _write(arr, out, nodata=-9999.0, compression="zstd")
+        # Caller's buffer must still carry the NaN it started with.
+        np.testing.assert_array_equal(np.isnan(arr), np.isnan(original))
+        # And the non-NaN positions must be untouched.
+        finite = ~np.isnan(original)
+        np.testing.assert_array_equal(arr[finite], original[finite])
+
+    def test_write_writes_sentinel_in_file(self, tmp_path):
+        arr = np.full((8, 8), 1.5, dtype=np.float32)
+        arr[2, 3] = np.nan
+        out = str(tmp_path / "tmp_2138_sentinel.tif")
+        _write(arr, out, nodata=-9999.0, compression="zstd")
+        # ``mask_nodata`` defaults to True on ``open_geotiff`` so the
+        # sentinel comes back as NaN. Use ``_read_to_array`` (the raw
+        # buffer) to confirm the sentinel actually hit disk.
+        decoded, _ = _read_to_array(out)
+        assert decoded[2, 3] == np.float32(-9999.0)
+
+
+class TestDtypePromotionPushdown:
+    def test_write_promotes_float16(self, tmp_path):
+        # Float16 is not a TIFF SampleFormat; the wrapper promotes to
+        # float32 before encode, and the push-down means a direct
+        # caller gets the same behaviour rather than a dtype-mapper
+        # ``ValueError``.
+        arr = (np.linspace(0, 1, 64, dtype=np.float16).reshape(8, 8))
+        out = str(tmp_path / "tmp_2138_float16.tif")
+        _write(arr, out, compression="zstd")
+        decoded, _ = _read_to_array(out)
+        assert decoded.dtype == np.float32
+        np.testing.assert_allclose(decoded, arr.astype(np.float32))
+
+    def test_write_promotes_bool(self, tmp_path):
+        arr = np.array([[True, False], [False, True]], dtype=np.bool_)
+        out = str(tmp_path / "tmp_2138_bool.tif")
+        _write(arr, out, compression="zstd")
+        decoded, _ = _read_to_array(out)
+        assert decoded.dtype == np.uint8
+        np.testing.assert_array_equal(decoded, arr.astype(np.uint8))
+
+
+# JPEG omitted from the byte-parity sweep on purpose: it requires the
+# opt-in, which the wrapper emits a runtime warning for, and JPEG is
+# lossy so trivial seed changes can shift bytes. The experimental codecs
+# (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``) are gated behind
+# ``allow_experimental_codecs=True`` (issue #2137) and are likewise
+# excluded from this sweep. ``_write`` is exercised elsewhere; the
+# parity sweep covers the stable lossless codec set that direct callers
+# reach for first.
+_PARITY_CODECS_2138 = (
+    "none",
+    "deflate",
+    "lzw",
+    "packbits",
+    "zstd",
+)
+
+
+@pytest.mark.parametrize("compression", _PARITY_CODECS_2138)
+def test_write_vs_to_geotiff_byte_parity_uint8(compression, tmp_path):
+    """``_write(arr, ...)`` and ``to_geotiff(xr.DataArray(arr), ...)``
+    must produce byte-identical files for every entry in
+    ``_VALID_COMPRESSIONS`` that round-trips losslessly. A divergence
+    here is exactly the silent-different-file footgun #2138 names.
+    """
+    if not _codec_available_2138(compression):
+        pytest.skip(f"{compression} codec not installed")
+    arr = _make_uint8_band_2138(seed=2138 + hash(compression) % 1000)
+    out_direct = str(tmp_path / f"tmp_2138_direct_{compression}.tif")
+    out_wrapper = str(tmp_path / f"tmp_2138_wrapper_{compression}.tif")
+    _write(arr, out_direct, compression=compression, tiled=True,
+           tile_size=16)
+    to_geotiff(xr.DataArray(arr, dims=("y", "x")), out_wrapper,
+               compression=compression, tiled=True, tile_size=16)
+    assert _file_bytes_2138(out_direct) == _file_bytes_2138(out_wrapper), (
+        f"byte-parity violated for compression={compression!r}: "
+        f"_write and to_geotiff produced different output files."
+    )
+
+
+@pytest.mark.parametrize("compression", ("zstd", "deflate", "lzw"))
+def test_write_streaming_vs_to_geotiff_byte_parity_uint8(
+        compression, tmp_path):
+    """Same idea for the dask streaming path. ``to_geotiff`` on a
+    dask-backed DataArray dispatches into ``_write_streaming``; feed
+    ``_write_streaming`` and the wrapper the same dask source and a
+    matching tile geometry and they must agree byte-for-byte."""
+    raw = _make_uint8_band_2138(seed=4276 + hash(compression) % 1000,
+                                shape=(48, 48))
+    chunks = (16, 16)
+    dask_arr = dsk.from_array(raw, chunks=chunks)
+
+    out_direct = str(
+        tmp_path / f"tmp_2138_direct_streaming_{compression}.tif"
+    )
+    out_wrapper = str(
+        tmp_path / f"tmp_2138_wrapper_streaming_{compression}.tif"
+    )
+
+    _write_streaming(dask_arr, out_direct, compression=compression,
+                     tiled=True, tile_size=16)
+    to_geotiff(xr.DataArray(dask_arr, dims=("y", "x")), out_wrapper,
+               compression=compression, tiled=True, tile_size=16)
+    assert _file_bytes_2138(out_direct) == _file_bytes_2138(out_wrapper), (
+        f"byte-parity violated for streaming compression={compression!r}"
+    )
+
+
+def test_write_lerc_lossless_round_trip(tmp_path):
+    """LERC with ``max_z_error=0`` is lossless. Confirm the codec
+    survives the push-down and still round-trips bit-exactly when the
+    pairing check passes."""
+    if not _codec_available_2138("lerc"):
+        pytest.skip("lerc codec not installed")
+    arr = _make_float32_band_2138()
+    out = str(tmp_path / "tmp_2138_lerc_lossless.tif")
+    _write(arr, out, compression="lerc", max_z_error=0.0)
+    # LERC is the Experimental read tier (PR 4 of epic #2340).
+    decoded, _ = _read_to_array(out, allow_experimental_codecs=True)
+    np.testing.assert_array_equal(decoded, arr)
+
+
+def test_aliases_match_underscore_names():
+    """``write`` / ``write_streaming`` / ``read_to_array`` must be the
+    exact same objects as their underscore-prefixed canonical names so
+    backward-compatible internal callers do not silently dispatch
+    into stale copies."""
+    from xrspatial.geotiff import _reader, _writer
+    assert _writer.write is _writer._write
+    assert _writer.write_streaming is _writer._write_streaming
+    assert _reader.read_to_array is _reader._read_to_array
+
+
+def test_write_not_leaked_into_public_namespace():
+    """The array-level write entry points are module-private. They
+    must not appear as attributes of ``xrspatial.geotiff`` (the
+    documented public surface is ``to_geotiff``). Mirrors the #1708
+    contract for ``read_to_array``."""
+    import xrspatial.geotiff as g
+
+    for name in ('write', 'write_streaming', '_write', '_write_streaming'):
+        assert not hasattr(g, name), (
+            f"{name!r} leaked into xrspatial.geotiff's public namespace. "
+            "The supported public eager-write entry point is to_geotiff. "
+            "Internal callers should import the array-level function "
+            "from xrspatial.geotiff._writer directly. See issue #2138."
+        )
+
+
+# -------------------------------------------------------------------------
+# Section: 3D dim validation (#1812)
+# -------------------------------------------------------------------------
+
+# Inputs that must be accepted (round-trip cleanly).
+_HAPPY_3D_INPUTS_1812 = [
+    pytest.param(("band", "y", "x"), (3, 4, 5), id="band-y-x"),
+    pytest.param(("bands", "y", "x"), (3, 4, 5), id="bands-y-x"),
+    pytest.param(("channel", "y", "x"), (3, 4, 5), id="channel-y-x"),
+    pytest.param(("y", "x", "band"), (4, 5, 3), id="y-x-band"),
+    pytest.param(("lat", "lon", "band"), (4, 5, 3), id="lat-lon-band"),
+    pytest.param(("row", "col", "channel"), (4, 5, 3), id="row-col-channel"),
+    pytest.param(("band", "lat", "lon"), (3, 4, 5), id="band-lat-lon-alias"),
+]
+
+
+def _make_da_1812(dims, shape, dtype=np.uint8, backend="numpy"):
+    if backend == "numpy":
+        arr = np.arange(int(np.prod(shape)), dtype=dtype).reshape(shape)
+    elif backend == "dask":
+        arr_np = np.arange(int(np.prod(shape)), dtype=dtype).reshape(shape)
+        arr = dsk.from_array(arr_np, chunks=2)
+    elif backend == "cupy":
+        import cupy
+
+        arr = cupy.arange(int(np.prod(shape)),
+                          dtype=cupy.dtype(dtype)).reshape(shape)
+    else:
+        raise ValueError(backend)
+    return xr.DataArray(arr, dims=dims, attrs={"crs": "EPSG:4326"})
+
+
+def test_repro_silent_corruption_now_raises(tmp_path):
+    """The original repro now raises a clear ValueError.
+
+    Post-#1972 the ``(time, y, x)`` layout produces the dedicated
+    temporal-leading-dim message rather than the generic ambiguous-dims
+    one, so accept either wording.
+    """
+    arr = np.zeros((2, 4, 5), dtype=np.uint8)
+    arr[0] = 1
+    arr[1] = 2
+    da = xr.DataArray(arr, dims=("time", "y", "x"),
+                      attrs={"crs": "EPSG:4326"})
+    out_path = tmp_path / "tmp_1812_time_y_x.tif"
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
+        to_geotiff(da, str(out_path), crs=4326)
+
+
+@pytest.mark.parametrize("dims, shape", [
+    pytest.param(("time", "y", "x"), (2, 4, 5), id="time-y-x"),
+    pytest.param(("z", "y", "x"), (2, 4, 5), id="z-y-x"),
+    pytest.param(("foo", "bar", "baz"), (2, 4, 5), id="foo-bar-baz"),
+])
+def test_eager_rejects_ambiguous_3d(tmp_path, dims, shape):
+    """Eager numpy path raises ValueError on ambiguous 3D dim names."""
+    da = _make_da_1812(dims, shape, backend="numpy")
+    out_path = tmp_path / f"tmp_1812_eager_{'_'.join(dims)}.tif"
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
+        to_geotiff(da, str(out_path), crs=4326)
+
+
+@pytest.mark.parametrize("dims, shape", [
+    pytest.param(("time", "y", "x"), (2, 4, 5), id="time-y-x"),
+    pytest.param(("z", "y", "x"), (2, 4, 5), id="z-y-x"),
+    pytest.param(("foo", "bar", "baz"), (2, 4, 5), id="foo-bar-baz"),
+])
+def test_dask_streaming_rejects_ambiguous_3d(tmp_path, dims, shape):
+    """Dask-streaming branch raises ValueError on ambiguous 3D dim names."""
+    da = _make_da_1812(dims, shape, backend="dask")
+    out_path = tmp_path / f"tmp_1812_dask_{'_'.join(dims)}.tif"
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
+        to_geotiff(da, str(out_path), crs=4326)
+
+
+@_gpu_only
+@pytest.mark.parametrize("dims, shape", [
+    pytest.param(("time", "y", "x"), (2, 4, 5), id="time-y-x"),
+    pytest.param(("foo", "bar", "baz"), (2, 4, 5), id="foo-bar-baz"),
+])
+def test_gpu_writer_rejects_ambiguous_3d(tmp_path, dims, shape):
+    """GPU writer raises ValueError on ambiguous 3D dim names."""
+    from xrspatial.geotiff import write_geotiff_gpu
+
+    da = _make_da_1812(dims, shape, backend="cupy")
+    out_path = tmp_path / f"tmp_1812_gpu_{'_'.join(dims)}.tif"
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
+        write_geotiff_gpu(da, str(out_path), crs=4326)
+
+
+@pytest.mark.parametrize("dims, shape", _HAPPY_3D_INPUTS_1812)
+def test_happy_3d_round_trip(tmp_path, dims, shape):
+    """Accepted 3D dim layouts still round-trip cleanly (eager + dask).
+
+    Each slice along the band axis is filled with a distinct constant
+    so a silent axis swap would change the per-slice sums.
+    """
+    # Build a per-slice-distinguishable array. ``arr_full[k]`` along the
+    # band axis is filled with ``k + 1``.
+    band_pos = next(i for i, d in enumerate(dims)
+                    if d in ("band", "bands", "channel"))
+    n_bands = shape[band_pos]
+    spatial_shape = tuple(s for i, s in enumerate(shape) if i != band_pos)
+    arr_np = np.empty(shape, dtype=np.uint8)
+    for k in range(n_bands):
+        slicer = [slice(None)] * 3
+        slicer[band_pos] = k
+        arr_np[tuple(slicer)] = k + 1
+
+    # Eager round-trip
+    da_eager = xr.DataArray(arr_np, dims=dims,
+                            attrs={"crs": "EPSG:4326"})
+    p_eager = tmp_path / f"tmp_1812_happy_eager_{'_'.join(dims)}.tif"
+    to_geotiff(da_eager, str(p_eager), crs=4326)
+    out_eager = open_geotiff(str(p_eager))
+    # On-disk layout is always (y, x, band). Compare per-band sums.
+    assert out_eager.shape == spatial_shape + (n_bands,)
+    for k in range(n_bands):
+        expected = (k + 1) * (spatial_shape[0] * spatial_shape[1])
+        assert int(out_eager.values[:, :, k].sum()) == expected, (
+            f"band {k} sum mismatch on eager round-trip of dims={dims}"
+        )
+
+    # Dask streaming round-trip
+    da_dask = xr.DataArray(dsk.from_array(arr_np, chunks=2), dims=dims,
+                           attrs={"crs": "EPSG:4326"})
+    p_dask = tmp_path / f"tmp_1812_happy_dask_{'_'.join(dims)}.tif"
+    to_geotiff(da_dask, str(p_dask), crs=4326)
+    out_dask = open_geotiff(str(p_dask))
+    assert out_dask.shape == spatial_shape + (n_bands,)
+    for k in range(n_bands):
+        expected = (k + 1) * (spatial_shape[0] * spatial_shape[1])
+        assert int(out_dask.values[:, :, k].sum()) == expected, (
+            f"band {k} sum mismatch on dask round-trip of dims={dims}"
+        )
+
+
+def test_2d_still_works(tmp_path):
+    """2D inputs are unaffected by the new 3D validator."""
+    arr = np.arange(20, dtype=np.uint8).reshape(4, 5)
+    da = xr.DataArray(arr, dims=("y", "x"), attrs={"crs": "EPSG:4326"})
+    p = tmp_path / "tmp_1812_2d.tif"
+    to_geotiff(da, str(p), crs=4326)
+    out = open_geotiff(str(p))
+    assert out.shape == (4, 5)
+    assert np.array_equal(out.values, arr)
+
+
+def test_error_message_actionable(tmp_path):
+    """The generic ValueError message tells the caller how to fix the input.
+
+    Uses a non-temporal leading dim so the dedicated #1972 temporal path
+    does not short-circuit, keeping the assertions on the generic
+    "(band, y, x)" / "(y, x, band)" / "#1812" wording intact.
+    """
+    arr = np.zeros((2, 4, 5), dtype=np.uint8)
+    da = xr.DataArray(arr, dims=("z", "y", "x"),
+                      attrs={"crs": "EPSG:4326"})
+    p = tmp_path / "tmp_1812_msg.tif"
+    with pytest.raises(ValueError) as excinfo:
+        to_geotiff(da, str(p), crs=4326)
+    msg = str(excinfo.value)
+    # Mentions the offending dim layout
+    assert "('z', 'y', 'x')" in msg
+    # Mentions the accepted alternatives
+    assert "(band, y, x)" in msg
+    assert "(y, x, band)" in msg
+    # Points the user at a concrete remediation
+    assert "transpose" in msg.lower() or "rename" in msg.lower()
+    # References the issue
+    assert "#1812" in msg
+
+
+@_gpu_only
+def test_gpu_writer_happy_path_still_works(tmp_path):
+    """GPU writer's existing happy paths (band-first and band-last) survive."""
+    import cupy
+
+    from xrspatial.geotiff import write_geotiff_gpu
+
+    arr_bf = cupy.arange(3 * 4 * 5, dtype=cupy.uint8).reshape(3, 4, 5)
+    da_bf = xr.DataArray(arr_bf, dims=("band", "y", "x"),
+                         attrs={"crs": "EPSG:4326"})
+    p_bf = tmp_path / "tmp_1812_gpu_bf.tif"
+    write_geotiff_gpu(da_bf, str(p_bf), crs=4326)
+    out_bf = open_geotiff(str(p_bf))
+    assert out_bf.shape == (4, 5, 3)
+
+    arr_bl = cupy.arange(4 * 5 * 3, dtype=cupy.uint8).reshape(4, 5, 3)
+    da_bl = xr.DataArray(arr_bl, dims=("y", "x", "band"),
+                         attrs={"crs": "EPSG:4326"})
+    p_bl = tmp_path / "tmp_1812_gpu_bl.tif"
+    write_geotiff_gpu(da_bl, str(p_bl), crs=4326)
+    out_bl = open_geotiff(str(p_bl))
+    assert out_bl.shape == (4, 5, 3)
+
+
+# -------------------------------------------------------------------------
+# Section: temporal-trailing 3D writer rejection (#1972)
+# -------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "temporal",
+    ['time', 't', 'date', 'datetime', 'times', 'dates'],
+)
+def test_validate_3d_rejects_yx_temporal(temporal):
+    with pytest.raises(ValueError, match="temporal trailing dim"):
+        _validate_3d_writer_dims(('y', 'x', temporal))
+
+
+@pytest.mark.parametrize(
+    "temporal",
+    ['TIME', 'Time', 'TiMe', 'DATE', 'Datetime', 'DATES', 'T'],
+)
+def test_validate_3d_rejects_yx_temporal_case_insensitive(temporal):
+    # CF allows ``'TIME'`` / ``'Time'``; the lowercase _TIME_DIM_NAMES
+    # tuple must still match via case-insensitive comparison so the
+    # mixed-case stack does not slip through the (y, x, *) fallback and
+    # silently write a 3-band TIFF (#1972 self-review).
+    with pytest.raises(ValueError, match="temporal trailing dim"):
+        _validate_3d_writer_dims(('y', 'x', temporal))
+
+
+@pytest.mark.parametrize(
+    "yx",
+    [('y', 'x'), ('lat', 'lon'), ('latitude', 'longitude'), ('row', 'col')],
+)
+def test_validate_3d_rejects_yx_aliases_with_temporal(yx):
+    with pytest.raises(ValueError, match="temporal trailing dim"):
+        _validate_3d_writer_dims((yx[0], yx[1], 'time'))
+
+
+def test_validate_3d_still_accepts_yx_band():
+    _validate_3d_writer_dims(('y', 'x', 'band'))
+    _validate_3d_writer_dims(('band', 'y', 'x'))
+
+
+def test_validate_3d_still_accepts_recognized_band_alias_trailing_dim():
+    # Recognized band aliases at the trailing position remain accepted.
+    # The loose ``(y, x, *)`` fallback for arbitrary unknown trailing
+    # names (``'foo'``, ``'z'``, ``'scenario'``) was removed in #2240
+    # because it silently wrote those values as TIFF bands. The
+    # regression coverage for the rejection lives in
+    # ``test_validate_3d_non_band_trailing_dim_2240.py``.
+    _validate_3d_writer_dims(('y', 'x', 'channel'))
+    _validate_3d_writer_dims(('y', 'x', 'bands'))
+
+
+def test_validate_3d_still_rejects_time_y_x():
+    # Leading temporal dim was already rejected; the symmetrised path
+    # now emits the dedicated temporal message (#1972 self-review nit 2)
+    # instead of the generic "ambiguous dims" wording.
+    with pytest.raises(ValueError, match="temporal leading dim"):
+        _validate_3d_writer_dims(('time', 'y', 'x'))
+
+
+@pytest.mark.parametrize(
+    "temporal",
+    ['time', 'TIME', 'Time', 't', 'T', 'date', 'datetime', 'dates'],
+)
+def test_validate_3d_rejects_temporal_y_x_case_insensitive(temporal):
+    # Mirror the trailing-dim case-insensitive coverage for the leading
+    # temporal axis (#1972 self-review nit 2).
+    with pytest.raises(ValueError, match="temporal leading dim"):
+        _validate_3d_writer_dims((temporal, 'y', 'x'))
+
+
+def test_validate_3d_rejects_temporal_yx_alias_leading():
+    # Leading-dim friendly message should fire for y/x aliases too.
+    with pytest.raises(ValueError, match="temporal leading dim"):
+        _validate_3d_writer_dims(('time', 'lat', 'lon'))
+
+
+def test_validate_3d_still_rejects_other_ambiguous_leading():
+    # The symmetric temporal message must not swallow the generic
+    # ambiguous-dims path for non-temporal, non-band leading names.
+    with pytest.raises(ValueError, match="ambiguous dims"):
+        _validate_3d_writer_dims(('foo', 'y', 'x'))
+
+
+def test_to_geotiff_rejects_yxtime_stack():
+    da = xr.DataArray(
+        np.zeros((4, 4, 3), dtype=np.float32),
+        coords={'y': np.arange(4.0), 'x': np.arange(4.0),
+                'time': np.arange(3)},
+        dims=('y', 'x', 'time'),
+    )
+    buf = io.BytesIO()
+    with pytest.raises(ValueError, match="temporal trailing dim"):
+        to_geotiff(da, buf)
+
+
+def test_error_message_suggests_isel_and_band_rename():
+    da = xr.DataArray(
+        np.zeros((4, 4, 3), dtype=np.float32),
+        coords={'y': np.arange(4.0), 'x': np.arange(4.0),
+                'time': np.arange(3)},
+        dims=('y', 'x', 'time'),
+    )
+    buf = io.BytesIO()
+    with pytest.raises(ValueError) as excinfo:
+        to_geotiff(da, buf)
+    msg = str(excinfo.value)
+    assert "isel(time=0)" in msg
+    assert "band" in msg.lower()
+
+
+# -------------------------------------------------------------------------
+# Section: empty spatial dim rejection (#2075)
+# -------------------------------------------------------------------------
+
+_EMPTY_SHAPES_2075 = [
+    pytest.param((0, 5), id="zero-height"),
+    pytest.param((5, 0), id="zero-width"),
+    pytest.param((0, 0), id="both-zero"),
+]
+
+
+@pytest.mark.parametrize("shape", _EMPTY_SHAPES_2075)
+def test_to_geotiff_rejects_empty_numpy(tmp_path, shape):
+    h, w = shape
+    da = xr.DataArray(
+        np.zeros(shape, dtype=np.float32),
+        dims=("y", "x"),
+    )
+    out = tmp_path / f"tmp_2075_empty_{h}x{w}.tif"
+    with pytest.raises(ValueError) as excinfo:
+        to_geotiff(da, str(out))
+    msg = str(excinfo.value)
+    # The message must name the writer that the user called so the
+    # traceback names the right entry point.
+    assert "to_geotiff" in msg
+    assert "empty" in msg.lower()
+    if h == 0:
+        assert "height=0" in msg
+    if w == 0:
+        assert "width=0" in msg
+    # Nothing should have been written.
+    assert not out.exists()
+
+
+@requires_gpu
+def test_write_geotiff_gpu_rejects_empty(tmp_path):
+    """``write_geotiff_gpu`` is a public entry point and does not go
+    through ``to_geotiff``; make sure the empty-shape guard fires there
+    too (the suggestion from PR #2078 review)."""
+    import cupy as cp
+
+    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+
+    arr = cp.zeros((0, 5), dtype=cp.float32)
+    out = tmp_path / "tmp_2075_empty_gpu_0x5.tif"
+    with pytest.raises(ValueError) as excinfo:
+        write_geotiff_gpu(arr, str(out))
+    msg = str(excinfo.value)
+    assert "write_geotiff_gpu" in msg
+    assert "height=0" in msg
+    assert not out.exists()
+
+
+def test_to_geotiff_rejects_empty_dask(tmp_path):
+    # One dask variant is enough to exercise the streaming entry point.
+    shape = (0, 5)
+    da = xr.DataArray(
+        dsk.zeros(shape, dtype=np.float32, chunks=shape if 0 not in shape
+                  else (1, 1)),
+        dims=("y", "x"),
+    )
+    out = tmp_path / "tmp_2075_empty_dask_0x5.tif"
+    with pytest.raises(ValueError) as excinfo:
+        to_geotiff(da, str(out))
+    msg = str(excinfo.value).lower()
+    assert "height" in msg or "empty" in msg or "(0, 5)" in msg
+    assert not out.exists()
+
+
+# -------------------------------------------------------------------------
+# Section: zero-band axis rejection (#2095)
+# -------------------------------------------------------------------------
+
+_ZERO_BAND_LAYOUTS_2095 = [
+    pytest.param(
+        (0, 5, 5),
+        ("band", "y", "x"),
+        id="band-first",
+    ),
+    pytest.param(
+        (5, 5, 0),
+        ("y", "x", "band"),
+        id="band-last",
+    ),
+]
+
+
+@pytest.mark.parametrize("shape,dims", _ZERO_BAND_LAYOUTS_2095)
+def test_to_geotiff_rejects_zero_bands_numpy(tmp_path, shape, dims):
+    da = xr.DataArray(np.zeros(shape, dtype=np.uint8), dims=dims)
+    out = tmp_path / f"tmp_2095_zerobands_{'_'.join(map(str, shape))}.tif"
+    with pytest.raises(ValueError) as excinfo:
+        to_geotiff(da, str(out))
+    msg = str(excinfo.value)
+    assert "to_geotiff" in msg
+    assert "no bands" in msg.lower() or "0 bands" in msg
+    # Nothing should have been written.
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("shape,dims", _ZERO_BAND_LAYOUTS_2095)
+def test_to_geotiff_rejects_zero_bands_dask(tmp_path, shape, dims):
+    # Dask cannot construct an array with a zero-length chunk along a
+    # zero-length dim, so build the dask array with chunks of 1 on the
+    # spatial axes and 1 on the band axis if non-zero. We only need the
+    # validator to fire before any compute happens.
+    chunks = tuple(1 if s == 0 else s for s in shape)
+    arr = dsk.zeros(shape, dtype=np.uint8, chunks=chunks)
+    da = xr.DataArray(arr, dims=dims)
+    out = tmp_path / f"tmp_2095_zerobands_dask_{'_'.join(map(str, shape))}.tif"
+    with pytest.raises(ValueError) as excinfo:
+        to_geotiff(da, str(out))
+    msg = str(excinfo.value).lower()
+    assert "band" in msg
+    assert not out.exists()
+
+
+def test_write_band_last_zero_bands_direct(tmp_path):
+    """``write`` is a public entry point. Direct callers (no DataArray
+    wrapper, no dims) pass raw numpy arrays through the band-last
+    convention, so a ``(y, x, 0)`` array must fail closed here too."""
+    from xrspatial.geotiff._writer import write
+
+    arr = np.zeros((5, 5, 0), dtype=np.uint8)
+    out = tmp_path / "tmp_2095_write_zerobands.tif"
+    with pytest.raises(ValueError) as excinfo:
+        write(arr, str(out))
+    msg = str(excinfo.value)
+    # The error template starts with ``"<entry_point> cannot write a
+    # raster with no bands"``. Anchor to that exact prefix so the
+    # assertion fails if the wrong entry point fires (every message
+    # also contains the substring "write" further on, so an `in`
+    # check would not distinguish ``write`` from ``write_streaming``
+    # or ``write_geotiff_gpu``).
+    # The array-level entry point was renamed from ``write`` to
+    # ``_write`` in #2138 to mark it as module-private. ``write`` is
+    # kept as a backward-compatible alias, so the entry-point token in
+    # the error message reflects the underlying function name.
+    assert msg.startswith("_write cannot write")
+    assert "0 bands" in msg or "no bands" in msg.lower()
+    assert not out.exists()
+
+
+def test_write_streaming_zero_bands_direct(tmp_path):
+    """``write_streaming`` is the dask-aware entry point. Direct callers
+    pass band-last dask arrays, so a ``(y, x, 0)`` chunked array must
+    fail closed before any tile-row math runs."""
+    from xrspatial.geotiff._writer import write_streaming
+
+    arr = dsk.zeros((5, 5, 0), dtype=np.uint8, chunks=(5, 5, 1))
+    out = tmp_path / "tmp_2095_write_streaming_zerobands.tif"
+    with pytest.raises(ValueError) as excinfo:
+        write_streaming(arr, str(out))
+    msg = str(excinfo.value)
+    # Renamed to ``_write_streaming`` in #2138; ``write_streaming``
+    # remains a backward-compatible alias.
+    assert msg.startswith("_write_streaming cannot write")
+    assert "0 bands" in msg or "no bands" in msg.lower()
+    assert not out.exists()
+
+
+@requires_gpu
+def test_write_geotiff_gpu_rejects_zero_bands(tmp_path):
+    """The GPU writer is a separate public entry point. The zero-band
+    guard must fire there too without dispatching any GPU work."""
+    import cupy as cp
+
+    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+
+    arr = xr.DataArray(
+        cp.zeros((0, 5, 5), dtype=cp.uint8),
+        dims=("band", "y", "x"),
+    )
+    out = tmp_path / "tmp_2095_zerobands_gpu.tif"
+    with pytest.raises(ValueError) as excinfo:
+        write_geotiff_gpu(arr, str(out))
+    msg = str(excinfo.value)
+    assert msg.startswith("write_geotiff_gpu cannot write")
+    assert "0 bands" in msg or "no bands" in msg.lower()
+    assert not out.exists()
