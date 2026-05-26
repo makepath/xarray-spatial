@@ -35,7 +35,6 @@ section pins a distinct failure mode rather than a shared invariant.
 """
 from __future__ import annotations
 
-import importlib.util
 import io
 import os
 import struct
@@ -62,24 +61,18 @@ from xrspatial.geotiff._header import (TAG_X_RESOLUTION, TAG_Y_RESOLUTION, IFD,
 from xrspatial.geotiff._runtime import (_X_DIM_NAMES, _Y_DIM_NAMES,
                                         _resolve_spatial_coords)
 
-from ..conftest import requires_integration
-
-
-def _gpu_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _gpu_available()
+from ..conftest import requires_gpu, requires_integration
 
 
 # ---------------------------------------------------------------------------
 # Shared helpers
+#
+# ``_make_da`` builds a float32 raster with sequential pixel values; used
+# by the round-trip / orientation tests in section 4 that need a writer
+# input recognisable by the reader. ``_make_da_uint8`` builds a uint8
+# zero raster; used by the section-5 ``_coords_to_transform`` regularity
+# checks where only the coord axes matter and the pixel buffer can be
+# anything.
 # ---------------------------------------------------------------------------
 
 
@@ -945,7 +938,7 @@ class TestCoordsToTransform3D:
             f"round-tripped pixel_width={pw} suggests the band-axis spacing "
             f"leaked into the GeoTransform; expected ~10.526")
 
-    @pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+    @requires_gpu
     def test_write_geotiff_gpu_roundtrip_3d(self, tmp_path):
         """GPU writer shares ``_coords_to_transform`` with the CPU writer.
 
