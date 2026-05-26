@@ -198,3 +198,15 @@ def test_read_geotiff_gpu_int_nodata_opt_in_restores_noop(tmp_path):
     assert da.dtype == cupy.uint16
     arr = da.data.get()
     np.testing.assert_array_equal(arr, [[10, 20], [30, 40]])
+
+
+@_gpu_only
+def test_read_geotiff_gpu_chunked_int_nodata_rejected_by_default(tmp_path):
+    """dask+cupy backend rejects at metadata parse, before any chunk task
+    is scheduled. Closes the four-backend matrix explicitly.
+    """
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    path = _build_uint16_tiff('nan', tmp_path)
+    with pytest.raises(InvalidIntegerNodataError):
+        read_geotiff_gpu(path, chunks=2)
