@@ -349,8 +349,8 @@ HTTP / fsspec reads
      - URLs resolving to loopback, link-local, or RFC1918 ranges raise
        :class:`xrspatial.geotiff.UnsafeURLError` unless
        ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set.
-     - ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
-       ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``,
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+       (ssrf_hardening and dns_rebinding sections),
        ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
        (HTTP SSRF presence gate)
      - `#2344`_
@@ -365,8 +365,8 @@ HTTP / fsspec reads
      - stable
      - ``open_geotiff(max_cloud_bytes=...)`` forwards to every read backend
        (no silent drop).
-     - ``xrspatial/geotiff/tests/test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py``,
-       ``xrspatial/geotiff/tests/test_open_geotiff_max_cloud_bytes_annot_2106.py``
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+       (max_cloud_bytes_dispatcher and max_cloud_bytes_annot sections)
      - `#2344`_
 
 Nodata lifecycle
