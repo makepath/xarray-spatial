@@ -551,85 +551,80 @@ def _check_mixed_source_crs(
     reference_source: str | None = None  # None == VRT-declared
 
     for src_path in source_paths:
-        src_handle = None
         try:
-            try:
-                src_handle = _FileSource(src_path)
+            with _FileSource(src_path) as src_handle:
                 data = src_handle.read_all()
                 header = parse_header(data)
                 ifds = parse_all_ifds(data, header)
                 if not ifds:
                     continue
                 geo = extract_geo_info(ifds[0], data, header.byte_order)
-            except (OSError, ValueError, struct.error):
-                # Unreadable / malformed source. The real read path
-                # surfaces this via the ``missing_sources`` contract
-                # (default ``'raise'``); the validator deliberately
-                # stays quiet so the canonical error fires from there
-                # with the existing message and code path.
-                continue
+        except (OSError, ValueError, struct.error):
+            # Unreadable / malformed source. The real read path
+            # surfaces this via the ``missing_sources`` contract
+            # (default ``'raise'``); the validator deliberately
+            # stays quiet so the canonical error fires from there
+            # with the existing message and code path.
+            continue
 
-            src_crs_raw = geo.crs_wkt
-            if not src_crs_raw and geo.crs_epsg is not None:
-                src_crs_raw = f"EPSG:{geo.crs_epsg}"
-            if not src_crs_raw:
-                # Source has no CRS at all. The VRT can legitimately
-                # provide one in this case (reader inherits the
-                # VRT-declared SRS), so skip.
-                continue
+        src_crs_raw = geo.crs_wkt
+        if not src_crs_raw and geo.crs_epsg is not None:
+            src_crs_raw = f"EPSG:{geo.crs_epsg}"
+        if not src_crs_raw:
+            # Source has no CRS at all. The VRT can legitimately
+            # provide one in this case (reader inherits the
+            # VRT-declared SRS), so skip.
+            continue
 
-            try:
-                src_crs = _PyProjCRS.from_user_input(src_crs_raw)
-            except _PyProjCRSError:
-                # Cannot canonicalise the source CRS; cannot prove
-                # disagreement. The decode path will surface its own
-                # error if the broken CRS matters.
-                continue
+        try:
+            src_crs = _PyProjCRS.from_user_input(src_crs_raw)
+        except _PyProjCRSError:
+            # Cannot canonicalise the source CRS; cannot prove
+            # disagreement. The decode path will surface its own
+            # error if the broken CRS matters.
+            continue
 
-            if reference_crs is None:
-                # No VRT-level SRS and this is the first source we
-                # could read; use it as the reference for the rest.
-                reference_crs = src_crs
-                reference_display = _format_crs_for_message(
-                    src_crs_raw, src_crs,
-                )
-                reference_source = src_path
-                continue
-
-            if src_crs.equals(reference_crs):
-                continue
-
-            src_display = _format_crs_for_message(src_crs_raw, src_crs)
-            if reference_source is None:
-                # Disagreement against the VRT-declared SRS.
-                raise VRTUnsupportedError(
-                    f"VRT '{source}' source '{src_path}' carries CRS "
-                    f"{src_display}, which does not match the "
-                    f"VRT-declared <SRS> ({reference_display}). The "
-                    f"mosaic reader has no reprojection step, so the "
-                    f"two sets of pixels cannot be composited into a "
-                    f"single CRS without misplacing one of them. "
-                    f"Reproject the source to the VRT-declared CRS "
-                    f"(e.g. ``gdalwarp -t_srs``) before referencing it, "
-                    f"or split the mosaic into per-CRS VRTs. See issue "
-                    f"#2321."
-                )
-            # Disagreement among sources (no VRT-level SRS).
-            raise VRTUnsupportedError(
-                f"VRT '{source}' has no <SRS> and its sources disagree "
-                f"on CRS: '{reference_source}' carries "
-                f"{reference_display} but '{src_path}' carries "
-                f"{src_display}. The mosaic reader has no reprojection "
-                f"step, so the sources cannot be composited into a "
-                f"single CRS. Reproject every source to a common CRS "
-                f"(e.g. ``gdalwarp -t_srs``) before assembling the VRT, "
-                f"or declare an authoritative <SRS> at the VRT level "
-                f"and use sources whose CRS already matches it. See "
-                f"issue #2321."
+        if reference_crs is None:
+            # No VRT-level SRS and this is the first source we
+            # could read; use it as the reference for the rest.
+            reference_crs = src_crs
+            reference_display = _format_crs_for_message(
+                src_crs_raw, src_crs,
             )
-        finally:
-            if src_handle is not None:
-                src_handle.close()
+            reference_source = src_path
+            continue
+
+        if src_crs.equals(reference_crs):
+            continue
+
+        src_display = _format_crs_for_message(src_crs_raw, src_crs)
+        if reference_source is None:
+            # Disagreement against the VRT-declared SRS.
+            raise VRTUnsupportedError(
+                f"VRT '{source}' source '{src_path}' carries CRS "
+                f"{src_display}, which does not match the "
+                f"VRT-declared <SRS> ({reference_display}). The "
+                f"mosaic reader has no reprojection step, so the "
+                f"two sets of pixels cannot be composited into a "
+                f"single CRS without misplacing one of them. "
+                f"Reproject the source to the VRT-declared CRS "
+                f"(e.g. ``gdalwarp -t_srs``) before referencing it, "
+                f"or split the mosaic into per-CRS VRTs. See issue "
+                f"#2321."
+            )
+        # Disagreement among sources (no VRT-level SRS).
+        raise VRTUnsupportedError(
+            f"VRT '{source}' has no <SRS> and its sources disagree "
+            f"on CRS: '{reference_source}' carries "
+            f"{reference_display} but '{src_path}' carries "
+            f"{src_display}. The mosaic reader has no reprojection "
+            f"step, so the sources cannot be composited into a "
+            f"single CRS. Reproject every source to a common CRS "
+            f"(e.g. ``gdalwarp -t_srs``) before assembling the VRT, "
+            f"or declare an authoritative <SRS> at the VRT level "
+            f"and use sources whose CRS already matches it. See "
+            f"issue #2321."
+        )
 
 
 def _format_crs_for_message(raw: str, crs) -> str:

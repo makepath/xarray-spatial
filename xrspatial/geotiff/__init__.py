@@ -159,7 +159,7 @@ __all__ = [
 #   ``allow_internal_only_jpeg=True`` (issue #1845);
 #   ``allow_experimental_codecs`` does NOT cover it.
 #
-# Tests in ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``
+# Tests in ``xrspatial/geotiff/tests/release_gates/test_features.py``
 # walk the mapping and assert that every Tier 3 codec rejects without
 # the opt-in flag and every Tier 4 codec rejects without its own
 # dedicated flag. The user-guide notebook
@@ -294,7 +294,8 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # behaviour with a warning. Mirrors the eager CPU path in
         # ``_reader._read_to_array`` and the dask metadata helper
         # ``_sidecar.discover_remote_sidecar``. Issue #2416.
-        from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
+        from ._sidecar import (attach_sidecar_origin, find_sidecar,
+                                handle_sidecar_parse_failure, load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
@@ -311,13 +312,14 @@ def _read_geo_info(source, *, overview_level: int | None = None,
                 # patch routes a cloud-source path through here.
                 raise
             except Exception as exc:
-                warnings.warn(
-                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
-                    f"{type(exc).__name__}: {exc}. Falling back to "
-                    f"base-file-only read. Delete the .ovr file or pass "
-                    f"overview_level>=1 to surface the parse error.",
-                    RuntimeWarning,
-                    stacklevel=3,
+                # Shared policy: surface the parse error when the
+                # caller asked for a level the base file alone cannot
+                # serve; warn and fall back otherwise. See
+                # ``_sidecar.handle_sidecar_parse_failure`` for the
+                # rationale. Issue #2484.
+                handle_sidecar_parse_failure(
+                    exc, sidecar_path, overview_level,
+                    base_ifd_count=len(ifds),
                 )
                 sidecar = None
             if sidecar is not None:

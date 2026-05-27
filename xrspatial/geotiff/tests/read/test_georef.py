@@ -1974,7 +1974,7 @@ def test_open_geotiff_rotated_raises_typed_error(tmp_path):
     """``open_geotiff`` on a rotated GeoTIFF raises
     ``RotatedTransformError``. This is the user-facing parity case
     with the VRT path (covered in
-    ``test_remaining_fail_closed_1987.test_read_rejects_rotated_vrt``).
+    ``unit/test_metadata.py::test_read_rejects_rotated_vrt``).
     """
     src = tmp_path / "tmp_2267_open_geotiff_rotated.tif"
     arr = np.arange(20, dtype='<u2').reshape(4, 5)

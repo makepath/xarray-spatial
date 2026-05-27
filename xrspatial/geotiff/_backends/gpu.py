@@ -438,7 +438,9 @@ def read_geotiff_gpu(source: str, *,
         # and ``reader.sidecar_ovr`` at advanced; matches the eager CPU
         # path in ``_reader._read_to_array`` and the dask metadata
         # helper ``_sidecar.discover_remote_sidecar``. Issue #2416.
-        from .._sidecar import attach_sidecar_origin, close_sidecar, find_sidecar, load_sidecar
+        from .._sidecar import (attach_sidecar_origin, close_sidecar,
+                                 find_sidecar, handle_sidecar_parse_failure,
+                                 load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
@@ -453,13 +455,14 @@ def read_geotiff_gpu(source: str, *,
                 # patch routes a cloud-source path through here.
                 raise
             except Exception as exc:
-                warnings.warn(
-                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
-                    f"{type(exc).__name__}: {exc}. Falling back to "
-                    f"base-file-only read. Delete the .ovr file or pass "
-                    f"overview_level>=1 to surface the parse error.",
-                    RuntimeWarning,
-                    stacklevel=3,
+                # Shared policy: surface the parse error when the
+                # caller asked for a level the base file alone cannot
+                # serve; warn and fall back otherwise. See
+                # ``_sidecar.handle_sidecar_parse_failure`` for the
+                # rationale. Issue #2484.
+                handle_sidecar_parse_failure(
+                    exc, sidecar_path, overview_level,
+                    base_ifd_count=len(ifds),
                 )
                 sidecar = None
             if sidecar is not None:
@@ -766,11 +769,8 @@ def read_geotiff_gpu(source: str, *,
 
             def _read_once():
                 if not _shared_data_cache:
-                    src2 = _FileSource(source)
-                    try:
+                    with _FileSource(source) as src2:
                         _shared_data_cache.append(src2.read_all())
-                    finally:
-                        src2.close()
                 return _shared_data_cache[0]
 
             band_arrays = []
@@ -880,15 +880,12 @@ def read_geotiff_gpu(source: str, *,
                     for i in range(len(offsets))
                 ]
             else:
-                src2 = _FileSource(source)
-                data2 = src2.read_all()
-                try:
+                with _FileSource(source) as src2:
+                    data2 = src2.read_all()
                     compressed_tiles = [
                         bytes(data2[offsets[i]:offsets[i] + byte_counts[i]])
                         for i in range(len(offsets))
                     ]
-                finally:
-                    src2.close()
 
         if arr_gpu is None:
             try:
@@ -1284,15 +1281,12 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
         # usable on the host. Open the file via mmap, slice out just the
         # bytes for these tiles, and run the GPU decoder on those.
         from .._reader import _FileSource
-        src = _FileSource(file_path)
-        try:
+        with _FileSource(file_path) as src:
             data = src.read_all()
             compressed_tiles = [
                 bytes(data[sub_offsets[i]:sub_offsets[i] + sub_byte_counts[i]])
                 for i in range(len(sub_offsets))
             ]
-        finally:
-            src.close()
         arr_gpu = gpu_decode_tiles(
             compressed_tiles, tw, th, sub_w, sub_h,
             compression, predictor, file_dtype, samples,
@@ -1361,11 +1355,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     if isinstance(src_path, str) and not src_path.startswith(
             ('http://', 'https://')):
         try:
-            _cap_fs = _FileSource(src_path)
-            try:
+            with _FileSource(src_path) as _cap_fs:
                 _cap_raw = _cap_fs.read_all()
-            finally:
-                _cap_fs.close()
             _cap_header = parse_header(_cap_raw)
             _cap_ifds = parse_all_ifds(_cap_raw, _cap_header)
             _cap_ifd = select_overview_ifd(_cap_ifds, overview_level)
@@ -1395,11 +1386,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     try:
         if isinstance(src_path, str) and not src_path.startswith(
                 ('http://', 'https://')):
-            fs = _FileSource(src_path)
-            try:
+            with _FileSource(src_path) as fs:
                 raw = fs.read_all()
-            finally:
-                fs.close()
             header = parse_header(raw)
             ifds = parse_all_ifds(raw, header)
             if not ifds:

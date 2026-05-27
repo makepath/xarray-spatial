@@ -1019,7 +1019,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     #     source integer dtype (handled by the ``promotes is False``
     #     fall-through below).
     # See also Copilot review on PR #1822.
-    declared_dtype = _effective_dtype_for_bands(selected_bands)
+    declared_dtype = _effective_dtype_for_bands(
+        selected_bands, source=source)
 
     if mask_nodata and declared_dtype.kind in ('u', 'i'):
         promotes = False

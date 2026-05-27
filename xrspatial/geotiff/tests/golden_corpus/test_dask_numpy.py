@@ -1,7 +1,7 @@
 """Dask+numpy backend cells against the golden-corpus oracle (issue #1930).
 
 Phase 3 PR 2 of the corpus plan. Mirrors the eager numpy parity layer
-(``test_golden_corpus_eager_numpy_1930.py``) but reads each fixture
+(``golden_corpus/test_eager_numpy.py``) but reads each fixture
 through the dask path: ``open_geotiff(str(path), chunks=32)``. The
 oracle pulls the candidate's pixels via ``.compute()`` under the hood
 (``_candidate_pixels`` is dask-aware), so the comparison machinery is
@@ -48,6 +48,7 @@ from xrspatial.geotiff import open_geotiff  # noqa: E402
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
+from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 FIXTURES_DIR = (
@@ -110,27 +111,27 @@ def _is_lossy(entry: dict) -> bool:
 
 
 def _build_param(entry: dict) -> pytest.param:
-    """Wrap a fixture entry in a ``pytest.param`` with the right mark."""
+    """Wrap a fixture entry in a ``pytest.param`` with the right marks.
+
+    Non-fast fixtures (the manifest's heavier ``compression_*`` cells,
+    including the optional-dep LERC one) pick up ``pytest.mark.slow``
+    via ``fast_slow_marks_for`` so the PR fast lane
+    (``pytest -m "not slow"``) deselects them. The nightly / push-to-main
+    job has no filter and exercises every fixture.
+    """
     fid = entry["id"]
+    marks = list(fast_slow_marks_for(entry))
     if fid in _PARITY_GAPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True),
+        marks.append(
+            pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True)
         )
-    if fid in _DASK_SKIPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.xfail(reason=_DASK_SKIPS[fid], strict=True),
+    elif fid in _DASK_SKIPS:
+        marks.append(
+            pytest.mark.xfail(reason=_DASK_SKIPS[fid], strict=True)
         )
-    if fid in _INTENTIONAL_SKIPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.skip(reason=_INTENTIONAL_SKIPS[fid]),
-        )
-    return pytest.param(entry, id=fid)
+    elif fid in _INTENTIONAL_SKIPS:
+        marks.append(pytest.mark.skip(reason=_INTENTIONAL_SKIPS[fid]))
+    return pytest.param(entry, id=fid, marks=marks)
 
 
 _FIXTURES = _resolved_fixtures()

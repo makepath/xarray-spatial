@@ -1499,13 +1499,10 @@ _STEM_1766 = "issue_1766"
 
 def _ifd_dimensions(path):
     """Return (width, height) for every IFD in the file."""
-    src = _FileSource(path)
-    try:
+    with _FileSource(path) as src:
         data = src.read_all()
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
-    finally:
-        src.close()
     return [(ifd.width, ifd.height) for ifd in ifds]
 
 
@@ -1602,13 +1599,10 @@ def test_overview_pyramid_mean_values_are_correct(tmp_path):
     # The on-disk overview value should match the chained-halving result.
     # ``open_geotiff`` returns the full-resolution band; read the overview
     # IFD directly through the low-level path.
-    src = _FileSource(path)
-    try:
+    with _FileSource(path) as src:
         data = src.read_all()
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
-    finally:
-        src.close()
     # IFD 1 is the /4 overview (only one we requested).
     assert ifds[1].width == 16 and ifds[1].height == 16
     # The byte-level check would require decoding tiles; the shape +

@@ -19,21 +19,27 @@ See ``CLUSTER_AUDIT_PR6.md`` for the file:test -> section:test mapping.
 """
 from __future__ import annotations
 
-import os
-import uuid
-
 import dask.array as da
 import numpy as np
+import os
 import pytest
+import uuid
 import xarray as xr
-
 from xrspatial.geotiff import read_vrt, to_geotiff
-from xrspatial.geotiff._errors import VRTUnsupportedError
-from xrspatial.geotiff._vrt import (_NP_TO_VRT_DTYPE, _parse_band_nodata, _vrt_dtype_name_for,
-                                    parse_vrt)
+from xrspatial.geotiff._errors import (
+    MixedBandMetadataError,
+    VRTUnsupportedError,
+)
+from xrspatial.geotiff._vrt import (
+    _NP_TO_VRT_DTYPE,
+    _parse_band_nodata,
+    _vrt_dtype_name_for,
+    parse_vrt,
+)
 from xrspatial.geotiff._vrt import read_vrt as _resample_alg_read_vrt_internal
 from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
 from xrspatial.geotiff._writer import write
+
 
 # ---------------------------------------------------------------------------
 # VRT dataType attribute validation and parsing (#1783)
@@ -46,7 +52,7 @@ def _dtype_validation_write(arr, path, **kw):
     write(arr, str(path), compression='none', tiled=False, **kw)
 
 
-def _dtype_validation_build_single_band_vrt(tmp_path, *, dtype_attr, src_path, filename='b.vrt', size=2, nodata=None):  # noqa: E501
+def _dtype_validation_build_single_band_vrt(tmp_path, *, dtype_attr, src_path, filename='b.vrt', size=2, nodata=None):
     """Hand-roll a single-band VRT with an arbitrary ``dataType`` attribute.
 
     ``dtype_attr`` is rendered verbatim into the ``<VRTRasterBand>``
@@ -63,7 +69,7 @@ def _dtype_validation_build_single_band_vrt(tmp_path, *, dtype_attr, src_path, f
     else:
         attr = ''
     nodata_elem = f'<NoDataValue>{nodata}</NoDataValue>' if nodata is not None else ''
-    vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand{attr} band="1">\n    {nodata_elem}\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+    vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand{attr} band="1">\n    {nodata_elem}\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
     p = tmp_path / filename
     p.write_text(vrt_xml)
     return str(p)
@@ -270,7 +276,7 @@ def _dtype_validation_make_minimal_vrt_xml(dtype_attr, nodata_text):
     only does the containment check after canonicalising the path, so
     we pass a path inside the temp dir at the call site.
     """
-    return f'<VRTDataset rasterXSize="1" rasterYSize="1"><GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform><VRTRasterBand dataType="{dtype_attr}" band="1"><NoDataValue>{nodata_text}</NoDataValue></VRTRasterBand></VRTDataset>'  # noqa: E501
+    return f'<VRTDataset rasterXSize="1" rasterYSize="1"><GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform><VRTRasterBand dataType="{dtype_attr}" band="1"><NoDataValue>{nodata_text}</NoDataValue></VRTRasterBand></VRTDataset>'
 
 
 def test_parse_vrt_uint64_nodata_is_int(tmp_path):
@@ -313,7 +319,7 @@ def test_uint64_nodata_round_trip_preserves_max_sentinel(tmp_path):
     b = np.array([[1, 2], [3, 4]], dtype=np.uint64)
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
-    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='UInt64', src_path=str(src), nodata=big)  # noqa: E501
+    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='UInt64', src_path=str(src), nodata=big)
     r = read_vrt(vrt)
     assert 'nodata' in r.attrs
     assert int(r.attrs['nodata']) == big
@@ -332,10 +338,10 @@ def test_uint64_nodata_masks_max_sentinel_in_data(tmp_path):
     b = np.array([[1, 2], [3, big]], dtype=np.uint64)
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
-    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='UInt64', src_path=str(src), nodata=big)  # noqa: E501
+    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='UInt64', src_path=str(src), nodata=big)
     r = read_vrt(vrt)
     assert r.dtype == np.float64, f'sentinel hit must promote to float64, got {r.dtype}'
-    assert np.isnan(r.values[1, 1]), f'the 2**64-1 cell must be masked to NaN; got {r.values[1, 1]!r}'  # noqa: E501
+    assert np.isnan(r.values[1, 1]), f'the 2**64-1 cell must be masked to NaN; got {r.values[1, 1]!r}'
     assert r.values[0, 0] == 1.0
     assert r.values[0, 1] == 2.0
     assert r.values[1, 0] == 3.0
@@ -350,7 +356,7 @@ def test_int64_min_nodata_masks_correctly(tmp_path):
     b = np.array([[info.min, -1], [0, info.max]], dtype=np.int64)
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
-    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Int64', src_path=str(src), nodata=info.min)  # noqa: E501
+    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Int64', src_path=str(src), nodata=info.min)
     r = read_vrt(vrt)
     assert r.dtype == np.float64
     assert np.isnan(r.values[0, 0])
@@ -369,7 +375,7 @@ def test_int32_negative_nodata_still_masks(tmp_path):
     b = np.array([[10, -9999], [-9999, 20]], dtype=np.int32)
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
-    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Int32', src_path=str(src), nodata=-9999)  # noqa: E501
+    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Int32', src_path=str(src), nodata=-9999)
     r = read_vrt(vrt)
     assert r.dtype == np.float64
     assert np.isnan(r.values[0, 1])
@@ -386,7 +392,7 @@ def test_float32_nan_nodata_still_works(tmp_path):
     b = np.array([[1.0, np.nan], [3.0, 4.0]], dtype=np.float32)
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
-    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Float32', src_path=str(src), nodata='nan')  # noqa: E501
+    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Float32', src_path=str(src), nodata='nan')
     r = read_vrt(vrt)
     assert r.dtype == np.float32
     assert np.isnan(r.attrs['nodata'])
@@ -400,7 +406,7 @@ def test_float64_scientific_nodata_still_works(tmp_path):
     b = np.array([[1.0, -15000000000.0], [3.0, 4.0]], dtype=np.float64)
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
-    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Float64', src_path=str(src), nodata='-1.5e10')  # noqa: E501
+    vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Float64', src_path=str(src), nodata='-1.5e10')
     r = read_vrt(vrt)
     assert r.dtype == np.float64
     assert r.attrs['nodata'] == -15000000000.0
@@ -412,7 +418,7 @@ def test_float64_scientific_nodata_still_works(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize('bps,sf,expected', [(12, 1, 'UInt16'), (12, 4, 'UInt16'), (1, 1, 'Byte'), (2, 1, 'Byte'), (4, 1, 'Byte'), (8, 1, 'Byte'), (16, 1, 'UInt16'), (32, 1, 'UInt32'), (64, 1, 'UInt64'), (8, 2, 'Int8'), (16, 2, 'Int16'), (32, 2, 'Int32'), (64, 2, 'Int64'), (32, 3, 'Float32'), (64, 3, 'Float64')])  # noqa: E501
+@pytest.mark.parametrize('bps,sf,expected', [(12, 1, 'UInt16'), (12, 4, 'UInt16'), (1, 1, 'Byte'), (2, 1, 'Byte'), (4, 1, 'Byte'), (8, 1, 'Byte'), (16, 1, 'UInt16'), (32, 1, 'UInt32'), (64, 1, 'UInt64'), (8, 2, 'Int8'), (16, 2, 'Int16'), (32, 2, 'Int32'), (64, 2, 'Int64'), (32, 3, 'Float32'), (64, 3, 'Float64')])
 def test_vrt_dtype_name_for_supported(bps, sf, expected):
     assert _vrt_dtype_name_for(bps, sf) == expected
 
@@ -429,10 +435,10 @@ def test_vrt_dtype_name_for_unsupported_raises():
 
 def test_np_to_vrt_dtype_table_covers_all_resolver_outputs():
     from xrspatial.geotiff._dtypes import tiff_dtype_to_numpy
-    pairs = [(8, 1), (8, 2), (16, 1), (16, 2), (32, 1), (32, 2), (32, 3), (64, 1), (64, 2), (64, 3), (1, 1), (2, 1), (4, 1), (12, 1)]  # noqa: E501
+    pairs = [(8, 1), (8, 2), (16, 1), (16, 2), (32, 1), (32, 2), (32, 3), (64, 1), (64, 2), (64, 3), (1, 1), (2, 1), (4, 1), (12, 1)]
     for bps, sf in pairs:
         np_dtype = tiff_dtype_to_numpy(bps, sf)
-        assert np_dtype.type in _NP_TO_VRT_DTYPE, f'resolver yields {np_dtype} for bps={bps}, sf={sf} but _NP_TO_VRT_DTYPE has no entry for it'  # noqa: E501
+        assert np_dtype.type in _NP_TO_VRT_DTYPE, f'resolver yields {np_dtype} for bps={bps}, sf={sf} but _NP_TO_VRT_DTYPE has no entry for it'
 
 
 def _dtype_12bit_unique_dir(tmp_path, label: str) -> str:
@@ -441,7 +447,7 @@ def _dtype_12bit_unique_dir(tmp_path, label: str) -> str:
     return str(d)
 
 
-def _dtype_12bit_write_uint16_tif(path: str, *, h: int = 4, w: int = 4, origin_x: float = 0.0) -> None:  # noqa: E501
+def _dtype_12bit_write_uint16_tif(path: str, *, h: int=4, w: int=4, origin_x: float=0.0) -> None:
     arr = np.arange(h * w, dtype=np.uint16).reshape(h, w)
     y = 100.0 + (np.arange(h) + 0.5) * -1.0
     x = origin_x + (np.arange(w) + 0.5) * 1.0
@@ -498,9 +504,9 @@ def _int_source_float_dtype_write_int16_with_sentinel(tmp_path, sentinel=-1, fil
     return p
 
 
-def _int_source_float_dtype_build_vrt(tmp_path, source_path, vrt_dtype, nodata_value, filename='mismatch.vrt'):  # noqa: E501
+def _int_source_float_dtype_build_vrt(tmp_path, source_path, vrt_dtype, nodata_value, filename='mismatch.vrt'):
     """Hand-roll a VRT with the requested dataType / NoDataValue pair."""
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{vrt_dtype}" band="1">\n    <NoDataValue>{nodata_value}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{source_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{vrt_dtype}" band="1">\n    <NoDataValue>{nodata_value}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{source_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
     p = str(tmp_path / filename)
     with open(p, 'w') as f:
         f.write(vrt_xml)
@@ -517,7 +523,7 @@ def test_float32_vrt_uint16_source_masks_in_range_sentinel(tmp_path):
     vrt = _int_source_float_dtype_build_vrt(tmp_path, src, 'Float32', 65535)
     r = read_vrt(vrt)
     assert r.dtype == np.float32, f'Float32-declared VRT should return float32, got {r.dtype}'
-    assert np.isnan(r.values[1, 1]), f'Sentinel pixel (uint16 65535 -> float32) should be NaN-masked; got values[1, 1]={r.values[1, 1]}'  # noqa: E501
+    assert np.isnan(r.values[1, 1]), f'Sentinel pixel (uint16 65535 -> float32) should be NaN-masked; got values[1, 1]={r.values[1, 1]}'
     assert r.attrs.get('nodata') == 65535.0
     assert r.values[0, 0] == 1.0
 
@@ -528,7 +534,7 @@ def test_float64_vrt_int16_source_masks_negative_sentinel(tmp_path):
     vrt = _int_source_float_dtype_build_vrt(tmp_path, src, 'Float64', -1)
     r = read_vrt(vrt)
     assert r.dtype == np.float64
-    assert np.isnan(r.values[1, 1]), f'Sentinel pixel (-1) should be NaN-masked; got values[1, 1]={r.values[1, 1]}'  # noqa: E501
+    assert np.isnan(r.values[1, 1]), f'Sentinel pixel (-1) should be NaN-masked; got values[1, 1]={r.values[1, 1]}'
     assert r.attrs.get('nodata') == -1.0
 
 
@@ -596,9 +602,9 @@ def test_float_vrt_int_source_with_band_select(tmp_path):
     float-declared VRT. The per-band ``NoDataValue`` from the VRT XML
     must reach the source-side masking step, not just ``attrs['nodata']``.
     """
-    src_a = _int_source_float_dtype_write_uint16_with_sentinel(tmp_path, sentinel=65535, filename='ba.tif')  # noqa: E501
-    src_b = _int_source_float_dtype_write_uint16_with_sentinel(tmp_path, sentinel=65000, filename='bb.tif')  # noqa: E501
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <NoDataValue>65535</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_a}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="Float32" band="2">\n    <NoDataValue>65000</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_b}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+    src_a = _int_source_float_dtype_write_uint16_with_sentinel(tmp_path, sentinel=65535, filename='ba.tif')
+    src_b = _int_source_float_dtype_write_uint16_with_sentinel(tmp_path, sentinel=65000, filename='bb.tif')
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <NoDataValue>65535</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_a}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="Float32" band="2">\n    <NoDataValue>65000</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_b}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
     vrt_path = str(tmp_path / 'mb.vrt')
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
@@ -623,15 +629,15 @@ def _multiband_dtype_write(arr, path, **kw):
     write(arr, str(path), compression='none', tiled=False, **kw)
 
 
-def _multiband_dtype_build_two_band_vrt(tmp_path, *, b0_dtype_str, b0_path, b1_dtype_str, b1_path, b1_extra='', b0_extra='', filename='mb.vrt', size=2):  # noqa: E501
+def _multiband_dtype_build_two_band_vrt(tmp_path, *, b0_dtype_str, b0_path, b1_dtype_str, b1_path, b1_extra='', b0_extra='', filename='mb.vrt', size=2):
     """Hand-roll a two-band VRT with arbitrary dataType strings."""
-    vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{b0_dtype_str}" band="1">\n{b0_extra}    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{b0_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="{b1_dtype_str}" band="2">\n{b1_extra}    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{b1_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+    vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{b0_dtype_str}" band="1">\n{b0_extra}    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{b0_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="{b1_dtype_str}" band="2">\n{b1_extra}    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{b1_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
     p = tmp_path / filename
     p.write_text(vrt_xml)
     return str(p)
 
 
-def _multiband_dtype_build_complex_source_vrt(tmp_path, *, dtype_str, src_path, scale_ratio=None, scale_offset=None, filename='cs.vrt', size=2, band_num=2, other_band_dtype='Byte', other_band_path=None, extra_band=True):  # noqa: E501
+def _multiband_dtype_build_complex_source_vrt(tmp_path, *, dtype_str, src_path, scale_ratio=None, scale_offset=None, filename='cs.vrt', size=2, band_num=2, other_band_dtype='Byte', other_band_path=None, extra_band=True):
     """Hand-roll a VRT where band 2 (or the only band) uses ComplexSource.
 
     ``extra_band=False`` writes a single-band VRT.
@@ -642,20 +648,24 @@ def _multiband_dtype_build_complex_source_vrt(tmp_path, *, dtype_str, src_path, 
     if scale_offset is not None:
         cs_lines.append(f'      <ScaleOffset>{scale_offset}</ScaleOffset>')
     cs_inner = '\n'.join(cs_lines)
-    complex_block = f'    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n{cs_inner}\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </ComplexSource>\n'  # noqa: E501
+    complex_block = f'    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n{cs_inner}\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </ComplexSource>\n'
     if extra_band and other_band_path is not None:
-        vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{other_band_dtype}" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{other_band_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="{dtype_str}" band="{band_num}">\n{complex_block}  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+        vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{other_band_dtype}" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{other_band_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="{dtype_str}" band="{band_num}">\n{complex_block}  </VRTRasterBand>\n</VRTDataset>'
     else:
-        vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{dtype_str}" band="1">\n{complex_block}  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+        vrt_xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{dtype_str}" band="1">\n{complex_block}  </VRTRasterBand>\n</VRTDataset>'
     p = tmp_path / filename
     p.write_text(vrt_xml)
     return str(p)
 
 
-def test_mixed_byte_and_float32_bands_preserve_fractional(tmp_path):
-    """``Byte`` band 0 + ``Float32`` band 1: band 1's fractional values
-    must survive the read. Before the fix the buffer was allocated as
-    uint8 and ``1.5, 2.5, 3.5, 4.5`` truncated to ``1, 2, 3, 4``.
+def test_mixed_byte_and_float32_bands_raise(tmp_path):
+    """``Byte`` band 0 + ``Float32`` band 1 must raise rather than widen.
+
+    The original #1696 fix widened the output buffer so band 1's
+    fractional values survived. The VRT support matrix at
+    ``_backends/vrt.py`` later tightened the contract: per-band dtype
+    mismatch is a documented error condition, not a silent widening.
+    Issue #2485 flipped the behaviour from widening to raising.
     """
     b0 = np.array([[10, 11], [12, 13]], dtype=np.uint8)
     b1 = np.array([[1.5, 2.5], [3.5, 4.5]], dtype=np.float32)
@@ -663,11 +673,11 @@ def test_mixed_byte_and_float32_bands_preserve_fractional(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b0, p0)
     _multiband_dtype_write(b1, p1)
-    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))  # noqa: E501
-    r = read_vrt(vrt_path)
-    assert r.dtype.kind == 'f', f'Mixed Byte+Float32 must widen to float; got {r.dtype}'
-    np.testing.assert_allclose(r.values[..., 1], b1.astype(r.dtype))
-    np.testing.assert_array_equal(r.values[..., 0], b0.astype(r.dtype))
+    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))
+    with pytest.raises(MixedBandMetadataError) as excinfo:
+        read_vrt(vrt_path)
+    msg = str(excinfo.value).lower()
+    assert 'band 1' in msg and 'band 2' in msg
 
 
 def test_complex_source_scale_promotes_buffer_to_float(tmp_path):
@@ -681,9 +691,9 @@ def test_complex_source_scale_promotes_buffer_to_float(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b, p0)
     _multiband_dtype_write(b, p1)
-    vrt_path = _multiband_dtype_build_complex_source_vrt(tmp_path, dtype_str='Byte', src_path=str(p1), scale_ratio=0.5, other_band_dtype='Byte', other_band_path=str(p0))  # noqa: E501
+    vrt_path = _multiband_dtype_build_complex_source_vrt(tmp_path, dtype_str='Byte', src_path=str(p1), scale_ratio=0.5, other_band_dtype='Byte', other_band_path=str(p0))
     r = read_vrt(vrt_path)
-    assert r.dtype.kind == 'f', f'ScaleRatio on a Byte band must widen the buffer to float; got {r.dtype}'  # noqa: E501
+    assert r.dtype.kind == 'f', f'ScaleRatio on a Byte band must widen the buffer to float; got {r.dtype}'
     expected = b.astype(np.float64) * 0.5
     np.testing.assert_allclose(r.values[..., 1], expected)
     np.testing.assert_array_equal(r.values[..., 0].astype(np.uint8), b)
@@ -700,7 +710,7 @@ def test_all_byte_no_scaling_stays_uint8(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b0, p0)
     _multiband_dtype_write(b1, p1)
-    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Byte', b1_path=str(p1))  # noqa: E501
+    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Byte', b1_path=str(p1))
     r = read_vrt(vrt_path)
     assert r.dtype == np.uint8, f'All-Byte VRT with no scaling must stay uint8; got {r.dtype}'
     np.testing.assert_array_equal(r.values[..., 0], b0)
@@ -723,18 +733,22 @@ def test_complex_source_scale_and_offset_preserve_precision(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b, p0)
     _multiband_dtype_write(b, p1)
-    vrt_path = _multiband_dtype_build_complex_source_vrt(tmp_path, dtype_str='Byte', src_path=str(p1), scale_ratio=0.25, scale_offset=1.5, other_band_dtype='Byte', other_band_path=str(p0))  # noqa: E501
+    vrt_path = _multiband_dtype_build_complex_source_vrt(tmp_path, dtype_str='Byte', src_path=str(p1), scale_ratio=0.25, scale_offset=1.5, other_band_dtype='Byte', other_band_path=str(p0))
     r = read_vrt(vrt_path)
     assert r.dtype.kind == 'f'
     expected = b.astype(np.float64) * 0.25 + 1.5
     np.testing.assert_allclose(r.values[..., 1], expected)
 
 
-def test_nodata_round_trip_through_widened_int_dtype(tmp_path):
-    """Band 0 = uint8 with NoData=255; band 1 = int16 with NoData=-9999.
-    ``np.result_type(uint8, int16) = int16``. Band 0's value 255 is
-    representable as int16 so the nodata fast-path still fires; the
-    surviving values must be preserved through the wider buffer.
+def test_mixed_byte_and_int16_bands_raise(tmp_path):
+    """``Byte`` band 0 + ``Int16`` band 1 must raise rather than widen.
+
+    Previously the reader widened via ``np.result_type(uint8, int16)``
+    and round-tripped the nodata sentinels through the wider buffer.
+    The #2485 contract rejects this kind of cross-band dtype mismatch
+    rather than silently flattening; callers that genuinely want the
+    widened behaviour must rebuild their VRT with a single declared
+    dataType.
     """
     b0 = np.array([[1, 2], [3, 255]], dtype=np.uint8)
     b1 = np.array([[100, 200], [300, -9999]], dtype=np.int16)
@@ -742,21 +756,13 @@ def test_nodata_round_trip_through_widened_int_dtype(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b0, p0, nodata=255)
     _multiband_dtype_write(b1, p1, nodata=-9999)
-    vrt_path = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Byte" band="1">\n    <NoDataValue>255</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="Int16" band="2">\n    <NoDataValue>-9999</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+    vrt_path = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Byte" band="1">\n    <NoDataValue>255</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="Int16" band="2">\n    <NoDataValue>-9999</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
     out = tmp_path / 'mixed.vrt'
     out.write_text(vrt_path)
-    r = read_vrt(str(out), band_nodata='first')
-    if r.dtype.kind == 'f':
-        assert r.values[0, 0, 0] == 1
-        assert r.values[0, 1, 0] == 2
-        assert r.values[1, 0, 0] == 3
-        assert np.isnan(r.values[1, 1, 0])
-        assert np.isnan(r.values[1, 1, 1])
-        assert r.values[0, 0, 1] == 100
-    else:
-        assert r.dtype == np.int16
-        assert r.values[0, 0, 0] == 1
-        assert r.values[0, 0, 1] == 100
+    with pytest.raises(MixedBandMetadataError) as excinfo:
+        read_vrt(str(out), band_nodata='first')
+    msg = str(excinfo.value).lower()
+    assert 'band 1' in msg and 'band 2' in msg
 
 
 def test_single_band_complex_source_scale_widens_buffer(tmp_path):
@@ -768,7 +774,7 @@ def test_single_band_complex_source_scale_widens_buffer(tmp_path):
     b = np.array([[10, 11], [12, 13]], dtype=np.uint8)
     p = tmp_path / 'b.tif'
     _multiband_dtype_write(b, p)
-    vrt_path = _multiband_dtype_build_complex_source_vrt(tmp_path, dtype_str='Byte', src_path=str(p), scale_ratio=0.5, extra_band=False)  # noqa: E501
+    vrt_path = _multiband_dtype_build_complex_source_vrt(tmp_path, dtype_str='Byte', src_path=str(p), scale_ratio=0.5, extra_band=False)
     r = read_vrt(vrt_path)
     assert r.ndim == 2, f'Single-band VRT must return a 2D array; got shape {r.shape}'
     assert r.dtype.kind == 'f', f'Single-band scaled VRT must widen to float; got {r.dtype}'
@@ -790,7 +796,7 @@ def test_band_select_uint8_first_then_float_returns_float_for_band_1(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b0, p0)
     _multiband_dtype_write(b1, p1)
-    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))  # noqa: E501
+    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))
     r = read_vrt(vrt_path, band=1)
     assert r.dtype == np.float32
     np.testing.assert_allclose(r.values, b1)
@@ -806,7 +812,7 @@ def test_band_select_uint8_first_then_float_returns_uint8_for_band_0(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b0, p0)
     _multiband_dtype_write(b1, p1)
-    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))  # noqa: E501
+    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))
     r = read_vrt(vrt_path, band=0)
     assert r.dtype == np.uint8
     np.testing.assert_array_equal(r.values, b0)
@@ -823,7 +829,7 @@ def test_all_float32_multiband_stays_float32(tmp_path):
     p1 = tmp_path / 'b1.tif'
     _multiband_dtype_write(b0, p0)
     _multiband_dtype_write(b1, p1)
-    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Float32', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))  # noqa: E501
+    vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Float32', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))
     r = read_vrt(vrt_path)
     assert r.dtype == np.float32
     np.testing.assert_allclose(r.values[..., 0], b0)
@@ -837,7 +843,7 @@ def test_zero_band_vrt_raises_value_error(tmp_path):
     raised by ``np.result_type`` when called with no arguments.
     """
     import pytest
-    vrt_xml = '<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n</VRTDataset>'  # noqa: E501
+    vrt_xml = '<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n</VRTDataset>'
     p = tmp_path / 'empty.vrt'
     p.write_text(vrt_xml)
     with pytest.raises(ValueError, match='no <VRTRasterBand>'):
@@ -850,21 +856,21 @@ def test_zero_band_vrt_raises_value_error(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, *, dtype_str='UInt16', np_dtype=np.uint16, band0_sentinel=65535, band1_sentinel=65000, band0_other=(1, 2, 3), band1_other=(7, 8, 9)):  # noqa: E501
+def _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, *, dtype_str='UInt16', np_dtype=np.uint16, band0_sentinel=65535, band1_sentinel=65000, band0_other=(1, 2, 3), band1_other=(7, 8, 9)):
     """Two single-band integer sources, each with a distinct nodata
     sentinel, exposed as bands 1 and 2 of a hand-rolled VRT.
 
     Used to be band 0's sentinel was the only one masked. Now every
     band gets its own sentinel.
     """
-    b0_arr = np.array([[band0_other[0], band0_other[1]], [band0_other[2], band0_sentinel]], dtype=np_dtype)  # noqa: E501
-    b1_arr = np.array([[band1_other[0], band1_other[1]], [band1_other[2], band1_sentinel]], dtype=np_dtype)  # noqa: E501
+    b0_arr = np.array([[band0_other[0], band0_other[1]], [band0_other[2], band0_sentinel]], dtype=np_dtype)
+    b1_arr = np.array([[band1_other[0], band1_other[1]], [band1_other[2], band1_sentinel]], dtype=np_dtype)
     p0 = str(tmp_path / 'vrt_b0_1611.tif')
     p1 = str(tmp_path / 'vrt_b1_1611.tif')
     write(b0_arr, p0, nodata=band0_sentinel, compression='none', tiled=False)
     write(b1_arr, p1, nodata=band1_sentinel, compression='none', tiled=False)
     vrt_path = str(tmp_path / 'two_band_per_band_nodata_1611.vrt')
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{dtype_str}" band="1">\n    <NoDataValue>{band0_sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="{dtype_str}" band="2">\n    <NoDataValue>{band1_sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{dtype_str}" band="1">\n    <NoDataValue>{band0_sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="{dtype_str}" band="2">\n    <NoDataValue>{band1_sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
     return vrt_path
@@ -881,7 +887,7 @@ def test_multiband_uint16_per_band_sentinel_each_masked(tmp_path):
     assert r.shape == (2, 2, 2)
     assert r.dtype == np.float64, f'expected float64 promotion, got {r.dtype}'
     assert np.isnan(r.values[1, 1, 0]), "band 0's sentinel pixel was not NaN-masked."
-    assert np.isnan(r.values[1, 1, 1]), "band 1's sentinel pixel was not NaN-masked; the regression from issue #1611 has returned."  # noqa: E501
+    assert np.isnan(r.values[1, 1, 1]), "band 1's sentinel pixel was not NaN-masked; the regression from issue #1611 has returned."
     assert r.values[0, 0, 0] == 1
     assert r.values[0, 0, 1] == 7
     assert r.values[1, 0, 0] == 3
@@ -896,7 +902,7 @@ def test_multiband_int32_negative_per_band_sentinel(tmp_path):
     sentinels to make sure the helper handles signed types and the
     range guard accepts negatives.
     """
-    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, dtype_str='Int32', np_dtype=np.int32, band0_sentinel=-9999, band1_sentinel=-7777, band0_other=(10, 20, 30), band1_other=(40, 50, 60))  # noqa: E501
+    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, dtype_str='Int32', np_dtype=np.int32, band0_sentinel=-9999, band1_sentinel=-7777, band0_other=(10, 20, 30), band1_other=(40, 50, 60))
     r = read_vrt(vrt_path, band_nodata='first')
     assert r.dtype == np.float64
     assert np.isnan(r.values[1, 1, 0])
@@ -912,13 +918,13 @@ def test_multiband_only_one_band_has_sentinel_present(tmp_path):
 
     Force band 1's sentinel never to appear by writing 99 instead.
     """
-    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, band0_sentinel=65535, band1_sentinel=65000, band1_other=(7, 8, 9))  # noqa: E501
+    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, band0_sentinel=65535, band1_sentinel=65000, band1_other=(7, 8, 9))
     b1_no_sentinel = np.array([[7, 8], [9, 99]], dtype=np.uint16)
     import os
     p1 = os.path.join(os.path.dirname(vrt_path), 'vrt_b1_1611.tif')
     write(b1_no_sentinel, p1, nodata=65000, compression='none', tiled=False)
     r = read_vrt(vrt_path, band_nodata='first')
-    assert r.dtype == np.float64, "Even when only band 0 has a present sentinel, the array still needs promotion so band 0's NaN can be expressed."  # noqa: E501
+    assert r.dtype == np.float64, "Even when only band 0 has a present sentinel, the array still needs promotion so band 0's NaN can be expressed."
     assert np.isnan(r.values[1, 1, 0])
     assert r.values[1, 1, 1] == 99.0
 
@@ -927,7 +933,7 @@ def test_multiband_no_sentinel_present_anywhere_keeps_int_dtype(tmp_path):
     """When no band actually contains its declared sentinel, skip
     promotion entirely. Avoids a needless float64 cast on integer data.
     """
-    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, band0_sentinel=65535, band1_sentinel=65000, band0_other=(1, 2, 3), band1_other=(7, 8, 9))  # noqa: E501
+    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, band0_sentinel=65535, band1_sentinel=65000, band0_other=(1, 2, 3), band1_other=(7, 8, 9))
     import os
     b0 = np.array([[1, 2], [3, 4]], dtype=np.uint16)
     b1 = np.array([[7, 8], [9, 10]], dtype=np.uint16)
@@ -946,7 +952,7 @@ def test_multiband_per_band_out_of_range_sentinel_is_no_op(tmp_path):
     for that band rather than raising. Mirrors PR #1583's behaviour
     (#1581): the helper ``_int_nodata_in_range`` gates the cast.
     """
-    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, dtype_str='UInt16', np_dtype=np.uint16, band0_sentinel=65535, band1_sentinel=10, band0_other=(1, 2, 3), band1_other=(7, 8, 9))  # noqa: E501
+    vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, dtype_str='UInt16', np_dtype=np.uint16, band0_sentinel=65535, band1_sentinel=10, band0_other=(1, 2, 3), band1_other=(7, 8, 9))
     with open(vrt_path) as f:
         xml = f.read()
     xml = xml.replace('<NoDataValue>10</NoDataValue>', '<NoDataValue>-9999</NoDataValue>')
@@ -1002,21 +1008,21 @@ def _resample_alg_write_src(tmp_path) -> str:
     return src_path
 
 
-def _resample_alg_write_vrt(tmp_path, xml: str, name: str = 'test.vrt') -> str:
+def _resample_alg_write_vrt(tmp_path, xml: str, name: str='test.vrt') -> str:
     p = str(tmp_path / name)
     with open(p, 'w') as f:
         f.write(xml)
     return p
 
 
-def _resample_alg_vrt_xml(src_path: str, *, alg_elem: str, dst_x: int = 2, dst_y: int = 2) -> str:
+def _resample_alg_vrt_xml(src_path: str, *, alg_elem: str, dst_x: int=2, dst_y: int=2) -> str:
     """Render a VRT XML with a 4x4 SrcRect and configurable DstRect+Alg.
 
     ``alg_elem`` is the raw ``<ResampleAlg>...</ResampleAlg>`` element
     to splice into the ``<ComplexSource>``, or the empty string to
     omit it entirely.
     """
-    return f'<VRTDataset rasterXSize="{dst_x}" rasterYSize="{dst_y}">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="{dst_x}" ySize="{dst_y}"/>\n      {alg_elem}\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
+    return f'<VRTDataset rasterXSize="{dst_x}" rasterYSize="{dst_y}">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="{dst_x}" ySize="{dst_y}"/>\n      {alg_elem}\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>'
 
 
 @pytest.mark.parametrize('alg', ['Bilinear', 'Cubic', 'CubicSpline', 'Lanczos', 'Average', 'Mode'])
@@ -1044,7 +1050,7 @@ def test_unsupported_resample_alg_case_insensitive(tmp_path):
         _resample_alg_read_vrt_internal(vrt_path)
 
 
-@pytest.mark.parametrize('alg', ['Nearest', 'NearestNeighbour', 'NearestNeighbor', 'NEAR', 'nearest', 'NEAREST', ''])  # noqa: E501
+@pytest.mark.parametrize('alg', ['Nearest', 'NearestNeighbour', 'NearestNeighbor', 'NEAR', 'nearest', 'NEAREST', ''])
 def test_nearest_variants_accepted(tmp_path, alg):
     """Nearest (and its case / spelling variants, plus empty text) is
     the implemented algorithm and must round-trip without raising."""
@@ -1071,7 +1077,7 @@ def test_bilinear_at_same_size_does_not_raise(tmp_path):
     accepted.  This pins down the resample-site placement of the
     check -- a parse-time check would have rejected this case too."""
     src_path = _resample_alg_write_src(tmp_path)
-    xml = _resample_alg_vrt_xml(src_path, alg_elem='<ResampleAlg>Bilinear</ResampleAlg>', dst_x=4, dst_y=4)  # noqa: E501
+    xml = _resample_alg_vrt_xml(src_path, alg_elem='<ResampleAlg>Bilinear</ResampleAlg>', dst_x=4, dst_y=4)
     vrt_path = _resample_alg_write_vrt(tmp_path, xml, 'bilinear_1to1.vrt')
     arr, _ = _resample_alg_read_vrt_internal(vrt_path)
     assert arr.shape == (4, 4)
@@ -1095,7 +1101,7 @@ _CRS = 4326
 _NODATA = -9999.0
 
 
-def _simple_mosaic_make_tile(tmp_dir, name: str, data: np.ndarray, origin_x: float, origin_y: float, *, nodata: float | None = _NODATA) -> str:  # noqa: E501
+def _simple_mosaic_make_tile(tmp_dir, name: str, data: np.ndarray, origin_x: float, origin_y: float, *, nodata: float | None=_NODATA) -> str:
     """Write ``data`` as a single-band GeoTIFF anchored at the given origin.
 
     Returns the on-disk path. ``data`` shape is ``(H, W)``.
@@ -1112,7 +1118,7 @@ def _simple_mosaic_make_tile(tmp_dir, name: str, data: np.ndarray, origin_x: flo
     return path
 
 
-def _simple_mosaic_make_multiband_tile(tmp_dir, name: str, data: np.ndarray, origin_x: float, origin_y: float) -> str:  # noqa: E501
+def _simple_mosaic_make_multiband_tile(tmp_dir, name: str, data: np.ndarray, origin_x: float, origin_y: float) -> str:
     """Write a multi-band GeoTIFF anchored at the given origin.
 
     ``data`` shape is ``(H, W, B)``.
@@ -1120,7 +1126,7 @@ def _simple_mosaic_make_multiband_tile(tmp_dir, name: str, data: np.ndarray, ori
     height, width, nbands = data.shape
     y = np.array([origin_y + _PIXEL_H * (i + 0.5) for i in range(height)])
     x = np.array([origin_x + _PIXEL_W * (j + 0.5) for j in range(width)])
-    raster = xr.DataArray(data, dims=['y', 'x', 'band'], coords={'y': y, 'x': x, 'band': np.arange(nbands)}, attrs={'crs': _CRS})  # noqa: E501
+    raster = xr.DataArray(data, dims=['y', 'x', 'band'], coords={'y': y, 'x': x, 'band': np.arange(nbands)}, attrs={'crs': _CRS})
     path = os.path.join(tmp_dir, name)
     to_geotiff(raster, path)
     return path
@@ -1142,7 +1148,7 @@ def simple_mosaic_mosaic_2x1(tmp_path):
     right_data = (left_data + height * width).astype(np.float32)
     origin_x, origin_y = (-120.0, 45.0)
     left_path = _simple_mosaic_make_tile(td, 'left.tif', left_data, origin_x, origin_y)
-    right_path = _simple_mosaic_make_tile(td, 'right.tif', right_data, origin_x + _PIXEL_W * width, origin_y)  # noqa: E501
+    right_path = _simple_mosaic_make_tile(td, 'right.tif', right_data, origin_x + _PIXEL_W * width, origin_y)
     vrt_path = os.path.join(td, 'simple_mosaic_mosaic_2x1.vrt')
     _write_vrt_internal(vrt_path, [left_path, right_path])
     expected = np.concatenate([left_data, right_data], axis=1)
@@ -1168,7 +1174,7 @@ def simple_mosaic_mosaic_2x2(tmp_path):
     nw_path = _simple_mosaic_make_tile(td, 'nw.tif', tile_nw, origin_x, origin_y)
     ne_path = _simple_mosaic_make_tile(td, 'ne.tif', tile_ne, origin_x + _PIXEL_W * w, origin_y)
     sw_path = _simple_mosaic_make_tile(td, 'sw.tif', tile_sw, origin_x, origin_y + _PIXEL_H * h)
-    se_path = _simple_mosaic_make_tile(td, 'se.tif', tile_se, origin_x + _PIXEL_W * w, origin_y + _PIXEL_H * h)  # noqa: E501
+    se_path = _simple_mosaic_make_tile(td, 'se.tif', tile_se, origin_x + _PIXEL_W * w, origin_y + _PIXEL_H * h)
     vrt_path = os.path.join(td, 'simple_mosaic_mosaic_2x2.vrt')
     _write_vrt_internal(vrt_path, [nw_path, ne_path, sw_path, se_path])
     top = np.concatenate([tile_nw, tile_ne], axis=1)
@@ -1189,14 +1195,14 @@ def simple_mosaic_mosaic_multiband_2x1(tmp_path):
     right_data = rng.random((h, w, b), dtype=np.float32)
     origin_x, origin_y = (-120.0, 45.0)
     left_path = _simple_mosaic_make_multiband_tile(td, 'left_mb.tif', left_data, origin_x, origin_y)
-    right_path = _simple_mosaic_make_multiband_tile(td, 'right_mb.tif', right_data, origin_x + _PIXEL_W * w, origin_y)  # noqa: E501
+    right_path = _simple_mosaic_make_multiband_tile(td, 'right_mb.tif', right_data, origin_x + _PIXEL_W * w, origin_y)
     vrt_path = os.path.join(td, 'mosaic_mb.vrt')
     _write_vrt_internal(vrt_path, [left_path, right_path])
-    expected = np.stack([np.concatenate([left_data[..., k], right_data[..., k]], axis=1) for k in range(b)], axis=-1)  # noqa: E501
+    expected = np.stack([np.concatenate([left_data[..., k], right_data[..., k]], axis=1) for k in range(b)], axis=-1)
     yield (vrt_path, expected, origin_x, origin_y)
 
 
-def _simple_mosaic_assert_attrs_ok(result, *, expected_nodata=None, expected_origin_x=None, expected_origin_y=None):  # noqa: E501
+def _simple_mosaic_assert_attrs_ok(result, *, expected_nodata=None, expected_origin_x=None, expected_origin_y=None):
     """Common attr assertions for VRT reads in this module.
 
     Checks that ``crs`` and ``transform`` are present and consistent
@@ -1211,16 +1217,16 @@ def _simple_mosaic_assert_attrs_ok(result, *, expected_nodata=None, expected_ori
         assert crs_val == _CRS
     else:
         assert crs_val, 'crs attr is present but empty'
-        assert 'WGS' in str(crs_val) or '4326' in str(crs_val), f'crs attr does not look like EPSG:4326: {crs_val!r}'  # noqa: E501
+        assert 'WGS' in str(crs_val) or '4326' in str(crs_val), f'crs attr does not look like EPSG:4326: {crs_val!r}'
     assert 'transform' in result.attrs, f'transform missing from attrs; have {sorted(result.attrs)}'
     transform = result.attrs['transform']
     assert len(transform) == 6, f'transform should be a 6-tuple, got {transform!r}'
-    assert transform[0] == pytest.approx(_PIXEL_W), f'transform pixel width = {transform[0]}, expected {_PIXEL_W}'  # noqa: E501
-    assert transform[4] == pytest.approx(_PIXEL_H), f'transform pixel height = {transform[4]}, expected {_PIXEL_H}'  # noqa: E501
+    assert transform[0] == pytest.approx(_PIXEL_W), f'transform pixel width = {transform[0]}, expected {_PIXEL_W}'
+    assert transform[4] == pytest.approx(_PIXEL_H), f'transform pixel height = {transform[4]}, expected {_PIXEL_H}'
     if expected_origin_x is not None:
-        assert transform[2] == pytest.approx(expected_origin_x), f'transform origin_x = {transform[2]}, expected {expected_origin_x}'  # noqa: E501
+        assert transform[2] == pytest.approx(expected_origin_x), f'transform origin_x = {transform[2]}, expected {expected_origin_x}'
     if expected_origin_y is not None:
-        assert transform[5] == pytest.approx(expected_origin_y), f'transform origin_y = {transform[5]}, expected {expected_origin_y}'  # noqa: E501
+        assert transform[5] == pytest.approx(expected_origin_y), f'transform origin_y = {transform[5]}, expected {expected_origin_y}'
     if expected_nodata is not None:
         assert 'nodata' in result.attrs, f'nodata missing from attrs; have {sorted(result.attrs)}'
         assert result.attrs['nodata'] == pytest.approx(expected_nodata)
@@ -1245,10 +1251,10 @@ def test_eager_2x1_mosaic_values_coords_attrs(simple_mosaic_mosaic_2x1):
     """
     vrt_path, expected, ox, oy = simple_mosaic_mosaic_2x1
     result = read_vrt(vrt_path)
-    assert result.shape == expected.shape, f'eager 2x1 shape {result.shape}, expected {expected.shape}'  # noqa: E501
+    assert result.shape == expected.shape, f'eager 2x1 shape {result.shape}, expected {expected.shape}'
     np.testing.assert_array_equal(result.values, expected)
     _simple_mosaic_assert_coords_monotonic(result, expected_origin_x=ox, expected_origin_y=oy)
-    _simple_mosaic_assert_attrs_ok(result, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)  # noqa: E501
+    _simple_mosaic_assert_attrs_ok(result, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)
 
 
 def test_eager_2x2_mosaic_values_coords_attrs(simple_mosaic_mosaic_2x2):
@@ -1260,10 +1266,10 @@ def test_eager_2x2_mosaic_values_coords_attrs(simple_mosaic_mosaic_2x2):
     """
     vrt_path, expected, ox, oy = simple_mosaic_mosaic_2x2
     result = read_vrt(vrt_path)
-    assert result.shape == expected.shape, f'eager 2x2 shape {result.shape}, expected {expected.shape}'  # noqa: E501
+    assert result.shape == expected.shape, f'eager 2x2 shape {result.shape}, expected {expected.shape}'
     np.testing.assert_array_equal(result.values, expected)
     _simple_mosaic_assert_coords_monotonic(result, expected_origin_x=ox, expected_origin_y=oy)
-    _simple_mosaic_assert_attrs_ok(result, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)  # noqa: E501
+    _simple_mosaic_assert_attrs_ok(result, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)
 
 
 def test_windowed_read_aligned_with_source_boundary(simple_mosaic_mosaic_2x1):
@@ -1281,11 +1287,11 @@ def test_windowed_read_aligned_with_source_boundary(simple_mosaic_mosaic_2x1):
     result = read_vrt(vrt_path, window=(r0, c0, r1, c1))
     np.testing.assert_array_equal(result.values, expected[r0:r1, c0:c1])
     full = read_vrt(vrt_path)
-    np.testing.assert_array_equal(np.asarray(result['x'].values), np.asarray(full['x'].values)[c0:c1])  # noqa: E501
-    np.testing.assert_array_equal(np.asarray(result['y'].values), np.asarray(full['y'].values)[r0:r1])  # noqa: E501
+    np.testing.assert_array_equal(np.asarray(result['x'].values), np.asarray(full['x'].values)[c0:c1])
+    np.testing.assert_array_equal(np.asarray(result['y'].values), np.asarray(full['y'].values)[r0:r1])
     expected_window_ox = ox + _PIXEL_W * c0
     expected_window_oy = oy + _PIXEL_H * r0
-    _simple_mosaic_assert_attrs_ok(result, expected_nodata=_NODATA, expected_origin_x=expected_window_ox, expected_origin_y=expected_window_oy)  # noqa: E501
+    _simple_mosaic_assert_attrs_ok(result, expected_nodata=_NODATA, expected_origin_x=expected_window_ox, expected_origin_y=expected_window_oy)
 
 
 def test_dask_2x1_mosaic_multi_chunk_matches_eager(simple_mosaic_mosaic_2x1):
@@ -1294,12 +1300,12 @@ def test_dask_2x1_mosaic_multi_chunk_matches_eager(simple_mosaic_mosaic_2x1):
     """
     vrt_path, expected, ox, oy = simple_mosaic_mosaic_2x1
     chunked = read_vrt(vrt_path, chunks=(16, 16))
-    assert isinstance(chunked.data, da.Array), f'expected dask Array, got {type(chunked.data).__name__}'  # noqa: E501
+    assert isinstance(chunked.data, da.Array), f'expected dask Array, got {type(chunked.data).__name__}'
     assert chunked.data.numblocks == (2, 4), f'expected 2x4 blocks, got {chunked.data.numblocks}'
     computed = chunked.compute()
     np.testing.assert_array_equal(computed.values, expected)
     _simple_mosaic_assert_coords_monotonic(computed, expected_origin_x=ox, expected_origin_y=oy)
-    _simple_mosaic_assert_attrs_ok(computed, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)  # noqa: E501
+    _simple_mosaic_assert_attrs_ok(computed, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)
 
 
 def test_dask_2x2_mosaic_multi_chunk_matches_eager(simple_mosaic_mosaic_2x2):
@@ -1315,7 +1321,7 @@ def test_dask_2x2_mosaic_multi_chunk_matches_eager(simple_mosaic_mosaic_2x2):
     computed = chunked.compute()
     np.testing.assert_array_equal(computed.values, expected)
     _simple_mosaic_assert_coords_monotonic(computed, expected_origin_x=ox, expected_origin_y=oy)
-    _simple_mosaic_assert_attrs_ok(computed, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)  # noqa: E501
+    _simple_mosaic_assert_attrs_ok(computed, expected_nodata=_NODATA, expected_origin_x=ox, expected_origin_y=oy)
 
 
 def test_eager_multiband_2x1_mosaic(simple_mosaic_mosaic_multiband_2x1):
@@ -1328,7 +1334,7 @@ def test_eager_multiband_2x1_mosaic(simple_mosaic_mosaic_multiband_2x1):
     """
     vrt_path, expected, ox, oy = simple_mosaic_mosaic_multiband_2x1
     result = read_vrt(vrt_path)
-    assert result.shape == expected.shape, f'multiband 2x1 shape {result.shape}, expected {expected.shape}'  # noqa: E501
+    assert result.shape == expected.shape, f'multiband 2x1 shape {result.shape}, expected {expected.shape}'
     np.testing.assert_array_equal(result.values, expected)
     _simple_mosaic_assert_coords_monotonic(result, expected_origin_x=ox, expected_origin_y=oy)
     _simple_mosaic_assert_attrs_ok(result, expected_origin_x=ox, expected_origin_y=oy)
@@ -1345,7 +1351,7 @@ def test_dask_multiband_2x1_mosaic_matches_eager(simple_mosaic_mosaic_multiband_
     vrt_path, expected, ox, oy = simple_mosaic_mosaic_multiband_2x1
     eager = read_vrt(vrt_path)
     chunked = read_vrt(vrt_path, chunks=(16, 16))
-    assert isinstance(chunked.data, da.Array), f'expected dask Array, got {type(chunked.data).__name__}'  # noqa: E501
+    assert isinstance(chunked.data, da.Array), f'expected dask Array, got {type(chunked.data).__name__}'
     computed = chunked.compute()
     assert computed.shape == eager.shape
     np.testing.assert_array_equal(computed.values, eager.values)
