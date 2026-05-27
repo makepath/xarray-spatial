@@ -1,21 +1,16 @@
 """Read-side overview tests: IFD selection, georef inheritance, and
 ``overview_level`` type validation.
 
-Consolidates three top-level files for epic #2424 (cluster 8):
+Covers three concerns:
 
-* ``test_overview_filter.py`` (#1504) -- ``select_overview_ifd`` skips
-  mask / page IFDs and ``open_geotiff(overview_level=...)`` lands on the
-  real pyramid, raising a clear ``ValueError`` out of range.
-* ``test_overview_geo_inheritance_1640.py`` (#1640) -- overview reads
-  inherit the level-0 georef and rescale the pixel size by the reduction
-  factor, across all four backends.
-* ``test_overview_level_type_validation_2074.py`` (#2074) and
-  ``test_overview_level_validation_backends_2160.py`` (#2160) --
-  ``overview_level`` type checks fire up front (and before unrelated
+* ``select_overview_ifd`` skips mask / page IFDs and
+  ``open_geotiff(overview_level=...)`` lands on the real pyramid, raising
+  a clear ``ValueError`` out of range.
+* Overview reads inherit the level-0 georef and rescale the pixel size by
+  the reduction factor, across all four backends.
+* ``overview_level`` type checks fire up front (and before unrelated
   source / chunk / GPU-policy errors) on ``open_geotiff``,
   ``read_geotiff_dask``, and ``read_geotiff_gpu``.
-
-Tests-only restructure.
 """
 from __future__ import annotations
 
@@ -65,7 +60,7 @@ def _materialise(da) -> np.ndarray:
 
 
 # =========================================================================
-# Section: overview_level skips mask / page IFDs (issue #1504)
+# Section: overview_level skips mask / page IFDs
 # =========================================================================
 #
 # GDAL COG variants can interleave NewSubfileType=4 (transparency mask)
@@ -341,7 +336,7 @@ class TestOpenGeotiffSkipsMask:
 
 
 # =========================================================================
-# Section: overview reads inherit level-0 georef (issue #1640)
+# Section: overview reads inherit level-0 georef
 # =========================================================================
 #
 # Overview IFDs in COGs typically carry no GeoKeys, ModelPixelScale, or
@@ -560,8 +555,8 @@ def test_overview_without_full_res_sibling_falls_back_gracefully(tmp_path):
 def test_overview_level_0_path_unchanged(tmp_path):
     """For overview_level=0, the helper must be a no-op.
 
-    Pin the contract that level-0 reads still get exactly the geo info
-    they did before #1640.
+    Pin the contract that level-0 reads still get exactly the same geo
+    info they always did.
     """
     path = str(tmp_path / "overview_lvl0_passthrough_1640.tif")
     src = _make_cog_with_overviews(path)
@@ -581,7 +576,7 @@ def test_overview_level_0_path_unchanged(tmp_path):
 
 
 # =========================================================================
-# Section: overview_level type validation on open_geotiff (issue #2074)
+# Section: overview_level type validation on open_geotiff
 # =========================================================================
 #
 # The selector in ``_header.select_overview_ifd`` compares
@@ -680,13 +675,13 @@ def test_overview_level_typeerror_names_value(cog_with_overview_2074):
 
 
 # =========================================================================
-# Section: overview_level type validation on direct backends (issue #2160)
+# Section: overview_level type validation on direct backends
 # =========================================================================
 #
-# Issue #2074 added the up-front guard to ``open_geotiff``. The direct
-# backends (``read_geotiff_dask``, ``read_geotiff_gpu``) reach the same
-# selector but only after source coercion, chunk validation, and (on the
-# GPU path) ``on_gpu_failure`` resolution. This section mirrors the #2074
+# ``open_geotiff`` has an up-front guard. The direct backends
+# (``read_geotiff_dask``, ``read_geotiff_gpu``) reach the same selector
+# but only after source coercion, chunk validation, and (on the GPU path)
+# ``on_gpu_failure`` resolution. This section mirrors the type-validation
 # tests against the two direct backends and asserts ordering: the
 # ``overview_level`` type check fires before ``_coerce_path``,
 # ``_validate_chunks_arg``, or the ``on_gpu_failure`` alias handling.

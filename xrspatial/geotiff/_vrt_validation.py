@@ -1,4 +1,4 @@
-"""Centralised VRT capability validation (issue #2329 / parent #2321).
+"""Centralised VRT capability validation.
 
 A single :func:`validate_parsed_vrt` entry point that audits an
 already-parsed :class:`xrspatial.geotiff._vrt.VRTDataset` against every
@@ -148,8 +148,8 @@ def validate_parsed_vrt(
 
     # Rule 2: dtype compatibility.
     #
-    # ``parse_vrt`` already rejects unknown ``dataType`` tokens (#1783),
-    # so this branch only fires when a future ``_DTYPE_MAP`` change
+    # ``parse_vrt`` already rejects unknown ``dataType`` tokens, so
+    # this branch only fires when a future ``_DTYPE_MAP`` change
     # adds a complex / bool / object entry, or when a caller hand-builds
     # a ``VRTDataset``. Surface the bad band number and dtype so the
     # message is actionable.
@@ -168,7 +168,7 @@ def validate_parsed_vrt(
     #
     # A non-zero skew_x (gt[2]) or skew_y (gt[4]) means the VRT is
     # rotated / sheared. The read pipeline treats those as no-georef
-    # (#2122) only when the caller opts in via ``allow_rotated=True``;
+    # only when the caller opts in via ``allow_rotated=True``;
     # otherwise the projected coords would mislabel a pixel grid as a
     # georeferenced raster. Reject up front to mirror the read-side
     # ``RotatedTransformError`` contract.
@@ -297,7 +297,7 @@ def validate_parsed_vrt(
             # every capability rejection and the message names both
             # outer and inner VRT paths. Case-insensitive on the
             # extension so ``.VRT`` (Windows-style) also trips the
-            # rejection. See issue #2371.
+            # rejection.
             if src.filename.lower().endswith('.vrt'):
                 # Direct interpolation (not !r) for ``src.filename`` so
                 # Windows paths render with single backslashes rather
@@ -327,7 +327,7 @@ def validate_parsed_vrt(
             # the mask, so the per-pixel mask would silently drop and
             # the dispatched array would mis-label every masked pixel
             # as valid. Reject with the source path and the offending
-            # flag. See issue #2371.
+            # flag.
             if src.use_mask_band:
                 raise VRTUnsupportedError(
                     f"VRT '{source}' source '{src.filename}' (band "
@@ -439,7 +439,7 @@ def validate_parsed_vrt(
                 _seen_source_paths.add(src.filename)
                 _unique_source_paths.append(src.filename)
 
-    # Rule 10: per-source CRS agreement (#2321 mixed-CRS gap, #2444).
+    # Rule 10: per-source CRS agreement.
     #
     # The VRT mosaic reader has no reprojection step: every source's
     # pixels are placed by integer offset into a single output buffer
@@ -653,7 +653,7 @@ def _format_crs_for_message(raw: str, crs) -> str:
     return repr(raw[:57] + '...')
 
 
-# Public alias matching the issue #2371 / epic #2342 naming. The
+# Public alias under the capability-validator naming. The
 # implementation continues to live under ``validate_parsed_vrt`` for
 # backward compatibility with the ``_backends/vrt.py`` call sites and
 # the existing test files; new call sites should prefer the

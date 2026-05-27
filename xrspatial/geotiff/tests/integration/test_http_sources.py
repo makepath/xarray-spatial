@@ -1,11 +1,9 @@
 """Loopback HTTP-server integration tests for the GeoTIFF reader.
 
-Consolidated from the issue-numbered files mapped in
-``CLUSTER_AUDIT_PR9.md``. Every test here needs a working loopback
-bind, hence the module-level ``@requires_loopback`` marker. PR 11 of
-epic #2390 drops the ``pytest_collection_modifyitems`` socketserver
-hack in ``conftest.py``; the explicit marker here keeps these tests
-skipped on sandboxes that deny loopback bind once the hack is gone.
+Every test here needs a working loopback bind, hence the module-level
+``@requires_loopback`` marker. The marker keeps these tests skipped on
+sandboxes that deny loopback bind, independent of any ``conftest.py``
+socketserver collection hook.
 """
 from __future__ import annotations
 
@@ -46,7 +44,6 @@ pytestmark = requires_loopback
 
 # ----------------------------------------------------------
 # Section: http_band_validation
-# Source: test_http_band_validation_1695.py
 # ----------------------------------------------------------
 class _RangeHandler_http_band_validation(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''
@@ -97,7 +94,7 @@ def _stop_http_band_validation(httpd):
 
 @pytest.fixture()
 def _allow_loopback_http_band_validation(monkeypatch):
-    """The HTTP source rejects loopback by default after #1664."""
+    """The HTTP source rejects loopback by default."""
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
 
 
@@ -145,7 +142,7 @@ def test_http_negative_band_rejected(multi_band_cog_http_band_validation):
 
     Before the fix, ``arr[:, :, -1]`` returned the trailing band without
     any error. The local path raises
-    ``IndexError("band=-1 out of range for 3-band file.")`` via #1673.
+    ``IndexError("band=-1 out of range for 3-band file.")``.
     """
     _path, payload, _arr = multi_band_cog_http_band_validation
     url, httpd, _ = _serve_http_band_validation(payload)
@@ -214,7 +211,7 @@ def test_http_nonzero_band_on_single_band_rejected(single_band_cog_http_band_val
     Before the fix, the post-decode slice at L1660 was gated on
     ``arr.ndim == 3 and samples_per_pixel > 1`` so ``band=1`` on a 2D
     single-band array was dropped on the floor. The local path raises
-    ``IndexError("band=1 requested on a single-band file.")`` via #1673.
+    ``IndexError("band=1 requested on a single-band file.")``.
     """
     _path, payload, _arr = single_band_cog_http_band_validation
     url, httpd, _ = _serve_http_band_validation(payload)
@@ -272,8 +269,8 @@ def test_http_band_none_returns_all_bands(multi_band_cog_http_band_validation):
 def test_local_and_http_negative_band_parity(multi_band_cog_http_band_validation):
     """The local eager path and the HTTP path raise the same
     ``IndexError`` class with the same diagnostic substring on
-    ``band=-1``. This is the parity guard #1673 set up for local vs dask
-    vs GPU; the HTTP branch joins after #1695.
+    ``band=-1``. This is the parity guard for local vs dask vs GPU,
+    extended to the HTTP branch.
     """
     path, payload, _arr = multi_band_cog_http_band_validation
     url, httpd, _ = _serve_http_band_validation(payload)
@@ -349,7 +346,6 @@ def test_open_geotiff_http_negative_band_rejected(multi_band_cog_http_band_valid
 
 # ----------------------------------------------------------
 # Section: http_cog_coalesce
-# Source: test_http_cog_coalesce.py
 # ----------------------------------------------------------
 
 
@@ -434,10 +430,10 @@ def test_coalesce_split_recovers_per_tile_bytes():
 
 
 # ---------------------------------------------------------------------------
-# Issue #2266: coalesced-range size cap. Without this cap a tile table
-# with many small valid byte counts and sub-MiB gaps would chain into
-# one merged range whose length is roughly num_tiles * gap_threshold,
-# turning a safe per-tile fetch into a multi-GiB over-fetch.
+# Coalesced-range size cap. Without this cap a tile table with many
+# small valid byte counts and sub-MiB gaps would chain into one merged
+# range whose length is roughly num_tiles * gap_threshold, turning a
+# safe per-tile fetch into a multi-GiB over-fetch.
 # ---------------------------------------------------------------------------
 
 def test_coalesce_caps_merged_range_size():
@@ -479,7 +475,7 @@ def test_coalesce_cap_round_trips_bytes():
 
 
 def test_coalesce_default_cap_bounds_adversarial_input_simple():
-    # The motivating scenario from issue #2266: 4096 tiles, each 1 KB,
+    # The motivating scenario: 4096 tiles, each 1 KB,
     # with offsets spaced 1 MiB apart. Without the cap this collapses
     # into one ~4 GiB merged range. With the default cap nothing
     # exceeds MAX_COALESCED_RANGE_BYTES_DEFAULT.
@@ -738,7 +734,6 @@ def test_dask_http_parses_ifds_once(small_cog_bytes_http_cog_coalesce, monkeypat
 
 # ----------------------------------------------------------
 # Section: http_cog_range_contract
-# Source: test_http_cog_range_contract_2286.py
 # ----------------------------------------------------------
 
 
@@ -797,7 +792,7 @@ def _stop_http_cog_range_contract(httpd):
 
 @pytest.fixture()
 def _allow_loopback_http_cog_range_contract(monkeypatch):
-    """The HTTP source rejects loopback by default after #1664."""
+    """The HTTP source rejects loopback by default."""
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
 
 
@@ -918,9 +913,8 @@ def test_windowed_tile_read_bounded_bytes_and_range_count(
     """A 32x32 window aligned to one tile fetches a single tile's bytes,
     not the whole file.
 
-    Pre-#1669/#1842 the HTTP path either ignored ``window=`` or fell
-    back to ``read_all()`` and sliced. Either regression would push the
-    total byte count past the per-tile budget.
+    A regression that ignored ``window=`` or fell back to ``read_all()``
+    and sliced would push the total byte count past the per-tile budget.
     """
     buf, expected, _ = small_tiled_cog_http_cog_range_contract
     src = _RecordingHTTPSource_http_cog_range_contract(buf)
@@ -1111,11 +1105,10 @@ def test_dask_read_parses_ifds_once_across_chunks(
     """An N-chunk dask graph must trigger at most one IFD-header GET
     across all chunk tasks.
 
-    Mirrors ``test_dask_http_parses_ifds_once`` in
-    ``test_http_cog_coalesce.py`` but exercises the explicit O(1)-in-
-    chunk-count contract this PR is supposed to pin. A regression where
-    each delayed task spins up a fresh ``_HTTPSource`` and reparses
-    headers would scale header GETs with chunk count.
+    Mirrors ``test_dask_http_parses_ifds_once`` but exercises the
+    explicit O(1)-in-chunk-count contract. A regression where each
+    delayed task spins up a fresh ``_HTTPSource`` and reparses headers
+    would scale header GETs with chunk count.
     """
     buf, expected, _ = small_tiled_cog_http_cog_range_contract
     src_holder: list[_RecordingHTTPSource_http_cog_range_contract] = []
@@ -1199,10 +1192,10 @@ class _CloseCountingSource_http_cog_range_contract(_HTTPSource):
     """``_HTTPSource`` that counts ``close()`` invocations.
 
     Used to assert the HTTP read path closes the source on the error
-    path (#1816), even when the IFD parse blows up on a truncated
-    file. Unlike the wrapper in ``test_cog_http_close_on_error_1816``
-    this subclass also serves real bytes so the failure can be driven
-    by a malformed payload rather than a monkeypatched explosion.
+    path, even when the IFD parse blows up on a truncated file. Unlike
+    the wrapper in the close-on-error section, this subclass also
+    serves real bytes so the failure can be driven by a malformed
+    payload rather than a monkeypatched explosion.
     """
 
     def __init__(self, buf: bytes):
@@ -1235,8 +1228,7 @@ def test_truncated_cog_closes_http_source(monkeypatch):
     valid TIFF. IFD parsing fails. The contract is:
 
     * the call raises (not a hang, not a silent zero-array return),
-    * ``source.close()`` runs exactly once via the ``finally`` guard
-      added for #1816.
+    * ``source.close()`` runs exactly once via the ``finally`` guard.
     """
     bad = b'II\x2a\x00' + b'\x00' * 28  # valid magic, IFD pointer = 0
     src = _CloseCountingSource_http_cog_range_contract(bad)
@@ -1255,9 +1247,9 @@ def test_malformed_ifd_chain_closes_http_source(monkeypatch):
     points past the buffer raises a ``ValueError`` and still closes
     the source.
 
-    Mirrors the #2050/#2266 'malformed pyramid metadata' scenarios:
-    the header looks valid enough to start parsing, then the IFD
-    extends past what any reasonable header prefetch will pull.
+    Mirrors the 'malformed pyramid metadata' scenarios: the header
+    looks valid enough to start parsing, then the IFD extends past what
+    any reasonable header prefetch will pull.
     """
     # Synthesize a tiny payload that crosses the parser-validation
     # threshold without being a real TIFF. The HTTP parser fetches
@@ -1387,10 +1379,9 @@ def test_short_body_during_pixel_fetch_closes_source(
 def test_coalesce_does_not_silently_exceed_explicit_cap():
     """``coalesce_ranges`` must respect the explicit cap kwarg.
 
-    Mirrors the pure-unit assertion in ``test_http_cog_coalesce.py``
-    but folds it into this file as the canonical contract row for
-    #2286: a future refactor that drops the cap (or treats it as an
-    advisory) flips this test red.
+    The canonical contract row for the coalesced-range cap: a future
+    refactor that drops the cap (or treats it as an advisory) flips
+    this test red.
     """
     one_mib = 1 << 20
     cap = 4 * one_mib
@@ -1411,9 +1402,9 @@ def test_coalesce_default_cap_bounds_adversarial_input():
     """The default cap must bound an adversarial 'thousands of tiles
     spaced 1 MiB apart' input.
 
-    This is the motivating #2266 scenario: a header with many tiny
-    valid byte counts and sub-threshold gaps. Without the default cap
-    the coalescer collapses the whole table into one multi-GiB GET.
+    The motivating adversarial scenario: a header with many tiny valid
+    byte counts and sub-threshold gaps. Without the default cap the
+    coalescer collapses the whole table into one multi-GiB GET.
     """
     one_mib = 1 << 20
     ranges = [(i * one_mib, 1024) for i in range(4096)]
@@ -1433,10 +1424,8 @@ def test_coalesced_get_size_capped_on_real_http_source():
     Constructs an in-memory recording source (sharing the contract
     with the production class via subclassing), asks for ranges that
     would otherwise merge into one big GET, and asserts every actual
-    GET respects the cap. Mirrors the dedicated row in
-    ``test_http_cog_coalesce.py``; reproduced here as the contract
-    anchor for #2293 so the cap survives any future refactor of the
-    coalescer.
+    GET respects the cap. Acts as the contract anchor so the cap
+    survives any future refactor of the coalescer.
     """
     one_mib = 1 << 20
     buf = bytes((i * 13) & 0xFF for i in range(16 * one_mib))
@@ -1549,7 +1538,6 @@ def test_loopback_end_to_end_windowed_byte_budget(small_tiled_cog_http_cog_range
 
 # ----------------------------------------------------------
 # Section: http_dask_allow_rotated
-# Source: test_http_dask_allow_rotated_2130.py
 # ----------------------------------------------------------
 
 
@@ -1646,9 +1634,8 @@ def test_http_dask_rotated_default_raises(tmp_path, monkeypatch):
 def test_http_dask_rotated_allow_rotated_reads(tmp_path, monkeypatch):
     """``allow_rotated=True`` over HTTP+dask reads the pixel grid.
 
-    Pre-#2130 this raised ``NotImplementedError`` because
-    ``read_geotiff_dask`` did not forward the kwarg to
-    ``_parse_cog_http_meta``.
+    A regression where ``read_geotiff_dask`` did not forward the kwarg
+    to ``_parse_cog_http_meta`` would raise ``NotImplementedError``.
     """
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
     src = tmp_path / "tmp_2130_http_dask_optin.tif"
@@ -1666,7 +1653,6 @@ def test_http_dask_rotated_allow_rotated_reads(tmp_path, monkeypatch):
 
 # ----------------------------------------------------------
 # Section: http_dask_orientation
-# Source: test_http_dask_orientation_1794.py
 # ----------------------------------------------------------
 
 
@@ -1741,7 +1727,6 @@ def test_http_dask_read_rejects_non_default_orientation(tmp_path, monkeypatch):
 
 # ----------------------------------------------------------
 # Section: http_meta_buffer
-# Source: test_http_meta_buffer_1718.py
 # ----------------------------------------------------------
 
 
@@ -1976,7 +1961,6 @@ def test_cap_raises_clear_error_on_excessive_chain(monkeypatch):
 
 # ----------------------------------------------------------
 # Section: http_no_stdlib_fallback
-# Source: test_http_no_stdlib_fallback_2050.py
 # ----------------------------------------------------------
 
 
@@ -1998,8 +1982,8 @@ def test_reader_imports_urllib3_at_module_level():
 def test_get_http_pool_returns_a_pool_manager():
     """``_get_http_pool`` is no longer allowed to return None.
 
-    Pre-#2050 it returned ``None`` when urllib3 was missing, which is
-    what routed callers into the stdlib fallback.
+    It used to return ``None`` when urllib3 was missing, which routed
+    callers into the now-removed stdlib fallback.
     """
     import urllib3
     pool = _reader_mod._get_http_pool()
@@ -2078,8 +2062,8 @@ class _MockResp_http_no_stdlib_fallback:
         self.headers = {}
         if content_range is not None:
             self.headers['Content-Range'] = content_range
-        # ``read_range`` (post #2264) does a Content-Length preflight; let
-        # callers either pin it explicitly or default to len(data).
+        # ``read_range`` does a Content-Length preflight; let callers
+        # either pin it explicitly or default to len(data).
         if content_length is None and data:
             self.headers['Content-Length'] = str(len(data))
         elif content_length is not None:
@@ -2122,9 +2106,9 @@ def test_read_range_uses_urllib3_pool(monkeypatch):
     assert method == 'GET'
     assert kwargs.get('redirect') is False
     assert kwargs.get('headers', {}).get('Range') == 'bytes=0-99'
-    # Post #2264: the GET must request a streaming body so the cap is
-    # enforced on the wire rather than after urllib3 has already
-    # buffered ``resp.data``.
+    # The GET must request a streaming body so the cap is enforced on
+    # the wire rather than after urllib3 has already buffered
+    # ``resp.data``.
     assert kwargs.get('preload_content') is False
 
 
@@ -2142,7 +2126,7 @@ def test_read_all_uses_urllib3_pool(monkeypatch):
 
 
 def test_read_range_short_circuits_zero_length(monkeypatch):
-    """No HTTP traffic for length<=0 -- behaviour preserved from pre-#2050."""
+    """No HTTP traffic for length<=0."""
     monkeypatch.setattr(
         socket, 'getaddrinfo', _fake_getaddrinfo_http_no_stdlib_fallback('93.184.216.34'))
     src = _reader_mod._HTTPSource('https://example.com/cog.tif')
@@ -2190,7 +2174,6 @@ def test_install_requires_lists_urllib3():
 
 # ----------------------------------------------------------
 # Section: http_orientation
-# Source: test_http_orientation_1717.py
 # ----------------------------------------------------------
 
 
@@ -2302,7 +2285,7 @@ def test_http_windowed_read_rejects_non_default_orientation(
 
     Mirrors the local-path guard so the contract is uniform across
     backends. Resolving windowed-read semantics for oriented files is
-    out of scope for #1717.
+    out of scope here.
     """
     arr = np.zeros((8, 8), dtype=np.uint8)
     path = tmp_path / f"tmp_1717_window_reject_{orientation}.tif"
@@ -2344,7 +2327,6 @@ def test_http_default_orientation_still_works(tmp_path, _allow_loopback_http_ori
 
 # ----------------------------------------------------------
 # Section: http_range_validation
-# Source: test_http_range_validation_1735.py
 # ----------------------------------------------------------
 
 
@@ -2390,9 +2372,8 @@ def test_range_request_ignored_for_nonzero_start_raises():
     url, httpd, _ = _serve_http_range_validation(_Handler)
     try:
         src = _HTTPSource(url)
-        # Post #2264 ``read_range`` rejects on the Content-Length
-        # preflight before any body bytes are read; pre-#2264 the
-        # ``_validate_range_response`` step rejected on
+        # ``read_range`` rejects on the Content-Length preflight before
+        # any body bytes are read. An older path rejected on
         # Content-Range/range-fetch grounds after the body was already
         # buffered. Both wordings prove the request was refused.
         with pytest.raises(
@@ -2525,9 +2506,9 @@ def test_range_ignored_200_oversize_rejected_via_content_length(
     """Server ignores ``Range`` for ``start=0`` and returns a 200 with
     a ``Content-Length`` past the full-object slack cap.
 
-    Before #2264, ``read_range`` buffered the entire body into
+    A regression where ``read_range`` buffered the entire body into
     ``resp.data`` (urllib3 default ``preload_content=True``) and then
-    sliced down to ``length``. That defeated the OOM guard the slice
+    sliced down to ``length`` defeats the OOM guard the slice
     comment claimed: a 16 KiB prefetch against a 2 GiB body still
     pulled 2 GiB into memory before the slice ran. The fix caps the
     fallback at :attr:`_HTTPSource._RANGE_IGNORED_FULL_OBJECT_CAP` and
@@ -2570,9 +2551,8 @@ def test_range_ignored_200_full_object_sliced_within_cap():
 
     This is the legitimate small-file fallback: the caller asked for
     a 64-byte prefetch, the file is a few KiB, and the server doesn't
-    honour Range. Pre-#2264 the slice happened after the whole body
-    was already in ``resp.data``; post-#2264 the body is bounded by
-    the streaming cap on the wire.
+    honour Range. The body is bounded by the streaming cap on the wire
+    rather than sliced after the whole body lands in ``resp.data``.
     """
 
     class _Handler(_BaseHandler_http_range_validation):
@@ -2633,7 +2613,7 @@ def test_range_ignored_200_no_content_length_is_streamed_and_capped(
     than the cap has arrived, so the body never gets fully buffered
     into Python memory.
 
-    This is the second half of the #2264 fix: the ``Content-Length``
+    The two halves of the streaming guard: the ``Content-Length``
     preflight catches honest oversize, the streaming cap (via chunked
     transfer encoding here, since the server omits ``Content-Length``)
     catches the case where the server volunteers no advertised size.
@@ -2677,7 +2657,7 @@ def test_range_request_uses_streaming_response(monkeypatch):
     This pins the wire-level behaviour the OOM fix depends on. If a
     future refactor flips the default back to ``preload_content=
     True``, the streaming cap and the ``Content-Length`` preflight
-    both become advisory rather than enforcing. Issue #2264.
+    both become advisory rather than enforcing.
     """
 
     captured: dict = {}
@@ -2715,7 +2695,6 @@ def test_range_request_uses_streaming_response(monkeypatch):
 
 # ----------------------------------------------------------
 # Section: http_read_all_bounded
-# Source: test_http_read_all_bounded_2051.py
 # ----------------------------------------------------------
 
 
@@ -2925,8 +2904,8 @@ def test_read_all_passes_when_body_fits_budget():
 # Stdlib fallback (urllib3 unavailable)
 # ---------------------------------------------------------------------------
 
-# The stdlib ``urllib.request`` fallback path was removed in #2050 /
-# #2055 (urllib3 is now a hard dependency). The three tests that
+# The stdlib ``urllib.request`` fallback path was removed (urllib3 is
+# now a hard dependency). The three tests that
 # previously covered the fallback's byte-budget enforcement no longer
 # have a code path to exercise; the urllib3-only equivalents above
 # (test_read_all_rejects_oversized_content_length,
@@ -3022,7 +3001,6 @@ def test_full_image_http_read_rejects_padded_body(tmp_path):
 
 # ----------------------------------------------------------
 # Section: http_scheme_case
-# Source: test_http_scheme_case_2321.py
 # ----------------------------------------------------------
 
 
@@ -3091,7 +3069,7 @@ class TestIsHttpSourceHelper_http_scheme_case:
         # the old ``startswith('http://')`` gate but is RFC-correct. The
         # validator rejects these downstream as "no hostname", so the
         # security posture is unchanged. Locking the broader classifier
-        # in here keeps any future tightening explicit. Issue #2332.
+        # in here keeps any future tightening explicit.
         assert _sources_mod._is_http_source('http:foo') is True
         assert _sources_mod._is_http_source('HTTP:foo') is True
 
@@ -3280,7 +3258,7 @@ class TestWriterRejectsHttpTargets_http_scheme_case:
     (correctly returns False) and into the local file write path, which
     surfaced an OS-specific ``OSError`` for the colon-in-filename. The
     typed error matches the lowercase-HTTP behaviour and points users at
-    the supported destinations. Follow-up to issue #2332 review.
+    the supported destinations.
     """
 
     @pytest.mark.parametrize("url", [
@@ -3300,7 +3278,6 @@ class TestWriterRejectsHttpTargets_http_scheme_case:
 
 # ----------------------------------------------------------
 # Section: http_stripped_window_max_pixels
-# Source: test_http_stripped_window_max_pixels_issue_A_1842.py
 # ----------------------------------------------------------
 
 
@@ -3308,13 +3285,12 @@ class TestWriterRejectsHttpTargets_http_scheme_case:
 def _no_sidecar_probe_http_stripped_window_max_pixels(monkeypatch):
     """Pin the byte-range assertions against the no-sidecar path.
 
-    Issue #2239 added a sidecar-discovery probe to ``_read_cog_http``
-    (an extra ``(0, 1)`` range fetch for ``<url>.ovr``) that shows up
-    in ``_RecordingHTTPSource.calls`` and breaks the strip-fetch
-    counts this file asserts. Disable discovery here so the
-    assertions continue to measure exactly the strip GETs the issue
-    is about. Sidecar behaviour for the chunked HTTP path is covered
-    by ``test_remote_sidecar_chunked_2239.py``.
+    The sidecar-discovery probe in ``_read_cog_http`` (an extra
+    ``(0, 1)`` range fetch for ``<url>.ovr``) shows up in
+    ``_RecordingHTTPSource.calls`` and breaks the strip-fetch counts
+    this file asserts. Disable discovery here so the assertions
+    continue to measure exactly the strip GETs. Sidecar behaviour for
+    the chunked HTTP path is covered in ``test_sidecar.py``.
     """
     from xrspatial.geotiff import _sidecar as _sidecar_mod
     monkeypatch.setattr(_sidecar_mod, 'find_sidecar', lambda _src: None)
@@ -3518,11 +3494,12 @@ def test_windowed_stripped_http_matches_full_read(
 
 
 # ---------------------------------------------------------------------------
-# Test 5: per-strip byte cap applies only to strips inside the window (#1851)
+# Test 5: per-strip byte cap applies only to strips inside the window
 # ---------------------------------------------------------------------------
 #
-# Before #1851 the windowed stripped HTTP path validated every strip's
-# StripByteCount before deciding which strips intersected the window. A
+# A regression would have the windowed stripped HTTP path validate
+# every strip's StripByteCount before deciding which strips
+# intersected the window. A
 # window that only touched a small benign strip would still fail if some
 # unrelated strip elsewhere in the file exceeded the per-strip cap. The
 # tiled HTTP path already applied the cap only when adding intersecting
@@ -3562,9 +3539,9 @@ def test_windowed_strip_byte_cap_skips_unrelated_oversized_strip(
 
     def fake_meta(source, *args, **kwargs):
         # ``_parse_cog_http_meta`` returns a 5-tuple when
-        # ``return_sidecar=True`` (the path ``_read_cog_http`` uses
-        # post-#2239) and a 4-tuple otherwise. Forward whatever the
-        # real function produced; only the IFD needs poisoning here.
+        # ``return_sidecar=True`` (the path ``_read_cog_http`` uses)
+        # and a 4-tuple otherwise. Forward whatever the real function
+        # produced; only the IFD needs poisoning here.
         result = real_meta(source, *args, **kwargs)
         ifd = result[1]
         n_strips = len(ifd.strip_offsets)
@@ -3604,7 +3581,7 @@ def test_windowed_strip_byte_cap_skips_unrelated_oversized_strip(
 
 
 # ---------------------------------------------------------------------------
-# Test 6: per-strip decoded-dimension guard (#1851)
+# Test 6: per-strip decoded-dimension guard
 # ---------------------------------------------------------------------------
 #
 # A tiny window intersecting a strip whose decoded geometry
@@ -3626,7 +3603,7 @@ def test_windowed_strip_decoded_dim_guard_rejects_oversized_strip(
 
     def fake_meta(source, *args, **kwargs):
         # ``_parse_cog_http_meta`` returns a 5-tuple when
-        # ``return_sidecar=True`` (post-#2239) and a 4-tuple otherwise.
+        # ``return_sidecar=True`` and a 4-tuple otherwise.
         result = real_meta(source, *args, **kwargs)
         ifd = result[1]
         # Claim a width that, multiplied by rows-per-strip and samples,
@@ -3652,7 +3629,6 @@ def test_windowed_strip_decoded_dim_guard_rejects_oversized_strip(
 
 # ----------------------------------------------------------
 # Section: http_window_band_planar
-# Source: test_http_window_band_planar_1669.py
 # ----------------------------------------------------------
 
 
@@ -3713,7 +3689,7 @@ def _stop_http_window_band_planar(httpd):
 
 @pytest.fixture()
 def _allow_loopback_http_window_band_planar(monkeypatch):
-    """The HTTP source blocks 127.0.0.1 by default after #1664."""
+    """The HTTP source blocks 127.0.0.1 by default."""
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
 
 
@@ -4127,9 +4103,9 @@ def test_http_window_and_band_combined(multi_band_chunky_cog_http_window_band_pl
 def planar_separate_tiled_cog_http_window_band_planar(tmp_path):
     """3-band tiled planar=2 (separate planes) TIFF.
 
-    The xrspatial writer only emits planar=1 (PR #1680 review feedback:
-    keep the test self-contained without taking on ``tifffile`` as a
-    test dep). The fixture builds the planar=2 file from raw bytes so
+    The xrspatial writer only emits planar=1, and keeping the test
+    self-contained avoids taking on ``tifffile`` as a test dep. The
+    fixture builds the planar=2 file from raw bytes so
     the HTTP tile-fetch loop is still exercised for separate-plane
     layouts. The result is a tiled GeoTIFF rather than a strict COG (no
     overviews), which is fine for the HTTP tile-fetch path.
@@ -4204,7 +4180,7 @@ def test_http_planar2_band_selection(planar_separate_tiled_cog_http_window_band_
 
 
 # ---------------------------------------------------------------------------
-# Orientation guard parity with the local path (PR #1680 review)
+# Orientation guard parity with the local path
 # ---------------------------------------------------------------------------
 
 @pytest.mark.usefixtures('_allow_loopback_http_window_band_planar')
@@ -4246,7 +4222,6 @@ def test_http_window_on_oriented_tiff_rejected(tmp_path):
 
 # ----------------------------------------------------------
 # Section: cog_http_close_on_error
-# Source: test_cog_http_close_on_error_1816.py
 # ----------------------------------------------------------
 
 
@@ -4299,7 +4274,7 @@ def _stop_cog_http_close_on_error(httpd):
 
 @pytest.fixture()
 def _allow_loopback_cog_http_close_on_error(monkeypatch):
-    """The HTTP source rejects loopback by default after #1664."""
+    """The HTTP source rejects loopback by default."""
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
 
 
@@ -4307,14 +4282,14 @@ def _allow_loopback_cog_http_close_on_error(monkeypatch):
 def _no_sidecar_probe_cog_http_close_on_error(monkeypatch):
     """Pin the close-count assertions against the no-sidecar code path.
 
-    Issue #2239 added a sidecar-discovery probe to ``_read_cog_http``
-    (one extra ``_HTTPSource`` construction for ``<url>.ovr``). The
-    fixtures in this file use a server that returns 200 for every
-    path, so the probe sees a "sidecar" that does not actually exist.
-    Disable discovery here so the test continues to count exactly the
+    The sidecar-discovery probe in ``_read_cog_http`` adds one extra
+    ``_HTTPSource`` construction for ``<url>.ovr``. The fixtures in
+    this file use a server that returns 200 for every path, so the
+    probe sees a "sidecar" that does not actually exist. Disable
+    discovery here so the test continues to count exactly the
     construction the close-on-error contract is supposed to cover.
     Sidecar-probe behaviour is exercised separately in
-    ``test_remote_sidecar_chunked_2239.py``.
+    ``test_sidecar.py``.
     """
     from xrspatial.geotiff import _sidecar as _sidecar_mod
     monkeypatch.setattr(_sidecar_mod, 'find_sidecar', lambda _src: None)
@@ -4469,7 +4444,6 @@ def test_http_source_closed_when_post_processing_raises(
 
 # ----------------------------------------------------------
 # Section: cog_http_concurrent
-# Source: test_cog_http_concurrent.py
 # ----------------------------------------------------------
 
 
@@ -4599,9 +4573,9 @@ def cog_http_server_cog_http_concurrent(tmp_path, monkeypatch):
     """Spin up a local http.server serving a tiled COG, yield (url, arr).
 
     Sets ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` for the duration of
-    the test because ``_HTTPSource`` blocks 127.0.0.1 by default after
-    issue #1664. The escape hatch is the documented way to keep loopback
-    test servers working.
+    the test because ``_HTTPSource`` blocks 127.0.0.1 by default. The
+    escape hatch is the documented way to keep loopback test servers
+    working.
     """
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
     arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
@@ -4640,7 +4614,6 @@ def test_read_to_array_dispatches_to_http(cog_http_server_cog_http_concurrent):
 
 # ----------------------------------------------------------
 # Section: cog_http_parallel_decode
-# Source: test_cog_http_parallel_decode_2026_05_15.py
 # ----------------------------------------------------------
 
 
@@ -4856,7 +4829,6 @@ def test_each_tile_decoded_once(monkeypatch, cog_http_url_large_tiles_cog_http_p
 
 # ----------------------------------------------------------
 # Section: cloud_read_byte_limit
-# Source: test_cloud_read_byte_limit_1928.py
 # ----------------------------------------------------------
 
 
@@ -4964,7 +4936,7 @@ class TestCloudByteLimit_cloud_read_byte_limit:
             _drop_from_memory_fs_cloud_read_byte_limit(path)
 
     def test_none_disables_limit(self, tmp_path):
-        """``max_cloud_bytes=None`` restores pre-#1928 behaviour."""
+        """``max_cloud_bytes=None`` disables the byte-budget check."""
         payload = _make_small_tif_bytes_cloud_read_byte_limit(tmp_path)
         path = "/disabled_check_1928.tif"
         _put_in_memory_fs_cloud_read_byte_limit(path, payload)
@@ -5033,9 +5005,8 @@ class TestCloudByteLimit_cloud_read_byte_limit:
 
 # ----------------------------------------------------------
 # Section: ssrf_hardening
-# Source: test_ssrf_hardening_1664.py
 #
-# SSRF defenses on ``_HTTPSource`` (issue #1664). These tests cover the
+# SSRF defenses on ``_HTTPSource``. These tests cover the
 # validator in isolation -- they do NOT make real HTTP calls.
 # ``socket.getaddrinfo`` is monkeypatched per-test to control what the
 # validator sees.
@@ -5101,7 +5072,7 @@ class TestSchemeAllowList_ssrf_1664:
     def test_env_var_does_not_widen_allow_list(self, monkeypatch):
         """The scheme allow-list is fixed at http/https.
 
-        Earlier drafts of #1664 exposed ``XRSPATIAL_GEOTIFF_ALLOWED_SCHEMES``
+        An earlier design exposed ``XRSPATIAL_GEOTIFF_ALLOWED_SCHEMES``
         as an escape hatch, but ``_HTTPSource`` is a urllib3 / urllib
         Range-GET implementation that only speaks http(s); widening the
         validator without widening the source just moves the failure to
@@ -5248,7 +5219,7 @@ def test_redirect_cap_is_set_ssrf_1664():
 # ---------------------------------------------------------------------------
 # Redirect re-validation -- the initial-URL allow-list is not enough on its
 # own because a public URL can 3xx-redirect to a private/loopback IP. Each
-# hop has to be re-validated. Issue #1664 review.
+# hop has to be re-validated.
 # ---------------------------------------------------------------------------
 
 
@@ -5261,8 +5232,8 @@ class _MockPoolResponse_ssrf_1664:
         self.headers = {'Location': location} if location else {}
         self.data = data
         self._body = data
-        # ``read_range`` (post #2264) does a Content-Length preflight and
-        # streams the body with ``_read_capped``. Pin Content-Length to
+        # ``read_range`` does a Content-Length preflight and streams the
+        # body with ``_read_capped``. Pin Content-Length to
         # the body size so the preflight passes; the streaming cap then
         # reads ``data`` via ``stream()`` below.
         if data:
@@ -5306,8 +5277,8 @@ class _MockPool_ssrf_1664:
 class TestRedirectRevalidation_ssrf_1664:
     # urllib3 is a hard install dependency (see setup.cfg install_requires),
     # so the urllib3 transport path is the only path. The stdlib fallback
-    # was removed in #2050 along with ``_ValidatingRedirectHandler``: it
-    # bypassed the IP pin that closes the #1846 DNS-rebinding TOCTOU.
+    # was removed along with ``_ValidatingRedirectHandler``: it bypassed
+    # the IP pin that closes the DNS-rebinding TOCTOU.
 
     def test_urllib3_redirect_to_private_rejected(self, monkeypatch):
         """Public host that 302-redirects to loopback must be rejected."""
@@ -5453,10 +5424,9 @@ def test_open_source_rejects_loopback_http_ssrf_1664(monkeypatch):
 
 # ----------------------------------------------------------
 # Section: dns_rebinding
-# Source: test_dns_rebinding_pin_issue_1846.py
 #
-# DNS-rebinding TOCTOU defence on ``_HTTPSource`` (issue #1846). The fix
-# pins the validated IP into the TCP connection while keeping the
+# DNS-rebinding TOCTOU defence on ``_HTTPSource``. The defence pins
+# the validated IP into the TCP connection while keeping the
 # original hostname in the Host header and TLS SNI. No real HTTP calls
 # are made: ``socket.getaddrinfo`` / ``socket.create_connection`` are
 # monkeypatched per test.
@@ -5769,9 +5739,8 @@ class TestRedirectRevalidates_dns_rebinding:
 
 # ----------------------------------------------------------
 # Section: uppercase_scheme_ssrf
-# Source: test_uppercase_scheme_ssrf_2323.py
 #
-# Uppercase URL schemes must not dodge SSRF hardening (issue #2323).
+# Uppercase URL schemes must not dodge SSRF hardening.
 # Schemes are case-insensitive per RFC 3986; a URL like
 # ``HTTP://127.0.0.1/foo.tif`` must still route through ``_HTTPSource``
 # (and its SSRF allow-list + pinned DNS), not slip onto the fsspec
@@ -6046,11 +6015,10 @@ class TestDaskBackendUppercaseDispatch_2323:
 
 # ----------------------------------------------------------
 # Section: max_cloud_bytes_dispatcher
-# Source: test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py
 #
 # Dispatcher parameter coverage for ``open_geotiff(max_cloud_bytes=...)``.
-# The kwarg is only meaningful on the eager non-VRT read path; after the
-# #1974 dispatcher fix it raises ``ValueError`` when supplied alongside
+# The kwarg is only meaningful on the eager non-VRT read path; the
+# dispatcher raises ``ValueError`` when it is supplied alongside
 # ``gpu=True``, ``chunks=...``, or a ``.vrt`` source rather than silently
 # dropping the budget.
 # ----------------------------------------------------------
@@ -6121,11 +6089,10 @@ class TestEagerFileLikeAcceptsMaxCloudBytes_2026_05_15:
 
 
 # ---------------------------------------------------------------------
-# Rejection pins. After the #1974 dispatcher fix, supplying
-# ``max_cloud_bytes`` alongside ``gpu=True``, ``chunks=...``, or a
-# ``.vrt`` source raises ``ValueError`` rather than silently dropping
-# the kwarg. Mirrors the ``on_gpu_failure`` / ``missing_sources``
-# guards established by #1810.
+# Rejection pins. Supplying ``max_cloud_bytes`` alongside ``gpu=True``,
+# ``chunks=...``, or a ``.vrt`` source raises ``ValueError`` rather than
+# silently dropping the kwarg. Mirrors the ``on_gpu_failure`` /
+# ``missing_sources`` guards.
 # ---------------------------------------------------------------------
 
 def test_dispatcher_gpu_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
@@ -6209,7 +6176,7 @@ def test_default_kwarg_does_not_trigger_guard_on_vrt_path_2026_05_15(tmp_path):
 
 # ---------------------------------------------------------------------
 # Explicit-``None`` pins. ``max_cloud_bytes=None`` is the documented
-# "skip the check entirely" sentinel on the eager path (#1928). The
+# "skip the check entirely" sentinel on the eager path. The
 # rejection guard is sentinel-based, so an explicit ``None`` is treated
 # as "caller supplied a value" and rejected on the non-eager branches
 # -- consistent with how ``on_gpu_failure`` and ``missing_sources``
@@ -6249,10 +6216,9 @@ def test_explicit_none_max_cloud_bytes_rejected_on_vrt_path_2026_05_15(
 
 # ----------------------------------------------------------
 # Section: max_cloud_bytes_annot
-# Source: test_open_geotiff_max_cloud_bytes_annot_2106.py
 #
-# Regression test for #2106: every kwarg on the public read/write entry
-# points carries a type annotation. The original gap was
+# Every kwarg on the public read/write entry points carries a type
+# annotation. The original gap was
 # ``open_geotiff(max_cloud_bytes=...)``; this pins it plus every other
 # public reader/writer kwarg.
 # ----------------------------------------------------------
@@ -6268,7 +6234,7 @@ _PUBLIC_ENTRY_POINTS_2106 = (
 
 
 def test_open_geotiff_max_cloud_bytes_has_type_annotation_2106():
-    """Pin the #2106 fix: the kwarg the bug named carries ``int | None``."""
+    """``max_cloud_bytes`` carries an ``int | None`` annotation."""
     sig = inspect.signature(open_geotiff)
     param = sig.parameters["max_cloud_bytes"]
     assert param.annotation is not inspect.Parameter.empty, (
@@ -6292,9 +6258,8 @@ def test_open_geotiff_max_cloud_bytes_has_type_annotation_2106():
 def test_public_entry_point_kwargs_have_type_annotations_2106(fn):
     """Every kwarg on the public read/write surface carries an annotation.
 
-    Catches future regressions of the same class as #2106: a kwarg added
-    to one entry point without an annotation while the rest of the
-    signature has them.
+    Catches a kwarg added to one entry point without an annotation
+    while the rest of the signature has them.
     """
     sig = inspect.signature(fn)
     missing = [

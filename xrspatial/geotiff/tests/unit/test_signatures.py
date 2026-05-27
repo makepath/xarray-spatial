@@ -2,40 +2,39 @@
 
 Single home for "does the public ``xrspatial.geotiff`` surface still
 expose the right kwargs, in the right order, with the right annotations,
-and do those kwargs still do what they say." Six sections, each a former
-top-level file:
+and do those kwargs still do what they say." Six sections:
 
-Section 1 -- Parameter annotations (#1654, #1705)
+Section 1 -- Parameter annotations
     Reader and writer entry points must annotate ``window``, ``path`` /
     ``source``, ``dtype``, ``on_gpu_failure``, ``nodata``, and
     ``streaming_buffer_bytes`` consistently across siblings. A few
     runtime smoke tests confirm the annotations did not break the call
     semantics they describe.
 
-Section 2 -- Canonical reader kwarg order (#1935)
+Section 2 -- Canonical reader kwarg order
     ``open_geotiff`` is the canonical surface; the three backend readers
     list their shared keyword-only params in the same relative order so
     ``inspect.signature``, IDE autocomplete, and Sphinx docs do not
     drift.
 
-Section 3 -- Experimental / internal-only opt-in gates (#2352)
+Section 3 -- Experimental / internal-only opt-in gates
     Read-side codec gate (LERC / JPEG2000 / LZ4 / JPEG-in-TIFF) and
     writer rich-tag gate (``gdal_metadata_xml`` / ``extra_tags``) each
     require the matching opt-in flag. The flags are pinned on every
     public entry point and the validators are unit-tested directly.
 
-Section 4 -- ``photometric`` kwarg and ``extra_tags`` override (#1769)
+Section 4 -- ``photometric`` kwarg and ``extra_tags`` override
     The writer defaults to MinIsBlack for any band count; RGB / RGBA are
     opt-in. A user-supplied Photometric / ExtraSamples ``extra_tags``
     entry wins over the writer's auto value.
 
-Section 5 -- ``gil_friendly`` deflate kwarg (#1830)
+Section 5 -- ``gil_friendly`` deflate kwarg
     The flag forces the deflate path through stdlib ``zlib`` (GIL-
     releasing) instead of the libdeflate binding. Tests cover the codec
     layer, the dispatcher, and every writer call site so a dropped kwarg
     cannot silently regress thread-pool scaling.
 
-Section 6 -- Reader / writer kwarg behaviour (2026-05-12 coverage sweep)
+Section 6 -- Reader / writer kwarg behaviour
     Override-effect and dtype-cast coverage for kwargs that the
     signature pins above only assert as *accepted*: ``read_geotiff_gpu``
     / ``read_geotiff_dask`` ``name`` and ``max_pixels``, ``write_vrt``
@@ -84,11 +83,11 @@ from xrspatial.geotiff._writer import (_PARALLEL_MIN_BYTES, _compress_block, _pr
 from .._helpers.markers import requires_gpu
 
 # ===========================================================================
-# Section 1 -- Parameter annotations (#1654, #1705)
+# Section 1 -- Parameter annotations
 # ===========================================================================
 #
-# The api-consistency sweep on 2026-05-12 flagged annotation drift across
-# the public surface: the same parameter was annotated on some sibling
+# The public surface had annotation drift: the same parameter was
+# annotated on some sibling
 # functions but bare ``=None`` on others. Each annotation is pinned here so
 # a future signature change cannot silently drop it. ``from __future__
 # import annotations`` keeps annotations as strings at runtime, so the
@@ -105,7 +104,7 @@ def _annotation(fn, param_name):
     return str(p.annotation)
 
 
-# --- window: 4-tuple (r0, c0, r1, c1) or None (#1654) ---
+# --- window: 4-tuple (r0, c0, r1, c1) or None ---
 
 
 def test_open_geotiff_window_annotated():
@@ -126,7 +125,7 @@ def test_read_geotiff_gpu_window_annotated():
     assert _annotation(read_geotiff_gpu, 'window') == 'tuple | None'
 
 
-# --- path: str or binary file-like (writer entry points, #1654) ---
+# --- path: str or binary file-like (writer entry points) ---
 
 
 def test_to_geotiff_path_annotated():
@@ -145,13 +144,13 @@ def test_write_geotiff_gpu_path_annotated():
 
 def test_write_vrt_path_annotated():
     """``write_vrt(path, ...)`` is str-only (VRT writes are path-only by
-    design; no file-like buffer support). After #1946 the canonical name
+    design; no file-like buffer support). The canonical name
     is ``path`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``).
     The annotation is plain ``str``: the default value is a private
     sentinel (not ``None``) so the deprecation shim can distinguish
     ``write_vrt(path=None, ...)`` (rejected with TypeError) from a
     caller who omitted ``path`` entirely (routed through the ``vrt_path``
-    alias). See PR #1962 review."""
+    alias)."""
     assert _annotation(write_vrt, 'path') == 'str'
 
 
@@ -163,7 +162,7 @@ def test_write_vrt_vrt_path_annotated():
     assert _annotation(write_vrt, 'vrt_path') == 'str | None'
 
 
-# --- source: str or BinaryIO (open_geotiff is the public dispatch, #1654) ---
+# --- source: str or BinaryIO (open_geotiff is the public dispatch) ---
 
 
 def test_open_geotiff_source_annotated():
@@ -171,7 +170,7 @@ def test_open_geotiff_source_annotated():
     the writer ``path`` annotation and the runtime behaviour the
     docstring documents (BytesIO buffers are routed through the eager
     numpy reader). The dedicated reader entry points stay ``str``-only
-    because they reject file-like sources at runtime. See issue #1754.
+    because they reject file-like sources at runtime.
     """
     ann = _annotation(open_geotiff, 'source')
     assert 'str' in ann
@@ -197,13 +196,13 @@ def test_read_vrt_source_str_only():
     assert _annotation(read_vrt, 'source') == 'str'
 
 
-# --- dtype: str | np.dtype | None on every reader entry point (#1775) ---
+# --- dtype: str | np.dtype | None on every reader entry point ---
 
 
 def test_open_geotiff_dtype_annotated():
     """``open_geotiff(dtype=...)`` accepts ``str | np.dtype | None``. The
     docstring already documents the accepted-type set; the annotation
-    now matches. See issue #1775."""
+    now matches."""
     assert _annotation(open_geotiff, 'dtype') == 'str | np.dtype | None'
 
 
@@ -219,7 +218,7 @@ def test_read_vrt_dtype_annotated():
     assert _annotation(read_vrt, 'dtype') == 'str | np.dtype | None'
 
 
-# --- on_gpu_failure: 'auto' | 'strict' (GPU failure policy, #1654) ---
+# --- on_gpu_failure: 'auto' | 'strict' (GPU failure policy) ---
 
 
 def test_open_geotiff_on_gpu_failure_annotated():
@@ -236,7 +235,7 @@ def test_read_geotiff_gpu_deprecated_gpu_alias_annotated():
     assert _annotation(read_geotiff_gpu, 'gpu') == 'str'
 
 
-# --- nodata: float | int | None on every writer entry point (#1705) ---
+# --- nodata: float | int | None on every writer entry point ---
 
 
 def test_to_geotiff_nodata_annotated():
@@ -248,11 +247,11 @@ def test_write_geotiff_gpu_nodata_annotated():
 
 
 def test_write_vrt_nodata_annotated():
-    """Pre-existing annotation from #1684 -- keep it pinned."""
+    """Pre-existing annotation -- keep it pinned."""
     assert _annotation(write_vrt, 'nodata') == 'float | int | None'
 
 
-# --- streaming_buffer_bytes: int on both writer entry points (#1705) ---
+# --- streaming_buffer_bytes: int on both writer entry points ---
 
 
 def test_to_geotiff_streaming_buffer_bytes_annotated():
@@ -311,7 +310,7 @@ def test_open_geotiff_bytesio_source_runtime(tmp_path):
     """``open_geotiff`` routes a ``BytesIO`` source through the eager
     numpy reader. The annotation pins this contract at the type level;
     this test pins it at the runtime level so a future refactor that
-    drops the file-like branch fails CI. See issue #1754.
+    drops the file-like branch fails CI.
     """
     da = _annotated_smoke_da()
     path = str(tmp_path / 'bytesio_source.tif')
@@ -329,7 +328,7 @@ def test_open_geotiff_dtype_kwarg_runtime(tmp_path):
     ``np.dtype`` instance after the annotation tightens to
     ``str | np.dtype | None``. The annotation pins the contract at the
     type level; this test pins it at the runtime level so the contract
-    cannot regress without failing CI. See issue #1775.
+    cannot regress without failing CI.
     """
     da = _annotated_smoke_da()
     path = str(tmp_path / 'dtype_kwarg.tif')
@@ -384,7 +383,7 @@ def test_write_geotiff_gpu_streaming_buffer_bytes_runtime_noop(tmp_path):
 
 
 # ===========================================================================
-# Section 2 -- Canonical reader kwarg order (#1935)
+# Section 2 -- Canonical reader kwarg order
 # ===========================================================================
 #
 # ``open_geotiff`` is the canonical surface. The three backend readers
@@ -409,25 +408,23 @@ _CANONICAL_ORDER = (
     "missing_sources",
     "allow_rotated",
     "allow_unparseable_crs",
-    # Issue #2417 added the GeoKey-shape fail-closed opt-out. Sits
-    # alongside the other ambiguous-metadata opt-outs so the canonical
-    # order keeps the typed-error gates grouped.
+    # GeoKey-shape fail-closed opt-out. Sits alongside the other
+    # ambiguous-metadata opt-outs so the canonical order keeps the
+    # typed-error gates grouped.
     "allow_inconsistent_geokeys",
-    # Issue #2441 (the #1774 follow-up) added the integer-nodata fail-
-    # closed opt-out. Sits alongside the other ambiguous-metadata
-    # opt-outs so the canonical order keeps the typed-error gates
-    # grouped.
+    # Integer-nodata fail-closed opt-out. Sits alongside the other
+    # ambiguous-metadata opt-outs so the canonical order keeps the
+    # typed-error gates grouped.
     "allow_invalid_nodata",
-    # Issue #2443 (epic #2342) added the stable-tier-only read-side
-    # gate. Sits alongside the other ambiguous-metadata opt-outs and
-    # immediately before the experimental-codec unlock it pairs with
-    # in the rejection message, so the canonical order tracks the
-    # release-contract grouping.
+    # Stable-tier-only read-side gate. Sits alongside the other
+    # ambiguous-metadata opt-outs and immediately before the
+    # experimental-codec unlock it pairs with in the rejection message,
+    # so the canonical order tracks the release-contract grouping.
     "stable_only",
-    # PR 4 of epic #2340 added the experimental / internal-only codec
-    # opt-ins on the read side, mirroring the writer surface from #2137
-    # / #1845. They sit after the other ``allow_*`` flags so the
-    # canonical order keeps the policy / typed-error gates grouped.
+    # Experimental / internal-only codec opt-ins on the read side,
+    # mirroring the writer surface. They sit after the other ``allow_*``
+    # flags so the canonical order keeps the policy / typed-error gates
+    # grouped.
     "allow_experimental_codecs",
     "allow_internal_only_jpeg",
     "band_nodata",
@@ -509,7 +506,7 @@ def test_read_geotiff_dask_matches_canonical_order():
 def test_read_vrt_matches_canonical_order():
     """``read_vrt`` must list shared params in the canonical order.
 
-    ``band_nodata`` is the #1987 PR 5 opt-out for the mixed-band metadata
+    ``band_nodata`` is the opt-out for the mixed-band metadata
     check; it is VRT-specific (no analogue on the other readers) and so
     lives in the per-function tail rather than in the shared canonical
     order.
@@ -548,15 +545,14 @@ def test_no_pairwise_order_inversions():
 
 
 # ===========================================================================
-# Section 3 -- Experimental / internal-only opt-in gates (#2352)
+# Section 3 -- Experimental / internal-only opt-in gates
 # ===========================================================================
 #
-# Issue #2340 tiers the GeoTIFF release contract into Stable / Advanced /
-# Experimental / Internal-only. PR 4 (#2352) extends the writer-side opt-in
-# shape onto every Experimental / Internal-only path that did not yet have
-# one, and mirrors the read-side codec gate. Each rejection message names
-# the missing flag, the feature, and the tier so a call site can be fixed in
-# one line.
+# The GeoTIFF release contract tiers features into Stable / Advanced /
+# Experimental / Internal-only. The writer-side opt-in shape covers every
+# Experimental / Internal-only path and mirrors the read-side codec gate.
+# Each rejection message names the missing flag, the feature, and the tier
+# so a call site can be fixed in one line.
 
 
 def _make_float32_da(h: int = 32, w: int = 32) -> xr.DataArray:
@@ -762,7 +758,7 @@ def test_validate_write_rich_tag_optin_accepts_with_flag():
 def test_validate_write_rich_tag_optin_exempts_round_trip():
     """An attrs dict carrying the ``_xrspatial_geotiff_contract`` marker
     came from an xrspatial read; round-tripping it back through
-    ``to_geotiff`` is the canonical contract from #1984 and must not
+    ``to_geotiff`` is the canonical contract and must not
     require a new flag. The marker is the gate's exemption signal.
     """
     _validate_write_rich_tag_optin(
@@ -928,15 +924,14 @@ def test_write_geotiff_gpu_rejects_rich_tags_without_flag(tmp_path):
 def test_allow_rotated_default_raises_already_gated():
     """``allow_rotated=False`` (the default) raises on a rotated read.
     Pinned here so the Experimental + Internal-only opt-in inventory
-    in PR 4 lives next to the existing ``allow_rotated`` /
+    lives next to the existing ``allow_rotated`` /
     ``allow_unparseable_crs`` gates and a future refactor cannot drop
     one of them without failing this file.
 
-    The PR 1 audit (#2348) demoted ``reader.allow_rotated`` from
-    advanced to experimental, so the gate already matches the epic.
+    ``reader.allow_rotated`` is an experimental-tier gate.
     """
     # A signature pin is enough -- the actual rotated-read behaviour is
-    # covered by the existing test_allow_rotated_geotiff_2115.py suite.
+    # covered by the georef read tests.
     params = inspect.signature(open_geotiff).parameters
     assert 'allow_rotated' in params
     assert params['allow_rotated'].default is False
@@ -944,10 +939,9 @@ def test_allow_rotated_default_raises_already_gated():
 
 def test_allow_unparseable_crs_default_raises_already_gated():
     """``allow_unparseable_crs=False`` (the default) raises on an
-    unparseable CRS string. The PR 1 audit (#2348) demoted
-    ``reader.allow_unparseable_crs`` to experimental, so the gate
-    already matches the epic. Pin the signature here next to the new
-    PR 4 opt-ins so the inventory lives in one file.
+    unparseable CRS string. ``reader.allow_unparseable_crs`` is an
+    experimental-tier gate. Pin the signature here next to the other
+    opt-ins so the inventory lives in one file.
     """
     params = inspect.signature(open_geotiff).parameters
     assert 'allow_unparseable_crs' in params
@@ -977,7 +971,7 @@ def test_gpu_write_requires_explicit_optin():
 
 
 # ===========================================================================
-# Section 4 -- photometric kwarg and extra_tags override (#1769)
+# Section 4 -- photometric kwarg and extra_tags override
 # ===========================================================================
 #
 # Before this fix the writer silently labelled any 3+ band array as RGB,
@@ -1076,7 +1070,7 @@ def test_user_extra_tags_override_extra_samples_1769(tmp_path):
         ]},
     )
     path = str(tmp_path / 'override_extras_1769.tif')
-    # extra_tags is the Experimental write surface (PR 4 of epic #2340).
+    # extra_tags is the Experimental write surface, so it needs the opt-in.
     to_geotiff(da, path, photometric='rgb',
                allow_experimental_codecs=True)
 
@@ -1099,7 +1093,7 @@ def test_user_extra_tags_override_photometric_1769(tmp_path):
     )
     path = str(tmp_path / 'override_photometric_1769.tif')
     # photometric='rgb' would otherwise emit Photometric=2.
-    # extra_tags is the Experimental write surface (PR 4 of epic #2340).
+    # extra_tags is the Experimental write surface, so it needs the opt-in.
     to_geotiff(da, path, photometric='rgb',
                allow_experimental_codecs=True)
 
@@ -1188,7 +1182,7 @@ def test_cog_overviews_carry_same_photometric_1769(tmp_path):
 
 
 # ===========================================================================
-# Section 5 -- gil_friendly deflate kwarg (#1830)
+# Section 5 -- gil_friendly deflate kwarg
 # ===========================================================================
 #
 # The flag gates a documented optimisation: when ``True`` the deflate path
@@ -1255,7 +1249,7 @@ def test_deflate_compress_gil_friendly_false_uses_libdeflate(monkeypatch):
 
     Pins the sequential-writer fast path: a regression flipping the
     default or always routing to stdlib zlib would silently undo the
-    ~3x per-call speedup that PR #1826 set out to deliver.
+    ~3x per-call speedup the libdeflate path delivers.
     """
     calls = {'n': 0}
     real = comp_mod._deflate.zlib_compress
@@ -1751,11 +1745,11 @@ def test_write_deflate_round_trip_across_parallelism_modes(
 
 
 # ===========================================================================
-# Section 6 -- Reader / writer kwarg behaviour (2026-05-12 coverage sweep)
+# Section 6 -- Reader / writer kwarg behaviour
 # ===========================================================================
 #
 # Override-effect and dtype-cast coverage for kwargs that the signature
-# pins in earlier sections assert only as *accepted*. Three sub-clusters:
+# pins in earlier sections assert only as *accepted*. Three groups:
 #
 #   6a -- ``write_vrt`` ``relative`` / ``crs`` / ``nodata`` override effect,
 #         plus the empty-``source_files`` error path.
@@ -1900,11 +1894,11 @@ class TestWriteVrtCrsWktBehaviour:
     the first source's WKT is propagated. With an override, the
     override wins.
 
-    Pre-#1715 the kwarg was named ``crs_wkt``. The new canonical name
+    The kwarg was formerly named ``crs_wkt``. The new canonical name
     is ``crs`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``);
     the old name is still accepted with ``DeprecationWarning``. These
     tests exercise the new path; the deprecated path is covered by
-    ``test_write_vrt_crs_1715.py``.
+    the VRT write tests.
     """
 
     def _read_parsed(self, vrt_path, tmp_path):
@@ -2069,7 +2063,7 @@ def test_read_geotiff_gpu_max_pixels_accepts_within_budget(small_tiff_path):
     path, arr = small_tiff_path
     # 8 * 8 = 64 pixels but per-tile dim safety check uses tile_size=16
     # (256 pixels per tile); 300 leaves room. The fixture's tile_size
-    # was bumped to 16 to satisfy the TIFF 6 multiple-of-16 rule (#1767).
+    # was bumped to 16 to satisfy the TIFF 6 multiple-of-16 rule.
     da = read_geotiff_gpu(path, max_pixels=300)
     np.testing.assert_array_equal(da.data.get(), arr)
 
@@ -2586,7 +2580,7 @@ def _make_single_tile_vrt(tmp_path, arr: np.ndarray) -> str:
     """Create a single-source VRT mosaic.
 
     Uses ``_vrt.write_vrt`` so source paths land relative to the VRT
-    directory; that keeps the issue #1671 containment guard happy
+    directory; that keeps the path-containment guard happy
     without environment variables.
     """
     tile_path = _write_tile_to_vrt(tmp_path, 'src_tile.tif', arr)
@@ -2673,9 +2667,9 @@ class TestReadVrtWindowEager:
 
         ``read_vrt`` used to silently clamp out-of-bounds windows. That
         masked caller bugs (typo'd coords, off-by-one extents) and made
-        the returned shape disagree with the caller's coord arrays. As
-        of #1697 / #1698 the validator rejects such windows up front
-        with a typed ``ValueError`` instead.
+        the returned shape disagree with the caller's coord arrays. The
+        validator now rejects such windows up front with a typed
+        ``ValueError`` instead.
         """
         arr = np.arange(4 * 4, dtype=np.float32).reshape(4, 4)
         vrt = _make_single_tile_vrt(tmp_path, arr)
@@ -2686,7 +2680,7 @@ class TestReadVrtWindowEager:
     def test_window_negative_offsets_rejected(self, tmp_path):
         """Negative start offsets raise ``ValueError``.
 
-        Per the post-#1697 contract, ``read_vrt`` validates the window
+        ``read_vrt`` validates the window
         against the VRT extent. Negative offsets are rejected the same
         way an over-large window is, rather than being silently clamped
         to zero.

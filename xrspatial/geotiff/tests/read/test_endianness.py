@@ -1,11 +1,10 @@
 """Big-endian / little-endian GeoTIFF reader paths.
 
-Consolidates the GPU byteswap regression coverage formerly in
-``test_gpu_byteswap_1508.py``. Pre-fix big-endian multi-byte TIFFs read
-via ``read_geotiff_gpu`` crashed inside the GPU decode pipeline because
-``cupy.ndarray`` does not expose ``byteswap()``. The dispatcher caught
-the error and silently fell back to CPU, so results stayed correct but
-the GPU fast path was lost.
+Big-endian multi-byte TIFFs read via ``read_geotiff_gpu`` once crashed
+inside the GPU decode pipeline because ``cupy.ndarray`` does not expose
+``byteswap()``. The dispatcher caught the error and silently fell back to
+CPU, so results stayed correct but the GPU fast path was lost. These
+tests pin the GPU byteswap path.
 """
 from __future__ import annotations
 

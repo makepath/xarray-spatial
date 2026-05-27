@@ -28,13 +28,13 @@ same set of fields on the same fixture across every wired-up backend:
 * transform tuple (rasterio 6-tuple)
 * CRS as EPSG int when present, plus ``crs_wkt`` string
 * declared nodata sentinel
-* masking state (``attrs.get('masked_nodata')`` from #2092)
+* masking state (``attrs.get('masked_nodata')``)
 * a small subset of canonical attrs whose round-trip semantics are
   already settled in the module (``raster_type``, ``transform``,
   ``crs``, ``crs_wkt``).
 
-Backends (issue #2132 plan)
----------------------------
+Backends
+--------
 
 The matrix is parametrised over up to 8 entries that span every
 public dispatch path the reader supports:
@@ -158,8 +158,8 @@ _BACKENDS: list[_BackendSpec] = [
     _BackendSpec(
         backend_id="dask+numpy",
         kwargs={"chunks": 16},
-        # Dask path supports fsspec URIs (#1749) but does not accept
-        # raw BytesIO. VRT lives on the ``vrt-dask`` row.
+        # Dask path supports fsspec URIs but does not accept raw
+        # BytesIO. VRT lives on the ``vrt-dask`` row.
         compat=frozenset({_SRC_LOCAL_TIFF, _SRC_FSSPEC}),
     ),
     _BackendSpec(
@@ -361,7 +361,7 @@ def _build_int8_unmasked(dir_path: Path, target: Path) -> Path:
     """Int8 single-band fixture with a -128 nodata sentinel.
 
     Read back with ``mask_nodata=False`` so the literal sentinel survives
-    in the int8 buffer (locks the #2092 / #2127 masked-flag contract).
+    in the int8 buffer (locks the masked-flag contract).
     """
     del dir_path
     rng = np.random.default_rng(seed=21322)
@@ -716,8 +716,8 @@ def assert_parity(
     Run against an already-read DataArray rather than re-opening here so
     the same helper applies to both ``open_geotiff(path, **kwargs)`` and
     the explicit ``read_geotiff_dask`` / ``read_geotiff_gpu`` /
-    ``read_vrt`` entry points wired up in follow-up PRs. ``ref`` is the
-    eager-numpy read of the same fixture, used as the reference for the
+    ``read_vrt`` entry points. ``ref`` is the eager-numpy read of the
+    same fixture, used as the reference for the
     pixel array, coord values, dims, and transform tuple.
 
     ``spec.dtype`` and ``spec.expected_crs_epsg`` /
@@ -791,8 +791,8 @@ def assert_parity(
         )
 
     # Masking state: ``attrs['masked_nodata']`` reflects whether the
-    # reader replaced sentinel pixels with NaN (#2092 / #2127). The
-    # contract is fixed once a fixture declares a sentinel.
+    # reader replaced sentinel pixels with NaN. The contract is fixed
+    # once a fixture declares a sentinel.
     if spec.expected_masked is not None:
         actual_masked = da.attrs.get("masked_nodata")
         assert actual_masked == spec.expected_masked, (
@@ -801,8 +801,8 @@ def assert_parity(
         )
 
     # Selected canonical attrs: reference and actual agree on presence
-    # and value. The list is intentionally narrow until issue #1984's
-    # contract version stamp lands.
+    # and value. The list is intentionally narrow until the contract
+    # version stamp lands.
     canonical_keys = ("raster_type", "transform", "crs", "crs_wkt")
     for key in canonical_keys:
         ref_v = ref.attrs.get(key)
@@ -899,9 +899,8 @@ _ROTATED_M = (
 def _write_rotated_tiff(path: Path, arr: np.ndarray) -> None:
     """Hand-build a TIFF with a rotated ``ModelTransformationTag``.
 
-    Mirrors the minimal writer used by
-    ``test_allow_rotated_geotiff_2115.py`` so the matrix can assert
-    error behaviour without depending on rasterio / GDAL.
+    A minimal hand-built writer so the matrix can assert error
+    behaviour without depending on rasterio / GDAL.
     """
     import struct
     h, w = arr.shape
@@ -1042,9 +1041,8 @@ def test_backend_parity_matrix_errors(
 # ===========================================================================
 #
 # Compares every read backend against the eager-numpy reference on every
-# manifest fixture. Originally lived in
-# ``test_backend_full_parity_2211.py``; merged here so a single file owns
-# all matrix-style backend-parity assertions.
+# manifest fixture, so a single file owns all matrix-style
+# backend-parity assertions.
 
 _HAS_YAML = importlib.util.find_spec("yaml") is not None
 _HAS_RASTERIO = importlib.util.find_spec("rasterio") is not None

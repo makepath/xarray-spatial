@@ -1,7 +1,6 @@
 """Unit tests for the GeoTIFF IFD (Image File Directory) parser.
 
-Consolidated from the per-failure-mode top-level files listed in
-``CLUSTER_AUDIT_IFD.md`` (cluster 2 of long-tail epic #2424). Every
+Every
 test here exercises the IFD-chain / entry-table parser in isolation,
 without standing up a full read pipeline. The sparse-block and
 sparse-strip sections at the end stand up the public reader because
@@ -12,7 +11,7 @@ Sections, in failure-mode order:
 
 1. ``parse_ifd`` entry-table bounds -- truncated ``num_entries``,
    truncated entry table, truncated next-IFD field, negative offsets,
-   classic + BigTIFF (issue #1672).
+   classic + BigTIFF.
 2. ``parse_ifd`` entry-value bounds -- ``MAX_IFD_ENTRY_COUNT``,
    ``MAX_IFD_ENTRY_BYTES``, value-range past EOF, pixel-array
    exemptions.
@@ -21,16 +20,16 @@ Sections, in failure-mode order:
    ``DuplicateIFDTagError`` instead of silently letting the last
    duplicate win.
 3. ``parse_all_ifds`` chain length cap (``MAX_IFDS``) -- classic and
-   big-endian, boundary, legitimate-COG sanity (security S3).
+   big-endian, boundary, legitimate-COG sanity.
 4. ``parse_all_ifds`` chain cycle detection -- A->B->A, self-cycle,
-   error message shape (issue #1913).
+   error message shape.
 5. ``parse_all_ifds`` malformed chain offsets -- ``first_ifd_offset``
    and ``next_ifd_offset`` past EOF, big-endian variant, valid
-   terminator still parses (issue #1863).
+   terminator still parses.
 6. Sparse blocks via the read pipeline -- tile + strip, with and
    without nodata, GPU path.
 7. Sparse strips through the parallel-decode pipeline -- local file
-   and HTTP COG, planar=1 and planar=2 (issue #2100).
+   and HTTP COG, planar=1 and planar=2.
 """
 from __future__ import annotations
 
@@ -260,7 +259,7 @@ def _build_single_ifd_with_next_offset(
 
 
 # ===========================================================================
-# Section 1: parse_ifd entry-table bounds (#1672)
+# Section 1: parse_ifd entry-table bounds
 # ===========================================================================
 
 
@@ -831,7 +830,7 @@ def test_chain_cap_legitimate_cog_with_overviews_passes(tmp_path):
 
 
 # ===========================================================================
-# Section 4: parse_all_ifds chain cycle detection (#1913)
+# Section 4: parse_all_ifds chain cycle detection
 # ===========================================================================
 
 
@@ -877,7 +876,7 @@ def test_chain_cycle_error_message_mentions_offset_and_malformed():
 
 
 # ===========================================================================
-# Section 5: parse_all_ifds malformed chain offsets (#1863)
+# Section 5: parse_all_ifds malformed chain offsets
 # ===========================================================================
 
 
@@ -1062,7 +1061,7 @@ class TestSparseTilesGPU:
         _write_sparse_tiled(path, nodata=0)
 
         arr = open_geotiff(path, gpu=True)
-        # GPU read applies the high-level nodata mask (#1542): the
+        # GPU read applies the high-level nodata mask: the
         # source uint16 raster is promoted to float64 and sentinel
         # values become NaN, matching the CPU eager path.
         host = arr.data.get()
@@ -1108,10 +1107,10 @@ def test_sparse_tiles_gpu_uses_capability_marker_2487():
 
 
 # ===========================================================================
-# Section 7: sparse strips through the parallel-decode pipeline (#2100)
+# Section 7: sparse strips through the parallel-decode pipeline
 # ===========================================================================
 #
-# The strip-decode parallelisation (PR #2104) added a collect-decode-
+# The strip-decode parallelisation added a collect-decode-
 # place pipeline in both ``_read_strips`` and
 # ``_fetch_decode_cog_http_strips``. The job-collection loop filters
 # sparse strips (``byte_counts[idx] == 0``) so the pool never decodes
