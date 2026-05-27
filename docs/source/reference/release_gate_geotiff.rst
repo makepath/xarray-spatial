@@ -170,7 +170,7 @@ Local GeoTIFF read and write
        and zero-area windows raise rather than silently clamp; coords
        on georeferenced inputs match the eager full-read slice.
      - ``xrspatial/geotiff/tests/unit/test_input_validation.py``,
-       ``xrspatial/geotiff/tests/test_no_georef_windowed_coords_1710.py``
+       ``xrspatial/geotiff/tests/read/test_georef.py``
      - `#2340`_
    * - ``reader.windowed`` -- shifted-transform parity (eager + dask)
      - stable
@@ -492,29 +492,25 @@ VRT supported subset
      - advanced
      - VRT over compatible GeoTIFF sources returns the same pixels and
        attrs through eager and dask paths.
-     - ``xrspatial/geotiff/tests/test_vrt_backend_coverage_2026_05_11.py``,
-       ``xrspatial/geotiff/tests/test_golden_corpus_vrt_1930.py``,
-       ``xrspatial/geotiff/tests/test_vrt_finalization_parity_2162.py``
+     - ``xrspatial/geotiff/tests/vrt/test_parity.py``,
+       ``xrspatial/geotiff/tests/test_golden_corpus_vrt_1930.py``
      - `#2342`_
    * - VRT default ``missing_sources='raise'``
      - stable
      - Missing source files fail at construction, not at compute.
-     - ``xrspatial/geotiff/tests/test_vrt_missing_sources_default_raise_1843.py``,
-       ``xrspatial/geotiff/tests/test_read_vrt_default_missing_sources_1860.py``,
-       ``xrspatial/geotiff/tests/test_vrt_chunked_missing_raise_at_build_2265.py``
+     - ``xrspatial/geotiff/tests/vrt/test_missing_sources.py``
      - `#2342`_
    * - VRT ``missing_sources='warn'`` opt-in
      - advanced
      - Holes surface as the band sentinel, ``attrs['vrt_holes']`` is set,
        and a :class:`GeoTIFFFallbackWarning` is emitted.
      - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
-       ``xrspatial/geotiff/tests/vrt/test_missing_sources.py``,
-       ``xrspatial/geotiff/tests/test_vrt_chunked_missing_sources_1799.py``
+       ``xrspatial/geotiff/tests/vrt/test_missing_sources.py``
      - `#2342`_
    * - VRT source / dest rectangle validation
      - stable
      - Out-of-bounds source or destination rectangles raise at construction.
-     - ``xrspatial/geotiff/tests/test_geotiff_vrt_srcrect_validation_1784.py``,
+     - ``xrspatial/geotiff/tests/vrt/test_validation.py``,
        ``xrspatial/geotiff/tests/vrt/test_window.py``
      - `#2342`_
    * - VRT path containment
@@ -541,8 +537,7 @@ VRT supported subset
      - advanced
      - Chunked VRT reads return the same shape, coords, attrs, and values
        as eager reads on the supported subset.
-     - ``xrspatial/geotiff/tests/vrt/test_window.py``,
-       ``xrspatial/geotiff/tests/test_read_vrt_lazy_chunks_1798.py``
+     - ``xrspatial/geotiff/tests/vrt/test_window.py``
      - `#2342`_
    * - VRT single-parse contract
      - stable
@@ -566,7 +561,7 @@ VRT supported subset
    * - ``write_vrt``
      - advanced
      - Writer rejects source-incompatibility cases at the writer boundary.
-     - ``xrspatial/geotiff/tests/test_to_geotiff_vrt_tiled_validation_1862.py``
+     - ``xrspatial/geotiff/tests/vrt/test_validation.py``
      - `#2342`_
 
 Sidecar and overview interactions
