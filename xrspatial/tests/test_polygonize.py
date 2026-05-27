@@ -1364,6 +1364,184 @@ class TestPolygonizeCRSPropagation:
         assert df.crs.to_epsg() == 4326
 
 
+# --- transform attr propagation tests (issue #2536) ---
+#
+# polygonize used to propagate attrs['crs'] but ignore attrs['transform'].
+# The result was a GeoDataFrame whose .crs claimed projected space while
+# the geometries were in pixel space (silent misalignment).  The fix auto-
+# detects attrs['transform'] (or rio.transform()) when no explicit
+# transform= is passed, mirroring the CRS auto-detection.
+
+@pytest.mark.skipif(gpd is None, reason="geopandas not installed")
+class TestPolygonizeTransformPropagation:
+    """polygonize auto-detects attrs['transform'] when not given one (#2536)."""
+
+    # rasterio-ordered transform: 10 m pixels, origin at (1e6, 5e6).
+    # _transform_points consumes this as
+    #   x = a*col + b*row + c, y = d*col + e*row + f.
+    _TRANSFORM = (10.0, 0.0, 1_000_000.0, 0.0, -10.0, 5_000_000.0)
+
+    @staticmethod
+    def _raster(**attrs):
+        data = np.array([[1, 1, 2], [1, 1, 2], [2, 2, 2]], dtype=np.int32)
+        return xr.DataArray(
+            data,
+            dims=('y', 'x'),
+            coords={'y': np.arange(3), 'x': np.arange(3)},
+            attrs=attrs,
+        )
+
+    def test_transform_attr_auto_detected_numpy(self):
+        """attrs['transform'] is applied even when transform= is omitted."""
+        raster = self._raster(transform=self._TRANSFORM)
+        _, polys = polygonize(raster, return_type='numpy')
+        # Polygons should span the CRS origin offset, not pixel space.
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        all_ys = np.concatenate([p[0][:, 1] for p in polys])
+        assert all_xs.min() >= 1_000_000.0 - 1e-6
+        assert all_xs.max() <= 1_000_000.0 + 30.0 + 1e-6
+        # pixel_height is negative so y decreases from origin.
+        assert all_ys.max() <= 5_000_000.0 + 1e-6
+        assert all_ys.min() >= 5_000_000.0 - 30.0 - 1e-6
+
+    def test_transform_attr_auto_detected_geopandas(self):
+        """The geopandas path applies the auto-detected transform."""
+        raster = self._raster(crs='EPSG:3857', transform=self._TRANSFORM)
+        df = polygonize(raster, return_type='geopandas')
+        assert df.crs is not None and df.crs.to_epsg() == 3857
+        bounds = df.geometry.total_bounds  # [minx, miny, maxx, maxy]
+        assert bounds[0] >= 1_000_000.0 - 1e-6
+        assert bounds[2] <= 1_000_000.0 + 30.0 + 1e-6
+        assert bounds[1] >= 5_000_000.0 - 30.0 - 1e-6
+        assert bounds[3] <= 5_000_000.0 + 1e-6
+
+    def test_explicit_transform_overrides_attr(self):
+        """An explicit transform= wins over attrs['transform']."""
+        raster = self._raster(transform=self._TRANSFORM)
+        # Identity-ish: pixel space, no offset.  Output must be in 0..3.
+        identity = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+        _, polys = polygonize(raster, transform=identity,
+                              return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        all_ys = np.concatenate([p[0][:, 1] for p in polys])
+        assert all_xs.max() <= 3.0 + 1e-6
+        assert all_ys.max() <= 3.0 + 1e-6
+
+    def test_no_transform_info_yields_pixel_coords(self):
+        """A raster with no transform info keeps pixel-space coords."""
+        raster = self._raster()  # no attrs
+        _, polys = polygonize(raster, return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        all_ys = np.concatenate([p[0][:, 1] for p in polys])
+        assert all_xs.max() <= 3.0 + 1e-6
+        assert all_ys.max() <= 3.0 + 1e-6
+
+    def test_no_georef_marker_suppresses_auto_detect(self):
+        """attrs['_xrspatial_no_georef']=True opts out of auto-detect even
+        when attrs['transform'] is also set (defensive: should not happen
+        in practice, but a malformed dict must not silently mis-transform)."""
+        raster = self._raster(
+            transform=self._TRANSFORM, _xrspatial_no_georef=True)
+        _, polys = polygonize(raster, return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        assert all_xs.max() <= 3.0 + 1e-6
+
+    def test_transform_attr_list_form_auto_detected(self):
+        """attrs['transform'] stored as a list (not a tuple) still works."""
+        raster = self._raster(transform=list(self._TRANSFORM))
+        _, polys = polygonize(raster, return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        assert all_xs.min() >= 1_000_000.0 - 1e-6
+
+    def test_transform_attr_invalid_length_falls_back(self):
+        """A malformed (wrong-length) attrs['transform'] is silently
+        ignored, parallel to how an unparseable attrs['crs'] is dropped
+        rather than raised.  The user did not opt in to that transform
+        explicitly, so falling back to pixel coords is friendlier than
+        breaking the call."""
+        raster = self._raster(transform=(1.0, 0.0, 0.0))  # only 3 elements
+        _, polys = polygonize(raster, return_type='numpy')
+        # Falls back to pixel-space coords.
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        assert all_xs.max() <= 3.0 + 1e-6
+
+    def test_explicit_transform_invalid_length_still_raises(self):
+        """An EXPLICIT transform= of wrong length must still raise --
+        only the attrs path is silent on malformed input."""
+        raster = self._raster()
+        with pytest.raises(ValueError, match="Incorrect transform length"):
+            polygonize(raster, transform=(1.0, 0.0, 0.0), return_type='numpy')
+
+    def test_transform_attr_unparseable_falls_back(self):
+        """A non-numeric attrs['transform'] is ignored, not raised."""
+        raster = self._raster(transform=("not", "a", "transform"))
+        # Falls back to pixel coords; no exception.
+        _, polys = polygonize(raster, return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        assert all_xs.max() <= 3.0 + 1e-6
+
+    def test_simplify_works_with_auto_detected_transform(self):
+        """simplify_tolerance still works after auto-detected transform."""
+        # Larger raster to leave room for simplification.
+        data = np.zeros((10, 10), dtype=np.int32)
+        data[2:8, 2:8] = 1
+        raster = xr.DataArray(
+            data,
+            dims=('y', 'x'),
+            attrs={'crs': 'EPSG:3857', 'transform': self._TRANSFORM},
+        )
+        df = polygonize(
+            raster, return_type='geopandas', simplify_tolerance=1.0)
+        assert df.crs.to_epsg() == 3857
+        # Should land near the projected origin.
+        assert df.geometry.total_bounds[0] >= 1_000_000.0 - 1e-6
+
+    @pytest.mark.skipif(da is None, reason="dask not installed")
+    def test_transform_attr_auto_detected_dask(self):
+        """Dask backend honours auto-detected attrs['transform']."""
+        data = np.array([[1, 1, 2], [1, 1, 2], [2, 2, 2]], dtype=np.int32)
+        dask_data = da.from_array(data, chunks=(2, 2))
+        raster = xr.DataArray(
+            dask_data,
+            dims=('y', 'x'),
+            coords={'y': np.arange(3), 'x': np.arange(3)},
+            attrs={'transform': self._TRANSFORM},
+        )
+        _, polys = polygonize(raster, return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        all_ys = np.concatenate([p[0][:, 1] for p in polys])
+        assert all_xs.min() >= 1_000_000.0 - 1e-6
+        assert all_ys.max() <= 5_000_000.0 + 1e-6
+
+    def test_rio_transform_auto_detected(self):
+        """rio.transform() is used when attrs['transform'] is absent.
+
+        rioxarray derives ``rio.transform()`` from the DataArray's x/y
+        coords when they are present, so the test sets coords that
+        encode the desired transform rather than calling
+        ``rio.write_transform`` (whose stamped value is overridden by
+        any existing coords).
+        """
+        pytest.importorskip("rioxarray")
+        # 10 m pixels, origin at (1e6, 5e6), pixel_height negative.  The
+        # coord values are pixel-centre coordinates, so the implied
+        # upper-left corner is (1e6, 5e6).
+        data = np.array([[1, 1, 2], [1, 1, 2], [2, 2, 2]], dtype=np.int32)
+        xs = 1_000_000.0 + 10.0 * np.arange(3) + 5.0  # centres
+        ys = 5_000_000.0 - 10.0 * np.arange(3) - 5.0
+        raster = xr.DataArray(
+            data,
+            dims=('y', 'x'),
+            coords={'y': ys, 'x': xs},
+        )
+        # Sanity: rio derives the right transform from the coords.
+        derived = tuple(raster.rio.transform())[:6]
+        assert derived == self._TRANSFORM, derived
+        _, polys = polygonize(raster, return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        assert all_xs.min() >= 1_000_000.0 - 1e-6
+
+
 # --- atol / rtol tolerance parameter tests (issue #2173) ---
 #
 # The float pathway in _calculate_regions groups adjacent pixels using an
