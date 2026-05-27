@@ -26,6 +26,15 @@ four top-level files into the release-gate suite:
 Section banners below mark the file boundaries. The ``SUPPORTED_FEATURES``
 test sections are tagged with their issue numbers in the headings so the
 audit trail to the original PRs stays intact.
+
+Note on release-gate scope
+--------------------------
+``@pytest.mark.release_gate`` markers in this file are localised to the
+sections that pin the release contract (the ``SUPPORTED_FEATURES`` tier
+gates and the ``VRT stable_only`` opt-in). The bulk of this file
+exercises the same public surface that the release-gate sister file
+``test_stable_features.py`` covers but is general feature regression,
+not contract pins; ``pytest -m release_gate`` picks the right subset.
 """
 from __future__ import annotations
 

@@ -689,16 +689,11 @@ class TestVRTRoundTripFromCorpus:
 import math
 import os
 
-import numpy as np
-import pytest
-import xarray as xr
-
 hypothesis = pytest.importorskip("hypothesis")
 
 from hypothesis import HealthCheck, assume, event, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
-from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -964,11 +959,11 @@ def _compare_pixels(a: np.ndarray, b: np.ndarray) -> None:
 # Attrs whose values must match between two consecutive read results
 # once the writer has canonicalised them. Other attrs (best-effort
 # pass-through) are only checked for presence.
-_LOCKED_ATTRS = ('crs', 'transform', 'nodata', 'raster_type',
+_PROPERTY_LOCKED_ATTRS = ('crs', 'transform', 'nodata', 'raster_type',
                  _NO_GEOREF_KEY)
 
 
-def _assert_fixed_point(da1: xr.DataArray, da2: xr.DataArray) -> None:
+def _assert_property_fixed_point(da1: xr.DataArray, da2: xr.DataArray) -> None:
     """Two consecutive write -> read results must agree on pixels,
     dtype, dims, and the canonical attrs.
     """
@@ -978,7 +973,7 @@ def _assert_fixed_point(da1: xr.DataArray, da2: xr.DataArray) -> None:
     assert set(da1.attrs) == set(da2.attrs), (
         f"attrs key drift: {set(da1.attrs) ^ set(da2.attrs)}"
     )
-    for key in _LOCKED_ATTRS:
+    for key in _PROPERTY_LOCKED_ATTRS:
         if key in da1.attrs:
             v1 = da1.attrs[key]
             v2 = da2.attrs[key]
@@ -1045,7 +1040,7 @@ def test_round_trip_fixed_point_numpy(tmp_path_factory, spec):
         # picks it up there. Re-passing would double up the kwarg.
         to_geotiff(da1, p2, compression='none', tiled=False)
         da2 = open_geotiff(p2)
-        _assert_fixed_point(da1, da2)
+        _assert_property_fixed_point(da1, da2)
     finally:
         # Drop the tmp files eagerly so a 200-example session doesn't
         # leave 400 .tif files on disk until session teardown. The
@@ -1110,7 +1105,7 @@ def test_round_trip_fixed_point_dask(tmp_path_factory, spec):
         da1 = open_geotiff(p1)
         to_geotiff(da1, p2, compression='none', tiled=False)
         da2 = open_geotiff(p2)
-        _assert_fixed_point(da1, da2)
+        _assert_property_fixed_point(da1, da2)
     finally:
         for p in (p1, p2):
             try:
