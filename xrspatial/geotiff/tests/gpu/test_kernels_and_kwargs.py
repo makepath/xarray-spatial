@@ -75,8 +75,12 @@ _CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
 def _install_cupy_stub_1903(monkeypatch, *, get_device_count):
     """Install a minimal stub ``cupy`` module so the preflight runs.
 
-    Used on machines without cupy installed; lets us exercise the
-    preflight failure path on CPU-only CI.
+    Lets us drive ``_preflight_cuda_runtime`` deterministically
+    regardless of the host's real CUDA state. Pass a ``get_device_count``
+    that raises to exercise the preflight failure path (CPU-only CI or
+    broken-CUDA hosts), or one that returns a positive int to exercise
+    the success path (e.g. so the alias-validation test in #2515 can
+    reach the file-read stage without depending on real CUDA).
     """
     cupy_mod = types.ModuleType("cupy")
     cuda_mod = types.ModuleType("cupy.cuda")
@@ -226,26 +230,35 @@ def test_gpu_alias_emits_deprecation_warning_1560():
     assert "on_gpu_failure" in str(deprecations[0].message)
 
 
-def test_gpu_alias_accepts_old_values_without_validation_error_1560():
-    """``gpu='strict'`` was the legacy spelling; should still validate."""
+def test_gpu_alias_accepts_old_values_without_validation_error_1560(
+        monkeypatch):
+    """``gpu='strict'`` was the legacy spelling; should still validate.
+
+    Stub ``cupy`` with a working preflight so the test exercises the
+    alias-validation path on every host, including ones where CuPy
+    imports but the CUDA runtime is unusable (issue #2515). Without the
+    stub, the real ``_preflight_cuda_runtime`` raises ``RuntimeError``
+    on broken-CUDA hosts and the test fails for an environmental
+    reason that has nothing to do with the alias logic under test.
+    """
     from xrspatial.geotiff import read_geotiff_gpu
+
+    # Install a stub cupy whose preflight passes; the call should then
+    # reach the file-read stage and raise ``FileNotFoundError``. This
+    # decouples the alias-validation check from real CUDA state.
+    _install_cupy_stub_1903(monkeypatch, get_device_count=lambda: 1)
 
     with warnings.catch_warnings():
         # Suppress the deprecation noise; we only care that the value
         # passes validation and the call proceeds past the value check.
-        # In CPU-only CI the next step is ``import cupy`` which raises
-        # ``ImportError`` (cupy is an optional extra); on a GPU host it
-        # gets to the file-read stage and raises ``FileNotFoundError``.
-        # Either is fine: both mean validation passed.
         warnings.simplefilter("ignore", DeprecationWarning)
         with pytest.raises(
-                (FileNotFoundError, OSError, ValueError, ImportError)
+                (FileNotFoundError, OSError, ValueError)
         ) as exc_info:
             read_geotiff_gpu("/nonexistent.tif", gpu='strict')
 
     # The validation ValueError carries our exact message; a generic
-    # file-read or cupy-import failure is fine because it means
-    # validation passed.
+    # file-read failure is fine because it means validation passed.
     if isinstance(exc_info.value, ValueError):
         assert "on_gpu_failure must be" not in str(exc_info.value)
 
