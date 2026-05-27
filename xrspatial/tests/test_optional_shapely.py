@@ -31,6 +31,7 @@ def test_import_xrspatial_without_shapely():
         import xrspatial  # noqa: F401
         import xrspatial.focal  # noqa: F401
         import xrspatial.rasterize  # noqa: F401
+        import xrspatial.polygonize  # noqa: F401
 
         # shapely must not have been imported as a side effect.
         if 'shapely' in sys.modules and sys.modules['shapely'] is not None:
