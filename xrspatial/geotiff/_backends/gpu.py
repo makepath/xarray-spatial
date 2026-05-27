@@ -766,11 +766,8 @@ def read_geotiff_gpu(source: str, *,
 
             def _read_once():
                 if not _shared_data_cache:
-                    src2 = _FileSource(source)
-                    try:
+                    with _FileSource(source) as src2:
                         _shared_data_cache.append(src2.read_all())
-                    finally:
-                        src2.close()
                 return _shared_data_cache[0]
 
             band_arrays = []
@@ -880,15 +877,12 @@ def read_geotiff_gpu(source: str, *,
                     for i in range(len(offsets))
                 ]
             else:
-                src2 = _FileSource(source)
-                data2 = src2.read_all()
-                try:
+                with _FileSource(source) as src2:
+                    data2 = src2.read_all()
                     compressed_tiles = [
                         bytes(data2[offsets[i]:offsets[i] + byte_counts[i]])
                         for i in range(len(offsets))
                     ]
-                finally:
-                    src2.close()
 
         if arr_gpu is None:
             try:
@@ -1284,15 +1278,12 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
         # usable on the host. Open the file via mmap, slice out just the
         # bytes for these tiles, and run the GPU decoder on those.
         from .._reader import _FileSource
-        src = _FileSource(file_path)
-        try:
+        with _FileSource(file_path) as src:
             data = src.read_all()
             compressed_tiles = [
                 bytes(data[sub_offsets[i]:sub_offsets[i] + sub_byte_counts[i]])
                 for i in range(len(sub_offsets))
             ]
-        finally:
-            src.close()
         arr_gpu = gpu_decode_tiles(
             compressed_tiles, tw, th, sub_w, sub_h,
             compression, predictor, file_dtype, samples,
@@ -1361,11 +1352,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     if isinstance(src_path, str) and not src_path.startswith(
             ('http://', 'https://')):
         try:
-            _cap_fs = _FileSource(src_path)
-            try:
+            with _FileSource(src_path) as _cap_fs:
                 _cap_raw = _cap_fs.read_all()
-            finally:
-                _cap_fs.close()
             _cap_header = parse_header(_cap_raw)
             _cap_ifds = parse_all_ifds(_cap_raw, _cap_header)
             _cap_ifd = select_overview_ifd(_cap_ifds, overview_level)
@@ -1395,11 +1383,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     try:
         if isinstance(src_path, str) and not src_path.startswith(
                 ('http://', 'https://')):
-            fs = _FileSource(src_path)
-            try:
+            with _FileSource(src_path) as fs:
                 raw = fs.read_all()
-            finally:
-                fs.close()
             header = parse_header(raw)
             ifds = parse_all_ifds(raw, header)
             if not ifds:
