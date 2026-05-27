@@ -1,4 +1,5 @@
 # Tests for _FileSource context manager protocol (issue #2449).
+import os
 import struct
 
 import numpy as np
@@ -18,7 +19,7 @@ def tiff_path(tmp_path):
 
 def _refcount(path):
     """Look up the cache refcount for *path*, or None if not cached."""
-    real = __import__('os').path.realpath(path)
+    real = os.path.realpath(path)
     entry = _mmap_cache._entries.get(real)
     return None if entry is None else entry[3]
 
@@ -44,10 +45,9 @@ def test_exit_releases_entry(tiff_path):
 def test_exit_releases_on_exception(tiff_path):
     _mmap_cache.clear()
     with pytest.raises(struct.error):
-        with _FileSource(tiff_path) as src:
+        with _FileSource(tiff_path):
             assert _refcount(tiff_path) == 1
-            struct.unpack('>I', b'')  # always raises
-            del src  # unreachable
+            struct.unpack('>I', b'')
     assert _refcount(tiff_path) == 0
 
 
