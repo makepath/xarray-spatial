@@ -5,7 +5,6 @@ import copy
 from math import sqrt
 from typing import Callable, Dict, List, Optional, Union
 
-
 # 3rd-party
 try:
     import dask
@@ -36,12 +35,9 @@ except ImportError:
         ndarray = False
 
 # local modules
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping, _validate_raster, cuda_args, has_cuda_and_cupy,
-    is_cupy_array, is_dask_cupy,
-    ngjit, not_implemented_func, validate_arrays,
-)
-from xrspatial.utils import has_dask_array
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args,
+                             has_cuda_and_cupy, has_dask_array, is_cupy_array, is_dask_cupy, ngjit,
+                             validate_arrays)
 
 TOTAL_COUNT = '_total_count'
 
@@ -452,7 +448,10 @@ def _stats_dask_numpy(
             )
 
     # generate dask dataframe
-    stats_df = dd.concat([dd.from_dask_array(s) for s in stats_dict.values()], axis=1, ignore_unknown_divisions=True)
+    stats_df = dd.concat(
+        [dd.from_dask_array(s) for s in stats_dict.values()],
+        axis=1, ignore_unknown_divisions=True,
+    )
     # name columns
     stats_df.columns = stats_dict.keys()
     # select columns (only include stats that were actually computed)
