@@ -2051,6 +2051,19 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
 
     # Stage the per-launch inputs once; first/last reuses these tensors
     # for the pass-2 stamp launches.
+    #
+    # ``poly_props`` and ``poly_global`` are referenced by both the
+    # scanline ``poly_launch`` and the supercover ``boundary_launch``
+    # under ``all_touched=True``. Hoist the host-to-device transfer above
+    # the conditional so the two launches share the same device buffers;
+    # without the hoist the props/global tables would be uploaded twice
+    # per call. See issue #2506.
+    poly_props_gpu = None
+    poly_global_gpu = None
+    if poly_geoms:
+        poly_props_gpu = cupy.asarray(poly_props)
+        poly_global_gpu = cupy.asarray(poly_global)
+
     poly_launch = None
     if len(edge_y_min) > 0:
         row_ptr, col_idx = _build_row_csr_numba(
@@ -2062,7 +2075,7 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
         poly_launch = (
             cupy.asarray(edge_y_min), cupy.asarray(edge_x_at_ymin),
             cupy.asarray(edge_inv_slope), cupy.asarray(edge_geom_id),
-            cupy.asarray(poly_props), cupy.asarray(poly_global),
+            poly_props_gpu, poly_global_gpu,
             cupy.asarray(row_ptr), cupy.asarray(col_idx))
 
     # all_touched boundaries.  ``poly_geoms`` and ``poly_ids`` come
@@ -2080,8 +2093,8 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
             boundary_launch = (
                 cupy.asarray(bx0), cupy.asarray(by0),
                 cupy.asarray(bx1), cupy.asarray(by1),
-                cupy.asarray(bidx), cupy.asarray(poly_props),
-                cupy.asarray(poly_global), len(bx0))
+                cupy.asarray(bidx), poly_props_gpu,
+                poly_global_gpu, len(bx0))
 
     r0, c0, r1, c1, line_idx = _extract_line_segments(
         line_geoms, bounds, height, width)
@@ -2525,6 +2538,12 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
     if poly_wkb:
         poly_geoms = _polys_from_wkb(poly_wkb)
         poly_ids = np.arange(len(poly_geoms), dtype=np.int32)
+        # Upload ``poly_props_2d`` and ``poly_global_2d`` once; both the
+        # scanline ``poly_launch`` and the supercover ``boundary_launch``
+        # under ``all_touched=True`` reference these tables, and without
+        # the hoist they would be transferred twice per tile. Issue #2506.
+        poly_props_2d_gpu = cupy.asarray(poly_props_2d)
+        poly_global_2d_gpu = cupy.asarray(poly_global_2d)
         edge_arrays = _extract_edges(
             poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
         edge_arrays = _sort_edges(edge_arrays)
@@ -2538,7 +2557,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
             poly_launch = (
                 cupy.asarray(edge_y_min), cupy.asarray(edge_x_at_ymin),
                 cupy.asarray(edge_inv_slope), cupy.asarray(edge_geom_id),
-                cupy.asarray(poly_props_2d), cupy.asarray(poly_global_2d),
+                poly_props_2d_gpu, poly_global_2d_gpu,
                 cupy.asarray(row_ptr), cupy.asarray(col_idx))
 
         # all_touched: stage the supercover boundary burn through
@@ -2552,8 +2571,8 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                 boundary_launch = (
                     cupy.asarray(bx0), cupy.asarray(by0),
                     cupy.asarray(bx1), cupy.asarray(by1),
-                    cupy.asarray(bidx), cupy.asarray(poly_props_2d),
-                    cupy.asarray(poly_global_2d), len(bx0))
+                    cupy.asarray(bidx), poly_props_2d_gpu,
+                    poly_global_2d_gpu, len(bx0))
 
     line_launch = None
     if len(seg_r0) > 0:
