@@ -246,6 +246,11 @@ class DuplicateIFDTagError(ValueError):
     Subclasses ``ValueError`` so existing ``except ValueError`` callers
     keep catching the case; new code can ``except`` this class directly
     to distinguish duplicate-tag rejection from other parse failures.
+
+    Raised at the public read entry points
+    (:func:`xrspatial.geotiff.open_geotiff` and the chunked / GPU /
+    VRT readers that share the same IFD parser), so a caller does not
+    need to invoke ``parse_ifd`` directly to see the failure.
     """
 
 
@@ -266,20 +271,20 @@ class UnsupportedGeoTIFFFeatureError(ValueError):
 
 
 __all__ = [
+    "ConflictingCRSError",
+    "ConflictingNodataError",
+    "DuplicateIFDTagError",
     "GeoTIFFAmbiguousMetadataError",
     "InconsistentGeoKeysError",
     "InvalidCRSCodeError",
-    "UnparseableCRSError",
-    "RotatedTransformError",
-    "NonUniformCoordsError",
-    "MixedBandMetadataError",
-    "ConflictingCRSError",
-    "ConflictingNodataError",
     "InvalidIntegerNodataError",
+    "MixedBandMetadataError",
+    "NonRepresentableEPSGCRSError",
+    "NonUniformCoordsError",
+    "RotatedTransformError",
+    "UnknownCRSModelTypeError",
+    "UnparseableCRSError",
+    "UnsupportedGeoTIFFFeatureError",
     "VRTStableSourcesOnlyError",
     "VRTUnsupportedError",
-    "UnknownCRSModelTypeError",
-    "NonRepresentableEPSGCRSError",
-    "UnsupportedGeoTIFFFeatureError",
-    "DuplicateIFDTagError",
 ]

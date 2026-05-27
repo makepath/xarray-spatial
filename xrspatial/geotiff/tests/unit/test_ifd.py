@@ -579,10 +579,10 @@ def test_duplicate_image_width_rejected_reproduction_2483():
 @pytest.mark.parametrize(
     "tag, label",
     [
-        pytest.param(TAG_IMAGE_WIDTH, "ImageWidth", id="dup-image-width"),
-        pytest.param(TAG_IMAGE_LENGTH, "ImageLength", id="dup-image-length"),
-        pytest.param(TAG_BITS_PER_SAMPLE, "BitsPerSample", id="dup-bits-per-sample"),
-        pytest.param(TAG_GEO_KEY_DIRECTORY, "GeoKeyDirectory", id="dup-geo-key-directory"),
+        pytest.param(TAG_IMAGE_WIDTH, "ImageWidth", id="duplicate_tag[image-width]"),
+        pytest.param(TAG_IMAGE_LENGTH, "ImageLength", id="duplicate_tag[image-length]"),
+        pytest.param(TAG_BITS_PER_SAMPLE, "BitsPerSample", id="duplicate_tag[bits-per-sample]"),
+        pytest.param(TAG_GEO_KEY_DIRECTORY, "GeoKeyDirectory", id="duplicate_tag[geo-key-directory]"),
     ],
 )
 def test_duplicate_tag_rejected_across_critical_tags(tag, label):

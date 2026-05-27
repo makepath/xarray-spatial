@@ -666,16 +666,11 @@ def parse_ifd(data: bytes | memoryview, offset: int,
     dims: dict[int, Any] = {}
     for i in range(num_entries):
         eo = entry_offset + i * entry_size
-        if is_big:
-            tag = struct.unpack_from(f'{bo}H', data, eo)[0]
-            type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
-            count = struct.unpack_from(f'{bo}Q', data, eo + 4)[0]
-            value_area_offset = eo + 12
-        else:
-            tag = struct.unpack_from(f'{bo}H', data, eo)[0]
-            type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
-            count = struct.unpack_from(f'{bo}I', data, eo + 4)[0]
-            value_area_offset = eo + 8
+        # Tag id is a 2-byte unsigned at the start of every entry in
+        # both classic TIFF and BigTIFF, so we can do the duplicate
+        # check before reading type / count and skip those reads on a
+        # rejection.
+        tag = struct.unpack_from(f'{bo}H', data, eo)[0]
         prior_eo = seen_tag_offsets.get(tag)
         if prior_eo is not None:
             raise DuplicateIFDTagError(
@@ -685,6 +680,14 @@ def parse_ifd(data: bytes | memoryview, offset: int,
                 f"tag id to appear at most once per IFD"
             )
         seen_tag_offsets[tag] = eo
+        if is_big:
+            type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
+            count = struct.unpack_from(f'{bo}Q', data, eo + 4)[0]
+            value_area_offset = eo + 12
+        else:
+            type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
+            count = struct.unpack_from(f'{bo}I', data, eo + 4)[0]
+            value_area_offset = eo + 8
         if tag not in _DIMENSION_TAGS:
             continue
         type_size = TIFF_TYPE_SIZES.get(type_id, 1)
