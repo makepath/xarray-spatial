@@ -236,7 +236,8 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # the user can still investigate. Mirrors the contract that
         # ``discover_remote_sidecar`` already uses on the dask metadata
         # path. Issue #2416.
-        from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
+        from ._sidecar import (attach_sidecar_origin, find_sidecar,
+                                handle_sidecar_parse_failure, load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
@@ -246,13 +247,19 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
             except CloudSizeLimitError:
                 raise
             except Exception as exc:
-                warnings.warn(
-                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
-                    f"{type(exc).__name__}: {exc}. Falling back to "
-                    f"base-file-only read. Delete the .ovr file or pass "
-                    f"overview_level>=1 to surface the parse error.",
-                    RuntimeWarning,
-                    stacklevel=3,
+                # Shared policy across eager CPU, eager GPU, and the
+                # metadata-only path: an explicit request for a level
+                # the base file alone cannot serve surfaces the
+                # underlying parse error (release contract row
+                # ``reader.sidecar_ovr``); otherwise we warn and fall
+                # back. The gate uses ``base_ifd_count`` rather than a
+                # bare ``>= 1`` because a base TIFF with internal
+                # overview IFDs can satisfy ``level=1`` without the
+                # sidecar, and forcing a raise in that case would deny
+                # a valid read. Issue #2484.
+                handle_sidecar_parse_failure(
+                    exc, sidecar_path, overview_level,
+                    base_ifd_count=len(ifds),
                 )
                 sidecar = None
             if sidecar is not None:
