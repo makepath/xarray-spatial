@@ -3211,6 +3211,37 @@ def rasterize(
     else:
         final_dtype = np.float64
 
+    # Reject NaN fill against an integer output dtype.  Without this guard
+    # the final ``astype(int_dtype)`` silently coerces NaN to either 0
+    # (unsigned) or ``np.iinfo(dtype).min`` (signed), and the rasterizer
+    # emits no ``_FillValue`` / ``nodata`` / ``nodatavals`` attr to mark
+    # the unwritten pixels.  Downstream consumers (geotiff writer,
+    # rioxarray masks) have no sentinel to key off and treat unwritten
+    # cells as valid data -- a metadata-propagation failure surfaced by
+    # the metadata sweep (issue #2504).
+    #
+    # Checked before any host / device allocation so the error surfaces
+    # cleanly regardless of backend (numpy, cupy, dask+numpy, dask+cupy)
+    # and before ``_check_output_dimensions`` -- the dtype mismatch is a
+    # configuration bug, not an OOM hazard, and naming it first gives the
+    # user the actionable diagnostic.
+    final_dtype_np = np.dtype(final_dtype)
+    try:
+        fill_is_nan_for_dtype_check = (
+            isinstance(fill, (int, float, np.integer, np.floating))
+            and np.isnan(float(fill)))
+    except (TypeError, ValueError):
+        fill_is_nan_for_dtype_check = False
+    if (fill_is_nan_for_dtype_check
+            and np.issubdtype(final_dtype_np, np.integer)):
+        raise ValueError(
+            f"fill=NaN cannot be represented in integer dtype "
+            f"{final_dtype_np}: the cast would silently coerce NaN to a "
+            f"dtype-specific sentinel (0 for unsigned, INT_MIN for signed) "
+            f"with no _FillValue attr to mark unwritten pixels. Pass an "
+            f"explicit integer fill (e.g. fill=0 or fill=-9999) or use a "
+            f"floating dtype.")
+
     # For GPU paths, resolve string merge names to GPU (merge_fn,
     # should_write_fn) pairs.  User callables are paired with the
     # always-write predicate (matches the public 3-arg signature).
