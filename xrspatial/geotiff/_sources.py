@@ -303,11 +303,15 @@ class _MmapCache:
         file objects are swallowed so a partially torn-down interpreter
         (where ``mmap.mmap.close`` or the file object's ``close`` raises
         because the underlying resource is already gone) does not crash
-        finalization. After this returns, ``_entries`` is empty and any
-        ``_FileSource`` that still holds an ``entry`` token will become a
-        no-op on its eventual ``release()`` -- the refcount decrement
-        still runs, but the close path is a no-op because the file
-        handle is already closed.
+        finalization. After this returns, ``_entries`` is empty.
+
+        If a stale ``_FileSource`` later calls ``release()`` on an entry
+        token that was torn down here, the release routes through the
+        orphan branch and calls ``_close_entry_locked`` a second time.
+        That second close is rare at interpreter shutdown (it requires a
+        live ``_FileSource`` to survive past ``atexit``), and it stays
+        safe because ``mmap.close()`` and the standard file object's
+        ``close()`` are both idempotent in CPython.
         """
         with self._lock:
             entries = list(self._entries.values())
@@ -375,8 +379,8 @@ def _shutdown_cleanup():
         pass
     # urllib3 PoolManager holds onto sockets until garbage collected.
     # Close it explicitly so the test runner's resource-warning filter
-    # does not catch leaked sockets at exit.
-    global _http_pool
+    # does not catch leaked sockets at exit. Read-only access of the
+    # module-level name, so no ``global`` is needed.
     pool = _http_pool
     if pool is not None:
         try:

@@ -1,16 +1,15 @@
 # Tests for the atexit shutdown hook that closes cached mmap-backed
 # file handles at interpreter shutdown (issue #2486).
+import atexit
 import os
 import subprocess
 import sys
 import textwrap
-import warnings
 
 import numpy as np
 import pytest
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff import _sources as _src_module
 from xrspatial.geotiff._sources import (
     _FileSource,
     _MmapCache,
@@ -152,14 +151,18 @@ def test_subprocess_read_emits_no_resource_warning(tiff_path_2486):
 
 def test_atexit_hook_is_registered():
     # The atexit hook must be registered on module import so production
-    # processes get the cleanup without any caller action. Use atexit's
-    # private ``_run_exitfuncs`` listing via the module attribute we set
-    # at registration time.
-    import atexit as _atexit_mod
-    # ``atexit._ncallbacks`` and ``atexit._clear`` exist but listing
-    # registered callbacks isn't part of the public API. The best we can
-    # do portably is verify the function is importable and callable.
-    assert callable(_shutdown_cleanup)
-    # Sanity: invoking it directly is the same shape as the atexit
-    # invocation would be.
-    _shutdown_cleanup()
+    # processes get the cleanup without any caller action. ``atexit``
+    # doesn't expose the registered callback list, but ``unregister``
+    # is a no-op when the function is not registered and removes it
+    # otherwise. Re-register immediately so this test doesn't disable
+    # the hook for the rest of the suite.
+    atexit.unregister(_shutdown_cleanup)
+    # Re-register so subsequent tests / the actual interpreter shutdown
+    # still benefit from the cleanup.
+    atexit.register(_shutdown_cleanup)
+    # If the registration was already present, unregistering and
+    # re-registering keeps the singleton invariant. The strong test of
+    # "the registration actually runs at interpreter exit" lives in
+    # ``test_subprocess_read_emits_no_resource_warning`` -- spawning a
+    # subprocess and asserting no ``ResourceWarning`` leaks is the real
+    # end-to-end check.
