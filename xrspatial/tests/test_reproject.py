@@ -3452,6 +3452,96 @@ class TestDaskDtypeParity:
         assert result.compute().dtype == np.float64
 
 
+@pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                    reason="dask + cupy required")
+class TestDaskCupyDtypeParity:
+    """Dask+CuPy reproject should preserve source integer dtype (#2505).
+
+    Mirrors :class:`TestDaskDtypeParity`. The previous behaviour of the
+    eager fast path in ``_reproject_dask_cupy`` silently promoted
+    integer inputs to float64 while the other three backends (numpy,
+    cupy, dask+numpy) and the chunked dask+cupy fallback preserved the
+    source dtype.
+    """
+
+    def _make_dask_cupy_raster(self, data, nodata):
+        coords = {
+            'y': np.linspace(5, -5, data.shape[0]),
+            'x': np.linspace(-5, 5, data.shape[1]),
+        }
+        attrs = {'crs': 'EPSG:4326', 'nodata': nodata}
+        chunks = (max(1, data.shape[0] // 2), max(1, data.shape[1] // 2))
+        return xr.DataArray(
+            da.from_array(cp.asarray(data), chunks=chunks),
+            dims=['y', 'x'], coords=coords, attrs=attrs,
+        )
+
+    def test_dask_cupy_reproject_int8_preserves_dtype(self):
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.int8).reshape(8, 8)
+        raster = self._make_dask_cupy_raster(data, nodata=-1)
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        # The fast path returns an eager cupy array, not a dask array,
+        # so result.dtype and result.data.dtype are the same object.
+        # Assert both for full symmetry with TestDaskDtypeParity.
+        assert result.dtype == np.int8
+        assert result.data.dtype == np.int8
+
+    def test_dask_cupy_reproject_int16_preserves_dtype(self):
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.int16).reshape(8, 8)
+        raster = self._make_dask_cupy_raster(data, nodata=-32768)
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert result.dtype == np.int16
+        assert result.data.dtype == np.int16
+
+    def test_dask_cupy_reproject_uint16_preserves_dtype(self):
+        from xrspatial.reproject import reproject
+        data = (np.arange(64, dtype=np.uint16) * 100).reshape(8, 8)
+        raster = self._make_dask_cupy_raster(data, nodata=0)
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert result.dtype == np.uint16
+        assert result.data.dtype == np.uint16
+
+    def test_dask_cupy_reproject_uint8_preserves_dtype(self):
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.uint8).reshape(8, 8)
+        raster = self._make_dask_cupy_raster(data, nodata=255)
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert result.dtype == np.uint8
+        assert result.data.dtype == np.uint8
+
+    def test_dask_cupy_reproject_float32_stays_float64(self):
+        """Float input still upcasts to float64 -- matches the numpy /
+        dask+numpy paths so the four-backend grid is consistent."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(0).rand(8, 8).astype(np.float32)
+        raster = self._make_dask_cupy_raster(data, nodata=np.nan)
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert result.dtype == np.float64
+        assert result.data.dtype == np.float64
+
+    def test_dask_cupy_reproject_int16_matches_dask_numpy_dtype(self):
+        """Cross-backend parity: dask+cupy and dask+numpy must agree on
+        output dtype for the same integer input. This is the exact case
+        that regressed before #2505 was fixed."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.int16).reshape(8, 8)
+        coords = {'y': np.linspace(5, -5, 8), 'x': np.linspace(-5, 5, 8)}
+        attrs = {'crs': 'EPSG:4326', 'nodata': -32768}
+        dask_np = xr.DataArray(
+            da.from_array(data, chunks=(4, 4)),
+            dims=['y', 'x'], coords=coords, attrs=attrs,
+        )
+        dask_cp = xr.DataArray(
+            da.from_array(cp.asarray(data), chunks=(4, 4)),
+            dims=['y', 'x'], coords=coords, attrs=attrs,
+        )
+        r_np = reproject(dask_np, 'EPSG:4326', resolution=1.0)
+        r_cp = reproject(dask_cp, 'EPSG:4326', resolution=1.0)
+        assert r_np.dtype == r_cp.dtype == np.int16
+
+
 @pytest.mark.skipif(not HAS_DASK, reason="dask required")
 class TestMergeDaskParity:
     """Dask merge should match the eager numpy merge."""
