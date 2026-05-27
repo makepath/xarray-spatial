@@ -183,9 +183,16 @@ def test_register_and_dispatch_read_check_1987(_reset_metadata_check_registries_
     register_read_metadata_check(check)
     try:
         validate_read_metadata({"_dispatch_probe": "value"})
-        # Only the probe payload was seen; built-in checks may also
-        # have run on this empty-context dispatch but seen is scoped
-        # to the custom callable only.
+        # The original (pre-consolidation) test asserted
+        # ``seen == [{"_dispatch_probe": "value"}]``. The relaxation
+        # to ``in seen`` is deliberate: in the consolidated module
+        # built-in registered checks (e.g.
+        # ``_check_write_conflicting_crs``) may also fire on the same
+        # dispatch, and we want this dispatch-mechanism test to stay
+        # independent of which other checks happen to be registered
+        # by import-time side effects. ``seen`` is only appended to
+        # from inside the custom callback above, so no other check
+        # can pollute it.
         assert {"_dispatch_probe": "value"} in seen
     finally:
         unregister_read_metadata_check(check)
@@ -200,6 +207,8 @@ def test_register_and_dispatch_write_check_1987(_reset_metadata_check_registries
     register_write_metadata_check(check)
     try:
         validate_write_metadata({"_dispatch_probe": "value"})
+        # See the read-side counterpart above for the rationale
+        # behind ``in seen`` (vs the original strict equality).
         assert {"_dispatch_probe": "value"} in seen
     finally:
         unregister_write_metadata_check(check)
