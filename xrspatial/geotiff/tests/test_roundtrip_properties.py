@@ -34,7 +34,7 @@ Cross-references to the adjacent contracts this back-stops:
 * backend parity matrix -- ``test_backend_parity_matrix.py``
 * no-georef marker (#2120) -- ``_xrspatial_no_georef`` in attrs
 * nodata semantics split (#2092) -- declared vs masked nodata, see
-  ``test_masked_nodata_attr_2092.py``
+  ``read/test_nodata.py``
 * int coords sentinel (#2087) -- integer ``x`` / ``y`` are a no-georef
   signal, the writer must not synthesise a transform from them
 
