@@ -28,7 +28,8 @@ import numpy as np
 from ._coords import _BAND_DIM_NAMES
 from ._errors import (ConflictingCRSError, ConflictingNodataError, InconsistentGeoKeysError,
                       InvalidIntegerNodataError, MixedBandMetadataError, NonUniformCoordsError,
-                      RotatedTransformError, UnparseableCRSError, VRTStableSourcesOnlyError)
+                      RotatedTransformError, UnparseableCRSError, VRTStableSourcesOnlyError,
+                      _distinct_per_band_nodatavals_msg)
 from ._runtime import (_MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, _TIME_DIM_NAMES,
                        _X_DIM_NAMES, _Y_DIM_NAMES)
 
@@ -1159,15 +1160,7 @@ def _check_write_distinct_per_band_nodatavals(
     if len(distinct) < 2:
         return
     raise ConflictingNodataError(
-        f"attrs['nodatavals']={nodatavals_attr!r} declares multiple "
-        f"distinct per-band nodata sentinels {distinct!r}, but a "
-        f"GeoTIFF stores a single file-wide GDAL_NODATA value. The "
-        f"writer would silently flatten the tuple to one scalar and "
-        f"the remaining bands' sentinel cells would round-trip as "
-        f"real data. Reconcile the tuple to a single sentinel (or "
-        f"NaN / None for bands with no sentinel), or pass the "
-        f"intended sentinel via the ``nodata=`` kwarg, which "
-        f"overrides attrs. See issue #2514."
+        _distinct_per_band_nodatavals_msg(nodatavals_attr, distinct)
     )
 
 

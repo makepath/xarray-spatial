@@ -30,8 +30,8 @@ from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataErro
                                MixedBandMetadataError, _runtime)
 from xrspatial.geotiff import _validation as _validation_mod
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt, to_geotiff
-from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, attrs_to_metadata,
-                                      geo_info_to_metadata, metadata_to_attrs)
+from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, _resolve_nodata_attr,
+                                      attrs_to_metadata, geo_info_to_metadata, metadata_to_attrs)
 from xrspatial.geotiff._errors import (ConflictingNodataError, InvalidCRSCodeError,
                                        NonUniformCoordsError, RotatedTransformError,
                                        UnparseableCRSError)
@@ -1896,6 +1896,23 @@ def test_write_all_nan_nodatavals_accepted(tmp_path):
     nan = float('nan')
     da = _da_2514(attrs={'nodatavals': (nan, nan)})
     to_geotiff(da, str(tmp_path / 'tmp_2514_all_nan.tif'))
+
+
+def test_resolve_nodata_attr_raises_on_distinct_per_band():
+    """Defense-in-depth path: ``_resolve_nodata_attr`` itself raises on
+    distinct per-band sentinels even when called outside the writer
+    (where ``_check_write_distinct_per_band_nodatavals`` would
+    normally fire first). Guards against bypass paths that might
+    skip the write-side validator. The two sites share the error
+    message via ``_distinct_per_band_nodatavals_msg`` in ``_errors``."""
+    with pytest.raises(ConflictingNodataError, match='distinct per-band'):
+        _resolve_nodata_attr({'nodatavals': (-9999.0, -8888.0)})
+    # ``attrs['nodata']`` short-circuits the resolver before the
+    # distinct-check runs; that path is the responsibility of the
+    # write-side validator (and is already covered).
+    assert _resolve_nodata_attr(
+        {'nodata': -9999.0, 'nodatavals': (-9999.0, -8888.0)}
+    ) == -9999.0
 
 
 # ---------------------------------------------------------------------------

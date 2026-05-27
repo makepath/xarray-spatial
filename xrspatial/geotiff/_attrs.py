@@ -164,7 +164,7 @@ import xarray as xr
 from ._coords import coords_from_geo_info as _coords_from_geo_info
 from ._coords import resolve_georef as _resolve_georef
 from ._coords import transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry
-from ._errors import ConflictingNodataError
+from ._errors import ConflictingNodataError, _distinct_per_band_nodatavals_msg
 from ._geotags import (_NO_GEOREF_KEY, GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_MODEL_TYPE,
                        GEOKEY_PROJECTED_CS_TYPE, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT)
 
@@ -1290,7 +1290,7 @@ def _resolve_nodata_attr(attrs: dict):
         # the boundary, but the resolver is also called from the writer
         # itself after validation, so a defensive check here guards
         # against accidental bypass paths.
-        usable: list = []
+        usable: list[tuple[float, Any]] = []
         for v in seq:
             if v is None:
                 continue
@@ -1308,14 +1308,13 @@ def _resolve_nodata_attr(attrs: dict):
                 if not any(fv == d for d in distinct):
                     distinct.append(fv)
             if len(distinct) > 1:
+                # Defense-in-depth raise: the writer-side validator
+                # ``_check_write_distinct_per_band_nodatavals`` normally
+                # fires first, but the resolver is also called from the
+                # writer itself after validation. Share the message via
+                # the helper in ``_errors`` so the two sites stay in sync.
                 raise ConflictingNodataError(
-                    f"attrs['nodatavals']={vals!r} declares multiple "
-                    f"distinct per-band nodata sentinels {distinct!r}, "
-                    f"but a GeoTIFF stores a single file-wide "
-                    f"GDAL_NODATA value. Reconcile the tuple to a "
-                    f"single sentinel (or NaN / None for bands with "
-                    f"no sentinel), or pass the intended sentinel "
-                    f"via the ``nodata=`` kwarg. See issue #2514."
+                    _distinct_per_band_nodatavals_msg(vals, distinct)
                 )
             return usable[0][1]
         # A tuple where every entry is non-numeric is almost certainly a
