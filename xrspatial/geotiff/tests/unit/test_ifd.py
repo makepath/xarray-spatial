@@ -16,6 +16,10 @@ Sections, in failure-mode order:
 2. ``parse_ifd`` entry-value bounds -- ``MAX_IFD_ENTRY_COUNT``,
    ``MAX_IFD_ENTRY_BYTES``, value-range past EOF, pixel-array
    exemptions.
+2b. ``parse_ifd`` duplicate-tag rejection (issue #2483) -- TIFF 6.0
+   forbids duplicate tag ids within one IFD; the parser must raise
+   ``DuplicateIFDTagError`` instead of silently letting the last
+   duplicate win.
 3. ``parse_all_ifds`` chain length cap (``MAX_IFDS``) -- classic and
    big-endian, boundary, legitimate-COG sanity (security S3).
 4. ``parse_all_ifds`` chain cycle detection -- A->B->A, self-cycle,
@@ -44,11 +48,23 @@ import pytest
 from xrspatial.geotiff import _decode as _decode_mod
 from xrspatial.geotiff import _header
 from xrspatial.geotiff import _reader as _reader_mod
-from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff import DuplicateIFDTagError, open_geotiff, to_geotiff
 from xrspatial.geotiff._dtypes import DOUBLE, LONG, SHORT
-from xrspatial.geotiff._header import (MAX_IFD_ENTRY_BYTES, MAX_IFD_ENTRY_COUNT, MAX_IFDS,
-                                       TAG_IMAGE_WIDTH, TAG_TILE_BYTE_COUNTS, TAG_TILE_OFFSETS,
-                                       TIFFHeader, parse_all_ifds, parse_header, parse_ifd)
+from xrspatial.geotiff._header import (
+    MAX_IFD_ENTRY_BYTES,
+    MAX_IFD_ENTRY_COUNT,
+    MAX_IFDS,
+    TAG_BITS_PER_SAMPLE,
+    TAG_GEO_KEY_DIRECTORY,
+    TAG_IMAGE_LENGTH,
+    TAG_IMAGE_WIDTH,
+    TAG_TILE_BYTE_COUNTS,
+    TAG_TILE_OFFSETS,
+    TIFFHeader,
+    parse_all_ifds,
+    parse_header,
+    parse_ifd,
+)
 from xrspatial.geotiff._reader import read_to_array
 
 from .._helpers.markers import requires_gpu, requires_loopback
@@ -527,6 +543,201 @@ def test_entry_value_short_count_pixel_tag_passes():
     header = parse_header(data)
     ifd = parse_ifd(data, header.first_ifd_offset, header)
     assert ifd.entries[TAG_TILE_BYTE_COUNTS].count == count
+
+
+# ===========================================================================
+# Section 2b: parse_ifd duplicate-tag rejection (#2483)
+# ===========================================================================
+#
+# TIFF 6.0 section 2 requires IFD entries to be sorted in ascending
+# order by tag id with no duplicates. The legacy parser stored entries
+# in a dict keyed by tag and let the last duplicate win, so a file
+# with two ImageWidth (or any other tag) entries silently parsed to
+# whichever value happened to come second. These tests pin the
+# fail-closed behavior: every duplicate raises ``DuplicateIFDTagError``
+# at parse time, and the error message names the duplicated tag id and
+# the byte offsets of the two conflicting entries.
+
+
+def test_duplicate_image_width_rejected_reproduction_2483():
+    """Regression: the exact reproduction case from issue #2483.
+
+    Two ``ImageWidth`` entries with values 4 and 999 must not silently
+    resolve to 999; the parser must raise instead.
+    """
+    bo = '<'
+    buf = bytearray()
+    buf.extend(b'II')
+    buf.extend(struct.pack(f'{bo}H', 42))
+    buf.extend(struct.pack(f'{bo}I', 8))  # IFD at offset 8
+    buf.extend(struct.pack(f'{bo}H', 2))  # num_entries
+    buf.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, LONG, 1))
+    buf.extend(struct.pack(f'{bo}I', 4))
+    buf.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, LONG, 1))
+    buf.extend(struct.pack(f'{bo}I', 999))
+    buf.extend(struct.pack(f'{bo}I', 0))
+    data = bytes(buf)
+    header = parse_header(data)
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+@pytest.mark.parametrize(
+    "tag, label",
+    [
+        pytest.param(TAG_IMAGE_WIDTH, "ImageWidth", id="duplicate_tag[image-width]"),
+        pytest.param(TAG_IMAGE_LENGTH, "ImageLength", id="duplicate_tag[image-length]"),
+        pytest.param(TAG_BITS_PER_SAMPLE, "BitsPerSample", id="duplicate_tag[bits-per-sample]"),
+        pytest.param(TAG_GEO_KEY_DIRECTORY, "GeoKeyDirectory", id="duplicate_tag[geo-key-directory]"),
+    ],
+)
+def test_duplicate_tag_rejected_across_critical_tags(tag, label):
+    """Duplicate detection fires on every tag, not just ImageWidth.
+
+    ImageLength controls pixel-array sizing, BitsPerSample controls the
+    decoded dtype, and the GeoKey directory carries the CRS contract.
+    All three were vulnerable to the same last-value-wins bug before
+    #2483.
+    """
+    value_bytes = struct.pack('<I', 1)
+    data = _build_tiff_with_entries(
+        entries=[
+            (tag, LONG, 1, value_bytes),
+            (tag, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    with pytest.raises(DuplicateIFDTagError, match=f"tag {tag} twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_error_names_offsets():
+    """The error message must locate both conflicting entries by byte offset.
+
+    Without these offsets a caller cannot find the bad bytes without
+    re-parsing the IFD themselves.
+    """
+    value_bytes = struct.pack('<I', 1)
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, value_bytes),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    # IFD starts at byte 8; entry table starts at byte 10 (after 2-byte
+    # num_entries). First entry at 10, second at 22 (10 + 12).
+    with pytest.raises(DuplicateIFDTagError) as exc_info:
+        parse_ifd(data, header.first_ifd_offset, header)
+    msg = str(exc_info.value)
+    assert "byte offset 10" in msg
+    assert "byte offset 22" in msg
+
+
+def test_duplicate_tag_rejected_in_bigtiff():
+    """BigTIFF (entry size 20) shares the same fail-closed contract."""
+    bo = '<'
+    ifd_offset = 16
+    buf = bytearray()
+    buf.extend(b'II')
+    buf.extend(struct.pack(f'{bo}H', 43))
+    buf.extend(struct.pack(f'{bo}H', 8))
+    buf.extend(b'\x00\x00')
+    buf.extend(struct.pack(f'{bo}Q', ifd_offset))
+    buf.extend(struct.pack(f'{bo}Q', 2))  # num_entries
+    for value in (4, 999):
+        buf.extend(struct.pack(f'{bo}HH', TAG_IMAGE_WIDTH, LONG))
+        buf.extend(struct.pack(f'{bo}Q', 1))  # count
+        buf.extend(struct.pack(f'{bo}Q', value))  # inline value
+    buf.extend(struct.pack(f'{bo}Q', 0))  # next IFD
+    data = bytes(buf)
+    header = parse_header(data)
+    assert header.is_bigtiff
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_rejected_before_dimension_prescan_emits():
+    """Dimension pre-scan path can't bypass the duplicate check either.
+
+    The pre-scan reads inline values for ``ImageWidth`` /
+    ``ImageLength`` to bound pixel-array counts in the second loop. The
+    duplicate check runs first, so a malformed file with two
+    ``ImageWidth`` entries fails at the pre-scan step rather than
+    reaching the early-exit code path with the wrong dimension value.
+    """
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_LENGTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_error_subclasses_value_error():
+    """``except ValueError`` callers keep catching the case.
+
+    ``DuplicateIFDTagError`` subclasses ``ValueError`` so existing
+    consumers (the public ``open_geotiff`` boundary, the legacy
+    ``ValueError`` family) continue to catch malformed-IFD failures
+    without code changes; new code can ``except`` the more specific
+    type to distinguish duplicate-tag rejection from other parse
+    failures.
+    """
+    assert issubclass(DuplicateIFDTagError, ValueError)
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    with pytest.raises(ValueError):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_surfaces_at_public_read_boundary(tmp_path):
+    """``open_geotiff`` must surface ``DuplicateIFDTagError`` to callers.
+
+    The duplicate check lives in the IFD parser, but the contract is
+    that the failure reaches the public read boundary so a caller using
+    ``open_geotiff`` (not the private ``parse_ifd``) sees it.
+    """
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    path = tmp_path / "issue_2483_dup_image_width.tif"
+    path.write_bytes(data)
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        open_geotiff(str(path))
+
+
+def test_legal_distinct_tags_still_parse_after_duplicate_check():
+    """Regression: distinct tag ids in a well-formed IFD still parse.
+
+    Confirms the duplicate check does not over-fire on a normal IFD
+    that legitimately carries many different tag ids.
+    """
+    width_value = struct.pack('<I', 256)
+    height_value = struct.pack('<I', 256)
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, width_value),
+            (TAG_IMAGE_LENGTH, LONG, 1, height_value),
+            (TAG_BITS_PER_SAMPLE, SHORT, 1, b'\x08\x00\x00\x00'),
+        ],
+    )
+    header = parse_header(data)
+    ifd = parse_ifd(data, header.first_ifd_offset, header)
+    assert ifd.width == 256
+    assert ifd.height == 256
 
 
 # ===========================================================================

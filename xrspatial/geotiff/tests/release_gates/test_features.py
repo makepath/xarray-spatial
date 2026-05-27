@@ -2827,6 +2827,9 @@ class TestPublicAPI:
             # case without importing from the private ``_errors`` module.
             'ConflictingCRSError',
             'ConflictingNodataError',
+            # Issue #2483: read-side fail-closed on TIFF directories that
+            # repeat a tag, replacing the legacy silent last-wins parse.
+            'DuplicateIFDTagError',
             'GeoTIFFAmbiguousMetadataError',
             # Issue #2417: read-side fail-closed on contradictory
             # ModelType / ProjectedCSType / GeographicType GeoKey

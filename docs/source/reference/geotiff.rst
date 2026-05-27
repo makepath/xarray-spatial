@@ -558,6 +558,11 @@ regression test that locks the behaviour.
        without ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1``
      - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
        (ssrf_hardening and dns_rebinding sections)
+   * - Duplicate IFD tag id within one IFD (TIFF 6.0 forbids this; the
+       parser raises ``DuplicateIFDTagError`` rather than letting the
+       last duplicate win silently)
+     - ``xrspatial/geotiff/tests/unit/test_ifd.py``
+       (Section 2b, ``test_duplicate_*``)
    * - Unsupported feature flags more broadly (codec, layout, and
        writer combos that ``SUPPORTED_FEATURES`` does not promise)
      - ``xrspatial/geotiff/tests/release_gates/test_features.py``
