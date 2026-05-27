@@ -283,7 +283,7 @@ def test_read_geotiff_gpu_stripped_chunks_tuple_1605(tmp_path):
 # ---------------------------------------------------------------------------
 
 @_gpu_only
-def test_stripped_3band_uint8():
+def test_stripped_3band_uint8_stripped_multiband():
     """3-band uint8 stripped TIFF reads as (y, x, band)."""
     from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
@@ -301,7 +301,7 @@ def test_stripped_3band_uint8():
 
 
 @_gpu_only
-def test_stripped_2band_uint16():
+def test_stripped_2band_uint16_stripped_multiband():
     """2-band uint16 stripped TIFF reads as (y, x, band)."""
     from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
@@ -320,7 +320,7 @@ def test_stripped_2band_uint16():
 
 
 @_gpu_only
-def test_stripped_singleband_still_2d():
+def test_stripped_singleband_still_2d_stripped_multiband():
     """Single-band stripped TIFF still produces a 2-D (y, x) DataArray."""
     from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
@@ -763,6 +763,12 @@ def test_gpu_int16_negative_nodata_1542(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Section: #2097 -- write_geotiff_gpu rejects MinIsWhite (band-first guard)
+#
+# The last test in this section
+# (``test_samples_hint_band_first_without_gpu_2097``) is CPU-only by design:
+# it drives ``_compute_gpu_samples_hint`` directly with a ``_FakeArray2097``
+# stand-in so the band-axis logic stays pinned even on a no-GPU CI runner.
+# Don't add ``@_gpu_only`` to it.
 # ---------------------------------------------------------------------------
 
 @_gpu_only
@@ -849,9 +855,11 @@ def _kvikio_available_1876() -> bool:
 
 
 _HAS_KVIKIO_1876 = _kvikio_available_1876()
-_gds_only_1876 = pytest.mark.skipif(
-    not (importlib.util.find_spec("cupy") is not None and _HAS_KVIKIO_1876),
-    reason="cupy + CUDA + kvikio required for GDS path",
+# The GDS path additionally requires kvikio. Stack ``@_gpu_only`` with the
+# kvikio probe at the test site so the cupy + CUDA runtime check is shared
+# with the rest of the module rather than reimplemented here.
+_requires_kvikio_1876 = pytest.mark.skipif(
+    not _HAS_KVIKIO_1876, reason="kvikio required for GDS path",
 )
 
 
@@ -961,7 +969,8 @@ def test_read_geotiff_gpu_chunks_preserves_attrs_1876(
     assert 'crs' in result.attrs
 
 
-@_gds_only_1876
+@_gpu_only
+@_requires_kvikio_1876
 def test_read_geotiff_gpu_chunks_uses_gds_path_when_available_1876(
         small_raster_path_1876, monkeypatch):
     """When kvikio is installed and the file qualifies, each chunk task

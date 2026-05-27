@@ -31,9 +31,9 @@ Per issue #2438 sub-PR A. This file is deleted on the final commit on this branc
 
 | Old | New |
 | --- | --- |
-| `test_stripped_3band_uint8` | `test_stripped_3band_uint8` |
-| `test_stripped_2band_uint16` | `test_stripped_2band_uint16` |
-| `test_stripped_singleband_still_2d` | `test_stripped_singleband_still_2d` |
+| `test_stripped_3band_uint8` | `test_stripped_3band_uint8_stripped_multiband` |
+| `test_stripped_2band_uint16` | `test_stripped_2band_uint16_stripped_multiband` |
+| `test_stripped_singleband_still_2d` | `test_stripped_singleband_still_2d_stripped_multiband` |
 
 ## #1753 -- stripped no-georef windowed coord parity (`test_gpu_stripped_no_georef_window_1753.py`)
 
@@ -45,8 +45,12 @@ Per issue #2438 sub-PR A. This file is deleted on the final commit on this branc
 | `TestStrippedGpuWindowedNoGeoref::test_dask_cupy_offset_window` | `TestStrippedGpuWindowedNoGeoref1753::test_dask_cupy_offset_window` |
 | `TestStrippedGpuWindowedNoGeoref::test_no_transform_attr` | `TestStrippedGpuWindowedNoGeoref1753::test_no_transform_attr` |
 | `TestStrippedGpuWindowedNoGeoref::test_uint16_window` | `TestStrippedGpuWindowedNoGeoref1753::test_uint16_window` |
-| `TestStrippedGpuWindowedBackendParity::test_dtype_parity[*]` | `TestStrippedGpuWindowedBackendParity1753::test_dtype_parity[*]` |
-| `TestStrippedGpuWindowedBackendParity::test_value_parity[*]` | `TestStrippedGpuWindowedBackendParity1753::test_value_parity[*]` |
+| `TestStrippedGpuWindowedBackendParity::test_dtype_parity[win0]` (win=(0,0,4,4)) | `TestStrippedGpuWindowedBackendParity1753::test_dtype_parity[win0]` |
+| `TestStrippedGpuWindowedBackendParity::test_dtype_parity[win1]` (win=(2,3,6,7)) | `TestStrippedGpuWindowedBackendParity1753::test_dtype_parity[win1]` |
+| `TestStrippedGpuWindowedBackendParity::test_dtype_parity[win2]` (win=(1,1,7,7)) | `TestStrippedGpuWindowedBackendParity1753::test_dtype_parity[win2]` |
+| `TestStrippedGpuWindowedBackendParity::test_value_parity[win0]` (win=(0,0,4,4)) | `TestStrippedGpuWindowedBackendParity1753::test_value_parity[win0]` |
+| `TestStrippedGpuWindowedBackendParity::test_value_parity[win1]` (win=(2,3,6,7)) | `TestStrippedGpuWindowedBackendParity1753::test_value_parity[win1]` |
+| `TestStrippedGpuWindowedBackendParity::test_value_parity[win2]` (win=(1,1,7,7)) | `TestStrippedGpuWindowedBackendParity1753::test_value_parity[win2]` |
 | `TestStrippedGpuWindowedGeorefStillWorks::test_georef_pixel_is_area_window` | `TestStrippedGpuWindowedGeorefStillWorks1753::test_georef_pixel_is_area_window` |
 | `TestStrippedGpuWindowedGeorefStillWorks::test_georef_offset_window` | `TestStrippedGpuWindowedGeorefStillWorks1753::test_georef_offset_window` |
 
