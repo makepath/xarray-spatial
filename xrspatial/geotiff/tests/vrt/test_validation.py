@@ -1036,15 +1036,28 @@ def test_mixed_source_crs_no_vrt_srs_rejects(tmp_path):
     assert src_3857 in str(excinfo.value)
 
 
+_VRT_TO_NP_DTYPE = {
+    "Byte": np.uint8,
+    "UInt16": np.uint16,
+    "Int16": np.int16,
+    "UInt32": np.uint32,
+    "Int32": np.int32,
+    "Float32": np.float32,
+    "Float64": np.float64,
+}
+
+
 @pytest.mark.parametrize(
-    "dtype_a, dtype_b, name_a, name_b",
+    "name_a, name_b",
     [
-        (np.uint16, np.float32, "UInt16", "Float32"),
-        (np.int32, np.float64, "Int32", "Float64"),
+        ("UInt16", "Float32"),
+        ("Int32", "Float64"),
     ],
+    ids=lambda n: n,
 )
+@pytest.mark.parametrize("chunks", [None, 2], ids=["eager", "chunked"])
 def test_mixed_source_dtype_ambiguous_widening_rejected(
-        tmp_path, dtype_a, dtype_b, name_a, name_b):
+        tmp_path, name_a, name_b, chunks):
     """Bands declaring incompatible dtypes must raise rather than
     silently widen via ``np.result_type``.
 
@@ -1052,10 +1065,16 @@ def test_mixed_source_dtype_ambiguous_widening_rejected(
     per-band dtype mismatches surface as ``MixedBandMetadataError``.
     Covers both the original ``UInt16`` + ``Float32`` case and an
     integer-floating combo at higher precision (``Int32`` + ``Float64``)
-    so the rule is enforced generally. Issue #2485.
+    so the rule is enforced generally. Parametrising over
+    ``chunks=None`` (eager) and ``chunks=2`` (dask) pins the same
+    behaviour on both reader paths so a future change that detours
+    around ``_effective_dtype_for_bands`` in the chunked path cannot
+    regress this silently. Issue #2485.
     """
-    src_a = _write_src_float32_geotiff(tmp_path, dtype=dtype_a)
-    src_b = _write_src_float32_geotiff(tmp_path, dtype=dtype_b)
+    src_a = _write_src_float32_geotiff(
+        tmp_path, dtype=_VRT_TO_NP_DTYPE[name_a])
+    src_b = _write_src_float32_geotiff(
+        tmp_path, dtype=_VRT_TO_NP_DTYPE[name_b])
     body_b1 = _simple_source_xml(src_a)
     body_b2 = _simple_source_xml(src_b)
     xml = f"""<VRTDataset rasterXSize="4" rasterYSize="4">
@@ -1071,13 +1090,19 @@ def test_mixed_source_dtype_ambiguous_widening_rejected(
     vrt_path = _write_vrt(tmp_path, xml)
 
     with pytest.raises(MixedBandMetadataError) as excinfo:
-        _package_read_vrt(vrt_path)
+        if chunks is None:
+            _package_read_vrt(vrt_path)
+        else:
+            _package_read_vrt(vrt_path, chunks=chunks)
     msg = str(excinfo.value).lower()
     assert any(k in msg for k in ('dtype', 'datatype', 'mixed'))
     # Message should name both conflicting bands so the caller can
     # locate the disagreement without reading the VRT XML by hand.
     assert 'band 1' in msg
     assert 'band 2' in msg
+    # And the VRT path so callers can locate the file from the
+    # traceback without re-parsing the XML.
+    assert vrt_path in str(excinfo.value)
 
 
 def test_supported_simple_vrt_round_trips_via_open_geotiff(tmp_path):

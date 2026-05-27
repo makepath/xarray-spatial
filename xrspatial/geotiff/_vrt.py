@@ -966,7 +966,7 @@ def _sentinel_for_dtype(nodata_val, dtype):
     return dtype.type(int(nodata_f))
 
 
-def _effective_dtype_for_bands(selected_bands) -> np.dtype:
+def _effective_dtype_for_bands(selected_bands, *, source=None) -> np.dtype:
     """Return the output buffer dtype shared by every selected band.
 
     Each band's effective dtype is the declared ``<VRTRasterBand>``
@@ -990,6 +990,16 @@ def _effective_dtype_for_bands(selected_bands) -> np.dtype:
     truncation. When every selected band declares the same ``dataType``,
     a ``ComplexSource``-driven widening on any band promotes the shared
     output buffer to ``float64``.
+
+    Parameters
+    ----------
+    selected_bands
+        The ``VRTRasterBand`` entries to validate.
+    source
+        Optional path / identifier of the VRT being read. When provided,
+        the ``MixedBandMetadataError`` message includes it so the caller
+        can locate the file from the traceback without re-parsing the
+        VRT XML.
     """
     if not selected_bands:
         raise ValueError(
@@ -1008,11 +1018,13 @@ def _effective_dtype_for_bands(selected_bands) -> np.dtype:
         band_descs = ", ".join(
             f"band {i + 1}: {d}" for i, d in enumerate(declared_dtypes)
         )
+        source_clause = f"VRT '{source}': " if source else ""
         raise MixedBandMetadataError(
-            "VRT bands declare conflicting dtypes; expected a single "
-            "declared dataType across all <VRTRasterBand> elements but "
-            f"saw {band_descs}. The VRT support matrix rejects mixed "
-            "band dtypes rather than widening via np.result_type."
+            f"{source_clause}VRT bands declare conflicting dtypes; "
+            "expected a single declared dataType across all "
+            f"<VRTRasterBand> elements but saw {band_descs}. The VRT "
+            "support matrix rejects mixed band dtypes rather than "
+            "widening via np.result_type."
         )
     # All declared dtypes agree. A single band's ``ComplexSource``
     # ``ScaleRatio`` / ``ScaleOffset`` still promotes the shared buffer
@@ -1406,7 +1418,7 @@ def read_vrt(vrt_path: str, *, window=None,
     # "at least one array or dtype is required" message that gives the
     # caller no hint about the underlying cause. The helper raises
     # ``ValueError`` for the empty case with that explicit message.
-    dtype = _effective_dtype_for_bands(selected_bands)
+    dtype = _effective_dtype_for_bands(selected_bands, source=vrt_path)
     fill = np.nan if dtype.kind in ('f', 'c') else 0
     if len(selected_bands) == 1:
         result = np.full((out_h, out_w), fill, dtype=dtype)
