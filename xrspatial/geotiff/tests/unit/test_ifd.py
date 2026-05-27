@@ -60,10 +60,16 @@ from xrspatial.geotiff._header import (
 )
 from xrspatial.geotiff._reader import read_to_array
 
-from .._helpers.markers import requires_loopback
+from .._helpers.markers import requires_gpu, requires_loopback
 
 _HAS_RASTERIO = importlib.util.find_spec("rasterio") is not None
-_HAS_CUPY = importlib.util.find_spec("cupy") is not None
+# Note: ``_HAS_CUPY`` (bare import probe) is intentionally NOT used to
+# gate GPU tests below. A bare ``import cupy`` succeeds on hosts where
+# the CUDA runtime is missing or unusable, which made
+# ``TestSparseTilesGPU`` fail at device-call time instead of skipping.
+# Use ``requires_gpu`` from ``_helpers.markers`` (which also probes
+# ``cupy.cuda.is_available()``) for any test that needs a working GPU
+# device. See issue #2487.
 
 requires_rasterio = pytest.mark.skipif(
     not _HAS_RASTERIO, reason="rasterio required to write sparse fixtures"
@@ -855,7 +861,7 @@ class TestSparseStrips:
 
 
 @requires_rasterio
-@pytest.mark.skipif(not _HAS_CUPY, reason="cupy required")
+@requires_gpu
 class TestSparseTilesGPU:
 
     def test_sparse_tile_gpu_round_trip(self, tmp_path):
@@ -874,6 +880,38 @@ class TestSparseTilesGPU:
         )
         assert np.all(np.isnan(host[:64, 64:]))
         assert np.all(np.isnan(host[64:, :]))
+
+
+def test_sparse_tiles_gpu_uses_capability_marker_2487():
+    """Pin the gate for ``TestSparseTilesGPU`` to the capability marker.
+
+    Regression test for #2487. The class previously gated on a bare
+    ``_HAS_CUPY = importlib.util.find_spec("cupy") is not None`` probe.
+    On hosts where cupy imports but the CUDA runtime is unusable, that
+    gate let the test run and fail at device-call time instead of
+    skipping cleanly. The gate must be ``requires_gpu`` from
+    ``_helpers.markers``, which also probes ``cupy.cuda.is_available()``.
+    """
+    from .._helpers import markers as _markers_mod
+
+    marks = list(getattr(TestSparseTilesGPU, 'pytestmark', []))
+    reasons = {getattr(m, 'kwargs', {}).get('reason', '') for m in marks}
+    # Both gates apply: rasterio (fixture writer) and gpu (device).
+    assert any('cupy + CUDA required' in r for r in reasons), (
+        f"TestSparseTilesGPU must gate on requires_gpu "
+        f"(reason 'cupy + CUDA required'); saw {reasons}"
+    )
+    # The marker the class actually carries must be the shared
+    # ``requires_gpu`` from ``_helpers.markers`` (which probes
+    # ``cupy.cuda.is_available()``), not a locally-built skipif on a
+    # bare ``import cupy`` probe. Compare the underlying ``Mark`` so
+    # this works regardless of whether pytest stored the
+    # ``MarkDecorator`` wrapper or unwrapped it.
+    expected_mark = _markers_mod.requires_gpu.mark
+    assert expected_mark in marks, (
+        f"TestSparseTilesGPU is not gated on the shared "
+        f"_helpers.markers.requires_gpu marker; saw marks={marks}"
+    )
 
 
 # ===========================================================================
