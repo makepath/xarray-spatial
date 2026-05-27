@@ -1397,6 +1397,10 @@ def test_gpu_writer_overview_loop_uses_putmask_1948():
     pair with ``cupy.putmask(current, nan_mask, ...)`` so the buffer
     ``make_overview_gpu`` returned is mutated in place. This guard
     fires if anyone reintroduces the redundant copy.
+
+    Path note: this file lives under ``tests/gpu/`` (one level deeper
+    than the original ``tests/`` home), so the walk back to
+    ``_writers/gpu.py`` is ``parent.parent.parent``, not ``parent.parent``.
     """
     src_path = pathlib.Path(__file__).parent.parent.parent / "_writers" / "gpu.py"
     src = src_path.read_text()
