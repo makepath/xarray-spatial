@@ -324,6 +324,12 @@ class _FileSource:
             _mmap_cache.release(self._entry)
             self._entry = None
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
 
 # ---------------------------------------------------------------------------
 # HTTP source: pool, timeouts, SSRF defences (issue #1664)
