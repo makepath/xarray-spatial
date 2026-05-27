@@ -8,7 +8,7 @@ read entry points are :func:`xrspatial.geotiff.open_geotiff`,
 defined here bypass the DataArray-level work that the public wrappers
 perform (ambiguous-metadata fail-closed, nodata-to-NaN promotion,
 ``masked_nodata`` attr, ``transform`` / ``crs`` attrs population) and
-have to replicate those steps by hand. See issue #2138.
+have to replicate those steps by hand.
 
 For source modules inside :mod:`xrspatial.geotiff`, the canonical
 internal name for the array-level reader is :func:`_read_to_array`.
@@ -19,27 +19,24 @@ from __future__ import annotations
 
 import numpy as np
 # ``urllib3`` is kept as a top-level import here even though the HTTP
-# source moved to ``_sources`` in #2228. ``test_http_no_stdlib_fallback_2050``
-# asserts the reader module carries a module-level urllib3 reference so a
-# build that silently drops the dependency cannot ship. The HTTP code path
-# itself uses the ``_sources`` import; this binding is purely the
-# "urllib3 is a hard install dep" guard.
+# source moved to ``_sources``. A test asserts the reader module carries
+# a module-level urllib3 reference so a build that silently drops the
+# dependency cannot ship. The HTTP code path itself uses the
+# ``_sources`` import; this binding is purely the "urllib3 is a hard
+# install dep" guard.
 import urllib3  # noqa: F401
 
 # COG-over-HTTP transport (bounded header prefetch, range-based tile/strip
-# fetch + decode) lives in ``_cog_http``. It is imported back here so that:
-#   * existing call sites inside this module (``_read_cog_http``,
-#     ``_parse_cog_http_meta``) keep their bare names, and
-#   * the historical public import surface
-#     (``from xrspatial.geotiff._reader import _read_cog_http`` and
-#     friends, used by the dask backend, the test suite, and external
-#     code that patches ``_reader._HTTPSource`` / ``_reader._parse_cog_http_meta``)
-#     stays intact without churn.
+# fetch + decode) lives in ``_cog_http``. It is imported back here so that
+# existing call sites inside this module (``_read_cog_http``,
+# ``_parse_cog_http_meta``) keep their bare names and the historical
+# public import surface (used by the dask backend, the test suite, and
+# external code that patches ``_reader._HTTPSource`` /
+# ``_reader._parse_cog_http_meta``) stays intact.
 # ``_cog_http._read_cog_http`` resolves ``_HTTPSource`` and
 # ``_parse_cog_http_meta`` through this module (via ``from . import _reader``
 # at call time) so monkeypatches against ``_reader._HTTPSource`` /
 # ``_reader._parse_cog_http_meta`` continue to take effect after the move.
-# Source: PR-J of the GeoTIFF refactor epic, issue #2258.
 from ._cog_http import (INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES,  # noqa: F401
                         _fetch_decode_cog_http_strips, _fetch_decode_cog_http_tiles,
                         _parse_cog_http_meta, _read_cog_http)
@@ -52,7 +49,6 @@ from ._cog_http import (INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES,  # noq
 #     (``from xrspatial.geotiff._reader import _read_strips`` and
 #     friends, used by VRT / GPU / dask backends, the writer, and the
 #     test suite) is preserved without churn.
-# Source: PR-G of the GeoTIFF refactor epic, issue #2246.
 from ._decode import (_NATIVE_ORDER, _PARALLEL_DECODE_PIXEL_THRESHOLD,  # noqa: F401
                       _apply_orientation, _apply_orientation_with_geo,
                       _apply_photometric_miniswhite, _apply_predictor, _decode_strip_or_tile,
@@ -69,7 +65,6 @@ from ._header import parse_all_ifds, parse_header, select_overview_ifd
 #     ``MAX_PIXELS_DEFAULT``, ``_check_dimensions`` and friends -- used
 #     by sidecar / VRT / GPU / dask backends and by the test suite) is
 #     preserved without churn.
-# Source: PR-H of the GeoTIFF refactor epic, issue #2247.
 from ._layout import (_FULL_IMAGE_BUDGET_HEADER_SLACK, MAX_PIXELS_DEFAULT,  # noqa: F401
                       PixelSafetyLimitError, _check_dimensions, _check_source_dimensions,
                       _compute_full_image_byte_budget, _has_sparse, _ifd_required_extent,
@@ -83,7 +78,6 @@ from ._layout import (_FULL_IMAGE_BUDGET_HEADER_SLACK, MAX_PIXELS_DEFAULT,  # no
 #     (``from xrspatial.geotiff._reader import _HTTPSource`` and friends,
 #     used by sidecar / VRT / GPU / dask backends and by the test suite) is
 #     preserved without churn.
-# Source: PR-E of the GeoTIFF refactor epic, issue #2228.
 from ._sources import (_CLOUD_SCHEMES, _DEFAULT_MMAP_CACHE_SIZE,  # noqa: F401
                        _HTTP_ALLOWED_SCHEMES, _HTTP_CONNECT_TIMEOUT_DEFAULT, _HTTP_MAX_REDIRECTS,
                        _HTTP_READ_TIMEOUT_DEFAULT, _MAX_CLOUD_BYTES_SENTINEL,
@@ -136,9 +130,8 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         bytes are downloaded. Default is :data:`MAX_CLOUD_BYTES_DEFAULT`
         (256 MiB), overridable via the
         ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` env var. Pass ``None`` to
-        skip the check entirely (pre-#1928 behaviour). The HTTP path
-        already reads only what it needs via range requests and is not
-        subject to this limit. See issue #1928.
+        skip the check entirely. The HTTP path already reads only what
+        it needs via range requests and is not subject to this limit.
 
     Returns
     -------
@@ -167,7 +160,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         src = _CloudSource(source)
         # Check the compressed object size before any bytes are
         # downloaded. ``_CloudSource.__init__`` already fetched the size
-        # via ``fsspec.size()``, so this is free. See issue #1928.
+        # via ``fsspec.size()``, so this is free.
         if cloud_budget is not None:
             size = src.size
             if size is None:
@@ -200,7 +193,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
     # no-op today, but the structural guard prevents a future
     # resource-holding source from leaking state on the failure path.
     # Mirrors the close-on-error contract that ``_read_cog_http``
-    # already enforces (issue #1816). See issue #2322.
+    # already enforces.
     try:
         data = src.read_all()
         header = parse_header(data)
@@ -209,14 +202,14 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         if len(ifds) == 0:
             raise ValueError("No IFDs found in TIFF file")
 
-        # External `.tif.ovr` sidecar (issue #2112). GDAL/rasterio write
+        # External `.tif.ovr` sidecar. GDAL/rasterio write
         # overview pyramids to a sibling file when the source is not a
         # COG; the sidecar's IFDs are the continuation of the base
         # file's pyramid. Discovery fires for local files, HTTP, and
         # fsspec sources; file-like buffers skip the lookup.
         # ``max_cloud_bytes`` propagates to ``load_sidecar`` so the
         # sidecar fetch inherits the same byte budget the base file
-        # enforces (#2121). The sidecar must be loaded before IFD
+        # enforces. The sidecar must be loaded before IFD
         # selection so ``overview_level`` indexes into a unified
         # pyramid list.
         #
@@ -232,7 +225,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # failure) falls back to base-only behaviour with a warning so
         # the user can still investigate. Mirrors the contract that
         # ``discover_remote_sidecar`` already uses on the dask metadata
-        # path. Issue #2416.
+        # path.
         from ._sidecar import (attach_sidecar_origin, find_sidecar, handle_sidecar_parse_failure,
                                load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
@@ -271,7 +264,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # unless the caller opted in. Mirrors the writer-side gate so the
         # two surfaces stay consistent. Fires before any tile/strip work
         # so the caller learns the missing flag from the rejection, not
-        # from a deeper decode-time failure. See PR 4 of epic #2340.
+        # from a deeper decode-time failure.
         from ._attrs import _validate_read_codec_optin
         _validate_read_codec_optin(
             ifd.compression,
@@ -288,7 +281,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         # Inherit georef from level 0 when an overview IFD lacks its own
-        # geokeys (issue #1640). For overview_level=0 (or None) this is a
+        # geokeys. For overview_level=0 (or None) this is a
         # no-op: the helper short-circuits when the IFD is not a
         # NewSubfileType=overview entry. Sidecar IFDs typically lack
         # geokeys (the GDAL convention), so the inheritance pulls from
@@ -298,7 +291,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # ``(data, byte_order)`` from the sidecar so the helper resolves
         # those tags against the right buffer. Sidecar IFDs without
         # geokeys still inherit from the base file via the existing
-        # overview-inheritance path. See issues #1640 and #2315.
+        # overview-inheritance path.
         georef_origin = (
             {iid: (od, oh.byte_order)
              for iid, (od, oh) in sidecar_origin.items()}
@@ -337,7 +330,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # ``read_geotiff_dask`` in ``__init__.py``) so all backends
         # agree on the contract. Reuses the IFD already parsed above,
         # so callers pay no extra metadata-parse cost (file-like
-        # sources are read once instead of twice). See issue #1634.
+        # sources are read once instead of twice).
         if window is not None:
             w_r0, w_c0, w_r1, w_c1 = window
             if (w_r0 < 0 or w_c0 < 0
@@ -353,9 +346,8 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # leaks a raw numpy ``IndexError`` with the internal slice
         # shape. Mirrors the dask path's pre-flight validator (see
         # ``read_geotiff_dask`` in ``__init__.py``), the GPU path, and
-        # the HTTP path (``_read_cog_http`` above, as of issue #1695)
-        # so all backends agree on the contract: 0-based non-negative
-        # index only. See issue #1673.
+        # the HTTP path (``_read_cog_http`` above) so all backends agree
+        # on the contract: 0-based non-negative index only.
         ifd_samples = ifd.samples_per_pixel
         if band is not None:
             # Reject ``bool`` and ``np.bool_`` before the range check.
@@ -364,7 +356,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
             # guard ``band=True`` silently reads band 1 and ``band=False``
             # reads band 0. ``np.bool_`` is not a subclass of ``bool`` so it
             # needs its own check to match the VRT path's existing
-            # rejection. See #1786.
+            # rejection.
             if isinstance(band, (bool, np.bool_)):
                 raise ValueError(
                     f"band must be a non-negative int, got {band!r}")
@@ -373,7 +365,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
             # ``0 <= 0.0 < n_bands`` and silently selects band 0 on a
             # single-band file or raises a raw numpy ``IndexError`` from
             # deep in the read path on multi-band files. The VRT paths
-            # already enforce this; mirror them here. See #1910.
+            # already enforce this; mirror them here.
             if not isinstance(band, (int, np.integer)):
                 raise TypeError(
                     f"band must be a non-negative int, got {band!r}")
@@ -408,8 +400,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
             # against the inverted sentinel instead.  Stash the inverted
             # sentinel on geo_info as a private attribute so callers can
             # apply the mask post-inversion while keeping the original
-            # sentinel on ``geo_info.nodata`` for the attrs round-trip
-            # (issue #1809).
+            # sentinel on ``geo_info.nodata`` for the attrs round-trip.
             inverted_nodata = _miniswhite_inverted_nodata(
                 geo_info.nodata, ifd, arr.dtype)
             arr = _apply_photometric_miniswhite(arr, ifd)
@@ -425,5 +416,4 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
 # Backward-compatible alias for internal call sites that pre-date the
 # rename to :func:`_read_to_array`. New code inside
 # ``xrspatial.geotiff`` should import :func:`_read_to_array` directly.
-# See issue #2138.
 read_to_array = _read_to_array

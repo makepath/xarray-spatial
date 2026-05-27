@@ -888,7 +888,7 @@ def unpack_bits(data: np.ndarray, bps: int, pixel_count: int) -> np.ndarray:
     elif bps == 2:
         # 4 pixels per byte, MSB-first. Vectorised across the packed
         # byte array so a large tile decodes in one pass instead of N
-        # Python iterations (issue #1713). The strided assignments
+        # Python iterations. The strided assignments
         # below mirror the original per-byte loop's write pattern,
         # including the contract that positions beyond
         # ``len(data) * 4`` are left as the ``np.empty`` initial
@@ -925,7 +925,7 @@ def unpack_bits(data: np.ndarray, bps: int, pixel_count: int) -> np.ndarray:
         return out
     elif bps == 4:
         # 2 pixels per byte, high nibble first. Vectorised across the
-        # packed byte array (issue #1713). Positions beyond
+        # packed byte array. Positions beyond
         # ``len(data) * 2`` keep the ``np.empty`` initial value,
         # matching the prior per-byte loop's contract for short
         # input buffers.
@@ -947,7 +947,7 @@ def unpack_bits(data: np.ndarray, bps: int, pixel_count: int) -> np.ndarray:
         return out
     elif bps == 12:
         # 2 pixels per 3 bytes, MSB-first. Vectorised across the
-        # packed byte array (issue #1713). Pairs whose third byte is
+        # packed byte array. Pairs whose third byte is
         # past ``len(data)`` are skipped, preserving the prior
         # ``np.empty`` semantics for short input buffers.
         out = np.empty(pixel_count, dtype=np.uint16)
@@ -1364,7 +1364,7 @@ def jpeg_decompress(data: bytes, width: int = 0, height: int = 0,
     import io
     if jpeg_tables:
         data = _splice_jpeg_tables(data, jpeg_tables)
-    # Pre-decode bomb cap (issue #1792). Pillow's built-in
+    # Pre-decode bomb cap. Pillow's built-in
     # DecompressionBombError fires at ~178M pixels (~500 MB RGB) which
     # is well above a typical tile's expected size; without this
     # per-tile pre-check a single malicious tile can allocate hundreds

@@ -1,21 +1,18 @@
 """Reader compression-codec coverage.
 
-Consolidates:
+Covers two things:
 
-* ``test_compression.py`` -- codec round-trip unit tests for the
-  reader's decompression entry points (deflate, LZW, predictor encode /
-  decode, the dispatcher).
-* ``test_decompression_caps.py`` -- decompression-bomb defenses
-  (security finding S1) across deflate, ZSTD, LZ4, PackBits, LERC,
+* Codec round-trip unit tests for the reader's decompression entry
+  points (deflate, LZW, predictor encode / decode, the dispatcher).
+* Decompression-bomb defenses across deflate, ZSTD, LZ4, PackBits, LERC,
   JPEG 2000, and JPEG.
 
 Several classes here (``TestDeflate``, ``TestLZW``, ``TestPredictor``,
 ``TestDispatch``, the ``Test*Direct`` codec bomb classes, and the JPEG
 SOF cap class) call the codec functions directly rather than going
 through ``open_geotiff`` / ``read_to_array``. They live under ``read/``
-because the reader is the only consumer of those decode entry points;
-the writer side of the same codecs is exercised from PR 7's writer
-cluster. Future maintainers scanning ``read/`` should treat these as
+because the reader is the only consumer of those decode entry points.
+Future maintainers scanning ``read/`` should treat these as
 reader-internal codec coverage rather than end-to-end read paths.
 """
 from __future__ import annotations
@@ -58,7 +55,7 @@ _HAS_PILLOW = _module_available("PIL")
 
 
 # ---------------------------------------------------------------------------
-# Codec round-trips (formerly test_compression.py)
+# Codec round-trips
 # ---------------------------------------------------------------------------
 
 
@@ -171,7 +168,7 @@ class TestDispatch:
 
 
 # ---------------------------------------------------------------------------
-# Decompression-bomb caps (formerly test_decompression_caps.py)
+# Decompression-bomb caps
 # ---------------------------------------------------------------------------
 
 

@@ -1,5 +1,4 @@
-"""Fast / slow pytest marker helper for the golden-corpus matrix
-(issue #1930, phase 4 PR 1).
+"""Fast / slow pytest marker helper for the golden-corpus matrix.
 
 Each manifest fixture carries a ``tags`` list. Fixtures tagged ``fast``
 run in the PR CI fast lane; everything else is treated as slow and

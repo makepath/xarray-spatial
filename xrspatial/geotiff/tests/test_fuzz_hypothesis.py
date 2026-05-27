@@ -1,4 +1,4 @@
-"""Hypothesis property and fuzz tests for the geotiff module (#1661).
+"""Hypothesis property and fuzz tests for the geotiff module.
 
 Three property groups:
 
@@ -15,9 +15,8 @@ Three property groups:
    offset. Reader must either parse consistently or raise a typed exception.
 
 The whole file is skipped if ``hypothesis`` is not installed -- it is not a
-hard test dep yet (see issue #1661 unresolved questions). Each test bounds
-example count and disables Hypothesis's deadline so CI variance doesn't
-flake.
+hard test dep yet. Each test bounds example count and disables Hypothesis's
+deadline so CI variance doesn't flake.
 """
 from __future__ import annotations
 
@@ -139,10 +138,10 @@ def test_round_trip_property(tmp_path_factory, inputs):
     path = str(tmp_dir / "rt.tif")
 
     # ``lz4`` is in the fuzz codec list and is a Tier 3 experimental
-    # codec gated behind ``allow_experimental_codecs`` (issue #2137).
-    # The other codecs in ``LOSSLESS_CODECS`` are Tier 1 and accept the
-    # default ``False``, so passing ``True`` unconditionally lets the
-    # fuzz harness exercise every codec uniformly.
+    # codec gated behind ``allow_experimental_codecs``. The other codecs
+    # in ``LOSSLESS_CODECS`` are Tier 1 and accept the default ``False``,
+    # so passing ``True`` unconditionally lets the fuzz harness exercise
+    # every codec uniformly.
     to_geotiff(
         da,
         path,
@@ -152,8 +151,8 @@ def test_round_trip_property(tmp_path_factory, inputs):
         allow_experimental_codecs=True,
     )
 
-    # Mirror the write-side opt-in (PR 4 of epic #2340) so the read
-    # accepts the experimental codec.
+    # Mirror the write-side opt-in so the read accepts the experimental
+    # codec.
     got = open_geotiff(path, dtype=str(da.dtype),
                        allow_experimental_codecs=True)
 
@@ -305,9 +304,9 @@ def test_corpus_baseline_parses():
 
 
 # --- Targeted regressions for bugs found by the property tests above ---
-# These three were caught by the byte-mutation property on first run and
-# fixed alongside this PR. They live here (not in a separate file) so the
-# regression context stays next to the harness that found them.
+# These three were caught by the byte-mutation property on first run.
+# They live here (not in a separate file) so the regression context
+# stays next to the harness that found them.
 
 def test_regression_rows_per_strip_zero_is_typed_error():
     """rps=0 must raise ValueError, not ZeroDivisionError."""
@@ -342,12 +341,12 @@ def test_regression_empty_sample_format_tuple_does_not_indexerror():
         pass
 
 
-# --- Group 4: truncation fuzz on the IFD entry table (#1672) ---
+# --- Group 4: truncation fuzz on the IFD entry table ---
 #
 # The byte-mutation fuzz in Group 3 flips one byte; it doesn't cover the
 # case where the file is truncated before `parse_ifd` has even finished
-# reading the entry table. The S2 typed-error work in #1661 fixed the
-# *value area* of each entry; the entry table itself (num_entries,
+# reading the entry table. Earlier typed-error work guarded the *value
+# area* of each entry; the entry table itself (num_entries,
 # tag/type/count fields, next-IFD pointer) was still unguarded and
 # escaped with `struct.error` on truncation.
 
@@ -396,9 +395,9 @@ def test_truncation_typed_errors_only(label, base_tiff, offset_frac):
         )
 
 
-# Targeted examples for each of the three #1672 bounds checks. These
-# pin the regression for the exact offsets the fuzz sweeps over and
-# give a fast-fail signal if any check is reverted.
+# Targeted examples for each of the three entry-table bounds checks.
+# These pin the regression for the exact offsets the fuzz sweeps over
+# and give a fast-fail signal if any check is reverted.
 
 @example(byte_count=8)    # Cuts before num_entries.
 @example(byte_count=9)    # Splits the 2-byte num_entries field.

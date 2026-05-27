@@ -1,4 +1,4 @@
-"""Tests for #1614: _build_gdal_metadata_xml escapes XML special chars.
+"""_build_gdal_metadata_xml escapes XML special chars.
 
 The serialiser previously interpolated keys and values with plain
 f-strings, which corrupted the document on any value containing
@@ -127,7 +127,7 @@ class TestToGeotiffMetadataRoundTrip:
 
 
 # =============================================================================
-# Section: Safe extra_tags filter (#1657)
+# Section: Safe extra_tags filter
 # =============================================================================
 #
 # Original: ``test_extra_tags_safe_filter_1657.py``.

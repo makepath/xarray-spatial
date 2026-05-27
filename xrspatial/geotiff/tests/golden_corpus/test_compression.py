@@ -1,6 +1,6 @@
-"""Smoke tests for the Phase 2 PR 5 compression fixtures (issue #1930).
+"""Smoke tests for the compression fixtures.
 
-Six fixtures land in this PR, one per major codec / predictor variant:
+Six fixtures, one per major codec / predictor variant:
 
 * ``compression_none_uint8`` -- baseline uncompressed uint8.
 * ``compression_deflate_predictor2_uint16`` -- deflate + predictor 2 (int).
@@ -22,9 +22,9 @@ The test:
 
 LERC and JPEG codec availability depends on the GDAL build. When a
 codec is unavailable the corresponding fixture is missing from disk and
-the relevant test is skipped via ``pytest.skip``. The pre-PR generator
-run did write them; this guard is defensive for environments where GDAL
-was rebuilt without those drivers.
+the relevant test is skipped via ``pytest.skip``. The committed fixtures
+were written with both codecs available; this guard is defensive for
+environments where GDAL was rebuilt without those drivers.
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ import numpy as np
 import pytest
 
 # Both pyyaml and rasterio are runtime deps of this test. importorskip
-# keeps minimal environments green; once Phase 2 fully lands these are
-# planned to move into the test extras (see README).
+# keeps minimal environments green; these are planned to move into the
+# test extras (see README).
 pytest.importorskip("yaml")
 rasterio = pytest.importorskip("rasterio")
 
@@ -66,8 +66,8 @@ def _fixture_path(fid: str) -> pathlib.Path:
 
     A missing file usually means the maintainer who regenerated the
     corpus had a GDAL build without the relevant codec (LERC or JPEG
-    are the common offenders). The committed fixtures in this PR were
-    built with both codecs available; this guard exists so a contributor
+    are the common offenders). The committed fixtures were built with
+    both codecs available; this guard exists so a contributor
     rebuilding locally without those drivers does not see a hard fail
     for a file they could not produce.
     """
@@ -168,8 +168,8 @@ def test_jpeg_lossy_mode_required() -> None:
     """The jpeg fixture passes only when the oracle is told it is lossy.
 
     Two halves: strict mode (default) must reject because JPEG quantises
-    pixel values; lossy mode must accept. This pins the contract added
-    in PR #1991 for Phase 2's jpeg cell.
+    pixel values; lossy mode must accept. This pins the lossy contract
+    for the jpeg cell.
     """
     path = _fixture_path("compression_jpeg_uint8_ycbcr")
     cand = _candidate_from_rasterio(path)

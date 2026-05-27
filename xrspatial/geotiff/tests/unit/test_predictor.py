@@ -1,7 +1,6 @@
 """TIFF Predictor (2 / 3) read and write coverage.
 
-Consolidated from the per-issue / per-dtype predictor files listed in
-``CLUSTER_AUDIT_PREDICTOR.md``. One parametrised home for predictor=2
+One parametrised home for predictor=2
 (horizontal differencing) and predictor=3 (floating-point, TIFF Technical
 Note 3) on the CPU read and write paths.
 
@@ -16,7 +15,7 @@ Coverage is grouped by behaviour:
   ``deflate`` / ``zstd``, tiled / stripped, dask streaming, multi-band);
   bit-level value fidelity at 1024x1024; predictor / compression
   interaction (``compression='none'`` suppresses the tag).
-* Predictor=3 multi-sample (issue #1247): hand-built TN3-compliant
+* Predictor=3 multi-sample: hand-built TN3-compliant
   multi-band stripped TIFFs decode correctly; single-band path stays
   consistent; the ``_apply_predictor`` dispatch helper inverts TN3
   encoding exactly.
@@ -31,12 +30,10 @@ Coverage is grouped by behaviour:
 
 GPU predictor variants are intentionally out of scope here -- the
 dedicated GPU predictor coverage lives in
-``xrspatial/geotiff/tests/gpu/test_codec.py`` (folded under epic
-#2438). GPU regressions that lived alongside CPU tests in the
-old files (predictor=2 int8 tiled/stripped, predictor=3 BE GPU,
-predictor=2/3 multi-sample GPU parity) move with this consolidation so
-the CPU and GPU coverage stay co-located by behaviour rather than
-hardware.
+``xrspatial/geotiff/tests/gpu/test_codec.py``. GPU regressions
+(predictor=2 int8 tiled/stripped, predictor=3 BE GPU, predictor=2/3
+multi-sample GPU parity) live there so the CPU and GPU coverage stay
+co-located by behaviour rather than hardware.
 """
 from __future__ import annotations
 
@@ -66,9 +63,7 @@ tifffile = pytest.importorskip("tifffile")
 
 # ---------------------------------------------------------------------------
 # GPU gate (co-located so GPU regressions stay next to the CPU baselines).
-# The dedicated GPU predictor files are in the GPU cluster (#2438); the
-# GPU tests that lived inside CPU-named files move here and skip when no
-# CUDA device is available.
+# These tests skip when no CUDA device is available.
 # ---------------------------------------------------------------------------
 
 
@@ -374,7 +369,7 @@ def _build_predictor3_stripped_tiff(arr: np.ndarray) -> bytes:
 # Section 1: Predictor=2 read round-trips (endianness x dtype x layout)
 # ===========================================================================
 #
-# PR #1498 reworked the predictor=2 decode to run sample-wise via a numpy
+# The predictor=2 decode runs sample-wise via a numpy
 # view at the file's byte order. Numba's nopython mode rejects arrays
 # with a non-native byte order, so the multi-byte big-endian path needs
 # a byteswap around the kernel call. The uint8 byte-wise kernel never
@@ -549,7 +544,7 @@ def test_predictor2_writer_interops_with_libtiff(tmp_path, dtype_str):
 # Section 3: Predictor=2 multi-sample (GPU multi-sample bug)
 # ===========================================================================
 #
-# Issue #1220: the GPU predictor=2 decode path passed ``width=tile_width
+# The GPU predictor=2 decode path previously passed ``width=tile_width
 # * samples`` and ``bytes_per_sample=itemsize * samples`` to the kernel,
 # making ``row_bytes`` ``tile_width * samples**2 * itemsize`` instead of
 # ``tile_width * samples * itemsize``. That walks past the end of each
@@ -794,7 +789,7 @@ def test_gpu_predictor3_big_endian_matches_cpu(tmp_path):
 # Section 5: Predictor=3 writer end-to-end
 # ===========================================================================
 #
-# Issue #1313: ``to_geotiff`` previously accepted ``predictor: bool`` and
+# ``to_geotiff`` previously accepted ``predictor: bool`` and
 # emitted only TIFF predictor 2.  Predictor 3 (byte-swizzled
 # differencing per TN3) gives noticeably better deflate/zstd ratios on
 # float data and is what most GDAL/rasterio workflows use for elevation
@@ -888,8 +883,8 @@ def test_predictor3_streaming_dask(tmp_path):
 def test_predictor3_multiband_round_trip(tmp_path):
     """Multi-band float predictor=3 round-trip.
 
-    Issue #1247 fixed the read side; this checks the write side now
-    round-trips correctly for the multi-band case where the row swizzle
+    This checks the write side round-trips correctly for the
+    multi-band case where the row swizzle
     has to use ``width * samples`` lanes, not ``width``.
     """
     h, w = 48, 64
@@ -984,7 +979,7 @@ def test_predictor3_encode_within_2x_of_predictor2(tmp_path):
 
 
 # ===========================================================================
-# Section 6: Predictor=3 multi-sample (issue #1247)
+# Section 6: Predictor=3 multi-sample
 # ===========================================================================
 #
 # The CPU predictor=3 decode path used to call
@@ -1009,7 +1004,7 @@ def test_cpu_predictor3_multisample_reads_correctly(
         tmp_path, samples, dtype_str):
     """CPU decode of a TN3-compliant multi-band predictor=3 TIFF.
 
-    Regression test for issue #1247.  Before the fix,
+    Before the fix,
     ``fp_predictor_decode`` was called with
     ``bytes_per_sample * samples`` as the lane count, which swizzles the
     byte lanes the wrong way for chunky multi-band data.  The decoded
@@ -1059,8 +1054,8 @@ def test_apply_predictor3_matches_tn3_reference():
     Builds a TN3-encoded buffer for multi-band float32 and checks that
     ``_apply_predictor(chunk, 3, width, height, bytes_per_sample,
     samples=samples)`` returns the original bytes.  This is the
-    narrowest possible regression test for #1247 and does not depend
-    on the TIFF header / reader plumbing.
+    narrowest possible regression test for the dispatch and does not
+    depend on the TIFF header / reader plumbing.
     """
     from xrspatial.geotiff._reader import _apply_predictor
 
@@ -1099,10 +1094,9 @@ def test_gpu_predictor3_multisample_matches_cpu(
         tmp_path, samples, dtype_str):
     """GPU decode of a tiled multi-sample float TIFF with predictor=3.
 
-    Regression coverage for issue #1479.  The GPU
-    ``_fp_predictor_decode_kernel`` correctly handles multi-sample float
-    rasters, but predictor=3 was not exercised by CI (only predictor=2
-    multi-sample was).
+    The GPU ``_fp_predictor_decode_kernel`` correctly handles
+    multi-sample float rasters; this exercises the predictor=3 path
+    (predictor=2 multi-sample is covered separately).
     """
     dtype = np.dtype(dtype_str)
     h, w = 64, 64
@@ -1130,7 +1124,7 @@ def test_gpu_predictor3_multisample_matches_cpu(
 
 
 # ===========================================================================
-# Section 7: Predictor=3 + integer SampleFormat validator (issue #1933)
+# Section 7: Predictor=3 + integer SampleFormat validator
 # ===========================================================================
 #
 # A malformed TIFF that claims Predictor=3 paired with an integer
