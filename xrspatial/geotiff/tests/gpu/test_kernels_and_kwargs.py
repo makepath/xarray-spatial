@@ -76,8 +76,12 @@ _CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
 def _install_cupy_stub_1903(monkeypatch, *, get_device_count):
     """Install a minimal stub ``cupy`` module so the preflight runs.
 
-    Used on machines without cupy installed; lets us exercise the
-    preflight failure path on CPU-only CI.
+    Lets us drive ``_preflight_cuda_runtime`` deterministically
+    regardless of the host's real CUDA state. Pass a ``get_device_count``
+    that raises to exercise the preflight failure path (CPU-only CI or
+    broken-CUDA hosts), or one that returns a positive int to exercise
+    the success path (e.g. so the alias-validation test in #2515 can
+    reach the file-read stage without depending on real CUDA).
     """
     cupy_mod = types.ModuleType("cupy")
     cuda_mod = types.ModuleType("cupy.cuda")
