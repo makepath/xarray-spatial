@@ -683,7 +683,7 @@ Internal-only surfaces (not promised)
        ``allow_internal_only_jpeg=True``; not covered by
        ``allow_experimental_codecs``.
      - ``xrspatial/geotiff/tests/unit/test_photometric.py``,
-       ``xrspatial/geotiff/tests/test_gpu_jpeg_interop_reject_issue_D_1845.py``
+       ``xrspatial/geotiff/tests/gpu/test_codec.py``
      - `#2340`_
 
 Cross-cutting CI gates
