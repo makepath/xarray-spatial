@@ -1802,6 +1802,103 @@ def test_write_none_in_nodatavals_tuple_is_skipped(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Distinct per-band nodatavals (#2514).
+#
+# A TIFF stores one GDAL_NODATA tag per file, so per-band tuples with
+# multiple distinct concrete sentinels cannot round-trip safely. The
+# legacy resolver flattened the tuple to the first usable entry and the
+# silent drop turned the remaining bands' sentinel cells into real data.
+# The validator now rejects this on write so the corruption never
+# reaches disk. The existing conflict check covered only the case where
+# every tuple member disagreed with attrs['nodata']; these tests cover
+# the dangerous case where the tuple itself carries the disagreement.
+# ---------------------------------------------------------------------------
+
+
+def _da_2514(*, attrs=None, shape=(2, 4, 4)):
+    """Multi-band DataArray for the per-band nodata tests (#2514)."""
+    data = np.zeros(shape, dtype=np.float32)
+    coords = {
+        'band': np.arange(1, shape[0] + 1),
+        'y': np.linspace(3.0, 0.0, shape[1], dtype=np.float64),
+        'x': np.linspace(0.0, 3.0, shape[2], dtype=np.float64),
+    }
+    return xr.DataArray(
+        data, dims=('band', 'y', 'x'), coords=coords, attrs=dict(attrs or {}),
+    )
+
+
+def test_write_rejects_distinct_per_band_nodatavals_no_scalar(tmp_path):
+    """Two distinct concrete entries in ``nodatavals`` without a scalar
+    ``nodata`` key still raises. The earlier conflict check only
+    inspected the (nodata, nodatavals) disagreement axis and let this
+    case through."""
+    da = _da_2514(attrs={'nodatavals': (-9999.0, -8888.0)})
+    out_path = str(tmp_path / 'tmp_2514_no_scalar.tif')
+    with pytest.raises(ConflictingNodataError, match='distinct per-band'):
+        to_geotiff(da, out_path)
+    # The error must surface before any file write.
+    assert not os.path.exists(out_path)
+
+
+def test_write_rejects_distinct_per_band_nodatavals_with_matching_scalar(tmp_path):
+    """A scalar ``nodata`` that happens to match one band does not
+    rescue the write -- the other band's sentinel would still be
+    silently dropped."""
+    da = _da_2514(attrs={'nodata': -9999.0, 'nodatavals': (-9999.0, -8888.0)})
+    out_path = str(tmp_path / 'tmp_2514_match_one_band.tif')
+    with pytest.raises(ConflictingNodataError, match='distinct per-band'):
+        to_geotiff(da, out_path)
+    assert not os.path.exists(out_path)
+
+
+def test_write_rejects_three_distinct_per_band_nodatavals(tmp_path):
+    """Three bands with three distinct sentinels: the check should
+    surface every concrete value in the error message so the user can
+    see which ones collided."""
+    da = _da_2514(
+        shape=(3, 4, 4),
+        attrs={'nodatavals': (-9999.0, -8888.0, 0.0)},
+    )
+    out_path = str(tmp_path / 'tmp_2514_three_distinct.tif')
+    with pytest.raises(ConflictingNodataError) as exc:
+        to_geotiff(da, out_path)
+    msg = str(exc.value)
+    assert '-9999' in msg and '-8888' in msg and '0.0' in msg
+    assert not os.path.exists(out_path)
+
+
+def test_write_distinct_nodatavals_explicit_kwarg_bypasses(tmp_path):
+    """``to_geotiff(..., nodata=X)`` overrides attrs and short-circuits
+    the per-band check the same way it short-circuits the conflict
+    check."""
+    da = _da_2514(attrs={'nodatavals': (-9999.0, -8888.0)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_kwarg.tif'), nodata=-1.0)
+
+
+def test_write_repeated_concrete_nodatavals_accepted(tmp_path):
+    """A tuple where every concrete entry is the same value (the rioxarray
+    convention for "all bands share this sentinel") must still write."""
+    da = _da_2514(attrs={'nodatavals': (-9999.0, -9999.0)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_repeated.tif'))
+
+
+def test_write_none_and_single_concrete_nodatavals_accepted(tmp_path):
+    """``(None, -9999.0)`` means "band 0 has no sentinel, band 1's
+    sentinel is -9999". One distinct concrete value -- safe."""
+    da = _da_2514(attrs={'nodatavals': (None, -9999.0)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_none_and_one.tif'))
+
+
+def test_write_all_nan_nodatavals_accepted(tmp_path):
+    """All-NaN ``nodatavals`` means "the float NaN is the sentinel" on
+    every band -- there is nothing to disagree about."""
+    nan = float('nan')
+    da = _da_2514(attrs={'nodatavals': (nan, nan)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_all_nan.tif'))
+
+
+# ---------------------------------------------------------------------------
 # Round-trip safety: a written-then-read DataArray with both attrs set
 # (which the reader does emit by default) still writes again cleanly.
 # ---------------------------------------------------------------------------

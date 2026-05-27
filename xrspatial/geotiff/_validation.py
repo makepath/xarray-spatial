@@ -1084,6 +1084,97 @@ register_write_metadata_check(_check_write_conflicting_nodata)
 
 
 # ---------------------------------------------------------------------------
+# Distinct per-band nodatavals write check (issue #2514)
+# ---------------------------------------------------------------------------
+
+
+def _check_write_distinct_per_band_nodatavals(
+    context: Mapping[str, Any],
+) -> None:
+    """Refuse writes whose ``attrs['nodatavals']`` declares two or more
+    distinct concrete per-band sentinels.
+
+    The TIFF / GDAL data model stores a single ``GDAL_NODATA`` tag per
+    file, so a multi-band raster shares one sentinel across every band
+    (see ``tests/parity/test_reference.py::TestMultibandUint16SharedNodata``
+    for the documented limitation). The legacy resolver in
+    ``_attrs._resolve_nodata_attr`` would silently pick the first usable
+    value and drop the rest, so bands that declared a different sentinel
+    would keep their sentinel cells as real data on the resulting file.
+
+    The earlier conflict check ``_check_write_conflicting_nodata`` only
+    catches the case where every entry in the tuple disagrees with the
+    canonical ``attrs['nodata']`` scalar. It misses the more dangerous
+    case where the tuple itself carries multiple distinct concrete
+    values (with or without an accompanying ``attrs['nodata']``), because
+    one of the per-band values happens to equal the flattened scalar.
+
+    Allowed:
+
+    * A tuple with a single distinct concrete value (possibly repeated).
+    * A tuple of all NaN / None entries.
+    * A tuple mixing ``None`` with a single concrete value.
+
+    Refused:
+
+    * Two or more distinct concrete (non-NaN, non-None) values, e.g.
+      ``(-9999.0, -8888.0)`` or ``(-9999.0, -9999.0, 0.0)``.
+
+    The explicit ``nodata=`` writer kwarg overrides attrs entirely and
+    short-circuits this check; the caller has stated which single
+    sentinel to write, so the per-band disagreement is irrelevant.
+
+    Context keys consumed:
+
+    * ``nodata_kwarg`` -- the explicit ``nodata=`` writer kwarg.
+    * ``attrs_nodatavals`` -- ``data.attrs.get('nodatavals')``.
+    """
+    if context.get('nodata_kwarg') is not None:
+        return
+    nodatavals_attr = context.get('attrs_nodatavals')
+    if nodatavals_attr is None:
+        return
+    try:
+        vals = list(nodatavals_attr)
+    except TypeError:
+        return
+    concrete: list[float] = []
+    for v in vals:
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(fv):
+            continue
+        concrete.append(fv)
+    # Deduplicate by exact float equality. The TIFF GDAL_NODATA tag is a
+    # single scalar, so any two concrete values that compare unequal are
+    # a collision the writer cannot represent.
+    distinct = []
+    for fv in concrete:
+        if not any(fv == d for d in distinct):
+            distinct.append(fv)
+    if len(distinct) < 2:
+        return
+    raise ConflictingNodataError(
+        f"attrs['nodatavals']={nodatavals_attr!r} declares multiple "
+        f"distinct per-band nodata sentinels {distinct!r}, but a "
+        f"GeoTIFF stores a single file-wide GDAL_NODATA value. The "
+        f"writer would silently flatten the tuple to one scalar and "
+        f"the remaining bands' sentinel cells would round-trip as "
+        f"real data. Reconcile the tuple to a single sentinel (or "
+        f"NaN / None for bands with no sentinel), or pass the "
+        f"intended sentinel via the ``nodata=`` kwarg, which "
+        f"overrides attrs. See issue #2514."
+    )
+
+
+register_write_metadata_check(_check_write_distinct_per_band_nodatavals)
+
+
+# ---------------------------------------------------------------------------
 # Non-uniform coords write check (issue #1987 PR 4)
 # ---------------------------------------------------------------------------
 
