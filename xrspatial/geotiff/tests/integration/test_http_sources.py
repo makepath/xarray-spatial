@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import http.server
 import inspect
+import io
 import math
 import numpy as np
 import pytest
@@ -19,17 +20,22 @@ import socketserver
 import struct
 import threading
 import time
+import xarray as xr
 from xrspatial.geotiff import UnsafeURLError
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import _sources as _sources_mod
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask
+from xrspatial.geotiff import (open_geotiff, read_geotiff_dask,
+                               read_geotiff_gpu, read_vrt, to_geotiff,
+                               write_geotiff_gpu, write_vrt)
 from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._reader import INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES, PixelSafetyLimitError, _FULL_IMAGE_BUDGET_HEADER_SLACK, _HTTPSource, _compute_full_image_byte_budget, _parse_cog_http_meta, _read_cog_http, coalesce_ranges, read_to_array, split_coalesced_bytes
+from xrspatial.geotiff._reader import CloudSizeLimitError, INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES, PixelSafetyLimitError, _FULL_IMAGE_BUDGET_HEADER_SLACK, _HTTPSource, _compute_full_image_byte_budget, _parse_cog_http_meta, _read_cog_http, coalesce_ranges, read_to_array, split_coalesced_bytes
+from xrspatial.geotiff._sidecar import _is_http_url as _sidecar_is_http_url
 from xrspatial.geotiff._sources import MAX_COALESCED_RANGE_BYTES_DEFAULT
+from xrspatial.geotiff._writer import _is_fsspec_uri as _writer_is_fsspec_uri
 from xrspatial.geotiff._writer import write
 
-from xrspatial.geotiff.tests._helpers.markers import requires_loopback
+from xrspatial.geotiff.tests._helpers.markers import requires_gpu, requires_loopback
 
 pytestmark = requires_loopback
 
@@ -4987,3 +4993,1280 @@ class TestCloudByteLimit_cloud_read_byte_limit:
                 max_cloud_bytes=1,
             )
         assert not isinstance(exc_info.value, CloudSizeLimitError)
+
+# ----------------------------------------------------------
+# Section: ssrf_hardening
+# Source: test_ssrf_hardening_1664.py
+#
+# SSRF defenses on ``_HTTPSource`` (issue #1664). These tests cover the
+# validator in isolation -- they do NOT make real HTTP calls.
+# ``socket.getaddrinfo`` is monkeypatched per-test to control what the
+# validator sees.
+# ----------------------------------------------------------
+def _fake_getaddrinfo_ssrf_1664(ip: str):
+    """Return a getaddrinfo replacement that always resolves to *ip*.
+
+    Mirrors the real return tuple layout: each element is
+    ``(family, type, proto, canonname, sockaddr)``. The validator only
+    looks at index 4 (sockaddr) so the rest is filler.
+    """
+    def _resolver(host, port, *args, **kwargs):
+        if ':' in ip:
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 0, '',
+                     (ip, port or 0, 0, 0))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 (ip, port or 0))]
+    return _resolver
+
+
+# ---------------------------------------------------------------------------
+# Scheme allow-list
+# ---------------------------------------------------------------------------
+
+
+class TestSchemeAllowList_ssrf_1664:
+    def test_https_accepted(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('93.184.216.34'))
+        # example.com -> a public IP -- should pass.
+        _reader_mod._validate_http_url('https://example.com/cog.tif')
+
+    def test_http_accepted(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('93.184.216.34'))
+        _reader_mod._validate_http_url('http://example.com/cog.tif')
+
+    def test_file_scheme_rejected(self):
+        with pytest.raises(UnsafeURLError) as excinfo:
+            _reader_mod._validate_http_url('file:///etc/passwd')
+        msg = str(excinfo.value).lower()
+        assert "scheme" in msg
+        assert "'file'" in str(excinfo.value).lower()
+
+    def test_gopher_scheme_rejected(self):
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('gopher://example.com/')
+
+    def test_ftp_scheme_rejected(self):
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('ftp://example.com/x.tif')
+
+    def test_empty_url_rejected(self):
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('')
+
+    def test_non_string_rejected(self):
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url(None)  # type: ignore[arg-type]
+
+    def test_env_var_does_not_widen_allow_list(self, monkeypatch):
+        """The scheme allow-list is fixed at http/https.
+
+        Earlier drafts of #1664 exposed ``XRSPATIAL_GEOTIFF_ALLOWED_SCHEMES``
+        as an escape hatch, but ``_HTTPSource`` is a urllib3 / urllib
+        Range-GET implementation that only speaks http(s); widening the
+        validator without widening the source just moves the failure to
+        connect time. fsspec handles every other ``scheme://``.
+        """
+        monkeypatch.setenv(
+            'XRSPATIAL_GEOTIFF_ALLOWED_SCHEMES', 'ftp,gopher')
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('93.184.216.34'))
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('ftp://example.com/x.tif')
+
+
+# ---------------------------------------------------------------------------
+# Host filtering -- private / loopback / link-local
+# ---------------------------------------------------------------------------
+
+
+class TestPrivateHostBlocking_ssrf_1664:
+    @pytest.mark.parametrize("ip", [
+        '127.0.0.1',
+        '127.0.0.5',
+        '10.0.0.1',
+        '172.16.5.5',
+        '192.168.1.1',
+        '169.254.169.254',  # cloud metadata
+        '0.0.0.0',
+    ])
+    def test_ipv4_private_rejected(self, monkeypatch, ip):
+        monkeypatch.setattr(socket, 'getaddrinfo',
+                            _fake_getaddrinfo_ssrf_1664(ip))
+        with pytest.raises(UnsafeURLError) as excinfo:
+            _reader_mod._validate_http_url('http://attacker.test/x.tif')
+        msg = str(excinfo.value).lower()
+        assert "private" in msg or "loopback" in msg or "link-local" in msg
+
+    @pytest.mark.parametrize("ip", [
+        '::1',          # IPv6 loopback
+        'fe80::1',      # IPv6 link-local
+        'fc00::1',      # IPv6 unique-local
+    ])
+    def test_ipv6_private_rejected(self, monkeypatch, ip):
+        monkeypatch.setattr(socket, 'getaddrinfo',
+                            _fake_getaddrinfo_ssrf_1664(ip))
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('http://attacker.test/x.tif')
+
+    def test_localhost_literal_rejected(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('127.0.0.1'))
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('http://localhost:8080/x.tif')
+
+    def test_public_ip_accepted(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('8.8.8.8'))
+        _reader_mod._validate_http_url('http://example.com/x.tif')
+
+    def test_env_override_allows_private(self, monkeypatch):
+        monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('127.0.0.1'))
+        # No exception expected.
+        _reader_mod._validate_http_url('http://127.0.0.1:8080/cog.tif')
+
+    def test_env_override_truthy_values(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('127.0.0.1'))
+        for v in ('1', 'true', 'TRUE', 'yes', 'on'):
+            monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', v)
+            _reader_mod._validate_http_url('http://127.0.0.1/x.tif')
+
+    def test_dns_rebind_partial_private_rejected(self, monkeypatch):
+        """If ANY resolved IP is private, the URL is rejected.
+
+        This blocks DNS-rebinding tricks where a hostile DNS server
+        returns both a public and a private IP for the same name.
+        """
+        def _resolver(host, port, *args, **kwargs):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 ('8.8.8.8', port or 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 ('127.0.0.1', port or 0)),
+            ]
+        monkeypatch.setattr(socket, 'getaddrinfo', _resolver)
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('http://attacker.test/x.tif')
+
+    def test_unresolvable_host_rejected(self, monkeypatch):
+        def _broken(host, port, *args, **kwargs):
+            raise socket.gaierror(-2, 'Name or service not known')
+        monkeypatch.setattr(socket, 'getaddrinfo', _broken)
+        with pytest.raises(UnsafeURLError) as excinfo:
+            _reader_mod._validate_http_url('http://nope.example.invalid/x.tif')
+        assert "resolve" in str(excinfo.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Timeout configuration
+# ---------------------------------------------------------------------------
+
+
+class TestHTTPTimeouts_ssrf_1664:
+    def test_default_connect_timeout(self, monkeypatch):
+        monkeypatch.delenv(
+            'XRSPATIAL_GEOTIFF_HTTP_CONNECT_TIMEOUT', raising=False)
+        assert _reader_mod._http_connect_timeout() == 10.0
+
+    def test_default_read_timeout(self, monkeypatch):
+        monkeypatch.delenv(
+            'XRSPATIAL_GEOTIFF_HTTP_READ_TIMEOUT', raising=False)
+        assert _reader_mod._http_read_timeout() == 30.0
+
+    def test_env_override_connect(self, monkeypatch):
+        monkeypatch.setenv('XRSPATIAL_GEOTIFF_HTTP_CONNECT_TIMEOUT', '2.5')
+        assert _reader_mod._http_connect_timeout() == 2.5
+
+    def test_env_override_read(self, monkeypatch):
+        monkeypatch.setenv('XRSPATIAL_GEOTIFF_HTTP_READ_TIMEOUT', '7')
+        assert _reader_mod._http_read_timeout() == 7.0
+
+    def test_env_garbage_falls_back(self, monkeypatch):
+        monkeypatch.setenv(
+            'XRSPATIAL_GEOTIFF_HTTP_CONNECT_TIMEOUT', 'not-a-float')
+        assert _reader_mod._http_connect_timeout() == 10.0
+
+    def test_env_zero_falls_back(self, monkeypatch):
+        # Zero is not a useful timeout; treat as missing.
+        monkeypatch.setenv('XRSPATIAL_GEOTIFF_HTTP_READ_TIMEOUT', '0')
+        assert _reader_mod._http_read_timeout() == 30.0
+
+
+# ---------------------------------------------------------------------------
+# Redirect cap
+# ---------------------------------------------------------------------------
+
+
+def test_redirect_cap_is_set_ssrf_1664():
+    """The module-level constant is what both transports honour."""
+    assert _reader_mod._HTTP_MAX_REDIRECTS == 5
+
+
+# ---------------------------------------------------------------------------
+# Redirect re-validation -- the initial-URL allow-list is not enough on its
+# own because a public URL can 3xx-redirect to a private/loopback IP. Each
+# hop has to be re-validated. Issue #1664 review.
+# ---------------------------------------------------------------------------
+
+
+class _MockPoolResponse_ssrf_1664:
+    """Stand-in for ``urllib3.HTTPResponse`` -- only the bits we touch."""
+
+    def __init__(self, status: int, location: str | None = None,
+                 data: bytes = b''):
+        self.status = status
+        self.headers = {'Location': location} if location else {}
+        self.data = data
+        self._body = data
+        # ``read_range`` (post #2264) does a Content-Length preflight and
+        # streams the body with ``_read_capped``. Pin Content-Length to
+        # the body size so the preflight passes; the streaming cap then
+        # reads ``data`` via ``stream()`` below.
+        if data:
+            self.headers['Content-Length'] = str(len(data))
+
+    def stream(self, amt=65536, decode_content=True):
+        if self._body:
+            yield self._body
+
+    def release_conn(self):
+        pass
+
+    def drain_conn(self):
+        pass
+
+
+class _MockPool_ssrf_1664:
+    """Records requests, returns scripted responses in order.
+
+    Each scripted response is a ``_MockPoolResponse_ssrf_1664``. After the
+    script is exhausted, returns a 200 with empty body so loops terminate.
+    """
+
+    def __init__(self, script: list):
+        self.script = list(script)
+        self.calls: list[str] = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append(url)
+        # Caller must explicitly opt out of urllib3's built-in redirect
+        # follower; if it doesn't, our hop-by-hop validation is dead code.
+        assert kwargs.get('redirect') is False, (
+            f"_HTTPSource must request with redirect=False so each hop "
+            f"is validated by Python; got {kwargs.get('redirect')!r}"
+        )
+        if self.script:
+            return self.script.pop(0)
+        return _MockPoolResponse_ssrf_1664(200, data=b'OK')
+
+
+class TestRedirectRevalidation_ssrf_1664:
+    # urllib3 is a hard install dependency (see setup.cfg install_requires),
+    # so the urllib3 transport path is the only path. The stdlib fallback
+    # was removed in #2050 along with ``_ValidatingRedirectHandler``: it
+    # bypassed the IP pin that closes the #1846 DNS-rebinding TOCTOU.
+
+    def test_urllib3_redirect_to_private_rejected(self, monkeypatch):
+        """Public host that 302-redirects to loopback must be rejected."""
+        # Initial validator pass: example.com resolves to a public IP.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+
+        # Now the redirect target resolves to loopback. The validator on
+        # the *Location* hop must catch this even though the initial URL
+        # was clean.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('127.0.0.1'))
+        src._pool = _MockPool_ssrf_1664([
+            _MockPoolResponse_ssrf_1664(
+                302, location='http://attacker.test/inner.tif'),
+        ])
+
+        with pytest.raises(UnsafeURLError) as excinfo:
+            src.read_range(0, 100)
+        assert 'attacker.test' in str(excinfo.value) or \
+            '127.0.0.1' in str(excinfo.value)
+
+    def test_urllib3_redirect_to_public_followed(self, monkeypatch):
+        """Public -> public redirect is followed; validator passes each hop."""
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+        src._pool = _MockPool_ssrf_1664([
+            _MockPoolResponse_ssrf_1664(
+                302, location='https://cdn.example.com/x.tif'),
+            _MockPoolResponse_ssrf_1664(200, data=b'tiff-bytes'),
+        ])
+        data = src.read_range(0, 100)
+        assert data == b'tiff-bytes'
+        # Two GETs were issued: original + redirected target.
+        assert len(src._pool.calls) == 2
+        assert src._pool.calls[1] == 'https://cdn.example.com/x.tif'
+
+    def test_urllib3_redirect_chain_capped(self, monkeypatch):
+        """More than _HTTP_MAX_REDIRECTS hops raises rather than looping."""
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+        # Script: every response is a redirect (one more than the cap).
+        n_redirects = _reader_mod._HTTP_MAX_REDIRECTS + 1
+        src._pool = _MockPool_ssrf_1664([
+            _MockPoolResponse_ssrf_1664(
+                302, location=f'https://example.com/hop{i}.tif')
+            for i in range(n_redirects)
+        ])
+        with pytest.raises(_reader_mod.UnsafeURLError) as excinfo:
+            src.read_range(0, 100)
+        msg = str(excinfo.value).lower()
+        assert 'redirect' in msg
+
+    def test_urllib3_relative_location_resolved(self, monkeypatch):
+        """Relative Location like ``/other.tif`` resolves against the source."""
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/dir/cog.tif')
+        src._pool = _MockPool_ssrf_1664([
+            _MockPoolResponse_ssrf_1664(302, location='/other.tif'),
+            _MockPoolResponse_ssrf_1664(200, data=b'after-relative'),
+        ])
+        data = src.read_range(0, 100)
+        assert data == b'after-relative'
+        assert src._pool.calls[1] == 'https://example.com/other.tif'
+
+
+# ---------------------------------------------------------------------------
+# Integration: _HTTPSource.__init__ runs the validator
+# ---------------------------------------------------------------------------
+
+
+class TestHTTPSourceConstructor_ssrf_1664:
+    def test_file_url_rejected_at_init(self):
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._HTTPSource('file:///etc/passwd')
+
+    def test_localhost_url_rejected_at_init(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('127.0.0.1'))
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._HTTPSource('http://127.0.0.1:6379/probe.tif')
+
+    def test_metadata_url_rejected_at_init(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo',
+            _fake_getaddrinfo_ssrf_1664('169.254.169.254'))
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._HTTPSource(
+                'http://169.254.169.254/latest/meta-data/')
+
+    def test_escape_hatch_allows_localhost(self, monkeypatch):
+        monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('127.0.0.1'))
+        src = _reader_mod._HTTPSource('http://127.0.0.1:8080/cog.tif')
+        # Timeout values are pulled from the env-aware helpers.
+        assert src._connect_timeout == 10.0
+        assert src._read_timeout == 30.0
+
+    def test_unsafe_url_error_is_value_error(self):
+        """``UnsafeURLError`` is a ``ValueError`` so existing handlers work."""
+        with pytest.raises(ValueError):
+            _reader_mod._HTTPSource('file:///etc/passwd')
+
+    def test_unsafe_url_error_carries_url(self):
+        try:
+            _reader_mod._HTTPSource('file:///etc/passwd')
+        except UnsafeURLError as e:
+            assert e.url == 'file:///etc/passwd'
+        else:
+            pytest.fail("UnsafeURLError not raised")
+
+
+# ---------------------------------------------------------------------------
+# read_to_array dispatcher honours the SSRF check
+# ---------------------------------------------------------------------------
+
+
+def test_read_to_array_rejects_file_url_ssrf_1664():
+    """The top-level dispatcher refuses ``file://`` URLs.
+
+    ``_open_source()`` routes any non-http(s) ``scheme://`` string to the
+    fsspec ``_CloudSource`` branch, so ``file://`` never reaches
+    ``_HTTPSource`` and the SSRF allow-list never sees it. The relevant
+    guarantee here is just: arbitrary local file access via a
+    ``file://`` URL does not silently succeed. fsspec raises (or
+    ``ImportError`` if fsspec isn't installed).
+    """
+    with pytest.raises((ValueError, FileNotFoundError, OSError, ImportError)):
+        read_to_array('file:///etc/passwd')
+
+
+def test_open_source_rejects_loopback_http_ssrf_1664(monkeypatch):
+    monkeypatch.setattr(
+        socket, 'getaddrinfo', _fake_getaddrinfo_ssrf_1664('127.0.0.1'))
+    with pytest.raises(UnsafeURLError):
+        _reader_mod._open_source('http://127.0.0.1:8080/x.tif')
+
+
+# ----------------------------------------------------------
+# Section: dns_rebinding
+# Source: test_dns_rebinding_pin_issue_1846.py
+#
+# DNS-rebinding TOCTOU defence on ``_HTTPSource`` (issue #1846). The fix
+# pins the validated IP into the TCP connection while keeping the
+# original hostname in the Host header and TLS SNI. No real HTTP calls
+# are made: ``socket.getaddrinfo`` / ``socket.create_connection`` are
+# monkeypatched per test.
+# ----------------------------------------------------------
+def _ip_resolver_dns_rebinding(ip: str):
+    """Return a ``getaddrinfo`` replacement that resolves any host to *ip*."""
+    def _resolver(host, port, *args, **kwargs):
+        if ':' in ip:
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 0, '',
+                     (ip, port or 0, 0, 0))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 (ip, port or 0))]
+    return _resolver
+
+
+def _switching_resolver_dns_rebinding(ips: list):
+    """Return a resolver that yields a different IP on each call.
+
+    After the script is exhausted, it sticks on the final IP. This is
+    how we simulate a rebinding DNS server: the first call (validation)
+    returns ``ips[0]``, the second call (would-be TCP connect) returns
+    ``ips[1]``.
+    """
+    state = {'i': 0}
+
+    def _resolver(host, port, *args, **kwargs):
+        idx = min(state['i'], len(ips) - 1)
+        state['i'] += 1
+        ip = ips[idx]
+        if ':' in ip:
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 0, '',
+                     (ip, port or 0, 0, 0))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 (ip, port or 0))]
+    return _resolver
+
+
+# ---------------------------------------------------------------------------
+# _validate_http_url returns the pinned IP
+# ---------------------------------------------------------------------------
+
+
+class TestValidatorReturnsPinnedIP_dns_rebinding:
+    def test_returns_first_public_ip(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _ip_resolver_dns_rebinding('93.184.216.34'))
+        ip = _reader_mod._validate_http_url('https://example.com/cog.tif')
+        assert ip == '93.184.216.34'
+
+    def test_returns_first_public_ipv6(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo',
+            _ip_resolver_dns_rebinding('2606:2800:220:1::1'))
+        ip = _reader_mod._validate_http_url('https://example.com/cog.tif')
+        assert ip == '2606:2800:220:1::1'
+
+    def test_returns_none_when_escape_hatch_enabled(self, monkeypatch):
+        """With the escape hatch we skip resolution and skip pinning.
+
+        Callers that opt into private hosts knowingly accept the looser
+        guarantee, and we don't want to force them to provide a literal
+        IP. Returning ``None`` tells ``_HTTPSource`` to fall back to
+        urllib3's default DNS path.
+        """
+        monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _ip_resolver_dns_rebinding('127.0.0.1'))
+        ip = _reader_mod._validate_http_url('http://127.0.0.1:8080/cog.tif')
+        assert ip is None
+
+    def test_raises_when_any_ip_private(self, monkeypatch):
+        """Existing SSRF guarantee is preserved.
+
+        If any resolved IP is private we still raise; we don't silently
+        pick a public one and pin to that.
+        """
+        def _resolver(host, port, *args, **kwargs):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 ('8.8.8.8', port or 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 ('127.0.0.1', port or 0)),
+            ]
+        monkeypatch.setattr(socket, 'getaddrinfo', _resolver)
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('http://attacker.test/x.tif')
+
+
+# ---------------------------------------------------------------------------
+# DNS rebinding defeated: the actual TCP connect targets the pinned IP
+# ---------------------------------------------------------------------------
+
+
+class TestPinnedConnectionTarget_dns_rebinding:
+    def test_init_records_pinned_ip(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _ip_resolver_dns_rebinding('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+        assert src._pinned_ip == '93.184.216.34'
+
+    def test_rebind_does_not_reach_private_ip(self, monkeypatch):
+        """End-to-end rebinding test.
+
+        Validator sees ``93.184.216.34`` (safe public IP). After that,
+        any further DNS resolution returns ``127.0.0.1`` (rebound to
+        loopback). The TCP connection must still target the validated
+        public IP.
+
+        We intercept ``socket.create_connection`` to record the target
+        address rather than actually opening a socket. ``read_range``
+        will fail when the mock returns no data; we only care that the
+        connection was attempted against the pinned IP.
+        """
+        # First getaddrinfo call (validation) returns public IP. Every
+        # subsequent call returns the rebound private IP.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo',
+            _switching_resolver_dns_rebinding(['93.184.216.34', '127.0.0.1']))
+
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+        assert src._pinned_ip == '93.184.216.34'
+
+        # Capture every TCP target the pool tries to dial. We don't
+        # actually want to open sockets, so we raise after recording.
+        attempted: list = []
+
+        class _StopConnect(OSError):
+            pass
+
+        def _fake_create_connection(address, *args, **kwargs):
+            attempted.append(address)
+            raise _StopConnect("intercepted in test")
+
+        # urllib3's HTTPConnection uses ``urllib3.util.connection.
+        # create_connection`` indirectly via _new_conn. Our pinned
+        # connection overrides _new_conn to call ``socket.create_
+        # connection`` directly, so patching ``socket.create_connection``
+        # is sufficient.
+        monkeypatch.setattr(
+            socket, 'create_connection', _fake_create_connection)
+
+        # Calling read_range goes through the pinned pool. The mocked
+        # create_connection raises before any real network I/O. urllib3
+        # wraps OSError in NewConnectionError / MaxRetryError; either
+        # way an exception bubbles up.
+        with pytest.raises(Exception):
+            src.read_range(0, 100)
+
+        # The validated public IP was used as the TCP target, not the
+        # rebound private one.
+        assert attempted, "expected at least one TCP connect attempt"
+        target_ip = attempted[0][0]
+        assert target_ip == '93.184.216.34', (
+            f"TCP connect went to {target_ip!r}, expected pinned "
+            f"public IP 93.184.216.34. DNS rebinding succeeded.")
+        assert target_ip != '127.0.0.1'
+
+    def test_host_header_and_sni_preserved(self, monkeypatch):
+        """Host header (and TLS SNI for HTTPS) stay set to the original
+        hostname, not the IP literal. Required for HTTP virtual hosting
+        and TLS certificate verification.
+        """
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _ip_resolver_dns_rebinding('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+
+        # Build the pinned pool the same way _request would, and
+        # inspect a fresh connection's attributes.
+        pool = src._get_pinned_pool(
+            'https', 'example.com', 443, '93.184.216.34')
+        conn = pool._new_conn()
+        try:
+            # ``host`` is what becomes the Host header (urllib3 uses
+            # ``self.host`` when building HTTP requests).
+            assert conn.host == 'example.com'
+            # The connection class carries the pinned IP. ``_new_conn``
+            # dials this directly via ``socket.create_connection`` and
+            # never consults DNS again.
+            assert conn.pinned_ip == '93.184.216.34'
+            # ``server_hostname`` is the TLS SNI value the pool feeds
+            # into the connection at handshake time; must be the
+            # original hostname so cert verification works. The pool
+            # stashes pool-construction extras (anything not in the
+            # explicit kwarg list) in ``conn_kw``, which it splats into
+            # the connection constructor in ``_new_conn``.
+            assert conn.server_hostname == 'example.com'
+            # The freshly-built connection has not yet hit the wire,
+            # so cert validation hasn't run; we're checking the
+            # *configuration* that will be used.
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Redirects: each hop is independently validated and pinned
+# ---------------------------------------------------------------------------
+
+
+class _MockPoolResponse_dns_rebinding:
+    def __init__(self, status: int, location: str | None = None,
+                 data: bytes = b''):
+        self.status = status
+        self.headers = {'Location': location} if location else {}
+        self.data = data
+        self._body = data
+        if data:
+            self.headers['Content-Length'] = str(len(data))
+
+    def stream(self, amt=65536, decode_content=True):
+        if self._body:
+            yield self._body
+
+    def release_conn(self):
+        pass
+
+    def drain_conn(self):
+        pass
+
+
+class _MockPool_dns_rebinding:
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append(url)
+        assert kwargs.get('redirect') is False
+        if self.script:
+            return self.script.pop(0)
+        return _MockPoolResponse_dns_rebinding(200, data=b'OK')
+
+
+class TestRedirectRevalidates_dns_rebinding:
+    def test_redirect_to_safe_host_revalidates(self, monkeypatch):
+        """A redirect from safe-host -> also-safe re-runs validation on
+        the new hostname and pins the new IP.
+        """
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _ip_resolver_dns_rebinding('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://safe-host.example.com/a.tif')
+        assert src._pinned_ip == '93.184.216.34'
+
+        # Record every host the validator sees by hooking ``getaddrinfo``.
+        # The hop-by-hop redirect loop in ``_request`` calls
+        # ``_validate_http_url`` on each ``Location``, which in turn
+        # calls ``getaddrinfo`` once per host. The new hop is on a
+        # different hostname so it resolves to a different public IP
+        # (we script the resolver to switch on the second call).
+        seen_hosts: list = []
+
+        def _tracking_resolver(host, port, *args, **kwargs):
+            seen_hosts.append(host)
+            # First host (safe-host.example.com) -> 93.184.216.34.
+            # Second host (also-safe.example.com) -> 1.1.1.1.
+            ip = '1.1.1.1' if 'also-safe' in host else '93.184.216.34'
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                     (ip, port or 0))]
+        monkeypatch.setattr(socket, 'getaddrinfo', _tracking_resolver)
+
+        # Use a scripted mock pool so we don't touch the network. We
+        # override _pool_for_request so the redirect loop receives our
+        # mock for both hops.
+        mock_pool = _MockPool_dns_rebinding([
+            _MockPoolResponse_dns_rebinding(
+                302,
+                location='https://also-safe.example.com/b.tif'),
+            _MockPoolResponse_dns_rebinding(200, data=b'ok'),
+        ])
+
+        def _stub_pool_for_request(url, pinned_ip):
+            return mock_pool
+
+        monkeypatch.setattr(
+            src, '_pool_for_request', _stub_pool_for_request)
+
+        data = src.read_range(0, 10)
+        assert data == b'ok'
+
+        # The Location host was resolved (i.e. re-validated). The
+        # initial host might not appear here because the constructor
+        # ran *before* the tracking resolver was installed.
+        assert any('also-safe.example.com' == h for h in seen_hosts), (
+            f"Redirect target was not re-validated. Hosts seen by "
+            f"getaddrinfo during the request: {seen_hosts!r}")
+        # Both URLs were issued through the mock, confirming the loop
+        # walked both hops.
+        assert mock_pool.calls == [
+            'https://safe-host.example.com/a.tif',
+            'https://also-safe.example.com/b.tif',
+        ]
+
+    def test_redirect_to_private_still_rejected(self, monkeypatch):
+        """Pinning doesn't weaken the existing redirect-to-private guard."""
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _ip_resolver_dns_rebinding('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+
+        # Now the redirect target resolves to loopback.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _ip_resolver_dns_rebinding('127.0.0.1'))
+
+        # Reuse the SSRF section's mock pool (same module now).
+        src._pool = _MockPool_ssrf_1664([
+            _MockPoolResponse_ssrf_1664(
+                302, location='http://attacker.test/inner.tif'),
+        ])
+        with pytest.raises(UnsafeURLError):
+            src.read_range(0, 100)
+
+
+# ----------------------------------------------------------
+# Section: uppercase_scheme_ssrf
+# Source: test_uppercase_scheme_ssrf_2323.py
+#
+# Uppercase URL schemes must not dodge SSRF hardening (issue #2323).
+# Schemes are case-insensitive per RFC 3986; a URL like
+# ``HTTP://127.0.0.1/foo.tif`` must still route through ``_HTTPSource``
+# (and its SSRF allow-list + pinned DNS), not slip onto the fsspec
+# branch. No real HTTP calls are made: ``socket.getaddrinfo`` is
+# monkeypatched per test.
+# ----------------------------------------------------------
+# Unique tmp-name prefix to keep parallel-rockout temp paths apart.
+_ISSUE_2323 = "2323"
+
+
+def _fake_getaddrinfo_2323(ip: str):
+    """getaddrinfo replacement that always resolves to *ip*."""
+    def _resolver(host, port, *args, **kwargs):
+        if ':' in ip:
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 0, '',
+                     (ip, port or 0, 0, 0))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 (ip, port or 0))]
+    return _resolver
+
+
+# ---------------------------------------------------------------------------
+# _is_http_url / _is_fsspec_uri helpers
+# ---------------------------------------------------------------------------
+
+
+class TestIsHttpUrlCaseInsensitive_2323:
+    @pytest.mark.parametrize("url", [
+        "http://example.com/x.tif",
+        "https://example.com/x.tif",
+        "HTTP://example.com/x.tif",
+        "HTTPS://example.com/x.tif",
+        "Http://example.com/x.tif",
+        "hTTpS://example.com/x.tif",
+        "HTTP://127.0.0.1/foo.tif",
+    ])
+    def test_http_variants_recognised(self, url):
+        assert _sources_mod._is_http_url(url) is True
+        assert _reader_mod._is_http_url(url) is True
+        assert _sidecar_is_http_url(url) is True
+
+    @pytest.mark.parametrize("path", [
+        "s3://bucket/x.tif",
+        "S3://bucket/x.tif",
+        "gs://bucket/x.tif",
+        "memory://buf",
+        "/local/path.tif",
+        "relative/path.tif",
+        "",
+    ])
+    def test_non_http_rejected(self, path):
+        assert _sources_mod._is_http_url(path) is False
+
+    def test_non_string_rejected(self):
+        assert _sources_mod._is_http_url(None) is False
+        assert _sources_mod._is_http_url(b"http://x/y") is False
+        assert _sources_mod._is_http_url(123) is False
+
+
+class TestIsFsspecUriExcludesHttpCaseInsensitive_2323:
+    @pytest.mark.parametrize("url", [
+        "HTTP://127.0.0.1/foo.tif",
+        "HTTPS://example.com/x.tif",
+        "Http://example.com/x.tif",
+        "hTTpS://example.com/x.tif",
+        "http://example.com/x.tif",
+    ])
+    def test_uppercase_http_not_fsspec(self, url):
+        # The bug: before the fix, uppercase URLs slipped past the
+        # http/https exclusion in _is_fsspec_uri and were routed to the
+        # fsspec branch (bypassing SSRF defences).
+        assert _sources_mod._is_fsspec_uri(url) is False
+        assert _writer_is_fsspec_uri(url) is False
+
+    @pytest.mark.parametrize("uri", [
+        "s3://bucket/x.tif",
+        "S3://bucket/x.tif",  # fsspec accepts case-insensitive schemes too
+        "gs://bucket/x.tif",
+        "memory://buffer",
+    ])
+    def test_real_fsspec_uris_still_match(self, uri):
+        assert _sources_mod._is_fsspec_uri(uri) is True
+
+
+# ---------------------------------------------------------------------------
+# _open_source dispatch -- uppercase URL must hit _HTTPSource
+# (and therefore SSRF validation), not _CloudSource
+# ---------------------------------------------------------------------------
+
+
+class TestOpenSourceUppercaseDispatch_2323:
+    def test_uppercase_loopback_rejected(self, monkeypatch):
+        # 127.0.0.1 is in the private/loopback range; the SSRF validator
+        # in _HTTPSource must reject it. If the URL were dispatched to
+        # fsspec instead, this would either silently succeed against a
+        # localhost service or raise a different error.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_2323('127.0.0.1'))
+        with pytest.raises(UnsafeURLError):
+            _sources_mod._open_source(f'HTTP://127.0.0.1/x_{_ISSUE_2323}.tif')
+
+    def test_uppercase_https_loopback_rejected(self, monkeypatch):
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_2323('127.0.0.1'))
+        with pytest.raises(UnsafeURLError):
+            _sources_mod._open_source(
+                f'HTTPS://localhost/x_{_ISSUE_2323}.tif')
+
+    def test_uppercase_metadata_ip_rejected(self, monkeypatch):
+        # 169.254.169.254 is the cloud-metadata service IP that SSRF
+        # attacks typically target. The validator treats link-local as
+        # private and must reject it whether the scheme is upper or
+        # lower case.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_2323('169.254.169.254'))
+        with pytest.raises(UnsafeURLError):
+            _sources_mod._open_source(
+                f'HTTP://metadata.example/x_{_ISSUE_2323}.tif')
+
+    def test_uppercase_public_routes_to_http_source(self, monkeypatch):
+        # A public IP should construct _HTTPSource successfully (rather
+        # than silently going to fsspec). We don't make a real request:
+        # the pinned-DNS resolution is enough to prove the dispatch
+        # branch picked _HTTPSource.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo_2323('93.184.216.34'))
+        src = _sources_mod._open_source(
+            f'HTTP://example.com/x_{_ISSUE_2323}.tif')
+        try:
+            assert type(src).__name__ == '_HTTPSource'
+        finally:
+            src.close()
+
+
+# ---------------------------------------------------------------------------
+# read_to_array dispatcher -- uppercase URL must take the COG-HTTP path
+# (which validates via _HTTPSource), not the fsspec _CloudSource path
+# ---------------------------------------------------------------------------
+
+
+class TestReadToArrayUppercaseDispatch_2323:
+    def test_uppercase_url_takes_http_path(self, monkeypatch):
+        """``read_to_array`` must route uppercase URLs through the
+        ``_read_cog_http`` path so the SSRF allow-list runs.
+
+        We stub ``_read_cog_http`` to capture the dispatch decision
+        without making any network calls.
+        """
+        captured = {}
+
+        def _fake_read_cog_http(source, **kwargs):
+            captured['source'] = source
+            captured['kwargs'] = kwargs
+            # Mimic the real return shape just enough to satisfy the
+            # caller: it isn't inspected here because we raise to short
+            # circuit any downstream logic.
+            raise RuntimeError("stubbed _read_cog_http reached")
+
+        monkeypatch.setattr(
+            _reader_mod, '_read_cog_http', _fake_read_cog_http)
+
+        with pytest.raises(RuntimeError, match="stubbed _read_cog_http"):
+            _reader_mod.read_to_array(
+                f'HTTP://example.com/x_{_ISSUE_2323}.tif')
+        assert captured.get('source') == (
+            f'HTTP://example.com/x_{_ISSUE_2323}.tif'
+        )
+
+    def test_lowercase_url_still_takes_http_path(self, monkeypatch):
+        # Regression guard: don't break the existing lowercase path.
+        captured = {}
+
+        def _fake_read_cog_http(source, **kwargs):
+            captured['source'] = source
+            raise RuntimeError("stubbed _read_cog_http reached")
+
+        monkeypatch.setattr(
+            _reader_mod, '_read_cog_http', _fake_read_cog_http)
+
+        with pytest.raises(RuntimeError):
+            _reader_mod.read_to_array(
+                f'http://example.com/x_{_ISSUE_2323}.tif')
+        assert captured['source'] == (
+            f'http://example.com/x_{_ISSUE_2323}.tif'
+        )
+
+
+# ---------------------------------------------------------------------------
+# Dask backend dispatch -- uppercase URL must construct _HTTPSource
+# (not _CloudSource) inside ``_read_geotiff_dask``
+# ---------------------------------------------------------------------------
+
+
+class TestDaskBackendUppercaseDispatch_2323:
+    """The dask backend has its own ``is_http``/``is_fsspec`` split at
+    ``_backends/dask.py:197-199``. Confirm an uppercase URL lands on the
+    HTTP branch (which constructs ``_HTTPSource``) rather than the
+    fsspec branch (``_CloudSource``).
+    """
+
+    def _stub_dask_http_path(self, monkeypatch):
+        """Replace ``_HTTPSource``, ``_CloudSource``, and
+        ``_parse_cog_http_meta`` with tracking stubs that raise once the
+        dispatch decision is observable. Returns a dict the caller reads
+        to check which source class was instantiated.
+        """
+        from xrspatial.geotiff import _reader as _r
+
+        seen = {'http': 0, 'cloud': 0}
+
+        class _Sentinel(Exception):
+            pass
+
+        def _fake_http_source(url):
+            seen['http'] += 1
+            seen['url'] = url
+            raise _Sentinel("dispatched to _HTTPSource")
+
+        def _fake_cloud_source(url, **kw):
+            seen['cloud'] += 1
+            seen['url'] = url
+            raise _Sentinel("dispatched to _CloudSource")
+
+        monkeypatch.setattr(_r, '_HTTPSource', _fake_http_source)
+        monkeypatch.setattr(_r, '_CloudSource', _fake_cloud_source)
+        return seen, _Sentinel
+
+    def test_uppercase_url_constructs_http_source(self, monkeypatch):
+        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+
+        seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
+
+        url = f'HTTP://example.com/x_dask_{_ISSUE_2323}.tif'
+        with pytest.raises(_Sentinel, match="_HTTPSource"):
+            read_geotiff_dask(url)
+
+        assert seen['http'] == 1, (
+            "uppercase URL did not reach _HTTPSource; "
+            f"seen={seen!r}")
+        assert seen['cloud'] == 0, (
+            "uppercase URL leaked to _CloudSource (fsspec branch); "
+            f"seen={seen!r}")
+        assert seen['url'] == url
+
+    def test_lowercase_url_still_constructs_http_source(self, monkeypatch):
+        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+
+        seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
+
+        url = f'http://example.com/x_dask_{_ISSUE_2323}.tif'
+        with pytest.raises(_Sentinel, match="_HTTPSource"):
+            read_geotiff_dask(url)
+
+        assert seen['http'] == 1
+        assert seen['cloud'] == 0
+
+    def test_uppercase_s3_url_still_constructs_cloud_source(
+            self, monkeypatch):
+        # Counter-check: a real fsspec URI (uppercase scheme too) must
+        # still go to the cloud branch.
+        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+
+        seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
+
+        url = f'S3://bucket/x_dask_{_ISSUE_2323}.tif'
+        with pytest.raises(_Sentinel, match="_CloudSource"):
+            read_geotiff_dask(url)
+
+        assert seen['cloud'] == 1
+        assert seen['http'] == 0
+
+
+# ----------------------------------------------------------
+# Section: max_cloud_bytes_dispatcher
+# Source: test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py
+#
+# Dispatcher parameter coverage for ``open_geotiff(max_cloud_bytes=...)``.
+# The kwarg is only meaningful on the eager non-VRT read path; after the
+# #1974 dispatcher fix it raises ``ValueError`` when supplied alongside
+# ``gpu=True``, ``chunks=...``, or a ``.vrt`` source rather than silently
+# dropping the budget.
+# ----------------------------------------------------------
+def _build_local_tif_2026_05_15(tmp_path, name='src.tif'):
+    """Write a small valid GeoTIFF used as the dispatcher's source."""
+    arr = np.arange(8 * 8, dtype=np.float32).reshape(8, 8)
+    da = xr.DataArray(
+        arr,
+        dims=['y', 'x'],
+        coords={'y': np.arange(8.0, 0, -1), 'x': np.arange(8.0)},
+        attrs={
+            'crs': 4326,
+            'transform': (1.0, 0, 0.0, 0, -1.0, 8.0),
+        },
+    )
+    path = str(tmp_path / name)
+    to_geotiff(da, path)
+    return path
+
+
+def _build_vrt_2026_05_15(tmp_path):
+    """Build a 1-source VRT mosaic referencing a small local GeoTIFF."""
+    src = _build_local_tif_2026_05_15(tmp_path, name='vrt_src.tif')
+    vrt = str(tmp_path / 'mosaic.vrt')
+    write_vrt(vrt, [src])
+    return vrt, src
+
+
+# ---------------------------------------------------------------------
+# Positive pins: the kwarg is forwarded through the eager path.
+# ---------------------------------------------------------------------
+
+class TestEagerLocalPathAcceptsMaxCloudBytes_2026_05_15:
+    """Local-file eager reads accept ``max_cloud_bytes`` as a no-op.
+
+    The docstring on ``open_geotiff`` states the budget "Has no effect
+    on local file or file-like sources." A tight budget on a local
+    file still reads successfully.
+    """
+
+    def test_local_file_max_cloud_bytes_small_is_noop(self, tmp_path):
+        path = _build_local_tif_2026_05_15(tmp_path)
+        # 8 bytes is far below the file size; local files skip the budget.
+        out = open_geotiff(path, max_cloud_bytes=8)
+        assert out.shape == (8, 8)
+        assert out.dtype == np.float32
+
+    def test_local_file_max_cloud_bytes_none_is_noop(self, tmp_path):
+        path = _build_local_tif_2026_05_15(tmp_path)
+        out = open_geotiff(path, max_cloud_bytes=None)
+        assert out.shape == (8, 8)
+
+    def test_local_file_max_cloud_bytes_large_is_noop(self, tmp_path):
+        path = _build_local_tif_2026_05_15(tmp_path)
+        out = open_geotiff(path, max_cloud_bytes=10 ** 9)
+        assert out.shape == (8, 8)
+
+
+class TestEagerFileLikeAcceptsMaxCloudBytes_2026_05_15:
+    """File-like sources accept ``max_cloud_bytes`` (documented no-op)."""
+
+    def test_bytesio_max_cloud_bytes_small_is_noop(self, tmp_path):
+        path = _build_local_tif_2026_05_15(tmp_path)
+        with open(path, 'rb') as f:
+            buf = io.BytesIO(f.read())
+        out = open_geotiff(buf, max_cloud_bytes=8)
+        assert out.shape == (8, 8)
+
+
+# ---------------------------------------------------------------------
+# Rejection pins. After the #1974 dispatcher fix, supplying
+# ``max_cloud_bytes`` alongside ``gpu=True``, ``chunks=...``, or a
+# ``.vrt`` source raises ``ValueError`` rather than silently dropping
+# the kwarg. Mirrors the ``on_gpu_failure`` / ``missing_sources``
+# guards established by #1810.
+# ---------------------------------------------------------------------
+
+def test_dispatcher_gpu_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
+    """``gpu=True`` with ``max_cloud_bytes=...`` raises ValueError.
+
+    The kwarg is only consumed on the eager non-VRT path; the GPU
+    branch never references it, so silently dropping the budget would
+    leave callers without feedback. The dispatcher rejects up front
+    before the GPU stack is even probed -- no cupy/CUDA is required.
+    """
+    path = _build_local_tif_2026_05_15(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=8, gpu=True)
+
+
+def test_dispatcher_dask_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
+    """``chunks=N`` with ``max_cloud_bytes=...`` raises ValueError.
+
+    The kwarg is only consumed on the eager non-VRT path; the dask
+    branch (``read_geotiff_dask``) never references it.
+    """
+    path = _build_local_tif_2026_05_15(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=8, chunks=4)
+
+
+def test_dispatcher_vrt_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
+    """``.vrt`` source with ``max_cloud_bytes=...`` raises ValueError.
+
+    The kwarg is only consumed on the eager non-VRT path; ``read_vrt``
+    never references it.
+    """
+    vrt, _src = _build_vrt_2026_05_15(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(vrt, max_cloud_bytes=8)
+
+
+def test_dispatcher_dask_gpu_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
+    """``gpu=True + chunks=N`` rejects max_cloud_bytes.
+
+    The GPU rejection fires first (it is checked before chunks), so
+    cupy / CUDA need not be installed for this assertion.
+    """
+    path = _build_local_tif_2026_05_15(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=8, gpu=True, chunks=4)
+
+
+# ---------------------------------------------------------------------
+# Sentinel-default regression pins. The default value of
+# ``max_cloud_bytes`` must remain the module sentinel, otherwise the
+# guard above would fire on every call that omits the kwarg.
+# ---------------------------------------------------------------------
+
+@requires_gpu
+def test_default_kwarg_does_not_trigger_guard_on_gpu_path_2026_05_15(tmp_path):
+    """Omitting ``max_cloud_bytes`` does not raise on the GPU branch.
+
+    The dispatcher only rejects when the caller passed an explicit
+    value; the sentinel default must pass through.
+    """
+    path = _build_local_tif_2026_05_15(tmp_path)
+    # No max_cloud_bytes -- should reach the GPU reader, not raise.
+    out = open_geotiff(path, gpu=True)
+    assert out.shape == (8, 8)
+
+
+def test_default_kwarg_does_not_trigger_guard_on_dask_path_2026_05_15(tmp_path):
+    """Omitting ``max_cloud_bytes`` does not raise on the dask branch."""
+    path = _build_local_tif_2026_05_15(tmp_path)
+    out = open_geotiff(path, chunks=4)
+    assert out.shape == (8, 8)
+
+
+def test_default_kwarg_does_not_trigger_guard_on_vrt_path_2026_05_15(tmp_path):
+    """Omitting ``max_cloud_bytes`` does not raise on the VRT branch."""
+    vrt, _src = _build_vrt_2026_05_15(tmp_path)
+    out = open_geotiff(vrt)
+    assert out.shape == (8, 8)
+
+
+# ---------------------------------------------------------------------
+# Explicit-``None`` pins. ``max_cloud_bytes=None`` is the documented
+# "skip the check entirely" sentinel on the eager path (#1928). The
+# rejection guard is sentinel-based, so an explicit ``None`` is treated
+# as "caller supplied a value" and rejected on the non-eager branches
+# -- consistent with how ``on_gpu_failure`` and ``missing_sources``
+# treat explicit values. These tests pin that semantics.
+# ---------------------------------------------------------------------
+
+def test_explicit_none_max_cloud_bytes_rejected_on_gpu_path_2026_05_15(
+        tmp_path):
+    """``gpu=True, max_cloud_bytes=None`` raises ValueError.
+
+    ``None`` is the documented "disable the budget" value on the eager
+    path. On the GPU path the budget is not consumed at all, so an
+    explicit ``None`` still indicates the caller expected the kwarg to
+    have an effect -- reject it for the same reason an explicit byte
+    count is rejected.
+    """
+    path = _build_local_tif_2026_05_15(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=None, gpu=True)
+
+
+def test_explicit_none_max_cloud_bytes_rejected_on_dask_path_2026_05_15(
+        tmp_path):
+    """``chunks=N, max_cloud_bytes=None`` raises ValueError."""
+    path = _build_local_tif_2026_05_15(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=None, chunks=4)
+
+
+def test_explicit_none_max_cloud_bytes_rejected_on_vrt_path_2026_05_15(
+        tmp_path):
+    """``.vrt`` source + ``max_cloud_bytes=None`` raises ValueError."""
+    vrt, _src = _build_vrt_2026_05_15(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(vrt, max_cloud_bytes=None)
+
+
+# ----------------------------------------------------------
+# Section: max_cloud_bytes_annot
+# Source: test_open_geotiff_max_cloud_bytes_annot_2106.py
+#
+# Regression test for #2106: every kwarg on the public read/write entry
+# points carries a type annotation. The original gap was
+# ``open_geotiff(max_cloud_bytes=...)``; this pins it plus every other
+# public reader/writer kwarg.
+# ----------------------------------------------------------
+_PUBLIC_ENTRY_POINTS_2106 = (
+    open_geotiff,
+    read_geotiff_gpu,
+    read_geotiff_dask,
+    read_vrt,
+    to_geotiff,
+    write_geotiff_gpu,
+    write_vrt,
+)
+
+
+def test_open_geotiff_max_cloud_bytes_has_type_annotation_2106():
+    """Pin the #2106 fix: the kwarg the bug named carries ``int | None``."""
+    sig = inspect.signature(open_geotiff)
+    param = sig.parameters["max_cloud_bytes"]
+    assert param.annotation is not inspect.Parameter.empty, (
+        "open_geotiff(max_cloud_bytes=...) is missing a type annotation; "
+        "the docstring declares ``int or None`` so the surface should match."
+    )
+    # ``xrspatial.geotiff.__init__`` uses ``from __future__ import
+    # annotations``, so ``param.annotation`` comes back as the source
+    # string. Pin the exact PEP 604 form rather than ``"int" in s and
+    # "None" in s`` -- the looser check would also pass on something
+    # like ``Mapping[int, None]``.
+    annotation_repr = str(param.annotation)
+    assert annotation_repr == "int | None", (
+        f"open_geotiff(max_cloud_bytes=...) annotation should be exactly "
+        f"``int | None`` to match the docstring; got {annotation_repr!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "fn", _PUBLIC_ENTRY_POINTS_2106, ids=lambda f: f.__name__)
+def test_public_entry_point_kwargs_have_type_annotations_2106(fn):
+    """Every kwarg on the public read/write surface carries an annotation.
+
+    Catches future regressions of the same class as #2106: a kwarg added
+    to one entry point without an annotation while the rest of the
+    signature has them.
+    """
+    sig = inspect.signature(fn)
+    missing = [
+        name
+        for name, param in sig.parameters.items()
+        if param.annotation is inspect.Parameter.empty
+    ]
+    assert missing == [], (
+        f"{fn.__name__} has kwargs without type annotations: {missing}. "
+        f"Add ``annotation`` to each so inspect.signature, IDE "
+        f"autocomplete, Sphinx, and mypy --strict all see the declared "
+        f"type. The docstring already declares the type for the kwargs "
+        f"in question (#2106 raised this for max_cloud_bytes)."
+    )

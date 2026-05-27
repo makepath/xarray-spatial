@@ -40,7 +40,7 @@ What you can expect:
   ``xrspatial/geotiff/tests/test_golden_corpus_gpu_1930.py`` and
   ``xrspatial/geotiff/tests/test_golden_corpus_dask_gpu_1930.py``.
 * Integer and float nodata sentinels survive the GPU round-trip; see
-  ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``.
+  ``xrspatial/geotiff/tests/gpu/test_reader.py``.
 * On GPU failure the reader emits
   :class:`xrspatial.geotiff.GeoTIFFFallbackWarning` and falls back to
   CPU unless ``on_gpu_failure='strict'`` or
@@ -152,13 +152,13 @@ this section is the brief.
   and is preserved on the next write. ``attrs['nodata']`` carries
   the sentinel as a Python ``int``. Out-of-range sentinels for the
   band dtype are rejected at write
-  (``xrspatial/geotiff/tests/test_nodata_out_of_range_1581.py``).
+  (``xrspatial/geotiff/tests/write/test_nodata.py``).
 * Float nodata. The on-disk sentinel is recorded on
   ``attrs['nodata']`` and surfaces as NaN in pixel data only when the
   read promotes via ``mask_nodata=True`` (the default for float
   outputs). With ``mask_nodata=False`` the raw float sentinel passes
   through, so downstream callers can branch on the exact value;
-  ``xrspatial/geotiff/tests/test_mask_nodata_kwarg_2052.py`` pins this
+  ``xrspatial/geotiff/tests/write/test_nodata.py`` pins this
   split.
 * NaN nodata. A file that declares ``nodata=NaN`` is read with NaN in
   both ``attrs['nodata']`` and pixel data (NaN propagates either way).
@@ -166,7 +166,7 @@ this section is the brief.
   signal: ``True`` when the read produced NaN-masked output distinct
   from the on-disk sentinel, ``False`` when pixel data carries the
   raw sentinel. The signal is part of the canonical attrs contract;
-  ``xrspatial/geotiff/tests/test_masked_nodata_attr_2092.py`` pins
+  ``xrspatial/geotiff/tests/read/test_nodata.py`` pins
   the canonical form and
   ``xrspatial/geotiff/tests/vrt/test_metadata.py``
   covers the VRT mosaic case.
@@ -176,8 +176,7 @@ this section is the brief.
   behaviour; see ``xrspatial/geotiff/tests/vrt/test_metadata.py``.
 
 The lifecycle is locked end-to-end by
-``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py`` and
-``xrspatial/geotiff/tests/test_nodata_lifecycle_parity_2211.py``.
+``xrspatial/geotiff/tests/read/test_nodata.py``.
 
 Reading
 =======
@@ -279,9 +278,9 @@ turn the process into a port scanner. The knobs are:
   (env). Per-call total byte budget for a remote read. The kwarg wins
   over the env var; the env var wins over the built-in default. Pass
   ``max_cloud_bytes=None`` to disable the cap on a single call. Locked
-  by ``xrspatial/geotiff/tests/test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py``,
-  ``xrspatial/geotiff/tests/test_open_geotiff_max_cloud_bytes_annot_2106.py``,
-  and ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``.
+  by ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+  (max_cloud_bytes_dispatcher and max_cloud_bytes_annot sections, plus
+  the http_read_all_bounded section).
 * ``XRSPATIAL_COG_MAX_TILE_BYTES``. Per-tile / per-strip compressed
   byte cap (default 256 MiB). Locked by
   ``xrspatial/geotiff/tests/read/test_tiling.py``,
@@ -296,9 +295,8 @@ turn the process into a port scanner. The knobs are:
 * ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS``. Set to ``1`` (or
   ``true`` / ``yes``) to disable the private-host reject. Off by
   default; locked by
-  ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
-  ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``,
-  and ``xrspatial/geotiff/tests/test_uppercase_scheme_ssrf_2323.py``.
+  ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+  (ssrf_hardening, dns_rebinding, and uppercase_scheme_ssrf sections).
 * ``XRSPATIAL_VRT_ALLOWED_ROOTS``. Colon-separated list of additional
   directory roots that a VRT is allowed to reference. The default
   containment rule (sources must live under the VRT's directory) is
@@ -308,8 +306,8 @@ turn the process into a port scanner. The knobs are:
   section.
 
 The same byte budget applies to sidecar fetches, not just the parent
-file
-(``xrspatial/geotiff/tests/test_sidecar_max_cloud_bytes_2121.py``).
+file (``xrspatial/geotiff/tests/integration/test_sidecar.py``,
+sidecar_max_cloud_bytes section).
 
 Strict mode (``XRSPATIAL_GEOTIFF_STRICT``)
 ==========================================
@@ -558,8 +556,8 @@ regression test that locks the behaviour.
        see also "Degenerate-axis writes" above.
    * - HTTP read against a private / loopback / link-local host
        without ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1``
-     - ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
-       ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+       (ssrf_hardening and dns_rebinding sections)
    * - Unsupported feature flags more broadly (codec, layout, and
        writer combos that ``SUPPORTED_FEATURES`` does not promise)
      - ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``

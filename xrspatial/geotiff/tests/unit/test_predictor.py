@@ -30,10 +30,9 @@ Coverage is grouped by behaviour:
   predictor=2 on smooth float data (opt-in via env var).
 
 GPU predictor variants are intentionally out of scope here -- the
-dedicated GPU predictor files
-(``test_predictor2_big_endian_gpu_1517.py``,
-``test_predictor3_int_dtype_gpu_1933.py``) are folded into the GPU
-cluster #2438. GPU regressions that lived alongside CPU tests in the
+dedicated GPU predictor coverage lives in
+``xrspatial/geotiff/tests/gpu/test_codec.py`` (folded under epic
+#2438). GPU regressions that lived alongside CPU tests in the
 old files (predictor=2 int8 tiled/stripped, predictor=3 BE GPU,
 predictor=2/3 multi-sample GPU parity) move with this consolidation so
 the CPU and GPU coverage stay co-located by behaviour rather than

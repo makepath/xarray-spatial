@@ -349,8 +349,8 @@ HTTP / fsspec reads
      - URLs resolving to loopback, link-local, or RFC1918 ranges raise
        :class:`xrspatial.geotiff.UnsafeURLError` unless
        ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set.
-     - ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
-       ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``,
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+       (ssrf_hardening and dns_rebinding sections),
        ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
        (HTTP SSRF presence gate)
      - `#2344`_
@@ -365,8 +365,8 @@ HTTP / fsspec reads
      - stable
      - ``open_geotiff(max_cloud_bytes=...)`` forwards to every read backend
        (no silent drop).
-     - ``xrspatial/geotiff/tests/test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py``,
-       ``xrspatial/geotiff/tests/test_open_geotiff_max_cloud_bytes_annot_2106.py``
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+       (max_cloud_bytes_dispatcher and max_cloud_bytes_annot sections)
      - `#2344`_
 
 Nodata lifecycle
@@ -386,8 +386,8 @@ Nodata lifecycle
      - The sentinel survives read and write across every backend; integer
        sentinels are preserved bit-exact, float sentinels surface as NaN
        only when ``mask_nodata=True``.
-     - ``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py``,
-       ``xrspatial/geotiff/tests/test_nodata_lifecycle_parity_2211.py``
+     - ``xrspatial/geotiff/tests/read/test_nodata.py``,
+       ``xrspatial/geotiff/tests/write/test_nodata.py``
      - `#2341`_
    * - ``attrs['masked_nodata']`` lifecycle signal
      - stable
@@ -580,8 +580,8 @@ Sidecar and overview interactions
      - advanced
      - External ``.tif.ovr`` sidecars produce the same georef status and
        CRS attrs as inline-overview sources.
-     - ``xrspatial/geotiff/tests/test_sidecar_ovr_2112.py``,
-       ``xrspatial/geotiff/tests/test_sidecar_own_geokeys_2315.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (sidecar_ovr and sidecar_own_geokeys sections)
      - `#2286`_
    * - Overview metadata survival (internal COG and ``.ovr`` sidecar)
      - stable
@@ -598,19 +598,22 @@ Sidecar and overview interactions
      - stable
      - Sidecar ``.ovr`` files fetched over HTTP honour the sidecar's own
        header byte order, not the parent file's.
-     - ``xrspatial/geotiff/tests/test_remote_sidecar_byte_order_2314.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (remote_sidecar_byte_order section)
      - `#2344`_
    * - Remote sidecar chunked read
      - advanced
      - Chunked dask reads can resolve remote sidecars without
        materializing the full file.
-     - ``xrspatial/geotiff/tests/test_remote_sidecar_chunked_2239.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (remote_sidecar_chunked section)
      - `#2344`_
    * - Sidecar ``max_cloud_bytes``
      - stable
      - The cloud byte budget applies to sidecar fetches, not just the
        parent file.
-     - ``xrspatial/geotiff/tests/test_sidecar_max_cloud_bytes_2121.py``
+     - ``xrspatial/geotiff/tests/integration/test_sidecar.py``
+       (sidecar_max_cloud_bytes section)
      - `#2344`_
 
 GPU paths (experimental)
@@ -658,7 +661,7 @@ GPU paths (experimental)
      - experimental
      - Integer and float nodata sentinels survive the GPU read / write
        round-trip.
-     - ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``,
+     - ``xrspatial/geotiff/tests/gpu/test_reader.py``,
        ``xrspatial/geotiff/tests/read/test_nodata.py``
      - `#2341`_
 
@@ -680,7 +683,7 @@ Internal-only surfaces (not promised)
        ``allow_internal_only_jpeg=True``; not covered by
        ``allow_experimental_codecs``.
      - ``xrspatial/geotiff/tests/unit/test_photometric.py``,
-       ``xrspatial/geotiff/tests/test_gpu_jpeg_interop_reject_issue_D_1845.py``
+       ``xrspatial/geotiff/tests/gpu/test_codec.py``
      - `#2340`_
 
 Cross-cutting CI gates
