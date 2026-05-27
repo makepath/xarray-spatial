@@ -1,4 +1,4 @@
-"""Smoke tests for the nodata-sentinel golden-corpus fixtures (#1930, Phase 2.6).
+"""Smoke tests for the nodata-sentinel golden-corpus fixtures.
 
 Three fixtures exercise the three nodata conventions the manifest schema
 recognises:
@@ -16,12 +16,11 @@ For each fixture we assert:
    an xrspatial backend would emit. This proves the oracle's NaN-aware
    nodata comparison handles each convention end-to-end.
 
-These tests do not touch any read backend -- backend wiring is deferred
-to Phase 3 per the plan on #1930. The xrspatial-shaped DataArray here is
-synthesised directly from the rasterio read so the oracle has something
-to compare against.
+These tests do not touch any read backend. The xrspatial-shaped DataArray
+here is synthesised directly from the rasterio read so the oracle has
+something to compare against.
 
-TODO(#1988): When the codebase grows a "declared nodata vs masked-data
+TODO: When the codebase grows a "declared nodata vs masked-data
 state" split, switch the candidate construction here to drive both sides
 explicitly. Today the candidate's ``attrs['nodata']`` mirrors whatever
 the rasterio source reports, which is the same shape the existing
@@ -84,9 +83,9 @@ def _candidate_from_source(src) -> xr.DataArray:
 # ---------------------------------------------------------------------------
 
 # Tight budget chosen from the largest fixture today (1402 bytes for the
-# float32 NaN file). The plan caps fixtures at 4 KB; tightening to 2 KB
-# here catches silent bloat (accidental overviews, predictor changes)
-# before it drifts toward the documented limit.
+# float32 NaN file). Corpus fixtures are capped at 4 KB; tightening to
+# 2 KB here catches silent bloat (accidental overviews, predictor
+# changes) before it drifts toward that limit.
 _FIXTURE_SIZE_BUDGET = 2048
 
 
@@ -182,7 +181,7 @@ def test_oracle_accepts_miniswhite_fixture() -> None:
 
     The white-as-min file carries no nodata tag, so the oracle's nodata
     branch compares ``None`` on both sides. The photometric flag itself
-    is not part of the canonical-attrs contract yet (#1984), and is read
+    is not part of the canonical-attrs contract yet, and is read
     by callers from the rasterio source directly.
     """
     with rasterio.open(FIXTURE_MINISWHITE) as src:

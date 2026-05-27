@@ -23,7 +23,7 @@ from ._header import (IFD, TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPL
 # distinguish them from user-authored int64 step-1 grids that match
 # the same shape. Lives here (alongside the other geotiff tag
 # constants) so both ``_coords`` and ``_attrs`` can import it
-# without a cycle. See issue #2120.
+# without a cycle.
 _NO_GEOREF_KEY = '_xrspatial_no_georef'
 
 # ImageDescription tag (270). Captured for round-trip but not managed
@@ -41,7 +41,7 @@ TAG_IMAGE_DESCRIPTION = 270
 # on its own for level > 0 IFDs, so leaking the source value to extra_tags
 # would mis-mark a primary IFD as an overview after a read overview ->
 # write round-trip. SubIFDs holds absolute byte offsets into the source
-# file, which become garbage in the rewritten output. See issue #1657.
+# file, which become garbage in the rewritten output.
 _MANAGED_TAGS = frozenset({
     TAG_NEW_SUBFILE_TYPE,
     TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
@@ -144,7 +144,7 @@ class GeoInfo:
     raster_type: int = RASTER_PIXEL_IS_AREA
     # int when GDAL_NODATA is a plain integer literal (so 64-bit sentinels
     # round-trip exactly), float for NaN / Inf / scientific notation /
-    # fractional values, None when the tag is absent.  See issue #1847.
+    # fractional values, None when the tag is absent.
     nodata: int | float | None = None
     colormap: list | None = None  # list of (R, G, B, A) float tuples, or None
     x_resolution: float | None = None
@@ -198,7 +198,7 @@ def _parse_gdal_metadata(xml_str: str) -> dict:
     try:
         # GDALMetadata XML rides inside TIFF tag 42112; a crafted file
         # can carry a billion-laughs payload there, so refuse DOCTYPEs
-        # before parsing. See issue #1579.
+        # before parsing.
         root = safe_fromstring(xml_str)
         for item in root.findall('Item'):
             name = item.get('name', '')
@@ -227,7 +227,7 @@ def _build_gdal_metadata_xml(meta: dict) -> str:
     ``xml.sax.saxutils.escape`` / ``quoteattr`` so a key or value
     containing XML special characters (``& < > " '``) cannot break
     the document or inject extra elements. Sample indices are emitted
-    from an ``int(...)`` cast and need no escaping. See issue #1614.
+    from an ``int(...)`` cast and need no escaping.
     """
     from xml.sax.saxutils import escape as _xml_escape
     from xml.sax.saxutils import quoteattr as _xml_quoteattr
@@ -261,7 +261,7 @@ def _epsg_to_wkt(epsg: int) -> str | None:
     Returns None if pyproj is not installed or the code is unknown.
 
     Under ``XRSPATIAL_GEOTIFF_STRICT=1`` the underlying exception is
-    re-raised instead of being swallowed. See issue #1662.
+    re-raised instead of being swallowed.
     """
     try:
         from pyproj import CRS
@@ -336,17 +336,16 @@ def _synthesize_user_defined_wkt(
     ``GeogCitationGeoKey`` as a free-form name, with the ellipsoid
     exposed via separate GeoKeys (``GeogSemiMajorAxisGeoKey``,
     ``GeogSemiMinorAxisGeoKey``, ``GeogInvFlatteningGeoKey``).
-    Rasterio reads such files and reports a GEOGCS CRS; pre-#1930
+    Rasterio reads such files and reports a GEOGCS CRS; earlier
     xrspatial dropped the projection silently because nothing stamped
-    a canonical ``attrs['crs_wkt']``. See issue #1930 (Phase 3
-    ``crs_citation_only`` parity gap).
+    a canonical ``attrs['crs_wkt']``.
 
     Returns a WKT string when pyproj is installed and the GeoKeys
     expose enough of the ellipsoid to feed ``pyproj.CRS.from_dict``,
     otherwise ``None``. The synthesized CRS is name-stripped (PROJ
     drops the GEOGCS name on ``to_dict()`` anyway). The underlying
     ``GeoInfo.geog_citation`` field is consumed elsewhere in the
-    reader, but contract v2 (issue #2016) stopped surfacing it on
+    reader, but the current contract no longer surfaces it on
     ``DataArray.attrs``; this helper exists to close the canonical-CRS
     parity gap, not to round-trip the citation field.
 
@@ -521,7 +520,7 @@ def _validate_tiepoint_consistency(tiepoint: tuple,
     extra tuple is predicted by the inferred affine within a tolerance
     scaled to the pixel size; mismatches raise ``NotImplementedError``
     with a clear pointer at the GCP case so users know why their file
-    is being rejected (issue #2117).
+    is being rejected.
 
     Parameters
     ----------
@@ -625,18 +624,15 @@ def _extract_transform(ifd: IFD,
         ``Affine`` ordering: ``(pixel_width, b, origin_x, d,
         pixel_height, origin_y)``); read it directly when the rotated
         mapping is needed. Default ``False`` -- existing behaviour,
-        raise ``RotatedTransformError`` (issue #2267; previously
-        ``NotImplementedError``).
+        raise ``RotatedTransformError``.
 
         This contract is read-only. ``rotated_affine`` is not currently
-        emitted by the writer. As of issue #2216 the writer refuses
-        such inputs with a ``ValueError`` naming the attr unless the
-        caller passes ``drop_rotation=True`` to accept the loss
-        explicitly; the silent identity-affine round-trip the previous
-        wording warned about is no longer reachable. If round-trip
-        preservation matters, the writer needs a separate
+        emitted by the writer; the writer refuses such inputs with a
+        ``ValueError`` naming the attr unless the caller passes
+        ``drop_rotation=True`` to accept the loss explicitly. If
+        round-trip preservation matters, the writer needs a separate
         ``ModelTransformationTag`` emit path that consumes
-        ``rotated_affine`` (see issue #2115 follow-up).
+        ``rotated_affine``.
 
     Returns
     -------
@@ -657,7 +653,7 @@ def _extract_transform(ifd: IFD,
     #
     # GeoTransform only carries the axis-aligned case.  For rotated, sheared,
     # or z-coupled transforms we raise ``RotatedTransformError`` unless the
-    # caller opts out via ``allow_rotated`` (issues #2115, #2267). The opt-out
+    # caller opts out via ``allow_rotated``. The opt-out
     # drops the georef so downstream coord generation uses pixel indices and
     # any spatial op that runs on the array sees no geo assumption to violate.
     # ``RotatedTransformError`` is the same typed error the VRT path raises
@@ -723,8 +719,8 @@ def _extract_transform(ifd: IFD,
             # agree, common case) or to encode a GCP warp where the
             # tuples describe a non-affine mapping. Silently picking the
             # first tuple turns the GCP case into wrong coordinates
-            # downstream (issue #2117). Validate that every tuple is
-            # consistent with the inferred affine; fail closed otherwise.
+            # downstream. Validate that every tuple is consistent with
+            # the inferred affine; fail closed otherwise.
             tp_i = tiepoint[0] if len(tiepoint) > 0 else 0.0
             tp_j = tiepoint[1] if len(tiepoint) > 1 else 0.0
             tp_x = tiepoint[3] if len(tiepoint) > 3 else 0.0
@@ -775,7 +771,7 @@ def _extract_transform(ifd: IFD,
         # the unit fallback. ``scale_source`` tells the helper to blame
         # the missing scale tag rather than the GCP-warp case in the
         # error message, since a multi-tiepoint file without
-        # ModelPixelScale is almost certainly malformed (issue #2117).
+        # ModelPixelScale is almost certainly malformed.
         _validate_tiepoint_consistency(
             tiepoint, origin_x, origin_y, 1.0, 1.0,
             scale_source="unit fallback",
@@ -800,9 +796,8 @@ def _parse_nodata_str(text: str | None) -> int | float | None:
     notation / fractional values, and ``None`` when the string is not a
     valid number.
 
-    Mirrors :func:`xrspatial.geotiff._vrt._parse_band_nodata` (issue
-    #1833) which addressed the same problem on the VRT XML path. See
-    issue #1847.
+    Mirrors :func:`xrspatial.geotiff._vrt._parse_band_nodata` which
+    addressed the same problem on the VRT XML path.
     """
     if text is None:
         return None
@@ -841,15 +836,13 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     allow_rotated : bool, optional
         Forwarded to :func:`_extract_transform`. When True, a rotated
         ``ModelTransformationTag`` is read as an ungeoreferenced pixel
-        grid instead of raising ``RotatedTransformError`` (issue #2115,
-        #2267).
+        grid instead of raising ``RotatedTransformError``.
     allow_invalid_nodata : bool, optional
         When False (default), reject integer-dtype sources whose
         ``GDAL_NODATA`` tag is non-finite (NaN / Inf) or fractional
         with :class:`InvalidIntegerNodataError`. When True, restore the
-        pre-rejection silent no-op behaviour. See issue #2441 (the
-        #1774 follow-up) and the release contract document for the full
-        rationale.
+        pre-rejection silent no-op behaviour. See the release contract
+        document for the full rationale.
 
     Returns
     -------
@@ -968,15 +961,14 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     # survives as a literal value rather than being masked to NaN.
     # Float parsing covers everything else: NaN / Inf / scientific
     # notation / fractional values.  Mirrors
-    # :func:`xrspatial.geotiff._vrt._parse_band_nodata` (issue #1833)
+    # :func:`xrspatial.geotiff._vrt._parse_band_nodata`
     # which fixed the same class of bug on the VRT XML path.
-    # See issue #1847.
     nodata = None
     nodata_str = ifd.nodata_str
     if nodata_str is not None:
         nodata = _parse_nodata_str(nodata_str)
-        # Reject non-finite / fractional GDAL_NODATA on integer sources
-        # (#1774 follow-up, #2441). Default behaviour raises
+        # Reject non-finite / fractional GDAL_NODATA on integer sources.
+        # Default behaviour raises
         # :class:`InvalidIntegerNodataError`; ``allow_invalid_nodata=True``
         # restores the legacy silent no-op for callers whose files
         # legitimately carry such sentinels. Derive the source dtype
@@ -1062,15 +1054,14 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         # round-trip it. The citation itself stays in crs_name for callers
         # that expect that key. Without this branch a read -> write cycle
         # silently drops the projection on user-defined CRS files because
-        # to_geotiff only consults attrs['crs'] / attrs['crs_wkt']. See
-        # issue #1632.
+        # to_geotiff only consults attrs['crs'] / attrs['crs_wkt'].
         crs_wkt = crs_name
     else:
         # Citation-only user-defined geographic CRS: no EPSG, no WKT
         # in the citation, but enough ellipsoid / units GeoKeys to
-        # synthesize a canonical WKT (issue #1930 Phase 3). Without
-        # this branch ``attrs['crs_wkt']`` stays None and the
-        # golden-corpus oracle reports a CRS parity gap.
+        # synthesize a canonical WKT. Without this branch
+        # ``attrs['crs_wkt']`` stays None and the golden-corpus oracle
+        # reports a CRS parity gap.
         synth = _synthesize_user_defined_wkt(
             model_type=(
                 int(model_type)
@@ -1125,8 +1116,7 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
 # Tag IDs that carry georeferencing payload (offsets into either the
 # IFD entry's inline value or the file's byte stream). When a sidecar
 # IFD declares any of these, the georef extractor must parse against
-# the sidecar's bytes / byte order, not the base file's. See issue
-# #2315.
+# the sidecar's bytes / byte order, not the base file's.
 _GEOREF_PAYLOAD_TAGS = frozenset({
     33550,  # TAG_MODEL_PIXEL_SCALE
     33922,  # TAG_MODEL_TIEPOINT
@@ -1145,7 +1135,7 @@ def _ifd_has_georef_payload(ifd: IFD) -> bool:
     and when they do the sidecar's georef tags must be parsed against
     the sidecar's byte buffer rather than the base file's. This helper
     is the conservative gate that flips the data / byte_order swap in
-    :func:`extract_geo_info_with_overview_inheritance`. See issue #2315.
+    :func:`extract_geo_info_with_overview_inheritance`.
     """
     entries = ifd.entries
     return any(tag in entries for tag in _GEOREF_PAYLOAD_TAGS)
@@ -1194,9 +1184,9 @@ def extract_geo_info_with_overview_inheritance(
     overview's own (possibly empty) info is returned -- callers get the
     same fallback behaviour they used to.
 
-    Inheriting nodata + the rich-tag set fixes #1739 (silent numerical
-    corruption when reading COG overview pixels because attrs['nodata']
-    was lost). The georef inheritance is the original fix from #1640.
+    Inheriting nodata + the rich-tag set prevents silent numerical
+    corruption when reading COG overview pixels (where attrs['nodata']
+    would otherwise be lost).
 
     Parameters
     ----------
@@ -1221,7 +1211,7 @@ def extract_geo_info_with_overview_inheritance(
         default is ``None``, which preserves the legacy behavior
         (read sidecar IFDs against the base file's bytes -- correct
         only when the sidecar has no geokeys, which is the GDAL
-        convention). See issue #2315.
+        convention).
 
     Returns
     -------
@@ -1231,7 +1221,6 @@ def extract_geo_info_with_overview_inheritance(
     # georef payload, resolve tag offsets against the sidecar's bytes /
     # byte order. The sidecar-without-geokeys convention (GDAL) keeps
     # ``(data, byte_order)`` from the base file and inherits below.
-    # See issue #2315.
     sel_data, sel_byte_order = data, byte_order
     if sidecar_origin is not None:
         origin = sidecar_origin.get(id(ifd))
@@ -1268,8 +1257,7 @@ def extract_geo_info_with_overview_inheritance(
     # normally lives in the base file (``data`` / ``byte_order`` are
     # correct), but a file with no full-resolution IFD of its own could
     # land here with ``base_ifd`` resolved out of a sidecar. The lookup
-    # is the same shape as the one applied to ``ifd`` above. See
-    # review nit on #2315.
+    # is the same shape as the one applied to ``ifd`` above.
     base_data, base_byte_order = data, byte_order
     if sidecar_origin is not None:
         base_origin = sidecar_origin.get(id(base_ifd))
@@ -1286,7 +1274,7 @@ def extract_geo_info_with_overview_inheritance(
     # an overview read silently drops attrs['nodata'] (so the sentinel
     # pixels the writer baked into the overview survive as ordinary data
     # and poison downstream stats) and attrs['gdal_metadata'] (user
-    # metadata loss). See issue #1739.
+    # metadata loss).
     #
     # Each field is inherited only when the overview lacks its own
     # value, so an overview IFD that does re-declare any of these keeps
@@ -1366,7 +1354,7 @@ def extract_geo_info_with_overview_inheritance(
     #   at the centroid of the ``scale_x`` x ``scale_y`` level-0 pixels
     #   it covers, which is
     #   ``origin + (scale - 1) * 0.5 * pixel_size_lvl0`` along each
-    #   axis (issue #1642).
+    #   axis.
     if effective_raster_type == RASTER_PIXEL_IS_POINT:
         origin_shift_x = (scale_x - 1.0) * 0.5 * base_t.pixel_width
         origin_shift_y = (scale_y - 1.0) * 0.5 * base_t.pixel_height
@@ -1429,15 +1417,15 @@ def _model_type_from_wkt(wkt: str) -> int:
 #
 # The set is kept intentionally small. The original range heuristic
 # (4000-4999) was wrong in both directions: it missed geographic codes
-# outside the window (NAD83(2011) = 6318, GDA2020 = 7844, etc., the bug
-# this PR fixes), AND it also covered projected codes inside the window
-# (4087 / 4088 World Equidistant Cylindrical, 4499 CGCS2000 / GK
-# zone 21, etc.). Expanding the set without pyproj's authoritative
-# answer just trades one mis-tag for another.
+# outside the window (NAD83(2011) = 6318, GDA2020 = 7844, etc.), AND it
+# also covered projected codes inside the window (4087 / 4088 World
+# Equidistant Cylindrical, 4499 CGCS2000 / GK zone 21, etc.). Expanding
+# the set without pyproj's authoritative answer just trades one mis-tag
+# for another.
 #
 # Currently: the few datums callers regularly write without pyproj.
 # Extend only after verifying ``CRS.from_epsg(code).is_geographic`` is
-# True. See issue #2277.
+# True.
 _KNOWN_GEOGRAPHIC_EPSG_FALLBACK = frozenset({
     4326,   # WGS 84
     4269,   # NAD83
@@ -1463,8 +1451,6 @@ def _model_type_from_epsg(crs_epsg: int) -> int:
     :class:`UnknownCRSModelTypeError` rather than guessing -- the legacy
     range heuristic at this site silently mis-tagged geographic codes
     like 6318 (NAD83(2011)) and 7844 (GDA2020) as projected.
-
-    See issue #2277.
     """
     try:
         from pyproj import CRS
@@ -1488,7 +1474,7 @@ def _model_type_from_epsg(crs_epsg: int) -> int:
                 "known EPSG or installing a current pyproj database will "
                 "resolve this."
             ) from e
-        # Defense in depth (#2418): the stable-EPSG path can only emit
+        # Defense in depth: the stable-EPSG path can only emit
         # GeographicTypeGeoKey or ProjectedCSTypeGeoKey, both of which
         # are specified to hold a 2D horizontal CRS. A compound CRS
         # (horizontal + vertical) reports ``is_geographic`` or
@@ -1559,7 +1545,7 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
     CRS. Prefer ``crs_epsg`` when the projection is registered with an
     EPSG code -- the EPSG path emits the standard GeoKeys every reader
     understands. A ``UserWarning`` is emitted on the WKT-only path so
-    the limitation is visible at call time. See issue #1768.
+    the limitation is visible at call time.
 
     Returns
     -------
@@ -1610,11 +1596,11 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
     if crs_epsg is not None:
         # Resolve the GeoTIFF ModelType via pyproj when available; raise
         # on unknown codes when pyproj can't classify them rather than
-        # guessing. See issue #2277 -- the historic EPSG-range heuristic
-        # silently mis-tagged geographic codes outside 4000-4999 (e.g.
-        # 6318, 7844, 9057) as projected AND projected codes inside
-        # 4000-4999 (e.g. 4087, 4088, 4499) as geographic, corrupting
-        # the CRS at write time.
+        # guessing. The historic EPSG-range heuristic silently
+        # mis-tagged geographic codes outside 4000-4999 (e.g. 6318,
+        # 7844, 9057) as projected AND projected codes inside 4000-4999
+        # (e.g. 4087, 4088, 4499) as geographic, corrupting the CRS at
+        # write time.
         model_type = _model_type_from_epsg(crs_epsg)
         key_entries.append((GEOKEY_MODEL_TYPE, 0, 1, model_type))
         num_keys += 1
@@ -1646,7 +1632,6 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         # caller so the interop limitation is visible at write time.
         # Python's default warning filter dedupes per call site, so the
         # warning fires once per location rather than once per pixel.
-        # See issue #1768.
         import warnings as _warnings
         _warnings.warn(
             "Writing a user-defined CRS via WKT only "
@@ -1694,7 +1679,7 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         # writer entry point (``to_geotiff``) already rejects these, but
         # ``build_geo_tags`` is called from a few other code paths and
         # ``str(True) == 'True'`` produces a non-numeric GDAL_NODATA tag
-        # that readers silently drop. See issue #1911.
+        # that readers silently drop.
         import numpy as _np
         if isinstance(nodata, (bool, _np.bool_)):
             raise TypeError(

@@ -1,25 +1,24 @@
-"""Cross-backend parity for the read finalization pipeline (epic #2162).
+"""Cross-backend parity for the read finalization pipeline.
 
 Sibling to ``parity/test_backend_matrix.py``. Where ``test_backend_matrix``
 asserts pixel/coord/attrs parity over a fixture matrix, this file pins the
-shared read-finalization plumbing that wave 2 of #2162 centralised into
-helpers in ``_attrs`` / ``_validation``. Three sections, each a former
-top-level file:
+shared read-finalization plumbing centralised into helpers in ``_attrs`` /
+``_validation``. Three sections:
 
-Section 1 -- Dispatcher kwarg parity (#2175)
+Section 1 -- Dispatcher kwarg parity
     ``_validate_dispatch_kwargs`` runs at the top of every public read
     entry point so ``overview_level``, ``max_cloud_bytes``,
     ``missing_sources``, ``band_nodata``, ``on_gpu_failure``, and the
     file-like-source guard reject identically across ``open_geotiff`` /
     ``read_geotiff_dask`` / ``read_geotiff_gpu`` / ``read_vrt``.
 
-Section 2 -- Eager finalization parity (#2179)
+Section 2 -- Eager finalization parity
     ``_finalize_eager_read`` stamps the same nodata / georef attrs on the
     eager numpy and eager GPU paths. The matrix walks float / int /
     out-of-range sentinels, ``mask_nodata=False``, no-sentinel,
     explicit ``dtype=``, windowed reads, MinIsWhite, and multi-band.
 
-Section 3 -- Lazy finalization parity (#2178)
+Section 3 -- Lazy finalization parity
     ``_finalize_lazy_read_attrs`` stamps the same attrs on the two dask
     backends (``read_geotiff_dask`` and the dask branch of
     ``read_geotiff_gpu``). Covers the five georef states plus the
@@ -44,11 +43,11 @@ from xrspatial.geotiff._attrs import (GEOREF_STATUS_CRS_ONLY, GEOREF_STATUS_FULL
 from xrspatial.geotiff._coords import _NO_GEOREF_KEY
 
 from .._helpers.markers import requires_gpu
-# Rotated-TIFF writer relocated to ``read/test_crs.py`` by epic #2390 PR 3.
+# Rotated-TIFF writer lives alongside the CRS read tests.
 from ..read.test_crs import _write_rotated_tiff
 
 # ===========================================================================
-# Section 1 -- Dispatcher kwarg parity (#2175)
+# Section 1 -- Dispatcher kwarg parity
 # ===========================================================================
 #
 # ``open_geotiff`` used to validate dispatcher kwargs inline; the three
@@ -506,7 +505,7 @@ def test_overview_level_message_parity(tmp_path):
 
 
 # ===========================================================================
-# Section 2 -- Eager finalization parity (#2179)
+# Section 2 -- Eager finalization parity
 # ===========================================================================
 #
 # ``_finalize_eager_read`` stamps nodata / georef attrs on the eager numpy
@@ -534,8 +533,7 @@ def _read_both(path, **kwargs):
     return cpu, gpu
 
 
-# Subset of attrs ``_finalize_eager_read`` is responsible for; mirrors
-# the issue body's parity claim list.
+# Subset of attrs ``_finalize_eager_read`` is responsible for.
 _LIFECYCLE_ATTRS = (
     'nodata',
     'nodata_pixels_present',
@@ -575,8 +573,7 @@ def test_float_sentinel_match_and_mask(tmp_path):
     assert gpu.attrs.get('masked_nodata') is True
 
     # Lifecycle attrs proper. ``nodata_pixels_present`` must surface
-    # as a real bool on both backends (the issue body calls this out
-    # explicitly).
+    # as a real bool on both backends.
     _assert_lifecycle_attrs_match(cpu, gpu)
     assert isinstance(cpu.attrs.get('nodata_pixels_present'), bool)
     assert isinstance(gpu.attrs.get('nodata_pixels_present'), bool)
@@ -715,12 +712,11 @@ def test_dtype_kwarg_records_post_mask_cast(tmp_path):
 def test_windowed_read_presence_matches_window_contents(tmp_path):
     """Windowed read: nodata_pixels_present reflects the window, not the IFD.
 
-    Pins the slice-before-mask behaviour the GPU local-eager path
-    picked up in #2179. Pre-PR the GPU path masked the full IFD then
-    sliced, so ``nodata_pixels_present`` reported sentinel presence
-    anywhere in the file; post-PR it reports presence within the
-    requested window. The CPU path has always behaved this way, so
-    the two now agree.
+    Pins the slice-before-mask behaviour on the GPU local-eager path.
+    Masking the full IFD then slicing would report sentinel presence
+    anywhere in the file; the contract is to report presence within the
+    requested window. The CPU path has always behaved this way, so the
+    two agree.
     """
     # 4x4 raster with the sentinel only in the bottom half so the two
     # windows below land on opposite sides of the presence bool.
@@ -799,8 +795,7 @@ def test_multiband_stripped_parity(tmp_path):
     path = str(tmp_path / 'eager_parity_2179_multiband.tif')
 
     # Stripped (tiled=False) routes the GPU read through the
-    # CPU-fallback eager site, which is one of the three sites this
-    # PR migrated.
+    # CPU-fallback eager site.
     to_geotiff(da_in, path, tiled=False)
 
     cpu, gpu = _read_both(path)
@@ -816,7 +811,7 @@ def test_multiband_stripped_parity(tmp_path):
 
 
 # ===========================================================================
-# Section 3 -- Lazy finalization parity (#2178)
+# Section 3 -- Lazy finalization parity
 # ===========================================================================
 #
 # ``_finalize_lazy_read_attrs`` centralises the validate-then-populate-then-
@@ -852,7 +847,7 @@ def _gpu_dask_available() -> bool:
     return gpu_available()
 
 
-# --- Fixture builders, mirroring the per-state fixtures in test_georef_status_2136 ---
+# --- Fixture builders, one per georef-status state ---
 
 
 def _make_full_tiff(path):
@@ -908,8 +903,7 @@ def _make_none_tiff(path):
 def _make_rotated_tiff(path):
     """Rotated ``ModelTransformationTag`` (opened with ``allow_rotated``)
     -> ``rotated_dropped``. The data is uint16 because the rotated-TIFF
-    writer in the #2115 test only emits integer pixels; that's fine for
-    a metadata pin."""
+    writer only emits integer pixels; that's fine for a metadata pin."""
     arr = np.arange(16, dtype='<u2').reshape(4, 4)
     _write_rotated_tiff(path, arr)
 
@@ -1009,8 +1003,8 @@ def test_attrs_dict_parity(tmp_path, fixture, expected_status,
 
 @pytest.mark.parametrize("opener", _BACKENDS)
 def test_nodata_pixels_present_absent_on_lazy(tmp_path, opener):
-    """Lazy contract from #2135: ``nodata_pixels_present`` stays unset
-    on both dask backends."""
+    """Lazy contract: ``nodata_pixels_present`` stays unset on both
+    dask backends."""
     path = str(tmp_path / "tmp_2178_pixels_absent.tif")
     _make_float_with_nodata_tiff(path)
     out = opener(path)
@@ -1087,8 +1081,7 @@ def test_dtype_cast_absent_parity_cross_backend(tmp_path):
 def test_dtype_cast_records_integer_target(tmp_path, opener):
     """Caller-supplied integer ``dtype=`` kwarg: ``nodata_dtype_cast``
     records the integer dtype on both backends. Pins the
-    ``dtype.kind != 'f'`` branch of the call-site fixup (review
-    follow-up for #2178)."""
+    ``dtype.kind != 'f'`` branch of the call-site fixup."""
     path = str(tmp_path / "tmp_2178_int_cast.tif")
     _make_int_with_nodata_tiff(path)
     # ``mask_nodata=False`` keeps the integer dtype; the caller cast

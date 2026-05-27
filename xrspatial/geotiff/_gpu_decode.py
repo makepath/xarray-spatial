@@ -14,7 +14,7 @@ from numba import cuda
 
 
 def _warn_or_raise_gpu_fallback(stage: str, exc: BaseException) -> bool:
-    """Report a GPU helper falling back to None (issue #1662).
+    """Report a GPU helper falling back to None.
 
     Returns ``True`` when ``XRSPATIAL_GEOTIFF_STRICT=1`` is set; callers
     should then re-raise the live exception with a bare ``raise`` so the
@@ -94,7 +94,7 @@ def _xp_byteswap(arr):
     looked equivalent but produced an array whose dtype was tagged with
     the opposite byte order (e.g. ``>u2`` instead of ``<u2``). Downstream
     consumers -- numba ``@ngjit`` kernels in particular -- reject
-    non-native dtypes (#1507 was exactly this), and the CPU reader's
+    non-native dtypes, and the CPU reader's
     contract is that decoded arrays come back native, so we mirror that
     here by working in a uint8 view, reversing along the byte axis, and
     re-viewing as the original dtype.
@@ -133,8 +133,8 @@ def _swap_byte_lanes(buf, bps: int) -> None:
     """Reverse bytes within each *bps*-sized sample of a flat uint8 buffer.
 
     Used by the GPU predictor=2 path to convert the raw decompressed byte
-    stream from file byte order to native byte order before differencing
-    (#1517). The per-dtype predictor kernels view ``buf`` as native
+    stream from file byte order to native byte order before differencing.
+    The per-dtype predictor kernels view ``buf`` as native
     unsigned integers, so on big-endian files the prefix-sum would run on
     a byte-swapped integer interpretation and produce wrong values.
 
@@ -946,15 +946,13 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
     submits every ``pread`` call before waiting on any of the resulting
     futures, and returns per-tile views into the shared buffer. This
     mirrors the single-allocation pattern the sibling nvCOMP paths use
-    (``_try_nvcomp_from_device_bufs`` at L1602, ``_try_nvcomp_batch_decompress``
-    at L1108) and lets kvikio's internal worker pool overlap the file
+    (``_try_nvcomp_from_device_bufs``, ``_try_nvcomp_batch_decompress``)
+    and lets kvikio's internal worker pool overlap the file
     reads instead of serialising one ``IOFuture.get()`` per tile.
 
     A ``_check_gpu_memory`` guard runs once against ``sum(tile_byte_counts)``
     before the allocation so the GDS path fails fast under malformed
     ``TileByteCounts`` rather than OOM'ing the device one tile at a time.
-
-    See issue #1688.
 
     Returns list of cupy arrays (one per tile, views into a shared
     buffer) on GPU, or None on partial read / setup failure.
@@ -1025,7 +1023,7 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
         # GDS not available, version mismatch, or CUDA error.
         # Reset CUDA error state if possible (the inner pass stays broad
         # because a failed synchronize() during error recovery has no
-        # better recovery path; see issue #1662).
+        # better recovery path).
         try:
             import cupy
             cupy.cuda.Device().synchronize()
@@ -1115,7 +1113,7 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
             manager = nvcomp.DeflateManager(chunk_size=tile_bytes)
             # Batch host->device upload: concatenate all tiles into one host
             # buffer, then a single cupy.asarray transfer. Mirrors the
-            # LZW/Deflate concat-then-upload pattern below (~L1714-1722).
+            # LZW/Deflate concat-then-upload pattern below.
             comp_sizes = [len(t) for t in raw_tiles]
             comp_offsets = np.zeros(len(raw_tiles), dtype=np.int64)
             for i in range(1, len(raw_tiles)):
@@ -1184,17 +1182,17 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
         # Batch host->device upload: concatenate all compressed tiles into a
         # single host buffer, do one cupy.asarray transfer, then derive
         # per-tile device pointers as base_ptr + offsets. Mirrors the
-        # LZW/Deflate concat-then-upload pattern below (~L1714-1722).
+        # LZW/Deflate concat-then-upload pattern below.
         # Per-tile cupy.asarray was measured at 256x64KB -> 6.07 ms vs 3.65 ms
         # for the batched form (~1.66x speedup, scales worse with more tiles).
         #
         # ``np.cumsum(..., out=offsets[1:])`` vectorises the prefix-sum
         # so the per-tile offsets land in one C-level pass instead of a
         # Python ``for`` loop. Aligns with the sibling
-        # ``_batched_d2h_to_bytes`` helper (~L924) and the
-        # ``_nvcomp_batch_compress`` post-decompress prefix sum (~L2572).
+        # ``_batched_d2h_to_bytes`` helper and the
+        # ``_nvcomp_batch_compress`` post-decompress prefix sum.
         # Microbench (1024 tiles): 84us Python loop -> 21us cumsum
-        # (~3.9x). See issue #1950.
+        # (~3.9x).
         # Allocate as uint64 up front: nvcomp consumes uint64 pointer/size
         # arrays, so skipping the intermediate int64 -> uint64 .astype copies
         # at the cupy.asarray sites avoids a redundant host-side allocation.
@@ -1335,8 +1333,7 @@ _NVJPEG_STATUS_SUCCESS = 0
 # constant. nvJPEG then dereferenced ``channel[1]``/``channel[2]`` of the
 # output struct, both of which the wrappers below set to NULL for
 # interleaved layouts, producing an out-of-bounds GPU write inside
-# ``ycbcr_to_format_kernel_roi`` and a sticky ``cudaErrorIllegalAddress``
-# (issue #1549).
+# ``ycbcr_to_format_kernel_roi`` and a sticky ``cudaErrorIllegalAddress``.
 _NVJPEG_OUTPUT_UNCHANGED = 0  # source colorspace (channel[0] only for Y)
 _NVJPEG_OUTPUT_Y = 2         # luma plane only
 _NVJPEG_OUTPUT_RGB = 3       # planar RGB
@@ -1563,8 +1560,7 @@ def _nvjpeg_batch_encode(d_tile_bufs, tile_width, tile_height, samples,
                         # only depends on the default stream the calls
                         # were issued on. Mirrors the decode-side fix at
                         # ``_try_nvjpeg_batch_decode`` (default stream sync)
-                        # and the nvJPEG2000 decode fix in #2107.
-                        # Issue #2212.
+                        # and the nvJPEG2000 decode fix.
                         cupy.cuda.Stream.null.synchronize()
 
                         # Get compressed size
@@ -1687,9 +1683,8 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
     kept two copies of the decompressed data alive at once (the per-tile
     buffers and the concatenated result) and ran a serial concat that the
     rest of the GPU paths avoid. The other nvCOMP code paths in this module
-    (LZW at ~L1847, deflate at ~L1878, host-buffer at ~L1114) already use
-    the single-buffer pattern; this brings the GDS path in line with them.
-    See issue #1659.
+    (LZW, deflate, host-buffer) already use the single-buffer pattern; this
+    brings the GDS path in line with them.
     """
     import ctypes
 
@@ -1855,7 +1850,7 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
         # buffer as native unsigned dtype, so on big-endian files we must
         # swap the bytes to native order BEFORE running the kernel,
         # otherwise the prefix-sum runs on the wrong integer
-        # interpretation (#1517). The pre-swap then makes the post-
+        # interpretation. The pre-swap then makes the post-
         # assembly byteswap unnecessary; see the BE branch below.
         if big_endian and dtype.itemsize > 1:
             _swap_byte_lanes(d_decomp, dtype.itemsize)
@@ -1896,7 +1891,7 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
     else:
         out = d_output.view(dtype=cupy.dtype(dtype)).reshape(
             image_height, image_width)
-    # Predictor=2 BE swapped d_decomp to native order pre-decode (#1517),
+    # Predictor=2 BE swapped d_decomp to native order pre-decode,
     # so the assembled output is already native; skip the final swap.
     needs_post_swap = (
         big_endian and dtype.itemsize > 1 and predictor != 2
@@ -2152,8 +2147,7 @@ def gpu_decode_tiles(
         # samples; per-dtype kernels handle the natural-width modular wrap.
         # On big-endian multi-byte files the kernels would otherwise view
         # the buffer with the wrong integer interpretation, so swap to
-        # native order first and skip the post-assembly swap below
-        # (#1517).
+        # native order first and skip the post-assembly swap below.
         if byte_order == '>' and dtype.itemsize > 1:
             _swap_byte_lanes(d_decomp, dtype.itemsize)
         total_rows = n_tiles * tile_height
@@ -2199,7 +2193,7 @@ def gpu_decode_tiles(
     # interprets it as native (always little-endian on supported GPUs),
     # so big-endian samples that are wider than a byte must be swapped
     # back to native before the values mean anything. Predictor=2 BE
-    # already swapped the buffer pre-decode (#1517), so skip the swap
+    # already swapped the buffer pre-decode, so skip the swap
     # in that case.
     if byte_order == '>' and dtype.itemsize > 1 and predictor != 2:
         # cupy.ndarray has no .byteswap(), so use the dtype-view helper.
@@ -2208,7 +2202,7 @@ def gpu_decode_tiles(
     # LERC valid-mask fill: GDAL writes LERC TIFFs with masked pixels
     # zero-filled in the data array, so without restoring nodata here a
     # masked pixel reads back as a real zero measurement.  Mirrors the
-    # CPU path in ``_decode_strip_or_tile`` (PR #1529).
+    # CPU path in ``_decode_strip_or_tile``.
     if _lerc_masks is not None and masked_fill is not None:
         out = _apply_lerc_mask_fill(
             out, _lerc_masks, tile_width, tile_height,
@@ -2478,14 +2472,14 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
         # Allocate one contiguous device buffer of size ``n_tiles *
         # max_cs`` and view ``n_tiles`` per-tile slabs into it. This
         # mirrors the single-buffer pattern already used by the decode
-        # path in ``_try_nvcomp_from_device_bufs`` (#1659) and the GDS
-        # fallback in ``gpu_decode_tiles_from_file`` (#1552). Per-tile
+        # path in ``_try_nvcomp_from_device_bufs`` and the GDS
+        # fallback in ``gpu_decode_tiles_from_file``. Per-tile
         # ``cupy.empty`` calls each round-trip through the memory pool
         # and add up to milliseconds of overhead for thousand-tile
         # writes; one allocation + pointer arithmetic skips that
         # bookkeeping. The slab views are non-overlapping so nvCOMP
         # can write into them in parallel via the per-tile pointer
-        # array. See issue #1712.
+        # array.
         _check_gpu_memory(n_tiles * max_cs,
                           what="nvCOMP compressed-output buffer")
         d_comp_pool = cupy.empty(n_tiles * max_cs, dtype=cupy.uint8)
@@ -2563,8 +2557,8 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
         #
         # Previously this loop ran one ``.get()`` per tile, which
         # serialised on the default stream and burned a per-DMA setup
-        # cost (issue #1712, same pattern as the decode-side fix in
-        # #1552). Instead, hoist the variable-size slabs into a
+        # cost (same pattern as the decode-side fix). Instead, hoist the
+        # variable-size slabs into a
         # contiguous buffer with one ``cupy.concatenate``, do one D2H
         # transfer, then slice the host buffer per tile.
         comp_sizes = d_comp_sizes.get().astype(int)
@@ -2733,11 +2727,11 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
         # per-component pointers as views into it. Sibling helpers in this
         # module already adopted the same pattern:
         #
-        #   * ``_try_nvcomp_from_device_bufs`` (#1659) -- per-tile alloc +
+        #   * ``_try_nvcomp_from_device_bufs`` -- per-tile alloc +
         #     trailing concat -> single contiguous buffer + pointer offsets.
-        #   * ``_try_kvikio_read_tiles`` (#1688) -- per-tile cupy.empty +
+        #   * ``_try_kvikio_read_tiles`` -- per-tile cupy.empty +
         #     serial pread -> single buffer + batched submit.
-        #   * ``_nvcomp_batch_compress`` (#1712) -- per-tile cupy.empty +
+        #   * ``_nvcomp_batch_compress`` -- per-tile cupy.empty +
         #     per-tile cupy.get -> single pool + concat + single get.
         #
         # The previous nvJPEG2000 path allocated ``samples`` fresh
@@ -2746,10 +2740,10 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
         # ``cupy.cuda.Device().synchronize()`` once per tile, which forces
         # default-stream serialisation that defeats nvJPEG2000's internal
         # pipelining. One pool allocation + one trailing sync removes both
-        # costs without changing the output layout. See issue #2107.
+        # costs without changing the output layout.
         # Defer the cupy import until past the dtype guard so a CPU-only
         # host that exercises the early-return branches (lib missing or
-        # unsupported dtype) does not need cupy installed (#2110 CI fix).
+        # unsupported dtype) does not need cupy installed.
         import cupy
 
         pitch = tile_width * dtype.itemsize
@@ -2826,7 +2820,7 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
         # default stream, so we have to wait once before returning so the
         # decoded bytes are visible to the caller's downstream kernels.
         # Replacing the per-tile sync with this single sync is the main
-        # performance win on multi-tile reads (#2107).
+        # performance win on multi-tile reads.
         cupy.cuda.Device().synchronize()
 
         # Cleanup
@@ -2954,8 +2948,7 @@ def _nvjpeg2k_batch_encode(d_tile_bufs, tile_width, tile_height,
             )
             # Sync only the default stream so concurrent work on other
             # CUDA streams is not serialised behind every per-tile encode.
-            # See issue #2212; matches the decoder-side fix from #2107
-            # and the nvJPEG encoder fix above.
+            # Matches the decoder-side fix and the nvJPEG encoder fix above.
             cupy.cuda.Stream.null.synchronize()
             if s != 0:
                 lib.nvjpeg2kEncodeParamsDestroy(enc_params)
@@ -3151,7 +3144,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
     overview pyramid covers the full source extent for odd-sized rasters.
     Odd inputs are NaN-padded along the trailing edge (float-promoted for
     integer dtypes) so the 2x2 block reshape works and the residual block
-    is reduced via the same nan-aware aggregations (issue #2105). Mirrors
+    is reduced via the same nan-aware aggregations. Mirrors
     the CPU helper :func:`xrspatial.geotiff._overview._block_reduce_2d` so
     the two backends produce identical overviews.
 
@@ -3170,7 +3163,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
 
     if method == 'nearest':
         # Top-left pixel of each 2x2 block; direct stride keeps the
-        # trailing row/col for odd-sized inputs (issue #2105). The
+        # trailing row/col for odd-sized inputs. The
         # ``.copy()`` materialises a contiguous device buffer so
         # downstream nodata-mask rewrites don't touch ``arr2d``.
         return arr2d[::2, ::2].copy()
@@ -3186,7 +3179,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
     if method == 'cubic':
         # No native cupy cubic resampler that handles arbitrary zoom
         # factors with the same prefilter=False NaN-safety the CPU
-        # helper uses for issue #1623. Fall back to CPU so cubic on
+        # helper uses. Fall back to CPU so cubic on
         # the GPU writer path produces the same overview bytes as the
         # CPU writer and so the sentinel handling matches. The CPU
         # helper handles odd-sized inputs via edge-replicate padding.
@@ -3209,7 +3202,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
         else:
             blocks = arr2d.reshape(oh, 2, ow, 2)
         # Mask the sentinel back to NaN so cupy.nanmean and friends
-        # honour it as missing-data (issue #1613). Match the upstream
+        # honour it as missing-data. Match the upstream
         # NaN->sentinel rewrite gate so ``nodata=+/-inf`` is masked here.
         if nodata is not None and not np.isnan(nodata):
             try:
@@ -3233,8 +3226,7 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
         # value into surrounding valid cells and produce overview pixels
         # that aren't masked on the read side because they don't equal
         # the sentinel. Same root cause as the CPU bug fixed alongside
-        # this; the GPU writer needs byte parity with CPU (the contract
-        # from #1623).
+        # this; the GPU writer needs byte parity with CPU.
         if (nodata is not None
                 and np.isfinite(nodata)
                 and float(nodata).is_integer()):
@@ -3306,8 +3298,8 @@ def make_overview_gpu(arr, method='mean', nodata=None):
     nodata : scalar or None
         When supplied, cells equal to the sentinel are masked back to
         NaN before the reduction so the sentinel does not bias the
-        result. Applies to float dtypes (issue #1613, extended to
-        ``cubic`` in #1623) and to integer dtypes (covers the
+        result. Applies to float dtypes (including ``cubic``) and to
+        integer dtypes (covers the
         sentinel-poisoning case that mixed sentinel + valid pixels in
         the nan-aware reduction). Ignored for ``nearest`` (no reduction
         averaging occurs).

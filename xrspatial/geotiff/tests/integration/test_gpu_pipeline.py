@@ -1,8 +1,6 @@
 """Combined dask+cupy GPU pipeline integration tests.
 
-Consolidated from the issue-numbered files mapped in
-``CLUSTER_AUDIT_PR9.md``. The ``requires_gpu`` marker comes from
-``_helpers/markers.py`` per the epic's single-source-of-truth rule.
+The ``requires_gpu`` marker comes from ``_helpers/markers.py``.
 """
 from __future__ import annotations
 
@@ -15,7 +13,6 @@ pytestmark = requires_gpu
 
 # ----------------------------------------------------------
 # Section: dask_cupy_combined
-# Source: test_dask_cupy_combined.py
 # ----------------------------------------------------------
 def _assert_dask_cupy_dask_cupy_combined(da_arr, expected_chunks, expected_dtype):
     """Common shape/type checks for a dask-wrapped cupy DataArray.

@@ -4,19 +4,17 @@ Covers the dask-backed streaming write surface and the thread-pool
 machinery that backs it:
 
 - the parallel strip / tile writer and its byte-threshold gate, plus the
-  libdeflate backend fallback (#1800);
+  libdeflate backend fallback;
 - streaming round-trip correctness, geo-metadata preservation, edge
   cases, multiband layouts, BigTIFF / error handling, COG fallback, and
-  the ``streaming_buffer_bytes`` horizontal-segmentation budget
-  (#1084 / #1485);
+  the ``streaming_buffer_bytes`` horizontal-segmentation budget;
 - parallel per-tile compression inside the streaming path -- bit-exact
   round trip, observable multi-thread participation, and an opt-in
-  wall-clock tripwire (P4);
+  wall-clock tripwire;
 - ThreadPoolExecutor shutdown on mid-stream failure so a compress / file
-  -write error never leaks worker threads (#2276).
+  -write error never leaks worker threads.
 
-Section banners below mark the topical sub-areas. Tests-only restructure
-for cluster 9 of long-tail epic #2424 (Sub-PR B).
+Section banners below mark the topical sub-areas.
 """
 from __future__ import annotations
 
@@ -38,7 +36,7 @@ from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import _PARALLEL_MIN_BYTES, _write_stripped, _write_tiled, write
 
 # -------------------------------------------------------------------------
-# Section: parallel strip / tile writer (#1800)
+# Section: parallel strip / tile writer
 # -------------------------------------------------------------------------
 
 
@@ -250,7 +248,7 @@ def test_write_tiled_deflate_large_tile_round_trip(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Section: streaming write round-trip (#1084 / #1485)
+# Section: streaming write round-trip
 # -------------------------------------------------------------------------
 
 @pytest.fixture
@@ -722,12 +720,12 @@ def test_streaming_write_perf_sanity(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Section: tile-pool shutdown on mid-stream failure (#2276)
+# Section: tile-pool shutdown on mid-stream failure
 # -------------------------------------------------------------------------
 
 # Re-use the writer's own constant so the test does not silently drift
 # if the prefix ever changes on the writer side. ``_writer`` exposes
-# ``_TILE_POOL_THREAD_PREFIX`` for exactly this purpose (#2276).
+# ``_TILE_POOL_THREAD_PREFIX`` for exactly this purpose.
 _WRITER_POOL_PREFIX = writer_mod._TILE_POOL_THREAD_PREFIX
 
 

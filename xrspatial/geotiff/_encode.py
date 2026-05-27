@@ -1,9 +1,8 @@
 """Strip/tile encode orchestration for TIFF/COG writes.
 
-This module holds the transport-independent encode helpers extracted
-from :mod:`xrspatial.geotiff._writer` in PR-L of the GeoTIFF refactor
-epic (issue #2211, sub-issue #2260). The functions here take an already
-materialised numpy array plus codec / predictor / photometric kwargs
+This module holds the transport-independent encode helpers. The
+functions here take an already materialised numpy array plus codec /
+predictor / photometric kwargs
 and produce on-disk byte chunks (compressed strips, compressed tiles)
 or normalised tag values. Everything that orchestrates the top-level
 write flow (DataArray packaging, IFD assembly, fsspec destinations,
@@ -16,8 +15,8 @@ by re-importing the names defined here back at the call sites that the
 test suite and the ``_writers`` subpackage depend on. See the import
 block at the top of ``_writer.py``.
 
-This module is the write-side analog of :mod:`xrspatial.geotiff._decode`
-(PR-G). Both modules sit between the codec primitives in ``_compression``
+This module is the write-side analog of :mod:`xrspatial.geotiff._decode`.
+Both modules sit between the codec primitives in ``_compression``
 and the higher-level orchestration in ``_reader`` / ``_writer``.
 
 This module deliberately has *no* module-level import of
@@ -52,7 +51,7 @@ PHOTOMETRIC_RGB = 2
 # defaults to MinIsBlack so scientific multispectral rasters (e.g.
 # R,G,B,NIR) round-trip without being silently tagged as RGB+alpha.
 # ``'rgba'`` is a convenience for "RGB plus an unassociated-alpha extra
-# sample".  See issue #1769.
+# sample".
 _PHOTOMETRIC_NAME_MAP = {
     'auto': 'auto',
     'minisblack': PHOTOMETRIC_MINISBLACK,
@@ -86,8 +85,7 @@ def _invert_nodata_for_miniswhite(nodata, dtype: np.dtype):
     Returns ``nodata`` unchanged for signed integer pixels, NaN
     sentinels, and unsigned sentinels that are out-of-range or
     fractional or non-finite -- matching the reader exactly. ``+/-inf``
-    on a float sentinel is negated (the reader does the same). See
-    issue #1836.
+    on a float sentinel is negated (the reader does the same).
     """
     if nodata is None:
         return nodata
@@ -117,7 +115,6 @@ def _apply_photometric_miniswhite_invert(
     data via ``_reader._apply_photometric_miniswhite``. Without a
     matching writer-side inversion, ``to_geotiff(da, photometric=
     'miniswhite')`` silently corrupts pixel values on the round trip.
-    See issue #1836.
 
     Returns the pre-inverted array (a new array) so that the reader's
     inversion restores the original values. Multi-band data passes
@@ -125,7 +122,6 @@ def _apply_photometric_miniswhite_invert(
     ``NotImplementedError`` -- the previous passthrough produced files
     whose pixel values disagreed with the on-disk Photometric tag
     against every standards-compliant TIFF consumer (GDAL, libtiff).
-    See issue #2278.
     """
     if resolved_photometric != 0 or samples_per_pixel != 1:
         return arr
@@ -221,7 +217,7 @@ def _reject_disagreeing_photometric_override(
     pre-inversion runs. Only the MinIsWhite-crossing single-band case
     is rejected; multi-band rasters and non-crossing overrides (e.g.
     photometric='minisblack' with extra_tags=[(262, SHORT, 1, 1)])
-    pass through unchanged. Issues #2073 / #1769 / #1836.
+    pass through unchanged.
     """
     if extra_tags is None:
         return
@@ -552,7 +548,7 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
         # per tile anyway and never read the buffer. That left a dead
         # allocation roughly the size of the full uncompressed raster
         # alongside the actual tile list, doubling peak memory and
-        # turning OOM-marginal writes into OOM-failing ones (#1736).
+        # turning OOM-marginal writes into OOM-failing ones.
         tiles = []
         rel_offsets = []
         byte_counts = []

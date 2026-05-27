@@ -1,7 +1,7 @@
-"""Smoke test for the golden corpus manifest + generator (issue #1930).
+"""Smoke test for the golden corpus manifest + generator.
 
-This is Phase 1 PR 1 of the plan in #1930: the manifest schema and the
-deterministic generator. The test verifies that:
+Covers the manifest schema and the deterministic generator. The test
+verifies that:
 
 * the manifest parses,
 * every fixture entry has the required schema fields after defaults are
@@ -13,7 +13,7 @@ deterministic generator. The test verifies that:
   likely to hit (bad enum value, missing required field, conflicting
   CRS spec).
 
-No real fixture files are produced or asserted here; that is Phase 2.
+No real fixture files are produced or asserted here.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ import pathlib
 import pytest
 
 # pyyaml is needed to read manifest.yaml. It is not in the package's
-# install_requires (and not yet in the `tests` extra; see the README in
+# install_requires (and not in the `tests` extra; see the README in
 # the golden_corpus directory). importorskip keeps minimal test
-# environments green until the test extra is amended in Phase 2.
+# environments green.
 pytest.importorskip("yaml")
 
 generate = importlib.import_module(
@@ -158,7 +158,7 @@ def test_validator_rejects_bad_entries(mutate, match):
 
 
 def test_required_fields_constant_covers_dimensions():
-    """REQUIRED_FIELDS keeps the issue-1930 dimensions in lockstep with the schema.
+    """REQUIRED_FIELDS keeps the corpus dimensions in lockstep with the schema.
 
     If you add a new dimension to the schema, add the field name here so
     no fixture can be added that quietly omits it.

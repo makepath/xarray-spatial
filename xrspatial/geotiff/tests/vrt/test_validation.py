@@ -1,21 +1,19 @@
 """VRT validator + reader-error contract.
 
-Consolidates the validator-side VRT cluster:
+Covers the validator-side VRT surface:
 
-* ``test_vrt_validation_2321.py`` -- centralised
-  ``validate_parsed_vrt`` rule rejections.
-* ``test_vrt_capability_validator_2371.py`` -- nested/warped VRT,
-  ``UseMaskBand`` / per-source ``MaskBand``, internal-entry-point
-  resample-alg gate, and the ``validate_vrt_capability`` alias.
-* ``test_vrt_unsupported_2370.py`` -- end-to-end negative coverage
-  (warped, nested, mixed CRS, mixed dtype, mixed band count, mask,
-  resample alg) through both public entry points.
-* ``test_vrt_narrow_except_1670.py`` -- narrowed-``except`` contract
-  in ``read_vrt`` for source-read failures (warn-and-continue vs
-  propagate) under default and ``XRSPATIAL_GEOTIFF_STRICT=1`` modes.
-* ``test_vrt_path_containment_1671.py`` -- path-traversal rejection
-  in ``parse_vrt`` / ``_read_vrt_internal`` and the
-  ``XRSPATIAL_VRT_ALLOWED_ROOTS`` opt-in.
+* centralised ``validate_parsed_vrt`` rule rejections.
+* nested/warped VRT, ``UseMaskBand`` / per-source ``MaskBand``,
+  internal-entry-point resample-alg gate, and the
+  ``validate_vrt_capability`` alias.
+* end-to-end negative coverage (warped, nested, mixed CRS, mixed dtype,
+  mixed band count, mask, resample alg) through both public entry
+  points.
+* narrowed-``except`` contract in ``read_vrt`` for source-read failures
+  (warn-and-continue vs propagate) under default and
+  ``XRSPATIAL_GEOTIFF_STRICT=1`` modes.
+* path-traversal rejection in ``parse_vrt`` / ``_read_vrt_internal``
+  and the ``XRSPATIAL_VRT_ALLOWED_ROOTS`` opt-in.
 
 Conventions:
 
@@ -499,7 +497,7 @@ def test_nested_vrt_uppercase_extension_rejected(tmp_path):
 def test_nested_vrt_rejected_via_entry_points(tmp_path, reader):
     """All three public-ish entry points must surface the nested-VRT
     rejection identically: the validator is wired at both the package
-    backend wrapper and the internal ``_vrt.read_vrt`` since #2371."""
+    backend wrapper and the internal ``_vrt.read_vrt``."""
     src_path = _write_src_uint16(tmp_path)
     inner_path = _write_inner_vrt(tmp_path, src_path)
     outer_path = _write_vrt(tmp_path, _nested_outer_xml(inner_path))
@@ -770,7 +768,7 @@ def test_unsupported_resample_chunked_raises_at_build(tmp_path):
 
 def test_resample_alg_rejected_at_internal_read_vrt(tmp_path):
     """The internal ``_vrt.read_vrt`` is now routed through the
-    validator (since #2371). A direct call produces the typed
+    validator. A direct call produces the typed
     ``VRTUnsupportedError`` at graph build / eager setup rather than the
     old ``NotImplementedError`` at the placement site."""
     src_path = _write_src_uint16(tmp_path)
@@ -780,14 +778,13 @@ def test_resample_alg_rejected_at_internal_read_vrt(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# End-to-end negative coverage: cases that historically required PR-1's
-# centralised validator. After #2329 / #2371 the rejections fire, so the
-# xfail wrapper from the 2370 file is gone -- assertions are direct.
+# End-to-end negative coverage: the centralised validator fires these
+# rejections directly, so the assertions below are not wrapped in xfail.
 # ---------------------------------------------------------------------------
 
 
 def test_mixed_source_dtype_complex_rejected(tmp_path):
-    """``dataType="CFloat32"`` (complex) raises ``ValueError`` per #1783;
+    """``dataType="CFloat32"`` (complex) raises ``ValueError``;
     the message must name the rejected dtype AND mention 'complex' so
     the rejection is actionable."""
     src_path = _write_src_float32_geotiff(tmp_path)
@@ -884,7 +881,7 @@ def test_dataset_level_mask_band_rejected(tmp_path):
 
 def test_mixed_source_crs_rejected(tmp_path):
     """Two band sources with disagreeing CRS (EPSG:4326 vs EPSG:3857)
-    cannot mosaic correctly without reprojection. Closed by #2444: the
+    cannot mosaic correctly without reprojection. The
     validator opens each source TIFF and raises
     ``VRTUnsupportedError`` when the source CRS disagrees with the
     VRT-declared ``<SRS>``. The error message names the offending
@@ -1107,7 +1104,7 @@ def test_supported_simple_vrt_round_trips_via_open_geotiff(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Reader-error narrowing: ``read_vrt`` historically ``except Exception``-ed
-# every source read, swallowing real bugs. After #1670 the catch is
+# every source read, swallowing real bugs. The catch is now
 # narrowed to I/O / parse / codec-decode errors only.
 #
 # The matrix is parametrised over exception class x mode:
@@ -1598,23 +1595,18 @@ class TestPathContainmentAllowlist:
 
 
 # ===========================================================================
-# VRT-tail validation folds (cluster 13, #2437)
+# Validation tail cases
 # ===========================================================================
 #
-# Three originally-standalone validation files folded here:
-#
-# * SrcRect negative-size / negative-offset rejection (was
-#   ``test_geotiff_vrt_srcrect_validation_1784.py``).
+# * SrcRect negative-size / negative-offset rejection.
 # * ``open_geotiff('.vrt')`` rejecting kwargs it silently dropped:
-#   ``overview_level`` and ``on_gpu_failure`` (was
-#   ``test_open_geotiff_vrt_kwarg_drop_1685.py``).
+#   ``overview_level`` and ``on_gpu_failure``.
 # * ``to_geotiff(..., '.vrt')`` rejecting ``tiled=False`` and validating
-#   ``tile_size`` up front instead of crashing in the writer (was
-#   ``test_to_geotiff_vrt_tiled_validation_1862.py``).
+#   ``tile_size`` up front instead of crashing in the writer.
 
 
 # ---------------------------------------------------------------------------
-# SrcRect negative-size / negative-offset rejection (#1784)
+# SrcRect negative-size / negative-offset rejection
 # ---------------------------------------------------------------------------
 #
 # A malformed ``<SrcRect xSize="-100"/>`` (or negative offset) must surface
@@ -1743,7 +1735,7 @@ class TestSrcRectRejection:
 
 
 # ---------------------------------------------------------------------------
-# open_geotiff('.vrt') kwarg-drop rejection (#1685)
+# open_geotiff('.vrt') kwarg-drop rejection
 # ---------------------------------------------------------------------------
 #
 # ``open_geotiff`` documents ``overview_level`` and ``on_gpu_failure`` but
@@ -1844,7 +1836,7 @@ class TestOpenGeotiffVrtKwargRejection:
 
 
 # ---------------------------------------------------------------------------
-# to_geotiff('.vrt') tiled / tile_size validation (#1862)
+# to_geotiff('.vrt') tiled / tile_size validation
 # ---------------------------------------------------------------------------
 #
 # ``to_geotiff(..., '.vrt', tiled=False)`` used to warn then crash with
