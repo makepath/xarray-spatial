@@ -11,10 +11,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import xarray as xr
-import xrspatial
+
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask, to_geotiff
 from xrspatial.geotiff._writer import write
-
 
 # ----------------------------------------------------------
 # Section: dask_chunk_tile_misalignment
@@ -26,8 +25,9 @@ dask_array_dask_chunk_tile_misalignment = pytest.importorskip("dask.array")
 
 def _write_tiled_dask_chunk_tile_misalignment(path: str, arr: np.ndarray, tile: int = 16) -> None:
     """Write *arr* as a tiled TIFF with the requested tile size."""
-    tifffile_dask_chunk_tile_misalignment.imwrite(str(path), arr, tile=(tile, tile),
-                     photometric="minisblack", compression="deflate")
+    tifffile_dask_chunk_tile_misalignment.imwrite(
+        str(path), arr, tile=(tile, tile),
+        photometric="minisblack", compression="deflate")
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +49,7 @@ def test_chunk_smaller_than_tile(tmp_path, _arr_64x96_dask_chunk_tile_misalignme
     from xrspatial.geotiff import read_geotiff_dask
 
     path = tmp_path / "tiled_misalign_small.tif"
-    _write_tiled_dask_chunk_tile_misalignment(path, _arr_64x96_dask_chunk_tile_misalignment, tile=16)
+    _write_tiled_dask_chunk_tile_misalignment(path, _arr_64x96_dask_chunk_tile_misalignment, tile=16)  # noqa: E501
 
     da_arr = read_geotiff_dask(str(path), chunks=11)
     assert isinstance(da_arr.data, dask_array_dask_chunk_tile_misalignment.Array)
@@ -69,7 +69,7 @@ def test_chunk_larger_than_tile_nonmultiple(tmp_path, _arr_64x96_dask_chunk_tile
     from xrspatial.geotiff import read_geotiff_dask
 
     path = tmp_path / "tiled_misalign_large.tif"
-    _write_tiled_dask_chunk_tile_misalignment(path, _arr_64x96_dask_chunk_tile_misalignment, tile=16)
+    _write_tiled_dask_chunk_tile_misalignment(path, _arr_64x96_dask_chunk_tile_misalignment, tile=16)  # noqa: E501
 
     da_arr = read_geotiff_dask(str(path), chunks=23)
     assert isinstance(da_arr.data, dask_array_dask_chunk_tile_misalignment.Array)
@@ -111,6 +111,8 @@ def test_chunk_tuple_doubly_unaligned(tmp_path):
 # Section: dask_int_nodata_chunks
 # Source: test_dask_int_nodata_chunks_1597.py
 # ----------------------------------------------------------
+
+
 @pytest.fixture
 def uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks(tmp_path):
     """Write a uint16 8x8 TIFF whose nodata sentinel is in the
@@ -124,7 +126,7 @@ def uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks(tmp_path):
     return path, arr
 
 
-def test_eager_promotes_to_float64_and_masks(uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks):
+def test_eager_promotes_to_float64_and_masks(uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks):  # noqa: E501
     """Baseline: the eager path produces float64 with 4 NaNs."""
     path, _ = uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks
     eager = open_geotiff(path)
@@ -211,9 +213,10 @@ def test_dask_float_input_with_sentinel_in_one_chunk(tmp_path):
 # Section: dask_max_pixels_default_guard
 # Source: test_dask_max_pixels_default_guard_1838.py
 # ----------------------------------------------------------
+
+
 tifffile_dask_max_pixels_default_guard = pytest.importorskip("tifffile")
 
-from xrspatial.geotiff import read_geotiff_dask  # noqa: E402
 from xrspatial.geotiff._reader import MAX_PIXELS_DEFAULT  # noqa: E402
 
 
@@ -232,8 +235,9 @@ def _write_oversized_dask_max_pixels_default_guard(path, *, h: int, w: int) -> N
     # file is valid, then patch the IFD's width/length tags to advertise
     # an oversized image.
     arr = np.zeros((16, 16), dtype=np.uint8)
-    tifffile_dask_max_pixels_default_guard.imwrite(str(path), arr, tile=(16, 16),
-                     photometric="minisblack", compression="none")
+    tifffile_dask_max_pixels_default_guard.imwrite(
+        str(path), arr, tile=(16, 16),
+        photometric="minisblack", compression="none")
     # Rewrite the ImageWidth (256) and ImageLength (257) tags in the IFD.
     # tifffile writes a classic TIFF; the IFD starts at offset 8 for a
     # small file. Parsing the offset properly requires reading the
@@ -276,8 +280,9 @@ def test_small_region_unaffected(tmp_path):
     """The default cap must not interfere with normal small reads."""
     arr = np.arange(64, dtype=np.uint8).reshape(8, 8)
     path = tmp_path / "tmp_1838_small.tif"
-    tifffile_dask_max_pixels_default_guard.imwrite(str(path), arr, tile=(16, 16),
-                     photometric="minisblack", compression="none")
+    tifffile_dask_max_pixels_default_guard.imwrite(
+        str(path), arr, tile=(16, 16),
+        photometric="minisblack", compression="none")
     da = read_geotiff_dask(str(path), chunks=8)
     np.testing.assert_array_equal(da.compute().values, arr)
 
@@ -285,6 +290,8 @@ def test_small_region_unaffected(tmp_path):
 # Section: dask_no_op_astype
 # Source: test_dask_no_op_astype_1624.py
 # ----------------------------------------------------------
+
+
 @pytest.fixture
 def float32_no_nodata_tif_dask_no_op_astype(tmp_path):
     """Write a 16x16 float32 TIFF with no nodata sentinel."""
@@ -402,6 +409,8 @@ def test_caller_supplied_dtype_still_casts(float32_no_nodata_tif_dask_no_op_asty
 # Section: dask_overview_level
 # Source: test_dask_overview_level.py
 # ----------------------------------------------------------
+
+
 tifffile_dask_overview_level = pytest.importorskip("tifffile")
 dask_array_dask_overview_level = pytest.importorskip("dask.array")
 
@@ -494,12 +503,15 @@ def test_dask_overview_level_none_returns_full_res(tmp_path):
 # Section: dask_planar_multiband
 # Source: test_dask_planar_multiband.py
 # ----------------------------------------------------------
+
+
 tifffile_dask_planar_multiband = pytest.importorskip("tifffile")
 dask_array_dask_planar_multiband = pytest.importorskip("dask.array")
 
 
-def _write_planar_tiff_dask_planar_multiband(path: str, data: np.ndarray, *,
-                       planar: str, tiled: bool) -> None:
+def _write_planar_tiff_dask_planar_multiband(
+        path: str, data: np.ndarray, *,
+        planar: str, tiled: bool) -> None:
     """Write *data* shaped ``(bands, height, width)`` with chosen layout.
 
     tifffile expects ``(bands, h, w)`` for ``planarconfig='separate'`` and
@@ -590,6 +602,8 @@ def test_dask_planar_separate_chunks_tuple(tmp_path):
 # Section: dask_streaming_write_degenerate
 # Source: test_dask_streaming_write_degenerate_2026_05_15.py
 # ----------------------------------------------------------
+
+
 def _read_raw_pixels_dask_streaming_write_degenerate(path: str) -> np.ndarray:
     """Read the raw pixel array off disk without xrspatial's NaN-mask
     pass.
@@ -865,6 +879,8 @@ class TestStreamingWriteFloatPredictor_dask_streaming_write_degenerate:
 # Section: accessor_io
 # Source: test_accessor_io.py
 # ----------------------------------------------------------
+
+
 def _make_da_accessor_io(height=8, width=10, crs=4326, name='elevation'):
     """Build a georeferenced DataArray for testing."""
     arr = np.arange(height * width, dtype=np.float32).reshape(height, width)

@@ -16,6 +16,10 @@ Sections, in failure-mode order:
 2. ``parse_ifd`` entry-value bounds -- ``MAX_IFD_ENTRY_COUNT``,
    ``MAX_IFD_ENTRY_BYTES``, value-range past EOF, pixel-array
    exemptions.
+2b. ``parse_ifd`` duplicate-tag rejection (issue #2483) -- TIFF 6.0
+   forbids duplicate tag ids within one IFD; the parser must raise
+   ``DuplicateIFDTagError`` instead of silently letting the last
+   duplicate win.
 3. ``parse_all_ifds`` chain length cap (``MAX_IFDS``) -- classic and
    big-endian, boundary, legitimate-COG sanity (security S3).
 4. ``parse_all_ifds`` chain cycle detection -- A->B->A, self-cycle,
@@ -41,29 +45,28 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from xrspatial.geotiff import DuplicateIFDTagError
 from xrspatial.geotiff import _decode as _decode_mod
 from xrspatial.geotiff import _header
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._dtypes import DOUBLE, LONG, SHORT
-from xrspatial.geotiff._header import (
-    MAX_IFD_ENTRY_BYTES,
-    MAX_IFD_ENTRY_COUNT,
-    MAX_IFDS,
-    TAG_IMAGE_WIDTH,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_TILE_OFFSETS,
-    TIFFHeader,
-    parse_all_ifds,
-    parse_header,
-    parse_ifd,
-)
+from xrspatial.geotiff._header import (MAX_IFD_ENTRY_BYTES, MAX_IFD_ENTRY_COUNT, MAX_IFDS,
+                                       TAG_BITS_PER_SAMPLE, TAG_GEO_KEY_DIRECTORY, TAG_IMAGE_LENGTH,
+                                       TAG_IMAGE_WIDTH, TAG_TILE_BYTE_COUNTS, TAG_TILE_OFFSETS,
+                                       TIFFHeader, parse_all_ifds, parse_header, parse_ifd)
 from xrspatial.geotiff._reader import read_to_array
 
-from .._helpers.markers import requires_loopback
+from .._helpers.markers import requires_gpu, requires_loopback
 
 _HAS_RASTERIO = importlib.util.find_spec("rasterio") is not None
-_HAS_CUPY = importlib.util.find_spec("cupy") is not None
+# Note: ``_HAS_CUPY`` (bare import probe) is intentionally NOT used to
+# gate GPU tests below. A bare ``import cupy`` succeeds on hosts where
+# the CUDA runtime is missing or unusable, which made
+# ``TestSparseTilesGPU`` fail at device-call time instead of skipping.
+# Use ``requires_gpu`` from ``_helpers.markers`` (which also probes
+# ``cupy.cuda.is_available()``) for any test that needs a working GPU
+# device. See issue #2487.
 
 requires_rasterio = pytest.mark.skipif(
     not _HAS_RASTERIO, reason="rasterio required to write sparse fixtures"
@@ -533,6 +536,202 @@ def test_entry_value_short_count_pixel_tag_passes():
 
 
 # ===========================================================================
+# Section 2b: parse_ifd duplicate-tag rejection (#2483)
+# ===========================================================================
+#
+# TIFF 6.0 section 2 requires IFD entries to be sorted in ascending
+# order by tag id with no duplicates. The legacy parser stored entries
+# in a dict keyed by tag and let the last duplicate win, so a file
+# with two ImageWidth (or any other tag) entries silently parsed to
+# whichever value happened to come second. These tests pin the
+# fail-closed behavior: every duplicate raises ``DuplicateIFDTagError``
+# at parse time, and the error message names the duplicated tag id and
+# the byte offsets of the two conflicting entries.
+
+
+def test_duplicate_image_width_rejected_reproduction_2483():
+    """Regression: the exact reproduction case from issue #2483.
+
+    Two ``ImageWidth`` entries with values 4 and 999 must not silently
+    resolve to 999; the parser must raise instead.
+    """
+    bo = '<'
+    buf = bytearray()
+    buf.extend(b'II')
+    buf.extend(struct.pack(f'{bo}H', 42))
+    buf.extend(struct.pack(f'{bo}I', 8))  # IFD at offset 8
+    buf.extend(struct.pack(f'{bo}H', 2))  # num_entries
+    buf.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, LONG, 1))
+    buf.extend(struct.pack(f'{bo}I', 4))
+    buf.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, LONG, 1))
+    buf.extend(struct.pack(f'{bo}I', 999))
+    buf.extend(struct.pack(f'{bo}I', 0))
+    data = bytes(buf)
+    header = parse_header(data)
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+@pytest.mark.parametrize(
+    "tag, label",
+    [
+        pytest.param(TAG_IMAGE_WIDTH, "ImageWidth", id="duplicate_tag[image-width]"),
+        pytest.param(TAG_IMAGE_LENGTH, "ImageLength", id="duplicate_tag[image-length]"),
+        pytest.param(TAG_BITS_PER_SAMPLE, "BitsPerSample", id="duplicate_tag[bits-per-sample]"),
+        pytest.param(TAG_GEO_KEY_DIRECTORY, "GeoKeyDirectory",
+                     id="duplicate_tag[geo-key-directory]"),
+    ],
+)
+def test_duplicate_tag_rejected_across_critical_tags(tag, label):
+    """Duplicate detection fires on every tag, not just ImageWidth.
+
+    ImageLength controls pixel-array sizing, BitsPerSample controls the
+    decoded dtype, and the GeoKey directory carries the CRS contract.
+    All three were vulnerable to the same last-value-wins bug before
+    #2483.
+    """
+    value_bytes = struct.pack('<I', 1)
+    data = _build_tiff_with_entries(
+        entries=[
+            (tag, LONG, 1, value_bytes),
+            (tag, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    with pytest.raises(DuplicateIFDTagError, match=f"tag {tag} twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_error_names_offsets():
+    """The error message must locate both conflicting entries by byte offset.
+
+    Without these offsets a caller cannot find the bad bytes without
+    re-parsing the IFD themselves.
+    """
+    value_bytes = struct.pack('<I', 1)
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, value_bytes),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    # IFD starts at byte 8; entry table starts at byte 10 (after 2-byte
+    # num_entries). First entry at 10, second at 22 (10 + 12).
+    with pytest.raises(DuplicateIFDTagError) as exc_info:
+        parse_ifd(data, header.first_ifd_offset, header)
+    msg = str(exc_info.value)
+    assert "byte offset 10" in msg
+    assert "byte offset 22" in msg
+
+
+def test_duplicate_tag_rejected_in_bigtiff():
+    """BigTIFF (entry size 20) shares the same fail-closed contract."""
+    bo = '<'
+    ifd_offset = 16
+    buf = bytearray()
+    buf.extend(b'II')
+    buf.extend(struct.pack(f'{bo}H', 43))
+    buf.extend(struct.pack(f'{bo}H', 8))
+    buf.extend(b'\x00\x00')
+    buf.extend(struct.pack(f'{bo}Q', ifd_offset))
+    buf.extend(struct.pack(f'{bo}Q', 2))  # num_entries
+    for value in (4, 999):
+        buf.extend(struct.pack(f'{bo}HH', TAG_IMAGE_WIDTH, LONG))
+        buf.extend(struct.pack(f'{bo}Q', 1))  # count
+        buf.extend(struct.pack(f'{bo}Q', value))  # inline value
+    buf.extend(struct.pack(f'{bo}Q', 0))  # next IFD
+    data = bytes(buf)
+    header = parse_header(data)
+    assert header.is_bigtiff
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_rejected_before_dimension_prescan_emits():
+    """Dimension pre-scan path can't bypass the duplicate check either.
+
+    The pre-scan reads inline values for ``ImageWidth`` /
+    ``ImageLength`` to bound pixel-array counts in the second loop. The
+    duplicate check runs first, so a malformed file with two
+    ``ImageWidth`` entries fails at the pre-scan step rather than
+    reaching the early-exit code path with the wrong dimension value.
+    """
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_LENGTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_error_subclasses_value_error():
+    """``except ValueError`` callers keep catching the case.
+
+    ``DuplicateIFDTagError`` subclasses ``ValueError`` so existing
+    consumers (the public ``open_geotiff`` boundary, the legacy
+    ``ValueError`` family) continue to catch malformed-IFD failures
+    without code changes; new code can ``except`` the more specific
+    type to distinguish duplicate-tag rejection from other parse
+    failures.
+    """
+    assert issubclass(DuplicateIFDTagError, ValueError)
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    header = parse_header(data)
+    with pytest.raises(ValueError):
+        parse_ifd(data, header.first_ifd_offset, header)
+
+
+def test_duplicate_tag_surfaces_at_public_read_boundary(tmp_path):
+    """``open_geotiff`` must surface ``DuplicateIFDTagError`` to callers.
+
+    The duplicate check lives in the IFD parser, but the contract is
+    that the failure reaches the public read boundary so a caller using
+    ``open_geotiff`` (not the private ``parse_ifd``) sees it.
+    """
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 4)),
+            (TAG_IMAGE_WIDTH, LONG, 1, struct.pack('<I', 999)),
+        ],
+    )
+    path = tmp_path / "issue_2483_dup_image_width.tif"
+    path.write_bytes(data)
+    with pytest.raises(DuplicateIFDTagError, match="tag 256 twice"):
+        open_geotiff(str(path))
+
+
+def test_legal_distinct_tags_still_parse_after_duplicate_check():
+    """Regression: distinct tag ids in a well-formed IFD still parse.
+
+    Confirms the duplicate check does not over-fire on a normal IFD
+    that legitimately carries many different tag ids.
+    """
+    width_value = struct.pack('<I', 256)
+    height_value = struct.pack('<I', 256)
+    data = _build_tiff_with_entries(
+        entries=[
+            (TAG_IMAGE_WIDTH, LONG, 1, width_value),
+            (TAG_IMAGE_LENGTH, LONG, 1, height_value),
+            (TAG_BITS_PER_SAMPLE, SHORT, 1, b'\x08\x00\x00\x00'),
+        ],
+    )
+    header = parse_header(data)
+    ifd = parse_ifd(data, header.first_ifd_offset, header)
+    assert ifd.width == 256
+    assert ifd.height == 256
+
+
+# ===========================================================================
 # Section 3: parse_all_ifds chain length cap (MAX_IFDS, security S3)
 # ===========================================================================
 
@@ -855,7 +1054,7 @@ class TestSparseStrips:
 
 
 @requires_rasterio
-@pytest.mark.skipif(not _HAS_CUPY, reason="cupy required")
+@requires_gpu
 class TestSparseTilesGPU:
 
     def test_sparse_tile_gpu_round_trip(self, tmp_path):
@@ -874,6 +1073,38 @@ class TestSparseTilesGPU:
         )
         assert np.all(np.isnan(host[:64, 64:]))
         assert np.all(np.isnan(host[64:, :]))
+
+
+def test_sparse_tiles_gpu_uses_capability_marker_2487():
+    """Pin the gate for ``TestSparseTilesGPU`` to the capability marker.
+
+    Regression test for #2487. The class previously gated on a bare
+    ``_HAS_CUPY = importlib.util.find_spec("cupy") is not None`` probe.
+    On hosts where cupy imports but the CUDA runtime is unusable, that
+    gate let the test run and fail at device-call time instead of
+    skipping cleanly. The gate must be ``requires_gpu`` from
+    ``_helpers.markers``, which also probes ``cupy.cuda.is_available()``.
+    """
+    from .._helpers import markers as _markers_mod
+
+    marks = list(getattr(TestSparseTilesGPU, 'pytestmark', []))
+    reasons = {getattr(m, 'kwargs', {}).get('reason', '') for m in marks}
+    # Both gates apply: rasterio (fixture writer) and gpu (device).
+    assert any('cupy + CUDA required' in r for r in reasons), (
+        f"TestSparseTilesGPU must gate on requires_gpu "
+        f"(reason 'cupy + CUDA required'); saw {reasons}"
+    )
+    # The marker the class actually carries must be the shared
+    # ``requires_gpu`` from ``_helpers.markers`` (which probes
+    # ``cupy.cuda.is_available()``), not a locally-built skipif on a
+    # bare ``import cupy`` probe. Compare the underlying ``Mark`` so
+    # this works regardless of whether pytest stored the
+    # ``MarkDecorator`` wrapper or unwrapped it.
+    expected_mark = _markers_mod.requires_gpu.mark
+    assert expected_mark in marks, (
+        f"TestSparseTilesGPU is not gated on the shared "
+        f"_helpers.markers.requires_gpu marker; saw marks={marks}"
+    )
 
 
 # ===========================================================================

@@ -256,6 +256,16 @@ the ambiguous-metadata family at once.
        and so on).
      - No opt-in. The error message names the feature and the source
        that triggered it.
+   * - :class:`~xrspatial.geotiff.DuplicateIFDTagError`
+     - An IFD declares the same tag id more than once. TIFF 6.0
+       forbids duplicate tags; without this check a malformed or
+       adversarial file could change the parsed ``ImageWidth``,
+       ``ImageLength``, ``Compression``, CRS, transform, or nodata
+       silently because the legacy parser let the last duplicate win.
+     - No opt-in. Either fix the source file or rewrite it through a
+       conforming TIFF writer (rasterio, GDAL, libtiff). The error
+       message names the duplicated tag id and the byte offsets of the
+       two conflicting entries.
 
 Remote-read safety limits
 =========================

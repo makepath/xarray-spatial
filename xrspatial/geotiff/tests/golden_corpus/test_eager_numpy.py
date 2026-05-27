@@ -11,7 +11,7 @@ The fixture list is discovered from the manifest at module-import time so
 ``pytest.mark.parametrize`` can attach per-fixture marks (``xfail`` for real
 gaps, ``skip`` for intentional divergences). A broken manifest therefore
 fails collection rather than test execution; the manifest validator tests
-under ``test_golden_corpus_manifest_1930.py`` catch that case separately.
+under ``golden_corpus/test_manifest.py`` catch that case separately.
 
 Skip / xfail taxonomy
 ---------------------
@@ -68,13 +68,13 @@ import pytest
 pytest.importorskip("yaml")
 pytest.importorskip("rasterio")
 
-from xrspatial.geotiff import open_geotiff
+from xrspatial.geotiff import open_geotiff  # noqa: E402
 
 # PR 4 of epic #2340: the golden corpus has experimental-codec
 # and JPEG-in-TIFF entries; the parity check is orthogonal to the
 # read-side opt-in so pass both flags through every open.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
-  # noqa: E402
+
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402

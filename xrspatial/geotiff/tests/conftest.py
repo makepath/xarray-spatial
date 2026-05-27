@@ -12,13 +12,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ._helpers.markers import (
-    gpu_available,
-    loopback_available,
-    requires_gpu,
-    requires_integration,
-    requires_loopback,
-)
+from ._helpers.markers import (gpu_available, loopback_available, requires_gpu,
+                               requires_integration, requires_loopback)
 from ._helpers.tiff_builders import make_minimal_tiff
 
 __all__ = [

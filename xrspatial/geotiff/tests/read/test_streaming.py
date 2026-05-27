@@ -39,9 +39,7 @@ from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG
                                        TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC,
                                        TAG_SAMPLE_FORMAT, TAG_SAMPLES_PER_PIXEL,
                                        TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS)
-from xrspatial.geotiff._writer import (_compute_classic_ifd_overhead,
-                                       _should_use_bigtiff_streaming)
-
+from xrspatial.geotiff._writer import _compute_classic_ifd_overhead, _should_use_bigtiff_streaming
 
 UINT32_MAX = 0xFFFFFFFF
 

@@ -893,6 +893,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # error ordering matches the eager path.
     from .._validation import validate_read_metadata
     from .._vrt_validation import validate_parsed_vrt as _validate_parsed_vrt
+
     # Centralised VRT capability validator (issue #2329). Run at graph
     # build time so capability mismatches surface here, not inside a
     # per-chunk decode task. ``read_vrt(..., chunks=)`` previously let
@@ -1018,7 +1019,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     #     source integer dtype (handled by the ``promotes is False``
     #     fall-through below).
     # See also Copilot review on PR #1822.
-    declared_dtype = _effective_dtype_for_bands(selected_bands)
+    declared_dtype = _effective_dtype_for_bands(
+        selected_bands, source=source)
 
     if mask_nodata and declared_dtype.kind in ('u', 'i'):
         promotes = False

@@ -55,27 +55,25 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (NonUniformCoordsError, _coords_to_transform,
-                               _transform_from_attr, open_geotiff, read_vrt,
-                               to_geotiff, write_geotiff_gpu)
+from xrspatial.geotiff import (NonUniformCoordsError, _coords_to_transform, _transform_from_attr,
+                               open_geotiff, read_vrt, to_geotiff, write_geotiff_gpu)
 from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GEOREF_STATUS_CRS_ONLY,
                                       GEOREF_STATUS_FULL, GEOREF_STATUS_NONE,
                                       GEOREF_STATUS_ROTATED_DROPPED, GEOREF_STATUS_TRANSFORM_ONLY,
                                       _compute_georef_status, _compute_georef_status_from_parts,
                                       _populate_attrs_from_geo_info, attrs_to_metadata,
                                       geo_info_to_metadata)
-from xrspatial.geotiff._coords import (GEOREF_STATUS_COORDS, _NO_GEOREF_KEY,
-                                       GeorefResolution, _has_no_georef_marker,
-                                       resolve_georef)
+from xrspatial.geotiff._coords import (_NO_GEOREF_KEY, GEOREF_STATUS_COORDS, GeorefResolution,
+                                       _has_no_georef_marker, resolve_georef)
 from xrspatial.geotiff._errors import GeoTIFFAmbiguousMetadataError, RotatedTransformError
-from xrspatial.geotiff._geotags import (RASTER_PIXEL_IS_AREA, TAG_MODEL_TRANSFORMATION,
-                                        GeoInfo, GeoTransform, _extract_transform,
-                                        extract_geo_info)
+from xrspatial.geotiff._geotags import (RASTER_PIXEL_IS_AREA, TAG_MODEL_TRANSFORMATION, GeoInfo,
+                                        GeoTransform, _extract_transform, extract_geo_info)
 from xrspatial.geotiff._header import IFD, IFDEntry, parse_all_ifds, parse_header
 from xrspatial.geotiff._writer import write
 from xrspatial.geotiff._writers.eager import _write_vrt_tiled
 
-from .._helpers.markers import gpu_available, requires_gpu as _gpu_only
+from .._helpers.markers import gpu_available
+from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.tiff_builders import make_minimal_tiff
 # Share the rotated-TIFF byte layout with the CRS suite (epic #2390 PR 3).
 from .test_crs import _write_rotated_tiff as _write_rotated_tiff_crs
@@ -1976,7 +1974,7 @@ def test_open_geotiff_rotated_raises_typed_error(tmp_path):
     """``open_geotiff`` on a rotated GeoTIFF raises
     ``RotatedTransformError``. This is the user-facing parity case
     with the VRT path (covered in
-    ``test_remaining_fail_closed_1987.test_read_rejects_rotated_vrt``).
+    ``unit/test_metadata.py::test_read_rejects_rotated_vrt``).
     """
     src = tmp_path / "tmp_2267_open_geotiff_rotated.tif"
     arr = np.arange(20, dtype='<u2').reshape(4, 5)

@@ -10,16 +10,14 @@ Tests-only restructure for epic #2390.
 
 from __future__ import annotations
 
-import importlib.util
 import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff._writer import _block_reduce_2d
 from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff._writer import _block_reduce_2d
 
 from .._helpers.markers import gpu_available as _gpu_available
-
 
 # -------------------------------------------------------------------------
 # Section: ceil-shape overview tests
@@ -2091,9 +2089,8 @@ def test_overview_with_own_nodata_keeps_own_value(tmp_path):
 # pixel that spans the first ``scale_x`` columns of level 0 has its
 # center at the centroid of those level-0 pixels.
 
-from xrspatial.geotiff._geotags import (  # noqa: E402
-    RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoInfo,
-    extract_geo_info_with_overview_inheritance)
+from xrspatial.geotiff._geotags import (RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT,  # noqa: E402
+                                        GeoInfo, extract_geo_info_with_overview_inheritance)
 
 
 def _make_pp_cog(path: str, size: int = 1024, pixel: float = 10.0) -> xr.DataArray:

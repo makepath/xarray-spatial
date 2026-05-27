@@ -7,7 +7,6 @@ Consolidated from the issue-numbered files mapped in
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from .._helpers.markers import requires_gpu
 
