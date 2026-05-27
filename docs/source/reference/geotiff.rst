@@ -40,7 +40,7 @@ What you can expect:
   ``xrspatial/geotiff/tests/test_golden_corpus_gpu_1930.py`` and
   ``xrspatial/geotiff/tests/test_golden_corpus_dask_gpu_1930.py``.
 * Integer and float nodata sentinels survive the GPU round-trip; see
-  ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``.
+  ``xrspatial/geotiff/tests/gpu/test_reader.py``.
 * On GPU failure the reader emits
   :class:`xrspatial.geotiff.GeoTIFFFallbackWarning` and falls back to
   CPU unless ``on_gpu_failure='strict'`` or
@@ -152,13 +152,13 @@ this section is the brief.
   and is preserved on the next write. ``attrs['nodata']`` carries
   the sentinel as a Python ``int``. Out-of-range sentinels for the
   band dtype are rejected at write
-  (``xrspatial/geotiff/tests/test_nodata_out_of_range_1581.py``).
+  (``xrspatial/geotiff/tests/write/test_nodata.py``).
 * Float nodata. The on-disk sentinel is recorded on
   ``attrs['nodata']`` and surfaces as NaN in pixel data only when the
   read promotes via ``mask_nodata=True`` (the default for float
   outputs). With ``mask_nodata=False`` the raw float sentinel passes
   through, so downstream callers can branch on the exact value;
-  ``xrspatial/geotiff/tests/test_mask_nodata_kwarg_2052.py`` pins this
+  ``xrspatial/geotiff/tests/write/test_nodata.py`` pins this
   split.
 * NaN nodata. A file that declares ``nodata=NaN`` is read with NaN in
   both ``attrs['nodata']`` and pixel data (NaN propagates either way).

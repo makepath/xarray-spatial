@@ -386,7 +386,8 @@ Nodata lifecycle
      - The sentinel survives read and write across every backend; integer
        sentinels are preserved bit-exact, float sentinels surface as NaN
        only when ``mask_nodata=True``.
-     - ``xrspatial/geotiff/tests/read/test_nodata.py``
+     - ``xrspatial/geotiff/tests/read/test_nodata.py``,
+       ``xrspatial/geotiff/tests/write/test_nodata.py``
      - `#2341`_
    * - ``attrs['masked_nodata']`` lifecycle signal
      - stable
@@ -659,7 +660,7 @@ GPU paths (experimental)
      - experimental
      - Integer and float nodata sentinels survive the GPU read / write
        round-trip.
-     - ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``,
+     - ``xrspatial/geotiff/tests/gpu/test_reader.py``,
        ``xrspatial/geotiff/tests/read/test_nodata.py``
      - `#2341`_
 
@@ -681,7 +682,7 @@ Internal-only surfaces (not promised)
        ``allow_internal_only_jpeg=True``; not covered by
        ``allow_experimental_codecs``.
      - ``xrspatial/geotiff/tests/unit/test_photometric.py``,
-       ``xrspatial/geotiff/tests/test_gpu_jpeg_interop_reject_issue_D_1845.py``
+       ``xrspatial/geotiff/tests/gpu/test_codec.py``
      - `#2340`_
 
 Cross-cutting CI gates
