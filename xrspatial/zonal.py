@@ -502,6 +502,7 @@ def _stats_numpy(
         result = pd.DataFrame(stats_dict)
 
     else:
+        _check_stats_dataarray_memory(len(stats_funcs), values.shape)
         result = np.full((len(stats_funcs), values.size), np.nan)
         zone_ids_map = {z: i for i, z in enumerate(unique_zones) if z in zone_ids}
         stats_id = 0
@@ -2011,6 +2012,30 @@ def _available_memory_bytes():
     except (ImportError, AttributeError):
         pass
     return 2 * 1024 ** 3
+
+
+def _check_stats_dataarray_memory(n_stats, values_shape):
+    """Guard the (n_stats, H*W) float64 buffer in ``_stats_numpy``.
+
+    The ``return_type='xarray.DataArray'`` branch allocates a same-shape
+    output replicated per requested statistic, so peak memory scales
+    linearly with ``len(stats_funcs)``.  Refuse the request when the
+    buffer would exceed half of available RAM.
+    """
+    n_cells = 1
+    for s in values_shape:
+        n_cells *= int(s)
+    required = n_stats * n_cells * 8  # float64
+    avail = _available_memory_bytes()
+    if required > 0.5 * avail:
+        raise MemoryError(
+            f"stats(return_type='xarray.DataArray') needs "
+            f"~{required / 1e9:.1f} GB for an "
+            f"({n_stats}, {n_cells}) float64 result buffer "
+            f"but only ~{avail / 1e9:.1f} GB is available. "
+            "Reduce `stats_funcs`, use a smaller raster, or call "
+            "stats(..., return_type='pandas.DataFrame') instead."
+        )
 
 
 def _regions_dask(data, neighborhood):
