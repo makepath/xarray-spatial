@@ -653,8 +653,7 @@ GPU paths (experimental)
      - experimental
      - GPU write produces a file the CPU reader can decode bit-exact on
        the supported codec subset.
-     - ``xrspatial/geotiff/tests/test_gpu_writer_attrs_1563.py``,
-       ``xrspatial/geotiff/tests/test_to_geotiff_gpu_fallback_1674.py``
+     - ``xrspatial/geotiff/tests/gpu/test_writer.py``
      - `#2340`_
    * - GPU nodata handling
      - experimental
