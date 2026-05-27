@@ -44,6 +44,7 @@ single signal a release engineer keys on:
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import re
 import struct
@@ -2651,10 +2652,14 @@ def test_release_gate_to_geotiff_docstring_marks_cog_stable() -> None:
     and the release contract. This assertion fails if the contradiction
     creeps back in. The check is deliberately strict on the wording so
     a copy-paste from another parameter cannot satisfy it accidentally.
-    """
-    from xrspatial.geotiff import to_geotiff
 
-    doc = to_geotiff.__doc__ or ""
+    ``inspect.getdoc`` normalises docstring indentation across every
+    supported Python (3.12 keeps the source-level indent on ``__doc__``;
+    3.13+ strips the common leading whitespace at compile time). The
+    regexes anchor at column 0 of the cleaned text so the assertion
+    matches on every supported version.
+    """
+    doc = inspect.getdoc(to_geotiff) or ""
     # The function-level tier block must list cog=True under [stable].
     # Match the bullet body across line wraps without taking a hard
     # dependency on a single line layout.
@@ -2670,8 +2675,8 @@ def test_release_gate_to_geotiff_docstring_marks_cog_stable() -> None:
     )
 
     # The per-parameter marker on the ``cog`` parameter must be [stable].
-    # The parameter doc starts at column 0 (Python strips the common
-    # leading indent on ``__doc__``), with the body indented one level.
+    # ``inspect.getdoc`` already removed the common indent, so the
+    # parameter line is at column 0 and the body is indented one level.
     cog_param_re = re.compile(
         r"^cog : bool\n    \[(?P<tier>[\w-]+)\]",
         re.MULTILINE,
@@ -2698,10 +2703,10 @@ def test_release_gate_to_geotiff_docstring_marks_overview_knobs_advanced() -> No
     COG writes (``SUPPORTED_FEATURES['writer.overviews'] == 'advanced'``).
     If those knobs ever get promoted, this gate fails together with the
     registry gate above so the change is forced through both surfaces.
+    Uses ``inspect.getdoc`` for the same cross-version reason as the
+    ``cog`` gate above.
     """
-    from xrspatial.geotiff import to_geotiff
-
-    doc = to_geotiff.__doc__ or ""
+    doc = inspect.getdoc(to_geotiff) or ""
     for param in ("overview_levels", "overview_resampling"):
         param_re = re.compile(
             rf"^{param} : [^\n]+\n    \[(?P<tier>[\w-]+)\]",
