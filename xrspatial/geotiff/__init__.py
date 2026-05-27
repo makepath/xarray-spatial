@@ -494,9 +494,13 @@ def open_geotiff(source: str | BinaryIO, *,
         ``on_gpu_failure='strict'`` is also set. No cross-backend
         numerical parity claim outside the Tier 1 codec set.
     max_pixels : int or None
-        [stable] Maximum allowed pixel count (width * height *
-        samples). None uses the default (~1 billion). Raise to read
-        legitimately large files.
+        [stable] Maximum allowed pixel count per materialised buffer.
+        Without ``chunks=`` the cap bounds the full windowed region
+        (width * height * samples); with ``chunks=`` the cap bounds
+        each chunk's decode buffer instead, so a small ``max_pixels``
+        no longer rejects a large lazy raster up front. None uses the
+        default (~1 billion). Raise it to read legitimately large
+        files. See issue #2501.
     max_cloud_bytes : int or None, optional
         [advanced] fsspec cloud reads can run up cost on large objects;
         the budget defends against accidental large downloads but the

@@ -148,8 +148,12 @@ def read_geotiff_gpu(source: str, *,
     name : str or None
         [experimental] Name for the DataArray.
     max_pixels : int or None
-        [experimental] Maximum allowed pixel count
-        (width * height * samples). None uses the default (~1 billion).
+        [experimental] Maximum allowed pixel count per materialised
+        buffer. With ``chunks=None`` it bounds the full image
+        (width * height * samples); with ``chunks=`` it bounds the
+        per-tile decode buffer instead so chunked reads of large
+        rasters do not need to widen the cap to the full file. None
+        uses the default (~1 billion). See issue #2501.
     on_gpu_failure : {'auto', 'strict'}, default 'auto'
         [experimental] Behaviour when any GPU decode stage raises an
         exception.
@@ -1501,7 +1505,10 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     offsets = list(ifd.tile_offsets)
     byte_counts = list(ifd.tile_byte_counts)
 
-    _check_dimensions(full_w, full_h, samples, max_pixels)
+    # ``max_pixels`` bounds the per-tile decode buffer on the GPU
+    # chunked path (a single tile is the largest contiguous allocation
+    # any one task makes), not the full image. The eager GPU path still
+    # applies it to the full image. See issue #2501.
     _check_dimensions(tw, th, samples, max_pixels)
     validate_tile_layout(ifd)
 
