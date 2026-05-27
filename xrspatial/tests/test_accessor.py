@@ -322,3 +322,59 @@ def test_ds_rasterize_no_valid_var():
     ds = xr.Dataset({'a': xr.DataArray(np.zeros(5), dims=['z'])})
     with pytest.raises(ValueError, match="no 2D variable"):
         ds.xrs.rasterize([])
+
+
+# ---------------------------------------------------------------------------
+# Optional matplotlib (the `plot` extra) — issue #2494
+# ---------------------------------------------------------------------------
+
+def test_compute_imports_without_matplotlib(monkeypatch):
+    """Core compute modules import even when matplotlib is unavailable.
+
+    Blocking ``matplotlib`` in ``sys.modules`` makes ``import matplotlib``
+    raise ImportError, simulating an install without the ``plot`` extra.
+    """
+    import importlib
+    import sys
+
+    monkeypatch.setitem(sys.modules, 'matplotlib', None)
+    monkeypatch.setitem(sys.modules, 'matplotlib.pyplot', None)
+
+    with pytest.raises(ImportError):
+        import matplotlib  # noqa: F401
+
+    # Re-importing the compute modules must not touch matplotlib.
+    for name in ('xrspatial.focal', 'xrspatial.zonal', 'xrspatial.dasymetric'):
+        importlib.reload(importlib.import_module(name))
+
+
+def test_require_matplotlib_message(monkeypatch):
+    """The helper points users at the `plot` extra when matplotlib is gone."""
+    import sys
+
+    from xrspatial.accessor import _require_matplotlib
+
+    monkeypatch.setitem(sys.modules, 'matplotlib', None)
+    with pytest.raises(ImportError, match=r"xarray-spatial\[plot\]"):
+        _require_matplotlib()
+
+
+def test_da_plot_without_matplotlib_raises(monkeypatch, elevation):
+    """``.xrs.plot()`` raises the friendly error when matplotlib is absent."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, 'matplotlib', None)
+    monkeypatch.setitem(sys.modules, 'matplotlib.pyplot', None)
+    with pytest.raises(ImportError, match=r"xarray-spatial\[plot\]"):
+        elevation.xrs.plot()
+
+
+def test_ds_plot_without_matplotlib_raises(monkeypatch, elevation):
+    """Dataset ``.xrs.plot()`` raises the friendly error too."""
+    import sys
+
+    ds = xr.Dataset({'elev': elevation})
+    monkeypatch.setitem(sys.modules, 'matplotlib', None)
+    monkeypatch.setitem(sys.modules, 'matplotlib.pyplot', None)
+    with pytest.raises(ImportError, match=r"xarray-spatial\[plot\]"):
+        ds.xrs.plot()
