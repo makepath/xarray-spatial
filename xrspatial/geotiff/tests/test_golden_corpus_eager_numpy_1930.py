@@ -53,7 +53,7 @@ Intentional skip (``skip``):
 
 * ``nodata_miniswhite_uint8`` -- MinIsWhite photometric inversion.
   xrspatial inverts pixels; rasterio leaves them raw. The inversion is
-  asserted by ``test_miniswhite_backend_parity_1797.py``.
+  asserted by the backend-parity tests.
 
 Each backend gets its own module under ``xrspatial/geotiff/tests/``; this
 file owns the eager numpy slice.

@@ -1383,10 +1383,9 @@ class _HTTPSource:
         below in case the server omits the header or lies about it.
 
         Missing or unparseable ``Content-Length`` returns silently --
-        the streaming cap in :meth:`_read_capped_urllib3` /
-        :meth:`_read_capped_stdlib` is the real defence and will catch
-        an over-sized body whether the header was honest, dishonest, or
-        absent.
+        the streaming cap in :meth:`_read_capped` is the real defence
+        and will catch an over-sized body whether the header was honest,
+        dishonest, or absent.
         """
         raw = None
         try:

@@ -927,7 +927,7 @@ def test_allow_rotated_default_raises_already_gated():
     ``reader.allow_rotated`` is an experimental-tier gate.
     """
     # A signature pin is enough -- the actual rotated-read behaviour is
-    # covered by the existing test_allow_rotated_geotiff_2115.py suite.
+    # covered by the georef read tests.
     params = inspect.signature(open_geotiff).parameters
     assert 'allow_rotated' in params
     assert params['allow_rotated'].default is False
@@ -1894,7 +1894,7 @@ class TestWriteVrtCrsWktBehaviour:
     is ``crs`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``);
     the old name is still accepted with ``DeprecationWarning``. These
     tests exercise the new path; the deprecated path is covered by
-    ``test_write_vrt_crs_1715.py``.
+    the VRT write tests.
     """
 
     def _read_parsed(self, vrt_path, tmp_path):
