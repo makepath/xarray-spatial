@@ -1,20 +1,17 @@
 """External `.tif.ovr` sidecar reads across the local and remote paths.
 
-Consolidated from the issue-numbered files mapped in
-``CLUSTER_AUDIT_SIDECAR.md`` (cluster 12 of the long-tail GeoTIFF test
-consolidation epic #2424). Each old file becomes a ``# Section:`` block
-below; helpers that collided across files are namespaced per source
-issue. No test bodies or assertions changed.
+Each ``# Section:`` block below covers one sidecar scenario; helpers
+that would otherwise collide across sections are namespaced per
+section.
 
 The sidecar fixtures live in ``../golden_corpus/fixtures``. Because this
-file sits one directory deeper than the original top-level location, the
+file sits one directory deeper than the top-level tests location, the
 fixture paths resolve against ``Path(__file__).resolve().parents[1]``
 (the ``tests`` directory) rather than ``parent``.
 
 HTTP / loopback-bind sections carry the shared ``@requires_loopback``
-marker from ``.._helpers.markers`` (the socketserver collection hook was
-dropped in #2390 PR 11). Hermetic sections (fsspec ``memory://``, byte
-surgery, in-process parsing) run everywhere.
+marker from ``.._helpers.markers``. Hermetic sections (fsspec
+``memory://``, byte surgery, in-process parsing) run everywhere.
 """
 from __future__ import annotations
 
@@ -58,9 +55,8 @@ def _fixture_or_skip():
 
 # ============================================================================
 # Section: sidecar_ovr
-# Source: test_sidecar_ovr_2112.py
 #
-# External `.tif.ovr` sidecar overview reader (issue #2112).
+# External `.tif.ovr` sidecar overview reader.
 #
 # Before the fix, opening a GDAL/rasterio file whose overview pyramid
 # lives in a sibling ``.tif.ovr`` worked at the base level but raised an
@@ -263,10 +259,10 @@ def _start_http_server_2112(directory):
 def test_find_sidecar_http_probe_returns_url_when_present(
         tmp_path, monkeypatch):
     # The sidecar probe now routes through ``_HTTPSource``, which
-    # rejects loopback hostnames under the SSRF guard added in #1664.
-    # Loopback is the standard local-server pattern in this repo's HTTP
-    # tests (see ``golden_corpus/test_http.py``); opt into the
-    # escape hatch the production reader exposes.
+    # rejects loopback hostnames under the SSRF guard. Loopback is the
+    # standard local-server pattern in this repo's HTTP tests (see
+    # ``golden_corpus/test_http.py``); opt into the escape hatch the
+    # production reader exposes.
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     src = _fixture_or_skip()
     shutil.copy(src, tmp_path / "x.tif")
@@ -346,15 +342,14 @@ def test_file_like_source_reads_base_without_sidecar():
 
 # ============================================================================
 # Section: sidecar_own_geokeys
-# Source: test_sidecar_own_geokeys_2315.py
 #
-# Sidecar IFDs that declare their own georef payload (issue #2315).
+# Sidecar IFDs that declare their own georef payload.
 #
 # The local eager reader and the metadata-only path both swap pixel bytes
-# over to the sidecar when the selected IFD lives there, but pre-#2315
-# they always read georef tags from the base file. A sidecar that does
-# declare its own GeoKeyDirectory / ModelPixelScale / ModelTiepoint /
-# ModelTransformation had its tags parsed against the wrong buffer.
+# over to the sidecar when the selected IFD lives there. A regression
+# that always read georef tags from the base file would parse a
+# sidecar's own GeoKeyDirectory / ModelPixelScale / ModelTiepoint /
+# ModelTransformation against the wrong buffer.
 # ============================================================================
 
 
@@ -438,8 +433,7 @@ def _mark_first_ifd_as_overview_2315(path):
     # 256 / ImageWidth), so the new entry goes at position 0. Assert
     # the invariant so a future writer change that emits a tag <= 254
     # fails this fixture loudly instead of silently producing an
-    # out-of-order IFD that the reader could later reject. (Review nit
-    # on #2315.)
+    # out-of-order IFD that the reader could later reject.
     if n_entries > 0:
         first_tag = struct.unpack_from("<H", raw, first_ifd_offset + 2)[0]
         assert first_tag > NSF, (
@@ -709,9 +703,8 @@ def test_sidecar_without_geokeys_inherits_from_base_metadata_only(tmp_path):
 
 # ============================================================================
 # Section: sidecar_max_cloud_bytes
-# Source: test_sidecar_max_cloud_bytes_2121.py
 #
-# Sidecar download honours ``max_cloud_bytes`` (issue #2121).
+# Sidecar download honours ``max_cloud_bytes``.
 #
 # Before the fix, ``load_sidecar`` downloaded the sibling ``.tif.ovr``
 # over HTTP / fsspec with no byte cap, bypassing the base-file budget so
@@ -854,7 +847,7 @@ def test_http_sidecar_succeeds_when_under_max_cloud_bytes(
 @requires_loopback
 def test_http_sidecar_max_cloud_bytes_none_is_unbounded(
         tmp_path, monkeypatch):
-    """``max_cloud_bytes=None`` preserves the pre-#2121 unbounded read."""
+    """``max_cloud_bytes=None`` keeps the sidecar read unbounded."""
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     src = _fixture_or_skip()
     sidecar_src = str(src) + ".ovr"
@@ -877,12 +870,12 @@ def test_read_to_array_propagates_max_cloud_bytes_to_sidecar(
         tmp_path, monkeypatch):
     """A fsspec ``file://`` source with a tight budget rejects the sidecar.
 
-    Pre-#2121, ``read_to_array(..., max_cloud_bytes=N)`` enforced ``N`` only
-    on the base file and silently bypassed it for the sidecar fetch. This
-    test inflates the sidecar (a normal ``.ovr`` is small relative to its
-    base) so the cloud budget that admits the base file rejects the
-    sidecar; the fix routes ``cloud_budget`` into ``load_sidecar`` so the
-    sidecar fetch trips the same guard.
+    A regression where ``read_to_array(..., max_cloud_bytes=N)`` enforced
+    ``N`` only on the base file would silently bypass it for the sidecar
+    fetch. This test inflates the sidecar (a normal ``.ovr`` is small
+    relative to its base) so the cloud budget that admits the base file
+    rejects the sidecar; ``cloud_budget`` routes into ``load_sidecar`` so
+    the sidecar fetch trips the same guard.
     """
     pytest.importorskip("fsspec")
     src = _fixture_or_skip()
@@ -950,9 +943,8 @@ def test_env_var_propagates_to_sidecar(tmp_path, monkeypatch):
 
 # ============================================================================
 # Section: sidecar_bad_does_not_break_base
-# Source: test_sidecar_bad_does_not_break_base_2416.py
 #
-# Corrupt ``.ovr`` sidecar must not break a base read (issue #2416).
+# Corrupt ``.ovr`` sidecar must not break a base read.
 #
 # A stale, truncated, or malformed sibling ``.ovr`` file should not take
 # the stable base read down: a base read survives garbage sidecar bytes
@@ -1249,9 +1241,8 @@ def test_open_geotiff_gpu_requesting_sidecar_level_surfaces_parse_error(
 
 # ============================================================================
 # Section: remote_sidecar_chunked
-# Source: test_remote_sidecar_chunked_2239.py
 #
-# Chunked remote reads honour external `.ovr` sidecars (issue #2239).
+# Chunked remote reads honour external `.ovr` sidecars.
 #
 # Before this fix the dask HTTP / fsspec paths and ``_read_geo_info``
 # skipped the sidecar lookup, so ``open_geotiff(remote, chunks=...,
@@ -1404,11 +1395,11 @@ def test_http_chunked_open_resolves_sidecar_overview(
 
 @requires_loopback
 def test_http_eager_reads_sidecar_overview(_http_with_sidecar_2239):
-    """The eager HTTP path also needs to honour sidecars (issue #2239)."""
+    """The eager HTTP path also needs to honour sidecars."""
     url = _http_with_sidecar_2239
     # The bundled fixture's sidecar carries two overview levels at 32x32
-    # and 16x16. Before the fix both raised "overview_level out of range"
-    # over HTTP because ``_read_cog_http`` only saw the in-file IFD chain.
+    # and 16x16. A reader that only saw the in-file IFD chain would raise
+    # "overview_level out of range" over HTTP for both.
     da32 = open_geotiff(url, overview_level=1)
     da16 = open_geotiff(url, overview_level=2)
     assert da32.shape == (32, 32)
@@ -1453,7 +1444,7 @@ def test_read_geo_info_fsspec_reports_sidecar_dimensions(
 # ---------------------------------------------------------------------------
 # Out-of-range guard: requesting an overview level beyond what the
 # merged pyramid offers should raise with a clear message rather than
-# silently swallow the request (issue #2239 contract).
+# silently swallow the request.
 # ---------------------------------------------------------------------------
 def test_fsspec_chunked_open_rejects_overview_past_sidecar(
         _fsspec_memory_with_sidecar_2239):
@@ -1553,10 +1544,8 @@ def test_file_like_chunked_open_unaffected_by_sidecar_discovery():
 
 # ============================================================================
 # Section: remote_sidecar_byte_order
-# Source: test_remote_sidecar_byte_order_2314.py
 #
-# Mixed-endian remote sidecar reads decode with the sidecar's byte order
-# (issue #2314).
+# Mixed-endian remote sidecar reads decode with the sidecar's byte order.
 #
 # ``_parse_cog_http_meta`` historically returned the base file's
 # ``TIFFHeader`` even when the selected IFD came from the sidecar, so a

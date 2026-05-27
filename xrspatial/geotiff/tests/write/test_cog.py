@@ -5,8 +5,7 @@ Covers the COG public API, the external-interop compliance suite
 parity rows that exercise xrspatial-write -> external-read and the
 mirror direction, and the tile-layout / tile-size pre-flight gates.
 
-HTTP-side COG tests stay separate (integration cluster, PR 9).
-Tests-only restructure for epic #2390.
+HTTP-side COG tests stay separate with the integration tests.
 """
 
 from __future__ import annotations
@@ -944,7 +943,7 @@ def test_external_cog_validator(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Validator-mode env contract (issue #2302)
+# Validator-mode env contract
 # ---------------------------------------------------------------------------
 
 
@@ -1141,7 +1140,7 @@ def test_rotated_affine_attr_without_drop_rotation_raises(tmp_path):
     """The reader stamps ``attrs['rotated_affine']`` when called with
     ``allow_rotated=True``. Writing such a DataArray without
     ``drop_rotation=True`` would silently produce an identity-affine
-    output (#2216), so the entry point refuses up front."""
+    output, so the entry point refuses up front."""
     da = _float_da_small()
     da.attrs['rotated_affine'] = (1.0, 0.5, 0.0, 0.0, 0.5, 1.0)
     p = tmp_path / 'cog_rotated_affine_2301.tif'
@@ -1187,7 +1186,7 @@ def test_rotated_transform_tuple_attr_raises(tmp_path):
 def test_rotated_transform_affine_attr_raises(tmp_path):
     """``attrs['transform']`` as a rasterio ``Affine`` with non-zero
     rotation/shear used to slip past the 6-tuple gate because
-    ``Affine`` iterates as a 9-element augmented matrix. The #2301
+    ``Affine`` iterates as a 9-element augmented matrix. The
     validation hook detects the Affine duck-type and raises the same
     diagnostic the 6-tuple branch already produced."""
     Affine = pytest.importorskip('affine').Affine
@@ -1241,7 +1240,7 @@ def test_affine_attr_with_unconvertable_b_d_raises(tmp_path):
 
 def test_axis_aligned_affine_attr_still_writes(tmp_path):
     """Sanity guard: an axis-aligned Affine (b=d=0) must keep working.
-    Without this row the #2301 hook could regress every legitimate
+    Without this row the validation hook could regress every legitimate
     Affine call site by widening the rejection bucket."""
     Affine = pytest.importorskip('affine').Affine
     da = _float_da_small()
@@ -1292,11 +1291,10 @@ def test_cupy_input_with_cog_currently_succeeds(tmp_path):
     GPU COG is documented as Experimental in the docstring tier map
     but is not refused at the entry point. This row pins the
     currently-succeeds behaviour so a future tier-promotion change
-    (tracked under #2286) does not silently break callers that
-    already rely on the path.
+    does not silently break callers that already rely on the path.
 
-    No production-side validation hook is added for #2301 because the
-    constraint for this issue is 'do not change semantics on paths
+    No production-side validation hook is added here because the
+    constraint is 'do not change semantics on paths
     that currently succeed'."""
     if importlib.util.find_spec('cupy') is None:
         pytest.skip('cupy not installed')
@@ -1344,8 +1342,8 @@ def test_object_dtype_with_cog_raises(tmp_path):
 def test_conflicting_attrs_crs_and_crs_wkt_raises(tmp_path):
     """When ``attrs['crs']`` and ``attrs['crs_wkt']`` resolve to
     different CRSes via pyproj, the writer refuses with
-    ``ConflictingCRSError`` (#1987 PR 6). #2301 only confirms the
-    message stays actionable; it does not introduce a new check."""
+    ``ConflictingCRSError``. This confirms the message stays
+    actionable; it does not introduce a new check."""
     pytest.importorskip('pyproj')
     wkt_3857 = (
         'PROJCS["WGS 84 / Pseudo-Mercator",'
@@ -1514,7 +1512,7 @@ def xrspatial_cog(tmp_path):
     """
     h, w = 64, 64
     # Use a +1 offset so pixel value 0 never appears -- the reader
-    # masks nodata-valued pixels to NaN under the #2092 contract,
+    # masks nodata-valued pixels to NaN,
     # which upcasts integer rasters to float64. The fixture's payload
     # is a deterministic ramp regardless of the offset.
     data = (np.arange(h * w, dtype=np.uint16) + 1).reshape(h, w)
@@ -1994,7 +1992,7 @@ def test_public_writer_rejects_cog_true_tiled_false(tmp_path):
 def test_public_writer_rejects_cog_true_tiled_false_with_tile_size(tmp_path):
     """Pinning the rejection survives a ``tile_size`` kwarg too.
 
-    Before #2312, ``to_geotiff(..., cog=True, tiled=False,
+    Previously, ``to_geotiff(..., cog=True, tiled=False,
     tile_size=128)`` emitted the "tile_size is ignored when tiled=False"
     warning and then wrote strips. The new gate has to fire before that
     warning so the caller never sees the misleading "tile_size is
@@ -2148,7 +2146,7 @@ def _alarm_timeout(seconds: int):
 @pytest.mark.parametrize('tile_size', [-1, 0])
 def test_to_geotiff_cog_non_positive_tile_size_raises(tmp_path, tiled, tile_size):
     """``cog=True`` with ``tile_size<=0`` raises ValueError up front,
-    regardless of ``tiled``. Before #2311 this hung the writer when
+    regardless of ``tiled``. Previously this hung the writer when
     ``tiled=False``."""
     da = _float_da()
     p = tmp_path / f'cog_tile_size_hang_2311_t{int(tiled)}_ts{tile_size}.tif'
@@ -2202,7 +2200,7 @@ def test_writer_auto_overview_loop_rejects_non_positive_tile_size(
     """``_write(..., cog=True, overview_levels=None)`` raises ValueError
     when ``tile_size`` is not a positive int, instead of spinning in the
     halving loop. The public ``to_geotiff`` already validates earlier;
-    this is the inner-writer safety net (#2311)."""
+    this is the inner-writer safety net."""
     from xrspatial.geotiff._writer import _write
 
     # Minimal float32 array large enough for the auto-overview branch to
@@ -2235,7 +2233,7 @@ def test_to_geotiff_cog_non_int_tile_size_raises(tmp_path, bad_tile_size):
     """Non-int ``tile_size`` (None, float, bool) with ``cog=True`` is
     rejected at the public boundary, regardless of ``tiled``. Bool is
     explicitly listed because Python treats ``True``/``False`` as int
-    subclasses (#2311 follow-up)."""
+    subclasses."""
     da = _float_da()
     p = tmp_path / (
         f'cog_tile_size_hang_2311_nonint_{type(bad_tile_size).__name__}.tif')
@@ -2260,7 +2258,7 @@ def test_to_geotiff_cog_non_int_tile_size_raises(tmp_path, bad_tile_size):
 def test_inner_overview_loop_guard_message_is_pinned():
     """Pin the inner-overview ``tile_size`` guard literal so removing
     the loop-side defense fails this test even when the top gate at
-    line 407 still raises for the same inputs (#2311)."""
+    line 407 still raises for the same inputs."""
     from xrspatial.geotiff import _writer as wmod
 
     guard_msg = (

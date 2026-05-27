@@ -1,35 +1,26 @@
 """Nodata propagation, attrs, lifecycle, and semantics on read.
 
-Cluster 10 of long-tail epic #2424 folds the read-side nodata files
-into this parametrised home. Sections in source-order below:
+Sections in source order:
 
-* ``test_nodata_attr_aliases_1582.py`` -- ``nodatavals`` / ``_FillValue``
-  alias resolution on write feeds the read-back nodata tag.
-* ``test_masked_nodata_attr_2092.py`` -- ``attrs['masked_nodata']``
-  reflects whether masking actually ran.
-* ``test_nodata_lifecycle_attrs_2135.py`` -- additive
-  ``nodata_pixels_present`` / ``nodata_dtype_cast`` lifecycle attrs.
-* ``test_nodata_nan_int_1774.py`` -- non-finite / fractional integer
-  sentinels are a no-op under the #2441 opt-in.
-* ``test_nodata_no_extra_copy_1553.py`` -- the dropped defensive copies
-  on the read path do not alias caller-visible buffers.
-* ``test_helper_band_nodata_2210.py`` -- ``band_nodata`` forwarding
-  through the shared validation helpers.
-* ``test_nodata_lifecycle_parity_2211.py`` -- ``NodataLifecycle``
-  decision contract + cross-backend parity.
-* ``test_nodata_semantics_split_1988.py`` -- the
-  ``nodata`` vs ``masked_nodata`` split-attrs contract.
+* ``nodatavals`` / ``_FillValue`` alias resolution on write feeds the
+  read-back nodata tag.
+* ``attrs['masked_nodata']`` reflects whether masking actually ran.
+* Additive ``nodata_pixels_present`` / ``nodata_dtype_cast`` lifecycle
+  attrs.
+* Non-finite / fractional integer sentinels are a no-op under the opt-in.
+* The dropped defensive copies on the read path do not alias
+  caller-visible buffers.
+* ``band_nodata`` forwarding through the shared validation helpers.
+* ``NodataLifecycle`` decision contract + cross-backend parity.
+* The ``nodata`` vs ``masked_nodata`` split-attrs contract.
 
-The original GPU nodata-mask reader coverage stays at the top of the
-file:
+The GPU nodata-mask reader coverage (in-place mask + removal-pin) stays
+at the top of the file.
 
-* ``test_apply_nodata_mask_gpu_inplace_1934.py`` / ``..._removed_2208``
-  -- the GPU helper in-place mask + removal-pin coverage.
-
-GPU-only nodata cases live in ``xrspatial/geotiff/tests/gpu/test_reader.py``
-(under the #1542 section); the GPU parity tests that live here are gated
-through the shared ``requires_gpu`` marker (aliased ``_gpu_only`` for
-brevity).
+GPU-only nodata cases live in
+``xrspatial/geotiff/tests/gpu/test_reader.py``; the GPU parity tests that
+live here are gated through the shared ``requires_gpu`` marker (aliased
+``_gpu_only`` for brevity).
 """
 from __future__ import annotations
 
@@ -203,12 +194,12 @@ def test_apply_nodata_mask_gpu_none_nodata_passthrough():
 
 
 # ---------------------------------------------------------------------------
-# Helper removal pin (#2208)
+# Helper removal pin
 # ---------------------------------------------------------------------------
 
 
 def test_apply_nodata_mask_gpu_with_presence_not_importable():
-    """The dead sibling helper stays removed after #2207."""
+    """The dead sibling helper stays removed."""
     # Covers both module-attribute absence and the import-time surface.
     with pytest.raises(ImportError):
         from xrspatial.geotiff._backends._gpu_helpers import \
@@ -222,7 +213,7 @@ def test_apply_nodata_mask_gpu_still_present():
 
 
 # ===========================================================================
-# nodata attr aliases on write feed the read-back tag (#1582)
+# nodata attr aliases on write feed the read-back tag
 # ===========================================================================
 
 _SENTINEL_1582 = -9999.0
@@ -294,9 +285,9 @@ def test_fill_value_resolves_to_nodata_tag(tmp_path, arr_with_sentinel_1582):
 
 def test_explicit_nodata_attr_wins_over_aliases(
         tmp_path, arr_with_sentinel_1582):
-    """``attrs['nodata']`` is xrspatial's canonical key. Issue #1987 PR 7
-    replaced the legacy "canonical silently wins, alias dropped" path
-    with a fail-closed raise: a DataArray with disagreeing ``nodata`` and
+    """``attrs['nodata']`` is xrspatial's canonical key. Rather than
+    silently letting the canonical value win and dropping the alias, the
+    writer fails closed: a DataArray with disagreeing ``nodata`` and
     ``nodatavals`` refuses to write. The explicit ``nodata=`` writer
     kwarg overrides both attrs and bypasses the check."""
     from xrspatial.geotiff import ConflictingNodataError
@@ -381,7 +372,7 @@ def test_gpu_writer_resolves_alias(tmp_path, arr_with_sentinel_1582,
 
 
 # ===========================================================================
-# ``attrs['masked_nodata']`` reflects whether masking ran (#2092)
+# ``attrs['masked_nodata']`` reflects whether masking ran
 # ===========================================================================
 
 
@@ -404,7 +395,7 @@ def _make_float_raster_with_nodata_2092(path):
 def test_eager_mask_nodata_false_reports_false(tmp_path):
     """Float file + nodata=-9999 + mask_nodata=False: buffer keeps
     literal sentinel pixels; attr must say False so downstream code
-    knows the sentinel is still present (#2092 bug case)."""
+    knows the sentinel is still present."""
     path = str(tmp_path / "tmp_2092_eager_unmasked.tif")
     _make_float_raster_with_nodata_2092(path)
 
@@ -636,7 +627,7 @@ def test_gpu_mask_nodata_true_reports_true(tmp_path):
 
 
 # ===========================================================================
-# Additive nodata lifecycle attrs: pixels_present / dtype_cast (#2135)
+# Additive nodata lifecycle attrs: pixels_present / dtype_cast
 # ===========================================================================
 
 
@@ -788,7 +779,7 @@ def test_eager_no_declared_sentinel(tmp_path):
 
 def test_dask_leaves_pixels_present_unset(tmp_path):
     """Dask path: per-chunk reduction would force eager compute, so
-    ``nodata_pixels_present`` stays unset by design (#2135)."""
+    ``nodata_pixels_present`` stays unset by design."""
     path = str(tmp_path / "tmp_2135_dask_present.tif")
     _make_float_raster_2135(path)
     out = read_geotiff_dask(path, chunks=2)
@@ -929,7 +920,7 @@ def test_gpu_dtype_cast_records_target(tmp_path):
 
 
 # ===========================================================================
-# Non-finite / fractional integer sentinels are a no-op (#1774, #2441 opt-in)
+# Non-finite / fractional integer sentinels are a no-op under the opt-in
 # ===========================================================================
 
 
@@ -1016,7 +1007,7 @@ def _build_uint16_tiff_1774(nodata_str: str, tmp_path) -> str:
 @pytest.mark.parametrize('nodata_str', ['nan', 'NaN', 'NAN'])
 def test_open_geotiff_eager_int_nodata_nan(tmp_path, nodata_str):
     """Eager numpy path: NaN nodata on uint16 file is a no-op under the
-    #2441 opt-in.
+    ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774(nodata_str, tmp_path)
     da = open_geotiff(path, allow_invalid_nodata=True)
@@ -1032,7 +1023,7 @@ def test_open_geotiff_eager_int_nodata_nan(tmp_path, nodata_str):
                                         '-inf', '-Inf', '-INF'])
 def test_open_geotiff_eager_int_nodata_inf(tmp_path, nodata_str):
     """Eager numpy path: +/-Inf nodata on uint16 file is a no-op under
-    the #2441 opt-in.
+    the ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774(nodata_str, tmp_path)
     da = open_geotiff(path, allow_invalid_nodata=True)
@@ -1055,8 +1046,8 @@ def test_open_geotiff_eager_int_nodata_finite_still_masks(tmp_path):
 
 
 def test_read_geotiff_dask_int_nodata_nan(tmp_path):
-    """Dask path: NaN nodata on uint16 file is a no-op under the #2441
-    opt-in.
+    """Dask path: NaN nodata on uint16 file is a no-op under the
+    ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774('nan', tmp_path)
     da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
@@ -1068,8 +1059,8 @@ def test_read_geotiff_dask_int_nodata_nan(tmp_path):
 
 
 def test_read_geotiff_dask_int_nodata_inf(tmp_path):
-    """Dask path: Inf nodata on uint16 file is a no-op under the #2441
-    opt-in.
+    """Dask path: Inf nodata on uint16 file is a no-op under the
+    ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774('inf', tmp_path)
     da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
@@ -1080,7 +1071,7 @@ def test_read_geotiff_dask_int_nodata_inf(tmp_path):
 
 @_gpu_only
 def test_apply_nodata_mask_gpu_int_nan_noop():
-    """GPU helper: NaN nodata on uint16 array is a no-op (#1774)."""
+    """GPU helper: NaN nodata on uint16 array is a no-op."""
     import cupy
 
     from xrspatial.geotiff import _apply_nodata_mask_gpu
@@ -1094,7 +1085,7 @@ def test_apply_nodata_mask_gpu_int_nan_noop():
 
 @_gpu_only
 def test_apply_nodata_mask_gpu_int_inf_noop():
-    """GPU helper: Inf nodata on uint16 array is a no-op (#1774)."""
+    """GPU helper: Inf nodata on uint16 array is a no-op."""
     import cupy
 
     from xrspatial.geotiff import _apply_nodata_mask_gpu
@@ -1124,7 +1115,7 @@ def test_apply_nodata_mask_gpu_int_finite_still_masks():
 @pytest.mark.parametrize('nodata_str', ['3.5', '29.5', '0.5'])
 def test_open_geotiff_eager_int_nodata_fractional_noop(tmp_path, nodata_str):
     """Eager numpy path: fractional nodata on uint16 is a no-op under the
-    #2441 opt-in.
+    ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774(nodata_str, tmp_path)
     da = open_geotiff(path, allow_invalid_nodata=True)
@@ -1138,7 +1129,8 @@ def test_open_geotiff_eager_int_nodata_fractional_does_not_alias_truncation(
 ):
     """A ``"30.5"`` sentinel must not mask the real pixel value 30
     (which is in the test image). ``int(30.5)`` would truncate to 30
-    without the integerness gate. Runs under the #2441 opt-in.
+    without the integerness gate. Runs under the ``allow_invalid_nodata``
+    opt-in.
     """
     path = _build_uint16_tiff_1774('30.5', tmp_path)
     da = open_geotiff(path, allow_invalid_nodata=True)
@@ -1149,8 +1141,8 @@ def test_open_geotiff_eager_int_nodata_fractional_does_not_alias_truncation(
 
 
 def test_read_geotiff_dask_int_nodata_fractional_noop(tmp_path):
-    """Dask path: fractional nodata on uint16 is a no-op under the #2441
-    opt-in.
+    """Dask path: fractional nodata on uint16 is a no-op under the
+    ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774('30.5', tmp_path)
     da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
@@ -1178,7 +1170,7 @@ def test_apply_nodata_mask_gpu_int_fractional_noop():
 
 
 # ===========================================================================
-# Dropped defensive copies on the read path do not alias buffers (#1553)
+# Dropped defensive copies on the read path do not alias buffers
 # ===========================================================================
 
 
@@ -1384,7 +1376,7 @@ def test_write_single_tile_does_not_mutate_caller_input(tmp_path):
 
 
 # ===========================================================================
-# band_nodata forwarding through the shared validation helpers (#2210)
+# band_nodata forwarding through the shared validation helpers
 # ===========================================================================
 
 
@@ -1479,7 +1471,7 @@ def test_validate_helper_omits_band_kwargs_short_circuits():
 def test_lazy_finalize_routes_band_nodata_through_validator():
     # Mixed-band sentinels routed through the lazy finalizer surface as
     # the same error class the VRT pre-read inline call raises, so the
-    # helper-routed post-read check is no longer a no-op (#2210).
+    # helper-routed post-read check is not a no-op.
     gi = _FakeGeoInfo2210()
 
     with pytest.raises(MixedBandMetadataError):
@@ -1512,8 +1504,8 @@ def test_lazy_finalize_band_nodata_first_opts_out():
 
 
 def test_lazy_finalize_without_band_kwargs_unchanged():
-    # The default kwargs match the pre-#2210 behaviour: no mixed-band
-    # dispatch is meaningful because ``band_nodata_values`` is None.
+    # The default kwargs are backward-compatible: no mixed-band dispatch
+    # is meaningful because ``band_nodata_values`` is None.
     gi = _FakeGeoInfo2210()
 
     attrs = _finalize_lazy_read_attrs(
@@ -1528,7 +1520,7 @@ def test_lazy_finalize_without_band_kwargs_unchanged():
 
 
 # ===========================================================================
-# NodataLifecycle decision contract + cross-backend parity (#2211 / #2226)
+# NodataLifecycle decision contract + cross-backend parity
 # ===========================================================================
 
 class TestRawSentinelExposure:
@@ -1734,9 +1726,9 @@ class TestWriterRestoreSentinelDecision:
         ) is True
 
     def test_masked_nodata_attr_false_returns_false(self):
-        # Mirrors issue #1988: literal False on attrs['masked_nodata']
-        # tells the writer the read path did NOT mask, so the in-buffer
-        # NaN must NOT be rewritten to the sentinel.
+        # Literal False on attrs['masked_nodata'] tells the writer the
+        # read path did NOT mask, so the in-buffer NaN must NOT be
+        # rewritten to the sentinel.
         lc = NodataLifecycle(declared=-9999.0, dtype_in=np.dtype("float32"))
         assert lc.writer_restore_sentinel(
             buffer_dtype=np.dtype("float32"),
@@ -1751,7 +1743,7 @@ class TestWriterRestoreSentinelDecision:
         ) is True
 
     def test_masked_nodata_attr_none_defaults_true(self):
-        # Attr absent -> pre-#1988 default (True).
+        # Attr absent -> default (True).
         lc = NodataLifecycle(declared=-9999.0, dtype_in=np.dtype("float32"))
         assert lc.writer_restore_sentinel(
             buffer_dtype=np.dtype("float32"),
@@ -1838,7 +1830,7 @@ class TestPixelsPresentSlot:
         assert lc.pixels_present is False
 
 
-# Cross-backend parity through the public API (#2226 PR-C)
+# Cross-backend parity through the public API
 
 
 def _make_int_raster_2211(path, sentinel=255, dtype=np.uint8, plant=True):
@@ -2044,7 +2036,7 @@ class TestMinIsWhiteSentinelInversion:
         # the same effective_sentinel resolution.
         assert np.isnan(da.data[0, 2])
         # attrs['nodata'] carries the on-disk value (inverted by the
-        # writer); this is the documented round-trip behaviour (#1809).
+        # writer); this is the documented round-trip behaviour.
         assert int(da.attrs["nodata"]) == 245
 
     def test_dask_matches_eager(self, tmp_path):
@@ -2205,8 +2197,8 @@ class TestWriterRestoreParity:
         assert readback.data[0, 1] == -9999.0
 
     def test_masked_nodata_false_attr_blocks_restore(self, tmp_path):
-        # Issue #1988: the reader stores masked_nodata=False to opt out
-        # of the writer's NaN->sentinel rewrite. The lifecycle's
+        # The reader stores masked_nodata=False to opt out of the
+        # writer's NaN->sentinel rewrite. The lifecycle's
         # writer_restore_sentinel reads this through the
         # ``restore_sentinel`` kwarg the writer threads in.
         path = str(tmp_path / "no_restore_2226.tif")
@@ -2249,13 +2241,13 @@ class TestWriterRestoreParity:
 
 
 # ===========================================================================
-# nodata vs masked_nodata split-attrs contract (#1988)
+# nodata vs masked_nodata split-attrs contract
 # ===========================================================================
 #
 # ``attrs['nodata']`` was historically overloaded as both "the file
 # declared this sentinel" and "the reader already replaced sentinel
-# pixels with NaN." Issue #1988 split those into ``nodata`` (declared)
-# and ``masked_nodata`` (whether the in-memory array was NaN-masked).
+# pixels with NaN." Those are split into ``nodata`` (declared) and
+# ``masked_nodata`` (whether the in-memory array was NaN-masked).
 # The rasterio-backed helpers below import rasterio lazily so the rest
 # of this module still collects when rasterio is absent.
 
@@ -2695,9 +2687,9 @@ def test_int_source_with_out_of_range_sentinel(tmp_path):
 class TestSetNodataAttrsHelper:
     """Direct coverage of :func:`_set_nodata_attrs` in ``_attrs.py``.
 
-    The helper signature changed in #2092 from ``array_dtype`` (dtype
-    inference) to ``masked`` (explicit decision passed by the
-    caller). These tests pin the new contract.
+    The helper takes ``masked`` (an explicit decision passed by the
+    caller) rather than inferring from ``array_dtype``. These tests pin
+    that contract.
     """
 
     def test_masked_true_marks_masked(self):
@@ -2740,8 +2732,8 @@ class TestShouldRestoreNanSentinelHelper:
     def test_missing_attr_defaults_to_true(self):
         from xrspatial.geotiff._attrs import _should_restore_nan_sentinel
         assert _should_restore_nan_sentinel({}) is True
-        # The default preserves pre-#1988 behaviour for any DataArray
-        # that did not pass through xrspatial's reader.
+        # The default is backward-compatible for any DataArray that did
+        # not pass through xrspatial's reader.
         assert _should_restore_nan_sentinel({"nodata": -9999}) is True
 
     def test_masked_nodata_true_returns_true(self):
@@ -2835,7 +2827,7 @@ class TestWriterRoundTripEager:
             on_disk = ds.read(1)
             # The GDAL_NODATA tag is still set, regardless of the
             # in-memory masking state. The two attrs carry independent
-            # meanings (see issue #1988).
+            # meanings.
             assert ds.nodata == -9999.0
         # NaN pixels survive unchanged: the writer must NOT rewrite
         # them to the integer sentinel because the array did not pass
@@ -2844,7 +2836,7 @@ class TestWriterRoundTripEager:
         assert (on_disk == -9999.0).sum() == 0
 
     def test_missing_masked_nodata_attr_restores_sentinel(self, tmp_path):
-        """External DataArrays without the attr keep pre-#1988 behaviour."""
+        """External DataArrays without the attr keep the legacy behaviour."""
         rasterio = pytest.importorskip("rasterio")
 
         path = tmp_path / "test_1988_writer_no_attr.tif"
@@ -2869,7 +2861,7 @@ class TestWriterRoundTripEager:
         with rasterio.open(str(path)) as ds:
             on_disk = ds.read(1)
             assert ds.nodata == -9999.0
-        # Pre-#1988 behaviour: missing attr = treat as masked.
+        # Legacy behaviour: missing attr = treat as masked.
         assert not np.isnan(on_disk).any()
         assert (on_disk == -9999.0).sum() == 2
 
@@ -3001,7 +2993,7 @@ class TestWriteStreamingRestoreSentinelKwarg:
         assert (on_disk == -9999.0).sum() == 0
 
     def test_streaming_default_is_true(self, tmp_path):
-        """Default preserves pre-#1988 behaviour."""
+        """Default preserves the legacy behaviour."""
         rasterio = pytest.importorskip("rasterio")
         import dask.array as da_mod
 

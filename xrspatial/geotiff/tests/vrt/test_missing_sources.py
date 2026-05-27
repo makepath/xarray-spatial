@@ -1,8 +1,6 @@
 """VRT ``missing_sources`` policy matrix.
 
-Consolidates the eager-only smoke checks that previously lived in
-``test_vrt_missing_sources_policy_1799.py`` with the eager-plus-chunked
-matrix from ``test_vrt_missing_sources_policy_2367.py``.
+Covers the eager and chunked policy matrix.
 
 Release contract (see ``_backends/vrt.py:206`` docstring):
 
@@ -16,18 +14,15 @@ Release contract (see ``_backends/vrt.py:206`` docstring):
 * Any other value raises ``ValueError`` naming the bad kwarg and
   echoing the bad value via ``repr()``.
 
-Also folds the VRT-tail missing-sources residue (cluster 13, #2437):
+Also covers:
 
 * Internal ``_vrt.read_vrt`` entry point default-raise + explicit-warn
-  + ``XRSPATIAL_GEOTIFF_STRICT=1`` override (was
-  ``test_vrt_missing_sources_default_raise_1843.py``).
+  + ``XRSPATIAL_GEOTIFF_STRICT=1`` override.
 * Public ``read_vrt`` / ``open_geotiff('.vrt')`` default-raise +
-  explicit-warn (was ``test_read_vrt_default_missing_sources_1860.py``).
+  explicit-warn.
 * Chunked-path missing-source policy: ``vrt_holes`` at build,
   raise-at-build, per-task compute warnings, window / band scoping,
-  multi-source error preview (was
-  ``test_vrt_chunked_missing_sources_1799.py`` and
-  ``test_vrt_chunked_missing_raise_at_build_2265.py``).
+  multi-source error preview.
 """
 from __future__ import annotations
 
@@ -395,7 +390,6 @@ class TestInternalEntryPointMissingSources:
 
 # ===========================================================================
 # Public default ``missing_sources='raise'`` on read_vrt + open_geotiff
-# (was test_read_vrt_default_missing_sources_1860.py).
 #
 # Pins that the public wrapper's default matches the internal
 # ``_vrt.read_vrt`` default rather than silently overriding it with the

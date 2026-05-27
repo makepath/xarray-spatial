@@ -1,11 +1,8 @@
 """Streaming / chunked read paths.
 
-Folds in the streaming-BigTIFF threshold tests from
-``xrspatial/tests/test_geotiff_streaming_bigtiff_threshold_1785.py``
-per the epic #2390 PR 8 directive. The cluster covers the
-streaming-decision helper that the chunked write/read pipeline uses to
-pick classic vs. BigTIFF, plus the integration check that the user's
-``bigtiff=`` override still wins on the streaming code path.
+Covers the streaming-decision helper that the chunked write/read pipeline
+uses to pick classic vs. BigTIFF, plus the integration check that the
+user's ``bigtiff=`` override still wins on the streaming code path.
 
 The streaming writer's auto-BigTIFF decision used to compare only the
 uncompressed pixel-data size against ``UINT32_MAX``. For rasters just

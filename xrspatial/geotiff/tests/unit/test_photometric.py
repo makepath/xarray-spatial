@@ -1,6 +1,6 @@
 """Photometric interpretation and codec-tier API surface tests.
 
-This file groups two clusters that share a *concern* rather than runtime
+This file groups two areas that share a *concern* rather than runtime
 logic: how the reader/writer expose photometric and codec-tier choices
 through the public API.
 
@@ -96,9 +96,9 @@ def _write_miniswhite_tiff(path: str, stored: np.ndarray, nodata_str: str,
 def _da(arr: np.ndarray, attrs_extra=None) -> xr.DataArray:
     """Wrap an ndarray as a ``to_geotiff``-compatible DataArray.
 
-    Square 1xN strips trigger the degenerate-axis rule introduced in
-    issue #2214; opt into the borrow-from-other-axis fallback for those
-    shapes so the writer accepts the call.
+    Square 1xN strips trigger the degenerate-axis rule; opt into the
+    borrow-from-other-axis fallback for those shapes so the writer
+    accepts the call.
     """
     h, w = arr.shape
     attrs = {'res': (1.0, 1.0)}

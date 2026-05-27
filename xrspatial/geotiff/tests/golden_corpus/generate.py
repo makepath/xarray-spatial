@@ -20,8 +20,7 @@ Usage::
     python -m xrspatial.geotiff.tests.golden_corpus.generate --only <id>
 
 Dry-run validates the manifest and reports what would be written without
-touching disk. The smoke test in this PR uses dry-run; Phase 2 PRs will
-flip to real writes once each fixture group lands.
+touching disk.
 """
 
 from __future__ import annotations
@@ -391,7 +390,7 @@ def _make_pixels(entry: dict[str, Any]) -> np.ndarray:
     # ``noise_with_corners`` plants the dtype's min and max sentinels in the
     # four corner pixels of every band so dtype-edge handling gets exercised
     # by the corpus. Floats keep noise as-is; a NaN sentinel is a separate
-    # property tracked by Phase 2 PR 6 (nodata).
+    # nodata property.
     if pattern == "noise_with_corners" and dtype.kind in ("i", "u"):
         info = np.iinfo(dtype)
         lo = dtype.type(info.min)
@@ -408,8 +407,8 @@ def _make_pixels(entry: dict[str, Any]) -> np.ndarray:
 def _stamp_nodata_pixels(arr: np.ndarray, entry: dict[str, Any]) -> None:
     """Plant a few sentinel pixels at deterministic positions.
 
-    The corpus nodata fixtures (#1930, Phase 2 PR 6) need the oracle to
-    exercise nodata-masking semantics, not just the tag round-trip.
+    The corpus nodata fixtures need the oracle to exercise nodata-masking
+    semantics, not just the tag round-trip.
     Noise / ramp / uniform patterns are vanishingly unlikely to hit the
     sentinel value on their own for wide integer dtypes (a 16x16 uint16
     raster sees each value with probability 1/65536 per cell), so we
@@ -429,7 +428,7 @@ def _stamp_nodata_pixels(arr: np.ndarray, entry: dict[str, Any]) -> None:
     dtype = arr.dtype
     # ``bool`` is a subclass of ``int``; reject it explicitly so a
     # ``nodata: true`` manifest entry can't slip a 1 into the raster.
-    # The write-side gate is #1990; this is the matching read-side gate.
+    # This is the read-side gate matching the write-side one.
     if isinstance(nd, bool):
         return
     if isinstance(nd, (int, float)):
@@ -465,7 +464,7 @@ def _resolve_crs(crs_spec: dict[str, Any] | None):
     if "citation" in crs_spec:
         # Citation-only: a WKT keyed only by name, no AUTHORITY tag and
         # no numeric projection parameters. Exercises the oracle's
-        # non-EPSG WKT fallback (Phase 2 PR 8 of #1930). PROJ does not
+        # non-EPSG WKT fallback. PROJ does not
         # resolve this to an EPSG code; on round-trip libgeotiff mutates
         # the WKT (axis order, UNIT AUTHORITY) but preserves to_dict().
         return CRS.from_wkt(
