@@ -1,4 +1,41 @@
-"""Tests for new features: multi-band, integer nodata, packbits, zstd, dask, BigTIFF."""
+"""Tests for new GeoTIFF features and the release-contract feature surface.
+
+Consolidated in cluster 16 of long-tail epic #2424 (issue #2440). Folds
+four top-level files into the release-gate suite:
+
+* Original ``test_features.py`` -- end-to-end coverage for multi-band,
+  integer nodata, packbits, zstd, dask, BigTIFF, palette / sub-byte
+  bit depths, planar config, and other writer/reader features. Most
+  cases are not strict release-gate pins but exercise the same public
+  surface the release-gate contract covers, so they sit alongside the
+  gates rather than at the top level.
+* ``test_supported_features_shape_2348.py`` -- structural invariants
+  on the ``SUPPORTED_FEATURES`` mapping (every entry has a tier label;
+  the tier set is closed; keys follow ``<group>.<name>``; the dict
+  literal has no duplicate keys; epic #2340 wave-1 promotions/demotions
+  stay pinned).
+* ``test_supported_features_tiers_2137.py`` -- tier-aware codec gate
+  on the writer (Tier 3 ``allow_experimental_codecs``; Tier 4
+  ``allow_internal_only_jpeg``); ``to_geotiff`` and
+  ``write_geotiff_gpu`` signature pins.
+* ``test_unsupported_features_2349.py`` -- typed-error refusals at the
+  VRT parser and the eager writer for unsupported feature combinations
+  (warped VRTs, derived raster bands, kernel-filtered sources, mixed
+  per-source nodata, rotated transforms, etc.).
+
+Section banners below mark the file boundaries. The ``SUPPORTED_FEATURES``
+test sections are tagged with their issue numbers in the headings so the
+audit trail to the original PRs stays intact.
+
+Note on release-gate scope
+--------------------------
+``@pytest.mark.release_gate`` markers in this file are localised to the
+sections that pin the release contract (the ``SUPPORTED_FEATURES`` tier
+gates and the ``VRT stable_only`` opt-in). The bulk of this file
+exercises the same public surface that the release-gate sister file
+``test_stable_features.py`` covers but is general feature regression,
+not contract pins; ``pytest -m release_gate`` picks the right subset.
+"""
 from __future__ import annotations
 
 import os
@@ -1173,7 +1210,7 @@ class TestBigEndian:
 
     def test_float32_big_endian(self, tmp_path):
         """Read a big-endian float32 TIFF."""
-        from .conftest import make_minimal_tiff
+        from ..conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.float32).reshape(4, 4)
         tiff_data = make_minimal_tiff(4, 4, np.dtype('float32'),
                                       pixel_data=expected, big_endian=True)
@@ -1187,7 +1224,7 @@ class TestBigEndian:
 
     def test_uint16_big_endian(self, tmp_path):
         """Read a big-endian uint16 TIFF."""
-        from .conftest import make_minimal_tiff
+        from ..conftest import make_minimal_tiff
         expected = np.arange(20, dtype=np.uint16).reshape(4, 5) * 1000
         tiff_data = make_minimal_tiff(5, 4, np.dtype('uint16'),
                                       pixel_data=expected, big_endian=True)
@@ -1201,7 +1238,7 @@ class TestBigEndian:
 
     def test_int32_big_endian(self, tmp_path):
         """Read a big-endian int32 TIFF."""
-        from .conftest import make_minimal_tiff
+        from ..conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.int32).reshape(4, 4) - 8
         tiff_data = make_minimal_tiff(4, 4, np.dtype('int32'),
                                       pixel_data=expected, big_endian=True)
@@ -1215,7 +1252,7 @@ class TestBigEndian:
 
     def test_float64_big_endian(self, tmp_path):
         """Read a big-endian float64 TIFF."""
-        from .conftest import make_minimal_tiff
+        from ..conftest import make_minimal_tiff
         expected = np.linspace(-1.0, 1.0, 16, dtype=np.float64).reshape(4, 4)
         tiff_data = make_minimal_tiff(4, 4, np.dtype('float64'),
                                       pixel_data=expected, big_endian=True)
@@ -1229,7 +1266,7 @@ class TestBigEndian:
 
     def test_uint8_big_endian_no_swap_needed(self, tmp_path):
         """uint8 big-endian needs no byte swap (single byte per sample)."""
-        from .conftest import make_minimal_tiff
+        from ..conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.uint8).reshape(4, 4)
         tiff_data = make_minimal_tiff(4, 4, np.dtype('uint8'),
                                       pixel_data=expected, big_endian=True)
@@ -1242,7 +1279,7 @@ class TestBigEndian:
 
     def test_big_endian_windowed(self, tmp_path):
         """Windowed read of a big-endian TIFF."""
-        from .conftest import make_minimal_tiff
+        from ..conftest import make_minimal_tiff
         expected = np.arange(64, dtype=np.float32).reshape(8, 8)
         tiff_data = make_minimal_tiff(8, 8, np.dtype('float32'),
                                       pixel_data=expected, big_endian=True)
@@ -1255,7 +1292,7 @@ class TestBigEndian:
 
     def test_big_endian_via_public_api(self, tmp_path):
         """open_geotiff handles big-endian files."""
-        from .conftest import make_minimal_tiff
+        from ..conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.float32).reshape(4, 4)
         tiff_data = make_minimal_tiff(
             4, 4, np.dtype('float32'), pixel_data=expected,
@@ -2851,3 +2888,943 @@ class TestPublicAPI:
         import xrspatial.geotiff as g
         assert 'plot_geotiff' not in g.__all__
         assert hasattr(g, 'plot_geotiff')
+
+
+# ===========================================================================
+# SUPPORTED_FEATURES structural invariants (#2348)
+# Source: test_supported_features_shape_2348.py
+# ===========================================================================
+
+import ast
+from pathlib import Path
+
+import pytest
+
+from xrspatial.geotiff import SUPPORTED_FEATURES
+
+_VALID_TIERS = frozenset({'stable', 'advanced', 'experimental', 'internal_only'})
+
+
+def test_supported_features_is_non_empty_dict():
+    """Catches an accidental refactor that swaps the dict for a
+    different container or empties it."""
+    assert isinstance(SUPPORTED_FEATURES, dict)
+    assert len(SUPPORTED_FEATURES) > 0
+
+
+def test_every_entry_has_a_tier():
+    """Every value is a non-empty string. Catches ``None`` /
+    placeholder values that would otherwise silently disable the
+    docs / notebook renderer for that row."""
+    for name, tier in SUPPORTED_FEATURES.items():
+        assert isinstance(tier, str), (name, type(tier).__name__)
+        assert tier, name
+
+
+def test_tier_set_is_closed():
+    """Every tier value is one of the four documented labels. The
+    set is closed; introducing a new tier requires updating the
+    docs, the notebook, and this test together."""
+    seen = set(SUPPORTED_FEATURES.values())
+    extras = seen - _VALID_TIERS
+    assert not extras, (
+        f"SUPPORTED_FEATURES carries unrecognised tier labels {sorted(extras)!r}; "
+        f"valid labels are {sorted(_VALID_TIERS)!r}. Adding a new tier requires "
+        f"updating xrspatial.geotiff.__init__ docs, the user-guide notebook table, "
+        f"and this test in the same commit."
+    )
+
+
+def test_every_tier_label_is_used():
+    """Every documented tier label appears on at least one entry.
+    Catches accidental drift where a tier is documented in the
+    package docstring but no feature references it (which makes the
+    label dead code)."""
+    seen = set(SUPPORTED_FEATURES.values())
+    missing = _VALID_TIERS - seen
+    assert not missing, (
+        f"the following tier labels are documented but unused: {sorted(missing)!r}. "
+        f"Either remove the label from the docs / notebook or add an entry that uses it."
+    )
+
+
+def test_keys_follow_group_dot_name_shape():
+    """Every key is ``"<group>.<name>"`` with a non-empty group and
+    name. The renderer in the user-guide notebook splits on ``.``
+    once to group rows; an entry without a dot would land in an
+    "(unknown)" bucket."""
+    for key in SUPPORTED_FEATURES:
+        assert isinstance(key, str), type(key).__name__
+        head, _, tail = key.partition('.')
+        assert head and tail, key
+        assert key.count('.') >= 1, key
+
+
+def test_keys_are_unique_in_source():
+    """Dict literals silently dedupe duplicate keys ('a': 'x', 'a':
+    'y' -> {'a': 'y'}). Parse the source and assert no key appears
+    twice so a future copy/paste typo fails CI instead of silently
+    overwriting the earlier tier."""
+    src = Path(__file__).resolve().parents[2] / '_attrs.py'
+    tree = ast.parse(src.read_text())
+
+    found_keys: list[str] | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        targets = node.targets
+        if (len(targets) == 1
+                and isinstance(targets[0], ast.Name)
+                and targets[0].id == 'SUPPORTED_FEATURES'
+                and isinstance(node.value, ast.Dict)):
+            found_keys = []
+            for k in node.value.keys:
+                # Dict-literal keys are ast.Constant on 3.8+.
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    found_keys.append(k.value)
+            break
+
+    assert found_keys is not None, (
+        "could not locate the ``SUPPORTED_FEATURES = {...}`` literal in "
+        "xrspatial/geotiff/_attrs.py; this test parses the source so a "
+        "duplicate key cannot be hidden by Python's dict-literal dedup."
+    )
+    duplicates = [k for k in found_keys if found_keys.count(k) > 1]
+    assert not duplicates, (
+        f"duplicate keys in the SUPPORTED_FEATURES literal: "
+        f"{sorted(set(duplicates))!r}. Python silently dedupes these so the "
+        f"later tier wins; remove the duplicates or rename them."
+    )
+
+
+@pytest.mark.parametrize("key,tier", [
+    ('reader.windowed', 'stable'),
+    ('reader.dask', 'stable'),
+    ('reader.allow_rotated', 'experimental'),
+    ('reader.allow_unparseable_crs', 'experimental'),
+])
+def test_epic_2340_wave_1_reconciliation(key, tier):
+    """Wave-1 reconciliation under epic #2340 lands the expected
+    promotions and demotions. Pinned so a future revert that bumps
+    these back to ``advanced`` or drops them entirely fails this
+    test before it reaches the docs / release notes.
+    """
+    assert key in SUPPORTED_FEATURES, (
+        f"{key!r} dropped from SUPPORTED_FEATURES; epic #2340 introduced "
+        f"this entry at tier {tier!r}. Restore it or update the test if "
+        f"the reconciliation has been revised."
+    )
+    assert SUPPORTED_FEATURES[key] == tier, (
+        f"{key!r} expected tier {tier!r}, got {SUPPORTED_FEATURES[key]!r}. "
+        f"Epic #2340 set this tier; a promotion / demotion needs to be "
+        f"justified in the changelog and reflected here."
+    )
+
+
+# ===========================================================================
+# SUPPORTED_FEATURES tier-aware codec gates (#2137)
+# Source: test_supported_features_tiers_2137.py
+# ===========================================================================
+
+import inspect
+import os
+import warnings
+
+import numpy as np
+import pytest
+import xarray as xr
+
+from xrspatial.geotiff import (SUPPORTED_FEATURES, GeoTIFFFallbackWarning, to_geotiff,
+                               write_geotiff_gpu)
+from xrspatial.geotiff._attrs import _VALID_COMPRESSIONS
+
+_TIER_VALUES = {'stable', 'advanced', 'experimental', 'internal_only'}
+
+
+def _make_float32_da(h: int = 32, w: int = 32) -> xr.DataArray:
+    """Small float32 raster with axis-aligned coords; round-trips
+    through every Tier 1 codec and exercises the experimental codec
+    gate without exhausting CI time.
+    """
+    rng = np.random.RandomState(0)
+    arr = rng.standard_normal((h, w)).astype(np.float32)
+    return xr.DataArray(
+        arr,
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(h, dtype=np.float64),
+            "x": np.arange(w, dtype=np.float64),
+        },
+        attrs={'crs': 4326},
+    )
+
+
+def _make_uint8_da(h: int = 32, w: int = 32) -> xr.DataArray:
+    """uint8 raster for codecs (jpeg2000 / j2k via glymur) that only
+    accept integer input.
+    """
+    rng = np.random.RandomState(0)
+    arr = rng.randint(0, 256, size=(h, w), dtype=np.uint8)
+    return xr.DataArray(
+        arr,
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(h, dtype=np.float64),
+            "x": np.arange(w, dtype=np.float64),
+        },
+        attrs={'crs': 4326},
+    )
+
+
+# Some Tier 3 codecs constrain the supported input dtype (glymur's
+# JPEG2000 encoder accepts only uint8/uint16). Pick the dtype that
+# exercises the actual encode without re-litigating per-codec limits.
+_EXPERIMENTAL_CODEC_INPUT = {
+    'jpeg2000': _make_uint8_da,
+    'j2k': _make_uint8_da,
+    'lerc': _make_float32_da,
+    'lz4': _make_float32_da,
+}
+
+
+def test_supported_features_is_a_mapping():
+    """``SUPPORTED_FEATURES`` is a non-empty mapping from feature name
+    to tier label. The notebook and the test suite both iterate it, so
+    accidental removal would break the documentation generator and the
+    parity matrix's tier-aware selection.
+    """
+    assert isinstance(SUPPORTED_FEATURES, dict)
+    assert len(SUPPORTED_FEATURES) > 0
+    for name, tier in SUPPORTED_FEATURES.items():
+        assert isinstance(name, str) and '.' in name, name
+        assert tier in _TIER_VALUES, (name, tier)
+
+
+def test_supported_features_has_split_cog_keys():
+    """The COG entry is split into three keys (issue #2291) so the
+    writer, local reader, and HTTP reader can promote between tiers on
+    independent tracks. All three keys must resolve in
+    ``SUPPORTED_FEATURES`` with a known tier label.
+
+    Pinned here so a future refactor that folds the keys back together
+    has to update the docs, the notebook, and this test in one commit.
+    """
+    for key in ('writer.cog', 'reader.local_cog', 'reader.http_cog'):
+        assert key in SUPPORTED_FEATURES, (
+            f"{key!r} missing from SUPPORTED_FEATURES; the split was "
+            "introduced in #2291 and must stay surfaced so the writer / "
+            "local reader / HTTP reader tracks stay independent."
+        )
+        assert SUPPORTED_FEATURES[key] in _TIER_VALUES, (
+            key, SUPPORTED_FEATURES[key])
+
+
+def test_supported_features_covers_every_valid_codec():
+    """Every codec name in ``_VALID_COMPRESSIONS`` carries a tier in
+    ``SUPPORTED_FEATURES``. The gate cannot silently miss a codec.
+    """
+    classified = {
+        name.split('.', 1)[1].lower()
+        for name in SUPPORTED_FEATURES
+        if name.startswith('codec.')
+    }
+    for codec in _VALID_COMPRESSIONS:
+        assert codec.lower() in classified, (
+            f"codec {codec!r} is in _VALID_COMPRESSIONS but missing from "
+            "SUPPORTED_FEATURES; add a 'codec.<name>' entry classified "
+            "into one of stable / experimental / internal_only.")
+
+
+def test_to_geotiff_signature_has_allow_experimental_codecs():
+    """``to_geotiff`` exposes ``allow_experimental_codecs=False``.
+
+    Pinning the signature catches accidental removal during future
+    refactors: if the kwarg disappears, the writer silently drops back
+    to the unconditional acceptance of Tier 3 codecs and the issue
+    regresses.
+    """
+    params = inspect.signature(to_geotiff).parameters
+    assert 'allow_experimental_codecs' in params
+    assert params['allow_experimental_codecs'].default is False
+
+
+def test_write_geotiff_gpu_signature_has_allow_experimental_codecs():
+    """``write_geotiff_gpu`` carries the same kwarg with the same
+    default, so the two writers expose a consistent surface and the
+    auto-dispatch path forwards a single value to either.
+    """
+    params = inspect.signature(write_geotiff_gpu).parameters
+    assert 'allow_experimental_codecs' in params
+    assert params['allow_experimental_codecs'].default is False
+
+
+@pytest.mark.parametrize(
+    "codec",
+    sorted(
+        name.split('.', 1)[1]
+        for name, tier in SUPPORTED_FEATURES.items()
+        if name.startswith('codec.') and tier == 'stable'
+    ),
+)
+def test_stable_codecs_accept_default_call(tmp_path, codec):
+    """Tier 1 codecs round-trip a small float32 raster with no flags.
+    A regression that accidentally gates a stable codec behind the new
+    flag would surface here.
+    """
+    da = _make_float32_da()
+    path = os.path.join(str(tmp_path), f'stable_{codec}_2137.tif')
+    out = to_geotiff(da, path, compression=codec)
+    assert out == path
+    assert os.path.exists(path)
+
+
+@pytest.mark.parametrize(
+    "codec",
+    sorted(
+        name.split('.', 1)[1]
+        for name, tier in SUPPORTED_FEATURES.items()
+        if name.startswith('codec.') and tier == 'experimental'
+    ),
+)
+def test_experimental_codec_rejected_by_default(tmp_path, codec):
+    """Tier 3 codecs raise ``ValueError`` whose message names the
+    ``allow_experimental_codecs`` flag so the caller learns the
+    opt-in name from the rejection itself.
+    """
+    da = _make_float32_da()
+    path = os.path.join(str(tmp_path), f'reject_{codec}_2137.tif')
+    with pytest.raises(ValueError, match='allow_experimental_codecs'):
+        to_geotiff(da, path, compression=codec)
+
+
+@pytest.mark.parametrize(
+    "codec",
+    sorted(
+        name.split('.', 1)[1]
+        for name, tier in SUPPORTED_FEATURES.items()
+        if name.startswith('codec.') and tier == 'experimental'
+    ),
+)
+def test_experimental_codec_opt_in_emits_warning(tmp_path, codec):
+    """``allow_experimental_codecs=True`` lets the codec through and
+    emits ``GeoTIFFFallbackWarning`` once per call. The warning shape
+    matches the existing ``allow_internal_only_jpeg`` opt-in so docs
+    and downstream warning filters can target a single class.
+    """
+    da = _EXPERIMENTAL_CODEC_INPUT.get(codec, _make_float32_da)()
+    path = os.path.join(str(tmp_path), f'optin_{codec}_2137.tif')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        try:
+            to_geotiff(da, path, compression=codec,
+                       allow_experimental_codecs=True)
+        except (ImportError, ModuleNotFoundError) as e:
+            # ``jpeg2000`` / ``j2k`` need glymur; ``lerc`` needs a
+            # codec backend. The opt-in warning still fires before the
+            # encode runs, so the warning assertion below holds even
+            # when the optional dependency is missing on the runner.
+            pytest.skip(f"optional dependency missing for {codec}: {e}")
+    fallback = [w for w in caught
+                if issubclass(w.category, GeoTIFFFallbackWarning)]
+    assert fallback, (
+        f"to_geotiff(compression={codec!r}, allow_experimental_codecs="
+        "True) must emit GeoTIFFFallbackWarning so the caller knows "
+        "the codec carries no cross-backend parity claim.")
+    # Exactly one warning per call. Pinning the count catches the
+    # double-warn regression where the CPU dispatcher fires the
+    # warning and then ``write_geotiff_gpu`` fires it again on the GPU
+    # dispatch path; the CPU dispatcher gates its warning on
+    # ``not use_gpu`` to keep this invariant on the GPU path too.
+    assert len(fallback) == 1, (
+        f"expected exactly one GeoTIFFFallbackWarning for "
+        f"to_geotiff(compression={codec!r}, allow_experimental_codecs="
+        f"True); got {len(fallback)}: "
+        f"{[str(w.message) for w in fallback]}")
+    # Warning text names both the codec and the opt-in flag so logs
+    # are self-describing rather than pointing to a docs URL.
+    msg = str(fallback[0].message)
+    assert 'allow_experimental_codecs' in msg
+    assert codec in msg
+
+
+def test_jpeg_internal_only_not_covered_by_experimental_flag(tmp_path):
+    """``allow_experimental_codecs=True`` does NOT unlock
+    ``compression='jpeg'`` -- internal-only is the strictest tier and
+    keeps its own dedicated flag (``allow_internal_only_jpeg``). The
+    two flags do not collapse into one switch.
+    """
+    da = _make_float32_da().astype(np.uint8)
+    path = os.path.join(str(tmp_path), 'jpeg_only_experimental_2137.tif')
+    with pytest.raises(ValueError, match='allow_internal_only_jpeg'):
+        to_geotiff(
+            da, path, compression='jpeg',
+            allow_experimental_codecs=True,
+        )
+
+
+def test_jpeg_rejected_without_its_own_flag(tmp_path):
+    """``compression='jpeg'`` without ``allow_internal_only_jpeg=True``
+    raises ``ValueError`` whose message names the dedicated flag.
+    Pinned here so the Tier 4 contract sits alongside the Tier 3
+    contract in one file.
+    """
+    da = _make_float32_da().astype(np.uint8)
+    path = os.path.join(str(tmp_path), 'jpeg_no_flag_2137.tif')
+    with pytest.raises(ValueError, match='allow_internal_only_jpeg'):
+        to_geotiff(da, path, compression='jpeg')
+
+
+# ===========================================================================
+# Unsupported feature combinations (typed refusals, #2349)
+# Source: test_unsupported_features_2349.py
+# ===========================================================================
+
+import os
+import uuid
+
+import numpy as np
+import pytest
+import xarray as xr
+
+from xrspatial.geotiff._errors import VRTUnsupportedError
+from xrspatial.geotiff import (RotatedTransformError, UnsupportedGeoTIFFFeatureError,
+                               open_geotiff, to_geotiff)
+from xrspatial.geotiff._vrt import parse_vrt, write_vrt
+
+
+# ---------------------------------------------------------------------------
+# VRT parse-time gates: subClass, derived raster bands, unknown band children.
+# ---------------------------------------------------------------------------
+
+
+def test_warped_vrt_subclass_rejected_at_parse():
+    """A ``<VRTDataset subClass="VRTWarpedDataset">`` is not a plain mosaic.
+
+    Without an explicit refusal the reader would dispatch on whatever
+    simple sources the warped VRT happens to embed and drop the warping
+    semantics silently. Pin the typed error and the feature-naming
+    substring so the message stays actionable for callers grepping for
+    "warped" / "subClass".
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4" '
+        'subClass="VRTWarpedDataset"></VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError, match="subClass"):
+        parse_vrt(xml, '.')
+
+
+def test_pansharpened_vrt_subclass_rejected_at_parse():
+    """A ``<VRTDataset subClass="VRTPansharpenedDataset">`` is rejected too.
+
+    The subClass check covers every GDAL VRT subclass uniformly, not
+    just the warped one. Pin the pansharpened case so a caller who
+    points read_vrt at a pansharpened VRT sees the same actionable
+    failure rather than silently mis-reading.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4" '
+        'subClass="VRTPansharpenedDataset"></VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError, match="VRTPansharpened"):
+        parse_vrt(xml, '.')
+
+
+def test_derived_rasterband_subclass_rejected_at_parse():
+    """A ``<VRTRasterBand subClass="VRTDerivedRasterBand">`` is rejected.
+
+    Derived raster bands declare a pixel-function expression evaluated
+    over the sources. read_vrt has no pixel-function evaluator and
+    would drop straight to the simple-source path, producing wrong
+    output. Pin the typed error and the band number in the message.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <VRTRasterBand band="1" dataType="Float32" '
+        '   subClass="VRTDerivedRasterBand"></VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError,
+                       match=r"band=1.*VRTDerivedRasterBand"):
+        parse_vrt(xml, '.')
+
+
+def test_kernel_filtered_source_rejected_at_parse():
+    """``<KernelFilteredSource>`` is a known unsupported source type.
+
+    The previous parser silently skipped every non-Simple/Complex tag
+    inside ``<VRTRasterBand>``. The new gate enumerates the known
+    output-altering children and raises on each. Pin the substring so
+    the caller can match on "KernelFilteredSource" specifically.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <VRTRasterBand band="1" dataType="Float32">'
+        '    <KernelFilteredSource>'
+        '      <SourceFilename relativeToVRT="1">src.tif</SourceFilename>'
+        '    </KernelFilteredSource>'
+        '  </VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError,
+                       match="KernelFilteredSource"):
+        parse_vrt(xml, '.')
+
+
+def test_pansharpening_options_rejected_at_parse():
+    """``<PansharpeningOptions>`` inside a band is rejected.
+
+    PansharpeningOptions sits under VRTRasterBand for the pansharpened
+    subClass case. The dataset-level subClass check fires first when
+    the subClass attribute is present, but a malformed VRT that omits
+    the subClass attribute still has to be rejected. Pin that path
+    here.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <VRTRasterBand band="1" dataType="Float32">'
+        '    <PansharpeningOptions></PansharpeningOptions>'
+        '  </VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError,
+                       match="PansharpeningOptions"):
+        parse_vrt(xml, '.')
+
+
+def test_unknown_band_child_rejected_at_parse():
+    """An unknown ``<VRTRasterBand>`` child element is rejected.
+
+    The previous parser silently skipped any unknown tag. A future GDAL
+    VRT extension that introduces a new pixel-altering element must
+    not slip past this reader as a no-op; the catch-all branch raises
+    rather than guess at semantics.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <VRTRasterBand band="1" dataType="Float32">'
+        '    <FutureVRTPixelMutator></FutureVRTPixelMutator>'
+        '  </VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError,
+                       match="FutureVRTPixelMutator"):
+        parse_vrt(xml, '.')
+
+
+def test_dataset_level_maskband_rejected_at_parse():
+    """A dataset-level ``<MaskBand>`` sibling of VRTRasterBand is rejected.
+
+    Per the GDAL VRT spec, ``<MaskBand>`` lives at the ``<VRTDataset>``
+    level (not inside a band). The band-children loop never sees it,
+    so without the dataset-root sweep the mask gets silently dropped.
+    Pin the typed error and the substring naming the offending tag.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <MaskBand>'
+        '    <VRTRasterBand dataType="Byte"></VRTRasterBand>'
+        '  </MaskBand>'
+        '  <VRTRasterBand band="1" dataType="Float32"></VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError, match="MaskBand"):
+        parse_vrt(xml, '.')
+
+
+def test_dataset_level_gcplist_rejected_at_parse():
+    """A dataset-level ``<GCPList>`` (ground-control points) is rejected.
+
+    GCPList signals a non-axis-aligned georeferencing model that
+    read_vrt cannot honour. Pin the rejection so a future refactor
+    cannot regress to the silent no-op pre-#2349 behaviour.
+    """
+    xml = (
+        '<VRTDataset rasterXSize="4" rasterYSize="4">'
+        '  <GCPList Projection="EPSG:4326"></GCPList>'
+        '  <VRTRasterBand band="1" dataType="Float32"></VRTRasterBand>'
+        '</VRTDataset>'
+    )
+    with pytest.raises(UnsupportedGeoTIFFFeatureError, match="GCPList"):
+        parse_vrt(xml, '.')
+
+
+def test_overview_list_band_child_still_passes(tmp_path):
+    """``<OverviewList>`` and ``<Overview>`` band children are informational.
+
+    GDAL emits these on VRTs whose source GeoTIFFs carry external
+    overviews. read_vrt does not consume VRT-level overview
+    declarations (the source-side reader handles overviews via
+    ``overview_level=``), so the elements were and remain
+    no-ops. Pin the allow-list so the catch-all "unknown element"
+    branch added in #2349 does not regress this case.
+    """
+    src = tmp_path / f'src_2349_ov_{uuid.uuid4().hex[:6]}.tif'
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    y = np.arange(4, dtype=np.float64)
+    x = np.arange(4, dtype=np.float64)
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      coords={'y': y, 'x': x},
+                      attrs={'crs': 4326})
+    to_geotiff(da, str(src), compression='none')
+    xml = (
+        f'<VRTDataset rasterXSize="4" rasterYSize="4">'
+        f'  <SRS>EPSG:4326</SRS>'
+        f'  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, 1.0</GeoTransform>'
+        f'  <VRTRasterBand band="1" dataType="Float32">'
+        f'    <OverviewList resampling="average">2 4</OverviewList>'
+        f'    <SimpleSource>'
+        f'      <SourceFilename relativeToVRT="1">{src.name}</SourceFilename>'
+        f'      <SourceBand>1</SourceBand>'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'    </SimpleSource>'
+        f'  </VRTRasterBand>'
+        f'</VRTDataset>'
+    )
+    parsed = parse_vrt(xml, str(tmp_path))
+    assert len(parsed.bands) == 1
+    assert len(parsed.bands[0].sources) == 1
+
+
+def test_informational_band_children_still_pass(tmp_path):
+    """``<Description>`` / ``<UnitType>`` / ``<Offset>`` / ``<Scale>`` skip.
+
+    The gate enumerates known informational children that have no
+    effect on the array bytes and must still be ignored silently.
+    Pin the allow-list so a future refactor cannot regress it to
+    "raise on everything" and break legitimate VRTs.
+    """
+    src = tmp_path / f'src_2349_info_{uuid.uuid4().hex[:6]}.tif'
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    y = np.arange(4, dtype=np.float64)
+    x = np.arange(4, dtype=np.float64)
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      coords={'y': y, 'x': x},
+                      attrs={'crs': 4326})
+    to_geotiff(da, str(src), compression='none')
+    xml = (
+        f'<VRTDataset rasterXSize="4" rasterYSize="4">'
+        f'  <SRS>EPSG:4326</SRS>'
+        f'  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, 1.0</GeoTransform>'
+        f'  <VRTRasterBand band="1" dataType="Float32">'
+        f'    <Description>test</Description>'
+        f'    <UnitType>m</UnitType>'
+        f'    <NoDataValue>-9999</NoDataValue>'
+        f'    <SimpleSource>'
+        f'      <SourceFilename relativeToVRT="1">{src.name}</SourceFilename>'
+        f'      <SourceBand>1</SourceBand>'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'    </SimpleSource>'
+        f'  </VRTRasterBand>'
+        f'</VRTDataset>'
+    )
+    parsed = parse_vrt(xml, str(tmp_path))
+    assert len(parsed.bands) == 1
+    assert len(parsed.bands[0].sources) == 1
+
+
+# ---------------------------------------------------------------------------
+# VRT writer cross-source mixed-metadata gates.
+# ---------------------------------------------------------------------------
+
+
+def _unique_dir(tmp_path, label: str) -> str:
+    d = tmp_path / f"vrt_2349_{label}_{uuid.uuid4().hex[:8]}"
+    d.mkdir()
+    return str(d)
+
+
+def _write_source(path: str, *, px: float = 1.0, py: float = -1.0,
+                  origin_x: float = 0.0, origin_y: float = 100.0,
+                  nodata: float | int | None = -9999.0,
+                  raster_type: str = 'area',
+                  crs: int = 4326,
+                  dtype=np.float32, h: int = 4, w: int = 4) -> None:
+    arr = np.arange(h * w, dtype=dtype).reshape(h, w)
+    y = origin_y + (np.arange(h) + 0.5) * py
+    x = origin_x + (np.arange(w) + 0.5) * px
+    attrs = {'crs': crs, 'raster_type': raster_type}
+    if nodata is not None:
+        attrs['nodata'] = nodata
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      coords={'y': y, 'x': x},
+                      attrs=attrs)
+    to_geotiff(da, path, compression='none', nodata=nodata)
+
+
+def test_mixed_per_source_nodata_rejected(tmp_path):
+    """Two sources with different nodata sentinels fail the write.
+
+    Legacy ``write_vrt`` picked ``first['nodata']`` for every band and
+    silently dropped the second source's sentinel. The fail-closed
+    surface refuses; the caller can override by pinning the mosaic
+    nodata via ``write_vrt(..., nodata=<value>)``. Pin the typed error
+    and a substring naming the kwarg so the message stays actionable.
+    """
+    d = _unique_dir(tmp_path, "nodata")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_source(a, origin_x=0.0, nodata=-9999.0)
+    _write_source(b, origin_x=4.0, nodata=-1.0)
+    vrt = os.path.join(d, "out.vrt")
+    with pytest.raises(UnsupportedGeoTIFFFeatureError,
+                       match=r"mixed.*nodata|nodata=\-9999"):
+        write_vrt(vrt, [a, b])
+
+
+def test_matching_nan_nodata_passes(tmp_path):
+    """Two sources both declaring NaN nodata are not a mismatch.
+
+    ``float('nan') != float('nan')`` evaluates True in plain Python,
+    so the naive cross-source equality check would flag a perfectly
+    consistent pair of NaN-sentinel sources as a mismatch. The
+    helper compares via ``math.isnan`` to keep two NaNs equal. Pin
+    the round-trip so a refactor cannot regress to the naive
+    comparator.
+    """
+    d = _unique_dir(tmp_path, "nan_nodata")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_source(a, origin_x=0.0, nodata=float('nan'))
+    _write_source(b, origin_x=4.0, nodata=float('nan'))
+    vrt = os.path.join(d, "out.vrt")
+    write_vrt(vrt, [a, b])
+    assert os.path.exists(vrt)
+
+
+def test_mixed_nodata_override_via_kwarg_passes(tmp_path):
+    """``write_vrt(..., nodata=<value>)`` opts back into flatten-to-kwarg.
+
+    The fail-closed default is the strict path; explicit caller intent
+    via the ``nodata`` kwarg overrides it. Pin that the opt-out keeps
+    working so the message is actionable rather than a dead-end.
+    """
+    d = _unique_dir(tmp_path, "nodata_ok")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_source(a, origin_x=0.0, nodata=-9999.0)
+    _write_source(b, origin_x=4.0, nodata=-1.0)
+    vrt = os.path.join(d, "out.vrt")
+    write_vrt(vrt, [a, b], nodata=-9999.0)
+    assert os.path.exists(vrt)
+
+
+def test_mixed_raster_type_rejected(tmp_path):
+    """Sources disagreeing on AREA_OR_POINT registration fail the write.
+
+    The mosaic writes a single dataset-level AREA_OR_POINT, so silently
+    flattening to the first source's value would shift the disagreeing
+    source by half a pixel on read. Pin the typed error and the
+    substring naming the mismatch.
+    """
+    d = _unique_dir(tmp_path, "raster_type")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_source(a, origin_x=0.0, raster_type='area')
+    _write_source(b, origin_x=4.0, raster_type='point')
+    vrt = os.path.join(d, "out.vrt")
+    with pytest.raises(UnsupportedGeoTIFFFeatureError,
+                       match=r"raster_type|AREA_OR_POINT"):
+        write_vrt(vrt, [a, b])
+
+
+# ---------------------------------------------------------------------------
+# Rotated / sheared write gates: regression pins for the existing
+# refusal at the eager writer entry point.
+# ---------------------------------------------------------------------------
+
+
+def test_eager_writer_rejects_rotated_6tuple_transform(tmp_path):
+    """``attrs['transform']`` 6-tuple with non-zero ``b`` or ``d`` is refused.
+
+    The eager writer emits an axis-aligned GeoTIFF; silently dropping
+    the skew terms would place the raster at the wrong location. Pin
+    the message wording so the existing match patterns in other
+    fail-closed regressions keep matching.
+    """
+    da = xr.DataArray(
+        np.zeros((4, 4), dtype=np.float32),
+        dims=['y', 'x'],
+        attrs={'transform': (1.0, 0.5, 0.0, 0.0, -1.0, 0.0)},
+    )
+    path = tmp_path / f"rotated_2349_{uuid.uuid4().hex[:6]}.tif"
+    with pytest.raises(ValueError, match=r"rotation/shear"):
+        to_geotiff(da, str(path))
+
+
+def test_eager_writer_rejects_rotated_affine_attr(tmp_path):
+    """``attrs['rotated_affine']`` (set by reader on ``allow_rotated``) refused.
+
+    The reader stamps the rotated 6-tuple on this attr when called with
+    ``allow_rotated=True``. The writer has no ModelTransformationTag
+    emit path, so a read-then-write round-trip would silently lose the
+    rotation. Pin the refusal so the regression cannot regress into a
+    silent identity-affine output.
+    """
+    da = xr.DataArray(
+        np.zeros((4, 4), dtype=np.float32),
+        dims=['y', 'x'],
+        attrs={'rotated_affine': (1.0, 0.5, 0.0, 0.0, -1.0, 0.0)},
+    )
+    path = tmp_path / f"rotated_affine_2349_{uuid.uuid4().hex[:6]}.tif"
+    with pytest.raises(ValueError, match=r"rotated_affine"):
+        to_geotiff(da, str(path))
+
+
+# ---------------------------------------------------------------------------
+# Warped / reprojection VRT gate: regression pin for the existing
+# RotatedTransformError on a VRT with non-zero GeoTransform skew terms.
+# ---------------------------------------------------------------------------
+
+
+def test_vrt_with_skewed_geotransform_rejected(tmp_path):
+    """A VRT GeoTransform with non-zero skew is rejected on read.
+
+    The GDAL GeoTransform skew terms (positions 2 and 4 in the
+    GDAL ordering) flag a warped / reprojection VRT or a rotated
+    source. read_vrt has no resampler for the warped case; pin the
+    existing typed error so a future refactor cannot regress to the
+    silent no-georef fallback.
+    """
+    src = tmp_path / f'flat_2349_{uuid.uuid4().hex[:6]}.tif'
+    arr = np.zeros((4, 4), dtype=np.float32)
+    da = xr.DataArray(arr, dims=['y', 'x'],
+                      coords={'y': np.arange(4, dtype=np.float64),
+                              'x': np.arange(4, dtype=np.float64)},
+                      attrs={'crs': 4326})
+    to_geotiff(da, str(src), compression='none')
+
+    vrt = tmp_path / f'rotated_2349_{uuid.uuid4().hex[:6]}.vrt'
+    vrt.write_text(
+        f'<VRTDataset rasterXSize="4" rasterYSize="4">'
+        f'  <SRS>EPSG:4326</SRS>'
+        f'  <GeoTransform>0.0, 1.0, 0.5, 0.0, 0.0, -1.0</GeoTransform>'
+        f'  <VRTRasterBand band="1" dataType="Float32">'
+        f'    <SimpleSource>'
+        f'      <SourceFilename relativeToVRT="1">{src.name}</SourceFilename>'
+        f'      <SourceBand>1</SourceBand>'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>'
+        f'    </SimpleSource>'
+        f'  </VRTRasterBand>'
+        f'</VRTDataset>'
+    )
+    # Sub-PR 2 of epic #2321 (#2329) centralised this rejection in
+    # ``_vrt_validation.py`` and re-typed it as ``VRTUnsupportedError``
+    # with a message naming the skew terms. Accept either the legacy
+    # ``RotatedTransformError`` or the new typed error so the regression
+    # pin survives the validator refactor.
+    with pytest.raises(
+        (RotatedTransformError, VRTUnsupportedError),
+        match=r"rotated affine|rotation/shear",
+    ):
+        open_geotiff(str(vrt))
+
+# ===========================================================================
+# VRT stable_only gate (#2443)
+# Source: test_vrt_stable_only_2443.py
+# ===========================================================================
+
+from pathlib import Path
+
+import pytest
+
+from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, VRTStableSourcesOnlyError,
+                               open_geotiff, read_geotiff_dask, read_vrt)
+from xrspatial.geotiff._errors import VRTUnsupportedError
+
+
+_MINIMAL_VRT_XML = '<VRTDataset rasterXSize="2" rasterYSize="2"></VRTDataset>\n'
+
+
+def _write_minimal_vrt(tmp_path: Path, name: str = "stable_only_2443") -> str:
+    path = tmp_path / f"{name}.vrt"
+    path.write_text(_MINIMAL_VRT_XML, encoding="utf-8")
+    return str(path)
+
+
+def test_open_geotiff_vrt_stable_only_rejected_by_default(tmp_path):
+    """``open_geotiff(vrt, stable_only=True)`` raises the typed error."""
+    path = _write_minimal_vrt(tmp_path, "open_geotiff_default")
+    with pytest.raises(VRTStableSourcesOnlyError) as excinfo:
+        open_geotiff(path, stable_only=True)
+    msg = str(excinfo.value)
+    assert path in msg, (
+        f"expected the offending VRT path in the rejection message; "
+        f"got: {msg!r}"
+    )
+    assert "stable_only" in msg
+    assert "allow_experimental_codecs" in msg
+    assert "release_gate_geotiff" in msg
+    assert "#2342" in msg
+
+
+def test_open_geotiff_vrt_stable_only_default_false_does_not_reject(tmp_path):
+    """The default ``stable_only=False`` does not fire the new gate.
+
+    The minimal-VRT body has no ``<VRTRasterBand>`` children so the
+    read still raises the downstream :class:`VRTUnsupportedError`
+    band-count check; pinning the exact class confirms the new gate is
+    not stealing the raise site at the default flag value.
+    """
+    path = _write_minimal_vrt(tmp_path, "open_geotiff_default_false")
+    with pytest.raises(VRTUnsupportedError):
+        open_geotiff(path)
+
+
+def test_open_geotiff_vrt_stable_only_with_experimental_unlock(tmp_path):
+    """``allow_experimental_codecs=True`` is the documented unlock.
+
+    When the caller passes both ``stable_only=True`` and
+    ``allow_experimental_codecs=True`` the gate is a no-op (the per-source
+    codec gate downstream handles the rest). The read still raises the
+    downstream "no <VRTRasterBand>" :class:`VRTUnsupportedError` on
+    this minimal-VRT fixture; pinning the exact downstream class keeps
+    a future refactor from silently broadening the unlock past intent.
+    """
+    path = _write_minimal_vrt(tmp_path, "open_geotiff_unlock")
+    with pytest.raises(VRTUnsupportedError):
+        open_geotiff(
+            path,
+            stable_only=True,
+            allow_experimental_codecs=True,
+        )
+
+
+def test_read_vrt_stable_only_rejected_by_default(tmp_path):
+    """Direct ``read_vrt(stable_only=True)`` raises the typed error too."""
+    path = _write_minimal_vrt(tmp_path, "read_vrt_direct")
+    with pytest.raises(VRTStableSourcesOnlyError):
+        read_vrt(path, stable_only=True)
+
+
+def test_read_geotiff_dask_vrt_stable_only_rejected(tmp_path):
+    """``read_geotiff_dask`` forwards the kwarg to ``read_vrt`` for VRT sources."""
+    path = _write_minimal_vrt(tmp_path, "read_dask_vrt")
+    with pytest.raises(VRTStableSourcesOnlyError):
+        read_geotiff_dask(path, stable_only=True)
+
+
+def test_vrt_stable_only_error_is_geotiff_ambiguous_metadata_error():
+    """The typed error subclasses :class:`GeoTIFFAmbiguousMetadataError`.
+
+    Callers that already ``except GeoTIFFAmbiguousMetadataError`` keep
+    catching this case without an import-list change. The release-gate
+    test in ``release_gates/test_stable_features.py`` relies on this
+    inheritance to assert on the base class.
+    """
+    assert issubclass(VRTStableSourcesOnlyError, GeoTIFFAmbiguousMetadataError)
+
+
+def test_read_vrt_stable_only_no_op_on_default(tmp_path):
+    """``stable_only=False`` (the default) is a no-op on the direct VRT path.
+
+    Same fixture as the rejection test, but the absence of the flag
+    means the read proceeds to the existing band-count validator and
+    raises :class:`VRTUnsupportedError`.
+    """
+    path = _write_minimal_vrt(tmp_path, "read_vrt_default")
+    with pytest.raises(VRTUnsupportedError):
+        read_vrt(path)

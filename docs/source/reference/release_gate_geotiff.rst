@@ -63,7 +63,7 @@ a release blocker (see the decision rule below).
 
 The cross-cutting meta-gates (the consolidated
 ``xrspatial/geotiff/tests/release_gates/test_stable_features.py`` plus
-``test_supported_features_tiers_2137.py``) are part of the same suite.
+``xrspatial/geotiff/tests/release_gates/test_features.py``) are part of the same suite.
 They fail if a row in this checklist names a feature key that is missing
 from :data:`xrspatial.geotiff.SUPPORTED_FEATURES` or a test file that
 does not exist.
@@ -140,7 +140,7 @@ Cross-references
 * When deprecating or removing a feature, update both the row here and the
   ``SUPPORTED_FEATURES`` entry in the same PR.
 * The parity gate in
-  ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py`` already
+  ``xrspatial/geotiff/tests/release_gates/test_features.py`` already
   asserts every codec key is tiered; this checklist extends that to the
   reader / writer / VRT / HTTP / GPU surfaces.
 
@@ -237,7 +237,7 @@ Local GeoTIFF read and write
    * - Codec ``none`` / ``deflate`` / ``lzw`` / ``zstd`` / ``packbits``
      - stable
      - Lossless byte-for-byte round-trip on integer and float dtypes.
-     - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
+     - ``xrspatial/geotiff/tests/release_gates/test_features.py``,
        ``xrspatial/geotiff/tests/read/test_compression.py``
      - `#2340`_
    * - Stable codec round-trip (read / write / read)
@@ -254,14 +254,14 @@ Local GeoTIFF read and write
      - Rejected by default; accepted with
        ``allow_experimental_codecs=True``; emits
        :class:`xrspatial.geotiff.GeoTIFFFallbackWarning` once per call.
-     - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``
+     - ``xrspatial/geotiff/tests/release_gates/test_features.py``
      - `#2340`_
    * - Codec ``jpeg``
      - internal_only
      - Rejected by default; accepted only with
        ``allow_internal_only_jpeg=True`` (does NOT collapse into the
        ``allow_experimental_codecs`` switch).
-     - ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``,
+     - ``xrspatial/geotiff/tests/release_gates/test_features.py``,
        ``xrspatial/geotiff/tests/unit/test_photometric.py``
      - `#2340`_
 
@@ -289,7 +289,7 @@ Cloud-optimized GeoTIFF (COG)
      - Local COG with overview IFDs decodes byte-for-byte through eager and
        dask paths.
      - ``xrspatial/geotiff/tests/write/test_cog.py``,
-       ``xrspatial/geotiff/tests/test_golden_corpus_overview_cog_1930.py``
+       ``xrspatial/geotiff/tests/golden_corpus/test_overview_cog.py``
      - `#2286`_
    * - ``reader.http_cog``
      - advanced
@@ -335,13 +335,13 @@ HTTP / fsspec reads
        (``HTTP://``, ``HTTPS://``) route the same way (case-insensitive
        scheme routing, ``#2323``).
      - ``xrspatial/geotiff/tests/integration/test_http_sources.py``,
-       ``xrspatial/geotiff/tests/test_golden_corpus_http_1930.py``
+       ``xrspatial/geotiff/tests/golden_corpus/test_http.py``
      - `#2344`_
    * - ``reader.fsspec``
      - advanced
      - Non-HTTP schemes (``s3://``, ``gs://``, ``file://``) dispatch through
        fsspec; HTTP(S) schemes do not silently fall through.
-     - ``xrspatial/geotiff/tests/test_golden_corpus_fsspec_1930.py``
+     - ``xrspatial/geotiff/tests/golden_corpus/test_fsspec.py``
      - `#2344`_
    * - ``reader.http`` -- SSRF defense
      - stable
@@ -463,7 +463,7 @@ attrs contract
        value.
      - ``xrspatial/geotiff/tests/write/test_crs.py``,
        ``xrspatial/geotiff/tests/gpu/test_kernels_and_kwargs.py``,
-       ``xrspatial/geotiff/tests/test_remaining_fail_closed_1987.py``
+       ``xrspatial/geotiff/tests/unit/test_metadata.py``
      - `#2340`_
 
 VRT supported subset
@@ -492,7 +492,7 @@ VRT supported subset
      - VRT over compatible GeoTIFF sources returns the same pixels and
        attrs through eager and dask paths.
      - ``xrspatial/geotiff/tests/vrt/test_parity.py``,
-       ``xrspatial/geotiff/tests/test_golden_corpus_vrt_1930.py``
+       ``xrspatial/geotiff/tests/golden_corpus/test_vrt.py``
      - `#2342`_
    * - VRT default ``missing_sources='raise'``
      - stable
@@ -638,8 +638,8 @@ GPU paths (experimental)
      - experimental
      - GPU read returns the same pixels and attrs as the CPU path on the
        golden corpus where the GPU path is exercised.
-     - ``xrspatial/geotiff/tests/test_golden_corpus_gpu_1930.py``,
-       ``xrspatial/geotiff/tests/test_golden_corpus_dask_gpu_1930.py``
+     - ``xrspatial/geotiff/tests/golden_corpus/test_gpu.py``,
+       ``xrspatial/geotiff/tests/golden_corpus/test_dask_gpu.py``
      - `#2341`_
    * - ``reader.gpu`` -- fallback warning
      - experimental
@@ -688,7 +688,7 @@ Cross-cutting CI gates
 
 These gates are not tier rows but they back the rest of the checklist.
 
-* ``test_supported_features_tiers_2137.py`` -- every codec in
+* ``release_gates/test_features.py`` -- every codec in
   ``_VALID_COMPRESSIONS`` has a ``SUPPORTED_FEATURES`` tier, and the writer
   rejects experimental and internal-only codecs without their respective
   opt-in flags. Owning epic: `#2340`_.

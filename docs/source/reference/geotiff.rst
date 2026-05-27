@@ -37,8 +37,8 @@ What you can expect:
 * GPU read and write produce the same pixels and the same canonical
   attrs as the CPU path on the supported codec subset. The eager and
   dask GPU readers are covered by
-  ``xrspatial/geotiff/tests/test_golden_corpus_gpu_1930.py`` and
-  ``xrspatial/geotiff/tests/test_golden_corpus_dask_gpu_1930.py``.
+  ``xrspatial/geotiff/tests/golden_corpus/test_gpu.py`` and
+  ``xrspatial/geotiff/tests/golden_corpus/test_dask_gpu.py``.
 * Integer and float nodata sentinels survive the GPU round-trip; see
   ``xrspatial/geotiff/tests/gpu/test_reader.py``.
 * On GPU failure the reader emits
@@ -123,7 +123,7 @@ affine and writes an axis-aligned file from the coords. This is
 locked by ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``.
 A rotated or skewed 6-tuple supplied through ``attrs['transform']``
 or through a VRT source is also rejected; see
-``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+``xrspatial/geotiff/tests/release_gates/test_features.py``
 (``test_eager_writer_rejects_rotated_6tuple_transform`` and
 ``test_vrt_with_skewed_geotransform_rejected``).
 
@@ -531,7 +531,7 @@ regression test that locks the behaviour.
    * - Mixed per-band nodata across VRT sources (default
        ``band_nodata=None``)
      - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
-       ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+       ``xrspatial/geotiff/tests/release_gates/test_features.py``
        (``test_mixed_per_source_nodata_rejected``)
    * - Rotated read without ``allow_rotated=True``
      - ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
@@ -539,11 +539,11 @@ regression test that locks the behaviour.
        ``xrspatial/geotiff/tests/test_rotated_typed_error_2267.py``
    * - Rotated write without ``drop_rotation=True``
      - ``xrspatial/geotiff/tests/test_to_geotiff_drop_rotation_2216.py``,
-       ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+       ``xrspatial/geotiff/tests/release_gates/test_features.py``
        (``test_eager_writer_rejects_rotated_6tuple_transform``,
        ``test_eager_writer_rejects_rotated_affine_attr``)
    * - Skewed VRT geotransform
-     - ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+     - ``xrspatial/geotiff/tests/release_gates/test_features.py``
        (``test_vrt_with_skewed_geotransform_rejected``)
    * - Complex source / mask band / alpha band in a VRT
      - ``xrspatial/geotiff/tests/test_vrt_unsupported_2370.py``,
@@ -565,7 +565,7 @@ regression test that locks the behaviour.
        (Section 2b, ``test_duplicate_*``)
    * - Unsupported feature flags more broadly (codec, layout, and
        writer combos that ``SUPPORTED_FEATURES`` does not promise)
-     - ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
+     - ``xrspatial/geotiff/tests/release_gates/test_features.py``
 
 This list is the prose mirror of the negative rows in
 :ref:`reference.geotiff_release_gate`. When a row gets promoted or

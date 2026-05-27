@@ -26,7 +26,10 @@ import pytest
 import uuid
 import xarray as xr
 from xrspatial.geotiff import read_vrt, to_geotiff
-from xrspatial.geotiff._errors import VRTUnsupportedError
+from xrspatial.geotiff._errors import (
+    MixedBandMetadataError,
+    VRTUnsupportedError,
+)
 from xrspatial.geotiff._vrt import (
     _NP_TO_VRT_DTYPE,
     _parse_band_nodata,
@@ -655,10 +658,14 @@ def _multiband_dtype_build_complex_source_vrt(tmp_path, *, dtype_str, src_path, 
     return str(p)
 
 
-def test_mixed_byte_and_float32_bands_preserve_fractional(tmp_path):
-    """``Byte`` band 0 + ``Float32`` band 1: band 1's fractional values
-    must survive the read. Before the fix the buffer was allocated as
-    uint8 and ``1.5, 2.5, 3.5, 4.5`` truncated to ``1, 2, 3, 4``.
+def test_mixed_byte_and_float32_bands_raise(tmp_path):
+    """``Byte`` band 0 + ``Float32`` band 1 must raise rather than widen.
+
+    The original #1696 fix widened the output buffer so band 1's
+    fractional values survived. The VRT support matrix at
+    ``_backends/vrt.py`` later tightened the contract: per-band dtype
+    mismatch is a documented error condition, not a silent widening.
+    Issue #2485 flipped the behaviour from widening to raising.
     """
     b0 = np.array([[10, 11], [12, 13]], dtype=np.uint8)
     b1 = np.array([[1.5, 2.5], [3.5, 4.5]], dtype=np.float32)
@@ -667,10 +674,10 @@ def test_mixed_byte_and_float32_bands_preserve_fractional(tmp_path):
     _multiband_dtype_write(b0, p0)
     _multiband_dtype_write(b1, p1)
     vrt_path = _multiband_dtype_build_two_band_vrt(tmp_path, b0_dtype_str='Byte', b0_path=str(p0), b1_dtype_str='Float32', b1_path=str(p1))
-    r = read_vrt(vrt_path)
-    assert r.dtype.kind == 'f', f'Mixed Byte+Float32 must widen to float; got {r.dtype}'
-    np.testing.assert_allclose(r.values[..., 1], b1.astype(r.dtype))
-    np.testing.assert_array_equal(r.values[..., 0], b0.astype(r.dtype))
+    with pytest.raises(MixedBandMetadataError) as excinfo:
+        read_vrt(vrt_path)
+    msg = str(excinfo.value).lower()
+    assert 'band 1' in msg and 'band 2' in msg
 
 
 def test_complex_source_scale_promotes_buffer_to_float(tmp_path):
@@ -733,11 +740,15 @@ def test_complex_source_scale_and_offset_preserve_precision(tmp_path):
     np.testing.assert_allclose(r.values[..., 1], expected)
 
 
-def test_nodata_round_trip_through_widened_int_dtype(tmp_path):
-    """Band 0 = uint8 with NoData=255; band 1 = int16 with NoData=-9999.
-    ``np.result_type(uint8, int16) = int16``. Band 0's value 255 is
-    representable as int16 so the nodata fast-path still fires; the
-    surviving values must be preserved through the wider buffer.
+def test_mixed_byte_and_int16_bands_raise(tmp_path):
+    """``Byte`` band 0 + ``Int16`` band 1 must raise rather than widen.
+
+    Previously the reader widened via ``np.result_type(uint8, int16)``
+    and round-tripped the nodata sentinels through the wider buffer.
+    The #2485 contract rejects this kind of cross-band dtype mismatch
+    rather than silently flattening; callers that genuinely want the
+    widened behaviour must rebuild their VRT with a single declared
+    dataType.
     """
     b0 = np.array([[1, 2], [3, 255]], dtype=np.uint8)
     b1 = np.array([[100, 200], [300, -9999]], dtype=np.int16)
@@ -748,18 +759,10 @@ def test_nodata_round_trip_through_widened_int_dtype(tmp_path):
     vrt_path = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Byte" band="1">\n    <NoDataValue>255</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="Int16" band="2">\n    <NoDataValue>-9999</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
     out = tmp_path / 'mixed.vrt'
     out.write_text(vrt_path)
-    r = read_vrt(str(out), band_nodata='first')
-    if r.dtype.kind == 'f':
-        assert r.values[0, 0, 0] == 1
-        assert r.values[0, 1, 0] == 2
-        assert r.values[1, 0, 0] == 3
-        assert np.isnan(r.values[1, 1, 0])
-        assert np.isnan(r.values[1, 1, 1])
-        assert r.values[0, 0, 1] == 100
-    else:
-        assert r.dtype == np.int16
-        assert r.values[0, 0, 0] == 1
-        assert r.values[0, 0, 1] == 100
+    with pytest.raises(MixedBandMetadataError) as excinfo:
+        read_vrt(str(out), band_nodata='first')
+    msg = str(excinfo.value).lower()
+    assert 'band 1' in msg and 'band 2' in msg
 
 
 def test_single_band_complex_source_scale_widens_buffer(tmp_path):
