@@ -1,12 +1,11 @@
-"""Golden corpus for xrspatial geotiff parity tests (issue #1930).
+"""Golden corpus for xrspatial geotiff parity tests.
 
-This package hosts the corpus fixtures, manifest, and oracle harness used
-by Phase 3 backend cells. The pieces are split across PRs so they can
-land independently:
+This package hosts the corpus fixtures, manifest, and oracle harness the
+per-backend test cells run against. The pieces are:
 
-* Phase 1 PR 1 -- manifest + deterministic generator. The contract for
-  what a fixture is.
-* Phase 1 PR 2 -- the oracle harness (``_oracle``).
-* Phase 2     -- the seed fixtures themselves.
-* Phase 3     -- the per-backend test cells that call the oracle.
+* the manifest plus the deterministic generator that turns it into
+  fixtures -- the contract for what a fixture is;
+* the oracle harness (``_oracle``);
+* the seed fixtures themselves;
+* the per-backend test cells that call the oracle.
 """

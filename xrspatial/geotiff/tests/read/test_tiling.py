@@ -1,24 +1,18 @@
 """Tile / strip decoder paths: byte caps, dtype dispatch, planar layout,
 sub-byte unpack, parallel-decode gate.
 
-Consolidated as cluster 5 of the long-tail GeoTIFF test consolidation
-epic (#2424). The original byte-cap content (issues #1664, #2026-05-18)
-sits in section 1-2; sections 3-9 fold seven top-level files in:
+Sections cover:
 
-* ``test_mixed_bps.py`` -- ``resolve_bits_per_sample`` unit cases and
-  end-to-end mixed-BPS rejection (issue #1505).
-* ``test_mixed_sample_format.py`` -- ``resolve_sample_format`` unit
-  cases and end-to-end mixed-SampleFormat rejection (issue #1868).
-* ``test_unpack_bits_vectorised_1713.py`` -- vectorised sub-byte
-  unpack vs the original loop-based reference (issue #1713).
-* ``test_geotiff_planar_strip_truncation_1782.py`` -- planar=2 strip
-  table truncation (issue #1782).
-* ``test_planar_multiband.py`` -- CPU + GPU planar / layout / band /
-  dtype matrix (audit A2 + A3).
-* ``test_parallel_decode_default_tile_1551.py`` -- parallel tile
-  decode gate at tile_size=256 (issue #1551 boundary).
-* ``test_parallel_strip_decode_2100.py`` -- parallel strip decode on
-  local + HTTP COG paths, planar=1 and planar=2 (issue #2100).
+* Tiled / stripped byte-cap defenses (sections 1-2).
+* ``resolve_bits_per_sample`` unit cases and end-to-end mixed-BPS
+  rejection.
+* ``resolve_sample_format`` unit cases and end-to-end mixed-SampleFormat
+  rejection.
+* Vectorised sub-byte unpack vs a loop-based reference.
+* planar=2 strip table truncation.
+* CPU + GPU planar / layout / band / dtype matrix.
+* Parallel tile decode gate at the default tile_size.
+* Parallel strip decode on local + HTTP COG paths, planar=1 and planar=2.
 """
 from __future__ import annotations
 
@@ -89,7 +83,7 @@ def _build_forged_stripped_tif(tmp_path, byte_count_value: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Section 1: tiled local byte cap (issue #1664)
+# Section 1: tiled local byte cap
 # ---------------------------------------------------------------------------
 
 
@@ -414,7 +408,7 @@ def _build_multi_band_tiff_sf(
 
 
 # ---------------------------------------------------------------------------
-# Section 3: mixed BitsPerSample dispatch (issue #1505)
+# Section 3: mixed BitsPerSample dispatch
 # ---------------------------------------------------------------------------
 
 
@@ -501,7 +495,7 @@ class TestMixedBitsPerSampleTiff:
         assert da.sizes['band'] == 4
 
     def test_mixed_bps_rgb_plus_8bit_alpha_rejected(self, tmp_path):
-        """RGB+8-bit-alpha is the canonical case from issue #1505."""
+        """RGB+8-bit-alpha is the canonical mixed-BPS case."""
         path = tmp_path / "mixed_rgba_2429.tif"
         # NB: the pixel block here is uint16 throughout; the test only
         # exercises the dispatch, not the (impossible) decode path.
@@ -520,7 +514,7 @@ class TestMixedBitsPerSampleTiff:
 
 
 # ---------------------------------------------------------------------------
-# Section 4: mixed SampleFormat dispatch (issue #1868)
+# Section 4: mixed SampleFormat dispatch
 # ---------------------------------------------------------------------------
 
 
@@ -557,8 +551,8 @@ class TestResolveSampleFormat:
             resolve_sample_format((1, 2, 1))
 
     def test_resolve_sf_empty_tuple_falls_back_to_default(self):
-        # Issue #1661 regression: empty SampleFormat from malformed TIFFs
-        # must not raise IndexError. Falling back to 1 (uint) is intentional.
+        # Empty SampleFormat from malformed TIFFs must not raise
+        # IndexError. Falling back to 1 (uint) is intentional.
         assert resolve_sample_format(()) == 1
 
 
@@ -617,7 +611,7 @@ class TestMixedSampleFormatTiff:
 
 
 # ---------------------------------------------------------------------------
-# Section 5: sub-byte BPS unpack (issue #1713)
+# Section 5: sub-byte BPS unpack
 # ---------------------------------------------------------------------------
 
 
@@ -794,7 +788,7 @@ def test_unpack_bits_unsupported_bps_raises():
 
 
 # ---------------------------------------------------------------------------
-# Section 6 helpers: hand-rolled planar=2 stripped TIFF (issue #1782)
+# Section 6 helpers: hand-rolled planar=2 stripped TIFF
 # ---------------------------------------------------------------------------
 
 
@@ -815,7 +809,7 @@ def _make_planar2_stripped_tiff(
     If ``truncate_strip_table_to`` is set, both ``StripOffsets`` (273)
     and ``StripByteCounts`` (279) are written with only that many entries
     instead of the full ``strips_per_band * bands`` count. This is the
-    corruption pattern from issue #1782.
+    strip-table truncation corruption pattern.
     """
     bo = '<'
     assert data.shape == (bands, height, width)
@@ -946,15 +940,15 @@ def _rgb_4x4() -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Section 6: planar=2 strip table truncation (issue #1782)
+# Section 6: planar=2 strip table truncation
 # ---------------------------------------------------------------------------
 
 
 def test_planar_strip_table_truncated_raises_typed_error():
-    """Issue #1782: planar=2 strip table holding only one band's worth of
-    strips must raise ``ValueError`` naming the planar layout and the
-    expected entry count, instead of silently returning a partially
-    initialised buffer.
+    """A planar=2 strip table holding only one band's worth of strips
+    must raise ``ValueError`` naming the planar layout and the expected
+    entry count, instead of silently returning a partially initialised
+    buffer.
     """
     data = _rgb_4x4()
     rps = 2
@@ -1082,7 +1076,7 @@ def _write_planar_matrix_tiff(
 
 
 # ---------------------------------------------------------------------------
-# Section 7: planar config x layout x bands x dtype matrix (audit A2 + A3)
+# Section 7: planar config x layout x bands x dtype matrix
 # ---------------------------------------------------------------------------
 
 
@@ -1179,7 +1173,7 @@ def test_planar_singleband_gpu(tiled, tmp_path):
 
 @_requires_tifffile
 def test_planar_stripped_separate_axis_order(tmp_path):
-    """Spec-level guard for audit A3: stripped planar=2 must yield (y, x, band)."""
+    """Spec-level guard: stripped planar=2 must yield (y, x, band)."""
     import tifffile
 
     data = _make_planar_matrix_data(3, 64, 96, np.uint8)
@@ -1245,7 +1239,7 @@ def _decode_tiled(data: bytes) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Section 8: parallel tile decode gate at the default tile_size (issue #1551)
+# Section 8: parallel tile decode gate at the default tile_size
 # ---------------------------------------------------------------------------
 
 
@@ -1328,7 +1322,7 @@ def test_parallel_tile_decode_sequential_when_only_one_tile(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Section 9 helpers: stripped TIFF builders + HTTP server (issue #2100)
+# Section 9 helpers: stripped TIFF builders + HTTP server
 # ---------------------------------------------------------------------------
 
 
@@ -1403,7 +1397,7 @@ def _start_server(blob: bytes):
 
 
 # ---------------------------------------------------------------------------
-# Section 9a: local strip decode parallel gate (issue #2100)
+# Section 9a: local strip decode parallel gate
 # ---------------------------------------------------------------------------
 
 
@@ -1427,9 +1421,9 @@ class TestReadStripsParallelGate:
         with open(p, "wb") as f:
             f.write(blob)
         par, _ = read_to_array(p)
-        # Patch the threshold in ``_decode`` (where ``_read_strips`` lives
-        # after PR-G, issue #2246), not in ``_reader``: the back-imported
-        # binding in ``_reader`` is a separate reference.
+        # Patch the threshold in ``_decode`` (where ``_read_strips``
+        # lives), not in ``_reader``: the back-imported binding in
+        # ``_reader`` is a separate reference.
         with patch.object(_decode_mod,
                           "_PARALLEL_DECODE_PIXEL_THRESHOLD", 10**12):
             ser, _ = read_to_array(p)
@@ -1446,8 +1440,7 @@ class TestReadStripsParallelGate:
             f.write(blob)
         # Patch ``concurrent.futures.ThreadPoolExecutor`` rather than the
         # reader module binding because the strip decode lives in
-        # ``_decode`` and re-imports the executor function-locally (PR-G,
-        # issue #2246).
+        # ``_decode`` and re-imports the executor function-locally.
         with patch.object(concurrent.futures, "ThreadPoolExecutor",
                           wraps=concurrent.futures.ThreadPoolExecutor
                           ) as mock_pool:
@@ -1488,7 +1481,7 @@ class TestReadStripsParallelGate:
 
 
 # ---------------------------------------------------------------------------
-# Section 9b: HTTP COG strip path (issue #2100)
+# Section 9b: HTTP COG strip path
 # ---------------------------------------------------------------------------
 
 
@@ -1569,7 +1562,7 @@ class TestHttpStripParallelDecode:
 
 
 # ---------------------------------------------------------------------------
-# Section 9c: planar=2 multi-band stripped TIFF parallel decode (issue #2100)
+# Section 9c: planar=2 multi-band stripped TIFF parallel decode
 # ---------------------------------------------------------------------------
 
 

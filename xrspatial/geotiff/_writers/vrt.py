@@ -1,9 +1,9 @@
 """VRT writer entry point.
 
 Wraps ``_vrt.write_vrt`` with the public ``write_vrt`` surface:
-deprecation handling for ``crs_wkt`` (#1715) and ``vrt_path`` (#1946),
+deprecation handling for the ``crs_wkt`` and ``vrt_path`` aliases,
 normalisation of the ``crs`` kwarg to WKT via ``_resolve_crs_to_wkt``,
-and the parity docstring vs ``to_geotiff`` / ``write_geotiff_gpu``.
+and the parity surface vs ``to_geotiff`` / ``write_geotiff_gpu``.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
               nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
-    Release-contract tier (epic #2340; see
+    Release-contract tier (see
     ``docs/source/reference/release_gate_geotiff.rst`` and
     ``docs/source/reference/geotiff_release_contract.rst``): the
     entry point is [advanced]. VRT mosaic output is supported but
@@ -34,12 +34,11 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     backing files, or per-band metadata disagreement. Full GDAL VRT
     parity, warped / reprojection VRTs, and nested VRTs are out of
     scope for this release. See
-    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map
-    (issue #2137).
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
 
     Output targets the same narrow subset of GDAL's VRT spec that the
-    reader supports (issue #2321; see the "VRT support matrix" section
-    in ``docs/source/reference/geotiff.rst`` and the audited matrix in
+    reader supports (see the "VRT support matrix" section in
+    ``docs/source/reference/geotiff.rst`` and the audited matrix in
     ``docs/source/reference/release_gate_geotiff.rst`` for the
     canonical contract):
 
@@ -61,7 +60,7 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     path : str
         [advanced] Output .vrt file path. Mirrors the ``path`` kwarg
         on ``to_geotiff`` and ``write_geotiff_gpu`` so the writer trio
-        shares a single destination-arg name (issue #1946).
+        shares a single destination-arg name.
     source_files : list of str
         [advanced] Paths to the source GeoTIFF files.
     vrt_path : str, optional
@@ -70,8 +69,7 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
         and ``vrt_path`` raises ``TypeError``. Kept so existing
         callers (``write_vrt(vrt_path, sources)`` positional or
         ``write_vrt(vrt_path=...)`` keyword) keep working through the
-        deprecation window. New code should use ``path``. See issue
-        #1946.
+        deprecation window. New code should use ``path``.
     relative : bool, optional
         [advanced] Store source paths relative to the VRT file
         (default True).
@@ -80,7 +78,7 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
         None, the CRS is taken from the first source GeoTIFF. Mirrors
         the ``crs`` kwarg on ``to_geotiff`` and ``write_geotiff_gpu``
         so the same value can be forwarded to whichever writer the
-        caller picked without per-writer special-casing (issue #1715).
+        caller picked without per-writer special-casing.
     crs_wkt : str or None, optional
         [internal-only] Deprecated alias for ``crs``. Emits
         ``DeprecationWarning`` when supplied (including
@@ -213,7 +211,7 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     # slip past every downstream ``isinstance(nodata, (int, float))``
     # guard and the VRT XML emitter would write ``<NoDataValue>True
     # </NoDataValue>``. No reader parses ``"True"`` as numeric, so the
-    # round-trip would silently drop the sentinel. See issue #1921.
+    # round-trip would silently drop the sentinel.
     _validate_nodata_arg(nodata)
 
     resolved_wkt = _resolve_crs_to_wkt(crs)

@@ -88,7 +88,7 @@ def tiff_dtype_to_numpy(bits_per_sample: int, sample_format: int = 1) -> np.dtyp
         # CUDA kernels don't carry float16 dispatch paths. The
         # promotion is symmetric with the writer's float16 path,
         # which auto-promotes float16 inputs to float32 before
-        # encoding (#1941).
+        # encoding.
         (16, SAMPLE_FORMAT_FLOAT): np.dtype('float32'),
         (32, SAMPLE_FORMAT_UINT): np.dtype('uint32'),
         (32, SAMPLE_FORMAT_INT): np.dtype('int32'),

@@ -4,13 +4,12 @@ Sibling to ``parity/test_backend_matrix.py``. Two sections, each a former
 top-level file:
 
 Section 1 -- Degenerate shapes and special floats across backends
-    (2026-05-11 coverage sweep)
     The eager numpy path covers 1x1 / 1xN / Nx1 rasters plus all-NaN /
     Inf inputs (``test_edge_cases.py``). This section adds the same
     coverage for the GPU, dask+numpy, and dask+cupy backends, plus the
     GPU writer's degenerate-shape path and the dask float-sentinel mask.
 
-Section 2 -- rasterio / Zarr round-trip parity (#1961)
+Section 2 -- rasterio / Zarr round-trip parity
     Read the same GeoTIFF three ways -- rasterio, ``open_geotiff``, and a
     Zarr round trip of the xarray-spatial result -- and assert pixels,
     coords, transform, CRS, and nodata agree. Pins the reader against an
@@ -321,7 +320,7 @@ class TestNanSentinelDaskRead:
     """Float raster with a finite ``nodata`` sentinel (``-9999.0``) is
     masked to NaN consistently across backends on read.
 
-    The integer-sentinel equivalent is pinned by issue #1597. The
+    The integer-sentinel equivalent is pinned elsewhere. The
     float path has no such per-chunk dtype divergence (the input is
     already float), but the dask graph still has to forward the
     sentinel substitution. A regression in the float branch of
@@ -370,7 +369,7 @@ class TestNanSentinelDaskRead:
 
 
 # ===========================================================================
-# Section 2 -- rasterio / Zarr round-trip parity (#1961)
+# Section 2 -- rasterio / Zarr round-trip parity
 # ===========================================================================
 #
 # Read the same GeoTIFF three ways and assert the results agree:
@@ -718,7 +717,7 @@ class TestNorthUpVsSouthUp:
 
 
 class TestStripeShapes:
-    """1xN and Nx1 single-row / single-column rasters (#1945)."""
+    """1xN and Nx1 single-row / single-column rasters."""
 
     @pytest.mark.parametrize('shape', [(1, 8), (8, 1)])
     def test_round_trip(self, tmp_path, shape):
@@ -769,7 +768,7 @@ class TestTiledCogNoOverviews:
 
 
 class TestNoGeorefIntegerCoords:
-    """No-georef raster -> reader emits integer indices (#1949)."""
+    """No-georef raster -> reader emits integer indices."""
 
     def test_round_trip(self, tmp_path):
         path = tmp_path / 'tmp_1961_no_georef.tif'

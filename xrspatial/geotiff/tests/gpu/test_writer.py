@@ -1,6 +1,6 @@
-"""GPU writer test consolidation (cluster 14 / issue #2438 sub-PR B).
+"""GPU writer tests.
 
-Folds eight GPU-only writer test files into one parametrised home under
+Folds the GPU-only writer test files into one parametrised home under
 ``xrspatial/geotiff/tests/gpu/``. Sections in source-order below:
 
 * ``test_gpu_writer_attrs_1563.py`` -- write-path attrs parity for the
@@ -234,9 +234,8 @@ def test_extra_tags_custom_tag_round_trips_via_gpu_writer(tmp_path):
         },
     )
     out = str(tmp_path / 'extra_tags_1563.tif')
-    # Rich-tag extra_tags is the Experimental write surface (PR 4 of
-    # epic #2340). Opt in on both write and read sides for the
-    # round-trip.
+    # Rich-tag extra_tags is an experimental write surface. Opt in on
+    # both write and read sides for the round-trip.
     write_geotiff_gpu(da_gpu, out, compression='none',
                       allow_experimental_codecs=True)
 
@@ -650,8 +649,8 @@ def test_write_geotiff_gpu_zstd_default_matches_explicit(tmp_path):
 def test_write_geotiff_gpu_jpeg_rgb_roundtrip(tmp_path):
     """``compression='jpeg'`` round-trips a 3-band uint8 RGB raster.
 
-    Uses a deterministic smooth gradient (the worst-case-for-JPEG random
-    input was replaced per Copilot review on #1647). At default quality
+    Uses a deterministic smooth gradient rather than the
+    worst-case-for-JPEG random input. At default quality
     plus 4:2:0 chroma subsampling a smooth RGB gradient round-trips with
     mean-abs error well under 5 absolute units per channel; we allow 8
     as a small platform-variance buffer.
@@ -659,8 +658,8 @@ def test_write_geotiff_gpu_jpeg_rgb_roundtrip(tmp_path):
     da, arr = _make_rgb_uint8_da()
     path = str(tmp_path / "jpeg_rgb.tif")
 
-    # Issue #1845: the JPEG encode path is opt-in. The writer also
-    # emits a GeoTIFFFallbackWarning, which is the documented contract.
+    # The JPEG encode path is opt-in. The writer also emits a
+    # GeoTIFFFallbackWarning, which is the documented contract.
     with pytest.warns(Warning):
         write_geotiff_gpu(
             da, path, compression='jpeg',
@@ -688,7 +687,7 @@ def test_write_geotiff_gpu_jpeg_uint8_single_band_roundtrip(tmp_path):
     da, arr = _make_mono_uint8_da()
     path = str(tmp_path / "jpeg_mono.tif")
 
-    # Issue #1845: opt-in flag required; warning fires.
+    # Opt-in flag required; warning fires.
     with pytest.warns(Warning):
         write_geotiff_gpu(
             da, path, compression='jpeg',
@@ -720,7 +719,7 @@ def test_write_geotiff_gpu_jpeg_uses_nvjpeg_when_available(tmp_path,
     da, _ = _make_rgb_uint8_da()
     path = str(tmp_path / "jpeg_nvjpeg_spy.tif")
 
-    # Issue #1845: opt-in flag required; warning fires.
+    # Opt-in flag required; warning fires.
     with pytest.warns(Warning):
         write_geotiff_gpu(
             da, path, compression='jpeg',
@@ -760,7 +759,7 @@ def test_write_geotiff_gpu_jpeg_compression_tag(tmp_path):
     da, _ = _make_rgb_uint8_da()
     path = str(tmp_path / "jpeg_tag.tif")
 
-    # Issue #1845: opt-in flag required; warning fires.
+    # Opt-in flag required; warning fires.
     with pytest.warns(Warning):
         write_geotiff_gpu(
             da, path, compression='jpeg',
@@ -1297,9 +1296,9 @@ def test_gpu_writer_nan_nodata_skips_substitution(tmp_path):
 @_gpu_only
 def test_gpu_writer_external_reader_sees_correct_nodata_mask(tmp_path):
     """rasterio (and any other GDAL_NODATA-strict reader) must see the
-    same valid-pixel set on CPU and GPU outputs. This is the bug from
-    #1599: the GPU file used to report 100% valid pixels because the
-    sentinel was never written into NaN positions."""
+    same valid-pixel set on CPU and GPU outputs. The GPU file used to
+    report 100% valid pixels because the sentinel was never written
+    into NaN positions."""
     rasterio = pytest.importorskip("rasterio")
     import cupy as cp
 
@@ -1870,8 +1869,8 @@ def _patch_gpu_writer_to_raise(monkeypatch, exc):
     stub that raises ``exc``.
 
     ``to_geotiff`` calls ``write_geotiff_gpu`` directly inside its own
-    defining module (``_writers.eager`` since #1888), so the patch
-    targets the module-level name there. Patching ``xrspatial.geotiff``
+    defining module (``_writers.eager``), so the patch targets the
+    module-level name there. Patching ``xrspatial.geotiff``
     would only update the package re-export and would not intercept the
     actual call site.
     """
@@ -2028,9 +2027,8 @@ def test_auto_detected_gpu_fallback_warns(
     """
     # Synthesise a "CuPy-looking" DataArray via _is_gpu_data's hook.
     # Easiest: patch _is_gpu_data to True in the writer module that
-    # actually calls it (the to_geotiff body lives in _writers.eager
-    # since #1888). The CPU fallback then operates on the numpy buffer
-    # underneath.
+    # actually calls it (the to_geotiff body lives in _writers.eager).
+    # The CPU fallback then operates on the numpy buffer underneath.
     from xrspatial.geotiff._writers import eager as g
     monkeypatch.setattr(g, '_is_gpu_data', lambda data: True, raising=True)
 

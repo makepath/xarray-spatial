@@ -1,9 +1,9 @@
 """Security tests for the geotiff subpackage.
 
 Tests for:
-- Unbounded allocation guard (issue #1184)
-- VRT path traversal prevention (issue #1185)
-- GPU read and VRT read allocation guards (issue #1195)
+- Unbounded allocation guard
+- VRT path traversal prevention
+- GPU read and VRT read allocation guards
 """
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ class TestDimensionGuard:
 
 
 # ---------------------------------------------------------------------------
-# Cat 1c: Tile dimension guard (issue #1215)
+# Cat 1c: Tile dimension guard
 # ---------------------------------------------------------------------------
 
 class TestTileDimensionGuard:
@@ -234,9 +234,9 @@ class TestTileDimensionGuard:
             f.write(bytes(patched))
 
         # Two valid rejection points: parse_ifd catches the mismatch
-        # between forged tile dims and the actual TileOffsets count
-        # (issue #1901), or validate_tile_layout's safety-limit check
-        # fires later if pre-IFD validation is ever relaxed.
+        # between forged tile dims and the actual TileOffsets count, or
+        # validate_tile_layout's safety-limit check fires later if
+        # pre-IFD validation is ever relaxed.
         with pytest.raises(
             ValueError,
             match=r"exceed the safety limit|exceeds expected value",
@@ -245,7 +245,7 @@ class TestTileDimensionGuard:
 
 
 # ---------------------------------------------------------------------------
-# Cat 1b: VRT allocation guard (issue #1195)
+# Cat 1b: VRT allocation guard
 # ---------------------------------------------------------------------------
 
 class TestVRTAllocationGuard:
@@ -303,11 +303,11 @@ class TestVRTAllocationGuard:
 # ---------------------------------------------------------------------------
 # Cat 5: VRT path traversal
 #
-# Tightened in issue #1671: ``parse_vrt`` no longer accepts source paths
-# that resolve outside the VRT directory (or any explicit allowlist
-# entry). The realpath call by itself only normalised ``..`` segments;
-# it did not enforce containment, so a crafted VRT could still hand
-# ``read_to_array`` an arbitrary path.
+# ``parse_vrt`` does not accept source paths that resolve outside the
+# VRT directory (or any explicit allowlist entry). The realpath call by
+# itself only normalises ``..`` segments; it does not enforce
+# containment, so a crafted VRT could otherwise hand ``read_to_array``
+# an arbitrary path.
 # ---------------------------------------------------------------------------
 
 
@@ -358,7 +358,7 @@ class TestVRTPathTraversal:
 
     def test_absolute_path_outside_vrt_dir_rejected(self, tmp_path):
         """Absolute paths pointing outside the VRT directory are rejected
-        by default (issue #1671)."""
+        by default."""
         from xrspatial.geotiff._vrt import parse_vrt
 
         vrt_xml = '''<VRTDataset rasterXSize="4" rasterYSize="4">
@@ -377,7 +377,7 @@ class TestVRTPathTraversal:
 
 
 # ---------------------------------------------------------------------------
-# Tile layout validation (issue #1219)
+# Tile layout validation
 #
 # An adversarial TIFF can declare image dimensions that imply more tiles
 # than its TileOffsets tag supplies. The CPU path silently skipped the
@@ -440,7 +440,7 @@ def _make_short_offsets_tiff(
 
 
 class TestTileLayoutValidation:
-    """Regression tests for issue #1219."""
+    """Regression tests for the tile-layout count mismatch."""
 
     def test_validate_tile_layout_rejects_short_offsets(self):
         """validate_tile_layout raises when offsets count < declared grid."""
@@ -522,12 +522,12 @@ class TestTileLayoutValidation:
 
 
 # ---------------------------------------------------------------------------
-# HTTP COG: per-tile compressed-byte cap (issue #1536)
+# HTTP COG: per-tile compressed-byte cap
 #
 # A crafted TIFF served over HTTP can declare arbitrarily large
-# TileByteCounts. Without the cap added in #1536, _fetch_decode_cog_http_tiles
-# passes those values straight into Range GETs sized by the attacker.
-# The local-mmap path is naturally bounded by file size, so these tests
+# TileByteCounts. Without the cap, _fetch_decode_cog_http_tiles passes
+# those values straight into Range GETs sized by the attacker. The
+# local-mmap path is naturally bounded by file size, so these tests
 # only exercise the HTTP path through a mock _HTTPSource.
 # ---------------------------------------------------------------------------
 
@@ -632,7 +632,7 @@ class _MockHTTPSource:
 
 
 class TestHTTPTileByteCountCap:
-    """Regression tests for the HTTP COG byte_count cap (#1536)."""
+    """Regression tests for the HTTP COG byte_count cap."""
 
     def _build_forged_cog(self, tmp_path, byte_count_value: int) -> bytes:
         """Build a real tiled COG, then patch every TileByteCounts entry."""
@@ -724,9 +724,9 @@ class TestHTTPTileByteCountCap:
     def test_local_path_respects_default_cap(self, tmp_path):
         """Legitimate local reads stay well under the default cap.
 
-        Before #1664 the local path bypassed the cap entirely. Now the
-        cap is shared, so we just confirm the default (256 MiB) leaves
-        plenty of headroom for a normal small tiled COG.
+        The local path once bypassed the cap entirely. Now the cap is
+        shared, so we just confirm the default (256 MiB) leaves plenty
+        of headroom for a normal small tiled COG.
         """
         import xarray as xr
 
@@ -742,7 +742,7 @@ class TestHTTPTileByteCountCap:
 
 
 # ---------------------------------------------------------------------------
-# XML entity expansion (billion-laughs) -- issue #1579
+# XML entity expansion (billion-laughs)
 #
 # VRT and GDALMetadata payloads go through xml.etree.ElementTree, which by
 # default expands internal entities. A crafted file can OOM the host via
@@ -764,7 +764,7 @@ _BILLION_LAUGHS_PROLOGUE = (
 
 
 class TestVRTXMLEntityExpansion:
-    """Issue #1579: parse_vrt refuses XML entity (billion-laughs) payloads."""
+    """parse_vrt refuses XML entity (billion-laughs) payloads."""
 
     def test_parse_vrt_rejects_doctype(self, tmp_path):
         """A VRT that declares ``<!DOCTYPE ...>`` is rejected outright."""
@@ -814,7 +814,7 @@ class TestVRTXMLEntityExpansion:
 
 
 class TestGDALMetadataXMLEntityExpansion:
-    """Issue #1579: _parse_gdal_metadata refuses entity-expansion payloads."""
+    """_parse_gdal_metadata refuses entity-expansion payloads."""
 
     def test_parse_gdal_metadata_doctype_returns_empty(self):
         """A DOCTYPE in GDALMetadata yields an empty dict, not expansion.

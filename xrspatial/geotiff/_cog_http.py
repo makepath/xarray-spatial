@@ -1,10 +1,7 @@
 """COG-over-HTTP transport: bounded header prefetch, tiled/stripped range reads.
 
-Extracted from :mod:`xrspatial.geotiff._reader` in PR-J of the GeoTIFF
-refactor epic (issue #2258). Behaviour-neutral move: every helper kept
-its signature, return contract, environment variables, and side
-effects. The helpers stay private to :mod:`xrspatial.geotiff`; public
-callers go through :func:`xrspatial.geotiff.open_geotiff` /
+The helpers stay private to :mod:`xrspatial.geotiff`; public callers go
+through :func:`xrspatial.geotiff.open_geotiff` /
 :func:`xrspatial.geotiff.read_geotiff_dask`.
 
 Monkeypatch contract
@@ -58,7 +55,7 @@ from ._compression import COMPRESSION_LERC
 # ``_read_strips``, ``_resolve_masked_fill``). The patched two are
 # pulled back through ``_reader`` so monkeypatches against
 # ``_reader._apply_photometric_miniswhite`` / ``_reader._decode_strip_or_tile``
-# keep working after the helper move (PR-J / #2258).
+# keep working after the helper move.
 from ._decode import (_PARALLEL_DECODE_PIXEL_THRESHOLD, _apply_orientation_with_geo,
                       _miniswhite_inverted_nodata, _read_strips, _resolve_masked_fill)
 from ._dtypes import SUB_BYTE_BPS, resolve_bits_per_sample, tiff_dtype_to_numpy
@@ -77,7 +74,7 @@ from ._layout import (MAX_PIXELS_DEFAULT, _check_dimensions, _check_source_dimen
 # ``_reader`` (which share the same function objects). At runtime
 # every construction call still goes through ``_reader._HTTPSource``
 # so monkeypatches against the ``_reader`` namespace continue to
-# intercept the source. PR-J / #2258.
+# intercept the source.
 from ._sources import (COALESCE_GAP_THRESHOLD_DEFAULT, _HTTPSource,
                        _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env)
 from ._validation import _validate_predictor_sample_format
@@ -90,7 +87,7 @@ INITIAL_HTTP_HEADER_BYTES = 16 * 1024
 #: Upper bound on how far ``_parse_cog_http_meta`` will grow its prefetch
 #: buffer before giving up. 4 MiB comfortably covers deep pyramids whose
 #: IFD chains plus tag arrays (TileOffsets, GeoAsciiParams, GDAL_METADATA)
-#: extend far past the initial fetch window. See issue #1718.
+#: extend far past the initial fetch window.
 MAX_HTTP_HEADER_BYTES = 4 * 1024 * 1024
 
 
@@ -116,14 +113,14 @@ def _parse_cog_http_meta(
 
     Pulled out of :func:`_read_cog_http` so :func:`read_geotiff_dask`
     can parse metadata once per graph rather than once per chunk task
-    (P5: each delayed task used to fire its own 16 KB header GET).
+    (each delayed task used to fire its own 16 KB header GET).
 
     ``source_path`` is the original URL or fsspec URI used to construct
     ``source``. When provided, the parser probes for a sibling ``.ovr``
     sidecar and merges its IFDs onto the pyramid list so an
     ``overview_level`` that lives in the sidecar resolves the same way
-    the eager local/fsspec reader resolves it (issue #2239). Without
-    it, the function preserves the prior base-only behaviour.
+    the eager local/fsspec reader resolves it. Without it, the function
+    preserves the prior base-only behaviour.
 
     When ``return_sidecar=True`` and the source has been probed, the
     return tuple grows an extra slot carrying ``(sidecar, route_path,
@@ -159,7 +156,7 @@ def _parse_cog_http_meta(
         result. ``geo_info`` is still extracted from the base file's
         ``header_bytes`` (sidecar IFDs typically carry no geokeys and
         inherit from the level-0 IFD that sits in the base buffer);
-        that parse is unaffected by the swap. Issue #2314.
+        that parse is unaffected by the swap.
     """
     if return_sidecar and source_path is None:
         # The 5-tuple contract guarantees ``route_path`` is a usable
@@ -173,7 +170,7 @@ def _parse_cog_http_meta(
     # Resolve the prefetch-window constants through ``_reader`` so a test
     # that ``monkeypatch.setattr(_reader, 'MAX_HTTP_HEADER_BYTES', ...)``
     # (the pattern used by ``test_http_meta_buffer_1718``) keeps shrinking
-    # the cap after the helper moved into ``_cog_http`` (PR-J / #2258).
+    # the cap after the helper moved into ``_cog_http``.
     # The capture is one-shot at function entry rather than per-iteration:
     # the original ``_reader._parse_cog_http_meta`` referenced the module
     # globals each loop pass, but the constants are not mutated mid-call
@@ -233,7 +230,7 @@ def _parse_cog_http_meta(
     # ``read_to_array`` site; without the equivalent step here the dask
     # metadata path and the eager HTTP path picked a stale (too-shallow)
     # pyramid for remote GDAL external-overview files and diverged from
-    # the eager local read. Issue #2239.
+    # the eager local read.
     sidecar = None
     sidecar_ifd_ids: set[int] = set()
     if source_path is not None:
@@ -248,16 +245,15 @@ def _parse_cog_http_meta(
     # (the common case for COG writers, including this package's
     # ``to_geotiff``), inherit and rescale the georef from the level-0
     # IFD so overview reads do not silently lose CRS / transform.
-    # See issue #1640. We pass ``header_bytes`` even when the selected
-    # IFD lives in the sidecar; that mirrors the eager local reader,
-    # whose sidecar IFDs typically carry no out-of-line geokeys and
-    # inherit from level-0 (which sits in the base buffer). #2239.
+    # We pass ``header_bytes`` even when the selected IFD lives in the
+    # sidecar; that mirrors the eager local reader, whose sidecar IFDs
+    # typically carry no out-of-line geokeys and inherit from level-0
+    # (which sits in the base buffer).
     #
-    # The ``sidecar_origin`` kwarg added in #2315 for the eager local /
-    # fsspec paths is intentionally not threaded here. A separate fix
-    # is tracked in the HTTP / dask sidecar-byte-order finding (see
-    # the linked issue / PR for the HTTP side). When that lands, this
-    # call should pick up the same mapping so an HTTP sidecar with
+    # The ``sidecar_origin`` kwarg used by the eager local / fsspec
+    # paths is intentionally not threaded here; the HTTP / dask
+    # sidecar-byte-order case is handled separately. When that lands,
+    # this call should pick up the same mapping so an HTTP sidecar with
     # its own geokeys is parsed against the sidecar bytes too.
     geo_info = extract_geo_info_with_overview_inheritance(
         ifd, ifds, header_bytes, header.byte_order,
@@ -269,8 +265,8 @@ def _parse_cog_http_meta(
     # ``.ovr`` paired with a little-endian base (or vice versa) would
     # otherwise have its pixels reinterpreted with the wrong endianness
     # at ``_decode_strip_or_tile``. Mirrors the local sidecar path in
-    # ``_reader.py:223`` which swaps to the sidecar header for the same
-    # reason. Issue #2314.
+    # ``_reader.py`` which swaps to the sidecar header for the same
+    # reason.
     #
     # ``used_sidecar`` can only be True when ``sidecar`` is not None:
     # ``sidecar_ifd_ids`` is populated by ``discover_remote_sidecar``
@@ -322,7 +318,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     window : tuple or None
         ``(row_start, col_start, row_stop, col_stop)``. Forwarded to
         ``_fetch_decode_cog_http_tiles`` so HTTP reads honour the same
-        windowed contract as the local-file path. See issue #1669.
+        windowed contract as the local-file path.
 
     Returns
     -------
@@ -334,13 +330,13 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # ``monkeypatch.setattr(_reader, '_parse_cog_http_meta', ...)``,
     # ``monkeypatch.setattr(_reader, '_fetch_decode_cog_http_tiles', ...)``
     # or ``monkeypatch.setattr(_reader, '_apply_photometric_miniswhite', ...)``
-    # keep working after the helper move (PR-J / #2258). ``_reader`` is
+    # keep working after the helper move. ``_reader`` is
     # imported lazily inside the function to avoid the circular import
     # at module load (``_reader`` re-exports our helpers).
     from . import _reader
     source = _reader._HTTPSource(url)
-    # Issue #1816: wrap everything after the ``_HTTPSource`` construction
-    # in try/finally so ``source.close()`` runs even when header parsing,
+    # Wrap everything after the ``_HTTPSource`` construction in
+    # try/finally so ``source.close()`` runs even when header parsing,
     # validation, fetch/decode, or orientation/photometric post-processing
     # raises. ``_HTTPSource.close()`` is a no-op today, but a future
     # resource-holding source would leak on the error path without this.
@@ -348,7 +344,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # calls in the validation blocks below stay as-is.
     sidecar = None
     try:
-        # Issue #2239: discover the sibling ``.tif.ovr`` sidecar so HTTP
+        # Discover the sibling ``.tif.ovr`` sidecar so HTTP
         # COG reads honour external overview pyramids the same way the
         # eager local/fsspec path does. ``source_path=url`` opts into
         # the discovery; ``return_sidecar=True`` hands back the loaded
@@ -374,7 +370,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         # Reject experimental and internal-only codecs on the HTTP read
         # path unless the caller opted in. Mirrors the gate in
         # ``_read_to_array`` so HTTP and local reads agree on the
-        # opt-in contract. See PR 4 of epic #2340.
+        # opt-in contract.
         from ._attrs import _validate_read_codec_optin
         try:
             _validate_read_codec_optin(
@@ -393,8 +389,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         # display pixels?) and the HTTP path does not yet implement
         # ``_apply_orientation``. Reject the combination here so HTTP and
         # local reads agree on the contract for oriented TIFFs instead of
-        # silently returning a different region or pixel order. See PR
-        # #1680 review feedback on issue #1669.
+        # silently returning a different region or pixel order.
         if ifd.orientation != 1 and window is not None:
             source.close()
             raise ValueError(
@@ -408,7 +403,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         # tile fetch is built. Without this, the helper silently clamps an
         # out-of-bounds window and returns a smaller array, mismatching
         # ``open_geotiff``'s caller-built coord arrays. Mirrors the
-        # local-path validator in ``read_to_array`` (#1634).
+        # local-path validator in ``read_to_array``.
         if window is not None:
             w_r0, w_c0, w_r1, w_c1 = window
             if (w_r0 < 0 or w_c0 < 0
@@ -430,13 +425,13 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         # ``source.close()`` is called for symmetry with the success-path
         # teardown below; it is a no-op on ``_HTTPSource`` today (the
         # urllib3 ``PoolManager`` is shared module-level, not per-source)
-        # but a future resource-holding source will need it. See issue #1695.
+        # but a future resource-holding source will need it.
         if band is not None:
             # Reject ``bool`` (and ``np.bool_``) up front; ``isinstance(True, int)``
             # is True in Python so ``True < samples_per_pixel`` evaluates without
             # raising and silently reads band 1. ``np.bool_`` is not a subclass of
             # ``bool`` so it needs its own check to match the VRT path's
-            # rejection. See #1786.
+            # rejection.
             if isinstance(band, (bool, np.bool_)):
                 source.close()
                 raise ValueError(
@@ -447,7 +442,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
             # single-band file or raises a raw numpy ``IndexError`` from
             # deep in the read path on multi-band files; ``band="0"``
             # fails the comparison with an opaque ``TypeError``. The VRT
-            # paths already enforce this; mirror them here. See #1910.
+            # paths already enforce this; mirror them here.
             if not isinstance(band, (int, np.integer)):
                 source.close()
                 raise TypeError(
@@ -476,7 +471,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         # Apply Orientation tag (274) so HTTP reads return the same pixel
         # order and transform as the local-file path. Only the full-read
         # branch reaches here; the windowed-read branch is rejected above
-        # for non-default orientation. See issue #1717.
+        # for non-default orientation.
         if ifd.orientation != 1:
             arr, geo_info = _apply_orientation_with_geo(
                 arr, geo_info, ifd.orientation)
@@ -485,14 +480,14 @@ def _read_cog_http(url: str, overview_level: int | None = None,
             # Stash the inverted sentinel on geo_info so the caller's
             # sentinel-to-NaN mask runs against the post-MinIsWhite value
             # while ``attrs['nodata']`` keeps the original sentinel for
-            # round-trip on write (issue #1809).
+            # round-trip on write.
             inverted_nodata = _miniswhite_inverted_nodata(
                 geo_info.nodata, ifd, arr.dtype)
             geo_info._mask_nodata = inverted_nodata
         arr = _reader._apply_photometric_miniswhite(arr, ifd)
     finally:
         source.close()
-        # Issue #2239: free the sidecar buffer when one was loaded.
+        # Free the sidecar buffer when one was loaded.
         # ``close_sidecar`` is a no-op for ``None`` and for the HTTP
         # ``bytes`` buffer, but keeps the contract consistent with the
         # local/fsspec eager path that also routes through it.
@@ -525,16 +520,15 @@ def _fetch_decode_cog_http_strips(
     path does. ``max_pixels`` is applied to the *materialised* pixel
     count (window for windowed reads, full image otherwise) so a small
     caller cap on a tiny window passes a large source the same way the
-    tiled branch does (#1823). When *window* is None, the function
-    falls back to ``source.read_all()`` and dispatches to
-    :func:`_read_strips`; the caller's ``max_pixels`` is threaded
-    through so the full-image dim check honours the user's cap.
-    See issues #1664 and #1823 for the safety contract this restores.
+    tiled branch does. When *window* is None, the function falls back to
+    ``source.read_all()`` and dispatches to :func:`_read_strips`; the
+    caller's ``max_pixels`` is threaded through so the full-image dim
+    check honours the user's cap.
     """
     width = ifd.width
     height = ifd.height
     samples = ifd.samples_per_pixel
-    # Source-IFD dim check (issue #2053). Mirror of the local-path
+    # Source-IFD dim check. Mirror of the local-path
     # check in ``_read_strips`` so HTTP COG reads of a malformed
     # stripped file fail at the source rather than collapsing to an
     # empty post-clamp window. Tiled paths already get the equivalent
@@ -558,14 +552,14 @@ def _fetch_decode_cog_http_strips(
     if rps is None or rps <= 0:
         raise ValueError(f"Invalid RowsPerStrip: {rps!r}")
 
-    # Per-strip compressed-byte cap (#1664). A crafted ``StripByteCounts``
+    # Per-strip compressed-byte cap. A crafted ``StripByteCounts``
     # entry can request an unbounded HTTP Range GET or decompress a few
     # KiB into gigabytes. The cap applies to strips we actually fetch:
     # - Full-image path: validated inside ``_read_strips`` over every
     #   strip (full file is materialised regardless).
     # - Windowed path: validated inside the fetch-range loop below so a
     #   small window only fails on strips it intersects -- mirrors the
-    #   tiled HTTP path's per-tile check (#1851).
+    #   tiled HTTP path's per-tile check.
     max_tile_bytes = _max_tile_bytes_from_env()
 
     # Full-image read: keep the legacy ``read_all`` + ``_read_strips``
@@ -581,7 +575,7 @@ def _fetch_decode_cog_http_strips(
         # body off the wire and into memory before ``_read_strips``
         # gets a chance to reject anything. The strip table tells us
         # the maximum legitimate byte offset; anything beyond that is
-        # either a malformed file or a hostile server. Issue #2051.
+        # either a malformed file or a hostile server.
         max_bytes = _compute_full_image_byte_budget(offsets, byte_counts)
         all_data = source.read_all(max_bytes=max_bytes)
         return _read_strips(all_data, ifd, header, dtype,
@@ -636,8 +630,8 @@ def _fetch_decode_cog_http_strips(
     else:
         result = np.empty((out_h, out_w), dtype=dtype)
 
-    # Pass 1: build the list of byte ranges + placements. Skip sparse
-    # strips and any strips whose intersected row range is empty.
+    # Build the list of byte ranges + placements. Skip sparse strips and
+    # any strips whose intersected row range is empty.
     band_count = samples if (planar == 2 and samples > 1) else 1
     strip_samples = 1 if band_count > 1 else samples
     fetch_ranges: list[tuple[int, int]] = []
@@ -653,7 +647,7 @@ def _fetch_decode_cog_http_strips(
                 # Sparse strip: result is already pre-filled above.
                 continue
             # Per-strip byte cap, scoped to strips the window actually
-            # fetches (#1851). Mirrors the per-tile check in
+            # fetches. Mirrors the per-tile check in
             # ``_fetch_decode_cog_http_tiles`` so a window over a benign
             # strip is not rejected because some unrelated strip in the
             # file exceeds the cap.
@@ -669,8 +663,8 @@ def _fetch_decode_cog_http_strips(
             fetch_ranges.append((offsets[global_idx], bc))
             placements.append((band_idx, strip_idx))
 
-    # Pass 2: fetch the strip bytes, coalescing adjacent ranges (mirrors
-    # the tiled HTTP path; see #1823 / coalescing rationale on line ~2145).
+    # Fetch the strip bytes, coalescing adjacent ranges (mirrors the
+    # tiled HTTP path).
     try:
         workers = max(1, int(
             _os_module.environ.get('XRSPATIAL_COG_HTTP_WORKERS', '8')))
@@ -688,7 +682,7 @@ def _fetch_decode_cog_http_strips(
     else:
         strip_bytes_list = []
 
-    # Pass 3: decode each strip and place its intersection with the window.
+    # Decode each strip and place its intersection with the window.
     #
     # Codec decode (deflate, zstd, LZW, ...) releases the GIL inside the C
     # extension, so threading the per-strip decode overlaps codec work
@@ -697,7 +691,7 @@ def _fetch_decode_cog_http_strips(
     # here so HTTP COG strip reads of wide windows benefit from the same
     # parallelism rather than serialising the decode after a parallel
     # fetch. The placement loop that copies pixels into ``result`` stays
-    # serial to avoid contending writes to the output buffer. Issue #2100.
+    # serial to avoid contending writes to the output buffer.
     n_decode_strips = len(strip_bytes_list)
     strip_pixel_count = width * rps
     decode_in_parallel = (
@@ -708,7 +702,7 @@ def _fetch_decode_cog_http_strips(
     # ``monkeypatch.setattr(_reader, '_decode_strip_or_tile', ...)``
     # (used by the strip-decode parallelism tests in
     # ``test_parallel_strip_decode_2100``) still observes the patched
-    # callable after the helper moved to ``_cog_http`` (PR-J / #2258).
+    # callable after the helper moved to ``_cog_http``.
     from . import _reader
 
     def _decode_http_strip(args):
@@ -717,7 +711,7 @@ def _fetch_decode_cog_http_strips(
         strip_rows = min(rps, height - strip_row)
         if strip_rows <= 0:
             return None
-        # Per-strip decoded-dimension cap (#1851). See note below.
+        # Per-strip decoded-dimension cap. See note below.
         _check_dimensions(width, strip_rows, strip_samples,
                           MAX_PIXELS_DEFAULT)
         return _reader._decode_strip_or_tile(
@@ -746,7 +740,7 @@ def _fetch_decode_cog_http_strips(
         if strip_rows <= 0:
             continue
 
-        # Per-strip decoded-dimension cap (#1851). Mirrors the per-tile
+        # Per-strip decoded-dimension cap. Mirrors the per-tile
         # ``_check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)`` in
         # the tiled HTTP path: a tiny window intersecting an oversized
         # strip would otherwise force ``_decode_strip_or_tile`` to
@@ -831,13 +825,13 @@ def _fetch_decode_cog_http_tiles(
     # TIFF header against absurd ``TileWidth`` / ``TileLength`` values
     # (e.g. 2**31) and uses ``MAX_PIXELS_DEFAULT`` so a caller's small
     # ``max_pixels`` -- intended as an output-window budget -- does not
-    # reject normal 256x256 tiles. See #1823.
+    # reject normal 256x256 tiles.
     if window is None:
         _check_dimensions(width, height, samples, max_pixels)
     _check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)
 
     # Reject malformed TIFFs whose declared tile grid exceeds the supplied
-    # TileOffsets length. See issue #1219.
+    # TileOffsets length.
     validate_tile_layout(ifd)
 
     if window is None:
@@ -857,7 +851,7 @@ def _fetch_decode_cog_http_tiles(
     # concatenated in TileOffsets. ``tiles_per_band`` selects the right
     # slab when computing ``tile_idx``; ``band_count == 1`` for chunky
     # files keeps the original single-loop fetch behaviour. Mirrors the
-    # local ``_read_tiles`` path (#1669).
+    # local ``_read_tiles`` path.
     band_count = samples if (planar == 2 and samples > 1) else 1
     tiles_per_band = tiles_across * tiles_down
     # Per-tile sample count: planar=2 tiles hold one band each, planar=1
@@ -884,7 +878,7 @@ def _fetch_decode_cog_http_tiles(
     tile_col_start = c0_out // tw
     tile_col_end = min(math.ceil(c1_out / tw), tiles_across)
 
-    # Pass 1: collect every tile's range and where it lands in the output.
+    # Collect every tile's range and where it lands in the output.
     # Empty tiles (byte_count == 0) and any tile_idx beyond the offsets
     # array are skipped here so the fetch list stays exactly aligned with
     # the placements list.
@@ -893,9 +887,9 @@ def _fetch_decode_cog_http_tiles(
     # _max_tile_bytes_from_env() (default MAX_TILE_BYTES_DEFAULT, 256 MiB)
     # before the fetch list is built. A crafted COG can claim arbitrarily
     # large TileByteCounts; without this guard the HTTP layer would issue
-    # a Range request sized by the attacker's value (issue #1536). The cap
-    # is overridable via XRSPATIAL_COG_MAX_TILE_BYTES. The local-mmap path
-    # applies the same cap in _read_tiles / _read_strips (issue #1664).
+    # a Range request sized by the attacker's value. The cap is
+    # overridable via XRSPATIAL_COG_MAX_TILE_BYTES. The local-mmap path
+    # applies the same cap in _read_tiles / _read_strips.
     max_tile_bytes = _max_tile_bytes_from_env()
     fetch_ranges: list[tuple[int, int]] = []
     # Placement record: (band_idx, tr, tc). band_idx is 0 for chunky
@@ -926,17 +920,17 @@ def _fetch_decode_cog_http_tiles(
                 fetch_ranges.append((off, bc))
                 placements.append((band_idx, tr, tc))
 
-    # Pass 2: fetch all tile bytes in parallel. Worker pool size is tunable
+    # Fetch all tile bytes in parallel. Worker pool size is tunable
     # via XRSPATIAL_COG_HTTP_WORKERS so users on very slow links can dial
     # it up without code changes.
     #
     # COG tile offsets are sorted and usually back-to-back, so we coalesce
-    # adjacent ranges into fewer larger GETs (P2). The 1 MB gap threshold
+    # adjacent ranges into fewer larger GETs. The 1 MB gap threshold
     # tolerates small interleaved metadata between tiles without dragging
     # in unrelated overview data. Set XRSPATIAL_COG_COALESCE_GAP=-1 to
     # disable merging (one GET per tile, the legacy behaviour).
     #
-    # The merged-range size cap (issue #2266) is resolved here too so
+    # The merged-range size cap is resolved here too so
     # the call below is self-documenting: a reader can see at the call
     # site that both ``gap_threshold`` and ``max_coalesced_range_bytes``
     # are governed by env vars. Without the explicit lookup the cap
@@ -959,7 +953,7 @@ def _fetch_decode_cog_http_tiles(
         gap_threshold=gap,
         max_coalesced_range_bytes=max_coalesced)
 
-    # Pass 3: decode each tile and place it (clipped to the window).
+    # Decode each tile and place it (clipped to the window).
     #
     # Codec decode (deflate, zstd, LZW, ...) releases the GIL inside the
     # C extension, so a thread pool over the per-tile decode actually
@@ -978,7 +972,7 @@ def _fetch_decode_cog_http_tiles(
     # ``monkeypatch.setattr(_reader, '_decode_strip_or_tile', ...)``
     # (used by ``test_cog_http_parallel_decode_2026_05_15``) still
     # observes the patched callable after the helper moved to
-    # ``_cog_http`` (PR-J / #2258).
+    # ``_cog_http``.
     from . import _reader
 
     def _decode_one(tile_data):
