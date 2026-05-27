@@ -76,7 +76,10 @@ from xrspatial.geotiff import open_geotiff  # noqa: E402
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
-from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
+from xrspatial.geotiff.tests.golden_corpus._marks import (  # noqa: E402
+    fast_slow_marks_for,
+    optional_dep_marks_for,
+)
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 FIXTURES_DIR = (
@@ -130,7 +133,7 @@ def _build_param(entry: dict) -> pytest.param:
     pick up ``pytest.mark.slow`` from the corpus helper.
     """
     fid = entry["id"]
-    marks = list(fast_slow_marks_for(entry))
+    marks = list(fast_slow_marks_for(entry)) + list(optional_dep_marks_for(entry))
     if fid in _PARITY_GAPS:
         marks.append(
             pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True)
