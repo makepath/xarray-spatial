@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ._dtypes import ASCII, RATIONAL, SRATIONAL, TIFF_TYPE_SIZES, TIFF_TYPE_STRUCT_CODES, UNDEFINED
+from ._errors import DuplicateIFDTagError
 
 # Caps for IFD entries that aren't pixel-data offset or byte-count
 # arrays. Pixel-data arrays (TileOffsets, StripOffsets, etc.) scale with
@@ -644,12 +645,24 @@ def parse_ifd(data: bytes | memoryview, offset: int,
     inline_max = 8 if is_big else 4
     entries = {}
 
-    # Pre-scan: walk the entry table and read inline values for the
-    # geometry tags we need to validate pixel-array counts. This pass
-    # only touches the fixed-size entry table; no pointer follows. A
-    # malformed file with a huge `count` on a pixel-array tag is caught
-    # by _expected_pixel_array_count below before the main loop reaches
+    # Pre-scan: walk the entry table and (a) reject duplicate tag ids
+    # and (b) read inline values for the geometry tags we need to
+    # validate pixel-array counts. This pass only touches the
+    # fixed-size entry table; no pointer follows. A malformed file with
+    # a huge `count` on a pixel-array tag is caught by
+    # _expected_pixel_array_count below before the main loop reaches
     # the actual unpack.
+    #
+    # Duplicate detection (issue #2483): TIFF 6.0 section 2 requires
+    # IFD entries to be sorted in ascending order by tag id with no
+    # duplicates. The legacy parser stored entries in a dict keyed by
+    # tag id and let the last write win, so a file with two ImageWidth
+    # entries silently parsed to whichever value came second. The same
+    # ambiguity applied to every tag, including the ones that control
+    # CRS, transform, compression, pixel offsets, and nodata. Walking
+    # the entry table here, before any value bytes are read, lets us
+    # fail closed at the parse boundary instead of guessing.
+    seen_tag_offsets: dict[int, int] = {}
     dims: dict[int, Any] = {}
     for i in range(num_entries):
         eo = entry_offset + i * entry_size
@@ -663,6 +676,15 @@ def parse_ifd(data: bytes | memoryview, offset: int,
             type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
             count = struct.unpack_from(f'{bo}I', data, eo + 4)[0]
             value_area_offset = eo + 8
+        prior_eo = seen_tag_offsets.get(tag)
+        if prior_eo is not None:
+            raise DuplicateIFDTagError(
+                f"IFD at offset {offset} declares tag {tag} twice "
+                f"(prior entry at byte offset {prior_eo}, duplicate "
+                f"entry at byte offset {eo}); TIFF 6.0 requires each "
+                f"tag id to appear at most once per IFD"
+            )
+        seen_tag_offsets[tag] = eo
         if tag not in _DIMENSION_TAGS:
             continue
         type_size = TIFF_TYPE_SIZES.get(type_id, 1)

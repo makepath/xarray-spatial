@@ -223,6 +223,32 @@ class NonRepresentableEPSGCRSError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class DuplicateIFDTagError(ValueError):
+    """An IFD declares the same tag id more than once (#2483).
+
+    TIFF 6.0 section 2 ("The TIFF Structure") requires IFD entries to be
+    sorted in ascending order by tag id with no duplicates. The legacy
+    parser stored entries in a dict keyed by tag and let the last write
+    win, so a file with two ``ImageWidth`` (or any other) entries parsed
+    silently to whichever value happened to come second. That is the
+    same silent-acceptance failure mode the rest of the
+    ``GeoTIFFAmbiguousMetadataError`` family rejects: a malformed or
+    adversarial file changes interpretation at the read boundary with no
+    signal to the caller.
+
+    The exception names the duplicated tag id and the byte offsets of
+    the two conflicting entries (the prior entry and the current one)
+    so a caller can locate the bad bytes without re-parsing the IFD.
+    The same check fires in the dimension pre-scan used to bound
+    pixel-array tag counts, so the early-exit path cannot silently
+    accept a malformed ``ImageWidth`` / ``ImageLength`` either.
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` callers
+    keep catching the case; new code can ``except`` this class directly
+    to distinguish duplicate-tag rejection from other parse failures.
+    """
+
+
 class UnsupportedGeoTIFFFeatureError(ValueError):
     """Caller asked for a feature this release does not implement (#2349).
 
@@ -255,4 +281,5 @@ __all__ = [
     "UnknownCRSModelTypeError",
     "NonRepresentableEPSGCRSError",
     "UnsupportedGeoTIFFFeatureError",
+    "DuplicateIFDTagError",
 ]
