@@ -38,14 +38,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    GeoTIFFFallbackWarning,
-    open_geotiff,
-    read_vrt,
-    to_geotiff,
-)
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, read_vrt, to_geotiff
 from xrspatial.geotiff._vrt import read_vrt as _internal_read_vrt
-
 
 PRESENT_FILL = 7.0
 

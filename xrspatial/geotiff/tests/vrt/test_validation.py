@@ -36,26 +36,14 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    GeoTIFFFallbackWarning,
-    open_geotiff,
-    to_geotiff,
-)
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff
 from xrspatial.geotiff._backends.vrt import read_vrt as _package_read_vrt
-from xrspatial.geotiff._errors import (
-    GeoTIFFAmbiguousMetadataError,
-    MixedBandMetadataError,
-    RotatedTransformError,
-    UnparseableCRSError,
-    UnsupportedGeoTIFFFeatureError,
-    VRTUnsupportedError,
-)
+from xrspatial.geotiff._errors import (GeoTIFFAmbiguousMetadataError, MixedBandMetadataError,
+                                       RotatedTransformError, UnparseableCRSError,
+                                       UnsupportedGeoTIFFFeatureError, VRTUnsupportedError)
 from xrspatial.geotiff._vrt import parse_vrt
 from xrspatial.geotiff._vrt import read_vrt as _internal_read_vrt
-from xrspatial.geotiff._vrt_validation import (
-    validate_parsed_vrt,
-    validate_vrt_capability,
-)
+from xrspatial.geotiff._vrt_validation import validate_parsed_vrt, validate_vrt_capability
 from xrspatial.geotiff._writer import write
 
 # ``xrspatial.geotiff.read_vrt`` (re-exported from the package init) is the

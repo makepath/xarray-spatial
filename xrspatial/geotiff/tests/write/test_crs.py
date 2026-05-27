@@ -32,10 +32,12 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataError, open_geotiff,
-                               to_geotiff)
-from xrspatial.geotiff._crs import (_WKT_ROOT_KEYWORDS, _looks_like_wkt as _looks_like_wkt_1929,
-                                    _validate_crs_arg, _validate_crs_fallback)
+from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataError,
+                               NonRepresentableEPSGCRSError, open_geotiff, to_geotiff)
+from xrspatial.geotiff._crs import _WKT_ROOT_KEYWORDS
+from xrspatial.geotiff._crs import _looks_like_wkt as _looks_like_wkt_1929
+from xrspatial.geotiff._crs import (_reject_non_representable_epsg, _validate_crs_arg,
+                                    _validate_crs_fallback)
 from xrspatial.geotiff._geotags import GeoTransform, _looks_like_wkt, build_geo_tags
 from xrspatial.geotiff._validation import (_check_write_conflicting_crs,
                                            _registered_write_metadata_checks)
@@ -529,9 +531,9 @@ _cupy_spec = pytest.importorskip("cupy", reason="GPU writer needs cupy")
 
 @requires_gpu
 def test_write_geotiff_gpu_numpy_int_crs_roundtrips_2082(tmp_path):
-    from xrspatial.geotiff import write_geotiff_gpu
-
     import cupy
+
+    from xrspatial.geotiff import write_geotiff_gpu
     arr = cupy.zeros((4, 4), dtype=cupy.float32)
     da = xr.DataArray(
         arr,
@@ -708,8 +710,7 @@ def test_human_readable_crs_name_not_promoted_to_crs_wkt_1632(tmp_path):
 
 
 def test_synthesize_user_defined_wkt_sphere_1632():
-    from xrspatial.geotiff._geotags import (MODEL_TYPE_GEOGRAPHIC,
-                                            _synthesize_user_defined_wkt)
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOGRAPHIC, _synthesize_user_defined_wkt
 
     wkt = _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_GEOGRAPHIC,
@@ -725,8 +726,7 @@ def test_synthesize_user_defined_wkt_sphere_1632():
 
 
 def test_synthesize_user_defined_wkt_oblate_ellipsoid_1632():
-    from xrspatial.geotiff._geotags import (MODEL_TYPE_GEOGRAPHIC,
-                                            _synthesize_user_defined_wkt)
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOGRAPHIC, _synthesize_user_defined_wkt
 
     wkt = _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_GEOGRAPHIC,
@@ -741,8 +741,7 @@ def test_synthesize_user_defined_wkt_oblate_ellipsoid_1632():
 
 
 def test_synthesize_user_defined_wkt_projected_returns_none_1632():
-    from xrspatial.geotiff._geotags import (MODEL_TYPE_PROJECTED,
-                                            _synthesize_user_defined_wkt)
+    from xrspatial.geotiff._geotags import MODEL_TYPE_PROJECTED, _synthesize_user_defined_wkt
 
     assert _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_PROJECTED,
@@ -753,8 +752,7 @@ def test_synthesize_user_defined_wkt_projected_returns_none_1632():
 
 
 def test_synthesize_user_defined_wkt_geocentric_returns_none_1632():
-    from xrspatial.geotiff._geotags import (MODEL_TYPE_GEOCENTRIC,
-                                            _synthesize_user_defined_wkt)
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOCENTRIC, _synthesize_user_defined_wkt
 
     assert _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_GEOCENTRIC,
@@ -771,8 +769,7 @@ def test_synthesize_user_defined_wkt_geocentric_returns_none_1632():
 
 
 def test_synthesize_user_defined_wkt_missing_ellipsoid_returns_none_1632():
-    from xrspatial.geotiff._geotags import (MODEL_TYPE_GEOGRAPHIC,
-                                            _synthesize_user_defined_wkt)
+    from xrspatial.geotiff._geotags import MODEL_TYPE_GEOGRAPHIC, _synthesize_user_defined_wkt
 
     assert _synthesize_user_defined_wkt(
         model_type=MODEL_TYPE_GEOGRAPHIC,
@@ -930,20 +927,6 @@ def test_wkt_only_citation_bytes_unchanged_after_fix_1768(tmp_path):
 # Source: test_compound_crs_reject_2418.py
 # ===========================================================================
 
-import io
-import os
-import tempfile
-
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import (
-    NonRepresentableEPSGCRSError,
-    open_geotiff,
-    to_geotiff,
-)
-from xrspatial.geotiff._crs import _reject_non_representable_epsg, _validate_crs_arg
 
 pyproj = pytest.importorskip("pyproj")
 rasterio = pytest.importorskip("rasterio")
@@ -1073,7 +1056,6 @@ def test_compound_epsg_corruption_surfaces_when_validator_bypassed(
     monkeypatch.setattr(
         _crs_mod, "_reject_non_representable_epsg", lambda *a, **kw: None
     )
-    original_model_type = _geotags_mod._model_type_from_epsg
 
     def _model_type_without_compound_check(crs_epsg):
         # Reproduce the pre-fix behaviour: only branch on is_geographic.

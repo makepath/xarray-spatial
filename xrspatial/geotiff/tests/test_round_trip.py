@@ -48,14 +48,18 @@ contract the writer must satisfy going forward.
 """
 from __future__ import annotations
 
+import math
+import os
 import pathlib
 
 import numpy as np
 import pytest
 import xarray as xr
+from hypothesis import HealthCheck, assume, event, given, settings
+from hypothesis import strategies as st
 
 from xrspatial.geotiff import open_geotiff, to_geotiff, write_vrt
-from xrspatial.geotiff._geotags import GeoTransform
+from xrspatial.geotiff._geotags import _NO_GEOREF_KEY, GeoTransform
 from xrspatial.geotiff._writer import write
 
 # ---------------------------------------------------------------------------
@@ -686,15 +690,9 @@ class TestVRTRoundTripFromCorpus:
 # Source: test_roundtrip_properties.py
 # ===========================================================================
 
-import math
-import os
 
 hypothesis = pytest.importorskip("hypothesis")
 
-from hypothesis import HealthCheck, assume, event, given, settings  # noqa: E402
-from hypothesis import strategies as st  # noqa: E402
-
-from xrspatial.geotiff._geotags import _NO_GEOREF_KEY  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Profile registration
@@ -960,7 +958,7 @@ def _compare_pixels(a: np.ndarray, b: np.ndarray) -> None:
 # once the writer has canonicalised them. Other attrs (best-effort
 # pass-through) are only checked for presence.
 _PROPERTY_LOCKED_ATTRS = ('crs', 'transform', 'nodata', 'raster_type',
-                 _NO_GEOREF_KEY)
+                          _NO_GEOREF_KEY)
 
 
 def _assert_property_fixed_point(da1: xr.DataArray, da2: xr.DataArray) -> None:

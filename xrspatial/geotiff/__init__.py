@@ -72,12 +72,10 @@ from ._coords import \
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry  # noqa: F401
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDTagError,
-                      GeoTIFFAmbiguousMetadataError,
-                      InconsistentGeoKeysError, InvalidCRSCodeError, InvalidIntegerNodataError,
-                      MixedBandMetadataError,
+                      GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, InvalidCRSCodeError,
+                      InvalidIntegerNodataError, MixedBandMetadataError,
                       NonRepresentableEPSGCRSError, NonUniformCoordsError, RotatedTransformError,
-                      UnknownCRSModelTypeError,
-                      UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
+                      UnknownCRSModelTypeError, UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
                       VRTStableSourcesOnlyError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
@@ -298,8 +296,8 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # behaviour with a warning. Mirrors the eager CPU path in
         # ``_reader._read_to_array`` and the dask metadata helper
         # ``_sidecar.discover_remote_sidecar``. Issue #2416.
-        from ._sidecar import (attach_sidecar_origin, find_sidecar,
-                                handle_sidecar_parse_failure, load_sidecar)
+        from ._sidecar import (attach_sidecar_origin, find_sidecar, handle_sidecar_parse_failure,
+                               load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:

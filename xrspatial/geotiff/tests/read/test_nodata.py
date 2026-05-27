@@ -33,6 +33,7 @@ brevity).
 """
 from __future__ import annotations
 
+import importlib.util
 import inspect
 import struct
 
@@ -40,16 +41,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_vrt,
-    to_geotiff,
-)
-from xrspatial.geotiff._attrs import (
-    _finalize_lazy_read_attrs,
-    _validate_read_geo_info,
-)
+from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, InvalidIntegerNodataError,
+                               open_geotiff, read_geotiff_dask, read_vrt, to_geotiff)
+from xrspatial.geotiff._attrs import _finalize_lazy_read_attrs, _validate_read_geo_info
 from xrspatial.geotiff._backends import _gpu_helpers
 from xrspatial.geotiff._errors import MixedBandMetadataError
 from xrspatial.geotiff._nodata import NodataLifecycle
@@ -3189,13 +3183,6 @@ class TestWriterGPU:
 # Source: test_invalid_int_nodata_rejection_2441.py
 # ===========================================================================
 
-import importlib.util
-
-import numpy as np
-import pytest
-
-from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, InvalidIntegerNodataError,
-                               open_geotiff, read_geotiff_dask)
 
 _build_uint16_tiff = _build_uint16_tiff_1774
 
@@ -3294,8 +3281,9 @@ def test_open_geotiff_float_dtype_nan_nodata_still_allowed(tmp_path):
     """Float-dtype sources with NaN ``GDAL_NODATA`` are the normal case
     and must not raise. NaN matches NaN, masking proceeds.
     """
-    from xrspatial.geotiff import to_geotiff
     import xarray as xr
+
+    from xrspatial.geotiff import to_geotiff
 
     arr = np.array([[1.0, 2.0], [np.nan, 4.0]], dtype=np.float32)
     da = xr.DataArray(

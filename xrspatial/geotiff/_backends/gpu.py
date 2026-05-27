@@ -438,9 +438,8 @@ def read_geotiff_gpu(source: str, *,
         # and ``reader.sidecar_ovr`` at advanced; matches the eager CPU
         # path in ``_reader._read_to_array`` and the dask metadata
         # helper ``_sidecar.discover_remote_sidecar``. Issue #2416.
-        from .._sidecar import (attach_sidecar_origin, close_sidecar,
-                                 find_sidecar, handle_sidecar_parse_failure,
-                                 load_sidecar)
+        from .._sidecar import (attach_sidecar_origin, close_sidecar, find_sidecar,
+                                handle_sidecar_parse_failure, load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:

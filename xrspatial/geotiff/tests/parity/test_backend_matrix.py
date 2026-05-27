@@ -67,17 +67,19 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-# Alias so existing base-section signatures that say ``Path`` keep working.
-Path = pathlib.Path
-
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt
-from xrspatial.geotiff._errors import RotatedTransformError
+from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
+from xrspatial.geotiff._errors import RotatedTransformError, UnparseableCRSError
 
 from .._helpers.markers import gpu_available, requires_gpu, requires_loopback
+
+# Alias so existing base-section signatures that say ``Path`` keep working.
+Path = pathlib.Path
+
 
 # ---------------------------------------------------------------------------
 # Environment gating
@@ -1049,9 +1051,8 @@ _HAS_RASTERIO = importlib.util.find_spec("rasterio") is not None
 
 if _HAS_YAML and _HAS_RASTERIO:
     from xrspatial.geotiff.tests.golden_corpus import generate as _fp_generate
-    from xrspatial.geotiff.tests.golden_corpus._marks import (
-        fast_slow_marks_for as _fp_fast_slow_marks_for,
-    )
+    from xrspatial.geotiff.tests.golden_corpus._marks import \
+        fast_slow_marks_for as _fp_fast_slow_marks_for
 
     _FP_FIXTURES_DIR = (
         pathlib.Path(_fp_generate.__file__).resolve().parent / "fixtures"
@@ -1814,6 +1815,7 @@ def _ap_open_vrt(path, meta):
     shifted by half a pixel here.
     """
     import os
+
     from pyproj import CRS
 
     height = _AP_HEIGHT
@@ -2094,11 +2096,6 @@ def test_pass_through_tags_all_backend_keysets_equal(tmp_path):
 # Source: test_finalization_helpers_2162.py
 # ===========================================================================
 
-import numpy as np
-import pytest
-
-from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
-from xrspatial.geotiff._errors import UnparseableCRSError
 
 # ---------------------------------------------------------------------------
 # Fixtures

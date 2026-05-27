@@ -28,13 +28,7 @@ from __future__ import annotations
 import struct
 from typing import TYPE_CHECKING
 
-import numpy as np
-
-from ._errors import (
-    RotatedTransformError,
-    UnparseableCRSError,
-    VRTUnsupportedError,
-)
+from ._errors import RotatedTransformError, UnparseableCRSError, VRTUnsupportedError
 
 if TYPE_CHECKING:
     from ._vrt import VRTDataset

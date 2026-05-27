@@ -19,54 +19,45 @@ rejection (#2075), and zero-band-axis rejection (#2095).
 
 from __future__ import annotations
 
-import dask.array as dsk
-import numpy as np
-import pytest
+import glob
+import inspect
+import io
 import os
 import platform
-import xarray as xr
-import inspect
-import importlib.util
-import io
+import re
 import tracemalloc
+import typing
 import uuid
 import warnings
-import typing
-import re
-import glob
 
-from xrspatial.geotiff import (
-    _vrt as _vrt_module,
-    _writer as writer_mod,
-    open_geotiff,
-    read_vrt,
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
+import dask.array as dsk
+import dask.array as da
+import numpy as np
+import pytest
+import xarray as xr
+
+from xrspatial.geotiff import _vrt as _vrt_module
+from xrspatial.geotiff import _writer as writer_mod
+from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_geotiff_gpu, write_vrt
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, parse_header, parse_ifd
 from xrspatial.geotiff._reader import _read_to_array, read_to_array
 from xrspatial.geotiff._validation import _validate_3d_writer_dims
-from xrspatial.geotiff._writer import (
-    _make_overview,
-    _write,
-    _write_streaming,
-    _write_tiled,
-    write,
-)
 # ``write_vrt`` here is the private internal binding, aliased so it does
 # not shadow the public re-export above. The only section that needs
 # the private form is the writer-source-compat fold (see PR
 # description for the why).
 from xrspatial.geotiff._vrt import write_vrt as _priv_write_vrt
+from xrspatial.geotiff._writer import _make_overview, _write, _write_streaming, _write_tiled, write
 from xrspatial.geotiff.tests.conftest import requires_gpu
 
+from .._helpers.markers import gpu_available as _gpu_available
 
 # -------------------------------------------------------------------------
 # Section: writer round-trip basics
 # -------------------------------------------------------------------------
+
 
 class TestMakeOverview:
     def test_2x_decimation(self):
@@ -464,7 +455,6 @@ def test_writer_kwarg_defaults_match_to_geotiff():
 # Section: return-path contract
 # -------------------------------------------------------------------------
 
-from .._helpers.markers import gpu_available as _gpu_available  # noqa: E402
 
 _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(
@@ -2546,16 +2536,7 @@ def test_write_geotiff_gpu_rejects_zero_bands(tmp_path):
 # Source: test_streaming_photometric_override_2073.py
 # ===========================================================================
 
-import os
 
-import dask.array as da
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import open_geotiff, to_geotiff
-
-TAG_PHOTOMETRIC = 262
 TYPE_SHORT = 3
 
 

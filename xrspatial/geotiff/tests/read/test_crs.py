@@ -32,17 +32,11 @@ import pytest
 from xrspatial.geotiff import open_geotiff
 from xrspatial.geotiff._attrs import _populate_attrs_from_geo_info
 from xrspatial.geotiff._errors import RotatedTransformError
-from xrspatial.geotiff._geotags import (
-    _NO_GEOREF_KEY,
-    TAG_MODEL_TRANSFORMATION,
-    GeoInfo,
-    GeoTransform,
-    _extract_transform,
-)
+from xrspatial.geotiff._geotags import (_NO_GEOREF_KEY, TAG_MODEL_TRANSFORMATION, GeoInfo,
+                                        GeoTransform, _extract_transform)
 from xrspatial.geotiff._header import IFD, IFDEntry
 
 from .._helpers.markers import requires_gpu
-
 
 # ---------------------------------------------------------------------------
 # Synthetic rotated 4x4 ModelTransformationTag values.

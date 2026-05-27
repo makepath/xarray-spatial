@@ -47,8 +47,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (GeoTIFFFallbackWarning, open_geotiff, to_geotiff,
-                               write_geotiff_gpu)
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff, write_geotiff_gpu
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, TAG_SAMPLE_FORMAT, parse_header
 
 tifffile = pytest.importorskip("tifffile")
@@ -264,8 +263,8 @@ def _float32_case():
                      id="miniswhite_read[float32-nodata-neg9999]"),
     ],
 )
-def test_eager_numpy_miniswhite_nodata(tmp_path, case_factory, nodata_str,
-                                        sentinel):
+def test_eager_numpy_miniswhite_nodata(
+        tmp_path, case_factory, nodata_str, sentinel):
     """Eager numpy read masks against the post-inversion sentinel."""
     stored, expected = case_factory()
     path = str(tmp_path / "mw_eager.tif")
@@ -637,8 +636,8 @@ def test_read_signed_miniswhite_rejected_on_gpu_path(tmp_path):
         ),
     ],
 )
-def test_unsigned_and_float_miniswhite_still_round_trip(tmp_path, arr_factory,
-                                                       assert_kind):
+def test_unsigned_and_float_miniswhite_still_round_trip(
+        tmp_path, arr_factory, assert_kind):
     """The unsigned and float paths are unaffected by the signed
     rejection; pin the non-regression here so the rejection branch
     cannot accidentally widen."""
@@ -711,8 +710,8 @@ def test_to_geotiff_and_gpu_writer_share_kwarg_default():
                      id="allow_internal_only_jpeg[error-mentions-flag]"),
     ],
 )
-def test_to_geotiff_rejects_jpeg_without_opt_in(tmp_path, expect_match,
-                                                 assertion_target):
+def test_to_geotiff_rejects_jpeg_without_opt_in(
+        tmp_path, expect_match, assertion_target):
     """Without the opt-in, ``compression='jpeg'`` raises ``ValueError``,
     and the message points at the opt-in flag plus its issue marker so
     callers can find the escape hatch."""

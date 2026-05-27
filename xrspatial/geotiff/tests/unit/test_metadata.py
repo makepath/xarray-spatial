@@ -17,24 +17,30 @@ collision-free.
 """
 from __future__ import annotations
 
+import os
 import struct
-import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
 import xarray as xr
 
+import xrspatial.geotiff as geotiff_pkg
 from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataError,
-                               MixedBandMetadataError, open_geotiff, read_geotiff_dask, read_vrt,
-                               to_geotiff)
+                               MixedBandMetadataError, _runtime)
 from xrspatial.geotiff import _validation as _validation_mod
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt, to_geotiff
 from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, attrs_to_metadata,
                                       geo_info_to_metadata, metadata_to_attrs)
 from xrspatial.geotiff._errors import (ConflictingNodataError, InvalidCRSCodeError,
                                        NonUniformCoordsError, RotatedTransformError,
                                        UnparseableCRSError)
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY
-from xrspatial.geotiff._validation import (_registered_read_metadata_checks,
+from xrspatial.geotiff._validation import (_check_read_rotated_transform,
+                                           _check_read_unparseable_crs,
+                                           _check_write_conflicting_nodata,
+                                           _check_write_non_uniform_coords,
+                                           _registered_read_metadata_checks,
                                            _registered_write_metadata_checks,
                                            register_read_metadata_check,
                                            register_write_metadata_check,
@@ -42,7 +48,6 @@ from xrspatial.geotiff._validation import (_registered_read_metadata_checks,
                                            unregister_write_metadata_check, validate_read_metadata,
                                            validate_write_metadata)
 from xrspatial.geotiff._writer import write
-
 
 # =============================================================================
 # Section: Ambiguous metadata hooks (#1987 PR 0)
@@ -1354,9 +1359,6 @@ def test_read_geotiff_dask_band_nodata_rejects_unknown_value_1987(tmp_path):
 # Source: test_runtime_sentinels_identity_1880.py
 # ===========================================================================
 
-import xrspatial.geotiff as geotiff_pkg
-from xrspatial.geotiff import _runtime
-
 
 def test_gpu_deprecated_sentinel_is_singleton():
     assert geotiff_pkg._GPU_DEPRECATED_SENTINEL is _runtime._GPU_DEPRECATED_SENTINEL
@@ -1430,23 +1432,6 @@ def test_fallback_message_includes_exception_type_and_message():
 # Source: test_remaining_fail_closed_1987.py
 # ===========================================================================
 
-import os
-import struct
-from pathlib import Path
-
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import (ConflictingNodataError, GeoTIFFAmbiguousMetadataError,
-                               NonUniformCoordsError, RotatedTransformError, UnparseableCRSError,
-                               open_geotiff, to_geotiff)
-from xrspatial.geotiff._validation import (_check_read_rotated_transform,
-                                           _check_read_unparseable_crs,
-                                           _check_write_conflicting_nodata,
-                                           _check_write_non_uniform_coords,
-                                           _registered_read_metadata_checks,
-                                           _registered_write_metadata_checks)
 
 pyproj = pytest.importorskip("pyproj")
 
