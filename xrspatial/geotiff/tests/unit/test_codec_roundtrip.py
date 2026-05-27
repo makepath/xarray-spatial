@@ -1,7 +1,6 @@
 """Round-trip and parameter coverage for the codec public API.
 
-Consolidated from the per-codec / per-issue files listed in
-``CLUSTER_AUDIT_CODEC_ROUNDTRIP.md``. The sibling ``test_compression.py``
+The sibling ``test_compression.py``
 in this directory is intentionally scoped to PackBits kernel unit tests
 (its own docstring says so); write/read round-trips through the public
 ``to_geotiff`` / ``open_geotiff`` API land here.
@@ -11,19 +10,17 @@ Coverage is grouped by codec:
 * JPEG: low-level codec, JPEGTables splice helper, writer round-trips
   (internal-only ``allow_internal_only_jpeg=True`` path), validation,
   rasterio-driven GDAL tiled JPEG read-back, ``to_geotiff`` rejection
-  of the public ``compression='jpeg'`` path (issue #1050 / #1502).
+  of the public ``compression='jpeg'`` path.
 * JPEG 2000: codec round-trip via glymur, writer round-trip, dispatcher
-  parity, availability flag (issue #1048).
+  parity, availability flag.
 * LERC: codec round-trip, writer round-trip, ``max_z_error`` budget
   semantics (lossless at 0, bounded error otherwise), dask streaming
-  path, valid-mask handling, availability flag (issue #1052 / #1510 /
-  A4).
+  path, valid-mask handling, availability flag.
 * LZ4: codec round-trip, writer round-trip, predictor interaction,
-  ``compression_level`` boundaries (eager + dask), availability flag
-  (issue #1051 / 2026-05-11).
+  ``compression_level`` boundaries (eager + dask), availability flag.
 * Generic ``compression_level``: zstd / deflate round-trip and size
   monotonicity, LZW silent-ignore, out-of-range rejection.
-* ``write_geotiff_gpu`` docstring drift (issue #1644).
+* ``write_geotiff_gpu`` docstring drift.
 
 LERC and JPEG 2000 sections use ``pytest.importorskip`` (or skip
 markers) because the optional codec libraries are not part of the base
@@ -99,7 +96,7 @@ def _make_geo_da(arr: np.ndarray) -> xr.DataArray:
 
 
 # ===========================================================================
-# JPEG (issue #1050, #1502)
+# JPEG
 # ===========================================================================
 
 
@@ -355,7 +352,7 @@ class TestGdalTiledJpegRead:
 
 
 # ===========================================================================
-# JPEG 2000 (issue #1048)
+# JPEG 2000
 # ===========================================================================
 
 
@@ -468,7 +465,7 @@ class TestJpeg2000WriteRoundTrip:
         data = np.arange(64, dtype=np.uint8).reshape(8, 8)
         da = _make_geo_da(data)
         path = str(tmp_path / "j2k_api.tif")
-        # Tier 3 codec (issue #2137); pass the opt-in so the round-trip
+        # Experimental codec; pass the opt-in so the round-trip
         # exercises the encode path rather than the rejection gate.
         to_geotiff(da, path, compression="jpeg2000",
                    allow_experimental_codecs=True)
@@ -503,7 +500,7 @@ class TestJpeg2000Availability:
 
 
 # ===========================================================================
-# LERC (issue #1052, #1510, A4)
+# LERC
 # ===========================================================================
 
 
@@ -604,7 +601,7 @@ class TestLercWriteRoundTrip:
         path = str(tmp_path / "lerc_api.tif")
         to_geotiff(da, path, compression="lerc",
                    allow_experimental_codecs=True)
-        # PR 4 of epic #2340 also gates the read side on the opt-in.
+        # The read side is also gated on the opt-in.
         result = open_geotiff(path, allow_experimental_codecs=True)
         np.testing.assert_array_equal(result.values, data)
 
@@ -902,7 +899,7 @@ class TestLercAvailability:
 
 
 # ===========================================================================
-# LZ4 (issue #1051, 2026-05-11)
+# LZ4
 # ===========================================================================
 
 
@@ -1282,7 +1279,7 @@ class TestCompressionLevelOutOfRange:
 
 
 # ===========================================================================
-# write_geotiff_gpu compression docstring drift (issue #1644)
+# write_geotiff_gpu compression docstring drift
 # ===========================================================================
 
 
@@ -1303,10 +1300,10 @@ _gpu_only = pytest.mark.skipif(
 
 # Codecs to exercise end-to-end through the GPU writer. ``jpeg`` is
 # excluded here because (a) ``to_geotiff`` rejects it at runtime and
-# (b) the JPEG round-trip is covered by the GPU codec cluster
-# (issue #2438) with appropriate uint8 RGB data; keeping it out of
-# this parametrize avoids exercising the JPEG path on dtype/shape
-# combinations that aren't representative.
+# (b) the JPEG round-trip is covered by the GPU codec tests with
+# appropriate uint8 RGB data; keeping it out of this parametrize
+# avoids exercising the JPEG path on dtype/shape combinations that
+# aren't representative.
 _GPU_FALLBACK_CODECS = (
     "lzw", "packbits", "lz4", "lerc", "jpeg2000", "j2k",
 )
@@ -1314,7 +1311,7 @@ _GPU_FALLBACK_CODECS = (
 
 def test_write_geotiff_gpu_docstring_lists_full_codec_set():
     """The ``compression`` docstring block lists every codec
-    ``to_geotiff`` accepts (issue #1644)."""
+    ``to_geotiff`` accepts."""
     from xrspatial.geotiff import write_geotiff_gpu
 
     doc = write_geotiff_gpu.__doc__

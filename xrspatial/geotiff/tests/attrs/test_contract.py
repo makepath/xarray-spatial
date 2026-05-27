@@ -1,7 +1,6 @@
-"""Consolidated attrs-contract tests for the GeoTIFF module.
+"""Attrs-contract tests for the GeoTIFF module.
 
-This file folds in the four ``test_attrs_contract_*_1984.py`` files
-that previously lived at the top of ``xrspatial/geotiff/tests/``:
+Four dimensions of the attrs contract:
 
 * ``canonical``    -- keys xrspatial owns and guarantees round-trip
                       stable through ``to_geotiff`` -> ``open_geotiff``.
@@ -14,17 +13,12 @@ that previously lived at the top of ``xrspatial/geotiff/tests/``:
                       emitted by every read backend (eager numpy, dask,
                       GPU, dask+GPU, VRT eager, VRT chunked).
 
-The four dimensions stay separate top-level sections in this file. Tests
-are parametrised within each dimension and given descriptive IDs
-(``canonical[GDAL_NODATA]``, ``alias[nodatavals->nodata]``, etc.) rather
-than per-issue filenames. Git history remains the audit trail for which
-issue introduced each assertion.
+Each dimension is a separate top-level section. Tests are parametrised
+within each dimension and given descriptive IDs
+(``canonical[GDAL_NODATA]``, ``alias[nodatavals->nodata]``, etc.).
 
-The release-gate sibling (``test_release_gate_attrs_contract.py``) is
-intentionally not folded here; it lives on its own under PR 10 of the
-epic. Parity-flavoured siblings (``test_attrs_parity_1548.py``,
-``test_attrs_finalization_parity_2211.py``,
-``test_attrs_kwarg_parity_1561.py``) belong with PR 4's parity cluster.
+The release-gate attrs-contract tests live in their own release-gate
+module; parity-flavoured attrs tests live with the parity suite.
 """
 from __future__ import annotations
 
@@ -53,7 +47,6 @@ _CONTRACT_KEY = '_xrspatial_geotiff_contract'
 # Canonical tier
 #
 # Keys xrspatial owns; round-trip is guaranteed through write -> read.
-# Sourced from ``test_attrs_contract_canonical_1984.py``.
 # ===========================================================================
 
 # Every key the canonical tier guarantees round-trip stable. Order
@@ -75,7 +68,7 @@ _CANONICAL_KEYS = (
     'x_resolution',
     'y_resolution',
     'resolution_unit',
-    # Added in contract v3 (issue #2136). The fixture is georef + CRS
+    # Added in contract v3. The fixture is georef + CRS
     # so the round-tripped value is the ``'full'`` literal; value
     # equality lives on ``test_canonical[georef_status]`` below.
     'georef_status',
@@ -143,9 +136,9 @@ def canonical_roundtrip(tmp_path):
     da, expected_transform = _make_canonical_da()
     path = str(tmp_path / 'attrs_contract_canonical.tif')
     # The canonical fixture carries ``extra_tags``; the rich-tag gate
-    # (#2340) exempts attrs carrying ``_xrspatial_geotiff_contract``
-    # (set by the readers), but this fixture builds a fresh DataArray
-    # without the marker, so the initial write must opt in.
+    # exempts attrs carrying ``_xrspatial_geotiff_contract`` (set by the
+    # readers), but this fixture builds a fresh DataArray without the
+    # marker, so the initial write must opt in.
     to_geotiff(da, path, allow_experimental_codecs=True)
     rd = open_geotiff(path)
     return rd, expected_transform
@@ -253,7 +246,7 @@ def _check_canonical_contract_version(rd, _expected_transform):
 
 
 def _check_canonical_georef_status(rd, _expected_transform):
-    """``georef_status`` (issue #2136) is canonical from contract v3.
+    """``georef_status`` is canonical from contract v3.
     The fixture sets ``crs`` + axis-aligned transform-from-coords, so
     the round-tripped value is the ``'full'`` literal."""
     assert rd.attrs['georef_status'] == 'full'
@@ -391,8 +384,7 @@ def test_canonical_raster_type_point_roundtrip(tmp_path):
 #
 # Compatibility aliases (rioxarray ``nodatavals``, CF ``_FillValue``)
 # are honoured on read when canonical ``nodata`` is absent. The write
-# side emits only ``nodata``, never the aliases. Sourced from
-# ``test_attrs_contract_aliases_1984.py``.
+# side emits only ``nodata``, never the aliases.
 # ===========================================================================
 
 # Arbitrary float-castable sentinel distinct from any data value below.
@@ -470,8 +462,8 @@ def test_alias_canonical_nodata_wins_at_resolver(_arr_with_sentinel):
 def test_alias_canonical_nodata_wins_at_write(
         tmp_path, _arr_with_sentinel):
     """Pin: the legacy "canonical nodata silently wins on write" was
-    replaced by a fail-closed raise (issue #1987). A DataArray with
-    disagreeing ``nodata`` and ``nodatavals`` attrs refuses to write
+    replaced by a fail-closed raise. A DataArray with disagreeing
+    ``nodata`` and ``nodatavals`` attrs refuses to write
     instead of dropping the alias. The opt-out is the explicit
     ``nodata=`` kwarg, which overrides both attrs."""
     da = _da_float(
@@ -539,13 +531,12 @@ def test_alias_nan_in_nodatavals_is_skipped():
 # Passthrough tier
 #
 # Writer does not consume; reader rebuilds the value from a TIFF tag
-# if one survived. Sourced from
-# ``test_attrs_contract_passthrough_1984.py``.
+# if one survived.
 # ===========================================================================
 
 # Full set of pass-through keys defined by the contract. Contract v2
-# (issue #2016) trimmed this set to the three TIFF-tag-derived keys
-# that actually round-trip via ``_merge_friendly_extra_tags``.
+# trimmed this set to the three TIFF-tag-derived keys that actually
+# round-trip via ``_merge_friendly_extra_tags``.
 _ALL_PASSTHROUGH_KEYS = (
     'image_description',
     'extra_samples',
@@ -554,7 +545,7 @@ _ALL_PASSTHROUGH_KEYS = (
 
 
 # Attrs that the reader emitted under a ``DeprecationWarning`` in
-# contract v1 and that contract v2 (issue #2016) removed entirely.
+# contract v1 and that contract v2 removed entirely.
 _REMOVED_IN_V2_ATTRS = (
     'crs_name',
     'geog_citation',
@@ -601,7 +592,7 @@ def _passthrough_roundtrip(tmp_path, da, name='roundtrip.tif'):
 # before write.
 # ``expected``: ``'reconstructible'`` (key must be present in the
 # read-back attrs and equal to the written value) or ``'dropped'`` (key
-# must be absent). After contract v2 (issue #2016), every row carries
+# must be absent). After contract v2, every row carries
 # ``'reconstructible'``; the ``'dropped'`` arm is kept so a future
 # addition can use it without restructuring the test.
 _PASSTHROUGH_CASES = [
@@ -703,8 +694,8 @@ def test_passthrough_does_not_promote_to_canonical(tmp_path):
     """Setting legacy GeoKey-derived attrs without a CRS does not
     inject one.
 
-    Contract v2 (issue #2016) removed these keys from the reader's
-    emission set, but a user with a hand-built ``DataArray`` may still
+    Contract v2 removed these keys from the reader's emission set, but
+    a user with a hand-built ``DataArray`` may still
     set them. The writer treats them as advisory and never synthesises
     a CRS from them; this test pins that invariant.
     """
@@ -744,7 +735,7 @@ def test_passthrough_does_not_promote_to_canonical(tmp_path):
 
 
 def test_passthrough_removed_attrs_not_emitted(tmp_path):
-    """Contract v2 (issue #2016) removed 13 deprecated reader attrs.
+    """Contract v2 removed 13 deprecated reader attrs.
 
     A freshly read DataArray does not carry any of them, even when the
     underlying GeoTIFF's GeoKey directory advertises the values. Pins
@@ -812,7 +803,6 @@ def test_passthrough_removed_attrs_absent_after_roundtrip(tmp_path):
 # Version tier
 #
 # Per-backend coverage of the ``_xrspatial_geotiff_contract`` stamp.
-# Sourced from ``test_attrs_contract_version_1984.py``.
 # ===========================================================================
 
 
@@ -848,25 +838,23 @@ def _write_minimal_vrt(vrt_path, source_name, *, height, width):
 def test_version_constant_is_current():
     """Pin the integer value so a careless bump shows up here first.
 
-    Contract v3 (issue #2136) added ``attrs['georef_status']`` to the
-    canonical tier. Contract v4 (issue #2129) added
-    ``attrs['rotated_affine']`` for the ``allow_rotated=True`` opt-in
-    path. Bumping past 4 should be paired with a docs update and a
-    sibling test for the new key.
+    Contract v3 added ``attrs['georef_status']`` to the canonical tier.
+    Contract v4 added ``attrs['rotated_affine']`` for the
+    ``allow_rotated=True`` opt-in path. Bumping past 4 should be paired
+    with a docs update and a sibling test for the new key.
     """
     assert _ATTRS_CONTRACT_VERSION == 4
 
 
 def test_version_module_docstring_matches_constant():
-    """Guard against the docstring and the constant drifting apart
-    (#2237).
+    """Guard against the docstring and the constant drifting apart.
 
     The ``_attrs.py`` module docstring spells out the current contract
     version inline (``The contract version is recorded in
     ``attrs['_xrspatial_geotiff_contract']`` (currently ``<N>``)``).
-    A previous bump (v3 -> v4 for issue #2129's ``rotated_affine``
-    attr) updated the constant but left the docstring at ``3``. This
-    test parses the documented number out of the docstring and asserts
+    A previous v3 -> v4 bump for the ``rotated_affine`` attr updated the
+    constant but left the docstring at ``3``. This test parses the
+    documented number out of the docstring and asserts
     it equals ``_ATTRS_CONTRACT_VERSION`` so the next drift gets caught
     in CI rather than in code review.
     """

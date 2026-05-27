@@ -1,7 +1,7 @@
 """GPU codec coverage: nvCOMP, nvJPEG / nvJPEG2000, JPEG, LERC, predictor.
 
-Cluster 14 of long-tail epic #2424 (Sub-PR C) folds the GPU codec test
-files into one home. Sections in source-order below:
+This module gathers the GPU codec tests into one home. Sections in
+source-order below:
 
 * ``test_nvcomp_batch_compress_batched_1712.py`` -- batched nvCOMP
   compress: single contiguous output alloc + single batched D2H concat.
@@ -69,7 +69,7 @@ _HAS_IMAGECODECS = importlib.util.find_spec("imagecodecs") is not None
 
 
 # ============================================================
-# Section: nvCOMP batched compress (#1712)
+# Section: nvCOMP batched compress
 # ============================================================
 # Source: test_nvcomp_batch_compress_batched_1712.py
 #
@@ -154,7 +154,7 @@ def test_gpu_write_zero_tile_edge_case_1712():
 
 
 # ============================================================
-# Section: nvCOMP batched H2D upload (P3 perf audit)
+# Section: nvCOMP batched H2D upload
 # ============================================================
 # Source: test_nvcomp_batch_upload_p3.py
 #
@@ -307,7 +307,7 @@ def test_nvcomp_batch_upload_perf_regression_guard_p3(tmp_path, monkeypatch):
 
 
 # ============================================================
-# Section: nvCOMP decompress cumsum offsets (#1950)
+# Section: nvCOMP decompress cumsum offsets
 # ============================================================
 # Source: test_nvcomp_decompress_cumsum_offsets_1950.py
 #
@@ -402,7 +402,7 @@ def test_nvcomp_batch_decompress_roundtrip_1950():
 
 
 # ============================================================
-# Section: nvCOMP from-device-bufs single alloc (#1659)
+# Section: nvCOMP from-device-bufs single alloc
 # ============================================================
 # Source: test_nvcomp_from_device_bufs_single_alloc_1659.py
 #
@@ -559,7 +559,7 @@ def _fake_decompress_fn_1659(*args):
 
 
 # ============================================================
-# Section: nvJPEG encode stream-null sync (#2212)
+# Section: nvJPEG encode stream-null sync
 # ============================================================
 # Source: test_nvjpeg_encode_stream_sync_2212.py
 #
@@ -738,7 +738,7 @@ class TestDecodeReferencePattern_2212:
 
 
 # ============================================================
-# Section: nvJPEG2000 single-alloc pool (#2107)
+# Section: nvJPEG2000 single-alloc pool
 # ============================================================
 # Source: test_nvjpeg2k_single_alloc_2107.py
 #
@@ -952,7 +952,7 @@ class TestNvjpeg2kPoolWithCupy_2107:
 
 
 # ============================================================
-# Section: nvJPEG output-format constants (#1549)
+# Section: nvJPEG output-format constants
 # ============================================================
 # Source: test_jpeg_gpu_1549.py
 #
@@ -1113,7 +1113,7 @@ def test_cuda_context_survives_after_jpeg_gpu_read_1549(tmp_path):
 
 
 # ============================================================
-# Section: LERC valid-mask GPU (PR #1529 follow-up)
+# Section: LERC valid-mask GPU
 # ============================================================
 # Source: test_lerc_valid_mask_gpu.py
 #
@@ -1284,7 +1284,7 @@ class TestGpuLercValidMask:
 
 
 # ============================================================
-# Section: predictor=2 big-endian GPU (#1517)
+# Section: predictor=2 big-endian GPU
 # ============================================================
 # Source: test_predictor2_big_endian_gpu_1517.py
 #
@@ -1583,7 +1583,7 @@ def test_swap_byte_lanes_cupy_uint8_noop_1517():
 
 
 # ============================================================
-# Section: predictor=3 + integer SampleFormat rejection on GPU (#1933)
+# Section: predictor=3 + integer SampleFormat rejection on GPU
 # ============================================================
 # Source: test_predictor3_int_dtype_gpu_1933.py
 #
@@ -1801,7 +1801,7 @@ class TestErrorMessageStable_1933:
 
 
 # ============================================================
-# Section: GPU writer rejects JPEG without opt-in (#1845)
+# Section: GPU writer rejects JPEG without opt-in
 # ============================================================
 # Source: test_gpu_jpeg_interop_reject_issue_D_1845.py
 #

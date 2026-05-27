@@ -1,4 +1,4 @@
-"""Canonical round-trip invariants for the geotiff module (issue #1986).
+"""Canonical round-trip invariants for the geotiff module.
 
 This module enumerates the supported round-trip cases and pins the
 invariant per case. Two invariants are in scope:
@@ -16,7 +16,7 @@ Every case also asserts **fixed-point convergence**: after the first
 ``da2`` must match ``da1`` exactly. One round is enough to detect drift
 because the writer is deterministic given the same input attrs.
 
-Corpus-backed cases (using the #1930 golden corpus fixtures):
+Corpus-backed cases (using the golden corpus fixtures):
 
 * planar multiband -- in: ``PLANARCONFIG=2`` (separate). Out: chunky.
   The writer emits chunky only, so the on-disk layout drifts but pixel
@@ -24,7 +24,7 @@ Corpus-backed cases (using the #1930 golden corpus fixtures):
 * overviews (internal IFD) -- base IFD pixels round-trip byte-equal
   and the overview factor list is preserved when the writer is asked
   to re-emit the same pyramid. Per-pixel overview parity is verified
-  by the oracle suite (#1930), not here.
+  by the oracle suite, not here.
 * COG layout -- base IFD pixels round-trip byte-equal and overview
   factors are preserved; the GDAL ``LAYOUT=COG`` ghost-IFD marker
   does NOT re-emit (xrspatial's writer does not synthesise the
@@ -35,16 +35,14 @@ Corpus-backed cases (using the #1930 golden corpus fixtures):
   ``np.concatenate`` of the source pixels; the rewrite is a plain
   GeoTIFF whose pixels match.
 
-Cases NOT covered here (deferred to follow-up PRs):
+Cases NOT covered here:
 
 * float with non-NaN declared nodata -- requires the masked / declared
-  nodata split from issue #1988 to express the invariant cleanly.
+  nodata split to express the invariant cleanly.
 
-The per-incident round-trip test coverage
-(``unit/test_metadata.py`` (#1484 section),
-``test_int_coords_round_trip_hotfix_1962.py``, etc.) stays as regression
-marker for the underlying bug numbers. This module is the canonical
-contract the writer must satisfy going forward.
+The per-incident round-trip test coverage (e.g. ``unit/test_metadata.py``)
+stays as a regression marker for the underlying bugs. This module is the
+canonical contract the writer must satisfy going forward.
 """
 from __future__ import annotations
 
@@ -213,9 +211,9 @@ class TestIntWithDeclaredNodata:
     Current behaviour: the reader promotes integer-with-sentinel rasters
     to ``float64`` and masks sentinel pixels to NaN. This module
     documents that drift as the contract for now. A future write path
-    informed by issue #1988's masked / declared nodata split may restore
-    the original int dtype on the next read; that change will tighten
-    the invariant to byte-equivalent.
+    built on a masked / declared nodata split may restore the original
+    int dtype on the next read; that change will tighten the invariant
+    to byte-equivalent.
     """
 
     def test_int32_sentinel_promotes_and_masks(self, tmp_path):
@@ -264,8 +262,7 @@ class TestIntWithDeclaredNodata:
 
 class TestMultibandChunky:
     """Multi-band chunky (interleaved) raster. The writer emits chunky
-    by default; planar layout is not currently supported and is out of
-    scope for this PR."""
+    by default; planar layout is not currently supported."""
 
     @pytest.mark.parametrize("nbands", [2, 3, 4])
     def test_byte_equivalent_pixels(self, tmp_path, nbands):
@@ -296,7 +293,7 @@ class TestMultibandChunky:
 class TestNoGeorefSemantic:
     """File with no GeoTIFF tags reads back with integer pixel coords
     and no ``transform`` attr. The writer must not synthesise a
-    transform from those integer coords (issue #1949 fix).
+    transform from those integer coords.
 
     This case is intentionally narrower than
     ``test_no_georef_writer_round_trip_1949.py``: that file is the
@@ -370,26 +367,25 @@ class TestPixelIsPointRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Corpus-backed cases (#1930 golden corpus fixtures)
+# Corpus-backed cases (golden corpus fixtures)
 #
-# The fixtures referenced below ship with the golden corpus from issue
-# #1930. The tests below pull each fixture, run it through a
-# ``read -> write -> read`` cycle, and pin the canonical invariant.
-# Per the issue's constraint, no new fixtures are added; coverage is
-# extended by reusing the corpus.
+# The fixtures referenced below ship with the golden corpus. The tests
+# below pull each fixture, run it through a ``read -> write -> read``
+# cycle, and pin the canonical invariant. No new fixtures are added;
+# coverage is extended by reusing the corpus.
 #
-# Several corpus fixtures still carry the #1984 deprecated geographic
-# attrs (``geog_citation``, ``angular_units``, ``semi_major_axis``,
+# Several corpus fixtures still carry deprecated geographic attrs
+# (``geog_citation``, ``angular_units``, ``semi_major_axis``,
 # ``inv_flattening``). Reading them emits ``DeprecationWarning`` which
 # is informative noise here, not a regression -- the warning module
 # (``test_attrs_pr7_deprecate_geographic_1984.py``) already pins that
 # contract. Filter them out for these cases so the round-trip
-# assertions stay readable. Once the deprecated attrs are removed
-# (next #1984 PR), this filter goes away.
+# assertions stay readable. Once the deprecated attrs are removed,
+# this filter goes away.
 # ---------------------------------------------------------------------------
 
 # Class-level filter applied to every corpus-backed test class below.
-# The fixtures emit deprecation warnings on read for the #1984
+# The fixtures emit deprecation warnings on read for the deprecated
 # geographic-GeoKey attrs; that contract is locked elsewhere and is
 # noise for the round-trip tests.
 _CORPUS_DEPRECATION_FILTER = pytest.mark.filterwarnings(
@@ -453,7 +449,7 @@ class TestPlanarMultibandFromCorpus:
         assert da2.shape == da1.shape
         np.testing.assert_array_equal(
             np.asarray(da2.values), np.asarray(da1.values))
-        # Fixed point: corpus fixtures carry deprecated #1984 attrs
+        # Fixed point: corpus fixtures carry deprecated geographic attrs
         # (``geog_citation`` etc.) that the writer cannot reconstruct,
         # so the first cycle (``src -> da1 -> da2``) cannot satisfy
         # ``_assert_fixed_point``. Run a second cycle from ``da2`` and
@@ -484,7 +480,7 @@ class TestOverviewInternalFromCorpus:
     writer recomputes overviews from the base bytes through its own
     reducer rather than copying the original IFDs. This module pins
     factor preservation; pixel-level overview parity belongs to the
-    oracle (issue #1930).
+    oracle suite.
     """
 
     FIXTURE_NAME = "overview_internal_uint16.tif"
@@ -513,8 +509,8 @@ class TestOverviewInternalFromCorpus:
         np.testing.assert_array_equal(out_base, np.asarray(da1.values))
 
         da2 = open_geotiff(str(out))
-        # Fixed point from da2 onward (deprecated #1984 attrs on the
-        # corpus fixture mean the first cycle drops keys).
+        # Fixed point from da2 onward (deprecated geographic attrs on
+        # the corpus fixture mean the first cycle drops keys).
         out2 = tmp_path / "overview_internal_rt2_1986.tif"
         to_geotiff(da2, str(out2), compression='none',
                    cog=True, overview_levels=list(src_factors))
@@ -571,8 +567,8 @@ class TestCOGFromCorpus:
         )
 
         da2 = open_geotiff(str(out))
-        # Fixed point from da2 onward (deprecated #1984 attrs on the
-        # corpus fixture mean the first cycle drops keys).
+        # Fixed point from da2 onward (deprecated geographic attrs on
+        # the corpus fixture mean the first cycle drops keys).
         out2 = tmp_path / "cog_rt2_1986.tif"
         to_geotiff(da2, str(out2), compression='none',
                    cog=True, overview_levels=list(src_factors))
@@ -612,8 +608,8 @@ class TestSparseTiledFromCorpus:
         da2 = _read_write_read(da1, tmp_path, "sparse_corpus")
         np.testing.assert_array_equal(
             np.asarray(da2.values), np.asarray(da1.values))
-        # Fixed point from da2 onward (deprecated #1984 attrs on the
-        # corpus fixture mean the first cycle drops keys).
+        # Fixed point from da2 onward (deprecated geographic attrs on
+        # the corpus fixture mean the first cycle drops keys).
         da3 = _read_write_read(da2, tmp_path, "sparse_corpus_2")
         _assert_fixed_point(da2, da3)
 
@@ -681,8 +677,8 @@ class TestVRTRoundTripFromCorpus:
         # Unlike the other corpus-backed cases, ``da1`` here is the
         # VRT-resolved view of two rasterio-written GeoTIFFs (not the
         # corpus fixtures themselves), so it does not carry the
-        # deprecated #1984 geographic attrs. The first cycle already
-        # holds the fixed point.
+        # deprecated geographic attrs. The first cycle already holds the
+        # fixed point.
         _assert_fixed_point(da1, da2)
 
 # ===========================================================================

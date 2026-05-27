@@ -1,11 +1,11 @@
-"""Dask+numpy backend cells against the golden-corpus oracle (issue #1930).
+"""Dask+numpy backend cells against the golden-corpus oracle.
 
-Phase 3 PR 2 of the corpus plan. Mirrors the eager numpy parity layer
+Mirrors the eager numpy parity layer
 (``golden_corpus/test_eager_numpy.py``) but reads each fixture
 through the dask path: ``open_geotiff(str(path), chunks=32)``. The
 oracle pulls the candidate's pixels via ``.compute()`` under the hood
 (``_candidate_pixels`` is dask-aware), so the comparison machinery is
-the same. What this PR exercises is the windowed-decode plumbing inside
+the same. This exercises the windowed-decode plumbing inside
 ``read_geotiff_dask``: any divergence between the eager and dask reads
 shows up here.
 
@@ -27,8 +27,7 @@ Resolved gaps (no longer xfail):
 
 The chunk size is fixed at 32. Most corpus fixtures are 64x64 or
 smaller, so 32 produces either a 2x2 chunk grid or a single chunk;
-either way the dask path is exercised. A future PR can parametrise
-over chunk sizes if a fixture surfaces a chunk-edge bug.
+either way the dask path is exercised.
 """
 from __future__ import annotations
 
@@ -42,13 +41,16 @@ pytest.importorskip("dask")
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 
-# PR 4 of epic #2340: the golden corpus has experimental-codec
-# and JPEG-in-TIFF entries; the parity check is orthogonal to the
-# read-side opt-in so pass both flags through every open.
+# The golden corpus has experimental-codec and JPEG-in-TIFF entries;
+# the parity check is orthogonal to the read-side opt-in so pass both
+# flags through every open.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
-from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
+from xrspatial.geotiff.tests.golden_corpus._marks import (  # noqa: E402
+    fast_slow_marks_for,
+    optional_dep_marks_for,
+)
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 FIXTURES_DIR = (
@@ -70,8 +72,8 @@ CHUNK_SIZE = 32
 # ``attrs['crs_wkt']``.
 _PARITY_GAPS: dict[str, str] = {}
 
-# Dask-only gaps go here. Empty in the first pass; add an entry only when
-# a fixture is dask-specific (i.e. eager passes, dask does not).
+# Dask-only gaps go here. Empty; add an entry only when a fixture is
+# dask-specific (i.e. eager passes, dask does not).
 _DASK_SKIPS: dict[str, str] = {}
 
 # Fixtures whose overview-IFD code path is not yet wired into the
@@ -120,7 +122,7 @@ def _build_param(entry: dict) -> pytest.param:
     job has no filter and exercises every fixture.
     """
     fid = entry["id"]
-    marks = list(fast_slow_marks_for(entry))
+    marks = list(fast_slow_marks_for(entry)) + list(optional_dep_marks_for(entry))
     if fid in _PARITY_GAPS:
         marks.append(
             pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True)

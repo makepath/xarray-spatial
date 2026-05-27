@@ -1,22 +1,19 @@
 """Cross-backend parity and backend-coverage for the VRT read path.
 
-Consolidates the VRT-tail parity / coverage residue (cluster 13, #2437):
+Covers:
 
 * Backend parity for VRT reads with sidecar / overview interactions:
   eager-vs-dask pixel + metadata (coords, transform, CRS,
   ``georef_status``) parity, sidecar-vs-inline-overview attrs, and the
-  windowed coord / transform shift (was
-  ``test_vrt_backend_parity_2321.py``).
+  windowed coord / transform shift.
 * Cross-backend parity for the VRT finalization pipeline: VRT eager vs
   ``open_geotiff`` and VRT chunked vs ``read_geotiff_dask`` for the five
   canonical georef states, ``band_nodata='first'`` per-band attrs,
   ``dtype=`` no-sentinel branch, ``missing_sources='warn'`` vrt_holes,
-  and eager/chunked internal parity (was
-  ``test_vrt_finalization_parity_2162.py``).
+  and eager/chunked internal parity.
 * Backend / parameter coverage for ``read_vrt``: the GPU and dask+GPU
   decode paths, ``dtype=`` / ``name=`` kwargs, and the file-like +
-  backend-kwarg rejection on ``open_geotiff`` (was
-  ``test_vrt_backend_coverage_2026_05_11.py``).
+  backend-kwarg rejection on ``open_geotiff``.
 
 The parity helpers (``_materialise`` / ``_assert_pixels_equal`` /
 ``_assert_metadata_parity``) mirror ``parity/test_backend_matrix.py`` so
@@ -71,7 +68,6 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 # ===========================================================================
 # Backend parity with sidecar / overview interactions
-# (was test_vrt_backend_parity_2321.py).
 # ===========================================================================
 #
 # Asserts eager / dask parity on the surface most likely to drift:
@@ -475,7 +471,6 @@ def test_assert_metadata_parity_flags_transform_drift(tmp_path):
 
 # ===========================================================================
 # VRT finalization-pipeline parity
-# (was test_vrt_finalization_parity_2162.py).
 # ===========================================================================
 #
 # The VRT eager and chunked paths route through the shared
@@ -998,7 +993,6 @@ def test_vrt_eager_chunked_internal_parity(tmp_path, pair_factory,
 
 # ===========================================================================
 # read_vrt backend / parameter coverage
-# (was test_vrt_backend_coverage_2026_05_11.py).
 # ===========================================================================
 #
 # Covers the GPU and dask+GPU decode paths the read_vrt body handles, the

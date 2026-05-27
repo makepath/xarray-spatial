@@ -842,7 +842,7 @@ def select_overview_ifd(ifds: list[IFD], overview_level: int | None) -> IFD:
     if not ifds:
         raise ValueError("No IFDs found in TIFF file")
 
-    # Defense in depth (issue #2074). ``open_geotiff`` already type-checks
+    # Defense in depth. ``open_geotiff`` already type-checks
     # ``overview_level``, but this selector is also reachable from the dask,
     # GPU, and accessor readers that forward the kwarg without going through
     # the public entry point.

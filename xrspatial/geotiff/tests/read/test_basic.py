@@ -1,10 +1,8 @@
 """Minimal reader paths: band validation, byte-band, eager read.
 
-Consolidates the reader-side band-validation regression coverage
-(formerly ``test_band_validation_1673.py``). The contract is that every
-backend rejects out-of-range ``band`` arguments with the same typed
-``IndexError`` so callers see consistent diagnostics regardless of
-which path they pick.
+The band-validation contract is that every backend rejects
+out-of-range ``band`` arguments with the same typed ``IndexError`` so
+callers see consistent diagnostics regardless of which path they pick.
 """
 from __future__ import annotations
 
@@ -133,18 +131,14 @@ class TestBandValidationBackendParity:
 
 
 # =============================================================================
-# Section: open_geotiff missing_sources (#1810)
+# Section: open_geotiff missing_sources
 # =============================================================================
 #
-# Original: ``test_open_geotiff_missing_sources_1810.py``.
-#
-# ``open_geotiff`` did not accept ``missing_sources`` and did not
-# forward it to ``read_vrt`` when the source was a VRT. The
-# api-consistency sweep on 2026-05-13 flagged that ``read_vrt`` had
-# gained a ``missing_sources='warn'|'raise'`` policy kwarg (#1806) but
-# the documented dispatcher entry point ``open_geotiff`` did not
-# expose it. Same class of dispatcher-drops-backend-kwarg bug as
-# #1561, #1605, #1685, #1795.
+# ``open_geotiff`` must accept ``missing_sources`` and forward it to
+# ``read_vrt`` when the source is a VRT. ``read_vrt`` exposes a
+# ``missing_sources='warn'|'raise'`` policy kwarg; the documented
+# dispatcher entry point ``open_geotiff`` must expose it too rather than
+# silently dropping the backend kwarg.
 
 
 def _write_missing_source_vrt_1810(path):
@@ -245,9 +239,6 @@ def test_open_geotiff_vrt_without_missing_sources_kwarg_still_works_1810(tmp_pat
 # =============================================================================
 # Section: Reader strips/tiles/array (low-level) and partial-tile validation
 # =============================================================================
-#
-# Original: ``test_reader.py`` (general low-level reader coverage) and
-# the ``#1486`` partial-tile validation block within it.
 #
 # Covers ``_read_strips`` / ``_read_tiles`` / ``read_to_array`` happy
 # paths and the truncated-tile rejection contract that turns opaque
@@ -358,11 +349,11 @@ class TestReadToArray_reader:
 
 
 class TestPartialTileValidation_1486:
-    """Issue #1486: corrupt tile/strip data should raise a clear error.
+    """Corrupt tile/strip data should raise a clear error.
 
     Without validation a truncated deflate stream causes numpy.reshape to
     raise an opaque "cannot reshape array of size N" with no hint of which
-    tile is at fault.  These tests pin the new behaviour: a clear ValueError
+    tile is at fault.  These tests pin the behaviour: a clear ValueError
     naming the size mismatch.
     """
 

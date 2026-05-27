@@ -35,8 +35,8 @@ def _codec_decode_exceptions() -> tuple[type[BaseException], ...]:
     * ``zstandard.ZstdError`` from ``zstandard.stream_reader.read`` when
       a ZSTD frame is corrupt.
 
-    These are recoverable per-source failures -- they mean "this tile's
-    compressed payload is bad", not "the program is broken" -- so they
+    These are recoverable per-source failures: they mean "this tile's
+    compressed payload is bad", not "the program is broken", so they
     belong in the same warn-and-skip catch as ``OSError`` / ``ValueError``
     / ``struct.error``. ``RuntimeError`` (raised by lz4 frame decoder,
     LERC error-code translation, and glymur on malformed JP2) is
@@ -176,7 +176,7 @@ def _xml_attr(value) -> str:
 # ``CInt32``, ``CFloat32``, ``CFloat64``) are deliberately absent: the
 # reader has no complex-data code path, so an unknown ``dataType`` raises
 # in :func:`parse_vrt` rather than silently dropping the imaginary
-# component by falling back to ``Float32``.  See issue #1783.
+# component by falling back to ``Float32``.
 _DTYPE_MAP = {
     'Byte': np.uint8,
     'Int8': np.int8,
@@ -210,7 +210,7 @@ class _Source:
     # Parsed from ``<NODATA>`` on the source.  ``int`` for integer-dtype
     # bands so 64-bit sentinels survive without float64 rounding (see
     # :func:`_parse_band_nodata`); ``float`` for floating-dtype bands
-    # and the legacy fallback.  See issue #1783 follow-up.
+    # and the legacy fallback.
     nodata: Union[int, float, None] = None
     # ComplexSource extras
     scale: float | None = None
@@ -218,23 +218,22 @@ class _Source:
     # GDAL ``<ComplexSource><ResampleAlg>`` values are ``NearestNeighbour``
     # (default), ``Bilinear``, ``Cubic``, ``CubicSpline``, ``Lanczos``,
     # ``Average``, ``Mode``.  Only nearest-neighbour is implemented in
-    # the placement step (issue #1694).  When ``SrcRect`` and ``DstRect``
-    # sizes differ (resampling actually required), the read raises
+    # the placement step.  When ``SrcRect`` and ``DstRect`` sizes differ
+    # (resampling actually required), the read raises
     # ``NotImplementedError`` for any non-nearest algorithm rather than
-    # silently substituting nearest (issue #1751); a non-nearest alg with
-    # matching rect sizes is a no-op and passes through.  Higher-quality
-    # resamplers are tracked for follow-up.
+    # silently substituting nearest; a non-nearest alg with matching
+    # rect sizes is a no-op and passes through.
     resample_alg: str | None = None
     # True when the source element declared ``<UseMaskBand>true</UseMaskBand>``
     # (GDAL writes this for ComplexSource entries that read through the
     # source raster's per-band mask). The read pipeline ignores mask bands
     # and would silently drop the per-pixel mask, so ``validate_parsed_vrt``
-    # rejects sources where this flag is set. See issue #2371.
+    # rejects sources where this flag is set.
     use_mask_band: bool = False
     # True when the source element declared a ``<MaskBand>`` child
-    # (per-source mask reference). Same disposition as ``use_mask_band`` --
+    # (per-source mask reference). Same disposition as ``use_mask_band``:
     # the read pipeline cannot serve the mask semantics and the validator
-    # rejects the VRT. See issue #2371.
+    # rejects the VRT.
     has_mask_source: bool = False
 
 
@@ -246,7 +245,7 @@ class _VRTBand:
     # Parsed from ``<NoDataValue>``.  ``int`` for integer-dtype bands so
     # 64-bit sentinels (``2**64 - 1``, ``INT64_MIN``) survive without
     # float64 rounding; ``float`` for floating-dtype bands.  See
-    # :func:`_parse_band_nodata` and the issue #1783 follow-up.
+    # :func:`_parse_band_nodata`.
     nodata: Union[int, float, None] = None
     sources: list[_Source] = field(default_factory=list)
     color_interp: str | None = None
@@ -269,12 +268,12 @@ class VRTDataset:
     raster_type: str = 'area'  # 'area' or 'point'
     # Per-load record of sources skipped by ``read_vrt`` when called
     # with ``missing_sources='warn'`` (the lenient opt-in; the default
-    # since #1843 is ``'raise'``, and strict mode always raises). Each
-    # entry is a dict with ``source``, ``band`` (1-based), ``dst_rect``
-    # (xoff, yoff, xsize, ysize), and ``error`` keys. Empty when no
-    # sources failed to read. Populated by :func:`read_vrt` so callers
-    # on the warn path can detect holes by attribute lookup instead of
-    # parsing the ``GeoTIFFFallbackWarning`` message (issue #1734).
+    # is ``'raise'``, and strict mode always raises). Each entry is a
+    # dict with ``source``, ``band`` (1-based), ``dst_rect`` (xoff,
+    # yoff, xsize, ysize), and ``error`` keys. Empty when no sources
+    # failed to read. Populated by :func:`read_vrt` so callers on the
+    # warn path can detect holes by attribute lookup instead of parsing
+    # the ``GeoTIFFFallbackWarning`` message.
     holes: list[dict] = field(default_factory=list)
 
 
@@ -316,7 +315,7 @@ def _parse_band_nodata(text: str | None,
     fall back to the parsed ``float`` (matching the eager-TIFF reader's
     behaviour in :func:`_resolve_masked_fill`: the sentinel can never
     match a real pixel, but ``attrs['nodata']`` still surfaces the raw
-    value for write round-trip).  See issue #1783 follow-up.
+    value for write round-trip).
     """
     if text is None:
         return None
@@ -359,7 +358,7 @@ def _parse_band_nodata(text: str | None,
 
 # VRTRasterBand child elements that read_vrt explicitly supports or
 # tolerates. Hoisted to module scope so the parse_vrt band loop does
-# not rebuild the frozensets on every iteration (epic #2340 / PR 5).
+# not rebuild the frozensets on every iteration.
 #
 # ``_INFORMATIONAL_BAND_TAGS`` -- pure-metadata children that have no
 # effect on the assembled array. Silently ignored.
@@ -382,8 +381,8 @@ _INFORMATIONAL_BAND_TAGS = frozenset({
     # VRT band-level overview declarations. The reader does not load
     # VRT-declared overviews (overview_level= is honoured by the
     # underlying GeoTIFF source reader, not by VRT-level overview
-    # tags), so keeping these informational preserves pre-#2349
-    # behaviour for VRTs emitted by GDAL with declared overviews.
+    # tags), so keeping these informational lets VRTs emitted by GDAL
+    # with declared overviews read as plain mosaics.
     'OverviewList', 'Overview',
 })
 _SOURCE_BAND_TAGS = frozenset({'SimpleSource', 'ComplexSource'})
@@ -396,14 +395,14 @@ _UNSUPPORTED_BAND_TAGS = frozenset({
     # (warp options usually sit at the dataset level or alongside the
     # ``VRTWarpedRasterBand`` subClass marker), but catching it here as
     # well keeps the parser symmetric with the dataset-level rejection
-    # in ``_UNSUPPORTED_DATASET_TAGS``. See issue #2371.
+    # in ``_UNSUPPORTED_DATASET_TAGS``.
     'GDALWarpOptions',
 })
 
 # Dataset-level (``<VRTDataset>`` children, sibling of ``<VRTRasterBand>``)
 # elements that signal a feature this reader does not implement. The band
 # loop never sees these because they sit at the dataset level; sweep the
-# root for them after the ``subClass`` check. See epic #2340 / PR 5.
+# root for them after the ``subClass`` check.
 _UNSUPPORTED_DATASET_TAGS = frozenset({
     # Per-dataset alpha / mask band. GDAL writes this as a sibling of
     # the VRTRasterBand entries; the previous parser ignored it and
@@ -420,7 +419,7 @@ _UNSUPPORTED_DATASET_TAGS = frozenset({
     # (or as a child of a band that does not use the subClass attribute,
     # depending on how the VRT was emitted). The mosaic reader does not
     # implement reprojection; silently ignoring the block would dispatch
-    # on the raw source pixels and skip the warp step. See issue #2371.
+    # on the raw source pixels and skip the warp step.
     'GDALWarpOptions',
 })
 
@@ -448,13 +447,13 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
     """
     # ``safe_fromstring`` refuses DOCTYPE declarations so a crafted VRT
     # cannot trigger XML entity expansion (billion-laughs) attacks
-    # against the reader. See issue #1579.
+    # against the reader.
     root = safe_fromstring(xml_str)
 
     # Pre-compute the trusted roots once per parse.  ``vrt_dir`` is
     # always trusted; the allowlist from ``XRSPATIAL_VRT_ALLOWED_ROOTS``
     # is only consulted for absolute sources (``relativeToVRT='0'``).
-    # See issue #1671 for the path-traversal hardening.
+    # This is the path-traversal hardening boundary.
     vrt_root = os.path.realpath(vrt_dir)
     allowed_roots = _allowed_source_roots()
 
@@ -466,7 +465,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
     # produce wrong output: the reader would dispatch on whatever simple
     # sources the subclassed VRT happens to embed and skip the subclass
     # semantics entirely. Name the offending attribute in the error and
-    # point at the release tier map. See epic #2340 / PR 5 (#2349).
+    # point at the release tier map.
     _sub_class = root.get('subClass')
     if _sub_class:
         raise UnsupportedGeoTIFFFeatureError(
@@ -485,7 +484,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
     # ``<MaskBand>`` / ``<GCPList>`` / dataset-level
     # ``<PansharpeningOptions>`` would otherwise slip through silently
     # and drop its declared semantics (per-pixel mask, ground control
-    # points, pansharpening setup). See epic #2340 / PR 5.
+    # points, pansharpening setup).
     for _ds_child in root:
         _ds_tag = _ds_child.tag
         if isinstance(_ds_tag, str) and _ds_tag in _UNSUPPORTED_DATASET_TAGS:
@@ -535,7 +534,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         # implement. The plain ``<VRTRasterBand>`` mosaic case has no
         # ``subClass`` attribute. Reject so the derived expression is
         # not silently dropped down to whatever sources happen to be
-        # listed. Epic #2340 / PR 5.
+        # listed.
         _band_sub_class = band_elem.get('subClass')
         if _band_sub_class:
             raise UnsupportedGeoTIFFFeatureError(
@@ -551,7 +550,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         # ``_DTYPE_MAP.get(dtype_name, np.float32)`` collapsed both cases
         # to ``Float32``, so a VRT declaring ``CFloat32`` silently lost
         # its imaginary component and one declaring a typo (``Flaot32``)
-        # silently produced wrong values.  See issue #1783.
+        # silently produced wrong values.
         dtype_name = band_elem.get('dataType')
         if dtype_name is None:
             dtype_name = 'Float32'
@@ -572,7 +571,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         # ``int`` so values like ``2**64 - 1`` or ``INT64_MIN`` round-trip
         # exactly through the masking pipeline; ``float(text)`` would
         # collapse those to a representable float64 and break exact-
-        # equality masks downstream.  See issue #1783 follow-up.
+        # equality masks downstream.
         nodata_str = _text(band_elem, 'NoDataValue')
         nodata = _parse_band_nodata(nodata_str, dtype)
         color_interp = _text(band_elem, 'ColorInterp')
@@ -583,7 +582,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         # ones stay ignored; the output-altering ones (kernel filters,
         # derived band expressions, pansharpening) get rejected so a
         # VRT relying on them cannot read as a plain mosaic and lose
-        # its declared computation. See epic #2340 / PR 5.
+        # its declared computation.
         sources = []
         for src_elem in band_elem:
             tag = src_elem.tag
@@ -626,7 +625,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
             # to their target before the containment check below.
             filename = os.path.realpath(filename)
 
-            # Containment policy (issue #1671):
+            # Containment policy:
             #
             # * ``relativeToVRT='1'`` declares the source lives under the
             #   VRT directory.  Honour that intent even when the allowlist
@@ -672,7 +671,6 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
             # Per-source ``<NODATA>`` honours the band dtype too -- a
             # uint64 source feeding a UInt64 band needs the full 64-bit
             # sentinel preserved, not a float64-rounded approximation.
-            # See issue #1783 follow-up.
             src_nodata_str = _text(src_elem, 'NODATA')
             src_nodata = _parse_band_nodata(src_nodata_str, dtype)
 
@@ -695,8 +693,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                 # ``NotImplementedError`` for any non-nearest algorithm
                 # rather than returning silently-mislabelled pixels;
                 # sources with matching rect sizes do not resample and
-                # pass through regardless of this tag.  See issues
-                # #1694 and #1751.
+                # pass through regardless of this tag.
                 resample_alg = _text(src_elem, 'ResampleAlg')
 
             # ``<UseMaskBand>`` and ``<MaskBand>`` per-source markers
@@ -708,7 +705,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
             # GDAL emits ``<UseMaskBand>true</UseMaskBand>`` exclusively;
             # the truthy set is narrowed to ``('1', 'true')`` to match
             # what real VRTs contain rather than every spelling Python
-            # would coerce to ``True``. See issue #2371.
+            # would coerce to ``True``.
             use_mask_band_str = _text(src_elem, 'UseMaskBand')
             use_mask_band = (
                 use_mask_band_str is not None
@@ -751,7 +748,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
 # (or that explicitly request it).  Comparison is case-insensitive and
 # done on the stripped element text.  Empty / missing text is also
 # treated as nearest because the GDAL default for a SimpleSource with
-# no ``ResampleAlg`` child is nearest.  See issue #1751.
+# no ``ResampleAlg`` child is nearest.
 _NEAREST_RESAMPLE_ALGS = frozenset({
     '', 'nearest', 'nearestneighbour', 'nearestneighbor', 'near',
 })
@@ -767,7 +764,7 @@ def _check_resample_alg_supported(resample_alg: str | None,
     placement, so a VRT that asks for any of the higher-quality
     resamplers would silently return nearest-sampled pixels mislabelled
     as the requested algorithm.  Refuse the read instead of returning
-    quietly wrong numbers.  See issue #1751.
+    quietly wrong numbers.
     """
     if resample_alg is None:
         return
@@ -795,9 +792,9 @@ def _resample_nearest(src_arr: np.ndarray,
     out_size``; ``floor`` of that, clamped into range, gives the index.
 
     Used by :func:`read_vrt` to honour ``<SrcRect>``/``<DstRect>``
-    scaling.  See issue #1694 -- before this helper, a source array was
-    pasted directly into the destination with no resample step, which
-    raised a broadcast error for downsampled sources and left holes for
+    scaling.  Before this helper, a source array was pasted directly
+    into the destination with no resample step, which raised a
+    broadcast error for downsampled sources and left holes for
     upsampled ones.
 
     Integer-ratio cases short-circuit to ``np.repeat`` (integer
@@ -855,7 +852,7 @@ def _nn_src_index(out_idx: int, src_size: int, out_size: int) -> int:
     rule as :func:`_resample_nearest`, with the same clamp into
     ``[0, src_size - 1]``. Used to compute the inverse mapping from a
     clipped destination sub-window back to the minimal source rect that
-    feeds it. See issue #1704.
+    feeds it.
     """
     idx = int(math.floor((out_idx + 0.5) * src_size / out_size))
     if idx < 0:
@@ -884,7 +881,6 @@ def _resample_nearest_window(src_sub: np.ndarray,
     on the full source array; subtracting the origin then indexes into
     ``src_sub``. This yields the same numbers as resampling the full
     source rect and slicing ``[dst_r0:dst_r1, dst_c0:dst_c1]`` afterward.
-    See issue #1704.
     """
     out_h = dst_r1 - dst_r0
     out_w = dst_c1 - dst_c0
@@ -918,7 +914,7 @@ def _resample_nearest_window(src_sub: np.ndarray,
 # Shared helpers used by both the eager VRT read path (this module) and the
 # chunked dask path in ``xrspatial.geotiff.__init__._read_vrt_chunked``.
 # Centralised here so both call sites agree on dtype promotion, sentinel
-# masking, and effective-dtype computation. See issue #1825.
+# masking, and effective-dtype computation.
 # ---------------------------------------------------------------------------
 
 
@@ -934,13 +930,13 @@ def _sentinel_for_dtype(nodata_val, dtype):
     max) and ``-2**63`` (``Int64`` min) round-trip without the float64
     rounding that pushes them past the dtype's representable range.
     ``_parse_band_nodata`` parses integer-band ``<NoDataValue>`` directly
-    as ``int`` to feed this path. See issue #1783 follow-up.
+    as ``int`` to feed this path.
 
     This is the single shared implementation used by both the eager path
     in :func:`read_vrt` and the chunked path in
     :func:`xrspatial.geotiff._read_vrt_chunked`; previously a closure in
     the eager path and a module-level twin in the chunked path duplicated
-    the logic (issue #1825).
+    the logic.
     """
     if nodata_val is None or dtype.kind not in ('u', 'i'):
         return None
@@ -974,14 +970,13 @@ def _effective_dtype_for_bands(selected_bands, *, source=None) -> np.dtype:
     declarations apply a non-identity ``ScaleRatio`` (``scale``) or
     ``ScaleOffset`` (``offset``). Mirrors the historic inline computation
     in :func:`read_vrt` and matches the parse-time declared dtype the
-    chunked path emits up front. Issue #1825.
+    chunked path emits up front.
 
     All selected bands must share the same declared ``dataType``. The
     VRT support matrix documented at ``xrspatial.geotiff._backends.vrt``
     requires this: per-band dtype mismatch raises rather than silently
     flattening to a common output dtype. A disagreement raises
-    :class:`MixedBandMetadataError` naming the offending bands. Issue
-    #2485.
+    :class:`MixedBandMetadataError` naming the offending bands.
 
     Per-band widening to ``float64`` driven by a ``ComplexSource``
     ``ScaleRatio`` / ``ScaleOffset`` is not a cross-band dtype mismatch
@@ -1052,7 +1047,6 @@ def _apply_integer_sentinel_mask(arr, vrt, band):
     Returns the (possibly promoted) ``arr``. The internal reader already
     NaN-masks float source arrays inline; this helper only fires for
     integer-dtype outputs paired with an integer ``<NoDataValue>``.
-    Issue #1825.
     """
     if arr.dtype.kind not in ('u', 'i'):
         return arr
@@ -1094,8 +1088,8 @@ def _apply_integer_sentinel_mask_with_presence(arr, vrt, band):
     Returns ``(arr, pixels_present)`` where ``pixels_present`` is a bool
     indicating whether any sentinel pixel was found in the integer
     buffer before masking. Used by the VRT eager and chunked paths to
-    surface ``attrs['nodata_pixels_present']`` (issue #2135) without
-    rescanning the (possibly promoted) float buffer.
+    surface ``attrs['nodata_pixels_present']`` without rescanning the
+    (possibly promoted) float buffer.
 
     Kept as a sibling of :func:`_apply_integer_sentinel_mask` rather
     than collapsed into one helper with an opt-in flag because the
@@ -1144,8 +1138,8 @@ def _scan_for_sentinel(arr, vrt, band):
     """Detect whether ``arr`` contains any pixel matching a declared sentinel.
 
     Used by the VRT eager path when ``mask_nodata=False`` so
-    ``attrs['nodata_pixels_present']`` (issue #2135) still surfaces a
-    meaningful answer even though the masking branch was skipped. The
+    ``attrs['nodata_pixels_present']`` still surfaces a meaningful
+    answer even though the masking branch was skipped. The
     multi-band case checks each band against its own ``<NoDataValue>``;
     the single-band case checks the selected band's sentinel.
 
@@ -1200,9 +1194,8 @@ def read_vrt(vrt_path: str, *, window=None,
              ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
-    Do not call this symbol directly from external code. Release-contract
-    tier (epic #2340): this is the [internal-only] pixel-assembly
-    helper. The public surface lives in
+    Do not call this symbol directly from external code. This is the
+    [internal-only] pixel-assembly helper. The public surface lives in
     ``xrspatial.geotiff.read_vrt`` (re-exported from
     ``_backends/vrt.py``) and carries the [advanced] tier; this
     function is what that public wrapper calls into. See
@@ -1232,24 +1225,23 @@ def read_vrt(vrt_path: str, *, window=None,
         source so a partial mosaic never surfaces silently. This matches
         the rest of the geotiff module's up-front rejection of malformed
         input and avoids the ambiguity of a zero-fill hole on an integer
-        raster without a nodata sentinel (see issue #1843). Prior to
-        #1843 the default was ``'warn'``; callers that relied on the
-        lenient behaviour should pass ``missing_sources='warn'``
-        explicitly.
+        raster without a nodata sentinel. The default was previously
+        ``'warn'``; callers that relied on the lenient behaviour should
+        pass ``missing_sources='warn'`` explicitly.
         ``'warn'`` is the opt-in escape hatch for partial mosaics: it
         emits ``GeoTIFFFallbackWarning`` and records the skipped source
         on ``vrt.holes`` (surfaced as ``attrs['vrt_holes']`` on the
         public DataArray).
         ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
-        module regardless of this kwarg (see issue #1662).
+        module regardless of this kwarg.
     parsed : VRTDataset or None
         [internal-only] Pre-parsed VRT structure. When supplied,
         ``vrt_path`` is not
         re-read or re-parsed and the source-path containment check is
         skipped (the supplied ``VRTDataset`` is assumed to have been
         produced by :func:`parse_vrt` already, which performs the check).
-        Used by the chunked dask path (issue #1825) so each per-chunk
-        task can skip the redundant XML parse and allowlist validation.
+        Used by the chunked dask path so each per-chunk task can skip
+        the redundant XML parse and allowlist validation.
     mask_nodata : bool, default True
         [internal-only] If True (the default), float source bands have
         their declared
@@ -1260,7 +1252,6 @@ def read_vrt(vrt_path: str, *, window=None,
         so the literal sentinel value survives to the public backend
         layer, which can then honor a caller's ``mask_nodata=False``
         opt-out symmetrically for float and integer source dtypes.
-        See issue #2158.
 
     Returns
     -------
@@ -1269,9 +1260,9 @@ def read_vrt(vrt_path: str, *, window=None,
     Notes
     -----
     The VRT path is a conservative advanced feature scoped to simple
-    GeoTIFF mosaics rather than full GDAL VRT parity. See epic #2342
-    and the "VRT support matrix" section of the geotiff reference
-    docs (issue #2321) for the canonical contract.
+    GeoTIFF mosaics rather than full GDAL VRT parity. See the "VRT
+    support matrix" section of the geotiff reference docs for the
+    canonical contract.
 
     *Supported:*
 
@@ -1305,8 +1296,8 @@ def read_vrt(vrt_path: str, *, window=None,
     if parsed is not None:
         # Shallow-copy with a fresh ``holes`` list. ``read_vrt`` appends
         # to ``vrt.holes`` on missing/unreadable sources, and under
-        # chunked dispatch (issue #1825) the same ``parsed`` instance is
-        # threaded into every per-chunk task. Mutating the shared list
+        # chunked dispatch the same ``parsed`` instance is threaded into
+        # every per-chunk task. Mutating the shared list
         # would leak skipped-source records across tasks (racy growth
         # under the threaded scheduler, and cumulative duplication
         # across calls if a caller ever reused the parsed object). The
@@ -1321,11 +1312,11 @@ def read_vrt(vrt_path: str, *, window=None,
     # Route every fresh parse through the centralised capability
     # validator before any source read. When ``parsed`` is supplied the
     # caller is responsible for having validated already (the chunked
-    # dask path threads a pre-validated instance in via #1825, and the
+    # dask path threads a pre-validated instance in, and the
     # ``_backends/vrt.read_vrt`` wrapper runs the validator on the
     # eager parse before dispatching). Direct callers of this internal
-    # entry point now get the same capability gate as the public
-    # backend path. See issue #2371.
+    # entry point get the same capability gate as the public backend
+    # path.
     if parsed is None:
         # Lazy import: ``_vrt_validation`` imports ``_NEAREST_RESAMPLE_ALGS``
         # from this module for the resample-alg check, so a top-level
@@ -1355,15 +1346,14 @@ def read_vrt(vrt_path: str, *, window=None,
                 f"{len(vrt.bands)} band(s)")
 
     # Validate ``window`` against the VRT's parsed extent before any
-    # source reads. Prior to #1697, per-source reads silently clamped
+    # source reads. Previously, per-source reads silently clamped
     # out-of-bounds windows to the source extent and returned a smaller
     # array, which then mismatched caller-built coord arrays in
     # ``open_geotiff`` and surfaced as an opaque
     # ``CoordinateValidationError`` far from the real cause. We now
     # reject invalid windows up front. Mirrors the local-path validator
-    # in ``read_to_array`` (#1634) and the HTTP path validator in
-    # ``_read_cog_http`` (#1669) so all backends agree on the contract.
-    # See issue #1697.
+    # in ``read_to_array`` and the HTTP path validator in
+    # ``_read_cog_http`` so all backends agree on the contract.
     if window is not None:
         r0, c0, r1, c1 = window
         if (r0 < 0 or c0 < 0
@@ -1411,7 +1401,7 @@ def read_vrt(vrt_path: str, *, window=None,
     # ``float64`` when integer and floating-point bands mix, but it can
     # be a narrower float -- e.g. ``float32`` under NumPy 2.x for
     # ``uint8`` + ``float32`` -- or ``complex128`` when complex bands
-    # are present). See issue #1696.
+    # are present).
     #
     # Guard against a malformed VRT with zero ``<VRTRasterBand>``
     # elements: ``np.result_type()`` with no args raises a generic
@@ -1438,7 +1428,6 @@ def read_vrt(vrt_path: str, *, window=None,
             # produce ``dst_*1 < dst_*0`` and the source would be silently
             # skipped by the overlap continue below; we'd rather surface the
             # malformed VRT to the caller than treat it as a no-op tile.
-            # See issue #1737.
             if dr.x_size < 0 or dr.y_size < 0:
                 raise ValueError(
                     f"VRT SimpleSource DstRect has negative size "
@@ -1453,7 +1442,7 @@ def read_vrt(vrt_path: str, *, window=None,
             # the missing-source fallback (which is meant for unreadable
             # files, not malformed XML rectangles); a negative ``xOff`` /
             # ``yOff`` likewise produces an out-of-range window that the
-            # fallback would turn into a zero-filled hole. See issue #1784.
+            # fallback would turn into a zero-filled hole.
             if sr.x_size < 0 or sr.y_size < 0:
                 raise ValueError(
                     f"VRT SimpleSource SrcRect has negative size "
@@ -1496,7 +1485,6 @@ def read_vrt(vrt_path: str, *, window=None,
             # source/destination shapes; trying to resample a windowed
             # source slice independently introduces fence-post errors at
             # the clip boundary and breaks the integer-ratio fast paths.
-            # See issue #1694.
             needs_resample = (sr.y_size != dr.y_size
                               or sr.x_size != dr.x_size)
             if needs_resample:
@@ -1517,7 +1505,7 @@ def read_vrt(vrt_path: str, *, window=None,
                 # clamped to ``src - 1``; taking that mapping at the two
                 # endpoints bounds the source range we have to read.
                 # ``+ 1`` on the stop makes the range half-open, matching
-                # the read_to_array window convention. See issue #1704.
+                # the read_to_array window convention.
                 src_row_min = _nn_src_index(
                     sub_r0, sr.y_size, dr.y_size)
                 src_row_max = _nn_src_index(
@@ -1539,8 +1527,7 @@ def read_vrt(vrt_path: str, *, window=None,
                 # DstRect even on a tiny output; with the windowed read
                 # the intermediate is now bounded by the window, so the
                 # pixel-budget check applies to the clipped sub-window
-                # rather than the full DstRect.  See issues #1737 and
-                # #1704.
+                # rather than the full DstRect.
                 sub_dst_h = sub_r1 - sub_r0
                 sub_dst_w = sub_c1 - sub_c0
                 if (sub_dst_w > max_pixels
@@ -1577,7 +1564,7 @@ def read_vrt(vrt_path: str, *, window=None,
             # ``RuntimeError``, ``MemoryError``, and other non-I/O bugs
             # should NOT be absorbed by the "skip the tile" fallback --
             # they signal real failures and need to surface to the
-            # caller. See issues #1670 and PR #1675.
+            # caller.
             try:
                 src_arr, _ = read_to_array(
                     src.filename,
@@ -1595,7 +1582,7 @@ def read_vrt(vrt_path: str, *, window=None,
                 # Default (``missing_sources='raise'``) surfaces the read
                 # failure immediately so a partial mosaic never ships
                 # silently. ``XRSPATIAL_GEOTIFF_STRICT=1`` forces the same
-                # raise module-wide regardless of the kwarg (#1662).
+                # raise module-wide regardless of the kwarg.
                 #
                 # The ``missing_sources='warn'`` opt-in keeps the legacy
                 # lenient path: emit ``GeoTIFFFallbackWarning`` once per
@@ -1606,8 +1593,7 @@ def read_vrt(vrt_path: str, *, window=None,
                 # plus a machine-readable list of which sources failed --
                 # zero-filled holes in an integer VRT are otherwise
                 # indistinguishable from real data without a nodata
-                # sentinel, which is why the default was flipped to raise
-                # in #1843. See also issues #1734 and #1843.
+                # sentinel, which is why the default was flipped to raise.
                 import warnings
 
                 from . import GeoTIFFFallbackWarning, _geotiff_strict_mode
@@ -1641,7 +1627,7 @@ def read_vrt(vrt_path: str, *, window=None,
             # check so a legitimate ``<NODATA>0</NODATA>`` survives the
             # fallback: the earlier ``src.nodata or nodata`` shortcut treated
             # ``0.0`` as falsy and silently replaced it with the band-level
-            # sentinel (issue #1655).
+            # sentinel.
             #
             # Apply nodata masking *before* the resample.  Nearest-neighbour
             # carries the sentinel value through unchanged, which is what
@@ -1659,7 +1645,7 @@ def read_vrt(vrt_path: str, *, window=None,
             # arm masked unconditionally, and the integer-feeding-float
             # branch below promoted to NaN unconditionally, so a caller
             # passing ``mask_nodata=False`` to ``read_vrt`` still lost
-            # the literal sentinel pixels. See issue #2158.
+            # the literal sentinel pixels.
             src_nodata = src.nodata if src.nodata is not None else nodata
             if mask_nodata and src_nodata is not None and src_arr.dtype.kind == 'f':
                 src_arr = src_arr.copy()
@@ -1679,7 +1665,6 @@ def read_vrt(vrt_path: str, *, window=None,
                 # so out-of-range sentinels (e.g. uint16 file paired
                 # with GDAL_NODATA="-9999") stay no-op rather than
                 # tripping OverflowError on ``dtype.type(int(...))``.
-                # See issue #1616.
                 # Accept an int sentinel directly so 64-bit values
                 # (``2**64 - 1`` for UInt64, ``INT64_MIN`` for Int64)
                 # don't get clobbered by ``float(...).is_integer()``
@@ -1719,7 +1704,7 @@ def read_vrt(vrt_path: str, *, window=None,
                 # only implemented kernel; silently substituting it for
                 # ``Bilinear`` / ``Cubic`` / ``Average`` / ``Mode``
                 # would return wrong numbers under the user's
-                # configured algorithm name.  See issue #1751.
+                # configured algorithm name.
                 _check_resample_alg_supported(src.resample_alg, src.filename)
                 # Resample only the destination sub-window the caller
                 # asked for.  ``_resample_nearest_window`` walks each
@@ -1730,7 +1715,7 @@ def read_vrt(vrt_path: str, *, window=None,
                 # ``src_arr`` (which is the minimal sub-rect read above).
                 # The output is byte-identical to resampling the full
                 # rect and slicing ``[sub_r0:sub_r1, sub_c0:sub_c1]``
-                # afterwards. See issue #1704.
+                # afterwards.
                 src_arr = _resample_nearest_window(
                     src_arr,
                     src_row_min, src_col_min,
@@ -1804,7 +1789,7 @@ def _vrt_dtype_name_for(bps, sample_format):
 
 
 def _check_no_rotated_source_transforms(sources_meta: list[dict]) -> None:
-    """Reject VRT writer sources whose transform has non-zero skew (#2349).
+    """Reject VRT writer sources whose transform has non-zero skew.
 
     The writer emits an axis-aligned mosaic GeoTransform with ``0.0``
     skew slots. A source whose own GeoTIFF declared a rotated /
@@ -1814,9 +1799,8 @@ def _check_no_rotated_source_transforms(sources_meta: list[dict]) -> None:
     mis-aligned mosaic.
 
     The rotated 6-tuple is stamped on ``GeoTransform.rotated_affine``
-    by the reader when ``allow_rotated=True`` -- see issue #2129. A
-    plain axis-aligned source has ``rotated_affine=None`` and skips
-    the check.
+    by the reader when ``allow_rotated=True``. A plain axis-aligned
+    source has ``rotated_affine=None`` and skips the check.
     """
     for m in sources_meta:
         ra = getattr(m['transform'], 'rotated_affine', None)
@@ -1845,7 +1829,7 @@ def _check_no_rotated_source_transforms(sources_meta: list[dict]) -> None:
 
 
 def _check_no_mixed_raster_type(sources_meta: list[dict]) -> None:
-    """Reject VRT writer sources whose AREA_OR_POINT disagrees (#2349).
+    """Reject VRT writer sources whose AREA_OR_POINT disagrees.
 
     The mosaic VRT emits a single dataset-level ``AREA_OR_POINT``
     value. Silent flattening to ``first['raster_type']`` would shift
@@ -1903,7 +1887,7 @@ def _nodata_values_agree(a, b) -> bool:
 
 def _check_no_mixed_nodata(sources_meta: list[dict], *,
                            caller_nodata) -> None:
-    """Reject VRT writer sources whose nodata sentinels disagree (#2349).
+    """Reject VRT writer sources whose nodata sentinels disagree.
 
     The legacy writer silently picked ``first['nodata']`` for every
     band of every source, so a tile whose own sentinel was different
@@ -1941,8 +1925,8 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
               nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
-    Do not call this symbol directly from external code. Release-contract
-    tier (epic #2340): this is the [internal-only] VRT XML emitter.
+    Do not call this symbol directly from external code. This is the
+    [internal-only] VRT XML emitter.
     The public surface lives in ``xrspatial.geotiff.write_vrt``
     (re-exported from ``_writers/vrt.py``) and carries the [advanced]
     tier; this function is what that public wrapper calls into. See
@@ -1990,8 +1974,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     # ``_validate_nodata_arg`` so callers see the parity error from the
     # entry point. Repeat the check here so direct callers of the
     # internal symbol (and any future refactor that splits the public
-    # wrapper) cannot regress to ``<NoDataValue>True</NoDataValue>``. See
-    # issue #1921.
+    # wrapper) cannot regress to ``<NoDataValue>True</NoDataValue>``.
     if isinstance(nodata, (bool, np.bool_)):
         raise TypeError(
             f"nodata must be numeric (int or float), got {nodata!r}")
@@ -2009,7 +1992,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
             ifd = ifds[0]
             # The writer is reading source metadata to populate the VRT XML;
             # it does not decode pixels or run the masking step that the
-            # new #2441 default-rejection guards against. Pass the opt-in
+            # invalid-nodata default-rejection guards against. Pass the opt-in
             # so a source TIFF with a non-finite / fractional ``GDAL_NODATA``
             # value can still be referenced by a VRT (the read-side default
             # still rejects it when the resulting VRT is later opened).
@@ -2047,7 +2030,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     # first on pixel size, sample format + bits-per-sample (i.e. dtype),
     # band count, and CRS WKT. Without this, build_vrt would silently
     # produce a syntactically valid VRT that misplaces or mis-types data
-    # downstream (issue #1733).
+    # downstream.
     #
     # Pixel size is compared with a small relative tolerance: TIFFs
     # written by different tools occasionally round the GeoTransform
@@ -2071,9 +2054,9 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
             return abs(a - b) > 0.0
         return abs(a - b) / denom > _PIXEL_SIZE_RTOL
 
-    # Group the new "fail-loudly on unsupported feature combinations"
-    # gates (epic #2340 / PR 5) in one block so the cross-source policy
-    # is easy to read end-to-end:
+    # Group the "fail-loudly on unsupported feature combinations" gates
+    # in one block so the cross-source policy is easy to read
+    # end-to-end:
     #
     #   1. Reject any source whose declared transform carries a
     #      non-zero skew term (rotated / sheared affine). write_vrt
@@ -2091,9 +2074,9 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     _check_no_mixed_nodata(sources_meta, caller_nodata=nodata)
 
     # Pixel size, sample format, band count, and CRS share the
-    # documented "all sources must agree with first" contract (#1733).
-    # These remain inline here because they predate #2349 and have
-    # their own match-pattern tests.
+    # documented "all sources must agree with first" contract. These
+    # remain inline here because they predate the grouped gates above
+    # and have their own match-pattern tests.
     first_crs = first.get('crs_wkt')
     for m in sources_meta[1:]:
         t = m['transform']
@@ -2160,8 +2143,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     # previous local if/elif/else ladder had no entry for sub-byte or
     # 12-bit unsigned samples (reader promotes ``bps=12, sf=1`` to
     # ``uint16``), so a VRT over a valid 12-bit source got tagged
-    # ``Byte`` and could be truncated by downstream GDAL readers. Issue
-    # #1914.
+    # ``Byte`` and could be truncated by downstream GDAL readers.
     vrt_dtype_name = _vrt_dtype_name_for(first['bps'], first['sample_format'])
 
     srs = crs_wkt or first.get('crs_wkt') or ''
@@ -2176,7 +2158,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     # special characters (``< > & " '``) cannot break the document or
     # inject extra elements.  Numeric fields (offsets, sizes, pixel
     # scales) are emitted from int / float literals and need no
-    # escaping.  See issue #1607.
+    # escaping.
     lines = [f'<VRTDataset rasterXSize="{int(total_w)}" rasterYSize="{int(total_h)}">']
     if srs:
         lines.append(f'  <SRS>{_xml_text(srs)}</SRS>')

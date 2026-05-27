@@ -1,10 +1,8 @@
 """Dask-only pipeline integration tests for the GeoTIFF reader.
 
-Consolidated from the issue-numbered files mapped in
-``CLUSTER_AUDIT_PR9.md``. Covers chunk/tile alignment, integer-nodata
-chunking, no-op astype optimisations, overview level selection,
-planar multiband, max-pixels guards, streaming writes, and the
-accessor IO surface.
+Covers chunk/tile alignment, integer-nodata chunking, no-op astype
+optimisations, overview level selection, planar multiband, max-pixels
+guards, streaming writes, and the accessor IO surface.
 """
 from __future__ import annotations
 
@@ -17,7 +15,6 @@ from xrspatial.geotiff._writer import write
 
 # ----------------------------------------------------------
 # Section: dask_chunk_tile_misalignment
-# Source: test_dask_chunk_tile_misalignment.py
 # ----------------------------------------------------------
 tifffile_dask_chunk_tile_misalignment = pytest.importorskip("tifffile")
 dask_array_dask_chunk_tile_misalignment = pytest.importorskip("dask.array")
@@ -109,7 +106,6 @@ def test_chunk_tuple_doubly_unaligned(tmp_path):
 
 # ----------------------------------------------------------
 # Section: dask_int_nodata_chunks
-# Source: test_dask_int_nodata_chunks_1597.py
 # ----------------------------------------------------------
 
 
@@ -177,9 +173,8 @@ def test_dask_chunks_2_per_chunk_dtype_uniform(
 def test_dask_keeps_dtype_for_out_of_range_sentinel(tmp_path):
     """Out-of-range sentinels (uint16 + nodata=-9999) stay uint16.
 
-    The fix should not regress #1581: when the sentinel cannot match
-    any pixel, no float64 promotion is needed and the dask path keeps
-    the file's native dtype.
+    When the sentinel cannot match any pixel, no float64 promotion is
+    needed and the dask path keeps the file's native dtype.
     """
     arr = np.array([[1, 2, 3, 4]] * 4, dtype=np.uint16)
     path = str(tmp_path / 'uint16_out_of_range_1597.tif')
@@ -211,7 +206,6 @@ def test_dask_float_input_with_sentinel_in_one_chunk(tmp_path):
 
 # ----------------------------------------------------------
 # Section: dask_max_pixels_default_guard
-# Source: test_dask_max_pixels_default_guard_1838.py
 # ----------------------------------------------------------
 
 
@@ -258,22 +252,36 @@ def _write_oversized_dask_max_pixels_default_guard(path, *, h: int, w: int) -> N
     path.write_bytes(bytes(raw))
 
 
-def test_default_max_pixels_guard_fires_for_full_region(tmp_path):
-    """``max_pixels=None`` must apply the module default cap at the
-    up-front region guard, matching the eager / VRT paths.
+def test_default_max_pixels_guard_does_not_fire_up_front(tmp_path):
+    """The dask path no longer rejects an oversized full image at graph-
+    build time (#2501). The cap is now per-chunk, so a forged
+    multi-billion-pixel header builds a lazy graph without erroring;
+    each chunk task decodes against ``max_pixels`` separately.
     """
-    path = tmp_path / "tmp_1838_oversized.tif"
+    path = tmp_path / "tmp_2501_oversized.tif"
     side = int((MAX_PIXELS_DEFAULT ** 0.5)) + 2
     _write_oversized_dask_max_pixels_default_guard(path, h=side, w=side)
-    with pytest.raises(ValueError, match=r"max_pixels"):
-        read_geotiff_dask(str(path))
+    # The graph builds; the up-front guard is gone. Chunk-level decode
+    # may still fail when a task actually runs, but that is a separate
+    # path. ``read_geotiff_dask(...)`` itself returns a DataArray.
+    da = read_geotiff_dask(str(path))
+    assert da.shape == (side, side)
 
 
-def test_explicit_max_pixels_still_enforced(tmp_path):
-    path = tmp_path / "tmp_1838_explicit_cap.tif"
-    _write_oversized_dask_max_pixels_default_guard(path, h=2048, w=2048)
-    with pytest.raises(ValueError, match=r"max_pixels"):
-        read_geotiff_dask(str(path), max_pixels=1024)
+def test_explicit_max_pixels_enforced_per_chunk(tmp_path):
+    """Per-chunk decode honours ``max_pixels`` even when the full image
+    would have fit under it (#2501). Build a real 64x64 file, request
+    chunks of 32, and set ``max_pixels`` below the per-chunk cost.
+    """
+    arr = np.arange(64 * 64, dtype=np.uint8).reshape(64, 64)
+    path = tmp_path / "tmp_2501_per_chunk_cap.tif"
+    tifffile_dask_max_pixels_default_guard.imwrite(
+        str(path), arr, tile=(16, 16),
+        photometric="minisblack", compression="none")
+    # 32x32 chunk = 1024 pixels; cap is 100. Graph builds, compute fails.
+    da = read_geotiff_dask(str(path), chunks=32, max_pixels=100)
+    with pytest.raises(ValueError, match="exceed the safety limit"):
+        da.compute()
 
 
 def test_small_region_unaffected(tmp_path):
@@ -288,7 +296,6 @@ def test_small_region_unaffected(tmp_path):
 
 # ----------------------------------------------------------
 # Section: dask_no_op_astype
-# Source: test_dask_no_op_astype_1624.py
 # ----------------------------------------------------------
 
 
@@ -314,7 +321,7 @@ def uint16_with_sentinel_in_first_chunk_dask_no_op_astype(tmp_path):
 
 
 def test_uint16_mask_path_still_promotes(uint16_with_sentinel_in_first_chunk_dask_no_op_astype):
-    """The #1597 promotion still runs when sentinels are present."""
+    """The int-sentinel float64 promotion still runs when sentinels are present."""
     path, arr = uint16_with_sentinel_in_first_chunk_dask_no_op_astype
     eager = open_geotiff(path)
     dk = open_geotiff(path, chunks=4)
@@ -377,10 +384,9 @@ def test_astype_skipped_when_dtypes_match(float32_no_nodata_tif_dask_no_op_astyp
         return tracked, meta
 
     # ``read_geotiff_dask``'s per-chunk worker calls the alias
-    # ``_read_to_array`` bound in ``xrspatial.geotiff._backends.dask``
-    # (since #1886). Patch that binding; patching
-    # ``_reader.read_to_array`` would not affect the already-imported
-    # alias. See issue #1708 for why ``read_to_array`` is internal.
+    # ``_read_to_array`` bound in ``xrspatial.geotiff._backends.dask``.
+    # Patch that binding; patching ``_reader.read_to_array`` would not
+    # affect the already-imported alias.
     monkeypatch.setattr(gt, '_read_to_array', wrapped_r2a)
 
     dk = read_geotiff_dask(path, chunks=4)
@@ -407,7 +413,6 @@ def test_caller_supplied_dtype_still_casts(float32_no_nodata_tif_dask_no_op_asty
 
 # ----------------------------------------------------------
 # Section: dask_overview_level
-# Source: test_dask_overview_level.py
 # ----------------------------------------------------------
 
 
@@ -501,7 +506,6 @@ def test_dask_overview_level_none_returns_full_res(tmp_path):
 
 # ----------------------------------------------------------
 # Section: dask_planar_multiband
-# Source: test_dask_planar_multiband.py
 # ----------------------------------------------------------
 
 
@@ -600,7 +604,6 @@ def test_dask_planar_separate_chunks_tuple(tmp_path):
 
 # ----------------------------------------------------------
 # Section: dask_streaming_write_degenerate
-# Source: test_dask_streaming_write_degenerate_2026_05_15.py
 # ----------------------------------------------------------
 
 
@@ -680,7 +683,7 @@ class TestStreamingWrite1xN_dask_streaming_write_degenerate:
         np.testing.assert_array_equal(result.values, arr)
 
     def test_1xN_wide_segmented_by_buffer(self, tmp_path):
-        """Wide single row segmented by streaming_buffer_bytes (#1485)."""
+        """Wide single row segmented by streaming_buffer_bytes."""
         arr = np.arange(64, dtype=np.float32).reshape(1, 64)
         da = xr.DataArray(arr, dims=['y', 'x']).chunk({'y': 1, 'x': 16})
         path = str(tmp_path / '1xN_seg.tif')
@@ -877,7 +880,6 @@ class TestStreamingWriteFloatPredictor_dask_streaming_write_degenerate:
 
 # ----------------------------------------------------------
 # Section: accessor_io
-# Source: test_accessor_io.py
 # ----------------------------------------------------------
 
 
