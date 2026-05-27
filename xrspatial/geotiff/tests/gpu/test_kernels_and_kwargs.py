@@ -1512,7 +1512,7 @@ try:
 except ImportError:
     LERC_AVAILABLE = False
 
-_lerc_gpu_only_1896 = pytest.mark.skipif(
+_lerc_required_1896 = pytest.mark.skipif(
     not (_LERC_INSTALLED and LERC_AVAILABLE),
     reason="lerc required",
 )
@@ -1561,7 +1561,7 @@ def lerc_writer_with_mask_1896(monkeypatch):
 
 
 @_gpu_only
-@_lerc_gpu_only_1896
+@_lerc_required_1896
 def test_gds_chunked_lerc_mask_matches_eager_1896(
         tmp_path, lerc_writer_with_mask_1896):
     """Chunked GDS path restores LERC-masked pixels to the nodata sentinel.
@@ -1616,7 +1616,7 @@ def test_gds_chunked_lerc_mask_matches_eager_1896(
 
 
 @_gpu_only
-@_lerc_gpu_only_1896
+@_lerc_required_1896
 def test_gds_chunked_lerc_mask_sentinel_nodata_1896(
         tmp_path, lerc_writer_with_mask_1896):
     """Sentinel nodata (-9999) on float LERC: chunked path matches eager."""
