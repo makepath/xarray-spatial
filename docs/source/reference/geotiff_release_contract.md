@@ -99,8 +99,8 @@ category. The `Key` column matches the runtime key.
 | Key | Tier | Notes |
 | --- | --- | --- |
 | `writer.local_file` | stable | Local GeoTIFF write; round-trips bit-exact under every stable codec. |
-| `writer.cog` | stable | CPU writer emits a spec-conforming COG layout (IFD-first, tiled, internal overviews, lossless codec). |
-| `writer.overviews` | advanced | Internal overview IFD generation. |
+| `writer.cog` | stable | CPU writer emits a spec-conforming COG layout (IFD-first, tiled, internal overviews, lossless codec). The COG layout itself is stable; the pyramid-customisation knobs on `to_geotiff` (`overview_levels`, `overview_resampling`) are tracked separately under `writer.overviews`. |
+| `writer.overviews` | advanced | Internal overview IFD generation: the `overview_levels` and `overview_resampling` knobs on `to_geotiff` and the resampled pyramid bytes themselves. The presence of an internal pyramid in a stable-codec COG is covered by `writer.cog`; this entry covers the customisation surface and the resampling output. |
 | `writer.bigtiff` | advanced | `bigtiff=True` (or auto-promotion above 4 GiB) writes BigTIFF magic, 8-byte offsets, and 20-byte IFD entries. |
 | `writer.bigtiff_cog` | advanced | BigTIFF plus COG. Tracked separately because the combination has its own external-interop surface. |
 | `writer.gpu` | experimental | GPU write path. |

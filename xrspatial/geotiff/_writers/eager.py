@@ -69,10 +69,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     * [stable] Local-file output on an axis-aligned grid with
       ``compression`` in ``{'none', 'deflate', 'lzw', 'packbits',
       'zstd'}``; CRS / transform / nodata attrs round-trip; ``bigtiff``
-      auto-promotion.
-    * [advanced] ``cog=True`` and overview generation; explicit
-      ``bigtiff=True``; ``photometric=`` overrides; ``extra_tags``
-      pass-through.
+      auto-promotion; ``cog=True`` (the IFD-first tiled COG layout with
+      a stable codec, covered by ``SUPPORTED_FEATURES['writer.cog']``).
+    * [advanced] Internal overview pyramid generation
+      (``SUPPORTED_FEATURES['writer.overviews']``): the
+      ``overview_levels`` and ``overview_resampling`` knobs and the
+      pyramid bytes themselves. Also explicit ``bigtiff=True``;
+      ``photometric=`` overrides; ``extra_tags`` pass-through.
     * [experimental] GPU dispatch via ``gpu=True``;
       ``compression`` in ``{'lerc', 'jpeg2000', 'j2k', 'lz4'}`` behind
       the explicit ``allow_experimental_codecs=True`` opt-in;
@@ -187,13 +190,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         * ``3`` -> floating-point predictor (float dtypes only; typically
           gives better deflate/zstd ratios on float data than predictor 2).
     cog : bool
-        [advanced] COG output materialises the full array because
-        overview pyramids need it, and the all-IFDs-at-file-start
-        layout only round-trips through readers that honour the COG
-        layout contract. Write as Cloud Optimized GeoTIFF. Requires
-        ``tiled=True`` (the default): the COG specification mandates a
-        tiled internal layout, so ``cog=True, tiled=False`` raises
-        ``ValueError`` (#2312).
+        [stable] Write as Cloud Optimized GeoTIFF. The CPU writer
+        emits the spec-conforming COG layout (IFD-first, tiled,
+        internal overviews, lossless codec) covered by
+        ``SUPPORTED_FEATURES['writer.cog']`` (stable as of #2300; see
+        issue #2286). Requires ``tiled=True`` (the default): the COG
+        specification mandates a tiled internal layout, so
+        ``cog=True, tiled=False`` raises ``ValueError`` (#2312). COG
+        output also materialises the full array, because the overview
+        pyramid needs random access to every pixel; the
+        ``streaming_buffer_bytes`` kwarg is a no-op on this path.
+        Customisation of the overview pyramid itself
+        (``overview_levels``, ``overview_resampling``) is tracked
+        separately as advanced under
+        ``SUPPORTED_FEATURES['writer.overviews']``.
     overview_levels : list[int] or None
         [advanced] Overview pyramids are an optional COG feature; the
         decimation factors and resampling choice affect downstream
