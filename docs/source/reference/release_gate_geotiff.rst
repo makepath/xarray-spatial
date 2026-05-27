@@ -221,8 +221,7 @@ Local GeoTIFF read and write
      - advanced
      - ``bigtiff=True`` (or auto-promotion above 4 GiB) writes a file with
        magic ``43``, 8-byte offsets, and 20-byte IFD entries.
-     - ``xrspatial/geotiff/tests/test_eager_bigtiff_overhead_exact_1905.py``,
-       ``xrspatial/geotiff/tests/test_to_geotiff_bigtiff_doc_1683.py``
+     - ``xrspatial/geotiff/tests/write/test_bigtiff.py``
      - `#2340`_
    * - ``writer.gdal_metadata_xml``
      - experimental
@@ -233,7 +232,7 @@ Local GeoTIFF read and write
    * - ``writer.extra_tags``
      - experimental
      - ``attrs['extra_tags']`` filters out reserved tag ids before write.
-     - ``xrspatial/geotiff/tests/test_extra_tags_safe_filter_1657.py``
+     - ``xrspatial/geotiff/tests/unit/test_safe_xml.py``
      - `#2340`_
    * - Codec ``none`` / ``deflate`` / ``lzw`` / ``zstd`` / ``packbits``
      - stable
@@ -401,8 +400,8 @@ Nodata lifecycle
      - stable
      - Mixed nodata across bands fails closed unless an explicit opt-in
        resolves the ambiguity.
-     - ``xrspatial/geotiff/tests/test_ambiguous_metadata_hooks_1987.py``,
-       ``xrspatial/geotiff/tests/test_conflicting_crs_write_1987.py``
+     - ``xrspatial/geotiff/tests/unit/test_metadata.py``,
+       ``xrspatial/geotiff/tests/write/test_crs.py``
      - `#2341`_
    * - VRT mixed-band nodata fail-closed
      - stable
@@ -462,7 +461,7 @@ attrs contract
        when the CRS WKT does not parse; the missing CRS surfaces in
        ``attrs['georef_status']`` rather than silently as a corrupt
        value.
-     - ``xrspatial/geotiff/tests/test_crs_fail_closed_1929.py``,
+     - ``xrspatial/geotiff/tests/write/test_crs.py``,
        ``xrspatial/geotiff/tests/gpu/test_kernels_and_kwargs.py``,
        ``xrspatial/geotiff/tests/test_remaining_fail_closed_1987.py``
      - `#2340`_

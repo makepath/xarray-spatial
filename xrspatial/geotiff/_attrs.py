@@ -843,7 +843,7 @@ def attrs_to_metadata(attrs) -> GeoTIFFMetadata:
       validator that should reject bool values; the boundary parser
       only needs to keep the bad value out of the record so the writer
       sees ``crs_epsg=None`` and falls through to ``crs_wkt``. See
-      ``test_crs_arg_validation_1971.py``.
+      ``write/test_crs.py`` (CRS argument validation #1971 section).
     * ``transform`` is coerced via ``tuple(...)`` with no length or
       numeric-type check. ``_transform_from_attr`` is the canonical
       validator and runs inside the writer.
