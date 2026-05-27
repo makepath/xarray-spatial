@@ -395,7 +395,7 @@ Nodata lifecycle
        distinct from the on-disk sentinel; mixed-band VRT inputs honour the
        split.
      - ``xrspatial/geotiff/tests/vrt/test_metadata.py``,
-       ``xrspatial/geotiff/tests/test_mask_nodata_gpu_vrt_2052.py``
+       ``xrspatial/geotiff/tests/gpu/test_kernels_and_kwargs.py``
      - `#2341`_
    * - Mixed-band metadata reject
      - stable
@@ -463,7 +463,7 @@ attrs contract
        ``attrs['georef_status']`` rather than silently as a corrupt
        value.
      - ``xrspatial/geotiff/tests/test_crs_fail_closed_1929.py``,
-       ``xrspatial/geotiff/tests/test_crs_fail_closed_gpu_1929.py``,
+       ``xrspatial/geotiff/tests/gpu/test_kernels_and_kwargs.py``,
        ``xrspatial/geotiff/tests/test_remaining_fail_closed_1987.py``
      - `#2340`_
 
@@ -647,8 +647,7 @@ GPU paths (experimental)
      - GPU read errors emit :class:`GeoTIFFFallbackWarning` and fall back
        to CPU unless ``on_gpu_failure='strict'`` or
        ``XRSPATIAL_GEOTIFF_STRICT=1`` is set.
-     - ``xrspatial/geotiff/tests/test_gpu_strict_fallback_1516.py``,
-       ``xrspatial/geotiff/tests/test_gpu_fallback_forwards_kwargs_2238.py``
+     - ``xrspatial/geotiff/tests/gpu/test_kernels_and_kwargs.py``
      - `#2340`_
    * - ``writer.gpu``
      - experimental
