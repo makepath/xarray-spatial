@@ -17,7 +17,7 @@ from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
 import numpy as np
 
-from ._errors import UnsupportedGeoTIFFFeatureError
+from ._errors import MixedBandMetadataError, UnsupportedGeoTIFFFeatureError
 from ._safe_xml import safe_fromstring
 
 
@@ -967,31 +967,65 @@ def _sentinel_for_dtype(nodata_val, dtype):
 
 
 def _effective_dtype_for_bands(selected_bands) -> np.dtype:
-    """Return the output buffer dtype that holds every selected band losslessly.
+    """Return the output buffer dtype shared by every selected band.
 
-    Computes ``np.result_type`` over each band's effective dtype, where
-    each band's effective dtype is widened to ``float64`` if any of its
-    ``ComplexSource`` declarations apply a non-identity ``ScaleRatio``
-    (``scale``) or ``ScaleOffset`` (``offset``). Mirrors the historic
-    inline computation in :func:`read_vrt` and matches the parse-time
-    declared dtype the chunked path emits up front. Issue #1825.
+    Each band's effective dtype is the declared ``<VRTRasterBand>``
+    ``dataType``, widened to ``float64`` if any of its ``ComplexSource``
+    declarations apply a non-identity ``ScaleRatio`` (``scale``) or
+    ``ScaleOffset`` (``offset``). Mirrors the historic inline computation
+    in :func:`read_vrt` and matches the parse-time declared dtype the
+    chunked path emits up front. Issue #1825.
+
+    All selected bands must share the same declared ``dataType``. The
+    VRT support matrix documented at ``xrspatial.geotiff._backends.vrt``
+    requires this: per-band dtype mismatch raises rather than silently
+    flattening to a common output dtype. A disagreement raises
+    :class:`MixedBandMetadataError` naming the offending bands. Issue
+    #2485.
+
+    Per-band widening to ``float64`` driven by a ``ComplexSource``
+    ``ScaleRatio`` / ``ScaleOffset`` is not a cross-band dtype mismatch
+    because it does not change the declared band ``dataType`` -- it just
+    promotes that one band's buffer to hold the scaled values without
+    truncation. When every selected band declares the same ``dataType``,
+    a ``ComplexSource``-driven widening on any band promotes the shared
+    output buffer to ``float64``.
     """
     if not selected_bands:
         raise ValueError(
             "VRT has no <VRTRasterBand> elements; cannot determine "
             "output dtype"
         )
-    effective_dtypes = []
+    declared_dtypes = [vrt_band.dtype for vrt_band in selected_bands]
+    # Contract from xrspatial.geotiff._backends.vrt: per-band declared
+    # dtype mismatch raises rather than flattening via ``np.result_type``.
+    # ``np.result_type`` would happily widen ``UInt16`` + ``Float32`` to
+    # ``Float32`` and silently change downstream dtype semantics
+    # (categorical values, integer extremes, nodata sentinels). Issue
+    # #2485.
+    first_declared = declared_dtypes[0]
+    if any(d != first_declared for d in declared_dtypes[1:]):
+        band_descs = ", ".join(
+            f"band {i + 1}: {d}" for i, d in enumerate(declared_dtypes)
+        )
+        raise MixedBandMetadataError(
+            "VRT bands declare conflicting dtypes; expected a single "
+            "declared dataType across all <VRTRasterBand> elements but "
+            f"saw {band_descs}. The VRT support matrix rejects mixed "
+            "band dtypes rather than widening via np.result_type."
+        )
+    # All declared dtypes agree. A single band's ``ComplexSource``
+    # ``ScaleRatio`` / ``ScaleOffset`` still promotes the shared buffer
+    # to ``float64`` so the scaled values survive without truncation.
+    # This preserves the issue #1696 / #1825 behaviour for matching-
+    # dtype bands.
     for vrt_band in selected_bands:
-        eff = vrt_band.dtype
         for src in vrt_band.sources:
             scaled = src.scale is not None and src.scale != 1.0
             offset = src.offset is not None and src.offset != 0.0
             if scaled or offset:
-                eff = np.dtype(np.float64)
-                break
-        effective_dtypes.append(eff)
-    return np.result_type(*effective_dtypes)
+                return np.dtype(np.float64)
+    return first_declared
 
 
 def _apply_integer_sentinel_mask(arr, vrt, band):

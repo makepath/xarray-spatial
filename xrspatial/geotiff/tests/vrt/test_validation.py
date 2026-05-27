@@ -1036,36 +1036,48 @@ def test_mixed_source_crs_no_vrt_srs_rejects(tmp_path):
     assert src_3857 in str(excinfo.value)
 
 
-@pytest.mark.xfail(
-    reason="mixed band dtype rejection still silently widens to a "
-           "common dtype; the validator needs to honour the contract",
-    strict=False,
+@pytest.mark.parametrize(
+    "dtype_a, dtype_b, name_a, name_b",
+    [
+        (np.uint16, np.float32, "UInt16", "Float32"),
+        (np.int32, np.float64, "Int32", "Float64"),
+    ],
 )
-def test_mixed_source_dtype_ambiguous_widening_rejected(tmp_path):
-    """Two bands declaring incompatible dtypes (``UInt16`` and
-    ``Float32``) silently widen the output buffer today. The contract
-    for the release is to reject mixed band dtypes unless the user opts
-    in."""
-    src_u16 = _write_src_float32_geotiff(tmp_path, dtype=np.uint16)
-    src_f32 = _write_src_float32_geotiff(tmp_path, dtype=np.float32)
-    body_b1 = _simple_source_xml(src_u16)
-    body_b2 = _simple_source_xml(src_f32)
+def test_mixed_source_dtype_ambiguous_widening_rejected(
+        tmp_path, dtype_a, dtype_b, name_a, name_b):
+    """Bands declaring incompatible dtypes must raise rather than
+    silently widen via ``np.result_type``.
+
+    The VRT support matrix at ``_backends/vrt.py`` requires that
+    per-band dtype mismatches surface as ``MixedBandMetadataError``.
+    Covers both the original ``UInt16`` + ``Float32`` case and an
+    integer-floating combo at higher precision (``Int32`` + ``Float64``)
+    so the rule is enforced generally. Issue #2485.
+    """
+    src_a = _write_src_float32_geotiff(tmp_path, dtype=dtype_a)
+    src_b = _write_src_float32_geotiff(tmp_path, dtype=dtype_b)
+    body_b1 = _simple_source_xml(src_a)
+    body_b2 = _simple_source_xml(src_b)
     xml = f"""<VRTDataset rasterXSize="4" rasterYSize="4">
   <SRS>EPSG:4326</SRS>
   <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
-  <VRTRasterBand dataType="UInt16" band="1">
+  <VRTRasterBand dataType="{name_a}" band="1">
 {body_b1}
   </VRTRasterBand>
-  <VRTRasterBand dataType="Float32" band="2">
+  <VRTRasterBand dataType="{name_b}" band="2">
 {body_b2}
   </VRTRasterBand>
 </VRTDataset>"""
     vrt_path = _write_vrt(tmp_path, xml)
 
-    with pytest.raises((ValueError, NotImplementedError)) as excinfo:
+    with pytest.raises(MixedBandMetadataError) as excinfo:
         _package_read_vrt(vrt_path)
     msg = str(excinfo.value).lower()
     assert any(k in msg for k in ('dtype', 'datatype', 'mixed'))
+    # Message should name both conflicting bands so the caller can
+    # locate the disagreement without reading the VRT XML by hand.
+    assert 'band 1' in msg
+    assert 'band 2' in msg
 
 
 def test_supported_simple_vrt_round_trips_via_open_geotiff(tmp_path):
