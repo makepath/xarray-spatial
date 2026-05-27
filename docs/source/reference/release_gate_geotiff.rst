@@ -386,8 +386,7 @@ Nodata lifecycle
      - The sentinel survives read and write across every backend; integer
        sentinels are preserved bit-exact, float sentinels surface as NaN
        only when ``mask_nodata=True``.
-     - ``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py``,
-       ``xrspatial/geotiff/tests/test_nodata_lifecycle_parity_2211.py``
+     - ``xrspatial/geotiff/tests/read/test_nodata.py``
      - `#2341`_
    * - ``attrs['masked_nodata']`` lifecycle signal
      - stable

@@ -1,11 +1,11 @@
 """Default-rejection tests for non-finite / fractional integer nodata (#2441).
 
-Companion to ``test_nodata_nan_int_1774.py`` (which covers the opt-in
-no-op path). These tests pin the release-contract upgrade: integer
-sources whose ``GDAL_NODATA`` tag is non-finite or fractional must raise
-``InvalidIntegerNodataError`` at the read boundary unless the caller
-explicitly opts back into the legacy silent no-op via
-``allow_invalid_nodata=True``.
+Companion to the #1774 opt-in no-op coverage (folded into
+``read/test_nodata.py`` by cluster 10 of epic #2424). These tests pin
+the release-contract upgrade: integer sources whose ``GDAL_NODATA`` tag
+is non-finite or fractional must raise ``InvalidIntegerNodataError`` at
+the read boundary unless the caller explicitly opts back into the legacy
+silent no-op via ``allow_invalid_nodata=True``.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import pytest
 from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, InvalidIntegerNodataError,
                                open_geotiff, read_geotiff_dask)
 
-from .test_nodata_nan_int_1774 import _build_uint16_tiff
+from .read.test_nodata import _build_uint16_tiff_1774 as _build_uint16_tiff
 
 
 def _gpu_available() -> bool:

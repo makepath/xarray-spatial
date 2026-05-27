@@ -166,7 +166,7 @@ this section is the brief.
   signal: ``True`` when the read produced NaN-masked output distinct
   from the on-disk sentinel, ``False`` when pixel data carries the
   raw sentinel. The signal is part of the canonical attrs contract;
-  ``xrspatial/geotiff/tests/test_masked_nodata_attr_2092.py`` pins
+  ``xrspatial/geotiff/tests/read/test_nodata.py`` pins
   the canonical form and
   ``xrspatial/geotiff/tests/vrt/test_metadata.py``
   covers the VRT mosaic case.
@@ -176,8 +176,7 @@ this section is the brief.
   behaviour; see ``xrspatial/geotiff/tests/vrt/test_metadata.py``.
 
 The lifecycle is locked end-to-end by
-``xrspatial/geotiff/tests/test_nodata_lifecycle_attrs_2135.py`` and
-``xrspatial/geotiff/tests/test_nodata_lifecycle_parity_2211.py``.
+``xrspatial/geotiff/tests/read/test_nodata.py``.
 
 Reading
 =======
