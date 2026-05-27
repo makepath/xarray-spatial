@@ -2556,10 +2556,11 @@ def _crop_bounds_dask(data, target_values):
 def crop(
     zones,
     values: xr.DataArray,
-    zones_ids: Union[list, tuple],
+    zone_ids: Optional[Union[list, tuple]] = None,
     name: str = "crop",
     column: Optional[str] = None,
     rasterize_kw: Optional[dict] = None,
+    zones_ids: Optional[Union[list, tuple]] = None,
 ):
     """
     Crop scans from edges and eliminates rows / cols until one of the
@@ -2574,8 +2575,9 @@ def crop(
     values: xr.DataArray
         Input values raster.
 
-    zones_ids : list or tuple
-        List of zone ids to crop raster.
+    zone_ids : list or tuple
+        List of zone ids to crop raster.  Matches the ``zone_ids`` parameter
+        of :func:`stats` and :func:`crosstab`.
 
     name: str, default='crop'
         Output xr.DataArray.name property.
@@ -2587,6 +2589,10 @@ def crop(
     rasterize_kw : dict, optional
         Extra keyword arguments forwarded to ``rasterize()`` when
         *zones* is vector input.
+
+    zones_ids : list or tuple, optional
+        Deprecated alias for ``zone_ids``.  Will emit a
+        ``DeprecationWarning`` and be removed in a future release.
 
     Returns
     -------
@@ -2644,7 +2650,7 @@ def crop(
         cropped_agg = crop(
             zones=zones_sub,
             values=values_agg,
-            zones_ids=[1],
+            zone_ids=[1],
         )
 
         # Edit Attributes
@@ -2686,6 +2692,31 @@ def crop(
             'Max Elevation': '4000',
         }
     """
+    # Backwards-compatible alias: stats() and crosstab() use `zone_ids`,
+    # crop() historically used `zones_ids` (extra 's').  Accept both,
+    # emit a DeprecationWarning on the old name, raise if both are passed.
+    if zones_ids is not None:
+        import warnings
+        if zone_ids is not None:
+            raise TypeError(
+                "crop() received both `zone_ids` and `zones_ids`; pass "
+                "only `zone_ids` (the canonical name)."
+            )
+        warnings.warn(
+            "crop(zones_ids=...) is deprecated and will be removed in a "
+            "future release; use `zone_ids=...` to match stats() and "
+            "crosstab().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        zone_ids = zones_ids
+
+    if zone_ids is None:
+        raise TypeError(
+            "crop() missing required argument `zone_ids` (list or tuple "
+            "of zone ids to crop to)."
+        )
+
     zones = _maybe_rasterize_zones(zones, values, column=column,
                                    rasterize_kw=rasterize_kw)
 
@@ -2694,11 +2725,11 @@ def crop(
 
     data = zones.data
     if has_dask_array() and isinstance(data, da.Array):
-        top, bottom, left, right = _crop_bounds_dask(data, zones_ids)
+        top, bottom, left, right = _crop_bounds_dask(data, zone_ids)
     else:
         if is_cupy_array(data):
             data = data.get()
-        top, bottom, left, right = _crop(data, np.asarray(zones_ids))
+        top, bottom, left, right = _crop(data, np.asarray(zone_ids))
 
     arr = values[top: bottom + 1, left: right + 1]
     arr.name = name

@@ -246,7 +246,7 @@ def test_crop_dask():
     raster = xr.DataArray(
         da.from_array(_CROP_ARR, chunks=(3, 2)), dims=['y', 'x'],
     )
-    result = crop(raster, raster, zones_ids=(1, 3))
+    result = crop(raster, raster, zone_ids=(1, 3))
     assert result.shape == _CROP_EXPECTED_SHAPE
     np.testing.assert_array_equal(result.data.compute(), _CROP_EXPECTED)
 
@@ -259,7 +259,7 @@ def test_crop_dask_lazy():
     raster = xr.DataArray(
         da.from_array(_CROP_ARR, chunks=(3, 2)), dims=['y', 'x'],
     )
-    result = crop(raster, raster, zones_ids=(1, 3))
+    result = crop(raster, raster, zone_ids=(1, 3))
     assert isinstance(result.data, da.Array)
 
 
@@ -268,7 +268,7 @@ def test_crop_cupy():
     import cupy
 
     raster = xr.DataArray(cupy.asarray(_CROP_ARR), dims=['y', 'x'])
-    result = crop(raster, raster, zones_ids=(1, 3))
+    result = crop(raster, raster, zone_ids=(1, 3))
     assert result.shape == _CROP_EXPECTED_SHAPE
     np.testing.assert_array_equal(result.data.get(), _CROP_EXPECTED)
 
@@ -281,7 +281,7 @@ def test_crop_dask_cupy():
 
     gpu = cupy.asarray(_CROP_ARR)
     raster = xr.DataArray(da.from_array(gpu, chunks=(3, 2)), dims=['y', 'x'])
-    result = crop(raster, raster, zones_ids=(1, 3))
+    result = crop(raster, raster, zone_ids=(1, 3))
     assert result.shape == _CROP_EXPECTED_SHAPE
     computed = result.data.compute()
     assert isinstance(computed, cupy.ndarray)

@@ -1673,7 +1673,7 @@ def test_crop():
                     [0, 0, 0, 0]], dtype=np.int64)
 
     raster = create_test_arr(arr)
-    result = crop(raster, raster, zones_ids=(1, 3))
+    result = crop(raster, raster, zone_ids=(1, 3))
     assert result.shape == (4, 3)
 
     trimmed_arr = np.array([[4, 0, 3],
@@ -1731,10 +1731,105 @@ def test_crop_nothing_to_crop():
                     [0, 0, 0, 0]], dtype=np.int64)
 
     raster = create_test_arr(arr)
-    result = crop(raster, raster, zones_ids=(0,))
+    result = crop(raster, raster, zone_ids=(0,))
     assert result.shape == arr.shape
     compare = arr == result.data
     assert compare.all()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for #2521: crop() should accept the canonical zone_ids
+# kwarg (matching stats() and crosstab()), with zones_ids kept as a
+# deprecated alias.
+# ---------------------------------------------------------------------------
+
+def test_crop_zone_ids_canonical_matches_zones_ids_legacy():
+    """crop(..., zone_ids=...) produces the same result as the legacy alias."""
+    import warnings
+
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    new = crop(raster, raster, zone_ids=(1, 3))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        legacy = crop(raster, raster, zones_ids=(1, 3))
+
+    assert new.shape == legacy.shape
+    assert (new.data == legacy.data).all()
+
+
+def test_crop_zones_ids_emits_deprecation_warning():
+    """Passing zones_ids must emit a DeprecationWarning."""
+    import warnings
+
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        crop(raster, raster, zones_ids=(1, 3))
+
+    dep = [w for w in caught if issubclass(w.category, DeprecationWarning)
+           and "zones_ids" in str(w.message)]
+    assert len(dep) >= 1, (
+        f"Expected a DeprecationWarning mentioning zones_ids, got: "
+        f"{[str(w.message) for w in caught]}"
+    )
+
+
+def test_crop_zone_ids_does_not_warn():
+    """Passing zone_ids (canonical) must not emit a DeprecationWarning."""
+    import warnings
+
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        crop(raster, raster, zone_ids=(1, 3))
+
+    dep = [w for w in caught if issubclass(w.category, DeprecationWarning)
+           and "zones_ids" in str(w.message)]
+    assert dep == [], (
+        f"Expected no DeprecationWarning for zone_ids, got: "
+        f"{[str(w.message) for w in dep]}"
+    )
+
+
+def test_crop_both_aliases_raises():
+    """Passing both zone_ids and zones_ids must raise TypeError."""
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with pytest.raises(TypeError, match="zone_ids.*zones_ids|zones_ids.*zone_ids"):
+        crop(raster, raster, zone_ids=(1,), zones_ids=(3,))
+
+
+def test_crop_missing_zone_ids_raises():
+    """crop() with neither zone_ids nor zones_ids must raise TypeError."""
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with pytest.raises(TypeError, match="zone_ids"):
+        crop(raster, raster)
 
 
 # ---------------------------------------------------------------------------
@@ -1925,8 +2020,8 @@ class TestVectorZones:
 
     def test_crop_gdf(self):
         values, gdf, zones_raster = self._zones_raster_and_gdf()
-        expected = crop(zones_raster, values, zones_ids=[1.0])
-        result = crop(gdf, values, zones_ids=[1.0], column='zone_id')
+        expected = crop(zones_raster, values, zone_ids=[1.0])
+        result = crop(gdf, values, zone_ids=[1.0], column='zone_id')
         xr.testing.assert_identical(result, expected)
 
     # -- rasterize_kw forwarding --
