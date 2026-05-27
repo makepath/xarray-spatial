@@ -1688,7 +1688,10 @@ def _apply_dask_numpy(zones_data, values_data, func, nodata):
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=np.array(()),
             ))
-        return da.stack(layers, axis=2)
+        stacked = da.stack(layers, axis=2)
+        # da.stack produces unit chunks along the new axis; merge back
+        # to the input chunking so downstream ops see the same shape.
+        return stacked.rechunk({2: values_data.chunks[2]})
 
 
 def _apply_dask_cupy(zones_data, values_data, func, nodata):
@@ -1728,7 +1731,10 @@ def _apply_dask_cupy(zones_data, values_data, func, nodata):
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=cupy.array(()),
             ))
-        return da.stack(layers, axis=2)
+        stacked = da.stack(layers, axis=2)
+        # da.stack produces unit chunks along the new axis; merge back
+        # to the input chunking so downstream ops see the same shape.
+        return stacked.rechunk({2: values_data.chunks[2]})
 
 
 def apply(
