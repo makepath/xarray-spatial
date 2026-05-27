@@ -1538,14 +1538,24 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
 
 
 def _hi_dask_cupy(zones_data, values_data, nodata):
-    """Dask+cupy backend: convert chunks to numpy, delegate."""
+    """Dask+cupy backend: convert chunks to numpy, delegate, then re-wrap as cupy.
+
+    The per-zone HI lookup table is a Python dict so the reduce step has to
+    pass through host memory. The painted output is wrapped back as cupy
+    chunks so the returned dask graph yields cupy arrays — keeping the
+    backend consistent with the dask+cupy input (issue #2525).
+    """
     zones_cpu = zones_data.map_blocks(
         lambda x: x.get(), dtype=zones_data.dtype, meta=np.array(()),
     )
     values_cpu = values_data.map_blocks(
         lambda x: x.get(), dtype=values_data.dtype, meta=np.array(()),
     )
-    return _hi_dask_numpy(zones_cpu, values_cpu, nodata)
+    result_cpu = _hi_dask_numpy(zones_cpu, values_cpu, nodata)
+    # Re-wrap each numpy chunk as cupy so dispatch downstream stays on GPU.
+    return result_cpu.map_blocks(
+        cupy.asarray, dtype=result_cpu.dtype, meta=cupy.array(()),
+    )
 
 
 def hypsometric_integral(

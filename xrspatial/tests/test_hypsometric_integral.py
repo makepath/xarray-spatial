@@ -254,3 +254,66 @@ def test_hypsometric_integral_list_of_pairs_zones():
     result = hypsometric_integral(zones_pairs, values, nodata=0)
     assert isinstance(result, xr.DataArray)
     assert result.shape == values.shape
+
+
+# --- backend-consistency regression (#2525) ---------------------------------
+
+def _has_cuda_and_cupy():
+    try:
+        from numba import cuda
+        import cupy  # noqa: F401
+        return cuda.is_available()
+    except Exception:
+        return False
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_hi_preserves_backend_2525(backend):
+    """Regression: output backend must match input backend.
+
+    Before the fix, `_hi_dask_cupy` converted chunks to numpy and called
+    `_hi_dask_numpy`, returning a dask+numpy array even when the input was
+    dask+cupy. Downstream dispatch via ArrayTypeFunctionMapping then routed
+    through the numpy path silently. See issue #2525.
+    """
+    if 'cupy' in backend and not _has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    from xrspatial.zonal import hypsometric_integral
+    from xrspatial.utils import (
+        is_cupy_array, is_dask_cupy, has_dask_array,
+    )
+
+    zones_np = np.array([[1, 1, 2, 2],
+                         [1, 1, 2, 2]], dtype=np.int32)
+    values_np = np.array([[10.0, 20.0, 30.0, 40.0],
+                          [15.0, 25.0, 35.0, 45.0]])
+
+    zones = create_test_raster(zones_np, backend, dims=['y', 'x'],
+                               chunks=(2, 2))
+    values = create_test_raster(values_np, backend, dims=['y', 'x'],
+                                chunks=(2, 2))
+
+    result = hypsometric_integral(zones, values)
+    assert isinstance(result, xr.DataArray)
+    assert result.shape == values.shape
+
+    if backend == 'numpy':
+        assert isinstance(result.data, np.ndarray)
+    elif backend == 'cupy':
+        assert is_cupy_array(result.data)
+    elif backend == 'dask+numpy':
+        assert has_dask_array() and isinstance(result.data, da.Array)
+        assert not is_dask_cupy(result)
+        # confirm chunks are numpy
+        sample = result.data.blocks[0, 0].compute()
+        assert isinstance(sample, np.ndarray)
+    elif backend == 'dask+cupy':
+        assert is_dask_cupy(result), (
+            "dask+cupy input must produce dask+cupy output (#2525)"
+        )
+        # confirm chunks are cupy
+        sample = result.data.blocks[0, 0].compute()
+        assert is_cupy_array(sample)
