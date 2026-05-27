@@ -3481,10 +3481,11 @@ class TestDaskCupyDtypeParity:
         data = np.arange(64, dtype=np.int8).reshape(8, 8)
         raster = self._make_dask_cupy_raster(data, nodata=-1)
         result = reproject(raster, 'EPSG:4326', resolution=1.0)
-        # The fast path returns an eager cupy array, not a dask array.
-        # Confirm the underlying dtype matches int8 on the lazy meta
-        # (when present) and on the materialised result.
+        # The fast path returns an eager cupy array, not a dask array,
+        # so result.dtype and result.data.dtype are the same object.
+        # Assert both for full symmetry with TestDaskDtypeParity.
         assert result.dtype == np.int8
+        assert result.data.dtype == np.int8
 
     def test_dask_cupy_reproject_int16_preserves_dtype(self):
         from xrspatial.reproject import reproject
@@ -3492,6 +3493,7 @@ class TestDaskCupyDtypeParity:
         raster = self._make_dask_cupy_raster(data, nodata=-32768)
         result = reproject(raster, 'EPSG:4326', resolution=1.0)
         assert result.dtype == np.int16
+        assert result.data.dtype == np.int16
 
     def test_dask_cupy_reproject_uint16_preserves_dtype(self):
         from xrspatial.reproject import reproject
@@ -3499,6 +3501,7 @@ class TestDaskCupyDtypeParity:
         raster = self._make_dask_cupy_raster(data, nodata=0)
         result = reproject(raster, 'EPSG:4326', resolution=1.0)
         assert result.dtype == np.uint16
+        assert result.data.dtype == np.uint16
 
     def test_dask_cupy_reproject_uint8_preserves_dtype(self):
         from xrspatial.reproject import reproject
@@ -3506,6 +3509,7 @@ class TestDaskCupyDtypeParity:
         raster = self._make_dask_cupy_raster(data, nodata=255)
         result = reproject(raster, 'EPSG:4326', resolution=1.0)
         assert result.dtype == np.uint8
+        assert result.data.dtype == np.uint8
 
     def test_dask_cupy_reproject_float32_stays_float64(self):
         """Float input still upcasts to float64 -- matches the numpy /
@@ -3515,6 +3519,7 @@ class TestDaskCupyDtypeParity:
         raster = self._make_dask_cupy_raster(data, nodata=np.nan)
         result = reproject(raster, 'EPSG:4326', resolution=1.0)
         assert result.dtype == np.float64
+        assert result.data.dtype == np.float64
 
     def test_dask_cupy_reproject_int16_matches_dask_numpy_dtype(self):
         """Cross-backend parity: dask+cupy and dask+numpy must agree on
