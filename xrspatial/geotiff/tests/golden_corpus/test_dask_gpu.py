@@ -1,6 +1,6 @@
-"""Dask+GPU backend cells against the golden-corpus oracle (issue #1930).
+"""Dask+GPU backend cells against the golden-corpus oracle.
 
-Phase 3 PR 4 of the corpus plan. Reads each fixture through
+Reads each fixture through
 ``open_geotiff(str(path), gpu=True, chunks=32, on_gpu_failure='strict')``,
 returning a dask-of-cupy DataArray. The oracle pulls pixels via
 ``.compute()`` then ``.get()`` so the comparison machinery is unchanged.
@@ -50,9 +50,9 @@ from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # 
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 # Golden-corpus fixtures span every codec/tier, including the
-# experimental and internal-only ones gated by epic #2340 PR 4. Opting
-# in here lets the parity check exercise the full corpus; the per-codec
-# release-contract tests pin the rejection shape separately.
+# experimental and internal-only ones. Opting in here lets the parity
+# check exercise the full corpus; the per-codec release-contract tests
+# pin the rejection shape separately.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 
 FIXTURES_DIR = (
@@ -63,8 +63,8 @@ CHUNK_SIZE = 32
 
 
 # Integer-nodata masking used to live here too; the oracle's
-# _normalise_for_masked_nodata helper (#2046) closes that gap so it is
-# no longer xfailed on any backend. The multi-band axis-order gap for
+# _normalise_for_masked_nodata helper closes that gap so it is no longer
+# xfailed on any backend. The multi-band axis-order gap for
 # the JPEG-YCbCr fixture is also closed on the eager / dask paths
 # (see ``_normalise_axis_order`` in ``_oracle.py``); on the dask+GPU
 # pipeline the decode error wins first so the JPEG fixture lives in

@@ -103,9 +103,9 @@ def _make_da_uint8(x_coords, y_coords):
 # Section 1 -- coords_from_pixel_geometry / coords_from_geo_info helpers
 # ===========================================================================
 #
-# Issue #1813: the shared helpers extracted from ``__init__.py``. Each
-# backend's read path now calls these instead of keeping its own inline
-# copy of the GeoTransform-to-(y, x) maths.
+# The shared helpers extracted from ``__init__.py``. Each backend's read
+# path calls these instead of keeping its own inline copy of the
+# GeoTransform-to-(y, x) maths.
 
 
 class TestCoordsFromPixelGeometry:
@@ -288,9 +288,9 @@ class TestCoordsFromGeoInfo:
 # Section 2 -- Multi-tiepoint consistency in _extract_transform
 # ===========================================================================
 #
-# Issue #2117: a ModelTiepointTag may carry one or many (I, J, K, X, Y, Z)
-# tuples. The reader used to slice only tiepoint[0:6] and silently drop
-# the rest, which produced wrong coordinates on GCP-warped files.
+# A ModelTiepointTag may carry one or many (I, J, K, X, Y, Z) tuples.
+# Slicing only tiepoint[0:6] silently drops the rest, which produces
+# wrong coordinates on GCP-warped files.
 
 
 # A simple axis-aligned affine: origin (100, 200), pixel size 10 in both axes.
@@ -451,9 +451,9 @@ class TestMultiTiepointValidation:
 # Section 3 -- Zero-denominator RATIONAL / SRATIONAL rejection
 # ===========================================================================
 #
-# Issue #2313: a RATIONAL or SRATIONAL tag with a zero denominator is
-# malformed by the TIFF spec. The reader used to coerce it to 0.0
-# silently; it now raises ValueError naming the tag and value.
+# A RATIONAL or SRATIONAL tag with a zero denominator is malformed by the
+# TIFF spec. Rather than coerce it to 0.0 silently, the reader raises
+# ValueError naming the tag and value.
 
 
 def _build_tiff_with_malformed_resolution(numerator: int, denominator: int,
@@ -548,7 +548,7 @@ def _build_tiff_with_malformed_resolution(numerator: int, denominator: int,
 
 
 class TestRationalZeroDenominator:
-    """Zero-denominator rationals must fail loudly (#2313)."""
+    """Zero-denominator rationals must fail loudly."""
 
     def test_rational_zero_denominator_surfaces_from_parse_all_ifds(self):
         data = _build_tiff_with_malformed_resolution(72, 0)
@@ -600,10 +600,9 @@ class TestRationalZeroDenominator:
 # Section 4 -- Descending / ascending coord round trip
 # ===========================================================================
 #
-# Issue #1716 (already consolidated): the writer emits
-# ModelTransformationTag (34264) when the axis direction is non-standard.
-# The reader has to rebuild the original direction from that tag, so the
-# round trip checks both halves at once.
+# The writer emits ModelTransformationTag (34264) when the axis direction
+# is non-standard. The reader has to rebuild the original direction from
+# that tag, so the round trip checks both halves at once.
 
 
 class TestDescendingCoordsRoundTrip:
@@ -704,14 +703,14 @@ class TestOrientationTagSelection:
 # Section 5 -- _coords_to_transform writer-side validation
 # ===========================================================================
 #
-# Issue #1720: regularity check on 1D coords.
-# Issue #1643: 3D (y, x, band) / (band, y, x) layout handling.
-# Issue #2215: alias-aware NonUniformCoordsError on every documented
-# spatial alias (y/x, lat/lon, latitude/longitude, row/col).
+# Regularity check on 1D coords.
+# 3D (y, x, band) / (band, y, x) layout handling.
+# Alias-aware NonUniformCoordsError on every documented spatial alias
+# (y/x, lat/lon, latitude/longitude, row/col).
 
 
 class TestCoordsToTransformRegularity:
-    """1D coord uniformity check (#1720)."""
+    """1D coord uniformity check."""
 
     def test_uniform_coords_ok(self):
         """Uniform coords write successfully (no regression)."""
@@ -811,7 +810,7 @@ def _make_geo_da_3d(dims):
 
 
 class TestCoordsToTransform3D:
-    """3D (y, x, band) and (band, y, x) layouts pick y/x spacing (#1643)."""
+    """3D (y, x, band) and (band, y, x) layouts pick y/x spacing."""
 
     def test_yxband_returns_yx_spacing(self):
         """3D (y, x, band) picks y/x spacing rather than (x, band) spacing."""
@@ -991,7 +990,7 @@ _ALIAS_PAIRS = [
 
 
 class TestNonUniformCoordsAliasResolution:
-    """``_resolve_spatial_coords`` picks the right coord arrays (#2215)."""
+    """``_resolve_spatial_coords`` picks the right coord arrays."""
 
     @pytest.mark.parametrize('y_name,x_name', _ALIAS_PAIRS)
     def test_resolve_spatial_coords_finds_alias(self, y_name, x_name):
@@ -1008,8 +1007,7 @@ class TestNonUniformCoordsAliasResolution:
 
         The alias list places ``y`` / ``x`` first so an array that
         happens to carry both names (rare, but possible after a rename
-        + retain) keeps matching exactly the coord it matched before
-        issue #2215.
+        + retain) keeps matching exactly the canonical coord.
         """
         data = np.zeros((4, 4), dtype=np.float32)
         y_arr = np.linspace(3.0, 0.0, 4, dtype=np.float64)
@@ -1040,7 +1038,7 @@ class TestNonUniformCoordsAliasResolution:
 
 class TestNonUniformCoordsAlias:
     """Non-uniform alias coords raise NonUniformCoordsError, not plain
-    ``ValueError`` (#2215)."""
+    ``ValueError``."""
 
     @pytest.mark.parametrize('y_name,x_name', _ALIAS_PAIRS)
     def test_non_uniform_y_alias_raises_typed(self, tmp_path, y_name, x_name):
@@ -1137,14 +1135,15 @@ class TestNonUniformCoordsAlias:
 # Section 6 -- Integer-coord round trip and the _NO_GEOREF_KEY marker
 # ===========================================================================
 #
-# Issue #2087 + #2120 + #2133: user-authored integer spatial coords must
-# not silently drop georef. Pre-#2120 the writer treated any int64
-# ascending step-1 grid as the no-georef placeholder; the marker-based
-# predicate ``_has_no_georef_marker`` replaced shape-based sniffing.
+# User-authored integer spatial coords must not silently drop georef.
+# Treating any int64 ascending step-1 grid as the no-georef placeholder
+# is wrong; the marker-based predicate ``_has_no_georef_marker`` replaces
+# shape-based sniffing.
 #
-# Issue #1962: hotfix for the integer-coord round-trip interaction with
-# the ``require_transform_for_georeferenced`` guard. Only runs under the
-# integration marker because the legacy hotfix wrote to the OS temp dir.
+# The integration-marked test covers the integer-coord round-trip
+# interaction with the ``require_transform_for_georeferenced`` guard. It
+# only runs under the integration marker because it writes to the OS temp
+# dir.
 
 
 def _arange_int64_shape(coord: np.ndarray) -> bool:
@@ -1169,7 +1168,7 @@ def _arange_int64_shape(coord: np.ndarray) -> bool:
 
 class TestNoGeorefMarkerPredicate:
     """``_has_no_georef_marker`` is an identity-True check on the
-    attribute, not a coord-shape heuristic (#2120, #2133)."""
+    attribute, not a coord-shape heuristic."""
 
     @pytest.mark.parametrize(
         "attrs,expected",
@@ -1222,7 +1221,7 @@ class TestNoGeorefMarkerPredicate:
 
 
 class TestIntCoordRoundTrip:
-    """User-authored integer-coord grids keep their georef (#2087)."""
+    """User-authored integer-coord grids keep their georef."""
 
     def test_user_authored_int_grid_writes_real_transform(self, tmp_path):
         # User-authored projected grid with integer-spaced coords. ``y``
@@ -1253,14 +1252,13 @@ class TestIntCoordRoundTrip:
 
     def test_both_axes_ascending_int64_step1_writes_real_transform(self,
                                                                    tmp_path):
-        # Pre-#2120 the writer treated any int64 ascending step-1 grid
-        # as the no-georef placeholder (because the reader emits coords
-        # of that shape) and silently stripped the georef. That trade-
-        # off bit real users whose projected grids happened to start at
-        # integer offsets like ``x=[500, 501, 502], y=[1000, 1001]``.
-        # Issue #2120 moved the placeholder signal to
-        # ``attrs[_NO_GEOREF_KEY]`` so the writer no longer guesses
-        # from coord shape alone.
+        # Treating any int64 ascending step-1 grid as the no-georef
+        # placeholder (because the reader emits coords of that shape) and
+        # silently stripping georef bites real users whose projected grids
+        # happen to start at integer offsets like ``x=[500, 501, 502],
+        # y=[1000, 1001]``. The placeholder signal lives in
+        # ``attrs[_NO_GEOREF_KEY]`` so the writer does not guess from coord
+        # shape alone.
         da = xr.DataArray(
             np.zeros((3, 3), dtype=np.float32),
             coords={
@@ -1301,14 +1299,12 @@ class TestIntCoordRoundTrip:
                                       [100.0, 101.0, 102.0])
 
     def test_non_uniform_int_coords_raise(self, tmp_path):
-        # Non-uniform integer spacing under the old sentinel silently
-        # stripped georef. The pre-#2133 fallback caught this via the
-        # lower-level ``coords_to_transform`` ("not uniformly spaced"
-        # message). Post-#2133, the write-metadata validator catches it
-        # first with a different message because the integer-dtype
-        # exemption has been replaced with a marker-based one. Either
-        # message satisfies the contract: a non-uniform write must
-        # raise rather than silently misrepresent the grid.
+        # Non-uniform integer spacing must not silently strip georef. The
+        # write-metadata validator catches it (the integer-dtype exemption
+        # was replaced with a marker-based one); the lower-level
+        # ``coords_to_transform`` ("not uniformly spaced") check is a
+        # backstop. Either message satisfies the contract: a non-uniform
+        # write must raise rather than silently misrepresent the grid.
         da = xr.DataArray(
             np.zeros((3, 3), dtype=np.float32),
             coords={
@@ -1347,10 +1343,9 @@ class TestIntCoordRoundTrip:
         # the reader stamps ``attrs[_NO_GEOREF_KEY] = True`` together
         # with the int64 ``np.arange``-shaped coords, and the writer
         # carries the marker forward so the next ``to_geotiff`` does
-        # not invent a transform. Issue #2120 made the marker the only
-        # signal -- a user constructing the same coord arrays from
-        # scratch without the marker now writes a real unit transform
-        # instead (see
+        # not invent a transform. The marker is the only signal -- a user
+        # constructing the same coord arrays from scratch without the
+        # marker writes a real unit transform instead (see
         # ``test_both_axes_ascending_int64_step1_writes_real_transform``).
         src = xr.DataArray(
             np.zeros((4, 4), dtype=np.float32),
@@ -1405,16 +1400,15 @@ class TestIntCoordRoundTrip:
 
 @requires_integration
 class TestIntCoordRoundTripIntegration:
-    """Integration coverage of the int-coord hotfix (#1962).
+    """Integration coverage of the int-coord round trip.
 
-    PR #1953 added ``require_transform_for_georeferenced`` which raises
-    when both spatial dims are present in ``da.coords`` and no transform
-    was resolved. PR #1954 made ``coords_to_transform`` return ``None``
-    for integer-dtype x/y coords as a no-georef sentinel (#1949). Their
-    interaction broke every writer call against an int-coord DataArray:
-    the resolver returned ``None``, then the guard raised. The
-    integration cases below write to the OS temp dir and only run when
-    ``XRSPATIAL_RUN_INTEGRATION=1``.
+    ``require_transform_for_georeferenced`` raises when both spatial dims
+    are present in ``da.coords`` and no transform was resolved.
+    ``coords_to_transform`` returns ``None`` for integer-dtype x/y coords
+    as a no-georef sentinel. Their interaction once broke every writer
+    call against an int-coord DataArray: the resolver returned ``None``,
+    then the guard raised. The integration cases below write to the OS
+    temp dir and only run when ``XRSPATIAL_RUN_INTEGRATION=1``.
     """
 
     def _tmp_path(self, name):

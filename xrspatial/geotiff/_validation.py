@@ -7,17 +7,13 @@ Pure leaves over numpy dtypes and Python primitives. Called from
 layouts, tile-size multiples of 16, etc.) stay in lockstep across
 every backend.
 
-Extracted in step 4 of issue #1813.
-
-Ambiguous-metadata hooks (issue #1987)
---------------------------------------
+Ambiguous-metadata hooks
+------------------------
 ``validate_read_metadata`` and ``validate_write_metadata`` are
-plug-points for the per-case checks listed in #1987 (unparseable CRS,
-rotated transforms, non-uniform coords, mixed band metadata, conflicting
-crs/crs_wkt, conflicting nodata aliases). PR 0 lands the hook
-signatures and a registry; each follow-up PR registers its check.
-The hooks are no-ops until at least one check is registered, so
-behaviour does not change until a per-case PR opts in.
+plug-points for per-case checks (unparseable CRS, rotated transforms,
+non-uniform coords, mixed band metadata, conflicting crs/crs_wkt,
+conflicting nodata aliases). The hooks are no-ops until at least one
+check is registered.
 """
 from __future__ import annotations
 
@@ -39,13 +35,13 @@ def _is_temporal_dim_name(name) -> bool:
     Compared case-insensitively against ``_TIME_DIM_NAMES`` so that
     CF-style ``'TIME'`` / ``'Time'`` reach the friendly temporal error
     in the 3D writer validator instead of slipping through the
-    ``(y, x, *)`` band-position fallback (#1972).
+    ``(y, x, *)`` band-position fallback.
     """
     return isinstance(name, str) and name.lower() in _TIME_DIM_NAMES
 
 
 def _validate_3d_writer_dims(dims) -> None:
-    """Reject ambiguous 3D writer inputs (issues #1812, #1972, #2240).
+    """Reject ambiguous 3D writer inputs.
 
     The writer interprets a 3D DataArray as either ``(band, y, x)`` or
     ``(y, x, band)``. ``data.dims[0] in _BAND_DIM_NAMES`` decides which
@@ -55,7 +51,7 @@ def _validate_3d_writer_dims(dims) -> None:
     axis values laid out along ``y`` (silent data corruption -- on
     read-back the array round-tripped with a swapped shape).
 
-    DataArray dim contract (tightened in #2240): the trailing axis of a
+    DataArray dim contract: the trailing axis of a
     ``(y, x, *)`` layout must be a recognized band alias
     (``_BAND_DIM_NAMES``). Previously the validator silently accepted
     any unknown trailing name (e.g. ``('y', 'x', 'z')``,
@@ -83,12 +79,12 @@ def _validate_3d_writer_dims(dims) -> None:
     if band_layout or yxb_layout:
         return
     # ``(y, x, *)`` with a non-band trailing dim. Temporal names get a
-    # dedicated friendly message (issue #1972); every other non-band
-    # trailing name (``z``, ``level``, ``scenario``, ``foo``, ...) is
-    # rejected with the dedicated ``"non-band trailing dim"`` message
-    # immediately below. Issue #2240 closes the escape hatch that
-    # previously let unknown trailing names through the band-position
-    # fallback. The generic ``"ambiguous dims"`` message at the bottom
+    # dedicated friendly message; every other non-band trailing name
+    # (``z``, ``level``, ``scenario``, ``foo``, ...) is rejected with
+    # the dedicated ``"non-band trailing dim"`` message immediately
+    # below, closing the escape hatch that previously let unknown
+    # trailing names through the band-position fallback. The generic
+    # ``"ambiguous dims"`` message at the bottom
     # of the function only fires for layouts that are neither
     # ``(y, x, *)`` nor ``(_TIME_, y, x)`` (e.g. ``('foo', 'y', 'x')``).
     if d0 in _Y_DIM_NAMES and d1 in _X_DIM_NAMES:
@@ -116,7 +112,7 @@ def _validate_3d_writer_dims(dims) -> None:
     # Symmetrise the friendly temporal message for the leading-dim case
     # ``(time, y, x)``. The generic ``ambiguous dims`` error below
     # already rejects this layout, but the temporal-specific message
-    # tells the caller exactly how to fix it (#1972).
+    # tells the caller exactly how to fix it.
     if _is_temporal_dim_name(d0) and d1 in _Y_DIM_NAMES and d2 in _X_DIM_NAMES:
         raise ValueError(
             f"3D writer input has temporal leading dim {d0!r} in dims "
@@ -142,7 +138,7 @@ def _validate_3d_writer_dims(dims) -> None:
 
 def _validate_writer_spatial_shape(shape, dims=None,
                                    entry_point: str = "to_geotiff") -> None:
-    """Reject empty spatial shapes at the writer entry point (issue #2075).
+    """Reject empty spatial shapes at the writer entry point.
 
     Clip and window pipelines can produce empty rasters. The eager and
     streaming writers used to accept those inputs, write a TIFF whose
@@ -161,7 +157,7 @@ def _validate_writer_spatial_shape(shape, dims=None,
     direct callers of ``write`` / ``write_streaming`` / ``write_geotiff_gpu``
     see the function they actually invoked.
 
-    Also rejects 3D inputs whose band/sample axis is zero (issue #2095).
+    Also rejects 3D inputs whose band/sample axis is zero.
     Without the band check, a DataArray of shape ``(0, y, x)`` band-first
     or ``(y, x, 0)`` band-last passed every spatial guard and reached
     the IFD assembly with ``samples_per_pixel == 0``. The resulting TIFF
@@ -169,7 +165,7 @@ def _validate_writer_spatial_shape(shape, dims=None,
     collapse of the band axis.
 
     Note that this validator runs before ``_validate_3d_writer_dims``
-    (#1812 / #1972 / #2240) in ``to_geotiff``. For an ambiguous-dim
+    in ``to_geotiff``. For an ambiguous-dim
     input like ``(5, 5, 0)`` with dims ``('y', 'x', 'time')``, the
     band-last branch sees ``bands == 0`` and the "no bands" error wins
     over the friendlier ambiguous-dim message. Both errors name the
@@ -292,8 +288,8 @@ def _validate_chunks_arg(chunks, *, allow_none=False):
     check. Returns the coerced int when given an ``np.integer`` scalar
     so downstream ``isinstance(chunks, int)`` checks stay accurate.
 
-    Mirrors the chunks-validation #1752 added to ``read_geotiff_dask``;
-    extends it to the GPU read and VRT read entry points per #1776.
+    Mirrors the chunks-validation in ``read_geotiff_dask``; extends it
+    to the GPU read and VRT read entry points.
     """
     if chunks is None:
         if allow_none:
@@ -338,7 +334,7 @@ def _validate_tile_size_arg(tile_size):
 
 
 def _validate_overview_level_arg(overview_level) -> None:
-    """Validate the ``overview_level`` kwarg type (issue #2074).
+    """Validate the ``overview_level`` kwarg type.
 
     Accepts ``None`` (default, treated as full resolution) and any
     ``int`` / ``numpy.integer`` instance. ``bool`` is rejected
@@ -377,28 +373,28 @@ def _validate_dispatch_kwargs(
     """Validate dispatcher-level kwargs across the GeoTIFF read entry points.
 
     Holds the kwarg-rejection rules that ``open_geotiff`` used to run
-    inline at ``__init__.py:508-584`` so the three direct backends
-    (``read_geotiff_dask``, ``read_geotiff_gpu``, ``read_vrt``) get the
-    same validation when called directly. Before this helper, a caller
-    who passed ``max_cloud_bytes`` straight to ``read_geotiff_dask`` (or
+    inline so the three direct backends (``read_geotiff_dask``,
+    ``read_geotiff_gpu``, ``read_vrt``) get the same validation when
+    called directly. Before this helper, a caller who passed
+    ``max_cloud_bytes`` straight to ``read_geotiff_dask`` (or
     ``band_nodata`` to ``read_geotiff_gpu``) got no error at all because
     the kwarg either silently dropped or raised an unrelated
-    ``TypeError`` from the signature. See issue #2175 (parent #2162).
+    ``TypeError`` from the signature.
 
     Rules enforced:
 
     - ``overview_level`` must be ``None`` or a non-bool int. Delegates to
-      :func:`_validate_overview_level_arg` (issue #2074).
+      :func:`_validate_overview_level_arg`.
     - ``on_gpu_failure`` requires ``gpu=True`` when explicit. The
       CPU/dask branches have no GPU failure policy and would otherwise
-      drop the kwarg silently (issue #1615).
+      drop the kwarg silently.
     - ``missing_sources`` requires a ``.vrt`` source when explicit. The
-      non-VRT branches do not run the VRT mosaic loop (issue #1810).
+      non-VRT branches do not run the VRT mosaic loop.
     - ``band_nodata`` requires a ``.vrt`` source when not ``None``. The
-      fail-closed mixed-band-metadata check is VRT-only (issue #1987).
+      fail-closed mixed-band-metadata check is VRT-only.
     - ``max_cloud_bytes`` is incompatible with ``.vrt``, ``gpu=True``,
       and ``chunks=...`` when explicit. The eager non-VRT non-GPU
-      non-dask branch is the only consumer (issue #1974).
+      non-dask branch is the only consumer.
     - File-like sources reject ``gpu=True`` and ``chunks=...``. The GPU
       and dask paths re-open the source by path from worker tasks.
 
@@ -441,9 +437,9 @@ def _validate_dispatch_kwargs(
     # Local import avoids a circular dependency with ``_reader`` when
     # ``_validation`` is imported at module load time of the geotiff
     # subpackage. The sentinel binding is cheap to look up.
-    # TODO(#2162 follow-up): move ``_MAX_CLOUD_BYTES_SENTINEL`` to
-    # ``_runtime`` alongside the other dispatch sentinels so this local
-    # import can hoist to module scope.
+    # TODO: move ``_MAX_CLOUD_BYTES_SENTINEL`` to ``_runtime`` alongside
+    # the other dispatch sentinels so this local import can hoist to
+    # module scope.
     from ._reader import _MAX_CLOUD_BYTES_SENTINEL
 
     _validate_overview_level_arg(overview_level)
@@ -513,7 +509,7 @@ def _validate_dispatch_kwargs(
 
 
 def _validate_predictor_sample_format(predictor, sample_format) -> None:
-    """Reject ``Predictor=3`` paired with a non-float ``SampleFormat`` (issue #1933).
+    """Reject ``Predictor=3`` paired with a non-float ``SampleFormat``.
 
     TIFF Technical Note 3 defines the floating-point predictor for IEEE
     float samples only. A reader-side input file (malformed, hand-crafted,
@@ -564,12 +560,12 @@ def _validate_predictor_sample_format(predictor, sample_format) -> None:
 
 
 def _validate_nodata_arg(nodata) -> None:
-    """Reject non-numeric ``nodata=`` at the writer entry point (#1973).
+    """Reject non-numeric ``nodata=`` at the writer entry point.
 
     ``None`` (no sentinel) passes through. ``bool`` is rejected with
     ``TypeError`` so all three writer entry points (eager, GPU, VRT)
     refuse ``nodata=True`` / ``nodata=False`` the same way the eager
-    path already does for issue #1911 -- ``float(True) == 1.0`` would
+    path already does -- ``float(True) == 1.0`` would
     otherwise slip a bool past the numeric branch on the GPU/VRT paths
     that do not have their own bool guard. Anything else is run
     through ``float()``: success means the writer's downstream
@@ -607,7 +603,7 @@ def _validate_int_nodata_for_dtype(
     Mirrors the masking-time gate in ``_nodata._sentinel_fits_dtype``: a
     NaN / Inf / fractional ``GDAL_NODATA`` value cannot match any pixel
     in an integer buffer, so the reader cannot honour the sentinel. The
-    legacy behaviour (#1774) parsed the value into ``attrs['nodata']``
+    legacy behaviour parsed the value into ``attrs['nodata']``
     and silently skipped the masking step. The release contract upgrades
     that silent no-op to a typed rejection so downstream code does not
     quietly see the raw sentinel value in the buffer instead of NaN.
@@ -677,8 +673,8 @@ def _validate_stable_only_vrt(
     """Reject a VRT source when the caller asks for stable-only sources.
 
     Implements the read-side gate the release-contract test
-    ``test_release_gate_negative_mixed_tier_vrt_children`` pins from
-    epic #2342. The ``reader.vrt`` entry point sits at the ``advanced``
+    ``test_release_gate_negative_mixed_tier_vrt_children`` pins. The
+    ``reader.vrt`` entry point sits at the ``advanced``
     tier in :data:`xrspatial.geotiff.SUPPORTED_FEATURES`, and VRT child
     sources can declare any codec / capability the underlying GeoTIFF
     reader supports (including the ``experimental`` and ``internal_only``
@@ -717,7 +713,7 @@ def _validate_stable_only_vrt(
         (case-insensitive) and the caller did not pass
         ``allow_experimental_codecs=True``. The message names the
         offending VRT path, both flags, and cites the release-contract
-        document plus epic #2342.
+        document.
     """
     if not stable_only:
         return
@@ -750,11 +746,11 @@ def _validate_no_rotated_affine(attrs, *, drop_rotation: bool,
     """Refuse writes that would silently drop ``attrs['rotated_affine']``.
 
     The reader exposes the rotated 6-tuple on ``attrs['rotated_affine']``
-    when called with ``allow_rotated=True`` (issue #2129). The writer
-    does not emit a ``ModelTransformationTag`` (tracked in #2115), so a
-    read-then-write round-trip used to silently drop the rotation and
-    write an identity-affine output (issue #2216). Refuse the write by
-    default so the loss is impossible without an explicit opt-in.
+    when called with ``allow_rotated=True``. The writer does not emit a
+    ``ModelTransformationTag``, so a read-then-write round-trip used to
+    silently drop the rotation and write an identity-affine output.
+    Refuse the write by default so the loss is impossible without an
+    explicit opt-in.
 
     Parameters
     ----------
@@ -794,9 +790,9 @@ def _validate_no_rotated_affine(attrs, *, drop_rotation: bool,
 
 
 # ---------------------------------------------------------------------------
-# Ambiguous-metadata hooks (issue #1987 PR 0)
+# Ambiguous-metadata hooks
 #
-# Each per-case PR (#1987 PRs 2-7) registers a check via
+# Per-case checks register via
 # ``register_read_metadata_check`` / ``register_write_metadata_check``.
 # The hooks below iterate the registered checks in registration order.
 # A check raises one of the ``_errors.GeoTIFFAmbiguousMetadataError``
@@ -816,7 +812,7 @@ _WRITE_METADATA_CHECKS: list[_WriteCheck] = []
 
 
 def register_read_metadata_check(check: _ReadCheck) -> _ReadCheck:
-    """Register a read-side ambiguous-metadata check (issue #1987).
+    """Register a read-side ambiguous-metadata check.
 
     Returns ``check`` so the call can be used as a decorator. Idempotent:
     re-registering the same callable is a no-op.
@@ -827,7 +823,7 @@ def register_read_metadata_check(check: _ReadCheck) -> _ReadCheck:
 
 
 def register_write_metadata_check(check: _WriteCheck) -> _WriteCheck:
-    """Register a write-side ambiguous-metadata check (issue #1987)."""
+    """Register a write-side ambiguous-metadata check."""
     if check not in _WRITE_METADATA_CHECKS:
         _WRITE_METADATA_CHECKS.append(check)
     return check
@@ -864,14 +860,14 @@ def _registered_write_metadata_checks() -> Iterable[_WriteCheck]:
 
 
 def validate_read_metadata(context: Mapping[str, Any] | None = None) -> None:
-    """Run all registered read-side ambiguous-metadata checks (issue #1987).
+    """Run all registered read-side ambiguous-metadata checks.
 
     Parameters
     ----------
     context : mapping, optional
-        Keys consumed by the registered checks. The PR-0 hook does not
-        prescribe a schema; each per-case PR documents the keys it
-        reads (e.g. ``'crs_wkt'``, ``'transform'``, ``'band_nodata'``).
+        Keys consumed by the registered checks. The hook does not
+        prescribe a schema; each check documents the keys it reads
+        (e.g. ``'crs_wkt'``, ``'transform'``, ``'band_nodata'``).
         A missing key is treated as "nothing to check" by the
         downstream check, not as an error here.
 
@@ -882,8 +878,7 @@ def validate_read_metadata(context: Mapping[str, Any] | None = None) -> None:
 
     Notes
     -----
-    No-op when no checks are registered, so PR 0 does not change
-    behaviour at any entry point.
+    No-op when no checks are registered.
     """
     if not _READ_METADATA_CHECKS:
         return
@@ -898,7 +893,7 @@ def validate_read_metadata(context: Mapping[str, Any] | None = None) -> None:
 
 
 def validate_write_metadata(context: Mapping[str, Any] | None = None) -> None:
-    """Run all registered write-side ambiguous-metadata checks (issue #1987).
+    """Run all registered write-side ambiguous-metadata checks.
 
     Mirror of ``validate_read_metadata`` for ``to_geotiff`` /
     ``write_geotiff_gpu`` / ``write_vrt``. See that docstring for the
@@ -913,7 +908,7 @@ def validate_write_metadata(context: Mapping[str, Any] | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Conflicting crs / crs_wkt write check (issue #1987 PR 1)
+# Conflicting crs / crs_wkt write check
 # ---------------------------------------------------------------------------
 
 
@@ -935,9 +930,8 @@ def _check_write_conflicting_crs(context: Mapping[str, Any]) -> None:
 
     * ``pyproj`` not installed -> no-op (downstream paths handle the
       missing dependency).
-    * Either attr unparseable -> no-op (a sibling check in this issue's
-      series, :class:`UnparseableCRSError`, will refuse those on its
-      own PR).
+    * Either attr unparseable -> no-op (the
+      :class:`UnparseableCRSError` check refuses those separately).
 
     Context keys consumed:
 
@@ -993,7 +987,7 @@ register_write_metadata_check(_check_write_conflicting_crs)
 
 
 # ---------------------------------------------------------------------------
-# Conflicting nodata aliases write check (issue #1987 PR 7)
+# Conflicting nodata aliases write check
 # ---------------------------------------------------------------------------
 
 
@@ -1084,7 +1078,7 @@ register_write_metadata_check(_check_write_conflicting_nodata)
 
 
 # ---------------------------------------------------------------------------
-# Non-uniform coords write check (issue #1987 PR 4)
+# Non-uniform coords write check
 # ---------------------------------------------------------------------------
 
 
@@ -1101,7 +1095,7 @@ def _check_write_non_uniform_coords(context: Mapping[str, Any]) -> None:
     files without GeoTIFF transform tags) skip the check. Their
     coords are the placeholder pixel-index fallback rather than
     projected positions, so uniformity is meaningless for them.
-    Issue #2120 moved this signal off coord dtype: a user-authored
+    The exemption keys off the marker, not coord dtype: a user-authored
     int-coord grid no longer earns the exemption just by having an
     integer dtype, only by carrying the marker.
 
@@ -1135,8 +1129,7 @@ def _check_write_non_uniform_coords(context: Mapping[str, Any]) -> None:
         diffs = np.diff(arr.astype(np.float64))
         # Use a relative tolerance pegged to the step magnitude so that
         # float32 rounding noise (~1e-7 relative) does not trip the
-        # check. Same tolerance the existing #1720 coord-regularity
-        # check uses.
+        # check. Same tolerance the existing coord-regularity check uses.
         step = float(diffs[0])
         if step == 0.0:
             raise NonUniformCoordsError(
@@ -1163,7 +1156,7 @@ register_write_metadata_check(_check_write_non_uniform_coords)
 
 
 # ---------------------------------------------------------------------------
-# Unparseable CRS read check (issue #1987 PR 2)
+# Unparseable CRS read check
 #
 # The write-side equivalent (refusing to emit an unparseable string to
 # GTCitationGeoKey) is already in place in ``_crs._validate_crs_fallback``
@@ -1225,7 +1218,7 @@ register_read_metadata_check(_check_read_unparseable_crs)
 
 
 # ---------------------------------------------------------------------------
-# Rotated transform read check (issue #1987 PR 3)
+# Rotated transform read check
 # ---------------------------------------------------------------------------
 
 
@@ -1292,7 +1285,7 @@ def _gdal_geotransform_to_affine_tuple(gt) -> tuple | None:
 
 
 # ---------------------------------------------------------------------------
-# Mixed band metadata read check (issue #1987 PR 5)
+# Mixed band metadata read check
 # ---------------------------------------------------------------------------
 
 
@@ -1353,11 +1346,6 @@ def _same_nodata(a: float, b: float) -> bool:
     return a == b
 
 
-# Registered as of issue #1987 PR 5. The check was staged in the
-# preceding bundle (#2031) along with the ``band_nodata=`` VRT kwarg
-# but not registered, because activation needed a coordinated migration
-# of the VRT test sites that read fixtures with disagreeing per-band
-# sentinels. The migration sweep ships alongside this registration.
 # Callers that still want the legacy flatten-to-first-band behaviour
 # pass ``band_nodata='first'`` to ``read_vrt`` / ``open_geotiff`` /
 # ``read_geotiff_dask``; the explicit opt-in surfaces the per-band
@@ -1366,7 +1354,7 @@ register_read_metadata_check(_check_read_mixed_band_metadata)
 
 
 # ---------------------------------------------------------------------------
-# Inconsistent GeoKey read check (issue #2417)
+# Inconsistent GeoKey read check
 # ---------------------------------------------------------------------------
 
 
@@ -1382,7 +1370,7 @@ _GEOKEY_USER_DEFINED = 32767
 
 
 def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
-    """Refuse reads whose GeoKey shape is internally contradictory (#2417).
+    """Refuse reads whose GeoKey shape is internally contradictory.
 
     The legacy reader took ``ProjectedCSTypeGeoKey`` first, fell back to
     ``GeographicTypeGeoKey``, and never cross-checked either against

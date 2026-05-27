@@ -1,13 +1,12 @@
 """Reader dtype handling.
 
-Consolidates:
+Covers:
 
-* ``test_dtype_read.py`` -- ``dtype=`` kwarg on ``open_geotiff`` (eager
-  + dask, float -> float / int -> int casts, float -> int rejection).
-* ``test_float16_read_1941.py`` -- IEEE half-precision auto-promotion to
-  float32 on read (eager + dask).
-* ``test_float16_read_gpu_1941.py`` -- the same float16 promotion on
-  ``read_geotiff_gpu`` and ``open_geotiff(gpu=True)``.
+* The ``dtype=`` kwarg on ``open_geotiff`` (eager + dask, float -> float
+  / int -> int casts, float -> int rejection).
+* IEEE half-precision auto-promotion to float32 on read (eager + dask).
+* The same float16 promotion on ``read_geotiff_gpu`` and
+  ``open_geotiff(gpu=True)``.
 """
 from __future__ import annotations
 

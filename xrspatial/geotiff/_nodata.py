@@ -21,8 +21,6 @@ inversion, dtype cast, NaN-to-sentinel rewrite); this helper owns the
 policy questions so the inline ``if nodata is not None`` branches in
 each backend collapse to a single ``NodataLifecycle(...)`` construction
 plus attribute access.
-
-PR-C of issue #2211 (sub-issue #2226).
 """
 
 from __future__ import annotations
@@ -40,7 +38,7 @@ def _is_finite_integer(value) -> bool:
     restore. Non-finite (NaN/Inf) and fractional sentinels return
     False so the caller skips the mask / restore step entirely.
     Bools are treated as integers by Python's ``float``/``int``; the
-    writer's bool-rejection (issue #1973) already runs upstream.
+    writer's bool-rejection already runs upstream.
     """
     if value is None:
         return False
@@ -292,7 +290,7 @@ class NodataLifecycle:
     def dtype_cast_occurred(self) -> bool:
         """True iff the caller requested an explicit dtype cast on read.
 
-        Used to populate ``attrs['nodata_dtype_cast']`` (#2135). The
+        Used to populate ``attrs['nodata_dtype_cast']``. The
         attr is omitted when False.
         """
         return self.dtype_request is not None
@@ -337,14 +335,14 @@ class NodataLifecycle:
           undefined; the current writer's ``not np.isnan(nodata)``
           gate matches this).
         * ``masked_nodata`` attr explicitly ``False`` -> False
-          (issue #1988: the read path did NOT mask, so any NaN in
-          the buffer was put there by the user for other reasons;
-          rewriting would corrupt their data).
-        * Otherwise True (pre-#1988 default).
+          (the read path did NOT mask, so any NaN in the buffer was
+          put there by the user for other reasons; rewriting would
+          corrupt their data).
+        * Otherwise True (the default).
 
         ``masked_nodata_attr`` is the value read off
         ``attrs['masked_nodata']`` by the caller. ``None`` means the
-        attr was absent (the pre-#1988 default applies). Pass ``False``
+        attr was absent (the default applies). Pass ``False``
         explicitly only when the attr was literal ``False`` -- truthy
         values and absence both collapse to the True default. Callers
         that already collapsed the attr via

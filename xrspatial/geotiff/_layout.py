@@ -11,8 +11,6 @@ The helpers are intentionally free of decode (codec) and transport
 (HTTP / mmap / fsspec) concerns. Decode lives in :mod:`._decode`,
 transport lives in :mod:`._sources`, top-level orchestration lives in
 :mod:`._reader`.
-
-Source: PR-H of the GeoTIFF refactor epic, issue #2247.
 """
 from __future__ import annotations
 
@@ -62,7 +60,7 @@ def _check_source_dimensions(width, height, samples):
     huge unsigned int but can also surface via signed-cast errors)
     would produce an empty array silently. The tiled paths are already
     protected by :func:`validate_tile_layout` in ``_header.py``; this
-    helper closes the same gap for the stripped path. Issue #2053.
+    helper closes the same gap for the stripped path.
     """
     if width <= 0 or height <= 0 or samples <= 0:
         raise ValueError(
@@ -90,7 +88,7 @@ def _sparse_fill_value(ifd: IFD, dtype: np.dtype):
     if nodata_str is not None:
         # Try ``int`` first so 64-bit sentinels survive without the
         # float64 round-trip; fall back to ``float`` for NaN / Inf /
-        # scientific notation / fractional values.  See issue #1847.
+        # scientific notation / fractional values.
         parsed = _parse_nd(nodata_str)
         if parsed is not None:
             if dtype.kind == 'f':
@@ -125,7 +123,7 @@ def _has_sparse(byte_counts) -> bool:
 #: ICC profile or XMP packet. 4 MiB is comfortable for real-world COGs
 #: (the prefetch path already tolerates up to ``MAX_HTTP_HEADER_BYTES``
 #: of header bytes) while still bounding the body away from gigabyte
-#: scale. Issue #2051.
+#: scale.
 _FULL_IMAGE_BUDGET_HEADER_SLACK = 4 * 1024 * 1024
 
 
@@ -145,7 +143,6 @@ def _compute_full_image_byte_budget(offsets, byte_counts) -> int:
 
     If the strip table is missing or empty (sparse-only, malformed),
     fall back to the per-strip safety cap so the read is still bounded.
-    Issue #2051.
     """
     fallback = _max_tile_bytes_from_env() + _FULL_IMAGE_BUDGET_HEADER_SLACK
     if not offsets or not byte_counts:

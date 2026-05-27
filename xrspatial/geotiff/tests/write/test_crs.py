@@ -1,26 +1,15 @@
-"""Consolidated CRS write-side tests (#2439 cluster 15 sub-cluster 2).
+"""CRS write-side tests.
 
-Folds six CRS-write regression files into one module per epic #2424:
+Covers the CRS write paths:
 
-* ``test_conflicting_crs_write_1987.py`` -- conflicting ``attrs['crs']``
-  vs ``attrs['crs_wkt']`` fail-closed.
-* ``test_crs_arg_validation_1971.py`` -- bool / unresolvable EPSG
-  rejection at all writer entry points.
-* ``test_crs_fail_closed_1929.py`` -- citation-only fall-through guard
-  for unparseable CRS strings.
-* ``test_numpy_int_crs_2082.py`` -- numpy integer EPSG round-trip
-  through eager / vrt-tiled / GPU writers.
-* ``test_user_defined_crs_wkt_1632.py`` -- user-defined WKT promotion
-  on read and round-trip.
-* ``test_wkt_only_crs_warning_1768.py`` -- ``UserWarning`` on the
-  WKT-only write path.
+* conflicting ``attrs['crs']`` vs ``attrs['crs_wkt']`` fail-closed.
+* bool / unresolvable EPSG rejection at all writer entry points.
+* citation-only fall-through guard for unparseable CRS strings.
+* numpy integer EPSG round-trip through eager / vrt-tiled / GPU writers.
+* user-defined WKT promotion on read and round-trip.
+* ``UserWarning`` on the WKT-only write path.
 
-``read/test_crs.py`` (from #2390 PR 3) owns the read side. The
-write-side coverage lives here to keep the split clean.
-
-Section headers below match the original file boundaries. Helpers are
-suffixed with the source issue number so each section stays
-collision-free.
+``read/test_crs.py`` owns the read side; write-side coverage lives here.
 """
 from __future__ import annotations
 
@@ -48,18 +37,16 @@ pyproj = pytest.importorskip("pyproj")
 
 
 # =============================================================================
-# Section: Conflicting CRS write check (#1987 PR 1)
+# Section: Conflicting CRS write check
 # =============================================================================
-#
-# Original: ``test_conflicting_crs_write_1987.py``.
 #
 # The writer historically consulted both ``attrs['crs']`` and
 # ``attrs['crs_wkt']`` and gave priority to the EPSG-style ``crs``
 # attr. When the two encoded different CRSes, the writer silently
 # emitted the EPSG and dropped the WKT -- the on-disk CRS no longer
-# matched what the DataArray advertised. PR 1 wires
-# ``xrspatial.geotiff._validation._check_write_conflicting_crs`` into
-# the write entry points so the disagreement now raises
+# matched what the DataArray advertised.
+# ``xrspatial.geotiff._validation._check_write_conflicting_crs`` is wired
+# into the write entry points so the disagreement now raises
 # ``ConflictingCRSError`` (subclass of ``ValueError``) at the boundary.
 
 
@@ -192,10 +179,8 @@ def test_read_back_roundtrip_does_not_raise_1987(tmp_path):
 
 
 # =============================================================================
-# Section: CRS argument validation (#1971)
+# Section: CRS argument validation
 # =============================================================================
-#
-# Original: ``test_crs_arg_validation_1971.py``.
 #
 # ``bool`` is an int subclass, so ``crs=True`` used to slip through
 # ``isinstance(crs, int)`` and write EPSG=1 to the file (with EPSG=0
@@ -315,10 +300,8 @@ def test_to_geotiff_vrt_path_attrs_crs_bool_bypass_1971(tmp_path):
 
 
 # =============================================================================
-# Section: CRS fail-closed citation guard (#1929)
+# Section: CRS fail-closed citation guard
 # =============================================================================
-#
-# Original: ``test_crs_fail_closed_1929.py``.
 #
 # The CRS resolution path used to swallow ``pyproj`` parse failures
 # with only a warning, then write the original unvalidatable string
@@ -457,10 +440,8 @@ class TestToGeotiffCrsFailClosed_1929:
 
 
 # =============================================================================
-# Section: Numpy integer CRS round-trip (#2082)
+# Section: Numpy integer CRS round-trip
 # =============================================================================
-#
-# Original: ``test_numpy_int_crs_2082.py``.
 #
 # ``_validate_crs_arg`` accepts ``numbers.Integral`` (incl. ``np.int32``
 # / ``np.int64`` / ``np.uint16``), but the eager and GPU writers used
@@ -547,10 +528,8 @@ def test_write_geotiff_gpu_numpy_int_crs_roundtrips_2082(tmp_path):
 
 
 # =============================================================================
-# Section: User-defined CRS WKT promotion (#1632)
+# Section: User-defined CRS WKT promotion
 # =============================================================================
-#
-# Original: ``test_user_defined_crs_wkt_1632.py``.
 #
 # Files with a user-defined CRS (no EPSG, WKT stored in the GeoTIFF
 # citation under ``GEOKEY_*_CS_TYPE == 32767``) used to round-trip
@@ -786,10 +765,8 @@ def test_synthesize_user_defined_wkt_missing_ellipsoid_returns_none_1632():
 
 
 # =============================================================================
-# Section: WKT-only CRS warning (#1768)
+# Section: WKT-only CRS warning
 # =============================================================================
-#
-# Original: ``test_wkt_only_crs_warning_1768.py``.
 #
 # ``build_geo_tags`` writes a user-defined CRS (no EPSG, WKT only) by
 # setting ``ProjectedCSType`` / ``GeographicType`` = 32767 and storing

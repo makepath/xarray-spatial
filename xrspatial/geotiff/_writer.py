@@ -7,7 +7,7 @@ write entry points are :func:`xrspatial.geotiff.to_geotiff`,
 defined here bypass the DataArray-level validation that the public
 wrappers run (``transform`` derivation, ``masked_nodata`` handling,
 ``band``-first dim reordering, ...) and must accept the resulting byte
-divergence. See issue #2138.
+divergence.
 
 For source modules inside :mod:`xrspatial.geotiff`, the canonical
 internal names for the array-level write functions are
@@ -30,7 +30,7 @@ from ._dtypes import ASCII, DOUBLE, LONG, RATIONAL, SHORT, numpy_to_tiff_dtype
 # ``_encode.py``. Re-export them here so internal call sites
 # (``_write``, ``_write_streaming``) and external importers (the
 # ``_writers`` subpackage, tests, ``_gpu_decode``) keep using the
-# ``xrspatial.geotiff._writer`` import path. See issue #2260.
+# ``xrspatial.geotiff._writer`` import path.
 from ._encode import (_PARALLEL_MIN_BYTES, _PHOTOMETRIC_NAME_MAP,  # noqa: F401
                       PHOTOMETRIC_MINISBLACK, PHOTOMETRIC_RGB, _apply_photometric_miniswhite_invert,
                       _apply_predictor_encode, _compress_block, _compression_tag,
@@ -52,7 +52,7 @@ from ._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG_EXTRA_SAMPLES, T
 # ``_MAX_OVERVIEW_LEVELS`` constants live in ``_overview.py``. Re-export
 # them here so internal call sites and external importers (the
 # ``_writers`` subpackage, ``_gpu_decode``, tests) keep using the
-# ``xrspatial.geotiff._writer`` import path. See issue #2259.
+# ``xrspatial.geotiff._writer`` import path.
 from ._overview import (_MAX_OVERVIEW_LEVELS, OVERVIEW_METHODS, _block_reduce_2d,  # noqa: F401
                         _make_overview, _replicate_pad_2d, _resolve_int_nodata,
                         _validate_overview_levels)
@@ -72,27 +72,28 @@ from ._write_layout import (BO, _assemble_cog_layout, _assemble_standard_layout,
 # IFDs; copying a level-1 source value onto a level-0 destination would
 # mis-mark the primary IFD as a reduced-resolution overview. SubIFDs
 # (330) carries absolute byte offsets, which become garbage after a
-# rewrite. The read side now filters both via ``_MANAGED_TAGS``; this
-# constant is the writer-side belt-and-braces guard. See issue #1657.
+# rewrite. The read side also filters both via ``_MANAGED_TAGS``; this
+# constant is the writer-side belt-and-braces guard against IFD
+# corruption.
 _DANGEROUS_EXTRA_TAG_IDS = frozenset({TAG_NEW_SUBFILE_TYPE, TAG_SUB_IFDS})
 
 # Tag IDs whose writer-auto value can be overridden by a user
 # ``extra_tags`` entry of the same id. Restricted to the photometric
 # interpretation tags so callers cannot accidentally clobber tags
-# carrying computed offsets, dimensions, or layout. See issue #1769.
+# carrying computed offsets, dimensions, or layout.
 _OVERRIDABLE_AUTO_TAG_IDS = frozenset({TAG_PHOTOMETRIC, TAG_EXTRA_SAMPLES})
 
 # Thread-name prefix for the per-tile compression ``ThreadPoolExecutor``
 # in the streaming write path. Tagging the workers lets leak-detection
-# tests (issue #2276) tell our pool's threads apart from dask's
-# offload/scheduler pools, which also use ``ThreadPoolExecutor`` and
-# are kept alive deliberately by dask as singletons.
+# tests tell our pool's threads apart from dask's offload/scheduler
+# pools, which also use ``ThreadPoolExecutor`` and are kept alive
+# deliberately by dask as singletons.
 _TILE_POOL_THREAD_PREFIX = 'xrspatial-geotiff-tile-compress'
 
 # TIFF Photometric Interpretation values (``PHOTOMETRIC_MINISBLACK``,
 # ``PHOTOMETRIC_RGB``) and the ``_PHOTOMETRIC_NAME_MAP`` friendly-name
 # table live in ``_encode.py`` and are re-exported above for
-# backwards-compatible imports. See issue #2260.
+# backwards-compatible imports.
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +102,7 @@ _TILE_POOL_THREAD_PREFIX = 'xrspatial-geotiff-tile-compress'
 # ``_resolve_photometric``, ``_reject_disagreeing_photometric_override``,
 # ``normalize_predictor``, ``_apply_predictor_encode``, ``_compression_tag``)
 # live in ``_encode.py`` and are re-exported above for backwards
-# compatibility. See issue #2260.
+# compatibility.
 # ---------------------------------------------------------------------------
 
 
@@ -132,9 +133,9 @@ _TILE_POOL_THREAD_PREFIX = 'xrspatial-geotiff-tile-compress'
 # Shared error messages
 # ---------------------------------------------------------------------------
 
-# Issue #2312: a single source of truth for the ``cog=True, tiled=False``
-# rejection message used by both the public ``to_geotiff`` boundary and
-# the array-level ``_write`` defense-in-depth gate. Keeping the message
+# Single source of truth for the ``cog=True, tiled=False`` rejection
+# message used by both the public ``to_geotiff`` boundary and the
+# array-level ``_write`` defense-in-depth gate. Keeping the message
 # string in one place stops the two raise sites from drifting if one
 # ever gets reworded. The substring assertions in
 # ``tests/write/test_cog.py`` pin the actionable tokens
@@ -167,8 +168,8 @@ def _validate_lowlevel_write_kwargs(*,
 
     Centralises the checks that the public :func:`to_geotiff` wrapper
     runs but that the array-level entry points used to skip, so a
-    direct caller cannot quietly produce a different file. See issue
-    #2138 for the gap inventory. The checks are byte-affecting: each
+    direct caller cannot quietly produce a different file. The checks
+    are byte-affecting: each
     of them changes the bytes on disk (or refuses to write garbage),
     so they belong with the array-level writer rather than the
     DataArray wrapper.
@@ -182,7 +183,7 @@ def _validate_lowlevel_write_kwargs(*,
     allow_internal_only_jpeg : bool
         If False (the default), ``compression='jpeg'`` is rejected
         because the encoder writes JFIF tiles without the
-        ``JPEGTables`` tag (issue #1845).
+        ``JPEGTables`` tag.
     max_z_error : float
         Per-pixel LERC error budget. Must be ``>= 0`` and is only
         meaningful with ``compression='lerc'``.
@@ -193,7 +194,8 @@ def _validate_lowlevel_write_kwargs(*,
         WKT fallback. Validated against the structural ``_looks_like_wkt``
         gate unless ``allow_unparseable_crs=True``.
     allow_unparseable_crs : bool
-        Opt-in to keep pre-#1929 behaviour for unparseable CRS strings.
+        Opt-in to keep the permissive behaviour for unparseable CRS
+        strings.
     entry_point : str
         Name of the calling function ('_write' or '_write_streaming'),
         used in error messages so the source of the rejection is clear.
@@ -201,7 +203,7 @@ def _validate_lowlevel_write_kwargs(*,
     from ._attrs import _VALID_COMPRESSIONS
     from ._crs import _validate_crs_fallback
 
-    # Gap #1: compression name validation against the canonical list.
+    # Compression name validation against the canonical list.
     # ``_compression_tag`` already raises on unknown names with a list,
     # but only ``str`` inputs reach it; non-string values would land in
     # ``compression_name.lower()`` and surface as ``AttributeError``.
@@ -219,7 +221,7 @@ def _validate_lowlevel_write_kwargs(*,
             f"compression must be a str (in {entry_point}); "
             f"got {type(compression).__name__}.")
 
-    # Gap #2: JPEG opt-in gate. The encoder writes self-contained JFIF
+    # JPEG opt-in gate. The encoder writes self-contained JFIF
     # streams without the JPEGTables tag (347), so the file decodes
     # through xrspatial but not through libtiff / GDAL / rasterio.
     # ``to_geotiff`` already enforces this; surface the same gate here
@@ -236,7 +238,7 @@ def _validate_lowlevel_write_kwargs(*,
             "opt in to the experimental internal-reader-only path "
             "(issue #1845).")
 
-    # Gap #3: max_z_error must be >= 0 and only applies with LERC.
+    # max_z_error must be >= 0 and only applies with LERC.
     # ``_write_tiled`` / ``_write_stripped`` silently ignore the value
     # on non-LERC codecs, which lets a typo or a stale arg slip past.
     if max_z_error is not None and max_z_error < 0:
@@ -250,7 +252,7 @@ def _validate_lowlevel_write_kwargs(*,
             f"max_z_error is only valid with compression='lerc' "
             f"(in {entry_point}); got compression={compression!r}.")
 
-    # Gap #4: ``crs_epsg`` must not be ``bool``. ``bool`` is an ``int``
+    # ``crs_epsg`` must not be ``bool``. ``bool`` is an ``int``
     # subclass in Python, so ``crs_epsg=True`` would otherwise be
     # written as ``EPSG=1`` (and ``False`` as ``EPSG=0``) -- neither
     # resolves with any CRS database. Mirrors the public
@@ -262,8 +264,8 @@ def _validate_lowlevel_write_kwargs(*,
             f"subclass in Python, so True/False would otherwise be "
             f"written as EPSG=1 / EPSG=0.")
 
-    # Gap #9: refuse to land an unvalidatable string in
-    # GTCitationGeoKey unless the caller opts in. ``to_geotiff`` runs
+    # Refuse to land an unvalidatable string in GTCitationGeoKey unless
+    # the caller opts in. ``to_geotiff`` runs
     # this against the post-``_wkt_to_epsg`` fallback; ``_write`` only
     # sees the raw ``crs_wkt`` kwarg, so apply the same structural
     # check here. This is a strict subset of the upstream gate -- the
@@ -374,12 +376,12 @@ def _write(data: np.ndarray, path: str, *,
         writes self-contained JFIF tiles without the ``JPEGTables``
         tag (347), so external readers (libtiff, GDAL, rasterio)
         reject the file. ``False`` (default) rejects
-        ``compression='jpeg'`` with a clear error. See issue #1845.
+        ``compression='jpeg'`` with a clear error.
     allow_unparseable_crs : bool
         Opt in to writing a ``crs_wkt`` string that does not parse as
-        WKT and does not resolve via pyproj into ``GTCitationGeoKey``
-        (pre-#1929 behaviour). Default ``False`` refuses to land
-        unvalidatable strings in the citation field.
+        WKT and does not resolve via pyproj into ``GTCitationGeoKey``.
+        Default ``False`` refuses to land unvalidatable strings in the
+        citation field.
 
     Notes
     -----
@@ -390,10 +392,10 @@ def _write(data: np.ndarray, path: str, *,
     handling) are deliberately *not* performed here -- they need
     ``data.dims`` / ``data.attrs`` state that the array-level entry
     point does not have. Direct callers that need those checks should
-    use :func:`xrspatial.geotiff.to_geotiff` instead. See issue #2138.
+    use :func:`xrspatial.geotiff.to_geotiff` instead.
     """
-    # Issue #2075: reject empty spatial shapes before any IFD layout
-    # math runs. ``to_geotiff`` already guards this for DataArray inputs,
+    # Reject empty spatial shapes before any IFD layout math runs.
+    # ``to_geotiff`` already guards this for DataArray inputs,
     # but ``_write`` is also called directly by tests and by the GPU
     # path, so guard here too. ``_write`` always receives band-last
     # arrays (eager moveaxis ran upstream), so the ndim-based pair
@@ -403,8 +405,8 @@ def _write(data: np.ndarray, path: str, *,
     _validate_writer_spatial_shape(
         getattr(data, 'shape', None), entry_point="_write")
 
-    # Issue #2138: push down byte-affecting validation that the public
-    # ``to_geotiff`` wrapper used to perform on its own. The wrapper
+    # Push down byte-affecting validation that the public ``to_geotiff``
+    # wrapper used to perform on its own. The wrapper
     # still runs the same checks upstream, so this is a no-op when
     # ``to_geotiff`` is the caller; the gate matters for direct callers
     # of ``_write`` (the GPU CPU-fallback path, internal tests, and
@@ -419,7 +421,7 @@ def _write(data: np.ndarray, path: str, *,
         entry_point="_write",
     )
 
-    # Issue #2311: defense in depth for the COG auto-overview hang.
+    # Defense in depth for the COG auto-overview hang.
     # ``to_geotiff`` already rejects non-positive tile_size when either
     # tiled or cog is true, but ``_write`` is a public-ish array-level
     # entry point reached from the GPU CPU-fallback path and downstream
@@ -437,8 +439,8 @@ def _write(data: np.ndarray, path: str, *,
             f"tile encoding and auto-overview generation), got "
             f"tile_size={tile_size!r}.")
 
-    # Issue #2138 gap #7: auto-promote ``float16`` and ``bool_`` before
-    # the dtype mapper. ``to_geotiff`` already does this upstream; the
+    # Auto-promote ``float16`` and ``bool_`` before the dtype mapper.
+    # ``to_geotiff`` already does this upstream; the
     # push-down here lets direct callers feed unsupported dtypes without
     # tripping ``numpy_to_tiff_dtype`` with a less actionable error.
     # The guard on ``isinstance(data, np.ndarray)`` is intentional:
@@ -453,13 +455,13 @@ def _write(data: np.ndarray, path: str, *,
         elif data.dtype == np.bool_:
             data = data.astype(np.uint8)
 
-    # Issue #2138 gap #5: defensive copy on the NaN-to-sentinel rewrite.
+    # Defensive copy on the NaN-to-sentinel rewrite.
     # ``to_geotiff`` already copies for DataArray inputs, but a direct
     # caller passing a NaN-containing float array would otherwise have
     # their buffer mutated (numpy arrays are passed by reference). The
     # rewrite is gated on ``restore_sentinel`` so DataArrays carrying
     # ``masked_nodata=False`` (read with ``mask_nodata=False``) keep
-    # their literal sentinel bytes untouched (#1988).
+    # their literal sentinel bytes untouched.
     if (isinstance(data, np.ndarray)
             and nodata is not None
             and data.dtype.kind == 'f'
@@ -490,8 +492,7 @@ def _write(data: np.ndarray, path: str, *,
     # values do not round-trip. The nodata sentinel is inverted alongside
     # the pixels so that the on-disk sentinel byte matches the on-disk
     # pixel byte that means "missing" -- the reader's existing mask logic
-    # (issue #1809) then identifies the correct positions and rewrites
-    # them to NaN. Issue #1836.
+    # then identifies the correct positions and rewrites them to NaN.
     _samples = data.shape[2] if data.ndim == 3 else 1
     _resolved_photo, _ = _resolve_photometric(photometric, _samples)
     _reject_disagreeing_photometric_override(
@@ -511,7 +512,7 @@ def _write(data: np.ndarray, path: str, *,
         if nodata is not None:
             nodata = _invert_nodata_for_miniswhite(nodata, data.dtype)
 
-    # Issue #2312: defense-in-depth gate for ``cog=True, tiled=False``.
+    # Defense-in-depth gate for ``cog=True, tiled=False``.
     # The public ``to_geotiff`` wrapper rejects this combination at its
     # own boundary, so this branch is unreachable when the wrapper is
     # the caller; the gate matters for direct callers of ``_write`` and
@@ -548,9 +549,9 @@ def _write(data: np.ndarray, path: str, *,
             # write cost dominates without benefiting consumers. The list
             # holds actual decimation factors (2, 4, 8, ...) so the loop
             # below treats auto-generated and user-supplied lists
-            # identically (issue #1766).
+            # identically.
             #
-            # Defense in depth (issue #2311): require a positive tile_size
+            # Defense in depth: require a positive tile_size
             # before entering the halving loop. The public ``to_geotiff``
             # entry point already validates tile_size when either tiled or
             # cog is true, but ``write()`` is also reachable from internal
@@ -580,7 +581,7 @@ def _write(data: np.ndarray, path: str, *,
             # decimation factor >= 2, strictly increasing, and feasible
             # for the input shape. The previous behaviour silently
             # ignored the values and used the list length as the
-            # halving count (issue #1766).
+            # halving count.
             overview_levels = _validate_overview_levels(
                 overview_levels, height=h, width=w)
 
@@ -592,7 +593,7 @@ def _write(data: np.ndarray, path: str, *,
         # match the sentinel-aware reader). We pass ``nodata`` into
         # ``_make_overview`` here so the reducer masks the sentinel back
         # to NaN before averaging; without this, the sentinel poisons
-        # the overview (issue #1613). After reduction any block that was
+        # the overview. After reduction any block that was
         # all-sentinel comes back as NaN; we rewrite those NaNs back to
         # ``nodata`` below so the on-disk overview tiles use the same
         # sentinel convention as the full-resolution band (external
@@ -651,15 +652,14 @@ def _write(data: np.ndarray, path: str, *,
 
 # Backward-compatible alias for internal call sites that pre-date the
 # rename to :func:`_write`. New code inside ``xrspatial.geotiff`` should
-# import :func:`_write` directly. See issue #2138 and the module
-# docstring.
+# import :func:`_write` directly. See the module docstring.
 write = _write
 
 
 # ---------------------------------------------------------------------------
 # Block compression helper (``_compress_block``) used by the streaming
 # writer lives in ``_encode.py`` and is re-exported above for
-# backwards compatibility. See issue #2260.
+# backwards compatibility.
 # ---------------------------------------------------------------------------
 
 
@@ -729,7 +729,7 @@ def _write_streaming(dask_data, path: str, *,
     -----
     This is a module-private array-level entry point. The supported
     public surface is :func:`xrspatial.geotiff.to_geotiff`. See
-    :func:`_write` and issue #2138 for the full rationale.
+    :func:`_write` for the full rationale.
     """
     import os
     import tempfile
@@ -740,7 +740,7 @@ def _write_streaming(dask_data, path: str, *,
             "Streaming dask write to cloud storage is not yet supported. "
             "Use .compute() first or write to a .vrt file.")
 
-    # Issue #2075: reject empty spatial shapes before tile/strip count
+    # Reject empty spatial shapes before tile/strip count
     # math (``math.ceil(width / tw)`` etc. below at the layout block)
     # silently produces zero entries. ``to_geotiff`` already validates
     # this upstream, but direct callers of ``_write_streaming`` go
@@ -749,7 +749,7 @@ def _write_streaming(dask_data, path: str, *,
     _validate_writer_spatial_shape(
         getattr(dask_data, 'shape', None), entry_point="_write_streaming")
 
-    # Issue #2138: push-down validation for byte-affecting kwargs.
+    # Push-down validation for byte-affecting kwargs.
     # ``to_geotiff`` runs these upstream as well, so this is a no-op
     # on that path; the gate matters for direct callers.
     _validate_lowlevel_write_kwargs(
@@ -766,7 +766,7 @@ def _write_streaming(dask_data, path: str, *,
     samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
     dtype = dask_data.dtype
 
-    # MinIsWhite pre-inversion (issue #1836) runs per-array in the eager
+    # MinIsWhite pre-inversion runs per-array in the eager
     # ``write`` path. The streaming dask path materialises one tile-row
     # at a time, so applying the inversion correctly would require
     # threading the transform through every per-tile segment. That
@@ -786,7 +786,7 @@ def _write_streaming(dask_data, path: str, *,
     # ``extra_tags`` entry of ``(TAG_PHOTOMETRIC, ...)`` silently
     # overrides the IFD tag further down, so the writer must reject the
     # MinIsWhite-crossing single-band case the same way the eager
-    # writer does. Issue #2073.
+    # writer does.
     _reject_disagreeing_photometric_override(
         extra_tags, _resolved_photo_ds, samples, photometric
     )
@@ -825,8 +825,7 @@ def _write_streaming(dask_data, path: str, *,
     # that variable-length payloads (gdal_metadata, geo tags, user
     # extra_tags) feed into the IFD-overhead calculation. Build the tag
     # list assuming classic offsets first, then decide BigTIFF, then
-    # promote the strip/tile offset arrays to LONG8 if needed. See
-    # issue #1785 and the Copilot review on PR #1787.
+    # promote the strip/tile offset arrays to LONG8 if needed.
     uncompressed_bytes = height * width * bytes_per_sample * samples
 
     # ---- Build tag list (mirrors _assemble_tiff for level 0) ----
@@ -846,7 +845,6 @@ def _write_streaming(dask_data, path: str, *,
     # 4-band raster is not silently tagged as RGB+alpha. A user
     # ``extra_tags`` entry of (TAG_PHOTOMETRIC, ...) or
     # (TAG_EXTRA_SAMPLES, ...) overrides the writer's chosen value.
-    # See issue #1769.
     auto_photometric, auto_extras = _resolve_photometric(
         photometric, samples)
     user_photometric_override = None
@@ -938,7 +936,7 @@ def _write_streaming(dask_data, path: str, *,
         existing_ids = {t[0] for t in tags}
         for etag_id, etype_id, ecount, evalue in extra_tags:
             # Skip dangerous tags (NewSubfileType, SubIFDs) that would
-            # mis-mark the IFD or carry stale offsets. See issue #1657.
+            # mis-mark the IFD or carry stale offsets.
             if (etag_id not in existing_ids
                     and etag_id not in _DANGEROUS_EXTRA_TAG_IDS):
                 tags.append((etag_id, etype_id, ecount, evalue))
@@ -947,10 +945,10 @@ def _write_streaming(dask_data, path: str, *,
     # Compute the real classic-TIFF IFD overhead from the actual tag
     # list, including overflow heap (gdal_metadata, geo ascii params,
     # strip/tile offset arrays, user extra_tags). This replaces the
-    # 200-byte fudge constant the original PR used; with metadata-heavy
-    # writes that constant silently underestimated overhead and let
-    # sub-4 GiB rasters overflow classic offsets late in the write.
-    # See issue #1785 and the Copilot review on PR #1787.
+    # 200-byte fudge constant an earlier version used; with
+    # metadata-heavy writes that constant silently underestimated
+    # overhead and let sub-4 GiB rasters overflow classic offsets late
+    # in the write.
     if bigtiff is None:
         ifd_overhead_bytes = _compute_classic_ifd_overhead(tags)
         # n_entries=0 because the strip/tile offset arrays are already
@@ -1037,8 +1035,8 @@ def _write_streaming(dask_data, path: str, *,
                 _use_pool = (comp_tag != COMPRESSION_NONE
                              and _pool_workers > 1)
                 # ``thread_name_prefix`` tags the worker threads so leak
-                # detection in tests (issue #2276) can tell our pool's
-                # workers apart from dask's offload/scheduler pools.
+                # detection in tests can tell our pool's workers apart
+                # from dask's offload/scheduler pools.
                 tile_pool = (
                     ThreadPoolExecutor(
                         max_workers=_pool_workers,
@@ -1050,7 +1048,7 @@ def _write_streaming(dask_data, path: str, *,
                 # failure, dask compute failure, file write failure)
                 # propagates. The previous code only called
                 # ``shutdown`` after the loop completed and leaked
-                # worker threads on any mid-stream raise. See #2276.
+                # worker threads on any mid-stream raise.
                 try:
                     for tr in range(tiles_down):
                         r0 = tr * th
@@ -1159,8 +1157,7 @@ def _write_streaming(dask_data, path: str, *,
                     # error path so ``wait=True`` only blocks on work
                     # already in flight. The previous shutdown call
                     # lived past the for-loop and never ran when an
-                    # exception escaped, leaking worker threads. See
-                    # issue #2276.
+                    # exception escaped, leaking worker threads.
                     if tile_pool is not None:
                         tile_pool.shutdown(wait=True, cancel_futures=True)
             else:
@@ -1234,7 +1231,6 @@ def _write_streaming(dask_data, path: str, *,
 # Backward-compatible alias for internal call sites that pre-date the
 # rename to :func:`_write_streaming`. New code inside
 # ``xrspatial.geotiff`` should import :func:`_write_streaming` directly.
-# See issue #2138.
 write_streaming = _write_streaming
 
 
@@ -1246,7 +1242,6 @@ def _is_fsspec_uri(path) -> bool:
     the URL to fsspec. Uses :func:`_sources._is_http_source` so the
     HTTP detection is case-insensitive (RFC 3986); without that, an
     uppercase ``HTTP://...`` slipped past this check and into fsspec.
-    Issues #2323 / #2332.
     """
     if not isinstance(path, str):
         return False
@@ -1260,7 +1255,7 @@ def _write_bytes(file_bytes: bytes | bytearray, path) -> None:
     or any binary file-like object exposing ``write``.
 
     Accepts either ``bytes`` or ``bytearray`` so the eager assembler
-    can hand its working buffer through without a copy (issue #1756);
+    can hand its working buffer through without a copy;
     ``file.write``, ``BytesIO.write``, and ``fsspec`` ``open(..., 'wb')``
     all accept the buffer protocol.
     """
@@ -1285,7 +1280,7 @@ def _write_bytes(file_bytes: bytes | bytearray, path) -> None:
     # Reject HTTP(S) write targets with a typed error before the local
     # file path tries to treat the URL as a filename. ``_is_http_source``
     # is case-insensitive so ``HTTP://...`` reports the same friendly
-    # error as ``http://...``. Issue #2332.
+    # error as ``http://...``.
     if isinstance(path, str) and _is_http_source(path):
         raise NotImplementedError(
             f"Writes are not supported over HTTP(S). Got {path!r}. "

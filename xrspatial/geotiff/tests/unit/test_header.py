@@ -119,7 +119,7 @@ class TestIFDProperties:
 class TestPlanarConfigValidation:
     """PlanarConfiguration must be 1 (Chunky) or 2 (Planar) per TIFF 6.0.
 
-    Issue #1870: ``planar_config`` previously returned the raw tag value
+    ``planar_config`` previously returned the raw tag value
     unchecked, so a malformed file with e.g. ``PlanarConfiguration=0``
     decoded under an assumed chunky layout instead of being rejected.
     """
@@ -179,9 +179,8 @@ class TestPlanarConfigValidation:
 class TestIFDChainLoop:
     """Verify parse_all_ifds rejects a malicious IFD chain cycle.
 
-    Issue #1482 (T-2) added a ``seen`` set so the parser would not loop
-    forever on a cyclic chain. Issue #1913 tightened that further: a
-    cycle is now treated as a malformed file (``ValueError``) for
+    A ``seen`` set keeps the parser from looping forever on a cyclic
+    chain, and a cycle is treated as a malformed file (``ValueError``) for
     consistency with the past-EOF and ``MAX_IFDS`` branches. Returning
     a truncated chain silently let callers act on a half-parsed file.
     """
@@ -214,7 +213,7 @@ class TestIFDChainLoop:
         return bytes(out)
 
     def test_cycle_raises_value_error(self):
-        """IFD chain cycle now raises rather than truncating silently (#1913)."""
+        """IFD chain cycle now raises rather than truncating silently."""
         data = self._build_two_ifd_loop()
         header = parse_header(data)
         with pytest.raises(ValueError, match="cycle"):
@@ -248,11 +247,11 @@ class TestIFDChainLoop:
 
 
 class TestReadValueRationals:
-    """T-8 coverage for RATIONAL / SRATIONAL edge cases in _read_value."""
+    """RATIONAL / SRATIONAL edge cases in _read_value."""
 
     def test_rational_denominator_zero_raises(self):
         # numerator=5, denominator=0 -- malformed, reject instead of
-        # silently mapping to 0.0 (issue #2313).
+        # silently mapping to 0.0.
         buf = struct.pack('<II', 5, 0)
         with pytest.raises(ValueError, match="Malformed RATIONAL"):
             _read_value(buf, 0, RATIONAL, 1, '<')
@@ -300,7 +299,7 @@ class TestReadValueRationals:
 
 
 class TestTruncatedIFD:
-    """T-8: a truncated IFD entry buffer should fail cleanly, not crash silently."""
+    """A truncated IFD entry buffer should fail cleanly, not crash silently."""
 
     def test_ifd_count_exceeds_buffer(self):
         bo = '<'
@@ -323,7 +322,7 @@ class TestTruncatedIFD:
 
 
 class TestBigTIFFEdges:
-    """T-8: BigTIFF malformations."""
+    """BigTIFF malformations."""
 
     def test_bigtiff_offset_size_not_eight(self):
         """BigTIFF with magic 43 but offset_size != 8 must raise."""
@@ -344,14 +343,13 @@ class TestBigTIFFEdges:
 
 
 class TestClassicTIFFLargeOffset:
-    """T-8: classic TIFF stores 32-bit offsets; offsets > 4 GB don't fit.
+    """Classic TIFF stores 32-bit offsets; offsets > 4 GB don't fit.
 
     There's no way to actually express an offset > 4 GB in a classic
     TIFF (the field is uint32). What we want to verify is that pointing
     a classic-TIFF first-IFD at an offset beyond the buffer is rejected
     by ``parse_all_ifds`` with a clear error rather than silently
     yielding an empty list (which used to mask truncated files).
-    See issue #1863.
     """
 
     def test_first_ifd_offset_past_buffer(self):

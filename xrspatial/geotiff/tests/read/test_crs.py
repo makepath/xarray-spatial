@@ -1,23 +1,18 @@
 """Rotated and dropped-CRS read-path matrix.
 
-Consolidates three previously-separate files into a single parametrized
-module covering the ``allow_rotated`` opt-in path and its CRS-drop
-contract:
+Covers the ``allow_rotated`` opt-in path and its CRS-drop contract:
 
-* ``test_allow_rotated_geotiff_2115.py`` -- rotated TIFFs without
-  embedded CRS; ``allow_rotated=False`` (default) raises and
-  ``allow_rotated=True`` reads the pixel grid on the eager and dask
-  GeoTIFF backends.
-* ``test_allow_rotated_crs_drop_2126.py`` -- rotated TIFFs whose GeoKey
-  block carries a CRS; ``allow_rotated=True`` drops ``crs`` / ``crs_wkt``
-  together with the transform on both backends, plus the unit-level
-  ``_populate_attrs_from_geo_info`` contract.
-* ``test_allow_rotated_no_crs_2122.py`` -- the eager / dask / cupy /
-  dask+cupy backend matrix plus the VRT eager + chunked paths, all
-  asserting CRS drop under ``allow_rotated=True``.
+* Rotated TIFFs without embedded CRS; ``allow_rotated=False`` (default)
+  raises and ``allow_rotated=True`` reads the pixel grid on the eager and
+  dask GeoTIFF backends.
+* Rotated TIFFs whose GeoKey block carries a CRS; ``allow_rotated=True``
+  drops ``crs`` / ``crs_wkt`` together with the transform on both
+  backends, plus the unit-level ``_populate_attrs_from_geo_info``
+  contract.
+* The eager / dask / cupy / dask+cupy backend matrix plus the VRT eager +
+  chunked paths, all asserting CRS drop under ``allow_rotated=True``.
 
-The HTTP-server rotated read (``test_http_dask_allow_rotated_2130.py``)
-stays in place; it belongs to the integration cluster (epic #2390 PR 9).
+The HTTP-server rotated read lives in the integration suite, not here.
 
 Test ID convention: ``(scenario, ...)`` where ``scenario`` is one of
 ``rotated_no_crs``, ``rotated_with_crs``, ``axis_aligned_with_crs``.
@@ -557,13 +552,12 @@ def test_open_geotiff_rotated_with_crs_drops_crs_gpu(tmp_path, chunks):
     """``allow_rotated=True`` on the GPU eager + dask+CuPy paths drops
     ``crs`` / ``crs_wkt``.
 
-    Pre-#2238, ``read_geotiff_gpu`` fell back to ``_read_to_array`` for
-    the stripped layout (and the three tiled CPU-fallback sites)
-    without forwarding ``allow_rotated``; the CPU re-read then raised.
-    The dask+CuPy path routes through the dask backend with
-    ``cupy.asarray`` mapped over each block, which forwards
-    ``allow_rotated`` correctly even before the eager fix landed; both
-    are pinned here.
+    ``read_geotiff_gpu`` must forward ``allow_rotated`` when it falls back
+    to ``_read_to_array`` for the stripped layout (and the three tiled
+    CPU-fallback sites); otherwise the CPU re-read raises. The dask+CuPy
+    path routes through the dask backend with ``cupy.asarray`` mapped over
+    each block, which forwards ``allow_rotated`` correctly; both are
+    pinned here.
     """
     src, _ = _build_rotated_with_crs(
         tmp_path, f"rotated_gpu_{_chunks_label(chunks)}.tif"

@@ -2,9 +2,8 @@
 
 Internal module — symbols are re-exported from ``xrspatial.geotiff`` for
 backwards-compatible private imports used in tests and other backends.
-Extracted from ``__init__.py`` as part of issue #1813 to remove the
-duplicated GeoTransform-to-(y, x) inline code that lived in each
-backend's eager / dask / GPU / VRT read path.
+Centralises the GeoTransform-to-(y, x) coord logic that previously lived
+inline in each backend's eager / dask / GPU / VRT read path.
 
 Two coord conventions are emitted:
 
@@ -15,7 +14,7 @@ Two coord conventions are emitted:
 * ``has_georef=False`` → integer pixel coords ``0..N-1``. Files without
   real georef tags carry a placeholder unit transform that would emit
   synthetic ``[-0.5, -1.5, ...]`` floats; the integer-pixel fallback
-  keeps the no-georef path consistent across backends (#1710, #1753).
+  keeps the no-georef path consistent across backends.
 
 A ``window=(r0, c0, r1, c1)`` parameter shifts the output coord arrays
 to the windowed sub-rectangle, so callers don't have to special-case
@@ -37,13 +36,13 @@ from ._geotags import _NO_GEOREF_KEY, RASTER_PIXEL_IS_POINT, GeoTransform
 # ``d`` terms below this magnitude are treated as float noise and pass
 # through as axis-aligned. Shared between ``transform_from_attr`` (6-tuple
 # attrs) and ``to_geotiff`` (rasterio ``Affine`` attrs) so the two gates
-# stay in lockstep on future tolerance tweaks (#2301).
+# stay in lockstep on future tolerance tweaks.
 ROTATION_SHEAR_TOL = 1e-12
 
 # Canonical georef_status string values (mirrored in ``_attrs.py`` as
-# ``GEOREF_STATUS_*`` constants). Issue #2225 centralises the
-# transform/georef contract here; ``_attrs.py`` aliases these names so
-# the public attrs surface keeps its existing identifiers.
+# ``GEOREF_STATUS_*`` constants). The transform/georef contract is
+# centralised here; ``_attrs.py`` aliases these names so the public
+# attrs surface keeps its existing identifiers.
 GEOREF_STATUS_NONE = 'none'
 GEOREF_STATUS_COORDS = 'coords'
 GEOREF_STATUS_TRANSFORM_ONLY = 'transform_only'
@@ -63,7 +62,7 @@ GeorefStatus = Literal[
 
 @dataclass(frozen=True)
 class GeorefResolution:
-    """Typed result returned by :func:`resolve_georef` (issue #2225).
+    """Typed result returned by :func:`resolve_georef`.
 
     Centralises the three georef decisions every backend used to make
     inline: how to derive the affine transform, which of the canonical
@@ -103,16 +102,16 @@ class GeorefResolution:
 # Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
 # non-spatial band axis. Used both to remap ``(band, y, x)`` inputs to
 # ``(y, x, band)`` before writing and to skip the band axis when inferring
-# a GeoTransform from coords (see :func:`coords_to_transform` / #1643).
+# a GeoTransform from coords (see :func:`coords_to_transform`).
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 
 # Attribute key callers set to True to opt in to the borrow-from-other-axis
 # pixel-size fallback for 1xN / Nx1 writes. See ``coords_to_transform`` and
-# ``require_transform_for_georeferenced`` for the contract. Issue #2214
-# replaced the unconditional borrow with this explicit opt-in so callers
-# whose source raster has non-square pixels don't get a silently wrong
-# transform written for a degenerate strip.
+# ``require_transform_for_georeferenced`` for the contract. The explicit
+# opt-in replaced an unconditional borrow so callers whose source raster
+# has non-square pixels don't get a silently wrong transform written for
+# a degenerate strip.
 _ASSUME_SQUARE_DEGENERATE_KEY = 'assume_square_pixels_for_degenerate_axis'
 
 
@@ -137,8 +136,8 @@ def _has_no_georef_marker(da: Any) -> bool:
     the placeholder int64 step-1 y/x coords for files without GeoTIFF
     transform tags. The writer checks the same marker before deciding
     that an int64 step-1 grid is the placeholder and skipping transform
-    synthesis. See issue #2120 for the silent-strip regression this
-    replaced.
+    synthesis. This replaced an earlier silent-strip regression where
+    user data matching the placeholder shape lost its georef.
 
     The identity check (``is True``) is deliberate: only the exact
     boolean ``True`` flips the writer into no-georef mode. A stray
@@ -178,7 +177,7 @@ def coords_from_pixel_geometry(
 
     For ``has_georef=False`` the result is integer pixel indices instead
     of projected coordinates; this matches the no-georef fallback every
-    backend agreed on (#1710, #1753).
+    backend agreed on.
     """
     if window is not None:
         r0, c0, r1, c1 = window
@@ -248,7 +247,7 @@ def coords_from_geo_info(
     origin / pixel size off ``geo_info.transform`` and the
     ``raster_type`` / ``has_georef`` flags off ``geo_info``. A missing
     ``transform`` (``None``) is treated as ``has_georef=False`` so the
-    no-georef integer-pixel fallback path runs (#1710 / #1753).
+    no-georef integer-pixel fallback path runs.
     """
     has_georef = getattr(geo_info, 'has_georef', True)
     t = geo_info.transform
@@ -356,7 +355,7 @@ def require_transform_for_georeferenced(
 ) -> None:
     """Raise if ``da`` carries spatial coords but no transform was derived.
 
-    Used by the writer entry points (#1945). A DataArray whose spatial
+    Used by the writer entry points. A DataArray whose spatial
     dim names appear in ``da.coords`` is an explicit caller request for a
     georeferenced output. Silently falling through to a non-georeferenced
     TIFF -- which is what the old code did for 1x1 inputs and inputs with
@@ -383,13 +382,12 @@ def require_transform_for_georeferenced(
     if xdim in da.coords and ydim in da.coords:
         # The reader stamps ``attrs[_NO_GEOREF_KEY] = True`` when it
         # emits its int64 step-1 placeholder coords for files without
-        # GeoTIFF transform tags (#1710, #1753, #1949). The writer
-        # checks that marker rather than the coord shape itself so a
-        # user-authored int64 grid that happens to match the placeholder
-        # pattern (e.g. ``x=[500,501,502], y=[1000,1001]``) keeps its
-        # georef on round-trip. Pre-#2120 the writer detected the
-        # placeholder by shape alone and silently stripped georef from
-        # real user data with that shape.
+        # GeoTIFF transform tags. The writer checks that marker rather
+        # than the coord shape itself so a user-authored int64 grid that
+        # happens to match the placeholder pattern (e.g.
+        # ``x=[500,501,502], y=[1000,1001]``) keeps its georef on
+        # round-trip. An earlier shape-only check silently stripped
+        # georef from real user data with that shape.
         if _has_no_georef_marker(da):
             return
         raise ValueError(
@@ -424,14 +422,13 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     ``(y, x, band)`` before writing pixel bytes, but it calls
     :func:`coords_to_transform` against the original DataArray, so the
     helper must handle both layouts to keep the geo-transform consistent
-    with the file's coord arrays. See issue #1643.
+    with the file's coord arrays.
 
     DataArrays carrying ``attrs[_NO_GEOREF_KEY] = True`` (stamped by
     the reader for files without GeoTIFF transform tags) return
     ``None`` before the uniformity check runs so the placeholder
-    round-trips without inventing a fake unit transform (#1949,
-    #2120). Pre-#2120 the placeholder was detected by coord shape
-    alone, which silently stripped georef from user-authored int64
+    round-trips without inventing a fake unit transform. An earlier
+    shape-based check silently stripped georef from user-authored int64
     step-1 grids that matched the same arange pattern.
     """
     if da.ndim == 3:
@@ -460,30 +457,29 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     # 1x1 has no pixel-size signal on either axis. The caller must supply
     # ``attrs['transform']`` (handled by the writer before calling us).
     # Returning ``None`` lets the writer detect this and raise rather than
-    # silently writing a non-georeferenced TIFF (#1945).
+    # silently writing a non-georeferenced TIFF.
     if len(x) < 2 and len(y) < 2:
         return None
 
     # No-georef path: the reader stamps
     # ``attrs[_NO_GEOREF_KEY] = True`` whenever it emits the int64
     # step-1 placeholder y/x coords for files without GeoTIFF transform
-    # tags (#1710, #1753, #1949). Synthesising a GeoTransform from those
-    # arrays would inject a fake unit transform (``pixel_width=1.0``,
-    # origin derived from ``coord[0]``) into the written file's
-    # ModelPixelScale / ModelTiepoint tags. The next read would then
-    # take the georef branch and the coord dtype silently flip to
-    # ``float64`` with ``attrs['transform']`` present, breaking the
-    # no-georef contract that downstream code branches on.
+    # tags. Synthesising a GeoTransform from those arrays would inject a
+    # fake unit transform (``pixel_width=1.0``, origin derived from
+    # ``coord[0]``) into the written file's ModelPixelScale /
+    # ModelTiepoint tags. The next read would then take the georef
+    # branch and the coord dtype silently flip to ``float64`` with
+    # ``attrs['transform']`` present, breaking the no-georef contract
+    # that downstream code branches on.
     #
     # Older revisions of this code detected the placeholder by coord
-    # shape: first ``dtype.kind in ('i', 'u')`` (broad, then tightened
-    # in #2087 to the exact ``arange(start, start+n, dtype=int64)``
-    # pattern). Both shape-based checks misclassified user-authored
-    # int64 step-1 grids (e.g. ``x=[500,501,502], y=[1000,1001]``) as
-    # the placeholder and silently stripped their georef on write
-    # (#2120). The marker is now the only signal: shape-matching coords
-    # without the marker fall through to the regular transform
-    # synthesis below.
+    # shape (first ``dtype.kind in ('i', 'u')``, later tightened to the
+    # exact ``arange(start, start+n, dtype=int64)`` pattern). Both
+    # shape-based checks misclassified user-authored int64 step-1 grids
+    # (e.g. ``x=[500,501,502], y=[1000,1001]``) as the placeholder and
+    # silently stripped their georef on write. The marker is now the
+    # only signal: shape-matching coords without the marker fall through
+    # to the regular transform synthesis below.
     if _has_no_georef_marker(da):
         return None
 
@@ -491,9 +487,9 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     # cannot be expressed faithfully. Validate up-front instead of
     # silently writing a transform that only matches the first step.
     #
-    # Issue #2215: raise NonUniformCoordsError (subclass of ValueError,
-    # so existing ``except ValueError`` callers keep working) rather
-    # than plain ValueError. This keeps the exception type consistent
+    # Raise NonUniformCoordsError (subclass of ValueError, so existing
+    # ``except ValueError`` callers keep working) rather than plain
+    # ValueError. This keeps the exception type consistent
     # with the upstream ambiguous-metadata validator, which already
     # raises NonUniformCoordsError for the same condition. Before this,
     # the validator caught the y/x case and this path caught the
@@ -517,14 +513,13 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
                 f"GeoTIFF requires an affine transform."
             )
 
-    # Degenerate-axis handling (#1945, #2214). When one axis has length
-    # 1, we can't read a step off it (``coord[1] - coord[0]`` is
-    # undefined). #1945 first taught the writer to borrow the pixel size
-    # from the non-degenerate axis on the assumption that the raster was
-    # square. That assumption is unsafe: a 30 m by 10 m source raster
-    # served as a 1xN strip silently wrote out with 30 m by 30 m pixels,
-    # and downstream slope / proximity / zonal math then trusted the
-    # wrong transform (#2214).
+    # Degenerate-axis handling. When one axis has length 1, we can't
+    # read a step off it (``coord[1] - coord[0]`` is undefined). An
+    # earlier version borrowed the pixel size from the non-degenerate
+    # axis on the assumption that the raster was square. That assumption
+    # is unsafe: a 30 m by 10 m source raster served as a 1xN strip
+    # silently wrote out with 30 m by 30 m pixels, and downstream slope
+    # / proximity / zonal math then trusted the wrong transform.
     #
     # We now return ``None`` for the degenerate case by default, which
     # routes to ``require_transform_for_georeferenced`` and raises a
@@ -604,8 +599,8 @@ def resolve_georef(
 ) -> GeorefResolution:
     """Centralised transform/georef resolver shared across backends.
 
-    Issue #2225. One function owns the four decisions every backend
-    used to make inline:
+    One function owns the four decisions every backend used to make
+    inline:
 
     1. Coord-to-transform inference (via :func:`coords_to_transform`).
     2. The no-georef marker behaviour
@@ -702,9 +697,8 @@ def resolve_georef(
 
     # Writer path: ``source`` is a DataArray. Prefer attrs['transform']
     # over coord-derived transforms (the same precedence the inline
-    # writer code applied for issue #1484 -- attrs['transform']
-    # round-trips bit-exactly while coord subtraction can drift on
-    # fractional pixel sizes).
+    # writer code applied -- attrs['transform'] round-trips bit-exactly
+    # while coord subtraction can drift on fractional pixel sizes).
     if isinstance(source, xr.DataArray):
         attrs = source.attrs
         attr_transform = attrs.get('transform') if attrs is not None else None
@@ -715,7 +709,7 @@ def resolve_georef(
             # values fold into ``crs_wkt`` (some pipelines stash the
             # WKT string under ``attrs['crs']``), bool values are
             # ignored at the boundary so the resolver does not flag a
-            # bogus ``has_crs`` signal on ``crs=True`` (issue #1971).
+            # bogus ``has_crs`` signal on ``crs=True``.
             crs_val = attrs.get('crs')
             if a_crs_wkt is None and isinstance(crs_val, str) and crs_val:
                 a_crs_wkt = crs_val
@@ -778,7 +772,7 @@ def resolve_georef(
         # No transform and no marker. The writer entry points run
         # :func:`require_transform_for_georeferenced` after the
         # resolver and raise when spatial coords are present but no
-        # transform could be inferred (#1945). We return ``None`` /
+        # transform could be inferred. We return ``None`` /
         # ``GEOREF_STATUS_NONE`` here and let that guard handle the
         # failure path.
         status = GEOREF_STATUS_CRS_ONLY if has_crs else GEOREF_STATUS_NONE

@@ -1531,7 +1531,18 @@ def _reproject_dask_cupy(
             x_desc=x_desc,
         )
 
-    result = cp.full(out_shape, nodata, dtype=cp.float64)
+    # Match the dask+numpy and chunked dask+cupy paths: integer sources
+    # round-trip back to their original dtype after clamping; floats stay
+    # float64. Without this, the eager dask+cupy fast path silently
+    # promoted int16/uint8/etc. inputs to float64 while the other
+    # backends preserved the source dtype (#2505).
+    src_dtype = np.dtype(raster.dtype)
+    if np.issubdtype(src_dtype, np.integer):
+        out_dtype = src_dtype
+    else:
+        out_dtype = np.dtype(np.float64)
+
+    result = cp.full(out_shape, nodata, dtype=out_dtype)
 
     row_offset = 0
     for i, rchunk in enumerate(row_chunks):
@@ -1656,6 +1667,15 @@ def _reproject_dask_cupy(
                     window, local_row, local_col,
                     resampling=resampling, nodata=nodata,
                 )
+
+            # Clamp + cast back for integer source dtypes so this fast
+            # path returns the same dtype as the other backends (#2505).
+            # Matches the per-chunk cast in _reproject_chunk_cupy.
+            if np.issubdtype(out_dtype, np.integer):
+                info = np.iinfo(out_dtype)
+                chunk_data = cp.clip(
+                    cp.round(chunk_data), info.min, info.max,
+                ).astype(out_dtype)
 
             result[row_offset:row_offset + rchunk,
                    col_offset:col_offset + cchunk] = chunk_data

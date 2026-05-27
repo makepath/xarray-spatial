@@ -16,8 +16,7 @@ flow through the numpy nan-aware path in :func:`_block_reduce_2d`
 because the existing implementation already computes the sentinel mask
 at native integer width before promoting to float64, which is required
 for 64-bit sentinels that round when cast to float64 (``INT64_MAX``,
-``UINT64_MAX``). A native-integer kernel is tracked as a follow-up on
-issue #2413.
+``UINT64_MAX``). A native-integer kernel is a possible follow-up.
 
 The kernels rely on numba specializing on the input array's dtype, so
 the same source covers both float32 and float64 inputs. The mean

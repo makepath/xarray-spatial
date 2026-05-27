@@ -5,10 +5,6 @@ numpy-only environments. Every public entry point that touches GPU
 data routes through one of these helpers, so a single canonical copy
 keeps nodata-mask, orientation-flip, and window/band-slice semantics
 in lockstep with the CPU reader.
-
-Extracted in step 6 of issue #1813 so the next PR (step 7) can move
-``read_geotiff_gpu`` itself into ``_backends/gpu.py`` as a near-
-mechanical lift.
 """
 from __future__ import annotations
 
@@ -58,7 +54,7 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
     ``cupy.putmask`` rather than allocating a fresh output via
     ``cupy.where``; every call site passes a freshly decoded GPU buffer
     that no caller-visible state aliases, so the mutation is safe and
-    drops one chunk-sized device allocation per call (#1934).
+    drops one chunk-sized device allocation per call.
     """
     import cupy
 
@@ -72,9 +68,8 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
                          arr_dtype.type('nan'))
         return arr_gpu
     if arr_dtype.kind in ('u', 'i'):
-        # PR-C #2226: lifecycle helper owns the
-        # finite / integer / in-range gate previously inlined here
-        # (#1774, #1564, #1616). Out-of-range, non-finite, or
+        # The lifecycle helper owns the finite / integer / in-range gate
+        # previously inlined here. Out-of-range, non-finite, or
         # fractional sentinels short-circuit to a no-op so
         # ``attrs['nodata']`` still records them while masking
         # leaves the integer buffer untouched.
@@ -86,7 +81,7 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
         if bool(mask.any().item()):
             # ``astype`` allocates the float64 buffer; write NaN into it
             # in place instead of running it through another ``cupy.where``
-            # that would allocate again (#1934).
+            # that would allocate again.
             arr_gpu = arr_gpu.astype(cupy.float64)
             cupy.putmask(arr_gpu, mask, cupy.float64('nan'))
         return arr_gpu
@@ -185,7 +180,7 @@ def _apply_orientation_gpu(arr_gpu, orientation: int):
     The CPU reader applies the TIFF Orientation tag (274) post-decode so
     pixel (0, 0) is always the visual top-left. The GPU read path used
     to skip this remap, so reads of any file with orientation != 1
-    returned different pixel buffers than the CPU reader (#1540).
+    returned different pixel buffers than the CPU reader.
 
     Same eight orientations the CPU helper handles. Operates on a cupy
     ndarray and returns a cupy ndarray; ``cupy.ascontiguousarray`` is
@@ -262,7 +257,7 @@ def _apply_orientation_geo_info(geo_info, orientation: int,
             pixel_height=new_px_h,
         )
     elif orientation in (5, 6, 7, 8):
-        # Match the CPU reader's #1765 refusal: a pixel-size swap alone
+        # Match the CPU reader's refusal: a pixel-size swap alone
         # cannot express the per-orientation origin shift plus rotation
         # these orientations require, so the x/y coords would be wrong.
         # ``has_georef`` is True for any file carrying ModelTransformation,
@@ -318,7 +313,7 @@ def _gpu_apply_window_band(arr_gpu, geo_info, *, window, band):
         # open_geotiff so the GPU-windowed coords carry the same
         # absolute pixel-center values as the CPU path. For files
         # with no GeoTIFF tags (``has_georef=False``), fall back to
-        # integer pixel coords matching ``_geo_to_coords`` (#1710).
+        # integer pixel coords matching ``_geo_to_coords``.
         coords = _coords_from_geo_info(
             geo_info, out_h, out_w, window=window,
         )
