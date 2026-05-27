@@ -17,8 +17,6 @@ internal call sites that pre-date the rename.
 """
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 # ``urllib3`` is kept as a top-level import here even though the HTTP
 # source moved to ``_sources`` in #2228. ``test_http_no_stdlib_fallback_2050``
@@ -235,8 +233,8 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # the user can still investigate. Mirrors the contract that
         # ``discover_remote_sidecar`` already uses on the dask metadata
         # path. Issue #2416.
-        from ._sidecar import (attach_sidecar_origin, find_sidecar,
-                                handle_sidecar_parse_failure, load_sidecar)
+        from ._sidecar import (attach_sidecar_origin, find_sidecar, handle_sidecar_parse_failure,
+                               load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:

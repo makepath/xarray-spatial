@@ -1,9 +1,13 @@
 """Tests for GeoTIFF tag interpretation."""
 from __future__ import annotations
 
+import struct
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from xrspatial.geotiff import GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, open_geotiff
 from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._geotags import (GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_PROJECTED_CS_TYPE,
                                         MODEL_TYPE_GEOGRAPHIC, MODEL_TYPE_PROJECTED,
@@ -11,6 +15,8 @@ from xrspatial.geotiff._geotags import (GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_PROJECTED
                                         TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT, GeoTransform,
                                         build_geo_tags, extract_geo_info)
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
+from xrspatial.geotiff._validation import (_check_read_inconsistent_geokeys,
+                                           _registered_read_metadata_checks, validate_read_metadata)
 
 from ..conftest import make_minimal_tiff
 
@@ -525,18 +531,6 @@ class TestTiepointWithoutScale_1750:
 # Inconsistent geokeys fail-closed (#2417)
 # Source: test_inconsistent_geokeys_2417.py
 # ===========================================================================
-
-import struct
-from pathlib import Path
-
-import numpy as np
-import pytest
-
-from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError,
-                               open_geotiff)
-from xrspatial.geotiff._validation import (_check_read_inconsistent_geokeys,
-                                           _registered_read_metadata_checks,
-                                           validate_read_metadata)
 
 
 # ---------------------------------------------------------------------------

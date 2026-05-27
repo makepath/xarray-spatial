@@ -8,9 +8,29 @@ which path they pick.
 """
 from __future__ import annotations
 
+import importlib.util
+import inspect
+import io
+import os
+import struct
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 import xarray as xr
+
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff
+from xrspatial.geotiff import write_vrt as _write_vrt_1810
+from xrspatial.geotiff._dtypes import tiff_dtype_to_numpy
+from xrspatial.geotiff._geotags import RASTER_PIXEL_IS_POINT, TAG_GEO_ASCII_PARAMS, extract_geo_info
+from xrspatial.geotiff._header import parse_all_ifds, parse_header
+from xrspatial.geotiff._reader import (_BytesIOSource, _read_strips, _read_tiles, _read_to_array,
+                                       read_to_array)
+from xrspatial.geotiff._sources import _FileSource, _mmap_cache
+from xrspatial.geotiff._writer import write
+
+from ..conftest import make_minimal_tiff
 
 
 @pytest.fixture
@@ -125,10 +145,6 @@ class TestBandValidationBackendParity:
 # the documented dispatcher entry point ``open_geotiff`` did not
 # expose it. Same class of dispatcher-drops-backend-kwarg bug as
 # #1561, #1605, #1685, #1795.
-import inspect  # noqa: E402
-
-from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff  # noqa: E402
-from xrspatial.geotiff import write_vrt as _write_vrt_1810  # noqa: E402
 
 
 def _write_missing_source_vrt_1810(path):
@@ -236,11 +252,6 @@ def test_open_geotiff_vrt_without_missing_sources_kwarg_still_works_1810(tmp_pat
 # Covers ``_read_strips`` / ``_read_tiles`` / ``read_to_array`` happy
 # paths and the truncated-tile rejection contract that turns opaque
 # numpy reshape errors into clear "size mismatch" diagnostics.
-from xrspatial.geotiff._dtypes import tiff_dtype_to_numpy  # noqa: E402
-from xrspatial.geotiff._header import parse_all_ifds, parse_header  # noqa: E402
-from xrspatial.geotiff._reader import _read_strips, _read_tiles, read_to_array  # noqa: E402
-
-from ..conftest import make_minimal_tiff  # noqa: E402
 
 
 class TestReadStrips_reader:
@@ -410,16 +421,6 @@ class TestPartialTileValidation_1486:
 # Accuracy regressions (#1081)
 # Source: test_accuracy_1081.py
 # ===========================================================================
-
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._geotags import RASTER_PIXEL_IS_POINT, TAG_GEO_ASCII_PARAMS, extract_geo_info
-from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._reader import read_to_array
-from xrspatial.geotiff._writer import write
 
 
 def _make_pixel_is_point_tiff(tmp_path, width=8, height=8):
@@ -693,17 +694,6 @@ class TestNodataRestore:
 # BytesIO file-like read/write (#1511)
 # Source: test_bytesio_source.py
 # ===========================================================================
-
-import importlib.util
-import io
-from concurrent.futures import ThreadPoolExecutor
-
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._reader import _BytesIOSource, read_to_array
 
 
 def _gpu_available() -> bool:
@@ -1079,16 +1069,6 @@ class TestWriteGeotiffGpuBytesIO:
 # Source: test_eager_source_close_on_error_2322.py
 # ===========================================================================
 
-import io
-from unittest.mock import patch
-
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._reader import _read_to_array
-
 
 def _make_tiff_bytes() -> bytes:
     """Build a small valid TIFF in memory for happy-path baselines."""
@@ -1221,11 +1201,6 @@ def test_cloud_source_closed_when_read_all_raises():
 # Source: test_orientation.py
 # ===========================================================================
 
-import numpy as np
-import pytest
-
-from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff._reader import read_to_array
 
 tifffile = pytest.importorskip("tifffile")
 
@@ -1718,15 +1693,6 @@ def test_orientation_with_band_selection_returns_2d(tmp_path):
 # _FileSource context-manager protocol (#2449)
 # Source: test_file_source_context_2449.py
 # ===========================================================================
-
-import os
-import struct
-
-import numpy as np
-import pytest
-
-from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._sources import _FileSource, _mmap_cache
 
 
 @pytest.fixture

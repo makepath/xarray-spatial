@@ -67,17 +67,19 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import numpy as np
+import pytest
+import xarray as xr
+
+from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt
+from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
+from xrspatial.geotiff._errors import RotatedTransformError, UnparseableCRSError
+
+from .._helpers.markers import gpu_available, requires_gpu, requires_loopback
+
 # Alias so existing base-section signatures that say ``Path`` keep working.
 Path = pathlib.Path
 
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
-import xarray as xr  # noqa: E402
-
-from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt  # noqa: E402
-from xrspatial.geotiff._errors import RotatedTransformError  # noqa: E402
-
-from .._helpers.markers import gpu_available, requires_gpu, requires_loopback  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Environment gating
@@ -2094,11 +2096,6 @@ def test_pass_through_tags_all_backend_keysets_equal(tmp_path):
 # Source: test_finalization_helpers_2162.py
 # ===========================================================================
 
-import numpy as np
-import pytest
-
-from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
-from xrspatial.geotiff._errors import UnparseableCRSError
 
 # ---------------------------------------------------------------------------
 # Fixtures

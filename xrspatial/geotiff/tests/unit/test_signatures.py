@@ -49,6 +49,7 @@ runtime logic. GPU rows skip when cupy + CUDA are absent via the shared
 """
 from __future__ import annotations
 
+import importlib.util
 import inspect
 import io
 import os
@@ -60,8 +61,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
+import xrspatial.geotiff as g
 import xrspatial.geotiff._compression as comp_mod
-from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
+from xrspatial.geotiff import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _wkt_to_epsg,
+                               open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
                                to_geotiff, write_geotiff_gpu, write_vrt)
 from xrspatial.geotiff._attrs import (_COMPRESSION_TAG_TO_NAME, _validate_read_codec_optin,
                                       _validate_write_rich_tag_optin)
@@ -70,6 +73,7 @@ from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLAT
                                             COMPRESSION_ZSTD, LZ4_AVAILABLE, compress,
                                             deflate_compress)
 from xrspatial.geotiff._dtypes import SHORT
+from xrspatial.geotiff._geotags import _epsg_to_wkt
 from xrspatial.geotiff._header import TAG_EXTRA_SAMPLES, TAG_PHOTOMETRIC, parse_header, parse_ifd
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._vrt import parse_vrt
@@ -2880,14 +2884,6 @@ class TestReadVrtWindowGpu:
 # Source: test_strict_mode_1662.py
 # ===========================================================================
 
-import importlib.util
-import warnings
-
-import pytest
-
-from xrspatial.geotiff import GeoTIFFFallbackWarning, _geotiff_strict_mode, _wkt_to_epsg
-from xrspatial.geotiff._geotags import _epsg_to_wkt
-
 
 @pytest.fixture
 def clear_strict_env(monkeypatch):
@@ -3219,10 +3215,6 @@ def test_read_geotiff_gpu_env_var_promotes_to_strict(monkeypatch, tmp_path):
 # Public namespace no-leak regression (#1708)
 # Source: test_namespace_no_leak.py
 # ===========================================================================
-
-import pytest
-
-import xrspatial.geotiff as g
 
 
 def test_read_to_array_not_in_module_namespace():

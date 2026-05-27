@@ -294,8 +294,8 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         # behaviour with a warning. Mirrors the eager CPU path in
         # ``_reader._read_to_array`` and the dask metadata helper
         # ``_sidecar.discover_remote_sidecar``. Issue #2416.
-        from ._sidecar import (attach_sidecar_origin, find_sidecar,
-                                handle_sidecar_parse_failure, load_sidecar)
+        from ._sidecar import (attach_sidecar_origin, find_sidecar, handle_sidecar_parse_failure,
+                               load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:

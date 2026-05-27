@@ -41,11 +41,13 @@ import xarray as xr
 from xrspatial.geotiff import _decode as _decode_mod
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
-from xrspatial.geotiff._compression import unpack_bits
+from xrspatial.geotiff._compression import COMPRESSION_NONE, unpack_bits
 from xrspatial.geotiff._dtypes import (resolve_bits_per_sample, resolve_sample_format,
                                        tiff_dtype_to_numpy)
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff._writer import (_assemble_cog_layout, _assemble_standard_layout,
+                                       _assemble_tiff, _write_stripped, _write_tiled)
 
 from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.markers import requires_loopback
@@ -1697,15 +1699,6 @@ class TestPlanar2MultibandStripParallel:
 # Layout assembly without bytes-copy (#1756)
 # Source: test_assemble_layout_no_bytes_copy_1756.py
 # ===========================================================================
-
-import io
-
-import numpy as np
-
-from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._compression import COMPRESSION_NONE
-from xrspatial.geotiff._writer import (_assemble_cog_layout, _assemble_standard_layout,
-                                       _assemble_tiff, _write_stripped, _write_tiled)
 
 
 def _build_parts(arr: np.ndarray):

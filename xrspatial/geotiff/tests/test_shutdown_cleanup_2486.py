@@ -10,12 +10,7 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import to_geotiff
-from xrspatial.geotiff._sources import (
-    _FileSource,
-    _MmapCache,
-    _mmap_cache,
-    _shutdown_cleanup,
-)
+from xrspatial.geotiff._sources import _FileSource, _mmap_cache, _MmapCache, _shutdown_cleanup
 
 
 @pytest.fixture

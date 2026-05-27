@@ -31,6 +31,7 @@ import uuid
 import warnings
 
 import dask.array as dsk
+import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
@@ -50,6 +51,8 @@ from xrspatial.geotiff._validation import _validate_3d_writer_dims
 from xrspatial.geotiff._vrt import write_vrt as _priv_write_vrt
 from xrspatial.geotiff._writer import _make_overview, _write, _write_streaming, _write_tiled, write
 from xrspatial.geotiff.tests.conftest import requires_gpu
+
+from .._helpers.markers import gpu_available as _gpu_available
 
 # -------------------------------------------------------------------------
 # Section: writer round-trip basics
@@ -452,7 +455,6 @@ def test_writer_kwarg_defaults_match_to_geotiff():
 # Section: return-path contract
 # -------------------------------------------------------------------------
 
-from .._helpers.markers import gpu_available as _gpu_available  # noqa: E402
 
 _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(
@@ -2534,16 +2536,7 @@ def test_write_geotiff_gpu_rejects_zero_bands(tmp_path):
 # Source: test_streaming_photometric_override_2073.py
 # ===========================================================================
 
-import os
 
-import dask.array as da
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import open_geotiff, to_geotiff
-
-TAG_PHOTOMETRIC = 262
 TYPE_SHORT = 3
 
 

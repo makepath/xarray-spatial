@@ -38,17 +38,29 @@ not contract pins; ``pytest -m release_gate`` picks the right subset.
 """
 from __future__ import annotations
 
+import ast
+import inspect
 import os
+import uuid
+import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff import (SUPPORTED_FEATURES, GeoTIFFAmbiguousMetadataError,
+                               GeoTIFFFallbackWarning, RotatedTransformError,
+                               UnsupportedGeoTIFFFeatureError, VRTStableSourcesOnlyError,
+                               open_geotiff, read_geotiff_dask, read_vrt, to_geotiff,
+                               write_geotiff_gpu)
+from xrspatial.geotiff._attrs import _VALID_COMPRESSIONS
 from xrspatial.geotiff._compression import (packbits_compress, packbits_decompress, zstd_compress,
                                             zstd_decompress)
+from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff._header import parse_header
 from xrspatial.geotiff._reader import read_to_array
+from xrspatial.geotiff._vrt import parse_vrt, write_vrt
 from xrspatial.geotiff._writer import write
 
 # -----------------------------------------------------------------------
@@ -2892,12 +2904,6 @@ class TestPublicAPI:
 # Source: test_supported_features_shape_2348.py
 # ===========================================================================
 
-import ast
-from pathlib import Path
-
-import pytest
-
-from xrspatial.geotiff import SUPPORTED_FEATURES
 
 _VALID_TIERS = frozenset({'stable', 'advanced', 'experimental', 'internal_only'})
 
@@ -3023,17 +3029,6 @@ def test_epic_2340_wave_1_reconciliation(key, tier):
 # Source: test_supported_features_tiers_2137.py
 # ===========================================================================
 
-import inspect
-import os
-import warnings
-
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff import (SUPPORTED_FEATURES, GeoTIFFFallbackWarning, to_geotiff,
-                               write_geotiff_gpu)
-from xrspatial.geotiff._attrs import _VALID_COMPRESSIONS
 
 _TIER_VALUES = {'stable', 'advanced', 'experimental', 'internal_only'}
 
@@ -3275,18 +3270,6 @@ def test_jpeg_rejected_without_its_own_flag(tmp_path):
 # Unsupported feature combinations (typed refusals, #2349)
 # Source: test_unsupported_features_2349.py
 # ===========================================================================
-
-import os
-import uuid
-
-import numpy as np
-import pytest
-import xarray as xr
-
-from xrspatial.geotiff._errors import VRTUnsupportedError
-from xrspatial.geotiff import (RotatedTransformError, UnsupportedGeoTIFFFeatureError,
-                               open_geotiff, to_geotiff)
-from xrspatial.geotiff._vrt import parse_vrt, write_vrt
 
 
 # ---------------------------------------------------------------------------
@@ -3723,14 +3706,6 @@ def test_vrt_with_skewed_geotransform_rejected(tmp_path):
 # VRT stable_only gate (#2443)
 # Source: test_vrt_stable_only_2443.py
 # ===========================================================================
-
-from pathlib import Path
-
-import pytest
-
-from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, VRTStableSourcesOnlyError,
-                               open_geotiff, read_geotiff_dask, read_vrt)
-from xrspatial.geotiff._errors import VRTUnsupportedError
 
 
 _MINIMAL_VRT_XML = '<VRTDataset rasterXSize="2" rasterYSize="2"></VRTDataset>\n'

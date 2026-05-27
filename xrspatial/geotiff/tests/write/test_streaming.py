@@ -33,7 +33,7 @@ import xarray as xr
 from xrspatial.geotiff import _writer as writer_mod
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLATE, COMPRESSION_NONE,
-                                            deflate_compress)
+                                            LERC_AVAILABLE, LZ4_AVAILABLE, deflate_compress)
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import _PARALLEL_MIN_BYTES, _write_stripped, _write_tiled, write
 
@@ -949,14 +949,9 @@ def test_pool_shutdown_on_happy_path(
 # Source: test_streaming_codecs_2026_05_11.py
 # ===========================================================================
 
-import numpy as np
-import pytest
-import xarray as xr
 
 pytest.importorskip("dask")
 
-from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
-from xrspatial.geotiff._compression import LERC_AVAILABLE, LZ4_AVAILABLE  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures

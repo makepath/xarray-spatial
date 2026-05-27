@@ -25,6 +25,8 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import open_geotiff
+from xrspatial.geotiff._overview import _block_reduce_2d
+from xrspatial.geotiff._overview_kernels import KERNELS
 
 
 def _gpu_available() -> bool:
@@ -918,12 +920,6 @@ def test_gpu_overview_level_check_runs_before_chunked_dispatch(
 # ngjit 2x2 overview kernels parity (#2413)
 # Source: test_overview_kernels_2413.py
 # ===========================================================================
-
-import numpy as np
-import pytest
-
-from xrspatial.geotiff._overview import _block_reduce_2d
-from xrspatial.geotiff._overview_kernels import KERNELS
 
 
 def _reference_reduce(arr, method, nodata=None):
