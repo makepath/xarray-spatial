@@ -1,25 +1,24 @@
-"""Oracle harness for the geotiff golden corpus (issue #1930, Phase 1.2).
+"""Oracle harness for the geotiff golden corpus.
 
 ``compare_to_oracle(fixture_path, candidate_da)`` reads ``fixture_path`` with
 rasterio (the reference implementation) and asserts that an xrspatial-produced
 ``xarray.DataArray`` agrees on every observable property: pixel values,
 dtype, transform, CRS, nodata sentinel, and a small set of canonical attrs.
 
-The Phase 3 backend cells (numpy, dask+numpy, cupy, dask+cupy, HTTP, VRT)
-each call this single function with the DataArray they produced; the oracle
+Each per-backend test cell (numpy, dask+numpy, cupy, dask+cupy, HTTP, VRT)
+calls this single function with the DataArray it produced; the oracle
 encapsulates "what parity means" so every backend agrees on it.
 
 Scope notes:
 
-* The full canonical-attrs contract is tracked in issue #1984 and is not
-  settled yet. Until it lands, the oracle asserts only the obvious subset
-  (``crs``, ``transform``, ``nodata``, ``dtype``) and leaves a hook
-  (``_assert_canonical_attrs``) that later PRs can fill in. See the TODO
-  in that function.
-* ``lossy=True`` skips bit-exact pixel comparison (for JPEG cells in
-  Phase 2) and instead verifies only shape, dtype, transform, and CRS.
-* The oracle does not import the corpus manifest from Phase 1 PR 1; it
-  takes a raw filesystem path so the two PRs stay decoupled.
+* The full canonical-attrs contract is not settled yet. Until it is, the
+  oracle asserts only the obvious subset (``crs``, ``transform``,
+  ``nodata``, ``dtype``) and leaves a hook (``_assert_canonical_attrs``)
+  to fill in. See the TODO in that function.
+* ``lossy=True`` skips bit-exact pixel comparison (for JPEG cells) and
+  instead verifies only shape, dtype, transform, and CRS.
+* The oracle does not import the corpus manifest; it takes a raw
+  filesystem path so the two stay decoupled.
 """
 from __future__ import annotations
 
@@ -154,7 +153,7 @@ def _crs_equal(ref, cand) -> bool:
     to EPSG-code comparison when both sides resolve to an EPSG code.
 
     Citation-only CRSes (a user-supplied name with no AUTHORITY tag, e.g.
-    the Phase 2 PR 8 ``crs_citation_only`` fixture) cannot be compared by
+    the ``crs_citation_only`` fixture) cannot be compared by
     EPSG code because neither side has one. PROJ's ``to_dict()`` projects
     them onto a small set of canonical fields (proj kind, ellipsoid
     radius, units), which is stable across the libgeotiff round-trip
@@ -246,13 +245,13 @@ def _pixels_equal(ref: np.ndarray, cand: np.ndarray) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Masked-nodata normalisation (issue #1988)
+# Masked-nodata normalisation
 # ---------------------------------------------------------------------------
 
 def _has_masked_nodata(candidate_da: xr.DataArray) -> bool:
     """True when the candidate reports xrspatial's masked-nodata contract.
 
-    The contract (issue #1988): xrspatial reads an integer GeoTIFF whose
+    The contract: xrspatial reads an integer GeoTIFF whose
     nodata tag carries an integer sentinel, masks the sentinel-equal
     pixels to NaN, and upcasts the array to float so NaN can live in
     it. The reader stamps ``attrs['masked_nodata'] = True`` to record
@@ -316,13 +315,13 @@ def _normalise_for_masked_nodata(
 
 
 # ---------------------------------------------------------------------------
-# Canonical-attrs hook (issue #1984)
+# Canonical-attrs hook
 # ---------------------------------------------------------------------------
 
-# Attrs the oracle currently asserts. Kept intentionally small until
-# issue #1984 (canonical attrs contract) settles which keys are canonical,
-# which are aliases, and which are pass-through metadata that may legally
-# diverge between rasterio and xrspatial reads.
+# Attrs the oracle currently asserts. Kept intentionally small until the
+# canonical-attrs contract settles which keys are canonical, which are
+# aliases, and which are pass-through metadata that may legally diverge
+# between rasterio and xrspatial reads.
 _CANONICAL_ATTR_KEYS_PROVISIONAL: tuple[str, ...] = (
     'crs',
     'transform',
@@ -340,14 +339,14 @@ def _assert_canonical_attrs(
     No-op today on purpose. The four sibling helpers
     (``_assert_dtype`` / ``_assert_transform`` / ``_assert_crs`` /
     ``_assert_nodata``) cover the provisional contract; this stub exists
-    so test code references stay stable when issue #1984 lands.
+    so test code references stay stable once the full contract lands.
 
-    TODO(#1984): Expand to the full canonical-attrs contract once it
-    settles. The provisional key set is in
-    ``_CANONICAL_ATTR_KEYS_PROVISIONAL``. Likely additions when #1984
-    lands: ``raster_type`` (PixelIsArea vs PixelIsPoint), resolution
-    keys, and a canonicalised view of GDAL metadata. Pass-through tags
-    (``gdal_metadata``, ``extra_tags``) stay out of scope.
+    TODO: Expand to the full canonical-attrs contract once it settles.
+    The provisional key set is in ``_CANONICAL_ATTR_KEYS_PROVISIONAL``.
+    Likely additions: ``raster_type`` (PixelIsArea vs PixelIsPoint),
+    resolution keys, and a canonicalised view of GDAL metadata.
+    Pass-through tags (``gdal_metadata``, ``extra_tags``) stay out of
+    scope.
 
     Parameters are prefixed with ``_`` because they are deliberately
     unused today; rename them when this function gains a body.
@@ -377,15 +376,14 @@ def _assert_transform(
     GeoTIFF tags (i.e. a CRS *or* a non-identity transform). When it is
     False the file is bare -- rasterio returns ``Affine.identity()`` for
     such files regardless of pixel size -- and xrspatial may legitimately
-    drop the transform attr (#1710). Identity-equal transforms alone are
+    drop the transform attr. Identity-equal transforms alone are
     NOT enough to declare "no georef": a real raster written at origin
     (0, 0) with 1.0 pixel size also matches identity.
     """
     cand_t = _candidate_transform(candidate_da)
     if not ref_has_georef:
         # Bare file. The candidate may legitimately:
-        # * carry no transform attr at all (xrspatial's no-georef path,
-        #   #1710),
+        # * carry no transform attr at all (xrspatial's no-georef path),
         # * carry an identity transform attr,
         # * carry a transform derived from integer-pixel-center coords
         #   (origin -0.5, pixel size 1.0 -- what xrspatial's
@@ -578,7 +576,7 @@ def _compare_against_open_source(
         'dtype': ref_dtype,
     }
 
-    # When the candidate reports the masked-nodata contract (#1988),
+    # When the candidate reports the masked-nodata contract,
     # rewrite the rasterio reference to match: cast to the candidate's
     # float dtype and replace sentinel-equal pixels with NaN. Then the
     # dtype + pixel assertions run on directly comparable arrays.
@@ -637,7 +635,7 @@ def compare_to_oracle(
     ----------
     fixture_path
         Path to a TIFF on disk. The oracle does not consult the corpus
-        manifest; callers (Phase 3 test cells) pass a raw path.
+        manifest; callers pass a raw path.
     candidate_da
         The xarray DataArray produced by an xrspatial read backend at
         full resolution (overview level 0). Compared against the base
@@ -645,8 +643,8 @@ def compare_to_oracle(
     lossy
         When ``True``, skip bit-exact pixel comparison and assert only
         shape, dtype, transform, and CRS. Use this for JPEG cells where
-        the codec is intrinsically lossy (Phase 2 PR 5). The same
-        ``lossy`` flag applies to every overview level when
+        the codec is intrinsically lossy. The same ``lossy`` flag
+        applies to every overview level when
         ``candidate_factory`` is given.
     candidate_factory
         Optional callable ``factory(level) -> xr.DataArray`` that returns
@@ -672,11 +670,11 @@ def compare_to_oracle(
 
     Notes
     -----
-    The canonical-attrs contract is tracked in issue #1984. Until it
-    settles, only the four obvious keys (crs/transform/nodata/dtype) are
-    checked; ``_assert_canonical_attrs`` is the hook later PRs will fill
-    in. Pass-through GeoTIFF metadata (gdal_metadata, extra_tags, etc.)
-    is intentionally not asserted here.
+    Until the canonical-attrs contract settles, only the four obvious
+    keys (crs/transform/nodata/dtype) are checked;
+    ``_assert_canonical_attrs`` is the hook to fill in. Pass-through
+    GeoTIFF metadata (gdal_metadata, extra_tags, etc.) is intentionally
+    not asserted here.
     """
     rasterio = _require_rasterio()
     fixture_path = Path(fixture_path)

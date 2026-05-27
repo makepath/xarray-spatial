@@ -7,14 +7,12 @@ the writer layout monkeypatch contract, and the VRT writer surface
 (path kwarg, CRS, bool / int nodata, int64, photometric, source
 compatibility, tiled output).
 
-Section banners below mark the topical sub-areas. Tests-only restructure
-for epic #2390.
+Section banners below mark the topical sub-areas.
 
-Cluster 9 of long-tail epic #2424 folded the writer-tail kwarg / shape
-validation files into the trailing sections: array-level ``_write`` /
-``_write_streaming`` push-down + byte parity (#2138), 3D dim validation
-(#1812), temporal-trailing 3D rejection (#1972), empty-spatial-dim
-rejection (#2075), and zero-band-axis rejection (#2095).
+The trailing sections cover the writer-tail kwarg / shape validation
+paths: array-level ``_write`` / ``_write_streaming`` push-down + byte
+parity, 3D dim validation, temporal-trailing 3D rejection,
+empty-spatial-dim rejection, and zero-band-axis rejection.
 """
 
 from __future__ import annotations
@@ -150,7 +148,7 @@ class TestWriteRoundTrip:
 class TestWriteInvalidInput:
     def test_unsupported_compression(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
-        # Issue #2138 pushed the canonical compression-list check from
+        # The canonical compression-list check was pushed from
         # ``to_geotiff`` down into ``_write`` so direct callers get the
         # same actionable error as the public wrapper. The wording
         # shifted from ``_compression_tag``'s "Unsupported compression"
@@ -213,7 +211,7 @@ def test_dtype_codec_roundtrip_stripped(tmp_path, dtype, codec):
         pytest.skip(f"codec {codec} not available: {e}")
 
     # Codecs in the experimental tier (LERC / J2K / LZ4) need the
-    # read-side opt-in too (PR 4 of epic #2340). Tier 1 codecs ignore
+    # read-side opt-in too. Tier 1 codecs ignore
     # the kwarg, so passing it unconditionally keeps the loop simple.
     arr, _geo = read_to_array(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(arr, expected)
@@ -429,9 +427,8 @@ def test_writer_kwarg_defaults_match_to_geotiff():
 
     A surprise-free dispatch ``to_geotiff(..., gpu=True)`` requires
     ``write_geotiff_gpu`` to default the same way for every kwarg the
-    auto-dispatch entry point forwards (issue #1916 added
-    ``allow_internal_only_jpeg`` to satisfy that contract; this test
-    pins the broader parity).
+    auto-dispatch entry point forwards (``allow_internal_only_jpeg`` was
+    added to satisfy that contract; this test pins the broader parity).
     """
     eager_sig = inspect.signature(to_geotiff)
     gpu_sig = inspect.signature(write_geotiff_gpu)
@@ -830,8 +827,8 @@ def test_write_vrt_path_kwarg_works(tmp_path):
     """Keyword ``write_vrt(path=..., source_files=...)`` works.
 
     A caller who passes everything by keyword (no positional args)
-    cannot reach the function before #1946 because ``path`` did not
-    exist; this is the path-symmetric counterpart to the existing
+    previously could not reach the function because the ``path`` kwarg
+    did not exist; this is the path-symmetric counterpart to the existing
     ``write_vrt(vrt_path=...)`` test below.
     """
     src = _build_source_tif(tmp_path)
@@ -846,8 +843,8 @@ def test_write_vrt_path_kwarg_works(tmp_path):
 def test_write_vrt_vrt_path_kwarg_emits_deprecation_warning(tmp_path):
     """``vrt_path=...`` works but emits ``DeprecationWarning``.
 
-    Mirrors the existing ``crs_wkt`` deprecation in the same writer
-    (#1715): old name still works, but caller sees a clear migration
+    Mirrors the existing ``crs_wkt`` deprecation in the same writer:
+    old name still works, but caller sees a clear migration
     hint via the warning.
     """
     src = _build_source_tif(tmp_path)
@@ -878,7 +875,7 @@ def test_write_vrt_no_path_raises(tmp_path):
     ``TypeError: missing 1 required positional argument`` from CPython.
     The shim adds a sentinel default so the kwarg-only positional no
     longer triggers that automatic check; the explicit raise inside
-    the shim preserves the pre-#1946 error semantics.
+    the shim preserves the original error semantics.
     """
     src = _build_source_tif(tmp_path)
     with pytest.raises(TypeError, match='path'):
@@ -888,7 +885,7 @@ def test_write_vrt_no_path_raises(tmp_path):
 def test_write_vrt_explicit_path_none_raises(tmp_path):
     """``write_vrt(path=None, ...)`` is rejected with TypeError.
 
-    The sentinel-default pattern (#1962 review) distinguishes "caller
+    The sentinel-default pattern distinguishes "caller
     passed nothing" (sentinel) from "caller passed None explicitly".
     Explicit ``None`` is a bug in the caller's code, not a request to
     fall through to the deprecated ``vrt_path`` alias, so the shim
@@ -905,7 +902,7 @@ def test_write_vrt_positional_none_raises(tmp_path):
     Same rationale as the keyword case: an explicit positional ``None``
     is rejected up front instead of crashing deep in
     ``os.path.dirname(os.path.abspath(None))``. Pinned because the
-    pre-#1962 code accepted positional ``None`` and raised the wrong
+    older code accepted positional ``None`` and raised the wrong
     "missing required argument" error.
     """
     src = _build_source_tif(tmp_path)
@@ -1106,8 +1103,7 @@ def test_write_vrt_both_crs_and_crs_wkt_rejected(tmp_path):
 def test_writer_trio_all_accept_crs_kwarg():
     """``crs`` is the canonical kwarg on every public writer in the trio.
     A caller forwarding ``crs=<value>`` to whichever writer matches the
-    output extension never has to special-case the kwarg name (issue
-    #1715)."""
+    output extension never has to special-case the kwarg name."""
     import inspect
 
     from xrspatial.geotiff import to_geotiff, write_geotiff_gpu, write_vrt
@@ -1164,7 +1160,7 @@ def src_geotiff(uint8_da, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# write_vrt: the bug from issue #1921
+# write_vrt: bool nodata rejection
 # ---------------------------------------------------------------------------
 
 
@@ -1175,8 +1171,8 @@ def src_geotiff(uint8_da, tmp_path):
 def test_write_vrt_rejects_bool_nodata(src_geotiff, tmp_path, bad):
     """``write_vrt`` raises ``TypeError`` for any bool nodata.
 
-    Fixed in issue #1921 by routing the public ``write_vrt`` wrapper
-    through ``_validate_nodata_arg`` and adding a defense-in-depth check
+    The public ``write_vrt`` wrapper routes
+    through ``_validate_nodata_arg`` and adds a defense-in-depth check
     inside the internal ``_vrt.write_vrt``.
     """
     vrt_path = str(tmp_path / "out_1921_bad.vrt")
@@ -1197,7 +1193,7 @@ def test_write_vrt_internal_rejects_bool_nodata(src_geotiff, tmp_path, bad):
     ``_vrt.write_vrt`` after writing per-tile GeoTIFFs, or a future
     split of the wrapper). Parametrize over both ``bool`` and
     ``np.bool_`` polarities so a refactor that narrows the internal
-    guard to just ``bool`` surfaces here, not in user code. See #1921.
+    guard to just ``bool`` surfaces here, not in user code.
     """
     from xrspatial.geotiff._vrt import write_vrt as _internal_write_vrt
     vrt_path = str(tmp_path / "out_1921_internal.vrt")
@@ -1241,7 +1237,7 @@ def test_write_vrt_accepts_none_nodata(src_geotiff, tmp_path):
 def test_write_geotiff_gpu_rejects_bool_nodata(uint8_da, tmp_path, bad):
     """Direct ``write_geotiff_gpu`` call rejects bool nodata.
 
-    The top-of-function ``_validate_nodata_arg`` call (added by #1973)
+    The top-of-function ``_validate_nodata_arg`` call
     fires first; the deeper ``build_geo_tags`` guard is a second line
     of defense. Pinning the behaviour so a refactor that drops the
     top-of-function call surfaces here, not deep inside the geotag
@@ -1662,7 +1658,7 @@ class TestVrtOutputNumpy:
         tiles_dir = str(tmp_path / 'named_1083_tiles')
         files = sorted(os.listdir(tiles_dir))
         # 200x200 with tile_size=128 -> 2x2 grid (TIFF 6 spec requires
-        # tile_size be a multiple of 16; 100 was rejected post-#1767).
+        # tile_size be a multiple of 16; 100 is rejected).
         assert files == [
             'tile_00_00.tif', 'tile_00_01.tif',
             'tile_01_00.tif', 'tile_01_01.tif',
@@ -1732,13 +1728,12 @@ class TestVrtEdgeCases:
 
 
 # =========================================================================
-# Folded from top-level writer-tail tests (cluster 9, epic #2424).
-# Sub-PR A: kwarg / shape validation paths.
+# Writer-tail kwarg / shape validation paths.
 # =========================================================================
 
 
 # -------------------------------------------------------------------------
-# Section: array-level write push-down + byte parity (#2138)
+# Section: array-level write push-down + byte parity
 # -------------------------------------------------------------------------
 
 def _codec_available_2138(name: str) -> bool:
@@ -1789,7 +1784,7 @@ def _file_bytes_2138(path: str) -> bytes:
 
 class TestCompressionNamePushdown:
     """``_write`` must reject unknown compression names with the canonical
-    list, the same way ``to_geotiff`` does. Before #2138 the array-level
+    list, the same way ``to_geotiff`` does. Previously the array-level
     entry point relied on ``_compression_tag`` which raised but without
     the canonical list."""
 
@@ -1812,7 +1807,7 @@ class TestCompressionNamePushdown:
 
 class TestJpegOptInPushdown:
     """``_write`` must refuse ``compression='jpeg'`` unless the caller
-    opts in, mirroring ``to_geotiff``'s gate. Before #2138 direct
+    opts in, mirroring ``to_geotiff``'s gate. Previously direct
     callers could silently produce a JFIF-tile file that other readers
     reject."""
 
@@ -1939,7 +1934,7 @@ class TestDtypePromotionPushdown:
 # opt-in, which the wrapper emits a runtime warning for, and JPEG is
 # lossy so trivial seed changes can shift bytes. The experimental codecs
 # (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``) are gated behind
-# ``allow_experimental_codecs=True`` (issue #2137) and are likewise
+# ``allow_experimental_codecs=True`` and are likewise
 # excluded from this sweep. ``_write`` is exercised elsewhere; the
 # parity sweep covers the stable lossless codec set that direct callers
 # reach for first.
@@ -1957,7 +1952,7 @@ def test_write_vs_to_geotiff_byte_parity_uint8(compression, tmp_path):
     """``_write(arr, ...)`` and ``to_geotiff(xr.DataArray(arr), ...)``
     must produce byte-identical files for every entry in
     ``_VALID_COMPRESSIONS`` that round-trips losslessly. A divergence
-    here is exactly the silent-different-file footgun #2138 names.
+    here is exactly the silent-different-file footgun this guards against.
     """
     if not _codec_available_2138(compression):
         pytest.skip(f"{compression} codec not installed")
@@ -2011,7 +2006,7 @@ def test_write_lerc_lossless_round_trip(tmp_path):
     arr = _make_float32_band_2138()
     out = str(tmp_path / "tmp_2138_lerc_lossless.tif")
     _write(arr, out, compression="lerc", max_z_error=0.0)
-    # LERC is the Experimental read tier (PR 4 of epic #2340).
+    # LERC is the Experimental read tier.
     decoded, _ = _read_to_array(out, allow_experimental_codecs=True)
     np.testing.assert_array_equal(decoded, arr)
 
@@ -2030,8 +2025,8 @@ def test_aliases_match_underscore_names():
 def test_write_not_leaked_into_public_namespace():
     """The array-level write entry points are module-private. They
     must not appear as attributes of ``xrspatial.geotiff`` (the
-    documented public surface is ``to_geotiff``). Mirrors the #1708
-    contract for ``read_to_array``."""
+    documented public surface is ``to_geotiff``). Mirrors the
+    privacy contract for ``read_to_array``."""
     import xrspatial.geotiff as g
 
     for name in ('write', 'write_streaming', '_write', '_write_streaming'):
@@ -2044,7 +2039,7 @@ def test_write_not_leaked_into_public_namespace():
 
 
 # -------------------------------------------------------------------------
-# Section: 3D dim validation (#1812)
+# Section: 3D dim validation
 # -------------------------------------------------------------------------
 
 # Inputs that must be accepted (round-trip cleanly).
@@ -2078,7 +2073,7 @@ def _make_da_1812(dims, shape, dtype=np.uint8, backend="numpy"):
 def test_repro_silent_corruption_now_raises(tmp_path):
     """The original repro now raises a clear ValueError.
 
-    Post-#1972 the ``(time, y, x)`` layout produces the dedicated
+    The ``(time, y, x)`` layout produces the dedicated
     temporal-leading-dim message rather than the generic ambiguous-dims
     one, so accept either wording.
     """
@@ -2194,7 +2189,7 @@ def test_2d_still_works(tmp_path):
 def test_error_message_actionable(tmp_path):
     """The generic ValueError message tells the caller how to fix the input.
 
-    Uses a non-temporal leading dim so the dedicated #1972 temporal path
+    Uses a non-temporal leading dim so the dedicated temporal path
     does not short-circuit, keeping the assertions on the generic
     "(band, y, x)" / "(y, x, band)" / "#1812" wording intact.
     """
@@ -2241,7 +2236,7 @@ def test_gpu_writer_happy_path_still_works(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Section: temporal-trailing 3D writer rejection (#1972)
+# Section: temporal-trailing 3D writer rejection
 # -------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -2261,7 +2256,7 @@ def test_validate_3d_rejects_yx_temporal_case_insensitive(temporal):
     # CF allows ``'TIME'`` / ``'Time'``; the lowercase _TIME_DIM_NAMES
     # tuple must still match via case-insensitive comparison so the
     # mixed-case stack does not slip through the (y, x, *) fallback and
-    # silently write a 3-band TIFF (#1972 self-review).
+    # silently write a 3-band TIFF.
     with pytest.raises(ValueError, match="temporal trailing dim"):
         _validate_3d_writer_dims(('y', 'x', temporal))
 
@@ -2283,7 +2278,7 @@ def test_validate_3d_still_accepts_yx_band():
 def test_validate_3d_still_accepts_recognized_band_alias_trailing_dim():
     # Recognized band aliases at the trailing position remain accepted.
     # The loose ``(y, x, *)`` fallback for arbitrary unknown trailing
-    # names (``'foo'``, ``'z'``, ``'scenario'``) was removed in #2240
+    # names (``'foo'``, ``'z'``, ``'scenario'``) was removed
     # because it silently wrote those values as TIFF bands. The
     # regression coverage for the rejection lives in
     # ``test_validate_3d_non_band_trailing_dim_2240.py``.
@@ -2293,7 +2288,7 @@ def test_validate_3d_still_accepts_recognized_band_alias_trailing_dim():
 
 def test_validate_3d_still_rejects_time_y_x():
     # Leading temporal dim was already rejected; the symmetrised path
-    # now emits the dedicated temporal message (#1972 self-review nit 2)
+    # now emits the dedicated temporal message
     # instead of the generic "ambiguous dims" wording.
     with pytest.raises(ValueError, match="temporal leading dim"):
         _validate_3d_writer_dims(('time', 'y', 'x'))
@@ -2305,7 +2300,7 @@ def test_validate_3d_still_rejects_time_y_x():
 )
 def test_validate_3d_rejects_temporal_y_x_case_insensitive(temporal):
     # Mirror the trailing-dim case-insensitive coverage for the leading
-    # temporal axis (#1972 self-review nit 2).
+    # temporal axis.
     with pytest.raises(ValueError, match="temporal leading dim"):
         _validate_3d_writer_dims((temporal, 'y', 'x'))
 
@@ -2351,7 +2346,7 @@ def test_error_message_suggests_isel_and_band_rename():
 
 
 # -------------------------------------------------------------------------
-# Section: empty spatial dim rejection (#2075)
+# Section: empty spatial dim rejection
 # -------------------------------------------------------------------------
 
 _EMPTY_SHAPES_2075 = [
@@ -2388,7 +2383,7 @@ def test_to_geotiff_rejects_empty_numpy(tmp_path, shape):
 def test_write_geotiff_gpu_rejects_empty(tmp_path):
     """``write_geotiff_gpu`` is a public entry point and does not go
     through ``to_geotiff``; make sure the empty-shape guard fires there
-    too (the suggestion from PR #2078 review)."""
+    too."""
     import cupy as cp
 
     from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
@@ -2420,7 +2415,7 @@ def test_to_geotiff_rejects_empty_dask(tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Section: zero-band axis rejection (#2095)
+# Section: zero-band axis rejection
 # -------------------------------------------------------------------------
 
 _ZERO_BAND_LAYOUTS_2095 = [
@@ -2485,7 +2480,7 @@ def test_write_band_last_zero_bands_direct(tmp_path):
     # check would not distinguish ``write`` from ``write_streaming``
     # or ``write_geotiff_gpu``).
     # The array-level entry point was renamed from ``write`` to
-    # ``_write`` in #2138 to mark it as module-private. ``write`` is
+    # ``_write`` to mark it as module-private. ``write`` is
     # kept as a backward-compatible alias, so the entry-point token in
     # the error message reflects the underlying function name.
     assert msg.startswith("_write cannot write")
@@ -2504,7 +2499,7 @@ def test_write_streaming_zero_bands_direct(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         write_streaming(arr, str(out))
     msg = str(excinfo.value)
-    # Renamed to ``_write_streaming`` in #2138; ``write_streaming``
+    # Renamed to ``_write_streaming``; ``write_streaming``
     # remains a backward-compatible alias.
     assert msg.startswith("_write_streaming cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()

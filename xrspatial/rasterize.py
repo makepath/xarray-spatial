@@ -1190,7 +1190,6 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
                          point_props, point_global,
                          merge_fn, should_write, order)
 
-    import warnings
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
         return out.astype(dtype)
@@ -1772,6 +1771,7 @@ def _ensure_gpu_kernels(merge_fn, should_write, merge_name=None):
                     err -= dc
                 c += sc
                 err += dr
+
     @cuda.jit
     def _burn_lines_supercover_gpu_pass2(
             out, written, order,

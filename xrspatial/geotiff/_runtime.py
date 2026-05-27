@@ -7,8 +7,6 @@ preserved by Python's module cache: every import of this module
 returns the same module instance, so ``_GPU_DEPRECATED_SENTINEL is
 other._GPU_DEPRECATED_SENTINEL`` resolves correctly regardless of
 which caller imported it.
-
-See issue #1813 step 2 for the rationale; PR for issue #1880.
 """
 from __future__ import annotations
 
@@ -29,29 +27,26 @@ _ON_GPU_FAILURE_SENTINEL = object()
 # ``write_vrt`` needs to distinguish "user passed crs_wkt= explicitly"
 # (deprecation path) from "user passed nothing" (no warning, pick CRS
 # from the first source). A plain default of None does not work because
-# None is itself a value a caller could supply alongside crs=. See
-# issue #1715.
+# None is itself a value a caller could supply alongside crs=.
 _CRS_WKT_DEPRECATED_SENTINEL = object()
 # ``open_geotiff`` needs to tell "caller never set missing_sources" (default
 # sentinel: skip forwarding so the read_vrt default applies, and reject the
 # kwarg up front for non-VRT sources) from "caller set missing_sources=<value>"
-# (forward verbatim to read_vrt). Mirrors the on_gpu_failure pattern. See
-# issue #1810.
+# (forward verbatim to read_vrt). Mirrors the on_gpu_failure pattern.
 _MISSING_SOURCES_SENTINEL = object()
 # ``write_vrt`` historically named its first positional kwarg ``vrt_path``
 # while ``to_geotiff`` / ``write_geotiff_gpu`` use ``path``. The deprecation
 # shim adds ``path`` as the new name and accepts ``vrt_path`` with a
 # DeprecationWarning. The sentinel pattern distinguishes "user passed
 # vrt_path= explicitly" from "user passed nothing", which is the same
-# rationale ``_CRS_WKT_DEPRECATED_SENTINEL`` documents above. See
-# issue #1946.
+# rationale ``_CRS_WKT_DEPRECATED_SENTINEL`` documents above.
 _VRT_PATH_DEPRECATED_SENTINEL = object()
 # ``write_vrt`` also needs to distinguish "user passed path= explicitly"
 # (including an explicit ``path=None``, which is an error) from "user
 # passed nothing" (fall through to the ``vrt_path`` shim). Without this
 # sentinel, ``write_vrt(None, sources)`` silently fell through to the
 # ``path is None`` branch and raised a "missing required argument"
-# TypeError for the wrong reason. See PR #1962 review.
+# TypeError for the wrong reason.
 _VRT_PATH_MISSING_SENTINEL = object()
 
 
@@ -64,8 +59,7 @@ _X_DIM_NAMES = ('x', 'lon', 'longitude', 'col')
 
 # Used by the writer ambiguous-metadata validators in
 # ``_writers/eager.py`` and ``_writers/gpu.py`` so the
-# ``NonUniformCoordsError`` check fires for alias-named coords too
-# (issue #2215).
+# ``NonUniformCoordsError`` check fires for alias-named coords too.
 def _resolve_spatial_coords(data):
     """Return ``(coord_y, coord_x)`` arrays for a DataArray, honoring aliases.
 
@@ -77,7 +71,7 @@ def _resolve_spatial_coords(data):
     ``NonUniformCoordsError`` check fires consistently. Without this
     helper, only literal ``coords['y']`` / ``coords['x']`` are passed
     in, and a DataArray with ``lat``/``lon`` coords slips past the
-    validator entirely (issue #2215).
+    validator entirely.
 
     Returns a tuple of ``numpy.ndarray`` (or ``None`` per axis if no
     matching coord is present). Resolution picks the first alias from
@@ -98,7 +92,7 @@ def _resolve_spatial_coords(data):
     return _first_match(_Y_DIM_NAMES), _first_match(_X_DIM_NAMES)
 
 
-# Temporal dim names. Used by the 3D writer validator (#1972) to refuse
+# Temporal dim names. Used by the 3D writer validator to refuse
 # ``(y, x, <temporal>)`` inputs that would otherwise be silently treated
 # as multiband rasters. CF / xarray conventions cover ``time`` and ``t``;
 # the rest match common upstream-pipeline aliases.
@@ -109,16 +103,16 @@ class GeoTIFFFallbackWarning(UserWarning):
     """Warning emitted when a geotiff helper falls back to a slower path.
 
     Raised in the same call sites that would silently return ``None`` under
-    the historic ``except Exception: return None`` pattern. See issue #1662
-    for the audit and the ``XRSPATIAL_GEOTIFF_STRICT=1`` env var that
-    promotes these warnings to exceptions.
+    the historic ``except Exception: return None`` pattern. The
+    ``XRSPATIAL_GEOTIFF_STRICT=1`` env var promotes these warnings to
+    exceptions.
     """
 
 
 def _geotiff_strict_mode() -> bool:
     """Return True when ``XRSPATIAL_GEOTIFF_STRICT`` is set to a truthy value.
 
-    Strict mode promotes the silent fallbacks audited in issue #1662 into
+    Strict mode promotes the audited silent fallbacks into
     raised exceptions. Useful in CI to catch GPU-path or VRT regressions
     that would otherwise hide behind a CPU fallback or a missing tile.
     """

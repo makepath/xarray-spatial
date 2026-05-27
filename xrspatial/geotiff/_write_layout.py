@@ -210,7 +210,7 @@ def _assemble_standard_layout(header_size: int,
     it via ``_write_bytes`` (which accepts any buffer-protocol object)
     and may slice it for header validation. Returning the bytearray
     directly avoids the peak-memory doubling that ``bytes(output)``
-    would impose on multi-GB writes (issue #1756).
+    would impose on multi-GB writes.
     """
     output = bytearray()
     entry_size = 20 if bigtiff else 12
@@ -283,7 +283,7 @@ def _assemble_cog_layout(header_size: int,
     """Assemble COG layout: all IFDs first, then all pixel data.
 
     Returns the assembled output as a ``bytearray``; see
-    :func:`_assemble_standard_layout` for the rationale (issue #1756).
+    :func:`_assemble_standard_layout` for the rationale.
     """
     entry_size = 20 if bigtiff else 12
     count_size = 8 if bigtiff else 2
@@ -300,7 +300,7 @@ def _assemble_cog_layout(header_size: int,
     total_ifd_size = sum(bs + ov for bs, ov in ifd_blocks)
     pixel_data_start = header_size + total_ifd_size
 
-    # COG block-order requirement (issue #2308): on-disk pixel data must
+    # COG block-order requirement: on-disk pixel data must
     # run smallest-overview first, then progressively larger overviews,
     # with the main-resolution image's blocks last. ``pixel_data_parts``
     # arrives in ``[main, ov_factor_2, ov_factor_4, ...]`` order (full
@@ -382,7 +382,7 @@ def _assemble_cog_layout(header_size: int,
 
     # Append all pixel data in COG-compliant order: smallest overview
     # first, then progressively larger, with the main resolution image
-    # last (issue #2308).
+    # last.
     for emit_idx in pixel_emission_order:
         _arr, _lw, _lh, _rel, _bc, comp_chunks = pixel_data_parts[emit_idx]
         for chunk in comp_chunks:
@@ -427,10 +427,10 @@ def _should_use_bigtiff_streaming(uncompressed_bytes: int,
     ``_assemble_tiff`` decision (``estimated_file_size > UINT32_MAX``):
     a file that is exactly ``UINT32_MAX`` bytes still fits classic.
 
-    See issue #1785 and the Copilot review on PR #1787: the previous
-    helper applied a 200-byte fudge for IFD overhead, which silently
-    underestimated when ``gdal_metadata_xml`` or large ``extra_tags``
-    pushed the actual overflow heap well past that constant.
+    The previous helper applied a 200-byte fudge for IFD overhead, which
+    silently underestimated when ``gdal_metadata_xml`` or large
+    ``extra_tags`` pushed the actual overflow heap well past that
+    constant.
 
     Parameters
     ----------
@@ -506,7 +506,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         writes do not transiently double peak memory; downstream
         consumers (``_write_bytes``, ``parse_header`` for the
         post-write validation slice) accept the buffer protocol so the
-        type change is transparent. See issue #1756.
+        type change is transparent.
     """
     # Photometric / extra-samples resolution and the writer-side tag
     # filter live in ``_writer.py`` (next to the public ``photometric``
@@ -554,8 +554,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
     # Resolve photometric interpretation once so primary IFD and any
     # overviews carry the same values. A user-supplied ``extra_tags``
     # entry of (TAG_PHOTOMETRIC, ...) or (TAG_EXTRA_SAMPLES, ...)
-    # overrides the writer's chosen value at every level. See issue
-    # #1769.
+    # overrides the writer's chosen value at every level.
     auto_photometric, auto_extras = _resolve_photometric(
         photometric, samples_per_pixel)
     user_photometric_override = None
@@ -590,7 +589,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         tags.append((TAG_COMPRESSION, SHORT, 1, compression))
         # Photometric: caller-controlled via the ``photometric`` kwarg
         # (default 'auto' = MinIsBlack for any band count, so a 4-band
-        # raster is not silently tagged as RGB+alpha). Issue #1769.
+        # raster is not silently tagged as RGB+alpha).
         if user_photometric_override is not None:
             tags.append(user_photometric_override)
         else:
@@ -660,7 +659,8 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
             if extra_tags is not None:
                 # Compute existing tag IDs once; update as we append to keep
                 # this loop O(len(extra_tags) + len(tags)) instead of O(N*M).
-                # See issue #1657 for the filter rationale.
+                # The filter drops tags that would mis-mark the IFD or
+                # carry stale offsets (NewSubfileType, SubIFDs).
                 existing_ids = {t[0] for t in tags}
                 for etag_id, etype_id, ecount, evalue in extra_tags:
                     if (etag_id not in existing_ids
@@ -677,9 +677,9 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
     # overhead is the exact bytes ``_build_ifd`` would emit, summed
     # across all IFDs. The earlier fixed 1 KB-per-IFD fudge
     # under-promoted near the 4 GiB boundary when ``gdal_metadata_xml``
-    # or ``extra_tags`` pushed the overflow heap past that constant
-    # (#1905). Shares ``_compute_classic_ifd_overhead`` with the
-    # streaming writer's BigTIFF decision (#1785, #1787).
+    # or ``extra_tags`` pushed the overflow heap past that constant.
+    # Shares ``_compute_classic_ifd_overhead`` with the streaming
+    # writer's BigTIFF decision.
     total_pixel_data = sum(sum(len(c) for c in chunks)
                            for _, _, _, _, _, chunks in pixel_data_parts)
     ifd_overhead = sum(

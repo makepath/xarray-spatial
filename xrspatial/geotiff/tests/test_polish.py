@@ -1,18 +1,18 @@
-"""Tests for the geotiff polish bundle (issue #1488).
+"""Tests for a bundle of low-severity geotiff polish items.
 
-Covers ten low-severity audit items:
+Covers:
 
-* C-1 -- early ``compression`` validation in ``to_geotiff``
-* C-2 -- read dispatch leaves ``read_geotiff_dask`` with a defensive
+* early ``compression`` validation in ``to_geotiff``
+* read dispatch leaves ``read_geotiff_dask`` with a defensive
   ``.vrt`` fallback that delegates to ``read_vrt``
-* C-5 -- ``write_vrt`` docstring lists kwargs (rejects unknown ones)
-* C-6 -- predictor doc covers True/2 equivalence and 3=fp
-* C-7 -- ``tile_size`` warns when ``tiled=False`` and non-default
-* P-3 -- mmap cache eviction (LRU + env var override)
-* P-4 -- decode parallelism gate based on tile pixel count
-* P-5 -- dask read raises with a hint instead of silently rescaling
-* P-6 -- GPU memory pre-check raises before the cupy call
-* P-9 -- COG auto-overview generation capped at 8 levels
+* ``write_vrt`` docstring lists kwargs (rejects unknown ones)
+* predictor doc covers True/2 equivalence and 3=fp
+* ``tile_size`` warns when ``tiled=False`` and non-default
+* mmap cache eviction (LRU + env var override)
+* decode parallelism gate based on tile pixel count
+* dask read raises with a hint instead of silently rescaling
+* GPU memory pre-check raises before the cupy call
+* COG auto-overview generation capped at 8 levels
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from xrspatial.geotiff._reader import _MmapCache, read_to_array
 from xrspatial.geotiff._writer import _MAX_OVERVIEW_LEVELS, write
 
 # ---------------------------------------------------------------------------
-# C-1: early compression validation
+# early compression validation
 # ---------------------------------------------------------------------------
 
 
@@ -56,7 +56,7 @@ class TestC1CompressionValidation:
 
 
 # ---------------------------------------------------------------------------
-# C-2: read dispatch comment (behavior verification)
+# read dispatch (behavior verification)
 # ---------------------------------------------------------------------------
 
 class TestC2ReadDispatch:
@@ -80,7 +80,7 @@ class TestC2ReadDispatch:
 
 
 # ---------------------------------------------------------------------------
-# C-5: write_vrt kwargs documented
+# write_vrt kwargs documented
 # ---------------------------------------------------------------------------
 
 class TestC5WriteVrtKwargs:
@@ -90,7 +90,7 @@ class TestC5WriteVrtKwargs:
         write(arr, a_path, compression='none')
         vrt_path = str(tmp_path / 'mosaic_c5_1488.vrt')
         # All four documented kwargs should be accepted. ``crs`` is the
-        # canonical name as of #1715 (was ``crs_wkt`` pre-rename); pass
+        # canonical name (``crs_wkt`` is the deprecated alias); pass
         # ``crs=None`` instead of the deprecated alias to avoid the
         # DeprecationWarning the alias now emits.
         write_vrt(vrt_path, [a_path], relative=False, crs=None,
@@ -106,7 +106,7 @@ class TestC5WriteVrtKwargs:
             write_vrt(vrt_path, [a_path], not_a_real_kwarg=True)
 
     def test_docstring_lists_kwargs(self):
-        # Defensive: the whole point of C-5 is the docstring -- guard
+        # Defensive: the docstring is the contract here -- guard
         # against future regressions.
         assert 'relative' in write_vrt.__doc__
         assert 'crs_wkt' in write_vrt.__doc__
@@ -114,7 +114,7 @@ class TestC5WriteVrtKwargs:
 
 
 # ---------------------------------------------------------------------------
-# C-6: predictor docstring polish
+# predictor docstring polish
 # ---------------------------------------------------------------------------
 
 class TestC6PredictorDoc:
@@ -127,7 +127,7 @@ class TestC6PredictorDoc:
 
 
 # ---------------------------------------------------------------------------
-# C-7: tile_size warning in strip mode
+# tile_size warning in strip mode
 # ---------------------------------------------------------------------------
 
 class TestC7TileSizeWarn:
@@ -155,7 +155,7 @@ class TestC7TileSizeWarn:
 
 
 # ---------------------------------------------------------------------------
-# P-3: mmap LRU cache cap
+# mmap LRU cache cap
 # ---------------------------------------------------------------------------
 
 class TestP3MmapLRU:
@@ -338,7 +338,7 @@ class TestP3MmapLRU:
 
 
 # ---------------------------------------------------------------------------
-# P-4: decode parallelism threshold
+# decode parallelism threshold
 # ---------------------------------------------------------------------------
 
 class TestP4ParallelThreshold:
@@ -364,7 +364,7 @@ class TestP4ParallelThreshold:
 
 
 # ---------------------------------------------------------------------------
-# P-5: dask task cap
+# dask task cap
 # ---------------------------------------------------------------------------
 
 class TestP5DaskTaskCap:
@@ -385,7 +385,7 @@ class TestP5DaskTaskCap:
 
 
 # ---------------------------------------------------------------------------
-# P-6: GPU memory pre-check
+# GPU memory pre-check
 # ---------------------------------------------------------------------------
 
 class TestP6GpuMemoryCheck:
@@ -431,7 +431,7 @@ class TestP6GpuMemoryCheck:
 
 
 # ---------------------------------------------------------------------------
-# P-9: COG auto-overview level cap
+# COG auto-overview level cap
 # ---------------------------------------------------------------------------
 
 class TestP9OverviewCap:

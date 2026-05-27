@@ -187,7 +187,7 @@ _VALID_COMPRESSIONS = (
 )
 
 
-# Tiered feature inventory for the public geotiff surface (issue #2137).
+# Tiered feature inventory for the public geotiff surface.
 # Defined in ``_attrs.py`` (not the package ``__init__.py``) so the writers
 # can import it at module scope without a circular dependency: the package
 # ``__init__`` already imports the writers. The package re-exports
@@ -198,22 +198,22 @@ _VALID_COMPRESSIONS = (
 # inline comments here track the codec/reader/writer split used by the
 # user-guide notebook table.
 #
-# COG entries are split into three keys (issue #2291, part of the #2286
-# rollout) so the writer, local reader, and HTTP reader can move between
-# tiers on their own track. The three code paths have different stability
-# profiles: the writer emits a self-contained COG layout, the local reader
-# parses overview IFDs out of an on-disk file, and the HTTP reader adds
-# range-request fetching and partial-IFD handling on top of that. Folding
-# them into a single ``cog`` key would tie a promotion of any one path to
-# a promotion of all three. The keys carry no behaviour today; production
-# code still gates on the underlying writer / reader options.
+# COG entries are split into three keys so the writer, local reader, and
+# HTTP reader can move between tiers on their own track. The three code
+# paths have different stability profiles: the writer emits a
+# self-contained COG layout, the local reader parses overview IFDs out of
+# an on-disk file, and the HTTP reader adds range-request fetching and
+# partial-IFD handling on top of that. Folding them into a single ``cog``
+# key would tie a promotion of any one path to a promotion of all three.
+# The keys carry no behaviour today; production code still gates on the
+# underlying writer / reader options.
 #
-# Stable COG contract (issue #2300, closes the #2286 wave)
-# --------------------------------------------------------
-# As of #2300 the local COG paths (``writer.cog`` and ``reader.local_cog``)
-# are tagged ``stable``. The promotion is backed by the writer compliance
-# suite (#2292), the cross-backend parity gate (#2293), and the per-tile
-# byte-budget contract that pins HTTP fetch behaviour (#2294 / #2298).
+# Stable COG contract
+# -------------------
+# The local COG paths (``writer.cog`` and ``reader.local_cog``) are tagged
+# ``stable``. The promotion is backed by the writer compliance suite, the
+# cross-backend parity gate, and the per-tile byte-budget contract that
+# pins HTTP fetch behaviour.
 #
 # The stable COG contract covers:
 #
@@ -230,39 +230,39 @@ _VALID_COMPRESSIONS = (
 # * GPU COG read / write (``writer.gpu``, ``reader.gpu``).
 # * Experimental codecs (``lerc``, ``jpeg2000``, ``j2k``, ``lz4``) and the
 #   internal-only ``jpeg`` codec.
-# * Rotated transforms (``reader.allow_rotated``); wave-1 of epic
-#   #2340 additionally demoted this entry from ``advanced`` to
-#   ``experimental`` -- see the alignment block immediately below.
+# * Rotated transforms (``reader.allow_rotated``), demoted from
+#   ``advanced`` to ``experimental`` -- see the alignment block
+#   immediately below.
 # * External ``.tif.ovr`` sidecars (``reader.sidecar_ovr``).
 # * File-like destinations with ``cog=True``.
 # * BigTIFF COG (tracked separately).
 # * HTTP / range COG (``reader.http_cog``); see the per-key comment below.
 #
-# Epic #2340 alignment (release contract)
-# ---------------------------------------
-# The epic tiers the public geotiff surface as Stable / Advanced /
-# Experimental / Internal-only for the next release. The mapping below
-# is the source of truth that the docs page, the user-guide notebook,
-# and the writer gates read from, so it has to match the epic.
+# Release-contract alignment
+# ---------------------------
+# The release contract tiers the public geotiff surface as Stable /
+# Advanced / Experimental / Internal-only. The mapping below is the
+# source of truth that the docs page, the user-guide notebook, and the
+# writer gates read from, so it has to match the contract.
 #
-# Wave-1 reconciliation under #2340:
+# Reconciliation notes:
 #
 # * Add ``reader.windowed`` at ``stable``. Windowed reads have a
 #   release-gate suite (``test_window_*`` + ``test_no_georef_windowed_coords_1710``
-#   and the GPU window cases) and the epic places them in Stable.
+#   and the GPU window cases) and the contract places them in Stable.
 # * Add ``reader.dask`` at ``stable``. Dask reads are parity-tested
 #   against the eager numpy reader via
 #   ``test_backend_parity_matrix.py`` and ``test_backend_full_parity_2211.py``,
-#   which is the bar the epic asks for ("dask reads only where
-#   parity-tested").
+#   which is the bar the contract asks for (dask reads only where
+#   parity-tested).
 # * Demote ``reader.allow_rotated`` from ``advanced`` to ``experimental``.
 #   The opt-in lets a caller bypass the read-side rotated-transform
-#   check that ``RotatedTransformError`` defends; the epic places
-#   rotated writes as Unsupported and the read-side escape hatch sits
-#   naturally in Experimental.
+#   check that ``RotatedTransformError`` defends; rotated writes are
+#   Unsupported and the read-side escape hatch sits naturally in
+#   Experimental.
 # * Demote ``reader.allow_unparseable_crs`` from ``advanced`` to
-#   ``experimental``. The epic places "explicit-CRS permissive escape
-#   hatches" in Experimental.
+#   ``experimental``. Explicit-CRS permissive escape hatches sit in
+#   Experimental.
 SUPPORTED_FEATURES = {
     # Codecs. Tier 1 lossless integer + float byte-for-byte round-trip.
     'codec.none': 'stable',
@@ -276,43 +276,41 @@ SUPPORTED_FEATURES = {
     'codec.j2k': 'experimental',
     'codec.lz4': 'experimental',
     # Tier 4 codec: requires the dedicated ``allow_internal_only_jpeg``
-    # opt-in (issue #1845). Not covered by ``allow_experimental_codecs``.
+    # opt-in. Not covered by ``allow_experimental_codecs``.
     'codec.jpeg': 'internal_only',
     # Read paths.
     'reader.local_file': 'stable',
-    # Windowed reads (#2340): release-gate covered by the window-read
+    # Windowed reads: release-gate covered by the window-read
     # suite in ``xrspatial/geotiff/tests/`` (eager numpy, dask, GPU,
     # HTTP, and VRT branches each have a window-validation test).
     'reader.windowed': 'stable',
-    # Dask reads (#2340): parity-tested against the eager numpy reader
+    # Dask reads: parity-tested against the eager numpy reader
     # by ``test_backend_parity_matrix.py`` and ``test_backend_full_parity_2211.py``,
-    # which is the gate the epic asks for. GPU-backed dask reads remain
+    # which is the gate the contract asks for. GPU-backed dask reads remain
     # under ``reader.gpu`` and stay experimental.
     'reader.dask': 'stable',
     'reader.fsspec': 'advanced',
     'reader.http': 'advanced',
     'reader.vrt': 'advanced',
     'reader.sidecar_ovr': 'advanced',
-    # Permissive escape hatches (#2340): demoted from ``advanced`` to
+    # Permissive escape hatches: demoted from ``advanced`` to
     # ``experimental``. Both opt-ins let a caller bypass a read-side
     # check (rotated transform / unparseable CRS) the writer normally
-    # rejects; the epic places these in Experimental.
+    # rejects, so they sit in Experimental.
     'reader.allow_rotated': 'experimental',
     'reader.allow_unparseable_crs': 'experimental',
-    # COG reader paths (issue #2291): split out from the previous
-    # single COG concept (which only carried ``writer.cog``) so the
-    # local and HTTP reader variants can promote independently of the
-    # writer and of each other.
+    # COG reader paths: split out from the previous single COG concept
+    # (which only carried ``writer.cog``) so the local and HTTP reader
+    # variants can promote independently of the writer and of each other.
     #
-    # ``reader.local_cog`` is ``stable`` as of #2300: on-disk
-    # overview-IFD parsing is covered by the compliance suite (#2292)
-    # and the parity gate (#2293).
+    # ``reader.local_cog`` is ``stable``: on-disk overview-IFD parsing
+    # is covered by the compliance suite and the parity gate.
     #
     # ``reader.http_cog`` stays ``advanced``. The HTTP path layers
     # range-request fetching, range coalescing, an SSRF / private-host
     # filter, a per-tile byte-count cap, and partial-IFD handling on
-    # top of the local COG reader. The byte-budget contract (#2294 /
-    # #2298) pins per-tile fetch behaviour, but the transport-side
+    # top of the local COG reader. The byte-budget contract pins
+    # per-tile fetch behaviour, but the transport-side
     # surface -- redirect handling, network error reporting, cache /
     # retry policy -- is not yet contracted at the ``stable`` bar.
     # Tracked for separate promotion.
@@ -321,10 +319,10 @@ SUPPORTED_FEATURES = {
     'reader.gpu': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
-    # ``writer.cog`` is ``stable`` as of #2300: the CPU writer emits a
+    # ``writer.cog`` is ``stable``: the CPU writer emits a
     # spec-conforming COG layout (IFD-first, tiled, internal
     # overviews, lossless codec) covered by the compliance suite
-    # (#2292) and the cross-backend parity gate (#2293). GPU writes,
+    # and the cross-backend parity gate. GPU writes,
     # BigTIFF COG, file-like destinations, and experimental codecs
     # stay outside the contract; see the block comment above.
     'writer.cog': 'stable',
@@ -333,7 +331,7 @@ SUPPORTED_FEATURES = {
     'writer.gpu': 'experimental',
     'writer.gdal_metadata_xml': 'experimental',
     'writer.extra_tags': 'experimental',
-    # BigTIFF COG writer surface (issue #2303, part of #2286 wave D).
+    # BigTIFF COG writer surface.
     # Tracked separately from ``writer.bigtiff`` and ``writer.cog`` because
     # the BigTIFF + COG combination has its own external-interop surface
     # (8-byte offsets in tile/overview tables, BigTIFF-form IFDs, COG
@@ -357,8 +355,8 @@ _EXPERIMENTAL_CODECS = frozenset(
 
 
 # Map TIFF compression tag values to codec names so the read-side opt-in
-# gate (PR 4 of epic #2340) can name the codec in the rejection message
-# without each call site repeating the integer-to-name table. The keys
+# gate can name the codec in the rejection message without each call
+# site repeating the integer-to-name table. The keys
 # are the TIFF 6 Compression tag values (tag 259) used inside
 # ``_compression.py``; the values match the codec names that appear on
 # the ``SUPPORTED_FEATURES`` keys (``codec.<name>``).
@@ -399,9 +397,8 @@ def _validate_read_codec_optin(
     the rejection message so the caller learns the name from the error
     rather than the docs.
 
-    Part of PR 4 of epic #2340 (the GeoTIFF release contract). The
-    writer side has carried these gates since #2137 / #1845; this
-    helper extends the same shape to the read entry points.
+    The writer side already carries these gates; this helper extends
+    the same shape to the read entry points.
 
     Parameters
     ----------
@@ -445,8 +442,8 @@ def _validate_read_codec_optin(
             "(epic #2340, original writer gate #2137).")
 
 
-# Writer rich-tag attrs that ride the Experimental tier (PR 4 of epic
-# #2340). ``writer.gdal_metadata_xml`` and ``writer.extra_tags`` carry
+# Writer rich-tag attrs that ride the Experimental tier.
+# ``writer.gdal_metadata_xml`` and ``writer.extra_tags`` carry
 # free-form payloads through to the on-disk TIFF; their interop with
 # other readers (rasterio, libtiff, GDAL) depends on the payload and is
 # not part of the release promise. The opt-in keeps the surface narrow
@@ -457,9 +454,9 @@ def _validate_read_codec_optin(
 # xrspatial read. The reader populated ``gdal_metadata_xml`` /
 # ``extra_tags`` from the source file; gating the write would force
 # every read-then-write caller to opt in. Skip the gate on
-# round-tripped attrs so the canonical contract from #1984 stays a
-# no-flag operation. The gate still fires when a caller adds those
-# attrs to a fresh DataArray that did not come from a read.
+# round-tripped attrs so the canonical contract stays a no-flag
+# operation. The gate still fires when a caller adds those attrs to a
+# fresh DataArray that did not come from a read.
 def _validate_write_rich_tag_optin(
     attrs: dict,
     *,
@@ -471,20 +468,20 @@ def _validate_write_rich_tag_optin(
     """Reject writes that include ``gdal_metadata_xml`` or ``extra_tags``
     unless the caller opted in via ``allow_experimental_codecs=True``.
 
-    Part of PR 4 of epic #2340. Mirrors the existing codec-flag shape
-    so the rejection names the same opt-in the caller already learned
-    from the LERC / J2K / LZ4 paths. Round-tripped attrs (carrying
-    the ``_xrspatial_geotiff_contract`` marker) are exempt so the
-    canonical attrs round-trip (#1984) stays a no-flag operation; the
-    gate fires only when a caller constructs a fresh DataArray with
-    one of the rich-tag attrs set.
+    Mirrors the existing codec-flag shape so the rejection names the
+    same opt-in the caller already learned from the LERC / J2K / LZ4
+    paths. Round-tripped attrs (carrying the
+    ``_xrspatial_geotiff_contract`` marker) are exempt so the canonical
+    attrs round-trip stays a no-flag operation; the gate fires only when
+    a caller constructs a fresh DataArray with one of the rich-tag attrs
+    set.
     """
     if allow_experimental_codecs:
         return
     # Round-trip exemption: a DataArray that came from
     # ``open_geotiff`` / ``read_geotiff_dask`` / ``read_geotiff_gpu``
     # carries the contract marker. Writing it back is the canonical
-    # round-trip and should not require a new flag (issue #1984).
+    # round-trip and should not require a new flag.
     #
     # This is a soft gate by design: a caller who hand-builds an
     # attrs dict with the contract marker could bypass it. Forging
@@ -524,30 +521,30 @@ _TIFF_SHORT = 3
 
 # Contract version emitted on every read; bumped when the attrs contract
 # changes. Downstream code reads ``attrs['_xrspatial_geotiff_contract']``
-# to learn which attrs-contract revision produced the array. See issue
-# #1984 and ``docs/source/user_guide/attrs_contract.rst``.
+# to learn which attrs-contract revision produced the array. See
+# ``docs/source/user_guide/attrs_contract.rst``.
 #
-# Version 2 (issue #2016) drops the 13 deprecated GeoKey-derived and
+# Version 2 drops the 13 deprecated GeoKey-derived and
 # matplotlib-colormap attrs that v1 still emitted under a
 # ``DeprecationWarning``. Downstream code that read those keys via
 # ``attrs[key]`` now sees ``KeyError`` rather than the deprecated value.
 #
-# Version 3 (issue #2136) adds ``attrs['georef_status']`` to the canonical
+# Version 3 adds ``attrs['georef_status']`` to the canonical
 # tier. Existing keys (``crs``, ``crs_wkt``, ``transform``, the
 # ``_xrspatial_no_georef`` marker) keep their pre-v3 shape so downstream
 # code that branches on them still works; the new attr is additive and
 # disambiguates ``crs_only`` from ``none`` and ``rotated_dropped`` from
 # the truly-no-transform case.
 #
-# Version 4 (issue #2129) adds ``attrs['rotated_affine']`` for the
+# Version 4 adds ``attrs['rotated_affine']`` for the
 # ``allow_rotated=True`` opt-in path. The 6-tuple is read-only -- the
 # writer drops it on round-trip until ``to_geotiff`` grows a
-# ``ModelTransformationTag`` emit path (#2115 follow-up). Existing keys
-# keep their pre-v4 shape.
+# ``ModelTransformationTag`` emit path. Existing keys keep their pre-v4
+# shape.
 _ATTRS_CONTRACT_VERSION = 4
 
 
-# Canonical ``attrs['georef_status']`` values (issue #2136). One attr
+# Canonical ``attrs['georef_status']`` values. One attr
 # encodes the five distinct states the reader can land in when CRS and
 # transform tags are combined; downstream code can branch on this rather
 # than reconstructing the state from the union of ``crs``, ``crs_wkt``,
@@ -584,7 +581,7 @@ _RESOLUTION_UNIT_NAMES = {v: k for k, v in _RESOLUTION_UNIT_IDS.items()}
 
 @dataclass(frozen=True)
 class GeoTIFFMetadata:
-    """Typed internal record for GeoTIFF read/write metadata (issue #2139).
+    """Typed internal record for GeoTIFF read/write metadata.
 
     Mirrors the public attrs contract documented in this module's
     docstring field-for-field. Read paths build a ``GeoTIFFMetadata``
@@ -605,7 +602,7 @@ class GeoTIFFMetadata:
     raster_type: str = 'area'
     has_georef: bool = True
 
-    # NoData semantics (issue #1988 / #2092)
+    # NoData semantics
     nodata: Any = None
     masked_nodata: bool | None = None
 
@@ -627,20 +624,20 @@ class GeoTIFFMetadata:
     # VRT-only
     vrt_holes: list | None = None
 
-    # Canonical reader-state classifier (issue #2136). Carried on the
+    # Canonical reader-state classifier. Carried on the
     # record so the eager / dask / GPU / VRT read paths all stamp it via
     # the same :func:`metadata_to_attrs` marshalling step instead of
     # branching on attrs after the dict has been built.
     georef_status: str | None = None
 
     # Rotated 6-tuple from ``ModelTransformationTag`` on the
-    # ``allow_rotated=True`` opt-in path (issue #2129). Carried on the
+    # ``allow_rotated=True`` opt-in path. Carried on the
     # record so the eager / dask / GPU / VRT read paths emit
     # ``attrs['rotated_affine']`` through the same marshalling step.
     # Read-only: :func:`attrs_to_metadata` intentionally does NOT
     # populate this field from incoming attrs so the writer keeps
     # dropping the rotation on round-trip until ``to_geotiff`` learns to
-    # emit ``ModelTransformationTag`` (#2115 follow-up).
+    # emit ``ModelTransformationTag``.
     rotated_affine: tuple | None = None
 
     # Contract version stamped on read
@@ -678,7 +675,7 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
             window=window,
         )
 
-    # ``allow_rotated=True`` opt-in path (#2115): the parser returns a
+    # ``allow_rotated=True`` opt-in path: the parser returns a
     # GeoTransform with ``rotated_affine`` set and ``has_georef=False``.
     # The rotated 6-tuple cannot be expressed as an axis-aligned
     # rasterio transform, so the writer cannot round-trip it via
@@ -686,7 +683,7 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
     # ``open_geotiff(allow_rotated=True)``, CRS attrs are dropped on
     # this path too -- otherwise downstream code that gates on
     # ``"crs" in da.attrs`` treats the array as spatially meaningful
-    # while the actual mapping is gone (#2126).
+    # while the actual mapping is gone.
     rotated_optin = (
         src_t is not None
         and getattr(src_t, 'rotated_affine', None) is not None
@@ -695,7 +692,7 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
     crs_epsg = None if rotated_optin else geo_info.crs_epsg
     crs_wkt = None if rotated_optin else geo_info.crs_wkt
 
-    # Surface the rotated 6-tuple on the public attrs (issue #2129) so
+    # Surface the rotated 6-tuple on the public attrs so
     # downstream code that knows how to handle rotated rasters can read
     # it without diving into the internal ``GeoInfo`` / ``GeoTransform``
     # objects. Tuple cast normalises lists or numpy sequences coming
@@ -734,7 +731,7 @@ def geo_info_to_metadata(geo_info, *, window=None) -> GeoTIFFMetadata:
         x_resolution=geo_info.x_resolution,
         y_resolution=geo_info.y_resolution,
         resolution_unit=resolution_unit,
-        # ``georef_status`` (#2136) is computed off the unmodified
+        # ``georef_status`` is computed off the unmodified
         # ``geo_info`` rather than the post-branch metadata fields so a
         # future change to which fields the record carries cannot
         # accidentally shift the status value. The VRT inline path uses
@@ -756,7 +753,7 @@ def metadata_to_attrs(md: GeoTIFFMetadata) -> dict:
     """
     attrs: dict = {'_xrspatial_geotiff_contract': md.contract_version}
 
-    # ``georef_status`` (#2136) is stamped before the optional CRS /
+    # ``georef_status`` is stamped before the optional CRS /
     # transform branches so the value reflects the reader's state
     # decision (computed off ``geo_info``) rather than which fields
     # happened to land in the emitted dict.
@@ -782,18 +779,18 @@ def metadata_to_attrs(md: GeoTIFFMetadata) -> dict:
     # rasterio-ordered transform tuple onto the dict a few lines later
     # (after the GPU transfer / dtype cast / nodata mask steps). Removing
     # this branch would re-introduce a duplicate transform write or, worse,
-    # would emit ``_NO_GEOREF_KEY`` on a georef'd VRT array. See #2139.
+    # would emit ``_NO_GEOREF_KEY`` on a georef'd VRT array.
     if md.transform is not None and md.has_georef:
         attrs['transform'] = md.transform
     elif not md.has_georef:
         attrs[_NO_GEOREF_KEY] = True
 
-    # ``rotated_affine`` (issue #2129) rides alongside the
+    # ``rotated_affine`` rides alongside the
     # ``_xrspatial_no_georef`` marker on the ``allow_rotated=True`` path
     # so callers can recover the rotated mapping. Only set on read; the
     # writer-side :func:`attrs_to_metadata` deliberately does not parse
     # it back, so a read-then-write round-trip drops the rotation until
-    # the writer grows ``ModelTransformationTag`` emit support (#2115).
+    # the writer grows ``ModelTransformationTag`` emit support.
     if md.rotated_affine is not None:
         attrs['rotated_affine'] = md.rotated_affine
 
@@ -844,7 +841,7 @@ def attrs_to_metadata(attrs) -> GeoTIFFMetadata:
       validator that should reject bool values; the boundary parser
       only needs to keep the bad value out of the record so the writer
       sees ``crs_epsg=None`` and falls through to ``crs_wkt``. See
-      ``write/test_crs.py`` (CRS argument validation #1971 section).
+      ``write/test_crs.py`` (CRS argument validation section).
     * ``transform`` is coerced via ``tuple(...)`` with no length or
       numeric-type check. ``_transform_from_attr`` is the canonical
       validator and runs inside the writer.
@@ -947,7 +944,7 @@ def _should_restore_nan_sentinel(attrs) -> bool:
     went through the sentinel-to-NaN promotion. The writer reads it back
     here to decide whether the inverse rewrite is appropriate:
 
-    * ``masked_nodata`` missing -> default True. Pre-#1988 behaviour:
+    * ``masked_nodata`` missing -> default True. Legacy behaviour:
       any float array with NaN and a declared sentinel gets the NaN
       pixels rewritten to the sentinel value. This is what every
       xrspatial caller has relied on for years and what every external
@@ -996,7 +993,7 @@ def _set_nodata_attrs(
     step). False iff the literal sentinel values are still present in
     the buffer.
 
-    ``pixels_present`` is the lifecycle signal added in issue #2135. If
+    ``pixels_present`` is a lifecycle signal. If
     not ``None``, the read path computed whether the read window
     contained at least one pixel matching the declared sentinel before
     masking; the value is forwarded to ``attrs['nodata_pixels_present']``
@@ -1005,7 +1002,7 @@ def _set_nodata_attrs(
     the value (e.g. dask, where a strict per-chunk reduction would
     force eager compute).
 
-    ``dtype_cast`` is the second lifecycle signal added in issue #2135.
+    ``dtype_cast`` is the second lifecycle signal.
     If the caller passed an explicit ``dtype=`` kwarg, the backend
     forwards the resolved target dtype string (e.g. ``"float64"``) so
     consumers can distinguish "float because masking promoted it" from
@@ -1013,7 +1010,7 @@ def _set_nodata_attrs(
     happened; the attr is omitted in that case.
 
     Contract (splits the two meanings previously fused into
-    ``attrs['nodata']`` per issue #1988, extended for #2135):
+    ``attrs['nodata']``):
 
     * ``attrs['nodata']`` -- declared file sentinel, as a scalar of the
       source dtype. Set whenever the source declared one, regardless of
@@ -1021,21 +1018,21 @@ def _set_nodata_attrs(
     * ``attrs['masked_nodata']`` -- the ``masked`` value the caller
       passed, coerced to bool. Only emitted when ``nodata is not
       None``; absence of the flag means there is no declared sentinel.
-    * ``attrs['nodata_pixels_present']`` (additive, #2135) -- bool,
+    * ``attrs['nodata_pixels_present']`` (additive) -- bool,
       only emitted when ``nodata is not None`` and ``pixels_present``
       is not ``None``. Tracks whether the read window contained any
       sentinel pixel before masking.
-    * ``attrs['nodata_dtype_cast']`` (additive, #2135) -- string dtype
+    * ``attrs['nodata_dtype_cast']`` (additive) -- string dtype
       name (e.g. ``"float64"``), only emitted when ``nodata is not
       None`` and ``dtype_cast`` is not ``None``. Records that a
       caller-requested cast happened after masking.
 
-    Pre-#2092 the helper inferred ``masked`` from the final array
+    The helper used to infer ``masked`` from the final array
     dtype, which lied when ``mask_nodata=False`` left literal sentinel
     values in a float buffer; downstream code that trusted the attr
     treated those literal values as already-NaN. The eager, dask, GPU,
     and VRT paths now compute ``masked`` as
-    ``mask_nodata and final_dtype.kind == 'f'``. See issue #2092.
+    ``mask_nodata and final_dtype.kind == 'f'``.
     """
     if nodata is None:
         return
@@ -1057,7 +1054,7 @@ def _validate_read_geo_info(
     band_nodata: str | None = None,
     band_nodata_values: list | None = None,
 ) -> None:
-    """Run issue #1987 read-side ambiguous-metadata checks against ``geo_info``.
+    """Run the read-side ambiguous-metadata checks against ``geo_info``.
 
     Centralised helper so the eager numpy, dask, GPU, and VRT read
     paths run the same checks before constructing the returned
@@ -1072,7 +1069,7 @@ def _validate_read_geo_info(
     ``band_nodata_values`` is falsy. VRT callers thread the kwargs
     through ``_finalize_lazy_read_attrs`` so the helper-routed call
     runs the same surface as the VRT pre-read inline check, instead
-    of dispatching the mixed-band check as a no-op (issue #2210).
+    of dispatching the mixed-band check as a no-op.
 
     Raises whichever ``GeoTIFFAmbiguousMetadataError`` subclass a
     registered check picks. The hook is a no-op when no check is
@@ -1084,7 +1081,7 @@ def _validate_read_geo_info(
     only carries origin + pixel size, and the upstream TIFF reader
     rejects rotated ``ModelTransformationTag`` entries with
     ``RotatedTransformError`` in ``_geotags._extract_transform_and_georef``
-    before we reach this helper (issue #2267; previously
+    before we reach this helper (previously a plain
     ``NotImplementedError``). Both the GeoTIFF and VRT entry points
     therefore raise the same typed error -- the rotated-transform check
     in this helper still fires only on the VRT path (which builds its
@@ -1106,7 +1103,7 @@ def _validate_read_geo_info(
         else None
     )
     # Pull the GeoKey shape onto the context so
-    # ``_check_read_inconsistent_geokeys`` (issue #2417) can audit
+    # ``_check_read_inconsistent_geokeys`` can audit
     # ModelType / ProjectedCSType / GeographicType for contradictions.
     # ``geo_info.geokeys`` is the parsed dict; missing keys map to
     # ``None`` so the check treats the slot as "not declared" rather
@@ -1133,7 +1130,7 @@ def _validate_read_geo_info(
 def _compute_georef_status(geo_info) -> str:
     """Classify ``geo_info`` into one of the five ``georef_status`` values.
 
-    See the module docstring and issue #2136 for the full rationale. The
+    See the module docstring for the full rationale. The
     decision table:
 
     ============================  =================  ===============
@@ -1165,7 +1162,7 @@ def _compute_georef_status(geo_info) -> str:
     synthesise a fake ``GeoInfo`` to reuse this helper. Keep all the
     call sites in lockstep through one of the two helpers.
 
-    Implementation note (#2225): routes through
+    Implementation note: routes through
     :func:`xrspatial.geotiff._coords.resolve_georef` so the read-side
     bucket decision lives in one place. The resolver's status strings
     are the same canonical values exported here (``GEOREF_STATUS_*``).
@@ -1189,7 +1186,7 @@ def _compute_georef_status_from_parts(
     the VRT paths and the ``_populate_attrs_from_geo_info`` path share
     the same decision rule without the intermediate object.
 
-    Implementation note (#2225): kept as a thin boolean shim so VRT
+    Implementation note: kept as a thin boolean shim so VRT
     inline branches do not have to build a fake ``GeoInfo`` to feed
     :func:`resolve_georef`. The decision table here mirrors the
     reader-path branch in :func:`resolve_georef`.
@@ -1216,12 +1213,12 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     via :func:`_set_nodata_attrs`. The pair carries two distinct
     signals: ``nodata`` is the declared file sentinel (always set when
     the source declared one), and ``masked_nodata`` is a boolean for
-    whether the in-memory array has been NaN-masked (issue #1988).
+    whether the in-memory array has been NaN-masked.
 
     ``window`` is a ``(r0, c0, r1, c1)`` tuple for windowed reads; when
     set, the emitted ``attrs['transform']`` shifts the origin to the
-    window's top-left. The eager path and the dask path (since #1561,
-    which threads ``window=`` through ``read_geotiff_dask``) both pass
+    window's top-left. The eager path and the dask path (which threads
+    ``window=`` through ``read_geotiff_dask``) both pass
     the outer window through this helper so the resulting DataArray
     advertises the windowed transform. The GPU path does not currently
     expose a windowed read, so it passes ``window=None``.
@@ -1236,10 +1233,10 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     # (:func:`metadata_to_attrs` and the legacy field-by-field writes)
     # produce the same attrs surface; centralising on the record lets
     # the VRT path emit the same field set without copying this block.
-    # The ``allow_rotated=True`` opt-in CRS-drop (#2126) is handled
-    # inside ``geo_info_to_metadata``. ``georef_status`` (#2136) rides
+    # The ``allow_rotated=True`` opt-in CRS-drop is handled
+    # inside ``geo_info_to_metadata``. ``georef_status`` rides
     # on the record so the VRT path can stamp it via the same
-    # marshalling step. See issue #2139 / ``metadata_to_attrs``.
+    # marshalling step. See ``metadata_to_attrs``.
     md = geo_info_to_metadata(geo_info, window=window)
     attrs.update(metadata_to_attrs(md))
 
@@ -1346,7 +1343,7 @@ def _resolve_nodata_attr(attrs: dict):
 
 def _nodata_attr_non_numeric_msg(attr_name: str, value) -> str:
     """Error string shared by the ``attrs['nodata']`` and ``attrs['_FillValue']``
-    non-numeric branches in ``_resolve_nodata_attr`` (#1973)."""
+    non-numeric branches in ``_resolve_nodata_attr``."""
     return (
         f"attrs[{attr_name!r}]={value!r} is not numeric "
         f"({type(value).__name__}). The writer needs a numeric "
@@ -1490,7 +1487,7 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
             # finite + integer + in-range so a sentinel that cannot match
             # an integer pixel resolves to ``False`` rather than crashing
             # in the equality cast (mirrors the eager block in
-            # ``open_geotiff`` for #1774 / #1564 / #1616).
+            # ``open_geotiff``).
             if (np.isfinite(mask_sentinel)
                     and float(mask_sentinel).is_integer()):
                 nodata_int = int(mask_sentinel)
@@ -1508,7 +1505,7 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
     else:
         # ``mask_nodata=False``: do not rewrite pixels, but still surface
         # ``attrs['nodata_pixels_present']`` so callers know whether
-        # literal sentinel pixels survive in the buffer (issue #2135).
+        # literal sentinel pixels survive in the buffer.
         if arr.dtype.kind == 'f':
             if np.isnan(mask_sentinel):
                 nodata_pixels_present = bool(np.isnan(arr).any())
@@ -1549,8 +1546,8 @@ def _finalize_eager_read(
 ):
     """Validate, populate attrs, mask, cast, and build an eager DataArray.
 
-    Wave 1 of #2162 -- ties together the four steps every eager read path
-    runs after the bytes land in a host (or cupy) buffer:
+    Ties together the steps every eager read path runs after the bytes
+    land in a host (or cupy) buffer:
 
     1. :func:`_validate_read_geo_info` -- runs first so a rejected file
        does not leak a partially-populated attrs dict.
@@ -1573,7 +1570,7 @@ def _finalize_eager_read(
     ``mask_sentinel=nodata``.
 
     The host-side mask block also runs on CuPy arrays via numpy
-    duck-typing, so the GPU eager backends (#2207, #2209) route through
+    duck-typing, so the GPU eager backends route through
     this helper without a separate GPU mask kernel.
 
     Returns a :class:`xarray.DataArray` ready for the caller to return
@@ -1586,7 +1583,7 @@ def _finalize_eager_read(
     a nested value after the call propagates both ways. Callers that
     care about isolation can ``copy.deepcopy(attrs_in)`` first.
     """
-    # Step 1: validate first so partial attrs never leak.
+    # Validate first so partial attrs never leak.
     _validate_read_geo_info(
         geo_info, window=window,
         allow_rotated=allow_rotated,
@@ -1594,13 +1591,13 @@ def _finalize_eager_read(
         allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
-    # Step 2: populate attrs from geo_info onto a fresh dict (or onto a
+    # Populate attrs from geo_info onto a fresh dict (or onto a
     # caller-supplied seed dict, which lets the GPU/VRT migration carry
     # backend-specific keys through without bypassing the helper).
     attrs: dict = dict(attrs_in) if attrs_in else {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
 
-    # Step 3: apply the nodata-to-NaN mask (or compute pixels_present
+    # Apply the nodata-to-NaN mask (or compute pixels_present
     # without rewriting if ``mask_nodata=False``). Skipped entirely when
     # the source declared no sentinel.
     nodata_pixels_present: bool | None = None
@@ -1609,7 +1606,7 @@ def _finalize_eager_read(
             arr, mask_sentinel=mask_sentinel, mask_nodata=mask_nodata,
         )
 
-    # Step 4: caller-requested dtype cast (post-mask so the integer
+    # Caller-requested dtype cast (post-mask so the integer
     # promotion above runs first). ``_validate_dtype_cast`` lives in
     # ``_validation``; local import keeps ``_attrs`` free of a top-level
     # validation dependency for parity with ``_validate_read_geo_info``.
@@ -1621,7 +1618,7 @@ def _finalize_eager_read(
         arr = arr.astype(target)
         dtype_cast_attr = target.name
 
-    # Step 5: stamp the nodata lifecycle attrs. ``masked`` is True iff
+    # Stamp the nodata lifecycle attrs. ``masked`` is True iff
     # the caller opted into masking AND the final buffer dtype is float,
     # mirroring the existing call sites (the integer promotion above
     # only runs when the sentinel matched at least one pixel, so an
@@ -1634,7 +1631,7 @@ def _finalize_eager_read(
         dtype_cast=dtype_cast_attr,
     )
 
-    # Step 6: build the DataArray. ``_coords_from_geo_info`` honours the
+    # Build the DataArray. ``_coords_from_geo_info`` honours the
     # windowed-read contract (origin shifted to the window's top-left).
     height, width = arr.shape[:2]
     coords = _coords_from_geo_info(
@@ -1667,8 +1664,8 @@ def _finalize_lazy_read_attrs(
 ):
     """Validate and populate attrs for dask-style lazy reads.
 
-    Wave 1 of #2162 -- the lazy counterpart of
-    :func:`_finalize_eager_read`. The dask + dask-GPU backends cannot
+    The lazy counterpart of :func:`_finalize_eager_read`. The dask +
+    dask-GPU backends cannot
     fold the nodata mask into a single eager step because masking runs
     per-chunk inside the graph; they only need the attrs side of the
     pipeline. This helper:
@@ -1681,19 +1678,19 @@ def _finalize_lazy_read_attrs(
        opted into masking AND the graph dtype is float.
        ``dtype_cast`` is recorded when ``caller_dtype`` is not ``None``
        and ``nodata`` is declared. ``pixels_present`` defaults to
-       ``None`` per the documented dask contract from issue #2135 (a
-       strict per-chunk reduction would force eager ``.compute()`` and
-       break the lazy contract, so the attr stays absent on lazy
-       outputs). Eager-VRT callers that already computed the presence
-       bool via a single decode pass can pass it through this kwarg so
-       the attr is stamped via the same finalization helper rather
-       than written ad-hoc post-call (PR-D of #2211).
+       ``None`` per the documented dask contract (a strict per-chunk
+       reduction would force eager ``.compute()`` and break the lazy
+       contract, so the attr stays absent on lazy outputs). Eager-VRT
+       callers that already computed the presence bool via a single
+       decode pass can pass it through this kwarg so the attr is stamped
+       via the same finalization helper rather than written ad-hoc
+       post-call.
 
     Returns the attrs ``dict`` only; the caller assembles the dask graph
     and builds the :class:`xarray.DataArray` itself, so this helper
     deliberately does not touch arrays or coords.
 
-    Two dtype parameters (#2206), split because every lazy/VRT call
+    Two dtype parameters, split because every lazy/VRT call
     site needs to keep them separate:
 
     * ``graph_dtype`` -- the resolved graph dtype the backend settled
@@ -1726,7 +1723,7 @@ def _finalize_lazy_read_attrs(
     ``band_nodata`` and ``band_nodata_values`` forward through to
     :func:`_validate_read_geo_info` so VRT callers can hand the
     mixed-band check the context it needs. Non-VRT callers omit them
-    and the mixed-band check short-circuits. See issue #2210.
+    and the mixed-band check short-circuits.
     """
     _validate_read_geo_info(
         geo_info, window=window,
