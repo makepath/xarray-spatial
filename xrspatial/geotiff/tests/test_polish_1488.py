@@ -451,13 +451,10 @@ class TestP9OverviewCap:
         # Re-open and count IFDs (overviews + full-res).
         from xrspatial.geotiff._header import parse_all_ifds, parse_header
         from xrspatial.geotiff._reader import _FileSource
-        src = _FileSource(path)
-        try:
+        with _FileSource(path) as src:
             data = src.read_all()
             header = parse_header(data)
             ifds = parse_all_ifds(data, header)
-        finally:
-            src.close()
 
         # 1 full-res IFD + at most 8 overview IFDs.
         assert len(ifds) <= 1 + _MAX_OVERVIEW_LEVELS
@@ -472,13 +469,10 @@ class TestP9OverviewCap:
 
         from xrspatial.geotiff._header import parse_all_ifds, parse_header
         from xrspatial.geotiff._reader import _FileSource
-        src = _FileSource(path)
-        try:
+        with _FileSource(path) as src:
             data = src.read_all()
             header = parse_header(data)
             ifds = parse_all_ifds(data, header)
-        finally:
-            src.close()
 
         # 10 explicit overviews + 1 full-res = 11 IFDs.
         assert len(ifds) == 11

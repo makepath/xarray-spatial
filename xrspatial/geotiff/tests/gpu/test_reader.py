@@ -1408,11 +1408,8 @@ def _parse_for_gds_1909(path: str):
     )
     from xrspatial.geotiff._reader import _FileSource
 
-    fs = _FileSource(path)
-    try:
+    with _FileSource(path) as fs:
         raw = fs.read_all()
-    finally:
-        fs.close()
     header = parse_header(raw)
     ifds = parse_all_ifds(raw, header)
     ifd = select_overview_ifd(ifds, None)
