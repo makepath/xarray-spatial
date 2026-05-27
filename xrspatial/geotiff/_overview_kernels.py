@@ -20,7 +20,20 @@ for 64-bit sentinels that round when cast to float64 (``INT64_MAX``,
 issue #2413.
 
 The kernels rely on numba specializing on the input array's dtype, so
-the same source covers both float32 and float64 inputs.
+the same source covers both float32 and float64 inputs. The mean
+accumulator is a Python float, which numba unifies to float64; the
+final value is downcast to the input dtype on store. That keeps the
+float32 mean's accumulation precision at float64 (matching the prior
+``np.nanmean`` path on this code's typical input sizes) at the cost of
+a couple of extra promote/downcast instructions per output pixel. The
+min / max ``best`` locals follow the same pattern; the result is
+identical to the input value either way since both reductions are
+exact.
+
+The four kernels share a near-identical 4-cell fetch + NaN/sentinel
+filter. Factoring it into a helper would interfere with ngjit
+inlining, so the duplication is deliberate: keep the inner loop body
+visible to the JIT for each method.
 """
 from __future__ import annotations
 
@@ -211,7 +224,11 @@ def _reduce2x2_median(arr, out, sentinel, has_sentinel):
             # Sort the first ``n`` slots ascending. The compare-swap
             # ladder below sorts up to four floats in place; comparisons
             # past ``n`` are gated so unused slots (still 0.0) do not
-            # leak into the result.
+            # leak into the result. Trace for n=4, (v0,v1,v2,v3) =
+            # (4,2,3,1):
+            #   after n>=2 swap : (2,4,3,1)
+            #   after n>=3 pass : (2,3,4,1)  # v1>v2 swap, then v0,v1
+            #   after n>=4 pass : (1,2,3,4)  # v2>v3, v1>v2, v0>v1
             if n >= 2 and v0 > v1:
                 v0, v1 = v1, v0
             if n >= 3:
