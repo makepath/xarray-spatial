@@ -1076,14 +1076,54 @@ def test_open_geotiff_requesting_sidecar_level_surfaces_parse_error(tmp_path):
 
 
 def test_open_geotiff_overview_level_two_surfaces_parse_error(tmp_path):
-    """Any ``overview_level >= 1`` triggers the surface-the-cause path,
-    not just level 1. The level value is reflected in the message."""
+    """Any level the base file alone cannot serve triggers the
+    surface-the-cause path. With ``_make_base_2416`` writing a single
+    IFD, that includes level 2 -- the sidecar would have to supply it,
+    so the corrupt-sidecar branch surfaces the parse failure rather
+    than letting ``select_overview_ifd`` raise a generic "out of
+    range"."""
     path, _ = _make_base_2416(tmp_path)
     _make_corrupt_sidecar_2416(path, b"not a tiff")
 
     with pytest.raises(ValueError, match="overview_level=2") as excinfo:
         open_geotiff(str(path), overview_level=2)
 
+    assert excinfo.value.__cause__ is not None
+
+
+def test_open_geotiff_internal_overview_level_silent_on_bad_sidecar(
+    tmp_path,
+):
+    """A TIFF carrying its own internal overview IFDs can satisfy
+    ``overview_level=1`` from the base file alone. A sibling corrupt
+    sidecar must not turn that valid read into a raise (#2484
+    follow-up): the warn-and-fall-back branch handles it, the request
+    is reachable from the base IFD chain, and the user gets the
+    overview they asked for."""
+    # Write a base TIFF with one internal overview level so the IFD
+    # chain has length 2 (level 0 + level 1) before any sidecar.
+    arr = np.arange(64, dtype=np.uint16).reshape(8, 8)
+    xs = np.arange(8) + 0.5
+    ys = np.arange(8) + 0.5
+    da = xr.DataArray(arr, dims=("y", "x"), coords={"y": ys, "x": xs})
+    da.attrs["crs"] = 4326
+    path = tmp_path / "internal_ovr_2484.tif"
+    to_geotiff(da, str(path), cog=True, compression="none",
+               overview_levels=[2])
+
+    _make_corrupt_sidecar_2416(path, b"not a tiff")
+
+    # Level 1 is the internal overview; reachable without the sidecar.
+    # Expect a warning (sidecar still tried + fell back), no raise.
+    with pytest.warns(RuntimeWarning, match="Ignoring unreadable sidecar"):
+        da_lvl1 = open_geotiff(str(path), overview_level=1)
+    # Internal overview is a 4x4 reduction of the 8x8 base.
+    assert da_lvl1.shape == (4, 4)
+
+    # Level 2 is beyond the base IFD chain -- now the sidecar is
+    # required, so the parse error surfaces.
+    with pytest.raises(ValueError, match="external sidecar") as excinfo:
+        open_geotiff(str(path), overview_level=2)
     assert excinfo.value.__cause__ is not None
 
 

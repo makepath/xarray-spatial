@@ -438,7 +438,9 @@ def read_geotiff_gpu(source: str, *,
         # and ``reader.sidecar_ovr`` at advanced; matches the eager CPU
         # path in ``_reader._read_to_array`` and the dask metadata
         # helper ``_sidecar.discover_remote_sidecar``. Issue #2416.
-        from .._sidecar import attach_sidecar_origin, close_sidecar, find_sidecar, load_sidecar
+        from .._sidecar import (attach_sidecar_origin, close_sidecar,
+                                 find_sidecar, handle_sidecar_parse_failure,
+                                 load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
@@ -453,30 +455,14 @@ def read_geotiff_gpu(source: str, *,
                 # patch routes a cloud-source path through here.
                 raise
             except Exception as exc:
-                # Explicit ``overview_level >= 1`` is a request for the
-                # external sidecar surface. The release contract
-                # (``geotiff_release_contract.md`` row
-                # ``reader.sidecar_ovr``) promises that this surfaces
-                # the underlying parse error rather than degrading to a
-                # misleading "out of range" raise from
-                # ``select_overview_ifd``. Chain via
-                # ``raise ... from exc`` so the traceback carries the
-                # concrete parse failure. Mirrors the eager CPU path
-                # in ``_reader._read_to_array``. Issue #2484.
-                if overview_level is not None and overview_level >= 1:
-                    raise ValueError(
-                        f"Cannot read overview_level={overview_level} "
-                        f"from external sidecar {sidecar_path!r}: "
-                        f"sidecar parse failed with "
-                        f"{type(exc).__name__}: {exc}"
-                    ) from exc
-                warnings.warn(
-                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
-                    f"{type(exc).__name__}: {exc}. Falling back to "
-                    f"base-file-only read. Delete the .ovr file or pass "
-                    f"overview_level>=1 to surface the parse error.",
-                    RuntimeWarning,
-                    stacklevel=3,
+                # Shared policy: surface the parse error when the
+                # caller asked for a level the base file alone cannot
+                # serve; warn and fall back otherwise. See
+                # ``_sidecar.handle_sidecar_parse_failure`` for the
+                # rationale. Issue #2484.
+                handle_sidecar_parse_failure(
+                    exc, sidecar_path, overview_level,
+                    base_ifd_count=len(ifds),
                 )
                 sidecar = None
             if sidecar is not None:
