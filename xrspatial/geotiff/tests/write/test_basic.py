@@ -17,54 +17,45 @@ empty-spatial-dim rejection, and zero-band-axis rejection.
 
 from __future__ import annotations
 
-import dask.array as dsk
-import numpy as np
-import pytest
+import glob
+import inspect
+import io
 import os
 import platform
-import xarray as xr
-import inspect
-import importlib.util
-import io
+import re
 import tracemalloc
+import typing
 import uuid
 import warnings
-import typing
-import re
-import glob
 
-from xrspatial.geotiff import (
-    _vrt as _vrt_module,
-    _writer as writer_mod,
-    open_geotiff,
-    read_vrt,
-    to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
-)
+import dask.array as dsk
+import dask.array as da
+import numpy as np
+import pytest
+import xarray as xr
+
+from xrspatial.geotiff import _vrt as _vrt_module
+from xrspatial.geotiff import _writer as writer_mod
+from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_geotiff_gpu, write_vrt
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, parse_header, parse_ifd
 from xrspatial.geotiff._reader import _read_to_array, read_to_array
 from xrspatial.geotiff._validation import _validate_3d_writer_dims
-from xrspatial.geotiff._writer import (
-    _make_overview,
-    _write,
-    _write_streaming,
-    _write_tiled,
-    write,
-)
 # ``write_vrt`` here is the private internal binding, aliased so it does
 # not shadow the public re-export above. The only section that needs
 # the private form is the writer-source-compat fold (see PR
 # description for the why).
 from xrspatial.geotiff._vrt import write_vrt as _priv_write_vrt
+from xrspatial.geotiff._writer import _make_overview, _write, _write_streaming, _write_tiled, write
 from xrspatial.geotiff.tests.conftest import requires_gpu
 
+from .._helpers.markers import gpu_available as _gpu_available
 
 # -------------------------------------------------------------------------
 # Section: writer round-trip basics
 # -------------------------------------------------------------------------
+
 
 class TestMakeOverview:
     def test_2x_decimation(self):
@@ -461,7 +452,6 @@ def test_writer_kwarg_defaults_match_to_geotiff():
 # Section: return-path contract
 # -------------------------------------------------------------------------
 
-from .._helpers.markers import gpu_available as _gpu_available  # noqa: E402
 
 _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(
@@ -2535,3 +2525,88 @@ def test_write_geotiff_gpu_rejects_zero_bands(tmp_path):
     assert msg.startswith("write_geotiff_gpu cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()
     assert not out.exists()
+
+# ===========================================================================
+# Streaming photometric override (#2073)
+# Source: test_streaming_photometric_override_2073.py
+# ===========================================================================
+
+
+TYPE_SHORT = 3
+
+
+def test_streaming_extra_tags_miniswhite_override_rejected_2073(tmp_path):
+    """Dask write with extra_tags forcing photometric=0 must raise."""
+    arr = xr.DataArray(
+        da.from_array(
+            np.array([[10, 20], [30, 40]], dtype=np.uint8),
+            chunks=(1, 2),
+        ),
+    )
+    arr.attrs['extra_tags'] = [(TAG_PHOTOMETRIC, TYPE_SHORT, 1, 0)]
+
+    out = tmp_path / 'tmp_2073_streaming_miniswhite.tif'
+    with pytest.raises(ValueError) as excinfo:
+        to_geotiff(arr, str(out), allow_experimental_codecs=True)
+
+    msg = str(excinfo.value)
+    assert 'extra_tags' in msg
+    assert 'photometric' in msg.lower() or 'MinIsWhite' in msg
+
+
+def test_streaming_extra_tags_minisblack_override_roundtrips_2073(tmp_path):
+    """The valid (non-MinIsWhite-crossing) override should still work."""
+    src = np.array([[10, 20], [30, 40]], dtype=np.uint8)
+    arr = xr.DataArray(
+        da.from_array(src, chunks=(1, 2)),
+        dims=('y', 'x'),
+        coords={'y': [1.0, 0.0], 'x': [0.0, 1.0]},
+    )
+    # photometric=1 (MinIsBlack) matches what the writer picks for a
+    # single-band raster anyway: no pre-inversion needed, so the guard
+    # must not fire.
+    arr.attrs['extra_tags'] = [(TAG_PHOTOMETRIC, TYPE_SHORT, 1, 1)]
+
+    out = tmp_path / 'tmp_2073_streaming_minisblack.tif'
+    to_geotiff(arr, str(out), allow_experimental_codecs=True)
+    assert os.path.exists(out)
+
+    back = open_geotiff(str(out))
+    np.testing.assert_array_equal(np.asarray(back.values), src)
+
+
+def test_streaming_extra_tags_miniswhite_override_multiband_not_rejected_2073(
+    tmp_path,
+):
+    """The guard fires only on single-band rasters.
+
+    Multi-band rasters do not pre-invert MinIsWhite, so a
+    ``TAG_PHOTOMETRIC`` override that crosses the MinIsWhite boundary
+    is not the kind of corruption the guard exists to prevent. Pins
+    the ``samples == 1`` gate inside
+    ``_reject_disagreeing_photometric_override``: a regression that
+    dropped or flipped the gate would surface as a spurious
+    ``ValueError`` here.
+
+    Whether a 3-band raster tagged MinIsWhite is semantically useful
+    is a separate concern; this test only locks in the guard's scope.
+    """
+    src = np.zeros((2, 2, 3), dtype=np.uint8)
+    src[..., 0] = 10
+    src[..., 1] = 20
+    src[..., 2] = 30
+    arr = xr.DataArray(
+        da.from_array(src, chunks=(2, 2, 3)),
+        dims=('y', 'x', 'band'),
+        coords={'y': [1.0, 0.0], 'x': [0.0, 1.0]},
+    )
+    arr.attrs['extra_tags'] = [(TAG_PHOTOMETRIC, TYPE_SHORT, 1, 0)]
+
+    out = tmp_path / 'tmp_2073_streaming_miniswhite_multiband.tif'
+    # Must not raise: the writer does not pre-invert multi-band data,
+    # so the override is not in the "corruption that the guard exists
+    # to prevent" set. If it raises for an unrelated reason
+    # (e.g. RGB-requires-3-bands check elsewhere), let the test
+    # surface that as a real failure rather than swallowing it.
+    to_geotiff(arr, str(out), allow_experimental_codecs=True)
+    assert os.path.exists(out)

@@ -72,28 +72,17 @@ _requires_rasterio_and_dask = pytest.mark.skipif(
     ),
 )
 
-from xrspatial.geotiff import (
-    SUPPORTED_FEATURES,
-    UnsafeURLError,
-    open_geotiff,
-    read_geotiff_dask,
-    to_geotiff,
-)
-from xrspatial.geotiff._compression import (
-    COMPRESSION_DEFLATE,
-    COMPRESSION_LZW,
-    COMPRESSION_NONE,
-    COMPRESSION_PACKBITS,
-    COMPRESSION_ZSTD,
-)
-from xrspatial.geotiff._errors import (
-    GeoTIFFAmbiguousMetadataError,
-    RotatedTransformError,
-)
-from xrspatial.geotiff._geotags import GeoTransform
-from xrspatial.geotiff._header import parse_header, parse_ifd
-from xrspatial.geotiff._writer import write
-from xrspatial.geotiff.tests._helpers.markers import requires_gpu
+from xrspatial.geotiff import (SUPPORTED_FEATURES, UnsafeURLError, open_geotiff,  # noqa: E402
+                               read_geotiff_dask, to_geotiff)
+from xrspatial.geotiff._compression import (COMPRESSION_DEFLATE, COMPRESSION_LZW,  # noqa: E402
+                                            COMPRESSION_NONE, COMPRESSION_PACKBITS,
+                                            COMPRESSION_ZSTD)
+from xrspatial.geotiff._errors import GeoTIFFAmbiguousMetadataError  # noqa: E402
+from xrspatial.geotiff._errors import RotatedTransformError  # noqa: E402
+from xrspatial.geotiff._geotags import GeoTransform  # noqa: E402
+from xrspatial.geotiff._header import parse_header, parse_ifd  # noqa: E402
+from xrspatial.geotiff._writer import write  # noqa: E402
+from xrspatial.geotiff.tests._helpers.markers import requires_gpu  # noqa: E402
 
 # =========================================================================== #
 # Shared codec constants                                                      #

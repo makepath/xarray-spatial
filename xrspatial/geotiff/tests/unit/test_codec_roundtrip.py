@@ -36,30 +36,11 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff._compression import (
-    # Compression tag constants
-    COMPRESSION_JPEG,
-    COMPRESSION_JPEG2000,
-    COMPRESSION_LERC,
-    COMPRESSION_LZ4,
-    # Availability flags
-    JPEG2000_AVAILABLE,
-    LERC_AVAILABLE,
-    LZ4_AVAILABLE,
-    # Codec functions (dispatcher + per-codec compress/decompress)
-    _splice_jpeg_tables,
-    compress,
-    decompress,
-    jpeg2000_compress,
-    jpeg2000_decompress,
-    jpeg_compress,
-    jpeg_decompress,
-    lerc_compress,
-    lerc_decompress,
-    lerc_decompress_with_mask,
-    lz4_compress,
-    lz4_decompress,
-)
+from xrspatial.geotiff._compression import (  # Compression tag constants; Availability flags; Codec functions (dispatcher + per-codec compress/decompress)  # noqa: E501
+    COMPRESSION_JPEG, COMPRESSION_JPEG2000, COMPRESSION_LERC, COMPRESSION_LZ4, JPEG2000_AVAILABLE,
+    LERC_AVAILABLE, LZ4_AVAILABLE, _splice_jpeg_tables, compress, decompress, jpeg2000_compress,
+    jpeg2000_decompress, jpeg_compress, jpeg_decompress, lerc_compress, lerc_decompress,
+    lerc_decompress_with_mask, lz4_compress, lz4_decompress)
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import _compression_tag, write
 
@@ -316,8 +297,7 @@ class TestGdalTiledJpegRead:
     def test_tiled_ycbcr_jpeg(self, tmp_path):
         import rasterio as rio
 
-        from xrspatial.geotiff._header import (TAG_JPEG_TABLES,
-                                               parse_all_ifds, parse_header)
+        from xrspatial.geotiff._header import TAG_JPEG_TABLES, parse_all_ifds, parse_header
 
         size = 128
         data = self._gradient_rgb(size)

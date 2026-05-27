@@ -16,7 +16,6 @@ import warnings
 from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
-import shapely
 import xarray as xr
 
 from xrspatial.utils import ngjit
@@ -30,6 +29,34 @@ try:
     import cuspatial  # noqa: F401  -- reserved for future GPU geometry parsing
 except ImportError:
     cuspatial = None
+
+#: Cached shapely module, populated by :func:`_require_shapely` on first use.
+#: shapely is an optional dependency (the ``vector`` extra). It is imported
+#: lazily so ``import xrspatial`` does not pull in shapely (and GEOS) for users
+#: who never rasterize vector geometry.
+_shapely = None
+
+
+def _require_shapely():
+    """Import shapely or raise a helpful error, caching the module.
+
+    rasterize and polygonize are the only paths that need shapely. Every
+    function here that touches the shapely array API calls this and binds the
+    return value to a local ``shapely`` name, so the error surfaces clearly
+    (including inside dask workers, which call the tile helpers directly rather
+    than through :func:`rasterize`).
+    """
+    global _shapely
+    if _shapely is None:
+        try:
+            import shapely as _s
+        except ImportError as e:
+            raise ImportError(
+                "shapely is required for rasterize/polygonize but is not "
+                "installed. Install it with: pip install xarray-spatial[vector]"
+            ) from e
+        _shapely = _s
+    return _shapely
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +261,7 @@ def _classify_geometries(geometries, props_array):
                 ([], empty_props.copy(), empty_idx.copy()),
                 ([], empty_props.copy(), empty_idx.copy()))
 
+    shapely = _require_shapely()
     type_ids = shapely.get_type_id(geom_arr)
     empty = shapely.is_empty(geom_arr)
     valid = ~empty
@@ -348,6 +376,7 @@ def _extract_edges(geometries, geom_ids, bounds, height, width,
 def _extract_edges_vectorized(geometries, geom_ids, bounds,
                               height, width, all_touched):
     """Vectorized edge extraction using shapely 2.0 array ops."""
+    shapely = _require_shapely()
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -472,6 +501,7 @@ def _extract_points(geometries, bounds, height, width):
 
 def _extract_points_vectorized(geometries, bounds, height, width):
     """Vectorized point extraction using shapely 2.0 array ops."""
+    shapely = _require_shapely()
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -532,6 +562,7 @@ def _extract_line_segments(geometries, bounds, height, width):
 
 def _extract_lines_vectorized(geometries, bounds, height, width):
     """Vectorized line extraction with Liang-Barsky clipping."""
+    shapely = _require_shapely()
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -2131,6 +2162,7 @@ def _geometry_bboxes(geometries):
     """Return (N, 4) float64 array of [xmin, ymin, xmax, ymax] per geometry."""
     if len(geometries) == 0:
         return np.empty((0, 4), dtype=np.float64)
+    shapely = _require_shapely()
     return shapely.bounds(np.asarray(geometries, dtype=object))
 
 
@@ -2298,11 +2330,13 @@ def _polys_to_wkb(geoms):
     """Pre-serialize polygon geometries to WKB for cheap pickling."""
     if not geoms:
         return []
+    shapely = _require_shapely()
     return shapely.to_wkb(np.asarray(geoms, dtype=object)).tolist()
 
 
 def _polys_from_wkb(wkb_list):
     """Deserialize WKB back to shapely geometries."""
+    shapely = _require_shapely()
     geoms = shapely.from_wkb(wkb_list)
     if not isinstance(geoms, (list, np.ndarray)):
         geoms = [geoms]
@@ -3048,6 +3082,10 @@ def rasterize(
         >>> density = rasterize(gdf, width=100, height=100,
         ...                     column='pop', merge='sum', fill=0)
     """
+    # Fail early with a clear message if the optional ``vector`` extra
+    # (shapely) is not installed, rather than deep inside a helper.
+    _require_shapely()
+
     if column is not None and columns is not None:
         raise ValueError(
             "'column' and 'columns' are mutually exclusive; use one or "

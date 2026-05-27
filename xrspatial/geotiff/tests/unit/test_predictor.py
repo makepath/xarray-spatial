@@ -55,7 +55,8 @@ from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION, TAG
                                        TAG_STRIP_BYTE_COUNTS, TAG_STRIP_OFFSETS)
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._validation import _validate_predictor_sample_format
-from xrspatial.geotiff._writer import _assemble_standard_layout, _write_stripped, normalize_predictor
+from xrspatial.geotiff._writer import (_assemble_standard_layout, _write_stripped,
+                                       normalize_predictor)
 
 tifffile = pytest.importorskip("tifffile")
 

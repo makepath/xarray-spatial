@@ -57,11 +57,11 @@ fsspec = pytest.importorskip("fsspec")
 
 import numpy as np  # noqa: E402
 
-from xrspatial.geotiff import open_geotiff
+from xrspatial.geotiff import open_geotiff  # noqa: E402
 
 # Corpus has experimental + jpeg entries.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
-  # noqa: E402
+
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402

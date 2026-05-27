@@ -101,6 +101,12 @@ Xarray-Spatial is a Python library for raster analysis built on xarray. It has 1
 # via pip
 pip install xarray-spatial
 
+# with plotting helpers (matplotlib)
+pip install xarray-spatial[plot]
+
+# with vector rasterization (shapely): rasterize, polygonize
+pip install xarray-spatial[vector]
+
 # via conda
 conda install -c conda-forge xarray-spatial
 ```
@@ -610,9 +616,11 @@ Check out the user guide [here](/examples/user_guide/).
 
 #### Dependencies
 
-**Core:** numpy, numba, scipy, xarray, matplotlib, zstandard
+**Core:** numpy, numba, scipy, xarray, zstandard
 
 **Optional:**
+- `matplotlib` — the `.xrs.plot` accessor helpers (`pip install xarray-spatial[plot]`)
+- `shapely` — the vector-to-raster paths, `rasterize` and `polygonize` (`pip install xarray-spatial[vector]`)
 - `pyproj` — WKT/PROJ CRS resolution
 - `cupy` — GPU acceleration
 - `dask` — out-of-core processing

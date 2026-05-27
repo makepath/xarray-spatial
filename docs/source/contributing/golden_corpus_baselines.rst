@@ -82,7 +82,7 @@ output is correct, the corpus baseline needs updating. The workflow:
    change is what you expected (e.g. tile layout, compression).
 
 4. **Run the full corpus matrix.** All backend modules under
-   ``xrspatial/geotiff/tests/test_golden_corpus_*_1930.py`` should pass
+   ``xrspatial/geotiff/tests/golden_corpus/test_*.py`` should pass
    against the new baseline. ``pytest`` runs them all; ``pytest -m "not
    slow"`` runs the PR fast lane only.
 

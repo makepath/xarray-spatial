@@ -20,7 +20,6 @@ from xrspatial.geotiff._dtypes import (SAMPLE_FORMAT_FLOAT, SAMPLE_FORMAT_INT, S
 
 from .._helpers.markers import requires_gpu as _gpu_only
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

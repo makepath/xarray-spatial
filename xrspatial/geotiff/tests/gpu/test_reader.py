@@ -40,10 +40,10 @@ import xarray as xr
 from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.markers import requires_loopback
 
-
 # ---------------------------------------------------------------------------
 # Section: window / band kwarg forwarding on GPU read
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def single_band_tiff_1605(tmp_path):
@@ -186,8 +186,8 @@ def test_read_geotiff_gpu_window_bounds_validation_1605(single_band_tiff_1605):
 
 
 @_gpu_only
-def test_read_geotiff_gpu_band_bounds_validation_1605(multi_band_tiff_1605,
-                                                     single_band_tiff_1605):
+def test_read_geotiff_gpu_band_bounds_validation_1605(
+        multi_band_tiff_1605, single_band_tiff_1605):
     """Out-of-range band raises IndexError."""
     multi_path, _ = multi_band_tiff_1605
     single_path, _ = single_band_tiff_1605
@@ -1395,14 +1395,8 @@ def test_chunked_url_path_still_uses_chunked_helper_2161(small_tif_bytes_2161,
 
 def _parse_for_gds_1909(path: str):
     """Return ``(ifd, geo_info, header)`` for the GDS entry point."""
-    from xrspatial.geotiff._geotags import (
-        extract_geo_info_with_overview_inheritance,
-    )
-    from xrspatial.geotiff._header import (
-        parse_all_ifds,
-        parse_header,
-        select_overview_ifd,
-    )
+    from xrspatial.geotiff._geotags import extract_geo_info_with_overview_inheritance
+    from xrspatial.geotiff._header import parse_all_ifds, parse_header, select_overview_ifd
     from xrspatial.geotiff._reader import _FileSource
 
     with _FileSource(path) as fs:

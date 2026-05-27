@@ -363,3 +363,72 @@ def discover_remote_sidecar(
     merged = list(base_ifds) + list(sidecar.ifds)
     sidecar_ifd_ids = {id(ifd) for ifd in sidecar.ifds}
     return merged, sidecar, sidecar_ifd_ids
+
+
+def handle_sidecar_parse_failure(
+    exc: BaseException,
+    sidecar_path: str,
+    overview_level: int | None,
+    base_ifd_count: int,
+) -> None:
+    """React to a sidecar load/parse failure consistently across readers.
+
+    Called by the eager CPU, eager GPU, and metadata-only paths after
+    catching a non-:class:`CloudSizeLimitError` exception from
+    :func:`load_sidecar`. The shared policy is:
+
+    * If the caller explicitly requested a level the base file alone
+      cannot serve (``overview_level >= base_ifd_count``), raise a
+      ``ValueError`` chained from ``exc`` so the traceback shows the
+      real sidecar parse failure. The release contract
+      (``geotiff_release_contract.md`` row ``reader.sidecar_ovr``) and
+      the in-tree warning text both promise this case surfaces the
+      cause rather than degrading to a misleading "out of range" raise
+      from :func:`select_overview_ifd`. Issue #2484.
+
+    * Otherwise (``None``, ``0``, or any level the base IFD chain can
+      serve), emit a ``RuntimeWarning`` and return so the caller can
+      fall back to base-only behaviour.
+
+    Gating on ``len(base_ifd_count)`` rather than the cruder
+    ``overview_level >= 1`` matters when the base TIFF carries
+    internal overview IFDs of its own: a request for ``level=1`` is
+    reachable from the base file in that case, and forcing a raise
+    just because a sibling sidecar happens to be corrupt would deny
+    the user a perfectly valid read.
+
+    Parameters
+    ----------
+    exc
+        The exception raised by :func:`load_sidecar`.
+    sidecar_path
+        Path or URL of the sidecar that failed to parse. Embedded in
+        both the raised error message and the fallback warning so the
+        user can find the offending file.
+    overview_level
+        The caller's requested overview level. ``None`` and ``0`` map
+        to silent-fallback. Higher values trigger the raise only when
+        they exceed ``base_ifd_count``.
+    base_ifd_count
+        Number of IFDs already parsed from the base file's pyramid.
+        A request inside ``[0, base_ifd_count)`` is satisfiable without
+        the sidecar and so does not trigger the raise.
+    """
+    if (
+        overview_level is not None
+        and overview_level >= base_ifd_count
+    ):
+        raise ValueError(
+            f"Cannot read overview_level={overview_level} from "
+            f"external sidecar {sidecar_path!r}: sidecar parse failed "
+            f"with {type(exc).__name__}: {exc}"
+        ) from exc
+    import warnings
+    warnings.warn(
+        f"Ignoring unreadable sidecar {sidecar_path!r}: "
+        f"{type(exc).__name__}: {exc}. Falling back to "
+        f"base-file-only read. Delete the .ovr file or pass "
+        f"overview_level>=1 to surface the parse error.",
+        RuntimeWarning,
+        stacklevel=3,
+    )

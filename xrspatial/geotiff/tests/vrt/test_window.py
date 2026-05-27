@@ -16,29 +16,31 @@ Sections:
 """
 from __future__ import annotations
 
-import dask
-import dask.array as da
 import glob
-import numpy as np
 import os
-import pytest
 import tempfile
 import uuid
 import warnings
-import xarray as xr
 from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
+
+import dask
+import dask.array as da
+import numpy as np
+import pytest
+import xarray as xr
+
 from xrspatial.geotiff import read_vrt, to_geotiff
 from xrspatial.geotiff._reader import PixelSafetyLimitError, read_to_array
-from xrspatial.geotiff._vrt import _resample_nearest, read_vrt as _scaled_rects_read_vrt_internal
+from xrspatial.geotiff._vrt import _resample_nearest
 from xrspatial.geotiff._vrt import read_vrt as _dstrect_cap_read_vrt_internal
 from xrspatial.geotiff._vrt import read_vrt as _resample_window_inverse_read_vrt_internal
+from xrspatial.geotiff._vrt import read_vrt as _scaled_rects_read_vrt_internal
 from xrspatial.geotiff._vrt import read_vrt as _source_tile_check_read_vrt_internal
 from xrspatial.geotiff._vrt import read_vrt as _window_validation_read_vrt_internal
 from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
 from xrspatial.geotiff._writer import write
-
 
 # ---------------------------------------------------------------------------
 # window kwarg validation
@@ -53,7 +55,7 @@ def _window_validation_unique_dir(tmp_path, label: str) -> str:
     return str(d)
 
 
-def _window_validation_write_tif(path: str, size: int=4) -> None:
+def _window_validation_write_tif(path: str, size: int = 4) -> None:
     """Write a ``size``x``size`` float32 GeoTIFF the VRT can wrap."""
     arr = np.arange(size * size, dtype=np.float32).reshape(size, size)
     y = np.linspace(float(size) - 0.5, 0.5, size)
@@ -62,10 +64,10 @@ def _window_validation_write_tif(path: str, size: int=4) -> None:
     to_geotiff(da, path, compression='none')
 
 
-def _window_validation_write_vrt(vrt_path: str, source_filename: str, size: int=4) -> None:
+def _window_validation_write_vrt(vrt_path: str, source_filename: str, size: int = 4) -> None:
     """Write a single-band VRT of dimension ``size``x``size`` pointing
     at ``source_filename`` (relative to the VRT directory)."""
-    xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">{source_filename}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    xml = f'<VRTDataset rasterXSize="{size}" rasterYSize="{size}">\n  <GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">{source_filename}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{size}" ySize="{size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt_path, 'w') as f:
         f.write(xml)
 
@@ -204,15 +206,15 @@ def _resample_window_inverse_write_vrt_xml(tmp_path, xml: str, name: str) -> str
     return p
 
 
-def _resample_window_inverse_write_src(tmp_path, arr: np.ndarray, name: str='tmp_1704_src.tif') -> str:
+def _resample_window_inverse_write_src(tmp_path, arr: np.ndarray, name: str = 'tmp_1704_src.tif') -> str:  # noqa: E501
     src_path = str(tmp_path / name)
     write(arr, src_path, compression='none', tiled=False)
     return src_path
 
 
-def _resample_window_inverse_single_source_vrt(src_path: str, *, raster_x: int, raster_y: int, src_x: int, src_y: int, src_xsize: int, src_ysize: int, dst_x: int, dst_y: int, dst_xsize: int, dst_ysize: int, dtype: str='UInt16', nodata: str | None=None) -> str:
+def _resample_window_inverse_single_source_vrt(src_path: str, *, raster_x: int, raster_y: int, src_x: int, src_y: int, src_xsize: int, src_ysize: int, dst_x: int, dst_y: int, dst_xsize: int, dst_ysize: int, dtype: str = 'UInt16', nodata: str | None = None) -> str:  # noqa: E501
     nodata_xml = f'      <NODATA>{nodata}</NODATA>\n' if nodata is not None else ''
-    return f'<VRTDataset rasterXSize="{raster_x}" rasterYSize="{raster_y}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{dtype}" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="{src_x}" yOff="{src_y}" xSize="{src_xsize}" ySize="{src_ysize}"/>\n      <DstRect xOff="{dst_x}" yOff="{dst_y}" xSize="{dst_xsize}" ySize="{dst_ysize}"/>\n{nodata_xml}    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    return f'<VRTDataset rasterXSize="{raster_x}" rasterYSize="{raster_y}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{dtype}" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="{src_x}" yOff="{src_y}" xSize="{src_xsize}" ySize="{src_ysize}"/>\n      <DstRect xOff="{dst_x}" yOff="{dst_y}" xSize="{dst_xsize}" ySize="{dst_ysize}"/>\n{nodata_xml}    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
 
 
 def test_upsample_window_matches_full_then_slice(tmp_path):
@@ -220,7 +222,7 @@ def test_upsample_window_matches_full_then_slice(tmp_path):
     windowed read must equal the full read sliced at the same offsets."""
     src = np.arange(10 * 10, dtype=np.uint16).reshape(10, 10) + 1
     src_path = _resample_window_inverse_write_src(tmp_path, src)
-    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=40, raster_y=40, src_x=0, src_y=0, src_xsize=10, src_ysize=10, dst_x=0, dst_y=0, dst_xsize=40, dst_ysize=40)
+    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=40, raster_y=40, src_x=0, src_y=0, src_xsize=10, src_ysize=10, dst_x=0, dst_y=0, dst_xsize=40, dst_ysize=40)  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_up.vrt')
     full, _ = _resample_window_inverse_read_vrt_internal(vrt_path)
     assert full.shape == (40, 40)
@@ -233,7 +235,7 @@ def test_downsample_window_matches_full_then_slice(tmp_path):
     """4x downsample, windowed read parity with full-then-slice."""
     src = np.arange(40 * 40, dtype=np.uint16).reshape(40, 40) + 1
     src_path = _resample_window_inverse_write_src(tmp_path, src)
-    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=10, raster_y=10, src_x=0, src_y=0, src_xsize=40, src_ysize=40, dst_x=0, dst_y=0, dst_xsize=10, dst_ysize=10)
+    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=10, raster_y=10, src_x=0, src_y=0, src_xsize=40, src_ysize=40, dst_x=0, dst_y=0, dst_xsize=10, dst_ysize=10)  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_down.vrt')
     full, _ = _resample_window_inverse_read_vrt_internal(vrt_path)
     assert full.shape == (10, 10)
@@ -242,7 +244,7 @@ def test_downsample_window_matches_full_then_slice(tmp_path):
     np.testing.assert_array_equal(windowed, full[r0:r1, c0:c1])
 
 
-@pytest.mark.parametrize('r0,c0,r1,c1', [(0, 0, 11, 11), (1, 1, 10, 10), (3, 2, 7, 9), (0, 0, 1, 1), (10, 10, 11, 11), (5, 0, 6, 11), (0, 5, 11, 6)])
+@pytest.mark.parametrize('r0,c0,r1,c1', [(0, 0, 11, 11), (1, 1, 10, 10), (3, 2, 7, 9), (0, 0, 1, 1), (10, 10, 11, 11), (5, 0, 6, 11), (0, 5, 11, 6)])  # noqa: E501
 def test_non_integer_ratio_7_to_11_window_parity(tmp_path, r0, c0, r1, c1):
     """SrcRect 7x7, DstRect 11x11 (irrational ratio 7/11). The
     nearest-neighbour mapping has uneven step sizes so the inverse
@@ -252,7 +254,7 @@ def test_non_integer_ratio_7_to_11_window_parity(tmp_path, r0, c0, r1, c1):
     """
     src = np.arange(7 * 7, dtype=np.uint16).reshape(7, 7) + 100
     src_path = _resample_window_inverse_write_src(tmp_path, src)
-    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=11, raster_y=11, src_x=0, src_y=0, src_xsize=7, src_ysize=7, dst_x=0, dst_y=0, dst_xsize=11, dst_ysize=11)
+    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=11, raster_y=11, src_x=0, src_y=0, src_xsize=7, src_ysize=7, dst_x=0, dst_y=0, dst_xsize=11, dst_ysize=11)  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_7_11.vrt')
     full, _ = _resample_window_inverse_read_vrt_internal(vrt_path)
     windowed, _ = _resample_window_inverse_read_vrt_internal(vrt_path, window=(r0, c0, r1, c1))
@@ -262,7 +264,7 @@ def test_non_integer_ratio_7_to_11_window_parity(tmp_path, r0, c0, r1, c1):
 def test_window_starting_at_origin(tmp_path):
     src = np.arange(8 * 8, dtype=np.uint16).reshape(8, 8) + 1
     src_path = _resample_window_inverse_write_src(tmp_path, src)
-    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=20, raster_y=20, src_x=0, src_y=0, src_xsize=8, src_ysize=8, dst_x=0, dst_y=0, dst_xsize=20, dst_ysize=20)
+    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=20, raster_y=20, src_x=0, src_y=0, src_xsize=8, src_ysize=8, dst_x=0, dst_y=0, dst_xsize=20, dst_ysize=20)  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_origin.vrt')
     full, _ = _resample_window_inverse_read_vrt_internal(vrt_path)
     windowed, _ = _resample_window_inverse_read_vrt_internal(vrt_path, window=(0, 0, 5, 5))
@@ -272,7 +274,7 @@ def test_window_starting_at_origin(tmp_path):
 def test_window_ending_at_last_pixel(tmp_path):
     src = np.arange(8 * 8, dtype=np.uint16).reshape(8, 8) + 1
     src_path = _resample_window_inverse_write_src(tmp_path, src)
-    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=20, raster_y=20, src_x=0, src_y=0, src_xsize=8, src_ysize=8, dst_x=0, dst_y=0, dst_xsize=20, dst_ysize=20)
+    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=20, raster_y=20, src_x=0, src_y=0, src_xsize=8, src_ysize=8, dst_x=0, dst_y=0, dst_xsize=20, dst_ysize=20)  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_last.vrt')
     full, _ = _resample_window_inverse_read_vrt_internal(vrt_path)
     windowed, _ = _resample_window_inverse_read_vrt_internal(vrt_path, window=(15, 15, 20, 20))
@@ -289,7 +291,7 @@ def test_window_crossing_multiple_sources(tmp_path):
     right = np.arange(5 * 5, dtype=np.uint16).reshape(5, 5) + 1000
     left_path = _resample_window_inverse_write_src(tmp_path, left, 'tmp_1704_left.tif')
     right_path = _resample_window_inverse_write_src(tmp_path, right, 'tmp_1704_right.tif')
-    vrt_xml = f'<VRTDataset rasterXSize="20" rasterYSize="10">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{left_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="5" ySize="5"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{right_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="5" ySize="5"/>\n      <DstRect xOff="10" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="20" rasterYSize="10">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{left_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="5" ySize="5"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{right_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="5" ySize="5"/>\n      <DstRect xOff="10" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_multi.vrt')
     full, _ = _resample_window_inverse_read_vrt_internal(vrt_path)
     assert full.shape == (10, 20)
@@ -306,7 +308,7 @@ def test_nodata_round_trip_through_window(tmp_path):
     src[3, 4] = 65535
     src[5, 2] = 65535
     src_path = _resample_window_inverse_write_src(tmp_path, src)
-    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=16, raster_y=16, src_x=0, src_y=0, src_xsize=8, src_ysize=8, dst_x=0, dst_y=0, dst_xsize=16, dst_ysize=16, dtype='Float32', nodata='65535')
+    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=16, raster_y=16, src_x=0, src_y=0, src_xsize=8, src_ysize=8, dst_x=0, dst_y=0, dst_xsize=16, dst_ysize=16, dtype='Float32', nodata='65535')  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_nodata.vrt')
     full, _ = _resample_window_inverse_read_vrt_internal(vrt_path)
     windowed, _ = _resample_window_inverse_read_vrt_internal(vrt_path, window=(4, 4, 12, 12))
@@ -321,7 +323,7 @@ def test_only_minimal_source_rect_is_read(tmp_path):
     """
     src = np.arange(40 * 40, dtype=np.uint16).reshape(40, 40) + 1
     src_path = _resample_window_inverse_write_src(tmp_path, src)
-    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=160, raster_y=160, src_x=0, src_y=0, src_xsize=40, src_ysize=40, dst_x=0, dst_y=0, dst_xsize=160, dst_ysize=160)
+    vrt_xml = _resample_window_inverse_single_source_vrt(src_path, raster_x=160, raster_y=160, src_x=0, src_y=0, src_xsize=40, src_ysize=40, dst_x=0, dst_y=0, dst_xsize=160, dst_ysize=160)  # noqa: E501
     vrt_path = _resample_window_inverse_write_vrt_xml(tmp_path, vrt_xml, 'tmp_1704_bound.vrt')
     seen_windows: list[tuple[int, int, int, int]] = []
     from xrspatial.geotiff import _reader as _reader_mod
@@ -337,7 +339,7 @@ def test_only_minimal_source_rect_is_read(tmp_path):
     r0, c0, r1, c1 = seen_windows[0]
     read_h = r1 - r0
     read_w = c1 - c0
-    assert read_h < 10, f'expected a small source row range, got {read_h} rows; the full SrcRect is 40 rows so the fix is not reducing the read.'
+    assert read_h < 10, f'expected a small source row range, got {read_h} rows; the full SrcRect is 40 rows so the fix is not reducing the read.'  # noqa: E501
     assert read_w < 10
 
 
@@ -358,10 +360,10 @@ def _dstrect_cap_write_source(td: str) -> str:
     return src_path
 
 
-def _dstrect_cap_write_vrt(td: str, *, dst_x_size: int, dst_y_size: int, raster_x: int=100, raster_y: int=100) -> str:
+def _dstrect_cap_write_vrt(td: str, *, dst_x_size: int, dst_y_size: int, raster_x: int = 100, raster_y: int = 100) -> str:  # noqa: E501
     """Write a VRT with a single SimpleSource using the given DstRect size."""
     vrt_path = os.path.join(td, 'mosaic.vrt')
-    vrt_xml = f'<VRTDataset rasterXSize="{raster_x}" rasterYSize="{raster_y}">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="{dst_x_size}" ySize="{dst_y_size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="{raster_x}" rasterYSize="{raster_y}">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="{dst_x_size}" ySize="{dst_y_size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
     return vrt_path
@@ -415,7 +417,7 @@ def test_per_source_cap_bites_when_sub_window_exceeds_budget():
     """
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _dstrect_cap_write_source(td)
-        vrt_path = _dstrect_cap_write_vrt(td, dst_x_size=2000, dst_y_size=2000, raster_x=2000, raster_y=2000)
+        vrt_path = _dstrect_cap_write_vrt(td, dst_x_size=2000, dst_y_size=2000, raster_x=2000, raster_y=2000)  # noqa: E501
         with pytest.raises(ValueError, match='resample intermediate|safety limit'):
             _dstrect_cap_read_vrt_internal(vrt_path, max_pixels=1000000)
         arr, _ = _dstrect_cap_read_vrt_internal(vrt_path, max_pixels=4000000)
@@ -428,7 +430,7 @@ def test_per_source_cap_inclusive_boundary():
     on the new sub-window semantics."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _dstrect_cap_write_source(td)
-        vrt_path = _dstrect_cap_write_vrt(td, dst_x_size=100, dst_y_size=100, raster_x=100, raster_y=100)
+        vrt_path = _dstrect_cap_write_vrt(td, dst_x_size=100, dst_y_size=100, raster_x=100, raster_y=100)  # noqa: E501
         with pytest.raises(ValueError, match='resample intermediate|safety limit'):
             _dstrect_cap_read_vrt_internal(vrt_path, max_pixels=9999)
         arr, _ = _dstrect_cap_read_vrt_internal(vrt_path, max_pixels=10000)
@@ -461,7 +463,7 @@ def test_negative_dstrect_y_size_rejected():
 # ---------------------------------------------------------------------------
 
 
-def _scaled_rects_write_vrt(tmp_path, xml: str, name: str='test.vrt') -> str:
+def _scaled_rects_write_vrt(tmp_path, xml: str, name: str = 'test.vrt') -> str:
     p = str(tmp_path / name)
     with open(p, 'w') as f:
         f.write(xml)
@@ -477,7 +479,7 @@ def test_downsample_4x4_to_2x2_does_not_raise_and_uses_nearest(tmp_path):
     src = np.arange(16, dtype=np.uint16).reshape(4, 4)
     src_path = str(tmp_path / 'src.tif')
     write(src, src_path, compression='none', tiled=False)
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     vrt_path = _scaled_rects_write_vrt(tmp_path, vrt_xml, 'down.vrt')
     result, _ = _scaled_rects_read_vrt_internal(vrt_path)
     assert result.shape == (2, 2), f'expected (2,2), got {result.shape}; resample step missing.'
@@ -495,7 +497,7 @@ def test_upsample_2x2_to_4x4_repeats_each_source_pixel(tmp_path):
     src = np.array([[1, 2], [3, 4]], dtype=np.uint16)
     src_path = str(tmp_path / 'src.tif')
     write(src, src_path, compression='none', tiled=False)
-    vrt_xml = f'<VRTDataset rasterXSize="4" rasterYSize="4">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="4" rasterYSize="4">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     vrt_path = _scaled_rects_write_vrt(tmp_path, vrt_xml, 'up.vrt')
     result, _ = _scaled_rects_read_vrt_internal(vrt_path)
     assert result.shape == (4, 4)
@@ -514,7 +516,7 @@ def test_non_integer_scale_3x3_to_2x2_no_holes(tmp_path):
     src = np.arange(9, dtype=np.uint16).reshape(3, 3)
     src_path = str(tmp_path / 'src.tif')
     write(src, src_path, compression='none', tiled=False)
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.5, 0.0, 0.0, 0.0, -1.5</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="3"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.5, 0.0, 0.0, 0.0, -1.5</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="3"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     vrt_path = _scaled_rects_write_vrt(tmp_path, vrt_xml, 'nonint.vrt')
     result, _ = _scaled_rects_read_vrt_internal(vrt_path)
     assert result.shape == (2, 2)
@@ -534,11 +536,11 @@ def test_per_band_scale_mix(tmp_path):
     p2 = str(tmp_path / 'b2.tif')
     write(band1_src, p1, compression='none', tiled=False)
     write(band2_src, p2, compression='none', tiled=False)
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="UInt16" band="2">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p2}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="UInt16" band="2">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p2}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     vrt_path = _scaled_rects_write_vrt(tmp_path, vrt_xml, 'mix.vrt')
     result, _ = _scaled_rects_read_vrt_internal(vrt_path)
     assert result.shape == (2, 2, 2)
-    expected_b1 = np.array([[band1_src[1, 1], band1_src[1, 3]], [band1_src[3, 1], band1_src[3, 3]]], dtype=np.uint16)
+    expected_b1 = np.array([[band1_src[1, 1], band1_src[1, 3]], [band1_src[3, 1], band1_src[3, 3]]], dtype=np.uint16)  # noqa: E501
     np.testing.assert_array_equal(result[..., 0], expected_b1)
     np.testing.assert_array_equal(result[..., 1], band2_src)
 
@@ -555,7 +557,7 @@ def test_window_on_downsampled_source_returns_correct_subwindow(tmp_path):
     src = np.arange(16, dtype=np.uint16).reshape(4, 4)
     src_path = str(tmp_path / 'src.tif')
     write(src, src_path, compression='none', tiled=False)
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     vrt_path = _scaled_rects_write_vrt(tmp_path, vrt_xml, 'win.vrt')
     result, _ = _scaled_rects_read_vrt_internal(vrt_path, window=(0, 0, 1, 1))
     assert result.shape == (1, 1)
@@ -570,10 +572,10 @@ def test_nodata_preserved_across_downsample(tmp_path):
     VRT output.
     """
     sentinel = np.uint16(65535)
-    src = np.array([[10, 20, 30, 40], [50, sentinel, 70, sentinel], [90, 100, 110, 120], [130, sentinel, 150, sentinel]], dtype=np.uint16)
+    src = np.array([[10, 20, 30, 40], [50, sentinel, 70, sentinel], [90, 100, 110, 120], [130, sentinel, 150, sentinel]], dtype=np.uint16)  # noqa: E501
     src_path = str(tmp_path / 'src_nd.tif')
     write(src, src_path, nodata=int(sentinel), compression='none', tiled=False)
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="Float64" band="1">\n    <NoDataValue>-9999</NoDataValue>\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <NODATA>65535</NODATA>\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="Float64" band="1">\n    <NoDataValue>-9999</NoDataValue>\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <NODATA>65535</NODATA>\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     vrt_path = _scaled_rects_write_vrt(tmp_path, vrt_xml, 'nd.vrt')
     result, _ = _scaled_rects_read_vrt_internal(vrt_path)
     assert result.shape == (2, 2)
@@ -595,7 +597,7 @@ def test_nodata_with_mixed_sentinel_and_valid_pixels(tmp_path):
     src[3, 3] = sentinel
     src_path = str(tmp_path / 'src_mixed.tif')
     write(src, src_path, nodata=int(sentinel), compression='none', tiled=False)
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="Float64" band="1">\n    <NoDataValue>-9999</NoDataValue>\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <NODATA>65535</NODATA>\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="Float64" band="1">\n    <NoDataValue>-9999</NoDataValue>\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <NODATA>65535</NODATA>\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     vrt_path = _scaled_rects_write_vrt(tmp_path, vrt_xml, 'nd_mixed.vrt')
     result, _ = _scaled_rects_read_vrt_internal(vrt_path)
     assert result.shape == (2, 2)
@@ -633,9 +635,9 @@ def _source_tile_check_write_normal_tile_source(td: str) -> str:
     return src
 
 
-def _source_tile_check_write_vrt(td: str, *, dst_x_size: int, dst_y_size: int, raster_x: int=100, raster_y: int=100, src_x_size: int=10, src_y_size: int=10) -> str:
+def _source_tile_check_write_vrt(td: str, *, dst_x_size: int, dst_y_size: int, raster_x: int = 100, raster_y: int = 100, src_x_size: int = 10, src_y_size: int = 10) -> str:  # noqa: E501
     vrt = os.path.join(td, 'mosaic.vrt')
-    xml = f'<VRTDataset rasterXSize="{raster_x}" rasterYSize="{raster_y}">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{src_x_size}" ySize="{src_y_size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{dst_x_size}" ySize="{dst_y_size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    xml = f'<VRTDataset rasterXSize="{raster_x}" rasterYSize="{raster_y}">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{src_x_size}" ySize="{src_y_size}"/>\n      <DstRect xOff="0" yOff="0" xSize="{dst_x_size}" ySize="{dst_y_size}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt, 'w') as f:
         f.write(xml)
     return vrt
@@ -657,7 +659,7 @@ class TestPerTileCheckDoesNotUseCallerBudget:
         the requested output window itself fits."""
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
             _source_tile_check_write_normal_tile_source(td)
-            vrt = _source_tile_check_write_vrt(td, dst_x_size=5, dst_y_size=5, raster_x=5, raster_y=5)
+            vrt = _source_tile_check_write_vrt(td, dst_x_size=5, dst_y_size=5, raster_x=5, raster_y=5)  # noqa: E501
             arr, _ = _source_tile_check_read_vrt_internal(vrt, max_pixels=100)
             assert arr.shape == (5, 5)
 
@@ -675,8 +677,8 @@ class TestOutputWindowCheckStillEnforced:
     def test_output_extent_exceeds_max_pixels_still_rejected(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
             src = os.path.join(td, 'src.tif')
-            to_geotiff(np.arange(64, dtype=np.uint8).reshape(8, 8), src, compression='none', tiled=False)
-            vrt = _source_tile_check_write_vrt(td, dst_x_size=8, dst_y_size=8, raster_x=8, raster_y=8, src_x_size=4, src_y_size=4)
+            to_geotiff(np.arange(64, dtype=np.uint8).reshape(8, 8), src, compression='none', tiled=False)  # noqa: E501
+            vrt = _source_tile_check_write_vrt(td, dst_x_size=8, dst_y_size=8, raster_x=8, raster_y=8, src_x_size=4, src_y_size=4)  # noqa: E501
             with pytest.raises(ValueError, match='exceed|safety limit'):
                 _source_tile_check_read_vrt_internal(vrt, max_pixels=4)
 
@@ -710,7 +712,18 @@ def test_tiny_vrt_with_huge_srcrect_now_reads_minimally(tmp_path):
     data = np.arange(16, dtype=np.uint8).reshape(4, 4)
     to_geotiff(data, str(src), compression='none')
     vrt = tmp_path / 'tmp_1796_source_cap.vrt'
-    vrt.write_text(f'<VRTDataset rasterXSize="1" rasterYSize="1">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">{os.path.basename(src)}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="1" ySize="1"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n')
+    vrt.write_text(
+        f'<VRTDataset rasterXSize="1" rasterYSize="1">\n'
+        f'  <VRTRasterBand dataType="Byte" band="1">\n'
+        f'    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="1">{os.path.basename(src)}</SourceFilename>\n'
+        f'      <SourceBand>1</SourceBand>\n'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        f'      <DstRect xOff="0" yOff="0" xSize="1" ySize="1"/>\n'
+        f'    </SimpleSource>\n'
+        f'  </VRTRasterBand>\n'
+        f'</VRTDataset>\n'
+    )
     arr = read_vrt(str(vrt), max_pixels=1)
     assert arr.shape == (1, 1)
 
@@ -726,7 +739,18 @@ def test_source_cap_still_fires_when_sub_window_exceeds_budget(tmp_path):
     data = np.arange(64, dtype=np.uint8).reshape(8, 8)
     to_geotiff(data, str(src), compression='none', tiled=False)
     vrt = tmp_path / 'tmp_1796_big_cap.vrt'
-    vrt.write_text(f'<VRTDataset rasterXSize="8" rasterYSize="8">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">{os.path.basename(src)}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="8" ySize="8"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n')
+    vrt.write_text(
+        f'<VRTDataset rasterXSize="8" rasterYSize="8">\n'
+        f'  <VRTRasterBand dataType="Byte" band="1">\n'
+        f'    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="1">{os.path.basename(src)}</SourceFilename>\n'
+        f'      <SourceBand>1</SourceBand>\n'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        f'      <DstRect xOff="0" yOff="0" xSize="8" ySize="8"/>\n'
+        f'    </SimpleSource>\n'
+        f'  </VRTRasterBand>\n'
+        f'</VRTDataset>\n'
+    )
     with pytest.raises(ValueError, match='exceed|safety limit'):
         read_vrt(str(vrt), max_pixels=4)
 
@@ -785,7 +809,7 @@ def lazy_chunks_multiband_vrt():
     arr = rng.random((64, 64, 3), dtype=np.float32)
     y = np.linspace(41.0, 40.0, 64)
     x = np.linspace(-106.0, -105.0, 64)
-    raster = xr.DataArray(arr, dims=['y', 'x', 'band'], coords={'y': y, 'x': x, 'band': np.arange(3)}, attrs={'crs': 4326})
+    raster = xr.DataArray(arr, dims=['y', 'x', 'band'], coords={'y': y, 'x': x, 'band': np.arange(3)}, attrs={'crs': 4326})  # noqa: E501
     td = tempfile.mkdtemp(prefix='tmp_1814_mb_')
     tile_path = os.path.join(td, 'tile.tif')
     to_geotiff(raster, tile_path)
@@ -803,7 +827,7 @@ def test_chunks_builds_dask_array_with_multiple_blocks(lazy_chunks_two_by_two_vr
     """
     vrt_path, _ = lazy_chunks_two_by_two_vrt
     result = read_vrt(vrt_path, chunks=(64, 64))
-    assert isinstance(result.data, da.Array), f'expected dask Array, got {type(result.data).__name__}'
+    assert isinstance(result.data, da.Array), f'expected dask Array, got {type(result.data).__name__}'  # noqa: E501
     assert result.data.numblocks == (4, 4), f'expected 4x4 blocks, got {result.data.numblocks}'
 
 
@@ -821,9 +845,9 @@ def test_chunks_is_lazy_does_not_call_internal_reader(monkeypatch, lazy_chunks_t
         return real_read(*args, **kwargs)
     monkeypatch.setattr(vrt_module, 'read_vrt', counting_read)
     result = read_vrt(vrt_path, chunks=(64, 64))
-    assert counter['calls'] == 0, f"_read_vrt_internal called {counter['calls']} times before .compute(); the chunked path leaked an eager decode"
+    assert counter['calls'] == 0, f"_read_vrt_internal called {counter['calls']} times before .compute(); the chunked path leaked an eager decode"  # noqa: E501
     computed = result.compute()
-    assert counter['calls'] == 16, f"expected 16 per-chunk decodes after compute, got {counter['calls']}"
+    assert counter['calls'] == 16, f"expected 16 per-chunk decodes after compute, got {counter['calls']}"  # noqa: E501
     assert computed.shape == (256, 256)
 
 
@@ -870,7 +894,7 @@ def test_window_plus_chunks_matches_eager(lazy_chunks_two_by_two_vrt):
     eager = read_vrt(vrt_path, window=window)
     chunked = read_vrt(vrt_path, window=window, chunks=(64, 64))
     assert isinstance(chunked.data, da.Array)
-    assert chunked.data.numblocks == (2, 3), f'expected (2, 3) numblocks over the window, got {chunked.data.numblocks}'
+    assert chunked.data.numblocks == (2, 3), f'expected (2, 3) numblocks over the window, got {chunked.data.numblocks}'  # noqa: E501
     computed = chunked.compute()
     assert computed.shape == eager.shape == (128, 144)
     assert np.array_equal(eager.values, computed.values)
@@ -886,7 +910,7 @@ def test_gpu_plus_chunks_returns_dask_on_cupy(lazy_chunks_two_by_two_vrt):
     vrt_path, _ = lazy_chunks_two_by_two_vrt
     result = read_vrt(vrt_path, gpu=True, chunks=(64, 64))
     assert isinstance(result.data, da.Array)
-    assert isinstance(result.data._meta, cupy.ndarray), f'expected cupy _meta, got {type(result.data._meta).__module__}.{type(result.data._meta).__name__}'
+    assert isinstance(result.data._meta, cupy.ndarray), f'expected cupy _meta, got {type(result.data._meta).__module__}.{type(result.data._meta).__name__}'  # noqa: E501
     computed = result.compute()
     assert isinstance(computed.data, cupy.ndarray)
 
@@ -917,6 +941,7 @@ def test_chunked_propagates_vrt_holes_when_source_missing(lazy_chunks_two_by_two
     so this test exercises the explicit ``'warn'`` opt-in.
     """
     import warnings
+
     from xrspatial.geotiff import GeoTIFFFallbackWarning
     from xrspatial.geotiff._reader import _mmap_cache
     vrt_path, _ = lazy_chunks_two_by_two_vrt
@@ -967,7 +992,7 @@ def test_chunked_integer_no_nodata_keeps_source_dtype():
     vrt_path = os.path.join(td, 'mosaic.vrt')
     _write_vrt_internal(vrt_path, [tile_path])
     result = read_vrt(vrt_path, chunks=(32, 32))
-    assert result.dtype == np.uint16, f'expected uint16 (source dtype), got {result.dtype}; chunked path promoted to float64 despite no declared nodata'
+    assert result.dtype == np.uint16, f'expected uint16 (source dtype), got {result.dtype}; chunked path promoted to float64 despite no declared nodata'  # noqa: E501
     computed = result.compute()
     assert computed.dtype == np.uint16
     np.testing.assert_array_equal(computed.values, arr)
@@ -992,19 +1017,19 @@ def _chunked_shared_dataset_make_tile_vrt(tmp_path, n_tiles_per_side=4):
     sources = []
     for r in range(n_tiles_per_side):
         for c in range(n_tiles_per_side):
-            arr = np.full((tile_size, tile_size), fill_value=r * n_tiles_per_side + c, dtype=np.float32)
+            arr = np.full((tile_size, tile_size), fill_value=r * n_tiles_per_side + c, dtype=np.float32)  # noqa: E501
             ox = c * tile_size
             oy = -(r * tile_size)
-            da = xr.DataArray(arr, dims=['y', 'x'], attrs={'transform': (1.0, 0.0, ox, 0.0, -1.0, oy)})
+            da = xr.DataArray(arr, dims=['y', 'x'], attrs={'transform': (1.0, 0.0, ox, 0.0, -1.0, oy)})  # noqa: E501
             path = os.path.join(tile_dir, f'tile_{r}_{c}.tif')
             to_geotiff(da, path, compression='deflate', tiled=True, tile_size=64)
             sources.append((path, r, c, tile_size))
     vrt_path = os.path.join(tmp_path, 'mosaic.vrt')
     width = n_tiles_per_side * tile_size
     height = n_tiles_per_side * tile_size
-    lines = [f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">', '<SRS></SRS>', '<GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>', '<VRTRasterBand dataType="Float32" band="1">']
+    lines = [f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">', '<SRS></SRS>', '<GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>', '<VRTRasterBand dataType="Float32" band="1">']  # noqa: E501
     for path, r, c, ts in sources:
-        lines.extend(['<SimpleSource>', f'<SourceFilename relativeToVRT="0">{path}</SourceFilename>', '<SourceBand>1</SourceBand>', f'<SrcRect xOff="0" yOff="0" xSize="{ts}" ySize="{ts}"/>', f'<DstRect xOff="{c * ts}" yOff="{r * ts}" xSize="{ts}" ySize="{ts}"/>', '</SimpleSource>'])
+        lines.extend(['<SimpleSource>', f'<SourceFilename relativeToVRT="0">{path}</SourceFilename>', '<SourceBand>1</SourceBand>', f'<SrcRect xOff="0" yOff="0" xSize="{ts}" ySize="{ts}"/>', f'<DstRect xOff="{c * ts}" yOff="{r * ts}" xSize="{ts}" ySize="{ts}"/>', '</SimpleSource>'])  # noqa: E501
     lines.extend(['</VRTRasterBand>', '</VRTDataset>'])
     with open(vrt_path, 'w') as f:
         f.write('\n'.join(lines))
@@ -1049,8 +1074,8 @@ def test_vrt_chunked_dataset_is_shared_graph_input(tmp_path):
             chunk_task_count += 1
             if isinstance(parsed_vrt, VRTDataset):
                 embedded_vrt_count += 1
-    assert chunk_task_count > 1, f'fixture sanity: expected multiple chunk tasks, got {chunk_task_count}'
-    assert embedded_vrt_count == 0, f"#1923 regression: {embedded_vrt_count} of {chunk_task_count} _vrt_chunk_read tasks still embed an inline VRTDataset in kwargs['parsed_vrt']. The fix wraps the dataset in dask.delayed(vrt, pure=True) so kwargs['parsed_vrt'] should be a TaskRef-style graph reference, not a VRTDataset."
+    assert chunk_task_count > 1, f'fixture sanity: expected multiple chunk tasks, got {chunk_task_count}'  # noqa: E501
+    assert embedded_vrt_count == 0, f"#1923 regression: {embedded_vrt_count} of {chunk_task_count} _vrt_chunk_read tasks still embed an inline VRTDataset in kwargs['parsed_vrt']. The fix wraps the dataset in dask.delayed(vrt, pure=True) so kwargs['parsed_vrt'] should be a TaskRef-style graph reference, not a VRTDataset."  # noqa: E501
 
 
 def test_vrt_chunked_decode_unchanged_after_shared_wrap(tmp_path):
@@ -1073,7 +1098,7 @@ def test_vrt_chunked_band_kwarg_still_validates(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _tiled_scheduler_make_dask_da(h: int=32, w: int=32, chunk: int=8) -> xr.DataArray:
+def _tiled_scheduler_make_dask_da(h: int = 32, w: int = 32, chunk: int = 8) -> xr.DataArray:
     """Return a dask-backed 2D DataArray with ``chunk``-sized chunks.
 
     Using ``da.from_array`` on a pre-built numpy array gives clean
@@ -1099,7 +1124,7 @@ def test_vrt_tiled_uses_threaded_scheduler():
         with patch.object(dask, 'compute', side_effect=spy) as p:
             to_geotiff(da_arr, vrt)
             assert p.called, '_write_vrt_tiled never invoked dask.compute'
-        assert captured.get('scheduler') == 'threads', f"Expected scheduler='threads' on the VRT-tiled write but got {captured.get('scheduler')!r}"
+        assert captured.get('scheduler') == 'threads', f"Expected scheduler='threads' on the VRT-tiled write but got {captured.get('scheduler')!r}"  # noqa: E501
 
 
 def test_vrt_tiled_threaded_write_produces_all_tiles():
@@ -1126,12 +1151,12 @@ def test_vrt_tiled_threaded_write_is_deterministic():
         to_geotiff(da_arr, vrt_path)
         stem = os.path.splitext(os.path.basename(vrt_path))[0]
         tiles_dir = os.path.join(os.path.dirname(vrt_path), stem + '_tiles')
-        return {os.path.basename(p): Path(p).read_bytes() for p in sorted(glob.glob(os.path.join(tiles_dir, '*.tif')))}
+        return {os.path.basename(p): Path(p).read_bytes() for p in sorted(glob.glob(os.path.join(tiles_dir, '*.tif')))}  # noqa: E501
     with tempfile.TemporaryDirectory(prefix='vrt_sched_1714_', ignore_cleanup_errors=True) as td1:
-        with tempfile.TemporaryDirectory(prefix='vrt_sched_1714_', ignore_cleanup_errors=True) as td2:
+        with tempfile.TemporaryDirectory(prefix='vrt_sched_1714_', ignore_cleanup_errors=True) as td2:  # noqa: E501
             tiles1 = _write_and_collect(os.path.join(td1, 'run1.vrt'))
             tiles2 = _write_and_collect(os.path.join(td2, 'run2.vrt'))
-    assert set(tiles1) == set(tiles2), f'Tile file set differs between runs: {set(tiles1) ^ set(tiles2)}'
+    assert set(tiles1) == set(tiles2), f'Tile file set differs between runs: {set(tiles1) ^ set(tiles2)}'  # noqa: E501
     for name, blob1 in tiles1.items():
         assert blob1 == tiles2[name], f'Tile {name} differs between runs (race condition?)'
 

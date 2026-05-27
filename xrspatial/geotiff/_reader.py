@@ -17,8 +17,6 @@ internal call sites that pre-date the rename.
 """
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 # ``urllib3`` is kept as a top-level import here even though the HTTP
 # source moved to ``_sources``. A test asserts the reader module carries
@@ -90,10 +88,9 @@ from ._sources import (_CLOUD_SCHEMES, _DEFAULT_MMAP_CACHE_SIZE,  # noqa: F401
                        _get_pinned_conn_classes, _http_allow_private_hosts, _http_connect_timeout,
                        _http_read_timeout, _http_timeout_from_env, _HTTPSource, _ip_is_private,
                        _is_file_like, _is_fsspec_uri, _is_http_source, _is_http_url,
-                       _make_pinned_pool,
-                       _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env, _mmap_cache,
-                       _mmap_cache_size_from_env, _MmapCache, _open_source,
-                       _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
+                       _make_pinned_pool, _max_coalesced_range_bytes_from_env,
+                       _max_tile_bytes_from_env, _mmap_cache, _mmap_cache_size_from_env, _MmapCache,
+                       _open_source, _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
                        split_coalesced_bytes)
 
 # ---------------------------------------------------------------------------
@@ -229,7 +226,8 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # the user can still investigate. Mirrors the contract that
         # ``discover_remote_sidecar`` already uses on the dask metadata
         # path.
-        from ._sidecar import attach_sidecar_origin, find_sidecar, load_sidecar
+        from ._sidecar import (attach_sidecar_origin, find_sidecar, handle_sidecar_parse_failure,
+                               load_sidecar)
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
         if sidecar_path is not None:
@@ -239,13 +237,19 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
             except CloudSizeLimitError:
                 raise
             except Exception as exc:
-                warnings.warn(
-                    f"Ignoring unreadable sidecar {sidecar_path!r}: "
-                    f"{type(exc).__name__}: {exc}. Falling back to "
-                    f"base-file-only read. Delete the .ovr file or pass "
-                    f"overview_level>=1 to surface the parse error.",
-                    RuntimeWarning,
-                    stacklevel=3,
+                # Shared policy across eager CPU, eager GPU, and the
+                # metadata-only path: an explicit request for a level
+                # the base file alone cannot serve surfaces the
+                # underlying parse error (release contract row
+                # ``reader.sidecar_ovr``); otherwise we warn and fall
+                # back. The gate uses ``base_ifd_count`` rather than a
+                # bare ``>= 1`` because a base TIFF with internal
+                # overview IFDs can satisfy ``level=1`` without the
+                # sidecar, and forcing a raise in that case would deny
+                # a valid read. Issue #2484.
+                handle_sidecar_parse_failure(
+                    exc, sidecar_path, overview_level,
+                    base_ifd_count=len(ifds),
                 )
                 sidecar = None
             if sidecar is not None:

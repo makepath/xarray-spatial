@@ -23,6 +23,7 @@ HTTP and cloud sources to merge nearby tile fetches into fewer GETs.
 """
 from __future__ import annotations
 
+import atexit
 import mmap
 import os as _os_module
 import threading
@@ -280,6 +281,59 @@ class _MmapCache:
                 entry = self._entries.pop(key)
                 self._close_entry_locked(entry)
 
+    def close_all(self):
+        """Close every cached entry, regardless of refcount. Shutdown hook.
+
+        Unlike :meth:`clear`, which only drops idle entries, this method
+        closes the underlying file handle and mmap for *every* entry the
+        cache still holds, including those with non-zero refcounts. It
+        exists so the :func:`atexit` hook registered at module import can
+        guarantee no GeoTIFF file handles leak past interpreter shutdown
+        (issue #2486). Live ``_FileSource`` instances with a non-zero
+        refcount are not the common case at interpreter exit, but a
+        long-running process that never released its sources (e.g. a
+        crash partway through a notebook session) would still leave
+        handles open without this stronger cleanup.
+
+        Safe to invoke multiple times. Errors closing individual mmap or
+        file objects are swallowed so a partially torn-down interpreter
+        (where ``mmap.mmap.close`` or the file object's ``close`` raises
+        because the underlying resource is already gone) does not crash
+        finalization. After this returns, ``_entries`` is empty.
+
+        If a stale ``_FileSource`` later calls ``release()`` on an entry
+        token that was torn down here, the release routes through the
+        orphan branch and calls ``_close_entry_locked`` a second time.
+        That second close is rare at interpreter shutdown (it requires a
+        live ``_FileSource`` to survive past ``atexit``), and it stays
+        safe because ``mmap.close()`` and the standard file object's
+        ``close()`` are both idempotent in CPython.
+        """
+        with self._lock:
+            entries = list(self._entries.values())
+            self._entries.clear()
+            for entry in entries:
+                # Mark orphaned so a late release() (after this method
+                # returns) routes through the orphan branch rather than
+                # trying to find the entry in the (now-empty) dict. The
+                # orphan branch will call _close_entry_locked again --
+                # mmap.close() and file.close() are idempotent in CPython
+                # so the double-close is safe.
+                entry[5] = True
+                try:
+                    if entry[1] is not None:
+                        entry[1].close()
+                except Exception:  # noqa: BLE001
+                    # mmap may already be closed if finalization runs
+                    # after the mmap module's atexit; swallow.
+                    pass
+                try:
+                    entry[0].close()
+                except Exception:  # noqa: BLE001
+                    # File object may already be closed for the same
+                    # reason; swallow.
+                    pass
+
 
 # Module-level cache shared across all reads. This is a *singleton*: there
 # is one shared mmap cache per Python process so concurrent ``_FileSource``
@@ -291,6 +345,47 @@ class _MmapCache:
 # to a third module, must keep the single-instance contract or
 # ``_FileSource`` will leak mmaps between cache instances.
 _mmap_cache = _MmapCache()
+
+
+def _shutdown_cleanup():
+    """Close every cached resource at interpreter shutdown (issue #2486).
+
+    Without this hook, the mmap cache (and the urllib3 PoolManager) hold
+    onto open file handles / sockets until the process exits, which
+    triggers ``ResourceWarning: unclosed file`` from pytest's warning
+    filter and from CPython's own finalizer chain. The cache eviction
+    policy keeps idle entries around on purpose so repeated reads of
+    the same path reuse the mmap; that is the right behaviour during
+    process life, but it leaves resources open at exit. This hook
+    bridges the gap.
+
+    The hook is idempotent: a second call after the cache is already
+    empty is a no-op. It also swallows individual close errors so a
+    partially torn-down runtime (where ``mmap`` / file objects are
+    already closed by an earlier finalizer) does not propagate an
+    exception out of the atexit chain.
+    """
+    try:
+        _mmap_cache.close_all()
+    except Exception:  # noqa: BLE001
+        # ``close_all`` already swallows per-entry errors; a top-level
+        # exception here would mean the cache state is corrupt or a
+        # module-level import has been unloaded by finalization. Either
+        # way, raising out of an atexit hook is worse than swallowing.
+        pass
+    # urllib3 PoolManager holds onto sockets until garbage collected.
+    # Close it explicitly so the test runner's resource-warning filter
+    # does not catch leaked sockets at exit. Read-only access of the
+    # module-level name, so no ``global`` is needed.
+    pool = _http_pool
+    if pool is not None:
+        try:
+            pool.clear()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+atexit.register(_shutdown_cleanup)
 
 
 class _FileSource:

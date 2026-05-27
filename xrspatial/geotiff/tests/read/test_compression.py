@@ -27,8 +27,8 @@ import pytest
 from xrspatial.geotiff._compression import (COMPRESSION_DEFLATE, COMPRESSION_LZW, COMPRESSION_NONE,
                                             compress, decompress, deflate_compress,
                                             deflate_decompress, lz4_decompress, lzw_compress,
-                                            lzw_decompress, packbits_decompress,
-                                            predictor_decode, predictor_encode, zstd_decompress)
+                                            lzw_decompress, packbits_decompress, predictor_decode,
+                                            predictor_encode, zstd_decompress)
 from xrspatial.geotiff._reader import read_to_array
 
 

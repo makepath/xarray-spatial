@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _VALID_COMPRESSIONS, _extract_rich_tags,
                       _resolve_nodata_attr, _should_restore_nan_sentinel)
 from .._backends._gpu_helpers import _is_gpu_data
-from .._coords import ROTATION_SHEAR_TOL, _BAND_DIM_NAMES, _has_no_georef_marker
+from .._coords import _BAND_DIM_NAMES, ROTATION_SHEAR_TOL, _has_no_georef_marker
 from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
 from .._coords import resolve_georef as _resolve_georef
 from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
@@ -291,7 +291,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         decodes through this library's reader but not through libtiff,
         GDAL, or rasterio. This codec is internal-only for the release
         contract: it is not externally interoperable and the path
-        exists so xrspatial can round-trip its own JPEG output. With the flag set, the write proceeds and a
+        exists so xrspatial can round-trip its own JPEG output. With
+        the flag set, the write proceeds and a
         ``GeoTIFFFallbackWarning`` is emitted at call time. Without
         the flag, ``compression='jpeg'`` raises ``ValueError``. The
         kwarg is forwarded unchanged to ``write_geotiff_gpu`` on the

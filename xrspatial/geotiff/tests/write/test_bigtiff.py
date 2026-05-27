@@ -9,13 +9,13 @@ drives the threshold via the IFD-overhead helper.
 from __future__ import annotations
 
 import struct
+
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-
 
 # -------------------------------------------------------------------------
 # Section: BigTIFF + COG compliance matrix

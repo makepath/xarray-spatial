@@ -5,7 +5,6 @@ The ``requires_gpu`` marker comes from ``_helpers/markers.py``.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from .._helpers.markers import requires_gpu
 

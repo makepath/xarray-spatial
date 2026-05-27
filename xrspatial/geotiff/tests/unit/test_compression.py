@@ -21,7 +21,6 @@ import pytest
 from xrspatial.geotiff._compression import (_packbits_encode_kernel, packbits_compress,
                                             packbits_decompress)
 
-
 # ---------------------------------------------------------------------------
 # Decoder: bit-exact decode against known PackBits encodings
 # ---------------------------------------------------------------------------
