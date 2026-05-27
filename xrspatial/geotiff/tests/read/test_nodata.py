@@ -26,9 +26,10 @@ file:
 * ``test_apply_nodata_mask_gpu_inplace_1934.py`` / ``..._removed_2208``
   -- the GPU helper in-place mask + removal-pin coverage.
 
-GPU-only nodata cases (``test_gpu_nodata_1542.py`` etc.) stay in the GPU
-cluster; the GPU parity tests that live here are gated through the
-shared ``requires_gpu`` marker (aliased ``_gpu_only`` for brevity).
+GPU-only nodata cases live in ``xrspatial/geotiff/tests/gpu/test_reader.py``
+(under the #1542 section); the GPU parity tests that live here are gated
+through the shared ``requires_gpu`` marker (aliased ``_gpu_only`` for
+brevity).
 """
 from __future__ import annotations
 
