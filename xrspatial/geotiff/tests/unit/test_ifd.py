@@ -45,26 +45,16 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from xrspatial.geotiff import DuplicateIFDTagError
 from xrspatial.geotiff import _decode as _decode_mod
 from xrspatial.geotiff import _header
 from xrspatial.geotiff import _reader as _reader_mod
-from xrspatial.geotiff import DuplicateIFDTagError, open_geotiff, to_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._dtypes import DOUBLE, LONG, SHORT
-from xrspatial.geotiff._header import (
-    MAX_IFD_ENTRY_BYTES,
-    MAX_IFD_ENTRY_COUNT,
-    MAX_IFDS,
-    TAG_BITS_PER_SAMPLE,
-    TAG_GEO_KEY_DIRECTORY,
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_TILE_OFFSETS,
-    TIFFHeader,
-    parse_all_ifds,
-    parse_header,
-    parse_ifd,
-)
+from xrspatial.geotiff._header import (MAX_IFD_ENTRY_BYTES, MAX_IFD_ENTRY_COUNT, MAX_IFDS,
+                                       TAG_BITS_PER_SAMPLE, TAG_GEO_KEY_DIRECTORY, TAG_IMAGE_LENGTH,
+                                       TAG_IMAGE_WIDTH, TAG_TILE_BYTE_COUNTS, TAG_TILE_OFFSETS,
+                                       TIFFHeader, parse_all_ifds, parse_header, parse_ifd)
 from xrspatial.geotiff._reader import read_to_array
 
 from .._helpers.markers import requires_gpu, requires_loopback
@@ -588,7 +578,8 @@ def test_duplicate_image_width_rejected_reproduction_2483():
         pytest.param(TAG_IMAGE_WIDTH, "ImageWidth", id="duplicate_tag[image-width]"),
         pytest.param(TAG_IMAGE_LENGTH, "ImageLength", id="duplicate_tag[image-length]"),
         pytest.param(TAG_BITS_PER_SAMPLE, "BitsPerSample", id="duplicate_tag[bits-per-sample]"),
-        pytest.param(TAG_GEO_KEY_DIRECTORY, "GeoKeyDirectory", id="duplicate_tag[geo-key-directory]"),
+        pytest.param(TAG_GEO_KEY_DIRECTORY, "GeoKeyDirectory",
+                     id="duplicate_tag[geo-key-directory]"),
     ],
 )
 def test_duplicate_tag_rejected_across_critical_tags(tag, label):

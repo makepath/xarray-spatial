@@ -72,11 +72,11 @@ from ._coords import \
     transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry  # noqa: F401
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDTagError,
-                      GeoTIFFAmbiguousMetadataError,
-                      InconsistentGeoKeysError, InvalidCRSCodeError, InvalidIntegerNodataError,
-                      MixedBandMetadataError, NonRepresentableEPSGCRSError, NonUniformCoordsError,
-                      RotatedTransformError, UnknownCRSModelTypeError, UnparseableCRSError,
-                      UnsupportedGeoTIFFFeatureError, VRTStableSourcesOnlyError)
+                      GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, InvalidCRSCodeError,
+                      InvalidIntegerNodataError, MixedBandMetadataError,
+                      NonRepresentableEPSGCRSError, NonUniformCoordsError, RotatedTransformError,
+                      UnknownCRSModelTypeError, UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
+                      VRTStableSourcesOnlyError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
