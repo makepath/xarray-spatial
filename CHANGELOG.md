@@ -4,6 +4,9 @@
 
 ### Unreleased
 
+
+### Version 0.10.0 - 2026-05-27
+
 #### GeoTIFF release contract
 
 Tiers what the public GeoTIFF and COG surface promises for this release.
