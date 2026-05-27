@@ -1,27 +1,30 @@
 """Nodata propagation, attrs, lifecycle, and semantics on read.
 
 Cluster 10 of long-tail epic #2424 folds the read-side nodata files
-into this parametrised home alongside the original GPU nodata-mask
-reader coverage:
+into this parametrised home. Sections in source-order below:
 
-* ``test_apply_nodata_mask_gpu_inplace_1934.py`` / ``..._removed_2208``
-  -- the original GPU helper in-place mask + removal-pin coverage.
-* ``test_masked_nodata_attr_2092.py`` -- ``attrs['masked_nodata']``
-  reflects whether masking actually ran.
 * ``test_nodata_attr_aliases_1582.py`` -- ``nodatavals`` / ``_FillValue``
   alias resolution on write feeds the read-back nodata tag.
+* ``test_masked_nodata_attr_2092.py`` -- ``attrs['masked_nodata']``
+  reflects whether masking actually ran.
 * ``test_nodata_lifecycle_attrs_2135.py`` -- additive
   ``nodata_pixels_present`` / ``nodata_dtype_cast`` lifecycle attrs.
-* ``test_nodata_lifecycle_parity_2211.py`` -- ``NodataLifecycle``
-  decision contract + cross-backend parity.
 * ``test_nodata_nan_int_1774.py`` -- non-finite / fractional integer
   sentinels are a no-op under the #2441 opt-in.
 * ``test_nodata_no_extra_copy_1553.py`` -- the dropped defensive copies
   on the read path do not alias caller-visible buffers.
-* ``test_nodata_semantics_split_1988.py`` -- the
-  ``nodata`` vs ``masked_nodata`` split-attrs contract.
 * ``test_helper_band_nodata_2210.py`` -- ``band_nodata`` forwarding
   through the shared validation helpers.
+* ``test_nodata_lifecycle_parity_2211.py`` -- ``NodataLifecycle``
+  decision contract + cross-backend parity.
+* ``test_nodata_semantics_split_1988.py`` -- the
+  ``nodata`` vs ``masked_nodata`` split-attrs contract.
+
+The original GPU nodata-mask reader coverage stays at the top of the
+file:
+
+* ``test_apply_nodata_mask_gpu_inplace_1934.py`` / ``..._removed_2208``
+  -- the GPU helper in-place mask + removal-pin coverage.
 
 GPU-only nodata cases (``test_gpu_nodata_1542.py`` etc.) stay in the GPU
 cluster; the GPU parity tests that live here are gated through the
@@ -240,7 +243,7 @@ def _da_float_1582(arr, **attrs):
 
 
 @pytest.fixture
-def _arr_with_sentinel_1582():
+def arr_with_sentinel_1582():
     return np.array(
         [[1.0, 2.0, _SENTINEL_1582], [3.0, _SENTINEL_1582, 5.0]],
         dtype=np.float32,
@@ -248,9 +251,9 @@ def _arr_with_sentinel_1582():
 
 
 def test_nodatavals_tuple_resolves_to_nodata_tag(
-        tmp_path, _arr_with_sentinel_1582):
+        tmp_path, arr_with_sentinel_1582):
     """rioxarray-style ``nodatavals`` tuple lands as the file's nodata."""
-    da = _da_float_1582(_arr_with_sentinel_1582,
+    da = _da_float_1582(arr_with_sentinel_1582,
                         crs=4326, nodatavals=(_SENTINEL_1582,))
     out = str(tmp_path / "nodatavals_tuple.tif")
     to_geotiff(da, out)
@@ -260,9 +263,9 @@ def test_nodatavals_tuple_resolves_to_nodata_tag(
 
 
 def test_nodatavals_list_resolves_to_nodata_tag(
-        tmp_path, _arr_with_sentinel_1582):
+        tmp_path, arr_with_sentinel_1582):
     """List variant of nodatavals (some readers return list, not tuple)."""
-    da = _da_float_1582(_arr_with_sentinel_1582,
+    da = _da_float_1582(arr_with_sentinel_1582,
                         crs=4326, nodatavals=[_SENTINEL_1582])
     out = str(tmp_path / "nodatavals_list.tif")
     to_geotiff(da, out)
@@ -272,9 +275,9 @@ def test_nodatavals_list_resolves_to_nodata_tag(
 
 
 def test_nodatavals_scalar_resolves_to_nodata_tag(
-        tmp_path, _arr_with_sentinel_1582):
+        tmp_path, arr_with_sentinel_1582):
     """Single-band variant where the attr is a scalar, not a sequence."""
-    da = _da_float_1582(_arr_with_sentinel_1582,
+    da = _da_float_1582(arr_with_sentinel_1582,
                         crs=4326, nodatavals=_SENTINEL_1582)
     out = str(tmp_path / "nodatavals_scalar.tif")
     to_geotiff(da, out)
@@ -283,9 +286,9 @@ def test_nodatavals_scalar_resolves_to_nodata_tag(
     assert rd.attrs.get("nodata") == _SENTINEL_1582
 
 
-def test_fill_value_resolves_to_nodata_tag(tmp_path, _arr_with_sentinel_1582):
+def test_fill_value_resolves_to_nodata_tag(tmp_path, arr_with_sentinel_1582):
     """CF-style ``_FillValue`` lands as the file's nodata."""
-    da = _da_float_1582(_arr_with_sentinel_1582,
+    da = _da_float_1582(arr_with_sentinel_1582,
                         crs=4326, **{"_FillValue": _SENTINEL_1582})
     out = str(tmp_path / "fillvalue.tif")
     to_geotiff(da, out)
@@ -295,7 +298,7 @@ def test_fill_value_resolves_to_nodata_tag(tmp_path, _arr_with_sentinel_1582):
 
 
 def test_explicit_nodata_attr_wins_over_aliases(
-        tmp_path, _arr_with_sentinel_1582):
+        tmp_path, arr_with_sentinel_1582):
     """``attrs['nodata']`` is xrspatial's canonical key. Issue #1987 PR 7
     replaced the legacy "canonical silently wins, alias dropped" path
     with a fail-closed raise: a DataArray with disagreeing ``nodata`` and
@@ -304,7 +307,7 @@ def test_explicit_nodata_attr_wins_over_aliases(
     from xrspatial.geotiff import ConflictingNodataError
 
     da = _da_float_1582(
-        _arr_with_sentinel_1582, crs=4326,
+        arr_with_sentinel_1582, crs=4326,
         nodata=-8888.0,
         nodatavals=(_SENTINEL_1582,),
         **{"_FillValue": -7777.0},
@@ -320,9 +323,9 @@ def test_explicit_nodata_attr_wins_over_aliases(
     assert rd.attrs.get("nodata") == -8888.0
 
 
-def test_kwarg_nodata_wins_over_attrs(tmp_path, _arr_with_sentinel_1582):
+def test_kwarg_nodata_wins_over_attrs(tmp_path, arr_with_sentinel_1582):
     """The ``nodata=`` keyword overrides anything in attrs."""
-    da = _da_float_1582(_arr_with_sentinel_1582,
+    da = _da_float_1582(arr_with_sentinel_1582,
                         crs=4326, nodatavals=(_SENTINEL_1582,))
     out = str(tmp_path / "kwarg_wins.tif")
     to_geotiff(da, out, nodata=-1234.0)
@@ -344,10 +347,10 @@ def test_nan_nodatavals_does_not_emit_tag(tmp_path):
     assert rd.attrs.get("nodata") is None
 
 
-def test_no_nodata_attrs_means_no_tag(tmp_path, _arr_with_sentinel_1582):
+def test_no_nodata_attrs_means_no_tag(tmp_path, arr_with_sentinel_1582):
     """Sanity guard: a DataArray with no nodata-related attrs still
     writes without a GDAL_NODATA tag."""
-    da = _da_float_1582(_arr_with_sentinel_1582, crs=4326)
+    da = _da_float_1582(arr_with_sentinel_1582, crs=4326)
     out = str(tmp_path / "no_nodata.tif")
     to_geotiff(da, out)
 
@@ -361,7 +364,7 @@ def test_no_nodata_attrs_means_no_tag(tmp_path, _arr_with_sentinel_1582):
     ("nodatavals", [_SENTINEL_1582]),
     ("_FillValue", _SENTINEL_1582),
 ])
-def test_gpu_writer_resolves_alias(tmp_path, _arr_with_sentinel_1582,
+def test_gpu_writer_resolves_alias(tmp_path, arr_with_sentinel_1582,
                                    attr_key, attr_value):
     """The GPU write path (write_geotiff_gpu) honours the same aliases."""
     import cupy
@@ -369,7 +372,7 @@ def test_gpu_writer_resolves_alias(tmp_path, _arr_with_sentinel_1582,
     from xrspatial.geotiff import write_geotiff_gpu
 
     da = xr.DataArray(
-        cupy.asarray(_arr_with_sentinel_1582),
+        cupy.asarray(arr_with_sentinel_1582),
         dims=["y", "x"],
         coords={"y": np.arange(2, dtype=np.float64),
                 "x": np.arange(3, dtype=np.float64)},
