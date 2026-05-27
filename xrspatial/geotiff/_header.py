@@ -186,7 +186,7 @@ class IFD:
     @property
     def sample_format(self) -> int:
         # resolve_sample_format keeps the empty-tuple fallback exercised by
-        # tests/test_fuzz_hypothesis_1661.py:311 and raises ValueError on
+        # tests/test_fuzz_hypothesis.py and raises ValueError on
         # mixed per-band values so we don't silently decode the rest of the
         # IFD with the first band's dtype.
         from ._dtypes import resolve_sample_format

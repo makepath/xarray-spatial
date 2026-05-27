@@ -1,7 +1,7 @@
 """Dask+numpy backend cells against the golden-corpus oracle (issue #1930).
 
 Phase 3 PR 2 of the corpus plan. Mirrors the eager numpy parity layer
-(``test_golden_corpus_eager_numpy_1930.py``) but reads each fixture
+(``golden_corpus/test_eager_numpy.py``) but reads each fixture
 through the dask path: ``open_geotiff(str(path), chunks=32)``. The
 oracle pulls the candidate's pixels via ``.compute()`` under the hood
 (``_candidate_pixels`` is dask-aware), so the comparison machinery is

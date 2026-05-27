@@ -39,7 +39,7 @@ pytest.importorskip("rasterio")
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 
-from ._helpers.markers import requires_loopback  # noqa: E402
+from .._helpers.markers import requires_loopback  # noqa: E402
 
 pytestmark = requires_loopback
 

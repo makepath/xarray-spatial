@@ -266,7 +266,7 @@ def test_find_sidecar_http_probe_returns_url_when_present(
     # The sidecar probe now routes through ``_HTTPSource``, which
     # rejects loopback hostnames under the SSRF guard added in #1664.
     # Loopback is the standard local-server pattern in this repo's HTTP
-    # tests (see ``test_golden_corpus_http_1930.py``); opt into the
+    # tests (see ``golden_corpus/test_http.py``); opt into the
     # escape hatch the production reader exposes.
     monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
     src = _fixture_or_skip()

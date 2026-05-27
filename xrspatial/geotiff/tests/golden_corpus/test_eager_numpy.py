@@ -11,7 +11,7 @@ The fixture list is discovered from the manifest at module-import time so
 ``pytest.mark.parametrize`` can attach per-fixture marks (``xfail`` for real
 gaps, ``skip`` for intentional divergences). A broken manifest therefore
 fails collection rather than test execution; the manifest validator tests
-under ``test_golden_corpus_manifest_1930.py`` catch that case separately.
+under ``golden_corpus/test_manifest.py`` catch that case separately.
 
 Skip / xfail taxonomy
 ---------------------
