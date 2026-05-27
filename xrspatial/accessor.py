@@ -14,6 +14,25 @@ directly via tab-completion::
 import xarray as xr
 
 
+def _require_matplotlib():
+    """Import matplotlib or raise a helpful error.
+
+    matplotlib is an optional dependency (the ``plot`` extra). The
+    plotting helpers call this before importing ``pyplot`` so a missing
+    install produces a clear message instead of a bare
+    ``ModuleNotFoundError``. Importing ``pyplot`` (not just the top-level
+    package) also catches the case where matplotlib is installed but has
+    no usable backend.
+    """
+    try:
+        import matplotlib.pyplot  # noqa: F401
+    except ImportError as e:
+        raise ImportError(
+            "matplotlib is required for plotting but is not installed. "
+            "Install it with: pip install xarray-spatial[plot]"
+        ) from e
+
+
 def _listed_colormap_from_attrs(attrs):
     """Build a :class:`matplotlib.colors.ListedColormap` from
     ``attrs['colormap']`` (raw uint16 RGB triples from TIFF tag 320).
@@ -73,6 +92,7 @@ class XrsSpatialDataArrayAccessor:
         -------
         matplotlib artist (from ``da.plot()``)
         """
+        _require_matplotlib()
         import matplotlib.pyplot as plt
         import numpy as np
 
@@ -629,6 +649,7 @@ class XrsSpatialDatasetAccessor:
         -------
         numpy.ndarray of matplotlib.axes.Axes
         """
+        _require_matplotlib()
         import math
         import matplotlib.pyplot as plt
         import numpy as np
