@@ -279,9 +279,9 @@ turn the process into a port scanner. The knobs are:
   (env). Per-call total byte budget for a remote read. The kwarg wins
   over the env var; the env var wins over the built-in default. Pass
   ``max_cloud_bytes=None`` to disable the cap on a single call. Locked
-  by ``xrspatial/geotiff/tests/test_max_cloud_bytes_dispatcher_silent_drop_2026_05_15.py``,
-  ``xrspatial/geotiff/tests/test_open_geotiff_max_cloud_bytes_annot_2106.py``,
-  and ``xrspatial/geotiff/tests/test_http_read_all_bounded_2051.py``.
+  by ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+  (max_cloud_bytes_dispatcher and max_cloud_bytes_annot sections, plus
+  the http_read_all_bounded section).
 * ``XRSPATIAL_COG_MAX_TILE_BYTES``. Per-tile / per-strip compressed
   byte cap (default 256 MiB). Locked by
   ``xrspatial/geotiff/tests/read/test_tiling.py``,
@@ -296,9 +296,8 @@ turn the process into a port scanner. The knobs are:
 * ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS``. Set to ``1`` (or
   ``true`` / ``yes``) to disable the private-host reject. Off by
   default; locked by
-  ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
-  ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``,
-  and ``xrspatial/geotiff/tests/test_uppercase_scheme_ssrf_2323.py``.
+  ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+  (ssrf_hardening, dns_rebinding, and uppercase_scheme_ssrf sections).
 * ``XRSPATIAL_VRT_ALLOWED_ROOTS``. Colon-separated list of additional
   directory roots that a VRT is allowed to reference. The default
   containment rule (sources must live under the VRT's directory) is
@@ -558,8 +557,8 @@ regression test that locks the behaviour.
        see also "Degenerate-axis writes" above.
    * - HTTP read against a private / loopback / link-local host
        without ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1``
-     - ``xrspatial/geotiff/tests/test_ssrf_hardening_1664.py``,
-       ``xrspatial/geotiff/tests/test_dns_rebinding_pin_issue_1846.py``
+     - ``xrspatial/geotiff/tests/integration/test_http_sources.py``
+       (ssrf_hardening and dns_rebinding sections)
    * - Unsupported feature flags more broadly (codec, layout, and
        writer combos that ``SUPPORTED_FEATURES`` does not promise)
      - ``xrspatial/geotiff/tests/test_unsupported_features_2349.py``
