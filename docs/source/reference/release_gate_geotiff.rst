@@ -660,7 +660,7 @@ GPU paths (experimental)
      - experimental
      - Integer and float nodata sentinels survive the GPU read / write
        round-trip.
-     - ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``,
+     - ``xrspatial/geotiff/tests/gpu/test_reader.py``,
        ``xrspatial/geotiff/tests/read/test_nodata.py``
      - `#2341`_
 

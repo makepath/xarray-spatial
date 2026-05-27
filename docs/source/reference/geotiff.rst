@@ -40,7 +40,7 @@ What you can expect:
   ``xrspatial/geotiff/tests/test_golden_corpus_gpu_1930.py`` and
   ``xrspatial/geotiff/tests/test_golden_corpus_dask_gpu_1930.py``.
 * Integer and float nodata sentinels survive the GPU round-trip; see
-  ``xrspatial/geotiff/tests/test_gpu_nodata_1542.py``.
+  ``xrspatial/geotiff/tests/gpu/test_reader.py``.
 * On GPU failure the reader emits
   :class:`xrspatial.geotiff.GeoTIFFFallbackWarning` and falls back to
   CPU unless ``on_gpu_failure='strict'`` or
