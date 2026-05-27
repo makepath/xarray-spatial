@@ -308,8 +308,8 @@ turn the process into a port scanner. The knobs are:
   section.
 
 The same byte budget applies to sidecar fetches, not just the parent
-file
-(``xrspatial/geotiff/tests/test_sidecar_max_cloud_bytes_2121.py``).
+file (``xrspatial/geotiff/tests/integration/test_sidecar.py``,
+sidecar_max_cloud_bytes section).
 
 Strict mode (``XRSPATIAL_GEOTIFF_STRICT``)
 ==========================================
