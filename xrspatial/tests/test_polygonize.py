@@ -1439,7 +1439,14 @@ class TestPolygonizeTransformPropagation:
     def test_no_georef_marker_suppresses_auto_detect(self):
         """attrs['_xrspatial_no_georef']=True opts out of auto-detect even
         when attrs['transform'] is also set (defensive: should not happen
-        in practice, but a malformed dict must not silently mis-transform)."""
+        in practice, but a malformed dict must not silently mis-transform).
+
+        Note: ``xrspatial.geotiff`` never produces a raster with both attrs
+        set simultaneously -- see ``xrspatial/geotiff/_attrs.py:782-785``,
+        which only writes ``_xrspatial_no_georef=True`` when
+        ``has_georef=False`` and in that branch does NOT write
+        ``attrs['transform']``.  This test guards against a hand-built or
+        future-third-party attrs dict that violates that invariant."""
         raster = self._raster(
             transform=self._TRANSFORM, _xrspatial_no_georef=True)
         _, polys = polygonize(raster, return_type='numpy')
@@ -1512,6 +1519,48 @@ class TestPolygonizeTransformPropagation:
         all_ys = np.concatenate([p[0][:, 1] for p in polys])
         assert all_xs.min() >= 1_000_000.0 - 1e-6
         assert all_ys.max() <= 5_000_000.0 + 1e-6
+
+    @pytest.mark.parametrize("connectivity", [4, 8])
+    def test_transform_attr_works_with_both_connectivities(self, connectivity):
+        """Auto-detected transform applies for connectivity=4 and 8 alike.
+
+        The transform is applied inside ``_scan`` after region tracing, so
+        the connectivity choice should not interact with the transform
+        path.  Parametrize to catch any future change that decouples one
+        connectivity from the transform call site.
+        """
+        raster = self._raster(transform=self._TRANSFORM)
+        _, polys = polygonize(
+            raster, connectivity=connectivity, return_type='numpy')
+        all_xs = np.concatenate([p[0][:, 0] for p in polys])
+        all_ys = np.concatenate([p[0][:, 1] for p in polys])
+        assert all_xs.min() >= 1_000_000.0 - 1e-6
+        assert all_xs.max() <= 1_000_000.0 + 30.0 + 1e-6
+        assert all_ys.max() <= 5_000_000.0 + 1e-6
+        assert all_ys.min() >= 5_000_000.0 - 30.0 - 1e-6
+
+    def test_transform_attr_with_mask(self):
+        """Auto-detected transform composes with a mask= argument.
+
+        The mask filters which pixels participate in polygonization but
+        does not touch the transform path; the surviving polygons should
+        still emerge in CRS space.
+        """
+        raster = self._raster(transform=self._TRANSFORM)
+        # Mask out the right column (col index 2) so only the value-1
+        # region in cols 0-1 remains.
+        mask_data = np.array(
+            [[True, True, False],
+             [True, True, False],
+             [False, False, False]], dtype=bool)
+        mask = xr.DataArray(mask_data, dims=('y', 'x'))
+        df = polygonize(raster, mask=mask, return_type='geopandas')
+        assert len(df) == 1  # only the value-1 polygon remains
+        # The surviving polygon should land at the CRS origin, not pixel 0.
+        bounds = df.geometry.total_bounds
+        assert bounds[0] >= 1_000_000.0 - 1e-6
+        assert bounds[2] <= 1_000_000.0 + 20.0 + 1e-6
+        assert bounds[3] <= 5_000_000.0 + 1e-6
 
     def test_rio_transform_auto_detected(self):
         """rio.transform() is used when attrs['transform'] is absent.
