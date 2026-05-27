@@ -1,27 +1,24 @@
 """Tests for new GeoTIFF features and the release-contract feature surface.
 
-Consolidated in cluster 16 of long-tail epic #2424 (issue #2440). Folds
-four top-level files into the release-gate suite:
+This module folds the legacy feature and supported-feature tests into
+the release-gate suite:
 
-* Original ``test_features.py`` -- end-to-end coverage for multi-band,
-  integer nodata, packbits, zstd, dask, BigTIFF, palette / sub-byte
-  bit depths, planar config, and other writer/reader features. Most
-  cases are not strict release-gate pins but exercise the same public
-  surface the release-gate contract covers, so they sit alongside the
-  gates rather than at the top level.
-* ``test_supported_features_shape_2348.py`` -- structural invariants
-  on the ``SUPPORTED_FEATURES`` mapping (every entry has a tier label;
-  the tier set is closed; keys follow ``<group>.<name>``; the dict
-  literal has no duplicate keys; epic #2340 wave-1 promotions/demotions
-  stay pinned).
-* ``test_supported_features_tiers_2137.py`` -- tier-aware codec gate
-  on the writer (Tier 3 ``allow_experimental_codecs``; Tier 4
-  ``allow_internal_only_jpeg``); ``to_geotiff`` and
-  ``write_geotiff_gpu`` signature pins.
-* ``test_unsupported_features_2349.py`` -- typed-error refusals at the
-  VRT parser and the eager writer for unsupported feature combinations
-  (warped VRTs, derived raster bands, kernel-filtered sources, mixed
-  per-source nodata, rotated transforms, etc.).
+* End-to-end coverage for multi-band, integer nodata, packbits, zstd,
+  dask, BigTIFF, palette / sub-byte bit depths, planar config, and
+  other writer/reader features. Most cases are not strict release-gate
+  pins but exercise the same public surface the release-gate contract
+  covers, so they sit alongside the gates rather than at the top level.
+* Structural invariants on the ``SUPPORTED_FEATURES`` mapping (every
+  entry has a tier label; the tier set is closed; keys follow
+  ``<group>.<name>``; the dict literal has no duplicate keys; the
+  documented promotions and demotions stay pinned).
+* Tier-aware codec gate on the writer (Tier 3
+  ``allow_experimental_codecs``; Tier 4 ``allow_internal_only_jpeg``);
+  ``to_geotiff`` and ``write_geotiff_gpu`` signature pins.
+* Typed-error refusals at the VRT parser and the eager writer for
+  unsupported feature combinations (warped VRTs, derived raster bands,
+  kernel-filtered sources, mixed per-source nodata, rotated transforms,
+  etc.).
 
 Section banners below mark the file boundaries. The ``SUPPORTED_FEATURES``
 test sections are tagged with their issue numbers in the headings so the
@@ -3003,10 +3000,11 @@ def test_keys_are_unique_in_source():
     ('reader.allow_unparseable_crs', 'experimental'),
 ])
 def test_epic_2340_wave_1_reconciliation(key, tier):
-    """Wave-1 reconciliation under epic #2340 lands the expected
-    promotions and demotions. Pinned so a future revert that bumps
-    these back to ``advanced`` or drops them entirely fails this
-    test before it reaches the docs / release notes.
+    """The pinned promotions and demotions land in the expected tiers.
+
+    Pinned so a future revert that bumps these back to ``advanced`` or
+    drops them entirely fails this test before it reaches the docs /
+    release notes.
     """
     assert key in SUPPORTED_FEATURES, (
         f"{key!r} dropped from SUPPORTED_FEATURES; epic #2340 introduced "
@@ -3687,11 +3685,11 @@ def test_vrt_with_skewed_geotransform_rejected(tmp_path):
         f'  </VRTRasterBand>'
         f'</VRTDataset>'
     )
-    # Sub-PR 2 of epic #2321 (#2329) centralised this rejection in
-    # ``_vrt_validation.py`` and re-typed it as ``VRTUnsupportedError``
-    # with a message naming the skew terms. Accept either the legacy
-    # ``RotatedTransformError`` or the new typed error so the regression
-    # pin survives the validator refactor.
+    # The rotated-VRT rejection was centralised in ``_vrt_validation.py``
+    # and re-typed as ``VRTUnsupportedError`` with a message naming the
+    # skew terms. Accept either the legacy ``RotatedTransformError`` or
+    # the new typed error so the regression pin survives the validator
+    # refactor.
     with pytest.raises(
         (RotatedTransformError, VRTUnsupportedError),
         match=r"rotated affine|rotation/shear",
