@@ -46,6 +46,7 @@ except Exception as exc:  # pragma: no cover - CI without CUDA
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
+from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 # Golden-corpus fixtures span every codec/tier, including the
@@ -125,25 +126,18 @@ def _is_lossy(entry: dict) -> bool:
 
 def _build_param(entry: dict) -> pytest.param:
     fid = entry["id"]
+    marks = list(fast_slow_marks_for(entry))
     if fid in _PARITY_GAPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True),
+        marks.append(
+            pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True)
         )
-    if fid in _DASK_GPU_SKIPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.xfail(reason=_DASK_GPU_SKIPS[fid], strict=True),
+    elif fid in _DASK_GPU_SKIPS:
+        marks.append(
+            pytest.mark.xfail(reason=_DASK_GPU_SKIPS[fid], strict=True)
         )
-    if fid in _INTENTIONAL_SKIPS:
-        return pytest.param(
-            entry,
-            id=fid,
-            marks=pytest.mark.skip(reason=_INTENTIONAL_SKIPS[fid]),
-        )
-    return pytest.param(entry, id=fid)
+    elif fid in _INTENTIONAL_SKIPS:
+        marks.append(pytest.mark.skip(reason=_INTENTIONAL_SKIPS[fid]))
+    return pytest.param(entry, id=fid, marks=marks)
 
 
 _FIXTURES = _resolved_fixtures()

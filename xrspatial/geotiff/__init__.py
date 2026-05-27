@@ -161,7 +161,7 @@ __all__ = [
 #   ``allow_internal_only_jpeg=True`` (issue #1845);
 #   ``allow_experimental_codecs`` does NOT cover it.
 #
-# Tests in ``xrspatial/geotiff/tests/test_supported_features_tiers_2137.py``
+# Tests in ``xrspatial/geotiff/tests/release_gates/test_features.py``
 # walk the mapping and assert that every Tier 3 codec rejects without
 # the opt-in flag and every Tier 4 codec rejects without its own
 # dedicated flag. The user-guide notebook
