@@ -45,7 +45,7 @@ What you can expect:
   :class:`xrspatial.geotiff.GeoTIFFFallbackWarning` and falls back to
   CPU unless ``on_gpu_failure='strict'`` or
   ``XRSPATIAL_GEOTIFF_STRICT=1`` is set; see
-  ``xrspatial/geotiff/tests/test_gpu_strict_fallback_1516.py``.
+  ``xrspatial/geotiff/tests/gpu/test_kernels_and_kwargs.py``.
 
 What you should NOT rely on:
 
