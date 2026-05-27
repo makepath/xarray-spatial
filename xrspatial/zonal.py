@@ -41,6 +41,16 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_ar
 
 TOTAL_COUNT = '_total_count'
 
+_DEFAULT_STATS_NUMPY = [
+    "mean", "max", "min", "sum", "std", "var", "count", "majority",
+]
+
+# 'majority' cannot be computed block-by-block, so it is omitted from the
+# dask default list and rejected when explicitly requested on a dask input.
+_DEFAULT_STATS_DASK = [
+    "mean", "max", "min", "sum", "std", "var", "count",
+]
+
 
 def _maybe_rasterize_zones(zones, values, column=None, rasterize_kw=None):
     """If *zones* is vector data, rasterize it using *values* as the template.
@@ -634,16 +644,7 @@ def stats(
     zones,
     values: xr.DataArray,
     zone_ids: Optional[List[Union[int, float]]] = None,
-    stats_funcs: Union[Dict, List] = [
-        "mean",
-        "max",
-        "min",
-        "sum",
-        "std",
-        "var",
-        "count",
-        "majority",
-    ],
+    stats_funcs: Optional[Union[Dict, List]] = None,
     nodata_values: Union[int, float] = None,
     return_type: str = 'pandas.DataFrame',
     column: Optional[str] = None,
@@ -688,16 +689,19 @@ def stats(
         List of zones to be included in calculation. If no zone_ids provided,
         all zones will be used.
 
-    stats_funcs : dict, or list of strings, default=['mean', 'max', 'min',
-        'sum', 'std', 'var', 'count', 'majority']
-        The statistics to calculate for each zone. If a list, possible
+    stats_funcs : dict, or list of strings, optional
+        The statistics to calculate for each zone.  If a list, possible
         choices are subsets of the default options.
         In the dictionary case, all of its values must be
         callable. Function takes only one argument that is the `values` raster.
-        The key become the column name in the output DataFrame.
-        Note that if `zones` and `values` are dask backed DataArrays,
-        `stats_funcs` must be provided as a list that is a subset of
-        default supported stats.
+        The key becomes the column name in the output DataFrame.
+        Defaults: ``['mean', 'max', 'min', 'sum', 'std', 'var', 'count',
+        'majority']`` for numpy/cupy and ``['mean', 'max', 'min', 'sum',
+        'std', 'var', 'count']`` for dask-backed inputs.  ``'majority'``
+        cannot be computed block-by-block so requesting it on a dask
+        input raises ``ValueError`` instead of being silently dropped.
+        Note that if `zones` and `values` are dask-backed DataArrays,
+        `stats_funcs` must be provided as a list (or left unset).
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
@@ -844,13 +848,32 @@ def stats(
 
     validate_arrays(zones, values)
 
+    is_dask_values = has_dask_array() and isinstance(values.data, da.Array)
+
+    # Resolve the default stats_funcs based on backend. The dask path cannot
+    # compute 'majority' block-by-block, so its default list omits it.  Using
+    # None as the sentinel default also avoids the mutable-default pitfall.
+    if stats_funcs is None:
+        stats_funcs = (
+            list(_DEFAULT_STATS_DASK) if is_dask_values
+            else list(_DEFAULT_STATS_NUMPY)
+        )
+
     # validate stats_funcs
-    if has_dask_array() and isinstance(values.data, da.Array) and not isinstance(stats_funcs, list):
+    if is_dask_values and not isinstance(stats_funcs, list):
         raise ValueError(
             "Got dask-backed DataArray as `values` aggregate. "
             "`stats_funcs` must be a subset of default supported stats "
             "`[\'mean\', \'max\', \'min\', \'sum\', \'std\', \'var\', \'count\']`"
         )
+
+    if is_dask_values and isinstance(stats_funcs, list):
+        unsupported = [s for s in stats_funcs if s not in _DEFAULT_STATS_DASK]
+        if unsupported:
+            raise ValueError(
+                f"stats_funcs={unsupported!r} not supported on dask-backed "
+                f"input.  Supported on dask: {_DEFAULT_STATS_DASK!r}."
+            )
 
     if isinstance(stats_funcs, list):
         # create a dict of stats

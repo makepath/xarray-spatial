@@ -1901,6 +1901,78 @@ def test_crop_missing_zone_ids_raises():
 
 
 # ---------------------------------------------------------------------------
+# Regression tests for #2528: dask backend must not silently drop 'majority'
+# from the requested stats list.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="dask.array not available")
+def test_stats_dask_explicit_majority_raises_2528():
+    """Explicit 'majority' on dask must raise instead of being silently dropped."""
+    zones_data = np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=float)
+    values_data = np.array([[1.0, 1, 2, 2], [3, 3, 5, 5]])
+
+    zones = xr.DataArray(da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'])
+    values = xr.DataArray(da.from_array(values_data, chunks=(2, 2)), dims=['y', 'x'])
+
+    with pytest.raises(ValueError, match="majority"):
+        stats(zones=zones, values=values, stats_funcs=['mean', 'majority'])
+
+    # Single-stat majority request also raises.
+    with pytest.raises(ValueError, match="majority"):
+        stats(zones=zones, values=values, stats_funcs=['majority'])
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="dask.array not available")
+def test_stats_dask_default_omits_majority_2528():
+    """Bare stats() on dask should resolve to the dask default (no majority).
+
+    Regression for #2528: the previous mutable default included 'majority'
+    and the dask path silently dropped it.  After the fix the dask default
+    resolves to the supported subset, so the result columns match the
+    documented contract and no stat is silently filtered.
+    """
+    zones_data = np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=float)
+    values_data = np.array([[1.0, 1, 2, 2], [3, 3, 5, 5]])
+
+    zones = xr.DataArray(da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'])
+    values = xr.DataArray(da.from_array(values_data, chunks=(2, 2)), dims=['y', 'x'])
+
+    df = stats(zones=zones, values=values).compute()
+    expected_cols = ['zone', 'mean', 'max', 'min', 'sum', 'std', 'var', 'count']
+    assert df.columns.tolist() == expected_cols
+    assert 'majority' not in df.columns
+
+
+def test_stats_numpy_default_includes_majority_2528():
+    """Bare stats() on numpy keeps 'majority' in the resolved default list."""
+    zones = xr.DataArray(np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=float),
+                         dims=['y', 'x'])
+    values = xr.DataArray(np.array([[1.0, 1, 2, 2], [3, 3, 5, 5]]),
+                          dims=['y', 'x'])
+
+    df = stats(zones=zones, values=values)
+    assert 'majority' in df.columns
+
+
+def test_stats_default_list_is_not_mutated_2528():
+    """Repeated calls with the default must not accumulate state.
+
+    The previous implementation used a mutable list literal as the default
+    argument.  After the switch to ``stats_funcs=None``, the resolved list
+    is freshly constructed each call, so a caller that mutates it locally
+    cannot leak state into the next caller.
+    """
+    zones = xr.DataArray(np.array([[1, 1], [2, 2]], dtype=float), dims=['y', 'x'])
+    values = xr.DataArray(np.array([[1.0, 2.0], [3.0, 4.0]]), dims=['y', 'x'])
+
+    df1 = stats(zones=zones, values=values)
+    df2 = stats(zones=zones, values=values)
+    assert df1.columns.tolist() == df2.columns.tolist()
+    assert 'majority' in df1.columns and 'majority' in df2.columns
+
+
+# ---------------------------------------------------------------------------
 # Regression tests for #881: np.unique / np.isfinite must not materialise
 # the full dask array.
 # ---------------------------------------------------------------------------
