@@ -20,10 +20,12 @@ def _require_matplotlib():
     matplotlib is an optional dependency (the ``plot`` extra). The
     plotting helpers call this before importing ``pyplot`` so a missing
     install produces a clear message instead of a bare
-    ``ModuleNotFoundError``.
+    ``ModuleNotFoundError``. Importing ``pyplot`` (not just the top-level
+    package) also catches the case where matplotlib is installed but has
+    no usable backend.
     """
     try:
-        import matplotlib  # noqa: F401
+        import matplotlib.pyplot  # noqa: F401
     except ImportError as e:
         raise ImportError(
             "matplotlib is required for plotting but is not installed. "

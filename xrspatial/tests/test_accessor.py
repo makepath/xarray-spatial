@@ -328,24 +328,42 @@ def test_ds_rasterize_no_valid_var():
 # Optional matplotlib (the `plot` extra) — issue #2494
 # ---------------------------------------------------------------------------
 
-def test_compute_imports_without_matplotlib(monkeypatch):
-    """Core compute modules import even when matplotlib is unavailable.
+def test_compute_imports_without_matplotlib():
+    """Core compute modules import in a fresh interpreter with no matplotlib.
 
-    Blocking ``matplotlib`` in ``sys.modules`` makes ``import matplotlib``
-    raise ImportError, simulating an install without the ``plot`` extra.
+    Runs in a subprocess so the import happens against a clean module cache
+    with matplotlib blocked, rather than reloading already-imported modules
+    in the test session.
     """
-    import importlib
+    import subprocess
     import sys
+    import textwrap
 
-    monkeypatch.setitem(sys.modules, 'matplotlib', None)
-    monkeypatch.setitem(sys.modules, 'matplotlib.pyplot', None)
+    code = textwrap.dedent(
+        """
+        import sys
+        sys.modules['matplotlib'] = None
+        sys.modules['matplotlib.pyplot'] = None
 
-    with pytest.raises(ImportError):
-        import matplotlib  # noqa: F401
+        import xrspatial  # noqa: F401
+        import xrspatial.focal  # noqa: F401
+        import xrspatial.zonal  # noqa: F401
+        import xrspatial.dasymetric  # noqa: F401
 
-    # Re-importing the compute modules must not touch matplotlib.
-    for name in ('xrspatial.focal', 'xrspatial.zonal', 'xrspatial.dasymetric'):
-        importlib.reload(importlib.import_module(name))
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:
+            pass
+        else:
+            raise SystemExit('matplotlib was unexpectedly importable')
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, '-c', code],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_require_matplotlib_message(monkeypatch):
