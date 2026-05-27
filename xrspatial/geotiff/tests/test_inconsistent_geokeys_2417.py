@@ -24,12 +24,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError,
-                               open_geotiff)
+from xrspatial.geotiff import GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, open_geotiff
 from xrspatial.geotiff._validation import (_check_read_inconsistent_geokeys,
-                                           _registered_read_metadata_checks,
-                                           validate_read_metadata)
-
+                                           _registered_read_metadata_checks, validate_read_metadata)
 
 # ---------------------------------------------------------------------------
 # Registry sanity.

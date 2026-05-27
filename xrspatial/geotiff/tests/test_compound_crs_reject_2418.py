@@ -29,18 +29,12 @@ re-resolving the stored integer through pyproj.
 from __future__ import annotations
 
 import io
-import os
-import tempfile
 
 import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    NonRepresentableEPSGCRSError,
-    open_geotiff,
-    to_geotiff,
-)
+from xrspatial.geotiff import NonRepresentableEPSGCRSError, open_geotiff, to_geotiff
 from xrspatial.geotiff._crs import _reject_non_representable_epsg, _validate_crs_arg
 
 pyproj = pytest.importorskip("pyproj")
@@ -171,7 +165,6 @@ def test_compound_epsg_corruption_surfaces_when_validator_bypassed(
     monkeypatch.setattr(
         _crs_mod, "_reject_non_representable_epsg", lambda *a, **kw: None
     )
-    original_model_type = _geotags_mod._model_type_from_epsg
 
     def _model_type_without_compound_check(crs_epsg):
         # Reproduce the pre-fix behaviour: only branch on is_geographic.

@@ -96,10 +96,9 @@ from ._sources import (_CLOUD_SCHEMES, _DEFAULT_MMAP_CACHE_SIZE,  # noqa: F401
                        _get_pinned_conn_classes, _http_allow_private_hosts, _http_connect_timeout,
                        _http_read_timeout, _http_timeout_from_env, _HTTPSource, _ip_is_private,
                        _is_file_like, _is_fsspec_uri, _is_http_source, _is_http_url,
-                       _make_pinned_pool,
-                       _max_coalesced_range_bytes_from_env, _max_tile_bytes_from_env, _mmap_cache,
-                       _mmap_cache_size_from_env, _MmapCache, _open_source,
-                       _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
+                       _make_pinned_pool, _max_coalesced_range_bytes_from_env,
+                       _max_tile_bytes_from_env, _mmap_cache, _mmap_cache_size_from_env, _MmapCache,
+                       _open_source, _resolve_max_cloud_bytes, _validate_http_url, coalesce_ranges,
                        split_coalesced_bytes)
 
 # ---------------------------------------------------------------------------

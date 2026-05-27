@@ -25,25 +25,20 @@ See ``CLUSTER_AUDIT_PR6.md`` for the file:test -> section:test mapping.
 """
 from __future__ import annotations
 
-import dask.array as da
 import glob
-import numpy as np
 import os
 import pathlib
 import pickle
-import pytest
 import tempfile
 import warnings
+
+import dask.array as da
+import numpy as np
+import pytest
 import xarray as xr
-from xrspatial.geotiff import (
-    GeoTIFFFallbackWarning,
-    MixedBandMetadataError,
-    open_geotiff,
-    read_geotiff_dask,
-    read_vrt,
-    to_geotiff,
-    write_vrt,
-)
+
+from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError, open_geotiff,
+                               read_geotiff_dask, read_vrt, to_geotiff, write_vrt)
 from xrspatial.geotiff._attrs import GEOREF_STATUS_FULL, GEOREF_STATUS_TRANSFORM_ONLY
 from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff._geotags import GeoTransform
@@ -53,7 +48,6 @@ from xrspatial.geotiff._vrt import read_vrt as _xml_size_cap_read_vrt_internal
 from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
 from xrspatial.geotiff._writer import write
 from xrspatial.geotiff.tests.conftest import requires_gpu
-
 
 # ---------------------------------------------------------------------------
 # vrt_holes attr on missing-source reads (#1734)
@@ -81,7 +75,20 @@ def _holes_attr_write_vrt_with_missing_source(vrt_path, missing_src) -> None:
     one would let downstream code mask the hole and side-step the
     regression. See the module docstring.
     """
-    vrt_path.write_text(f'<VRTDataset rasterXSize="4" rasterYSize="4">\n  <SRS></SRS>\n  <GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>\n  <VRTRasterBand dataType="Int32" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{missing_src}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n')
+    vrt_path.write_text(
+        f'<VRTDataset rasterXSize="4" rasterYSize="4">\n'
+        f'  <SRS></SRS>\n'
+        f'  <GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>\n'
+        f'  <VRTRasterBand dataType="Int32" band="1">\n'
+        f'    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="0">{missing_src}</SourceFilename>\n'
+        f'      <SourceBand>1</SourceBand>\n'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        f'      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        f'    </SimpleSource>\n'
+        f'  </VRTRasterBand>\n'
+        f'</VRTDataset>\n'
+    )
 
 
 def test_skipped_source_records_vrt_holes_attr(holes_attr_clear_strict_env, tmp_path):
@@ -120,13 +127,27 @@ def test_no_holes_attr_when_all_sources_read(holes_attr_clear_strict_env, tmp_pa
     cheap completeness check."""
     import numpy as np
     import xarray as xr
+
     from xrspatial.geotiff import to_geotiff
     src_path = tmp_path / 'src_1734.tif'
     arr = np.arange(16, dtype=np.float32).reshape(4, 4)
-    da_src = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.linspace(3.5, 0.5, 4), 'x': np.linspace(0.5, 3.5, 4)}, attrs={'crs': 4326})
+    da_src = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.linspace(3.5, 0.5, 4), 'x': np.linspace(0.5, 3.5, 4)}, attrs={'crs': 4326})  # noqa: E501
     to_geotiff(da_src, str(src_path), compression='none')
     vrt_path = tmp_path / 'mosaic_1734_ok.vrt'
-    vrt_path.write_text(f'<VRTDataset rasterXSize="4" rasterYSize="4">\n  <SRS></SRS>\n  <GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n')
+    vrt_path.write_text(
+        f'<VRTDataset rasterXSize="4" rasterYSize="4">\n'
+        f'  <SRS></SRS>\n'
+        f'  <GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>\n'
+        f'  <VRTRasterBand dataType="Float32" band="1">\n'
+        f'    <SimpleSource>\n'
+        f'      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n'
+        f'      <SourceBand>1</SourceBand>\n'
+        f'      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        f'      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+        f'    </SimpleSource>\n'
+        f'  </VRTRasterBand>\n'
+        f'</VRTDataset>\n'
+    )
     with warnings.catch_warnings():
         warnings.simplefilter('error', GeoTIFFFallbackWarning)
         da = read_vrt(str(vrt_path))
@@ -181,9 +202,9 @@ def _masked_nodata_attr_write_float_vrt(tmp_path, src_basename, vrt_basename, se
     """
     tifffile = pytest.importorskip('tifffile')
     src = str(tmp_path / src_basename)
-    tifffile.imwrite(src, np.array([[1.0, 2.0, sentinel], [4.0, sentinel, 6.0]], dtype=np.float32), metadata=None)
+    tifffile.imwrite(src, np.array([[1.0, 2.0, sentinel], [4.0, sentinel, 6.0]], dtype=np.float32), metadata=None)  # noqa: E501
     vrt = str(tmp_path / vrt_basename)
-    vrt_xml = f'<VRTDataset rasterXSize="3" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <NoDataValue>{sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="3" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <NoDataValue>{sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt, 'w') as fh:
         fh.write(vrt_xml)
     return vrt
@@ -195,7 +216,7 @@ def _masked_nodata_attr_write_int_vrt(tmp_path, src_basename, vrt_basename, sent
     src = str(tmp_path / src_basename)
     tifffile.imwrite(src, np.array([[10, 20, 30], [40, 50, 60]], dtype=np.int16), metadata=None)
     vrt = str(tmp_path / vrt_basename)
-    vrt_xml = f'<VRTDataset rasterXSize="3" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Int16" band="1">\n    <NoDataValue>{sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="3" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Int16" band="1">\n    <NoDataValue>{sentinel}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="3" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt, 'w') as fh:
         fh.write(vrt_xml)
     return vrt
@@ -204,16 +225,16 @@ def _masked_nodata_attr_write_int_vrt(tmp_path, src_basename, vrt_basename, sent
 def test_vrt_eager_float_source_mask_off_reports_false(tmp_path):
     """Eager VRT + float source + ``mask_nodata=False`` must report
     ``masked_nodata=False``. Pre-fix rule (dtype alone) said ``True``."""
-    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src.tif', 'tmp_2159_eager_unmasked.vrt')
+    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src.tif', 'tmp_2159_eager_unmasked.vrt')  # noqa: E501
     out = open_geotiff(vrt, mask_nodata=False)
     assert out.attrs.get('nodata') == -9999.0
-    assert out.attrs.get('masked_nodata') is False, f"caller opted out of masking but attrs say masked_nodata={out.attrs.get('masked_nodata')!r}"
+    assert out.attrs.get('masked_nodata') is False, f"caller opted out of masking but attrs say masked_nodata={out.attrs.get('masked_nodata')!r}"  # noqa: E501
 
 
 def test_vrt_eager_float_source_mask_on_reports_true(tmp_path):
     """Canonical direction: float source + masking on. The masking
     step runs, attr says True. Regression guard."""
-    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src_masked.tif', 'tmp_2159_eager_masked.vrt')
+    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src_masked.tif', 'tmp_2159_eager_masked.vrt')  # noqa: E501
     out = open_geotiff(vrt)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is True
@@ -224,7 +245,7 @@ def test_vrt_eager_int_source_mask_off_reports_false(tmp_path):
     skipped, dtype stays int, attr says False. Pre-fix rule already
     got this right (int dtype -> False); keep it green under the
     new ``mask_nodata and dtype.kind == 'f'`` rule."""
-    vrt = _masked_nodata_attr_write_int_vrt(tmp_path, 'tmp_2159_eager_int_src.tif', 'tmp_2159_eager_int_unmasked.vrt')
+    vrt = _masked_nodata_attr_write_int_vrt(tmp_path, 'tmp_2159_eager_int_src.tif', 'tmp_2159_eager_int_unmasked.vrt')  # noqa: E501
     out = open_geotiff(vrt, mask_nodata=False)
     assert out.dtype.kind == 'i'
     assert out.attrs.get('masked_nodata') is False
@@ -236,7 +257,7 @@ def test_vrt_eager_float_source_mask_off_with_cast_reports_false(tmp_path):
     float anyway and the rule said True. New rule short-circuits on
     ``mask_nodata=False`` and says False. The caller-supplied cast is
     still recorded via ``nodata_dtype_cast``."""
-    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src_cast.tif', 'tmp_2159_eager_unmasked_cast.vrt')
+    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src_cast.tif', 'tmp_2159_eager_unmasked_cast.vrt')  # noqa: E501
     out = open_geotiff(vrt, mask_nodata=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
@@ -246,15 +267,15 @@ def test_vrt_eager_float_source_mask_off_with_cast_reports_false(tmp_path):
 def test_vrt_chunked_float_source_mask_off_reports_false(tmp_path):
     """Chunked VRT path (``chunks=`` triggers ``_read_vrt_chunked``)
     + float source + ``mask_nodata=False`` must report False."""
-    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src.tif', 'tmp_2159_chunked_unmasked.vrt')
+    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src.tif', 'tmp_2159_chunked_unmasked.vrt')  # noqa: E501
     out = read_geotiff_dask(vrt, chunks=2, mask_nodata=False)
     assert out.attrs.get('nodata') == -9999.0
-    assert out.attrs.get('masked_nodata') is False, f"chunked VRT path: caller opted out of masking but attrs say masked_nodata={out.attrs.get('masked_nodata')!r}"
+    assert out.attrs.get('masked_nodata') is False, f"chunked VRT path: caller opted out of masking but attrs say masked_nodata = {out.attrs.get('masked_nodata')!r}"  # noqa: E501
 
 
 def test_vrt_chunked_float_source_mask_on_reports_true(tmp_path):
     """Canonical direction on the chunked path: masking on, attr True."""
-    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src_masked.tif', 'tmp_2159_chunked_masked.vrt')
+    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src_masked.tif', 'tmp_2159_chunked_masked.vrt')  # noqa: E501
     out = read_geotiff_dask(vrt, chunks=2)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is True
@@ -265,7 +286,7 @@ def test_vrt_chunked_int_source_mask_off_reports_false(tmp_path):
     stays integer because the masking-driven float-promotion gate
     earlier in the function is itself gated on ``mask_nodata``.
     The attr says False under both the old and the new rule."""
-    vrt = _masked_nodata_attr_write_int_vrt(tmp_path, 'tmp_2159_chunked_int_src.tif', 'tmp_2159_chunked_int_unmasked.vrt')
+    vrt = _masked_nodata_attr_write_int_vrt(tmp_path, 'tmp_2159_chunked_int_src.tif', 'tmp_2159_chunked_int_unmasked.vrt')  # noqa: E501
     out = read_geotiff_dask(vrt, chunks=2, mask_nodata=False)
     assert out.dtype.kind == 'i'
     assert out.attrs.get('masked_nodata') is False
@@ -275,7 +296,7 @@ def test_vrt_chunked_float_source_mask_off_with_cast_reports_false(tmp_path):
     """Chunked VRT + float source + ``mask_nodata=False`` + ``dtype=float64``
     cast. Same logic as the eager equivalent: caller opted out of
     masking, attr is False even though the lazy graph dtype is float."""
-    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src_cast.tif', 'tmp_2159_chunked_unmasked_cast.vrt')
+    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src_cast.tif', 'tmp_2159_chunked_unmasked_cast.vrt')  # noqa: E501
     out = read_geotiff_dask(vrt, chunks=2, mask_nodata=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
@@ -287,7 +308,7 @@ def test_vrt_attr_matches_dask_backend_under_mask_off(tmp_path):
     the regular dask backend does for an equivalent input. Pins the
     cross-backend invariant the contract at
     ``_attrs._set_nodata_attrs`` calls out."""
-    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_xbackend_src.tif', 'tmp_2159_xbackend.vrt')
+    vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_xbackend_src.tif', 'tmp_2159_xbackend.vrt')  # noqa: E501
     eager = open_geotiff(vrt, mask_nodata=False, dtype=np.float64)
     chunked = read_geotiff_dask(vrt, chunks=2, mask_nodata=False, dtype=np.float64)
     assert eager.attrs.get('masked_nodata') is False
@@ -312,7 +333,7 @@ def _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path):
     write(band0, p0, nodata=65535, compression='none', tiled=False)
     write(band1, p1, nodata=65000, compression='none', tiled=False)
     vrt_path = str(tmp_path / 'two_band_per_band_nodata_1598.vrt')
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <NoDataValue>65535</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="UInt16" band="2">\n    <NoDataValue>65000</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <NoDataValue>65535</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="UInt16" band="2">\n    <NoDataValue>65000</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
     return vrt_path
@@ -338,7 +359,7 @@ def test_read_vrt_band0_uses_band0_nodata(tmp_path):
 
 
 def test_read_vrt_band1_uses_band1_nodata(tmp_path):
-    """The previously-broken case: band=1 must use band 1's sentinel.
+    """The previously-broken case: band = 1 must use band 1's sentinel.
 
     Before the fix this returned dtype=uint16 with values=[[7,8],
     [9,65000]] and attrs['nodata']=65535.
@@ -346,8 +367,8 @@ def test_read_vrt_band1_uses_band1_nodata(tmp_path):
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
     r = read_vrt(vrt_path, band=1, band_nodata='first')
     assert r.dtype == np.float64, 'band=1 read kept uint16 dtype; per-band nodata regression.'
-    assert r.attrs.get('nodata') == 65000.0, f"attrs['nodata'] was {r.attrs.get('nodata')}, expected 65000 from band 1's <NoDataValue>."
-    assert np.isnan(r.values[1, 1]), "band 1's sentinel pixel was not NaN-masked; promotion ran against the wrong sentinel."
+    assert r.attrs.get('nodata') == 65000.0, f"attrs['nodata'] was {r.attrs.get('nodata')}, expected 65000 from band 1's <NoDataValue>."  # noqa: E501
+    assert np.isnan(r.values[1, 1]), "band 1's sentinel pixel was not NaN-masked; promotion ran against the wrong sentinel."  # noqa: E501
     assert r.values[0, 0] == 7
     assert r.values[1, 0] == 9
 
@@ -407,17 +428,17 @@ def test_read_vrt_non_integer_band_raises(tmp_path):
 def _source_nodata_zero_write_source(tmp_path, arr, name='src_1655.tif'):
     """Write a small float32 GeoTIFF without a GDAL_NODATA tag."""
     p = str(tmp_path / name)
-    write(arr, p, geo_transform=GeoTransform(origin_x=0.0, origin_y=0.0, pixel_width=1.0, pixel_height=-1.0), crs_epsg=4326, compression='none', tiled=False)
+    write(arr, p, geo_transform=GeoTransform(origin_x=0.0, origin_y=0.0, pixel_width=1.0, pixel_height=-1.0), crs_epsg=4326, compression='none', tiled=False)  # noqa: E501
     return p
 
 
-def _source_nodata_zero_vrt_with_source_nodata(tmp_path, src_path, nodata_xml, include_band_nodata=False, width=4, height=3, band_nodata='0.0'):
+def _source_nodata_zero_vrt_with_source_nodata(tmp_path, src_path, nodata_xml, include_band_nodata=False, width=4, height=3, band_nodata='0.0'):  # noqa: E501
     """Write a single-band Float32 VRT with the supplied ``<NODATA>``
     on its SimpleSource. ``include_band_nodata`` controls whether a
     ``<NoDataValue>`` is emitted on the band as well.
     """
     band_nd_elem = f'<NoDataValue>{band_nodata}</NoDataValue>' if include_band_nodata else ''
-    vrt_xml = f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">\n  <SRS>EPSG:4326</SRS>\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    {band_nd_elem}\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n      <DstRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n      <NODATA>{nodata_xml}</NODATA>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">\n  <SRS>EPSG:4326</SRS>\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    {band_nd_elem}\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n      <DstRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n      <NODATA>{nodata_xml}</NODATA>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path = str(tmp_path / 'src_zero_1655.vrt')
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
@@ -429,7 +450,7 @@ class TestVRTSourceNodataZero:
 
     def test_source_nodata_zero_no_band_nodata(self, tmp_path):
         """SimpleSource NODATA=0 with no band-level fallback masks zeros."""
-        arr = np.array([[1.0, 0.0, 3.0, 0.0], [4.0, 0.0, 6.0, 7.0], [0.0, 8.0, 9.0, 10.0]], dtype=np.float32)
+        arr = np.array([[1.0, 0.0, 3.0, 0.0], [4.0, 0.0, 6.0, 7.0], [0.0, 8.0, 9.0, 10.0]], dtype=np.float32)  # noqa: E501
         src = _source_nodata_zero_write_source(tmp_path, arr)
         vrt = _source_nodata_zero_vrt_with_source_nodata(tmp_path, src, '0.0')
         result, _ = _source_nodata_zero_read_vrt_internal(vrt)
@@ -457,7 +478,7 @@ class TestVRTSourceNodataZero:
         """Band-level ``<NoDataValue>0</NoDataValue>`` keeps working."""
         arr = np.array([[1.0, 0.0, 3.0]], dtype=np.float32)
         src = _source_nodata_zero_write_source(tmp_path, arr, name='band_zero.tif')
-        vrt_xml = f'<VRTDataset rasterXSize="3" rasterYSize="1">\n  <SRS>EPSG:4326</SRS>\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <NoDataValue>0.0</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="1"/>\n      <DstRect xOff="0" yOff="0" xSize="3" ySize="1"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+        vrt_xml = f'<VRTDataset rasterXSize="3" rasterYSize="1">\n  <SRS>EPSG:4326</SRS>\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Float32" band="1">\n    <NoDataValue>0.0</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="3" ySize="1"/>\n      <DstRect xOff="0" yOff="0" xSize="3" ySize="1"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
         vrt = str(tmp_path / 'band_zero_1655.vrt')
         with open(vrt, 'w') as f:
             f.write(vrt_xml)
@@ -469,7 +490,7 @@ class TestVRTSourceNodataZero:
         """SimpleSource NODATA=0 takes precedence over band NoDataValue=99."""
         arr = np.array([[1.0, 0.0, 99.0]], dtype=np.float32)
         src = _source_nodata_zero_write_source(tmp_path, arr, name='override.tif')
-        vrt = _source_nodata_zero_vrt_with_source_nodata(tmp_path, src, '0.0', include_band_nodata=True, band_nodata='99.0', width=3, height=1)
+        vrt = _source_nodata_zero_vrt_with_source_nodata(tmp_path, src, '0.0', include_band_nodata=True, band_nodata='99.0', width=3, height=1)  # noqa: E501
         result, _ = _source_nodata_zero_read_vrt_internal(vrt)
         assert int(np.isnan(result).sum()) == 1
         assert np.isnan(result[0, 1])
@@ -485,7 +506,7 @@ class TestVRTSourceNodataZero:
 def _int_nodata_write_uint16_with_nodata_tif(path, sentinel):
     """Write a small uint16 GeoTIFF with a nodata sentinel."""
     arr = np.array([[1, 2, 3], [sentinel, 5, 6]], dtype=np.uint16)
-    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': sentinel})
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': sentinel})  # noqa: E501
     to_geotiff(da, path, compression='none', nodata=sentinel)
     return arr
 
@@ -500,15 +521,15 @@ def test_vrt_uint16_nodata_promotes_to_float64(tmp_path):
     vrt_path = str(tmp_path / 'src_1564.vrt')
     write_vrt(vrt_path, [tif])
     via_vrt = read_vrt(vrt_path)
-    assert via_vrt.dtype == np.float64, f'VRT integer-with-nodata should promote to float64; got {via_vrt.dtype}'
-    assert np.isnan(via_vrt.values[1, 0]), f'VRT sentinel pixel should be NaN; got {via_vrt.values[1, 0]} (literal sentinel survived)'
+    assert via_vrt.dtype == np.float64, f'VRT integer-with-nodata should promote to float64; got {via_vrt.dtype}'  # noqa: E501
+    assert np.isnan(via_vrt.values[1, 0]), f'VRT sentinel pixel should be NaN; got {via_vrt.values[1, 0]} (literal sentinel survived)'  # noqa: E501
     assert via_vrt.attrs.get('nodata') == 65535.0
 
 
 def test_vrt_uint16_no_nodata_keeps_dtype(tmp_path):
     """Without a nodata sentinel, the dtype stays integer."""
     arr = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint16)
-    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326})
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326})  # noqa: E501
     tif = str(tmp_path / 'src_no_nodata_1564.tif')
     to_geotiff(da, tif, compression='none')
     vrt_path = str(tmp_path / 'src_no_nodata_1564.vrt')
@@ -522,7 +543,7 @@ def test_vrt_float_nodata_still_masks(tmp_path):
     """Regression guard: the existing float-with-nodata branch still
     works after the integer-branch addition."""
     arr = np.array([[1.0, 2.0, -9999.0], [4.0, -9999.0, 6.0]], dtype=np.float32)
-    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': -9999.0})
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': -9999.0})  # noqa: E501
     tif = str(tmp_path / 'srcf_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=-9999.0)
     vrt_path = str(tmp_path / 'srcf_1564.vrt')
@@ -540,7 +561,7 @@ def _int_nodata_rewrite_vrt_nodata(vrt_path, new_nodata_text):
     with open(vrt_path, 'r') as f:
         xml = f.read()
     import re
-    new_xml, n = re.subn('<NoDataValue>[^<]*</NoDataValue>', f'<NoDataValue>{new_nodata_text}</NoDataValue>', xml)
+    new_xml, n = re.subn('<NoDataValue>[^<]*</NoDataValue>', f'<NoDataValue>{new_nodata_text}</NoDataValue>', xml)  # noqa: E501
     assert n == 1, f'expected 1 NoDataValue element, found {n}'
     with open(vrt_path, 'w') as f:
         f.write(new_xml)
@@ -550,14 +571,14 @@ def test_vrt_fractional_nodata_is_not_masked(tmp_path):
     """Fractional VRT NoDataValue against an integer band must NOT mask:
     truncating to int would alias a real pixel value as nodata."""
     arr = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint16)
-    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': 1})
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': 1})  # noqa: E501
     tif = str(tmp_path / 'frac_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=1)
     vrt_path = str(tmp_path / 'frac_1564.vrt')
     write_vrt(vrt_path, [tif])
     _int_nodata_rewrite_vrt_nodata(vrt_path, '1.9')
     via_vrt = read_vrt(vrt_path)
-    assert via_vrt.dtype == np.uint16, f'Fractional NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype}, pixel @[0,0]={via_vrt.values[0, 0]})'
+    assert via_vrt.dtype == np.uint16, f'Fractional NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype}, pixel @[0,0]={via_vrt.values[0, 0]})'  # noqa: E501
     np.testing.assert_array_equal(via_vrt.values, arr)
 
 
@@ -565,14 +586,14 @@ def test_vrt_out_of_range_nodata_is_not_masked(tmp_path):
     """NoDataValue outside the dtype range must NOT mask: casting would
     wrap and alias an in-range pixel."""
     arr = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.uint16)
-    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': 0})
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.arange(2), 'x': np.arange(3)}, attrs={'crs': 4326, 'nodata': 0})  # noqa: E501
     tif = str(tmp_path / 'oor_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=0)
     vrt_path = str(tmp_path / 'oor_1564.vrt')
     write_vrt(vrt_path, [tif])
     _int_nodata_rewrite_vrt_nodata(vrt_path, '-1')
     via_vrt = read_vrt(vrt_path)
-    assert via_vrt.dtype == np.uint16, f'Out-of-range NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype})'
+    assert via_vrt.dtype == np.uint16, f'Out-of-range NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype})'  # noqa: E501
     np.testing.assert_array_equal(via_vrt.values, arr)
 
 
@@ -586,7 +607,7 @@ def test_vrt_open_geotiff_parity_uint16_nodata(tmp_path):
     write_vrt(vrt_path, [tif])
     via_vrt = open_geotiff(vrt_path)
     assert direct.dtype == via_vrt.dtype
-    np.testing.assert_array_equal(np.isnan(direct.values), np.isnan(via_vrt.values), err_msg='VRT route should NaN-mask the same pixels as direct read')
+    np.testing.assert_array_equal(np.isnan(direct.values), np.isnan(via_vrt.values), err_msg='VRT route should NaN-mask the same pixels as direct read')  # noqa: E501
     mask = ~np.isnan(direct.values)
     np.testing.assert_array_equal(direct.values[mask], via_vrt.values[mask])
 
@@ -597,7 +618,7 @@ def test_vrt_open_geotiff_parity_uint16_nodata(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _mask_nodata_float_write_float32_with_sentinel(tmp_path, sentinel=-9999.0, filename='float_2158.tif'):
+def _mask_nodata_float_write_float32_with_sentinel(tmp_path, sentinel=-9999.0, filename='float_2158.tif'):  # noqa: E501
     """float32 GeoTIFF with a non-NaN sentinel and matching pixels.
 
     The middle row has a literal ``-9999.0`` so the inline masking
@@ -609,7 +630,7 @@ def _mask_nodata_float_write_float32_with_sentinel(tmp_path, sentinel=-9999.0, f
     return (p, band)
 
 
-def _mask_nodata_float_write_float64_with_fractional_sentinel(tmp_path, sentinel=-9999.25, filename='float64_2158.tif'):
+def _mask_nodata_float_write_float64_with_fractional_sentinel(tmp_path, sentinel=-9999.25, filename='float64_2158.tif'):  # noqa: E501
     """float64 GeoTIFF with a fractional sentinel.
 
     Float32's exact-cast rounding would clobber a fractional value
@@ -622,10 +643,10 @@ def _mask_nodata_float_write_float64_with_fractional_sentinel(tmp_path, sentinel
     return (p, band)
 
 
-def _mask_nodata_float_build_vrt(tmp_path, source_path, vrt_dtype, nodata_value, filename='float_2158.vrt', shape=(3, 3)):
+def _mask_nodata_float_build_vrt(tmp_path, source_path, vrt_dtype, nodata_value, filename='float_2158.vrt', shape=(3, 3)):  # noqa: E501
     """Hand-roll a single-source VRT pointing at the float source."""
     h, w = shape
-    vrt_xml = f'<VRTDataset rasterXSize="{w}" rasterYSize="{h}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{vrt_dtype}" band="1">\n    <NoDataValue>{nodata_value}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{source_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{w}" ySize="{h}"/>\n      <DstRect xOff="0" yOff="0" xSize="{w}" ySize="{h}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'
+    vrt_xml = f'<VRTDataset rasterXSize="{w}" rasterYSize="{h}">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="{vrt_dtype}" band="1">\n    <NoDataValue>{nodata_value}</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{source_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{w}" ySize="{h}"/>\n      <DstRect xOff="0" yOff="0" xSize="{w}" ySize="{h}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>'  # noqa: E501
     p = str(tmp_path / filename)
     with open(p, 'w') as f:
         f.write(vrt_xml)
@@ -714,7 +735,7 @@ def test_mask_nodata_false_float64_fractional_sentinel(tmp_path):
     the pixel keeps its exact bit pattern.
     """
     src, original = _mask_nodata_float_write_float64_with_fractional_sentinel(tmp_path)
-    vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float64', -9999.25, filename='float64_2158.vrt', shape=(2, 2))
+    vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float64', -9999.25, filename='float64_2158.vrt', shape=(2, 2))  # noqa: E501
     r = read_vrt(vrt, mask_nodata=False)
     assert r.dtype == np.float64
     assert r.values[1, 0] == -9999.25
@@ -739,7 +760,7 @@ def test_masked_vs_unmasked_differ_only_at_sentinels(tmp_path):
     np.testing.assert_array_equal(masked[~nan_positions], unmasked[~sentinel_positions])
 
 
-def _mask_nodata_float_write_uint16_with_sentinel(tmp_path, sentinel=65535, filename='uint16_2158.tif'):
+def _mask_nodata_float_write_uint16_with_sentinel(tmp_path, sentinel=65535, filename='uint16_2158.tif'):  # noqa: E501
     """uint16 GeoTIFF with a matching sentinel.
 
     Used to exercise the integer-source-feeding-float-VRT promotion at
@@ -765,7 +786,7 @@ def test_int_source_float_vrt_mask_nodata_false_keeps_literal(tmp_path):
     that no masking ran.
     """
     src, _ = _mask_nodata_float_write_uint16_with_sentinel(tmp_path)
-    vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_2158.vrt', shape=(2, 2))
+    vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_2158.vrt', shape=(2, 2))  # noqa: E501
     r = read_vrt(vrt, mask_nodata=False)
     assert r.dtype == np.float32
     assert not np.isnan(r.values).any()
@@ -783,7 +804,7 @@ def test_int_source_float_vrt_default_still_promotes(tmp_path):
     opt-out is not requested.
     """
     src, _ = _mask_nodata_float_write_uint16_with_sentinel(tmp_path)
-    vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_default_2158.vrt', shape=(2, 2))
+    vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_default_2158.vrt', shape=(2, 2))  # noqa: E501
     r = read_vrt(vrt)
     assert r.dtype == np.float32
     assert np.isnan(r.values[1, 1])
@@ -803,7 +824,7 @@ def _tiled_metadata_make_rioxarray_style(arr=None):
     if arr is None:
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         arr[0, 0] = -9999.0
-    return xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(arr.shape[0], dtype=np.float64), 'x': np.arange(arr.shape[1], dtype=np.float64)}, attrs={'nodatavals': (-9999.0,), '_FillValue': -9999.0, 'crs': 4326, 'gdal_metadata': {'AREA_OR_POINT': 'Area', 'foo': 'bar'}, 'x_resolution': 96, 'y_resolution': 96, 'resolution_unit': 'inch', 'raster_type': 'point'})
+    return xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(arr.shape[0], dtype=np.float64), 'x': np.arange(arr.shape[1], dtype=np.float64)}, attrs={'nodatavals': (-9999.0,), '_FillValue': -9999.0, 'crs': 4326, 'gdal_metadata': {'AREA_OR_POINT': 'Area', 'foo': 'bar'}, 'x_resolution': 96, 'y_resolution': 96, 'resolution_unit': 'inch', 'raster_type': 'point'})  # noqa: E501
 
 
 def _tiled_metadata_first_tile_path(vrt_path):
@@ -825,7 +846,7 @@ class TestVrtTiledMetadataParity:
     def test_fill_value_alias_propagates_to_tiles(self, tmp_path):
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         arr[0, 0] = -9999.0
-        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'_FillValue': -9999.0, 'crs': 4326})
+        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'_FillValue': -9999.0, 'crs': 4326})  # noqa: E501
         vrt = str(tmp_path / 'fillvalue.vrt')
         to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
@@ -864,9 +885,9 @@ class TestVrtTiledMetadataParity:
         to_geotiff(da, vrt_path, tile_size=16)
         tif_da = open_geotiff(tif_path)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt_path))
-        keys = ('nodata', 'gdal_metadata', 'raster_type', 'x_resolution', 'y_resolution', 'resolution_unit')
+        keys = ('nodata', 'gdal_metadata', 'raster_type', 'x_resolution', 'y_resolution', 'resolution_unit')  # noqa: E501
         for k in keys:
-            assert tif_da.attrs.get(k) == tile_da.attrs.get(k), f'{k} mismatch: tif={tif_da.attrs.get(k)!r}, vrt-tile={tile_da.attrs.get(k)!r}'
+            assert tif_da.attrs.get(k) == tile_da.attrs.get(k), f'{k} mismatch: tif = {tif_da.attrs.get(k)!r}, vrt-tile={tile_da.attrs.get(k)!r}'  # noqa: E501
 
 
 class TestVrtTiledRichTagCoverage:
@@ -878,33 +899,33 @@ class TestVrtTiledRichTagCoverage:
         the dict->XML builder. Verify it still reaches per-tile files."""
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         xml = '<GDALMetadata>\n  <Item name="VRT_XML_KEY">vrt_xml_value</Item>\n</GDALMetadata>\n'
-        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'crs': 4326, 'gdal_metadata_xml': xml})
+        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'crs': 4326, 'gdal_metadata_xml': xml})  # noqa: E501
         vrt = str(tmp_path / 'gdal_xml.vrt')
         to_geotiff(da, vrt, tile_size=16, allow_experimental_codecs=True)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
         gm = tile_da.attrs.get('gdal_metadata') or {}
         gm_xml = tile_da.attrs.get('gdal_metadata_xml') or ''
-        assert gm.get('VRT_XML_KEY') == 'vrt_xml_value' or 'VRT_XML_KEY' in gm_xml, f'gdal_metadata_xml content lost on VRT-tile round-trip; gdal_metadata={gm!r}, gdal_metadata_xml={gm_xml!r}'
+        assert gm.get('VRT_XML_KEY') == 'vrt_xml_value' or 'VRT_XML_KEY' in gm_xml, f'gdal_metadata_xml content lost on VRT-tile round-trip; gdal_metadata={gm!r}, gdal_metadata_xml={gm_xml!r}'  # noqa: E501
 
     def test_extra_tags_entry_propagates_to_tiles(self, tmp_path):
         """A user-supplied ``extra_tags`` entry (Software, tag 305)
         must round-trip through the VRT-tiled writer."""
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         software = 'xrspatial-vrt-test-1606'
-        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'crs': 4326, 'extra_tags': [(305, 2, len(software) + 1, software)]})
+        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'crs': 4326, 'extra_tags': [(305, 2, len(software) + 1, software)]})  # noqa: E501
         vrt = str(tmp_path / 'extra_tags.vrt')
         to_geotiff(da, vrt, tile_size=16, allow_experimental_codecs=True)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
         et = tile_da.attrs.get('extra_tags') or []
         tag_ids = {entry[0] for entry in et}
-        assert 305 in tag_ids, f'Software (305) tag missing from VRT tile extra_tags; got tag ids {sorted(tag_ids)!r}'
+        assert 305 in tag_ids, f'Software (305) tag missing from VRT tile extra_tags; got tag ids {sorted(tag_ids)!r}'  # noqa: E501
 
     def test_image_description_friendly_attr_propagates_to_tiles(self, tmp_path):
         """``attrs['image_description']`` is folded into ``extra_tags``
         as tag 270 by ``_merge_friendly_extra_tags`` and then surfaces
         on read as ``attrs['image_description']``."""
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
-        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'crs': 4326, 'image_description': 'vrt-tile-friendly-1606'})
+        da = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'crs': 4326, 'image_description': 'vrt-tile-friendly-1606'})  # noqa: E501
         vrt = str(tmp_path / 'image_desc.vrt')
         to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
@@ -918,8 +939,8 @@ class TestVrtTiledMetadataDask:
         import dask.array as dska
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         arr[0, 0] = -9999.0
-        da_np = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'nodatavals': (-9999.0,), 'crs': 4326, 'gdal_metadata': {'k': 'v'}})
-        da = xr.DataArray(dska.from_array(arr, chunks=4), dims=da_np.dims, coords=da_np.coords, attrs=da_np.attrs)
+        da_np = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'nodatavals': (-9999.0,), 'crs': 4326, 'gdal_metadata': {'k': 'v'}})  # noqa: E501
+        da = xr.DataArray(dska.from_array(arr, chunks=4), dims=da_np.dims, coords=da_np.coords, attrs=da_np.attrs)  # noqa: E501
         vrt = str(tmp_path / 'dask.vrt')
         to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
@@ -981,7 +1002,7 @@ def test_chunked_path_parses_xml_once(monkeypatch, single_parse_two_by_two_vrt_1
     result = read_vrt(vrt_path, chunks=(64, 64))
     assert counter['parses'] == 1, f"expected 1 parse during construction, got {counter['parses']}"
     computed = result.compute()
-    assert counter['parses'] == 1, f"expected 1 parse total (construction only); got {counter['parses']} -- per-chunk tasks are still reparsing"
+    assert counter['parses'] == 1, f"expected 1 parse total (construction only); got {counter['parses']} -- per-chunk tasks are still reparsing"  # noqa: E501
     assert computed.shape == (256, 256)
     assert computed.dtype == np.float32
 
@@ -1003,9 +1024,9 @@ def test_chunked_path_reads_xml_file_once(monkeypatch, single_parse_two_by_two_v
         return real_read_xml(*args, **kwargs)
     monkeypatch.setattr(vrt_module, '_read_vrt_xml', counting_read_xml)
     result = read_vrt(vrt_path, chunks=(64, 64))
-    assert counter['reads'] == 1, f"expected 1 XML file read during construction, got {counter['reads']}"
+    assert counter['reads'] == 1, f"expected 1 XML file read during construction, got {counter['reads']}"  # noqa: E501
     result.compute()
-    assert counter['reads'] == 1, f"expected 1 XML file read total; got {counter['reads']} -- per-chunk tasks are still re-opening the .vrt file"
+    assert counter['reads'] == 1, f"expected 1 XML file read total; got {counter['reads']} -- per-chunk tasks are still re-opening the .vrt file"  # noqa: E501
 
 
 def test_parsed_vrt_is_picklable(single_parse_single_tile_vrt_1825):
@@ -1027,7 +1048,7 @@ def test_parsed_vrt_is_picklable(single_parse_single_tile_vrt_1825):
     assert restored.height == vrt.height
     assert len(restored.bands) == len(vrt.bands)
     assert restored.bands[0].dtype == vrt.bands[0].dtype
-    assert [s.filename for s in restored.bands[0].sources] == [s.filename for s in vrt.bands[0].sources]
+    assert [s.filename for s in restored.bands[0].sources] == [s.filename for s in vrt.bands[0].sources]  # noqa: E501
 
 
 def test_chunked_matches_eager_after_refactor(single_parse_two_by_two_vrt_1825):
@@ -1069,7 +1090,7 @@ def test_no_path_containment_revalidation_per_chunk(monkeypatch, single_parse_tw
     if isinstance(da_arr, da.Array):
         _block = da_arr.blocks[0, 0].compute()
         assert _block.shape[0] > 0 and _block.shape[1] > 0
-    assert parse_calls['n'] == parses_after_construction, f"per-block compute triggered extra parses ({parse_calls['n']} vs {parses_after_construction})"
+    assert parse_calls['n'] == parses_after_construction, f"per-block compute triggered extra parses ({parse_calls['n']} vs {parses_after_construction})"  # noqa: E501
 
 
 def test_parsed_kwarg_does_not_mutate_caller_holes(single_parse_single_tile_vrt_1825):
@@ -1096,7 +1117,7 @@ def test_parsed_kwarg_does_not_mutate_caller_holes(single_parse_single_tile_vrt_
         warnings.simplefilter('ignore')
         arr, returned = _read_vrt_internal(vrt_path, parsed=parsed, missing_sources='warn')
     assert parsed.holes == [], f'parsed.holes was mutated across the read; got {parsed.holes!r}'
-    assert id(parsed.holes) == holes_id_before, "parsed.holes list object was replaced -- the caller's reference is now stale"
+    assert id(parsed.holes) == holes_id_before, "parsed.holes list object was replaced -- the caller's reference is now stale"  # noqa: E501
     assert len(returned.holes) == 1
     assert returned.holes[0]['source'].endswith('gone.tif')
     assert arr.shape == (64, 64)
@@ -1152,7 +1173,7 @@ def test_source_filename_with_ampersand_round_trips(tmp_path):
     ``<SourceFilename>`` element decodes back to the original on-disk
     path (no double-escape, no corruption)."""
     arr = np.zeros((4, 4), dtype=np.float32)
-    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.linspace(1, 0, 4), 'x': np.linspace(0, 1, 4)}, attrs={'nodata': -9999.0})
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': np.linspace(1, 0, 4), 'x': np.linspace(0, 1, 4)}, attrs={'nodata': -9999.0})  # noqa: E501
     src = str(tmp_path / 'a&b.tif')
     to_geotiff(da, src)
     vrt_path = str(tmp_path / 'mosaic.vrt')
@@ -1190,13 +1211,13 @@ def _xml_size_cap_write_source(td: str) -> str:
     return src_path
 
 
-def _xml_size_cap_write_vrt(td: str, *, pad_bytes: int=0) -> str:
+def _xml_size_cap_write_vrt(td: str, *, pad_bytes: int = 0) -> str:
     """Write a VRT, optionally padded with a large XML comment."""
     vrt_path = os.path.join(td, 'tmp_1815_mosaic.vrt')
     comment = ''
     if pad_bytes > 0:
         comment = '<!-- ' + 'x' * pad_bytes + ' -->\n'
-    vrt_xml = '<VRTDataset rasterXSize="10" rasterYSize="10">\n' + comment + '  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">tmp_1815_src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = '<VRTDataset rasterXSize="10" rasterYSize="10">\n' + comment + '  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">tmp_1815_src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
     return vrt_path
@@ -1257,13 +1278,13 @@ def _xml_size_cap_chunked_write_source(td: str) -> str:
     return src_path
 
 
-def _xml_size_cap_chunked_write_vrt(td: str, *, pad_bytes: int=0) -> str:
+def _xml_size_cap_chunked_write_vrt(td: str, *, pad_bytes: int = 0) -> str:
     """Write a VRT, optionally padded with a large XML comment."""
     vrt_path = os.path.join(td, 'tmp_1831_mosaic.vrt')
     comment = ''
     if pad_bytes > 0:
         comment = '<!-- ' + 'x' * pad_bytes + ' -->\n'
-    vrt_xml = '<VRTDataset rasterXSize="10" rasterYSize="10">\n' + comment + '  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">tmp_1831_src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = '<VRTDataset rasterXSize="10" rasterYSize="10">\n' + comment + '  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="1">tmp_1831_src.tif</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
     return vrt_path
@@ -1308,10 +1329,10 @@ def test_chunked_read_vrt_raised_cap_allows_padded(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-_WGS84_WKT = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4326"]]'
+_WGS84_WKT = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4326"]]'  # noqa: E501
 
 
-_VRT_OMITTED_ATTR_KEYS = frozenset({'extra_tags', 'image_description', 'extra_samples', 'gdal_metadata', 'gdal_metadata_xml', 'x_resolution', 'y_resolution', 'resolution_unit', 'colormap'})
+_VRT_OMITTED_ATTR_KEYS = frozenset({'extra_tags', 'image_description', 'extra_samples', 'gdal_metadata', 'gdal_metadata_xml', 'x_resolution', 'y_resolution', 'resolution_unit', 'colormap'})  # noqa: E501
 
 
 _REPRESENTATION_KEYS = frozenset({'crs_wkt'})
@@ -1320,7 +1341,7 @@ _REPRESENTATION_KEYS = frozenset({'crs_wkt'})
 _BACKEND_LIFECYCLE_KEYS = frozenset({'nodata_pixels_present'})
 
 
-def _metadata_parity_write_single_source_vrt(tiff_path: str, vrt_path: str, *, width: int, height: int, dtype_xml: str='Float32', nodata: float | int | None=None, geo_transform: str | None='0.0, 1.0, 0.0, 0.0, 0.0, -1.0', srs: str | None=None) -> None:
+def _metadata_parity_write_single_source_vrt(tiff_path: str, vrt_path: str, *, width: int, height: int, dtype_xml: str = 'Float32', nodata: float | int | None = None, geo_transform: str | None = '0.0, 1.0, 0.0, 0.0, 0.0, -1.0', srs: str | None = None) -> None:  # noqa: E501
     """Write a 1-band VRT pointing at ``tiff_path``.
 
     Same writer style as ``test_vrt_finalization_parity_2162`` so the
@@ -1328,8 +1349,8 @@ def _metadata_parity_write_single_source_vrt(tiff_path: str, vrt_path: str, *, w
     """
     nodata_xml = f'    <NoDataValue>{nodata}</NoDataValue>\n' if nodata is not None else ''
     srs_xml = f'  <SRS>{srs}</SRS>\n' if srs is not None else ''
-    gt_xml = f'  <GeoTransform>{geo_transform}</GeoTransform>\n' if geo_transform is not None else ''
-    vrt_xml = f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">\n{gt_xml}{srs_xml}  <VRTRasterBand dataType="{dtype_xml}" band="1">\n{nodata_xml}    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{tiff_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n      <DstRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    gt_xml = f'  <GeoTransform>{geo_transform}</GeoTransform>\n' if geo_transform is not None else ''  # noqa: E501
+    vrt_xml = f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">\n{gt_xml}{srs_xml}  <VRTRasterBand dataType="{dtype_xml}" band="1">\n{nodata_xml}    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{tiff_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n      <DstRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
 
@@ -1340,9 +1361,9 @@ def _metadata_parity_build_full_georef_vrt(tmp_path: pathlib.Path) -> str:
     tiff = str(tmp_path / 'tmp_2321_full_src.tif')
     vrt = str(tmp_path / 'tmp_2321_full.vrt')
     data = np.arange(16, dtype=np.float32).reshape(4, 4)
-    da = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([100.0, 101.0, 102.0, 103.0])}, dims=('y', 'x'), attrs={'crs': 4326})
+    da = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([100.0, 101.0, 102.0, 103.0])}, dims=('y', 'x'), attrs={'crs': 4326})  # noqa: E501
     to_geotiff(da, tiff)
-    _metadata_parity_write_single_source_vrt(tiff, vrt, width=4, height=4, dtype_xml='Float32', nodata=-9999.0, geo_transform='100.0, 1.0, 0.0, 200.0, 0.0, -1.0', srs=_WGS84_WKT)
+    _metadata_parity_write_single_source_vrt(tiff, vrt, width=4, height=4, dtype_xml='Float32', nodata=-9999.0, geo_transform='100.0, 1.0, 0.0, 200.0, 0.0, -1.0', srs=_WGS84_WKT)  # noqa: E501
     return vrt
 
 
@@ -1352,9 +1373,9 @@ def _metadata_parity_build_transform_only_vrt(tmp_path: pathlib.Path) -> str:
     tiff = str(tmp_path / 'tmp_2321_tonly_src.tif')
     vrt = str(tmp_path / 'tmp_2321_tonly.vrt')
     data = np.arange(16, dtype=np.float32).reshape(4, 4)
-    da = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([100.0, 101.0, 102.0, 103.0])}, dims=('y', 'x'))
+    da = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([100.0, 101.0, 102.0, 103.0])}, dims=('y', 'x'))  # noqa: E501
     to_geotiff(da, tiff)
-    _metadata_parity_write_single_source_vrt(tiff, vrt, width=4, height=4, dtype_xml='Float32', geo_transform='100.0, 1.0, 0.0, 200.0, 0.0, -1.0', srs=None)
+    _metadata_parity_write_single_source_vrt(tiff, vrt, width=4, height=4, dtype_xml='Float32', geo_transform='100.0, 1.0, 0.0, 200.0, 0.0, -1.0', srs=None)  # noqa: E501
     return vrt
 
 
@@ -1365,11 +1386,11 @@ def _metadata_parity_build_integer_with_nodata_vrt(tmp_path: pathlib.Path) -> st
     must promote to float64 with NaN-masked sentinel pixels in every
     backend and stamp ``attrs['masked_nodata']=True``.
     """
-    src_arr = np.array([[1, 2, 3, 4], [5, 6, 7, 65535], [9, 10, 11, 12], [13, 14, 15, 16]], dtype=np.uint16)
+    src_arr = np.array([[1, 2, 3, 4], [5, 6, 7, 65535], [9, 10, 11, 12], [13, 14, 15, 16]], dtype=np.uint16)  # noqa: E501
     tiff = str(tmp_path / 'tmp_2321_int_src.tif')
     vrt = str(tmp_path / 'tmp_2321_int.vrt')
     write(src_arr, tiff, nodata=65535, compression='none', tiled=False)
-    _metadata_parity_write_single_source_vrt(tiff, vrt, width=4, height=4, dtype_xml='UInt16', nodata=65535, geo_transform='0.0, 1.0, 0.0, 0.0, 0.0, -1.0', srs=_WGS84_WKT)
+    _metadata_parity_write_single_source_vrt(tiff, vrt, width=4, height=4, dtype_xml='UInt16', nodata=65535, geo_transform='0.0, 1.0, 0.0, 0.0, 0.0, -1.0', srs=_WGS84_WKT)  # noqa: E501
     return vrt
 
 
@@ -1407,7 +1428,7 @@ def _metadata_parity_read_gpu_eager(vrt_path: str):
     return read_vrt(vrt_path, gpu=True)
 
 
-_BACKENDS = [pytest.param('numpy', _metadata_parity_read_eager_numpy, id='numpy'), pytest.param('dask', _metadata_parity_read_dask, id='dask'), pytest.param('gpu', _metadata_parity_read_gpu_eager, id='gpu', marks=requires_gpu)]
+_BACKENDS = [pytest.param('numpy', _metadata_parity_read_eager_numpy, id='numpy'), pytest.param('dask', _metadata_parity_read_dask, id='dask'), pytest.param('gpu', _metadata_parity_read_gpu_eager, id='gpu', marks=requires_gpu)]  # noqa: E501
 
 
 def _metadata_parity_comparable_attrs(attrs: dict) -> dict:
@@ -1417,7 +1438,7 @@ def _metadata_parity_comparable_attrs(attrs: dict) -> dict:
     backend stamps a TIFF-specific key while another does not) and the
     representation-only keys (``crs_wkt``).
     """
-    return {k: v for k, v in attrs.items() if k not in _VRT_OMITTED_ATTR_KEYS and k not in _REPRESENTATION_KEYS and (k not in _BACKEND_LIFECYCLE_KEYS)}
+    return {k: v for k, v in attrs.items() if k not in _VRT_OMITTED_ATTR_KEYS and k not in _REPRESENTATION_KEYS and (k not in _BACKEND_LIFECYCLE_KEYS)}  # noqa: E501
 
 
 def _metadata_parity_to_numpy(arr) -> np.ndarray:
@@ -1456,9 +1477,9 @@ def test_full_georef_vrt_attrs_match_eager_numpy(tmp_path, _label, reader):
     cand_attrs = _metadata_parity_comparable_attrs(dict(candidate.attrs))
     base_keys = set(base_attrs)
     cand_keys = set(cand_attrs)
-    assert base_keys == cand_keys, f'Attr-key drift between numpy and {_label}: numpy-only={base_keys - cand_keys}, {_label}-only={cand_keys - base_keys}'
+    assert base_keys == cand_keys, f'Attr-key drift between numpy and {_label}: numpy-only={base_keys - cand_keys}, {_label}-only={cand_keys - base_keys}'  # noqa: E501
     differing = [k for k in base_keys if base_attrs[k] != cand_attrs[k]]
-    assert not differing, f'Attr value drift between numpy and {_label}: {[(k, base_attrs[k], cand_attrs[k]) for k in differing]}'
+    assert not differing, f'Attr value drift between numpy and {_label}: {[(k, base_attrs[k], cand_attrs[k]) for k in differing]}'  # noqa: E501
     for key in ('transform', 'crs', 'georef_status'):
         assert key in cand_attrs, f'{_label} backend missing required attr {key!r}'
     assert cand_attrs['georef_status'] == GEOREF_STATUS_FULL
@@ -1492,7 +1513,7 @@ def test_full_georef_vrt_coords_match_eager_numpy(tmp_path, _label, reader):
     vrt = _metadata_parity_build_full_georef_vrt(tmp_path)
     base = _metadata_parity_read_eager_numpy(vrt)
     cand = reader(vrt)
-    assert list(cand.dims) == list(base.dims), f'dim drift numpy vs {_label}: {base.dims} vs {cand.dims}'
+    assert list(cand.dims) == list(base.dims), f'dim drift numpy vs {_label}: {base.dims} vs {cand.dims}'  # noqa: E501
     for axis in ('y', 'x'):
         np.testing.assert_array_equal(np.asarray(cand[axis].values), np.asarray(base[axis].values))
 
@@ -1571,12 +1592,12 @@ def _metadata_parity_write_mixed_crs_vrt(tmp_path: pathlib.Path) -> str:
     src0 = tmp_path / 'tmp_2321_mix_crs_src0.tif'
     src1 = tmp_path / 'tmp_2321_mix_crs_src1.tif'
     data = np.arange(16, dtype=np.float32).reshape(4, 4)
-    da0 = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([100.0, 101.0, 102.0, 103.0])}, dims=('y', 'x'), attrs={'crs': 4326})
-    da1 = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([104.0, 105.0, 106.0, 107.0])}, dims=('y', 'x'), attrs={'crs': 32633})
+    da0 = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([100.0, 101.0, 102.0, 103.0])}, dims=('y', 'x'), attrs={'crs': 4326})  # noqa: E501
+    da1 = xr.DataArray(data, coords={'y': np.array([200.0, 199.0, 198.0, 197.0]), 'x': np.array([104.0, 105.0, 106.0, 107.0])}, dims=('y', 'x'), attrs={'crs': 32633})  # noqa: E501
     to_geotiff(da0, str(src0))
     to_geotiff(da1, str(src1))
     vrt_path = tmp_path / 'tmp_2321_mixed_crs.vrt'
-    vrt_xml = f'<VRTDataset rasterXSize="8" rasterYSize="4">\n  <GeoTransform>100.0, 1.0, 0.0, 200.0, 0.0, -1.0</GeoTransform>\n  <SRS>{_WGS84_WKT}</SRS>\n  <VRTRasterBand dataType="Float32" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="4" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="8" rasterYSize="4">\n  <GeoTransform>100.0, 1.0, 0.0, 200.0, 0.0, -1.0</GeoTransform>\n  <SRS>{_WGS84_WKT}</SRS>\n  <VRTRasterBand dataType="Float32" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="4" yOff="0" xSize="4" ySize="4"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path.write_text(vrt_xml)
     return str(vrt_path)
 
@@ -1611,12 +1632,12 @@ def _metadata_parity_write_mixed_nodata_vrt(tmp_path: pathlib.Path) -> str:
     write(b0_arr, str(p0), nodata=65535, compression='none', tiled=False)
     write(b1_arr, str(p1), nodata=65000, compression='none', tiled=False)
     vrt_path = tmp_path / 'tmp_2321_mix_nodata.vrt'
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <NoDataValue>65535</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="UInt16" band="2">\n    <NoDataValue>65000</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <NoDataValue>65535</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n  <VRTRasterBand dataType="UInt16" band="2">\n    <NoDataValue>65000</NoDataValue>\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path.write_text(vrt_xml)
     return str(vrt_path)
 
 
-@pytest.mark.parametrize('reader_label, reader', [('eager_numpy', _metadata_parity_read_eager_numpy), ('dask_chunks_2', _metadata_parity_read_dask_chunks_2)])
+@pytest.mark.parametrize('reader_label, reader', [('eager_numpy', _metadata_parity_read_eager_numpy), ('dask_chunks_2', _metadata_parity_read_dask_chunks_2)])  # noqa: E501
 def test_mixed_nodata_vrt_fails_closed_by_default(tmp_path, reader_label, reader):
     """Per-band disagreeing nodata raises ``MixedBandMetadataError``
     by default on every backend route.
@@ -1657,7 +1678,7 @@ def _metadata_parity_write_unsupported_resample_vrt(tmp_path: pathlib.Path) -> s
     src_path = tmp_path / 'tmp_2321_resample_src.tif'
     write(src_arr, str(src_path), compression='none', tiled=False)
     vrt_path = tmp_path / 'tmp_2321_unsupported_resample.vrt'
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <ResampleAlg>Bilinear</ResampleAlg>\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 2.0, 0.0, 0.0, 0.0, -2.0</GeoTransform>\n  <VRTRasterBand dataType="UInt16" band="1">\n    <ComplexSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <ResampleAlg>Bilinear</ResampleAlg>\n    </ComplexSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path.write_text(vrt_xml)
     return str(vrt_path)
 
@@ -1679,7 +1700,7 @@ def test_unsupported_resample_alg_raises(tmp_path):
         read_vrt(vrt)
 
 
-def _metadata_parity_write_bad_srcrect_vrt(tmp_path: pathlib.Path, *, x_size: int=-50) -> str:
+def _metadata_parity_write_bad_srcrect_vrt(tmp_path: pathlib.Path, *, x_size: int = -50) -> str:
     """VRT with a negative-size ``<SrcRect>``.
 
     See #1784: the validator must reject this up front rather than
@@ -1689,7 +1710,7 @@ def _metadata_parity_write_bad_srcrect_vrt(tmp_path: pathlib.Path, *, x_size: in
     src_path = tmp_path / 'tmp_2321_bad_srcrect_src.tif'
     to_geotiff(src_arr, str(src_path), compression='none')
     vrt_path = tmp_path / 'tmp_2321_bad_srcrect.vrt'
-    vrt_xml = f'<VRTDataset rasterXSize="100" rasterYSize="100">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{x_size}" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="100" rasterYSize="100">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="{x_size}" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path.write_text(vrt_xml)
     return str(vrt_path)
 
@@ -1704,7 +1725,7 @@ def test_negative_srcrect_size_rejected(tmp_path):
         read_vrt(vrt)
 
 
-def _metadata_parity_write_bad_dstrect_vrt(tmp_path: pathlib.Path, *, x_size: int=-10) -> str:
+def _metadata_parity_write_bad_dstrect_vrt(tmp_path: pathlib.Path, *, x_size: int = -10) -> str:
     """VRT with a negative-size ``<DstRect>`` for the negative test.
 
     Mirrors the DstRect rejection added for #1737; the regression
@@ -1715,7 +1736,7 @@ def _metadata_parity_write_bad_dstrect_vrt(tmp_path: pathlib.Path, *, x_size: in
     src_path = tmp_path / 'tmp_2321_bad_dstrect_src.tif'
     to_geotiff(src_arr, str(src_path), compression='none')
     vrt_path = tmp_path / 'tmp_2321_bad_dstrect.vrt'
-    vrt_xml = f'<VRTDataset rasterXSize="100" rasterYSize="100">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="{x_size}" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="100" rasterYSize="100">\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="10" ySize="10"/>\n      <DstRect xOff="0" yOff="0" xSize="{x_size}" ySize="10"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path.write_text(vrt_xml)
     return str(vrt_path)
 
@@ -1736,7 +1757,7 @@ def test_negative_dstrect_size_rejected(tmp_path):
         read_vrt(vrt)
 
 
-def _metadata_parity_write_missing_source_vrt(tmp_path: pathlib.Path, *, name: str='tmp_2321_missing.vrt') -> str:
+def _metadata_parity_write_missing_source_vrt(tmp_path: pathlib.Path, *, name: str = 'tmp_2321_missing.vrt') -> str:  # noqa: E501
     """VRT pointing at a single source path that does not exist.
 
     The dispatcher's static missing-source sweep (#2265) raises at
@@ -1745,7 +1766,7 @@ def _metadata_parity_write_missing_source_vrt(tmp_path: pathlib.Path, *, name: s
     """
     vrt_path = tmp_path / name
     missing = tmp_path / 'tmp_2321_missing_src.tif'
-    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{missing}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'
+    vrt_xml = f'<VRTDataset rasterXSize="2" rasterYSize="2">\n  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n  <VRTRasterBand dataType="Byte" band="1">\n    <SimpleSource>\n      <SourceFilename relativeToVRT="0">{missing}</SourceFilename>\n      <SourceBand>1</SourceBand>\n      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n    </SimpleSource>\n  </VRTRasterBand>\n</VRTDataset>\n'  # noqa: E501
     vrt_path.write_text(vrt_xml)
     assert not os.path.exists(str(missing)), 'fixture leak: missing-source path exists on disk'
     return str(vrt_path)
@@ -1792,6 +1813,6 @@ def test_missing_sources_warn_records_holes(tmp_path):
     assert 'vrt_holes' in result.attrs, "missing_sources='warn' did not stamp attrs['vrt_holes']"
     holes = result.attrs['vrt_holes']
     assert len(holes) == 1
-    assert isinstance(holes[0], dict), f'vrt_holes entry type drifted: {type(holes[0]).__name__}; #1734 documents a dict shape'
+    assert isinstance(holes[0], dict), f'vrt_holes entry type drifted: {type(holes[0]).__name__}; #1734 documents a dict shape'  # noqa: E501
     hole_source = holes[0]['source']
     assert 'tmp_2321_missing_src.tif' in hole_source, f'hole source path drifted: {hole_source!r}'

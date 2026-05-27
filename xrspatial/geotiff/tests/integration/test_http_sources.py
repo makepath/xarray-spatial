@@ -13,28 +13,32 @@ import http.server
 import inspect
 import io
 import math
-import numpy as np
-import pytest
 import socket
 import socketserver
 import struct
 import threading
 import time
+
+import numpy as np
+import pytest
 import xarray as xr
+
 from xrspatial.geotiff import UnsafeURLError
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import _sources as _sources_mod
-from xrspatial.geotiff import (open_geotiff, read_geotiff_dask,
-                               read_geotiff_gpu, read_vrt, to_geotiff,
-                               write_geotiff_gpu, write_vrt)
+from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
+                               to_geotiff, write_geotiff_gpu, write_vrt)
 from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._reader import CloudSizeLimitError, INITIAL_HTTP_HEADER_BYTES, MAX_HTTP_HEADER_BYTES, PixelSafetyLimitError, _FULL_IMAGE_BUDGET_HEADER_SLACK, _HTTPSource, _compute_full_image_byte_budget, _parse_cog_http_meta, _read_cog_http, coalesce_ranges, read_to_array, split_coalesced_bytes
+from xrspatial.geotiff._reader import (_FULL_IMAGE_BUDGET_HEADER_SLACK, INITIAL_HTTP_HEADER_BYTES,
+                                       MAX_HTTP_HEADER_BYTES, CloudSizeLimitError,
+                                       PixelSafetyLimitError, _compute_full_image_byte_budget,
+                                       _HTTPSource, _parse_cog_http_meta, _read_cog_http,
+                                       coalesce_ranges, read_to_array, split_coalesced_bytes)
 from xrspatial.geotiff._sidecar import _is_http_url as _sidecar_is_http_url
 from xrspatial.geotiff._sources import MAX_COALESCED_RANGE_BYTES_DEFAULT
 from xrspatial.geotiff._writer import _is_fsspec_uri as _writer_is_fsspec_uri
 from xrspatial.geotiff._writer import write
-
 from xrspatial.geotiff.tests._helpers.markers import requires_gpu, requires_loopback
 
 pytestmark = requires_loopback
@@ -347,6 +351,8 @@ def test_open_geotiff_http_negative_band_rejected(multi_band_cog_http_band_valid
 # Section: http_cog_coalesce
 # Source: test_http_cog_coalesce.py
 # ----------------------------------------------------------
+
+
 def test_coalesce_empty_input():
     merged, mapping = coalesce_ranges([])
     assert merged == []
@@ -472,11 +478,14 @@ def test_coalesce_cap_round_trips_bytes():
         assert tile == payload[off:off + length]
 
 
-def test_coalesce_default_cap_bounds_adversarial_input():
+def test_coalesce_default_cap_bounds_adversarial_input_simple():
     # The motivating scenario from issue #2266: 4096 tiles, each 1 KB,
     # with offsets spaced 1 MiB apart. Without the cap this collapses
     # into one ~4 GiB merged range. With the default cap nothing
     # exceeds MAX_COALESCED_RANGE_BYTES_DEFAULT.
+    # (See test_coalesce_default_cap_bounds_adversarial_input for the
+    # http-cog-range-contract variant that also exercises the loopback
+    # fixtures; this version is the pure-coalescer unit case.)
     from xrspatial.geotiff._sources import MAX_COALESCED_RANGE_BYTES_DEFAULT
 
     one_mib = 1 << 20
@@ -731,6 +740,8 @@ def test_dask_http_parses_ifds_once(small_cog_bytes_http_cog_coalesce, monkeypat
 # Section: http_cog_range_contract
 # Source: test_http_cog_range_contract_2286.py
 # ----------------------------------------------------------
+
+
 @pytest.fixture()
 def _no_sidecar_probe_http_cog_range_contract(monkeypatch):
     from xrspatial.geotiff import _sidecar as _sidecar_mod
@@ -901,7 +912,7 @@ def multiband_chunky_cog_http_cog_range_contract(tmp_path):
 # 1. Windowed reads fetch only intersecting tiles -- bounded bytes + ranges
 # ===========================================================================
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_windowed_tile_read_bounded_bytes_and_range_count(
         small_tiled_cog_http_cog_range_contract, monkeypatch):
     """A 32x32 window aligned to one tile fetches a single tile's bytes,
@@ -947,7 +958,7 @@ def test_windowed_tile_read_bounded_bytes_and_range_count(
         f"the expected header + single-tile budget")
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_windowed_multi_tile_read_range_count_bounded(
         small_tiled_cog_http_cog_range_contract, monkeypatch):
     """A window that touches 2x2=4 tiles must not fetch all 64 tiles
@@ -984,7 +995,7 @@ def test_windowed_multi_tile_read_range_count_bounded(
 # 2. Overview reads fetch overview IFD bytes, not full-res
 # ===========================================================================
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_overview_read_does_not_fetch_full_resolution_pixels(
         cog_with_overviews_http_cog_range_contract, monkeypatch):
     """An ``overview_level=1`` read must pull the overview IFD's tiles,
@@ -1031,7 +1042,7 @@ def test_overview_read_does_not_fetch_full_resolution_pixels(
 # 3. ``band=`` on multi-band COGs returns correct pixels with bounded reads
 # ===========================================================================
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_band_selection_multiband_chunky_bounded_reads(
         multiband_chunky_cog_http_cog_range_contract, monkeypatch):
     """Per-band reads of a planar=1 chunky COG must return the right
@@ -1064,7 +1075,7 @@ def test_band_selection_multiband_chunky_bounded_reads(
         f"byte budget plus a small header slack")
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_band_selection_with_window_bounded_range_count(
         multiband_chunky_cog_http_cog_range_contract, monkeypatch):
     """``window=`` + ``band=`` on a multi-band COG: pixels match the
@@ -1094,7 +1105,7 @@ def test_band_selection_with_window_bounded_range_count(
 # 4. Dask COG reads parse metadata once per graph, not per chunk task
 # ===========================================================================
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_dask_read_parses_ifds_once_across_chunks(
         small_tiled_cog_http_cog_range_contract, monkeypatch):
     """An N-chunk dask graph must trigger at most one IFD-header GET
@@ -1140,7 +1151,7 @@ def test_dask_read_parses_ifds_once_across_chunks(
         f"Per-chunk header parsing would have produced ~{n_chunks}.")
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_dask_header_gets_independent_of_chunk_count(
         small_tiled_cog_http_cog_range_contract, monkeypatch):
     """Doubling chunk count must not double header GETs (O(1) in chunks).
@@ -1215,7 +1226,7 @@ class _CloseCountingSource_http_cog_range_contract(_HTTPSource):
             self.close_count += 1
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_truncated_cog_closes_http_source(monkeypatch):
     """A truncated buffer must surface a clear exception and still
     close the HTTP source on the way out.
@@ -1238,7 +1249,7 @@ def test_truncated_cog_closes_http_source(monkeypatch):
         f"close_count={src.close_count}")
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_malformed_ifd_chain_closes_http_source(monkeypatch):
     """A file with a well-formed TIFF header but an IFD chain that
     points past the buffer raises a ``ValueError`` and still closes
@@ -1263,7 +1274,7 @@ def test_malformed_ifd_chain_closes_http_source(monkeypatch):
         f"close_count={src.close_count}")
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_short_body_during_pixel_fetch_closes_source(
         small_tiled_cog_http_cog_range_contract, monkeypatch):
     """Header parses fine; the first pixel GET returns truncated bytes.
@@ -1372,7 +1383,7 @@ def test_short_body_during_pixel_fetch_closes_source(
 # 6. Coalescing bounded by the configured max-merged-range size
 # ===========================================================================
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_coalesce_does_not_silently_exceed_explicit_cap():
     """``coalesce_ranges`` must respect the explicit cap kwarg.
 
@@ -1395,7 +1406,7 @@ def test_coalesce_does_not_silently_exceed_explicit_cap():
     assert len(mapping) == len(ranges)
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_coalesce_default_cap_bounds_adversarial_input():
     """The default cap must bound an adversarial 'thousands of tiles
     spaced 1 MiB apart' input.
@@ -1414,7 +1425,7 @@ def test_coalesce_default_cap_bounds_adversarial_input():
             f"contract is broken")
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_coalesced_get_size_capped_on_real_http_source():
     """The real ``_HTTPSource`` ``read_ranges_coalesced`` path must
     propagate the cap through to the wire-level GETs.
@@ -1449,7 +1460,7 @@ def test_coalesced_get_size_capped_on_real_http_source():
     assert len(src.calls) >= 2
 
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_split_coalesced_bytes_round_trips_under_cap():
     """When the cap forces a split, ``split_coalesced_bytes`` still
     recovers every original byte range. The cap must not silently
@@ -1475,7 +1486,7 @@ def test_split_coalesced_bytes_round_trips_under_cap():
 # bounded contract holds when the bytes really do cross a socket.
 # ===========================================================================
 
-@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')
+@pytest.mark.usefixtures('_no_sidecar_probe_http_cog_range_contract', '_allow_loopback_http_cog_range_contract')  # noqa: E501
 def test_loopback_end_to_end_windowed_byte_budget(small_tiled_cog_http_cog_range_contract):
     """End-to-end through the real loopback server: a windowed read
     returns the right pixels and the total payload returned across all
@@ -1540,6 +1551,8 @@ def test_loopback_end_to_end_windowed_byte_budget(small_tiled_cog_http_cog_range
 # Section: http_dask_allow_rotated
 # Source: test_http_dask_allow_rotated_2130.py
 # ----------------------------------------------------------
+
+
 tifffile_http_dask_allow_rotated = pytest.importorskip("tifffile")
 
 
@@ -1655,6 +1668,8 @@ def test_http_dask_rotated_allow_rotated_reads(tmp_path, monkeypatch):
 # Section: http_dask_orientation
 # Source: test_http_dask_orientation_1794.py
 # ----------------------------------------------------------
+
+
 tifffile_http_dask_orientation = pytest.importorskip("tifffile")
 
 
@@ -1728,6 +1743,8 @@ def test_http_dask_read_rejects_non_default_orientation(tmp_path, monkeypatch):
 # Section: http_meta_buffer
 # Source: test_http_meta_buffer_1718.py
 # ----------------------------------------------------------
+
+
 class _InMemoryHTTPSource_http_meta_buffer(_HTTPSource):
     """_HTTPSource backed by an in-memory bytes buffer.
 
@@ -1789,8 +1806,8 @@ def _serve_http_meta_buffer(payload: bytes):
     return httpd, thread
 
 
-def _write_cog_with_big_metadata_http_meta_buffer(path: str, arr: np.ndarray,
-                                 metadata_pad_bytes: int) -> None:
+def _write_cog_with_big_metadata_http_meta_buffer(
+        path: str, arr: np.ndarray, metadata_pad_bytes: int) -> None:
     """Write a multi-overview COG whose level-0 IFD carries a huge
     GDAL_METADATA tag, pushing the chained overview IFDs past 64 KiB."""
     # GDAL_METADATA is stored as an out-of-line ASCII tag value when
@@ -1961,6 +1978,8 @@ def test_cap_raises_clear_error_on_excessive_chain(monkeypatch):
 # Section: http_no_stdlib_fallback
 # Source: test_http_no_stdlib_fallback_2050.py
 # ----------------------------------------------------------
+
+
 def test_urllib3_is_importable():
     """urllib3 is in install_requires; importing the module must work."""
     import urllib3  # noqa: F401
@@ -2114,7 +2133,7 @@ def test_read_all_uses_urllib3_pool(monkeypatch):
         socket, 'getaddrinfo', _fake_getaddrinfo_http_no_stdlib_fallback('93.184.216.34'))
     src = _reader_mod._HTTPSource('https://example.com/cog.tif')
     body = b'tiff-bytes'
-    pool = _MockPool_http_no_stdlib_fallback(_MockResp_http_no_stdlib_fallback(status=200, data=body))
+    pool = _MockPool_http_no_stdlib_fallback(_MockResp_http_no_stdlib_fallback(status=200, data=body))  # noqa: E501
     src._pool = pool
 
     data = src.read_all()
@@ -2127,7 +2146,7 @@ def test_read_range_short_circuits_zero_length(monkeypatch):
     monkeypatch.setattr(
         socket, 'getaddrinfo', _fake_getaddrinfo_http_no_stdlib_fallback('93.184.216.34'))
     src = _reader_mod._HTTPSource('https://example.com/cog.tif')
-    pool = _MockPool_http_no_stdlib_fallback(_MockResp_http_no_stdlib_fallback(status=206, data=b''))
+    pool = _MockPool_http_no_stdlib_fallback(_MockResp_http_no_stdlib_fallback(status=206, data=b''))  # noqa: E501
     src._pool = pool
 
     assert src.read_range(0, 0) == b''
@@ -2173,6 +2192,8 @@ def test_install_requires_lists_urllib3():
 # Section: http_orientation
 # Source: test_http_orientation_1717.py
 # ----------------------------------------------------------
+
+
 tifffile_http_orientation = pytest.importorskip("tifffile")
 
 
@@ -2325,6 +2346,8 @@ def test_http_default_orientation_still_works(tmp_path, _allow_loopback_http_ori
 # Section: http_range_validation
 # Source: test_http_range_validation_1735.py
 # ----------------------------------------------------------
+
+
 class _BaseHandler_http_range_validation(http.server.BaseHTTPRequestHandler):
     payload: bytes = b'0' * 64
 
@@ -2694,6 +2717,8 @@ def test_range_request_uses_streaming_response(monkeypatch):
 # Section: http_read_all_bounded
 # Source: test_http_read_all_bounded_2051.py
 # ----------------------------------------------------------
+
+
 class _BaseHandler_http_read_all_bounded(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''
     # Subclasses override these to fake misbehaviour.
@@ -2999,6 +3024,8 @@ def test_full_image_http_read_rejects_padded_body(tmp_path):
 # Section: http_scheme_case
 # Source: test_http_scheme_case_2321.py
 # ----------------------------------------------------------
+
+
 def _fake_getaddrinfo_http_scheme_case(ip: str):
     def _resolver(host, port, *args, **kwargs):
         if ':' in ip:
@@ -3275,6 +3302,8 @@ class TestWriterRejectsHttpTargets_http_scheme_case:
 # Section: http_stripped_window_max_pixels
 # Source: test_http_stripped_window_max_pixels_issue_A_1842.py
 # ----------------------------------------------------------
+
+
 @pytest.fixture()
 def _no_sidecar_probe_http_stripped_window_max_pixels(monkeypatch):
     """Pin the byte-range assertions against the no-sidecar path.
@@ -3544,7 +3573,7 @@ def test_windowed_strip_byte_cap_skips_unrelated_oversized_strip(
         # actual on-disk bytes are untouched; the windowed path never
         # reads them, so the test only exercises the metadata guard.
         poison_idx = n_strips - 1
-        _poison_strip_byte_count_http_stripped_window_max_pixels(ifd, poison_idx, max_tile_bytes * 4)
+        _poison_strip_byte_count_http_stripped_window_max_pixels(ifd, poison_idx, max_tile_bytes * 4)  # noqa: E501
         poison_target['idx'] = poison_idx
         return result
 
@@ -3625,6 +3654,8 @@ def test_windowed_strip_decoded_dim_guard_rejects_oversized_strip(
 # Section: http_window_band_planar
 # Source: test_http_window_band_planar_1669.py
 # ----------------------------------------------------------
+
+
 class _RangeHandler_http_window_band_planar(http.server.BaseHTTPRequestHandler):
     """Serve a single in-memory bytes payload with HTTP Range support."""
 
@@ -4191,7 +4222,7 @@ def test_http_window_on_oriented_tiff_rejected(tmp_path):
     # Orientation 2 = horizontal flip. Any non-default value triggers
     # the guard; pick 2 to mirror ``test_orientation_with_window_raises``
     # in ``test_orientation.py``.
-    payload = _make_oriented_tiff_http_window_band_planar(width=6, height=4, orientation=2, data=arr)
+    payload = _make_oriented_tiff_http_window_band_planar(width=6, height=4, orientation=2, data=arr)  # noqa: E501
 
     # Sanity check: the file decodes (without a window) and the local
     # path rejects window= on it. If either of these break, the parity
@@ -4217,6 +4248,8 @@ def test_http_window_on_oriented_tiff_rejected(tmp_path):
 # Section: cog_http_close_on_error
 # Source: test_cog_http_close_on_error_1816.py
 # ----------------------------------------------------------
+
+
 class _RangeHandler_cog_http_close_on_error(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''
 
@@ -4346,7 +4379,7 @@ def single_band_cog_cog_http_close_on_error(tmp_path):
 # Happy path: close called exactly once after full post-processing.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.usefixtures('_allow_loopback_cog_http_close_on_error', '_no_sidecar_probe_cog_http_close_on_error')
+@pytest.mark.usefixtures('_allow_loopback_cog_http_close_on_error', '_no_sidecar_probe_cog_http_close_on_error')  # noqa: E501
 def test_http_source_closed_on_success(single_band_cog_cog_http_close_on_error, monkeypatch):
     """A successful ``_read_cog_http`` closes the source exactly once.
 
@@ -4372,7 +4405,7 @@ def test_http_source_closed_on_success(single_band_cog_cog_http_close_on_error, 
 # Failure path: tile fetch raises, source still closed.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.usefixtures('_allow_loopback_cog_http_close_on_error', '_no_sidecar_probe_cog_http_close_on_error')
+@pytest.mark.usefixtures('_allow_loopback_cog_http_close_on_error', '_no_sidecar_probe_cog_http_close_on_error')  # noqa: E501
 def test_http_source_closed_when_tile_fetch_raises(
     single_band_cog_cog_http_close_on_error, monkeypatch,
 ):
@@ -4407,7 +4440,7 @@ def test_http_source_closed_when_tile_fetch_raises(
 # Failure path: post-processing (orientation) raises, source still closed.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.usefixtures('_allow_loopback_cog_http_close_on_error', '_no_sidecar_probe_cog_http_close_on_error')
+@pytest.mark.usefixtures('_allow_loopback_cog_http_close_on_error', '_no_sidecar_probe_cog_http_close_on_error')  # noqa: E501
 def test_http_source_closed_when_post_processing_raises(
     single_band_cog_cog_http_close_on_error, monkeypatch,
 ):
@@ -4438,6 +4471,8 @@ def test_http_source_closed_when_post_processing_raises(
 # Section: cog_http_concurrent
 # Source: test_cog_http_concurrent.py
 # ----------------------------------------------------------
+
+
 class _FakeHTTPSource_cog_http_concurrent(_HTTPSource):
     """_HTTPSource that fakes read_range with a configurable sleep.
 
@@ -4607,6 +4642,8 @@ def test_read_to_array_dispatches_to_http(cog_http_server_cog_http_concurrent):
 # Section: cog_http_parallel_decode
 # Source: test_cog_http_parallel_decode_2026_05_15.py
 # ----------------------------------------------------------
+
+
 class _RangeHandler_cog_http_parallel_decode(http.server.BaseHTTPRequestHandler):
     payload: bytes = b''
 
@@ -4712,7 +4749,7 @@ def test_serial_decode_matches_reference(cog_http_url_small_tiles_cog_http_paral
 # Branch selection: parallel pool is used when threshold is met, not otherwise
 # ---------------------------------------------------------------------------
 
-def test_parallel_pool_used_above_threshold(monkeypatch, cog_http_url_large_tiles_cog_http_parallel_decode):
+def test_parallel_pool_used_above_threshold(monkeypatch, cog_http_url_large_tiles_cog_http_parallel_decode):  # noqa: E501
     """When tile_pixels >= 64K and n_tiles > 1, a ThreadPoolExecutor is created.
 
     Instrument the module-level ``ThreadPoolExecutor`` symbol resolution
@@ -4748,7 +4785,7 @@ def test_parallel_pool_used_above_threshold(monkeypatch, cog_http_url_large_tile
     )
 
 
-def test_serial_path_below_threshold(monkeypatch, cog_http_url_small_tiles_cog_http_parallel_decode):
+def test_serial_path_below_threshold(monkeypatch, cog_http_url_small_tiles_cog_http_parallel_decode):  # noqa: E501
     """When tile_pixels < 64K, no ThreadPoolExecutor is used for decode.
 
     The fetch path may still create its own pool for HTTP range
@@ -4821,13 +4858,13 @@ def test_each_tile_decoded_once(monkeypatch, cog_http_url_large_tiles_cog_http_p
 # Section: cloud_read_byte_limit
 # Source: test_cloud_read_byte_limit_1928.py
 # ----------------------------------------------------------
+
+
 fsspec_cloud_read_byte_limit = pytest.importorskip("fsspec")
 
-from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
 from xrspatial.geotiff._reader import _MAX_CLOUD_BYTES_SENTINEL  # noqa: E402
 from xrspatial.geotiff._reader import MAX_CLOUD_BYTES_DEFAULT  # noqa: E402
-from xrspatial.geotiff._reader import (CloudSizeLimitError, _resolve_max_cloud_bytes,  # noqa: E402
-                                       read_to_array)
+from xrspatial.geotiff._reader import _resolve_max_cloud_bytes  # noqa: E402
 
 
 def _put_in_memory_fs_cloud_read_byte_limit(path: str, payload: bytes) -> None:
@@ -5003,6 +5040,8 @@ class TestCloudByteLimit_cloud_read_byte_limit:
 # ``socket.getaddrinfo`` is monkeypatched per-test to control what the
 # validator sees.
 # ----------------------------------------------------------
+
+
 def _fake_getaddrinfo_ssrf_1664(ip: str):
     """Return a getaddrinfo replacement that always resolves to *ip*.
 

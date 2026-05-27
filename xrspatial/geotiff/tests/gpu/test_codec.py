@@ -1593,27 +1593,13 @@ def test_swap_byte_lanes_cupy_uint8_noop_1517():
 
 from xrspatial.geotiff._compression import COMPRESSION_NONE  # noqa: E402
 from xrspatial.geotiff._dtypes import LONG, SHORT, numpy_to_tiff_dtype  # noqa: E402
-from xrspatial.geotiff._header import (  # noqa: E402
-    TAG_BITS_PER_SAMPLE,
-    TAG_COMPRESSION,
-    TAG_IMAGE_LENGTH,
-    TAG_IMAGE_WIDTH,
-    TAG_PHOTOMETRIC,
-    TAG_PREDICTOR,
-    TAG_ROWS_PER_STRIP,
-    TAG_SAMPLE_FORMAT,
-    TAG_SAMPLES_PER_PIXEL,
-    TAG_STRIP_BYTE_COUNTS,
-    TAG_STRIP_OFFSETS,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_TILE_LENGTH,
-    TAG_TILE_OFFSETS,
-    TAG_TILE_WIDTH,
-)
-from xrspatial.geotiff._writer import (  # noqa: E402
-    _assemble_standard_layout,
-    _write_stripped,
-)
+from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION,  # noqa: E402
+                                       TAG_IMAGE_LENGTH, TAG_IMAGE_WIDTH, TAG_PHOTOMETRIC,
+                                       TAG_PREDICTOR, TAG_ROWS_PER_STRIP, TAG_SAMPLE_FORMAT,
+                                       TAG_SAMPLES_PER_PIXEL, TAG_STRIP_BYTE_COUNTS,
+                                       TAG_STRIP_OFFSETS, TAG_TILE_BYTE_COUNTS, TAG_TILE_LENGTH,
+                                       TAG_TILE_OFFSETS, TAG_TILE_WIDTH)
+from xrspatial.geotiff._writer import _assemble_standard_layout, _write_stripped  # noqa: E402
 
 
 def _build_predictor3_uint32_stripped_tiff_1933(arr: np.ndarray) -> bytes:

@@ -42,11 +42,8 @@ from xrspatial.geotiff import _decode as _decode_mod
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
 from xrspatial.geotiff._compression import unpack_bits
-from xrspatial.geotiff._dtypes import (
-    resolve_bits_per_sample,
-    resolve_sample_format,
-    tiff_dtype_to_numpy,
-)
+from xrspatial.geotiff._dtypes import (resolve_bits_per_sample, resolve_sample_format,
+                                       tiff_dtype_to_numpy)
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._reader import read_to_array
 
@@ -54,7 +51,6 @@ from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.markers import requires_loopback
 from .._helpers.tiff_builders import make_minimal_tiff
 from .._helpers.tiff_surgery import patch_byte_counts as _patch_byte_counts
-
 
 # ---------------------------------------------------------------------------
 # Section 1 helpers: forged tiled / stripped tiffs for byte-cap tests

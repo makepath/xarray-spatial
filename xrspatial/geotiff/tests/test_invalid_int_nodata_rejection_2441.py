@@ -114,8 +114,9 @@ def test_open_geotiff_float_dtype_nan_nodata_still_allowed(tmp_path):
     """Float-dtype sources with NaN ``GDAL_NODATA`` are the normal case
     and must not raise. NaN matches NaN, masking proceeds.
     """
-    from xrspatial.geotiff import to_geotiff
     import xarray as xr
+
+    from xrspatial.geotiff import to_geotiff
 
     arr = np.array([[1.0, 2.0], [np.nan, 4.0]], dtype=np.float32)
     da = xr.DataArray(

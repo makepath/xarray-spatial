@@ -28,11 +28,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.geotiff import (RotatedTransformError, UnsupportedGeoTIFFFeatureError, open_geotiff,
+                               to_geotiff)
 from xrspatial.geotiff._errors import VRTUnsupportedError
-from xrspatial.geotiff import (RotatedTransformError, UnsupportedGeoTIFFFeatureError,
-                               open_geotiff, to_geotiff)
 from xrspatial.geotiff._vrt import parse_vrt, write_vrt
-
 
 # ---------------------------------------------------------------------------
 # VRT parse-time gates: subClass, derived raster bands, unknown band children.

@@ -18,16 +18,15 @@ collision-free.
 from __future__ import annotations
 
 import struct
-import warnings
 
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataError,
-                               MixedBandMetadataError, open_geotiff, read_geotiff_dask, read_vrt,
-                               to_geotiff)
+                               MixedBandMetadataError)
 from xrspatial.geotiff import _validation as _validation_mod
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt, to_geotiff
 from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, attrs_to_metadata,
                                       geo_info_to_metadata, metadata_to_attrs)
 from xrspatial.geotiff._errors import (ConflictingNodataError, InvalidCRSCodeError,
@@ -42,7 +41,6 @@ from xrspatial.geotiff._validation import (_registered_read_metadata_checks,
                                            unregister_write_metadata_check, validate_read_metadata,
                                            validate_write_metadata)
 from xrspatial.geotiff._writer import write
-
 
 # =============================================================================
 # Section: Ambiguous metadata hooks (#1987 PR 0)

@@ -19,7 +19,6 @@ from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, VRTStableSourcesOn
                                open_geotiff, read_geotiff_dask, read_vrt)
 from xrspatial.geotiff._errors import VRTUnsupportedError
 
-
 _MINIMAL_VRT_XML = '<VRTDataset rasterXSize="2" rasterYSize="2"></VRTDataset>\n'
 
 

@@ -40,16 +40,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    open_geotiff,
-    read_geotiff_dask,
-    read_vrt,
-    to_geotiff,
-)
-from xrspatial.geotiff._attrs import (
-    _finalize_lazy_read_attrs,
-    _validate_read_geo_info,
-)
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt, to_geotiff
+from xrspatial.geotiff._attrs import _finalize_lazy_read_attrs, _validate_read_geo_info
 from xrspatial.geotiff._backends import _gpu_helpers
 from xrspatial.geotiff._errors import MixedBandMetadataError
 from xrspatial.geotiff._nodata import NodataLifecycle

@@ -32,24 +32,15 @@ import xarray as xr
 
 from xrspatial.geotiff import _writer as writer_mod
 from xrspatial.geotiff import open_geotiff, to_geotiff
-from xrspatial.geotiff._compression import (
-    _HAVE_LIBDEFLATE,
-    COMPRESSION_DEFLATE,
-    COMPRESSION_NONE,
-    deflate_compress,
-)
+from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLATE, COMPRESSION_NONE,
+                                            deflate_compress)
 from xrspatial.geotiff._reader import read_to_array
-from xrspatial.geotiff._writer import (
-    _PARALLEL_MIN_BYTES,
-    _write_stripped,
-    _write_tiled,
-    write,
-)
-
+from xrspatial.geotiff._writer import _PARALLEL_MIN_BYTES, _write_stripped, _write_tiled, write
 
 # -------------------------------------------------------------------------
 # Section: parallel strip / tile writer (#1800)
 # -------------------------------------------------------------------------
+
 
 def _make_data_1800(h, w, dtype=np.float32, pattern='gradient'):
     """Reproducible array used across the parallel-writer tests."""

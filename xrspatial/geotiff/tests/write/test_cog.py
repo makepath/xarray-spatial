@@ -11,32 +11,35 @@ Tests-only restructure for epic #2390.
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
-import xarray as xr
-from .._helpers.markers import gpu_available, requires_loopback
-import os
+import contextlib
+import http.server
 import importlib.util
 import io
-import http.server
+import os
 import pathlib
+import signal
 import socketserver
 import threading
 import uuid
 import warnings
-import contextlib
-import signal
+
+import numpy as np
+import pytest
+import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._errors import ConflictingCRSError
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
-from xrspatial.geotiff._writer import write, write as _array_write
+from xrspatial.geotiff._writer import write
+from xrspatial.geotiff._writer import write as _array_write
 
+from .._helpers.markers import gpu_available, requires_loopback
 
 # -------------------------------------------------------------------------
 # Section: COG writer (public API)
 # -------------------------------------------------------------------------
+
 
 class TestCOGWriter:
     def test_cog_layout_ifds_before_data(self, tmp_path):
@@ -1400,10 +1403,10 @@ def test_crs_kwarg_overrides_attrs_silently(tmp_path):
 # -------------------------------------------------------------------------
 
 
-
 # ---------------------------------------------------------------------------
 # Environment gating
 # ---------------------------------------------------------------------------
+
 
 _HAS_DASK = importlib.util.find_spec("dask") is not None
 
@@ -2134,12 +2137,12 @@ def _alarm_timeout(seconds: int):
         signal.signal(signal.SIGALRM, old)
 
 
-
 # ---------------------------------------------------------------------------
 # Public boundary: ``to_geotiff(..., cog=True, tile_size<=0)`` must raise.
 # Covers both tiled=True and tiled=False, plus 0 and a negative value, so
 # the validator gate stays on regardless of layout flag.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize('tiled', [True, False])
 @pytest.mark.parametrize('tile_size', [-1, 0])

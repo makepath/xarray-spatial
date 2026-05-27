@@ -45,24 +45,20 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (NonUniformCoordsError, _coords_to_transform,
-                               open_geotiff, to_geotiff)
+from xrspatial.geotiff import NonUniformCoordsError, _coords_to_transform, open_geotiff, to_geotiff
 from xrspatial.geotiff._coords import (_has_no_georef_marker, coords_from_geo_info,
                                        coords_from_pixel_geometry,
                                        transform_tuple_from_pixel_geometry)
 from xrspatial.geotiff._dtypes import RATIONAL, SRATIONAL
-from xrspatial.geotiff._geotags import (RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT,
+from xrspatial.geotiff._geotags import (_NO_GEOREF_KEY, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT,
                                         TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
-                                        TAG_MODEL_TRANSFORMATION, GeoTransform,
-                                        _NO_GEOREF_KEY, _extract_transform,
+                                        TAG_MODEL_TRANSFORMATION, GeoTransform, _extract_transform,
                                         _validate_tiepoint_consistency)
-from xrspatial.geotiff._header import (TAG_X_RESOLUTION, TAG_Y_RESOLUTION, IFD,
-                                       IFDEntry, parse_all_ifds, parse_header)
-from xrspatial.geotiff._runtime import (_X_DIM_NAMES, _Y_DIM_NAMES,
-                                        _resolve_spatial_coords)
+from xrspatial.geotiff._header import (IFD, TAG_X_RESOLUTION, TAG_Y_RESOLUTION, IFDEntry,
+                                       parse_all_ifds, parse_header)
+from xrspatial.geotiff._runtime import _X_DIM_NAMES, _Y_DIM_NAMES, _resolve_spatial_coords
 
 from ..conftest import requires_gpu, requires_integration
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

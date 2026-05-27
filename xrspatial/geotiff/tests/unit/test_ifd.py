@@ -46,18 +46,9 @@ from xrspatial.geotiff import _header
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._dtypes import DOUBLE, LONG, SHORT
-from xrspatial.geotiff._header import (
-    MAX_IFD_ENTRY_BYTES,
-    MAX_IFD_ENTRY_COUNT,
-    MAX_IFDS,
-    TAG_IMAGE_WIDTH,
-    TAG_TILE_BYTE_COUNTS,
-    TAG_TILE_OFFSETS,
-    TIFFHeader,
-    parse_all_ifds,
-    parse_header,
-    parse_ifd,
-)
+from xrspatial.geotiff._header import (MAX_IFD_ENTRY_BYTES, MAX_IFD_ENTRY_COUNT, MAX_IFDS,
+                                       TAG_IMAGE_WIDTH, TAG_TILE_BYTE_COUNTS, TAG_TILE_OFFSETS,
+                                       TIFFHeader, parse_all_ifds, parse_header, parse_ifd)
 from xrspatial.geotiff._reader import read_to_array
 
 from .._helpers.markers import requires_loopback

@@ -18,7 +18,6 @@ surgery, in-process parsing) run everywhere.
 """
 from __future__ import annotations
 
-import importlib.util
 import io
 import os
 import pathlib
@@ -449,13 +448,12 @@ def _mark_first_ifd_as_overview_2315(path):
         )
     insert_pos = first_ifd_offset + 2
 
-    next_ifd_off_pos = first_ifd_offset + 2 + n_entries * 12
-    block_end = next_ifd_off_pos + 4
+    # next_ifd_off_pos = first_ifd_offset + 2 + n_entries * 12
+    # block_end = next_ifd_off_pos + 4 (kept for reference; not used)
 
     # Slide every byte from ``insert_pos`` to end-of-file forward by 12
     # bytes. This makes room for the new entry and keeps value blocks
     # that lived past the entries array intact at their new offsets.
-    tail = bytes(raw[insert_pos:])
     raw[insert_pos:insert_pos] = b"\x00" * 12  # carve a 12-byte hole
     # raw is now 12 bytes longer; the hole sits at insert_pos..insert_pos+12.
     # The original tail bytes are at insert_pos+12..end now.
