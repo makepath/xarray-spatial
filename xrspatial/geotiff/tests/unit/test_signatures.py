@@ -2085,13 +2085,13 @@ def test_read_geotiff_gpu_max_pixels_rejects_oversized(small_tiff_path):
 def test_read_geotiff_gpu_chunks_max_pixels_rejects_oversized(small_tiff_path):
     """Dask+GPU path enforces ``max_pixels`` per chunk (#2501).
 
-    The cap is now chunk-scoped, so a per-chunk allocation that
-    exceeds ``max_pixels`` raises either at graph-build (the GDS fast
-    path's per-tile check against the 16x16 TIFF tile dimension) or at
-    ``.compute()`` (the CPU-fallback path's per-chunk
-    ``_check_dimensions`` inside ``read_to_array``). The test accepts
-    either, since which path runs depends on whether KvikIO is
-    installed.
+    The cap is now chunk-scoped, so a per-chunk allocation over
+    ``max_pixels`` raises either at graph-build (the GDS fast path's
+    per-tile and per-chunk checks against the 16x16 TIFF tile dim and
+    the 4x4 chunk shape) or on ``.compute()`` (the CPU-fallback path's
+    per-chunk ``_check_dimensions`` inside ``read_to_array``). Wrap
+    both calls in ``pytest.raises`` so either branch satisfies the
+    test depending on whether KvikIO is installed.
     """
     path, _ = small_tiff_path
     with pytest.raises(ValueError, match="safety limit|exceeds max_pixels"):

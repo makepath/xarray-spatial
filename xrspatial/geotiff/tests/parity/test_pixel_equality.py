@@ -502,6 +502,28 @@ def test_read_geotiff_dask_max_pixels_bounds_chunk_not_full_image(
         da.compute()
 
 
+def test_read_geotiff_dask_max_pixels_chunk_includes_band_count(
+        small_multiband_tiff_path):
+    """Multi-band: per-chunk cap is ``chunk_h * chunk_w * samples`` (#2501).
+
+    The 4x6x3 fixture is 72 pixels. With ``chunks=2`` each chunk
+    materialises 2x2x3 = 12 pixels, fitting under ``max_pixels=20``
+    even though the full image (72) does not. With ``chunks=4`` the
+    largest chunk is 4x4x3 = 48 pixels and the per-chunk decode trips
+    the cap on compute.
+    """
+    path, arr = small_multiband_tiff_path
+
+    # Per-chunk cap satisfied (12 px <= 20) but full image (72) is not.
+    da = read_geotiff_dask(path, chunks=2, max_pixels=20)
+    np.testing.assert_array_equal(da.values, arr)
+
+    # Per-chunk cap exceeded (48 px > 20). Graph builds, compute raises.
+    da = read_geotiff_dask(path, chunks=4, max_pixels=20)
+    with pytest.raises(ValueError, match="exceed the safety limit"):
+        da.compute()
+
+
 def test_read_geotiff_dask_window_band_combined(small_multiband_tiff_path):
     """``window`` and ``band`` cooperate."""
     path, arr = small_multiband_tiff_path

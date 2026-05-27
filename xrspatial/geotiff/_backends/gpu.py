@@ -1505,10 +1505,11 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     offsets = list(ifd.tile_offsets)
     byte_counts = list(ifd.tile_byte_counts)
 
-    # ``max_pixels`` bounds the per-tile decode buffer on the GPU
-    # chunked path (a single tile is the largest contiguous allocation
-    # any one task makes), not the full image. The eager GPU path still
-    # applies it to the full image. See issue #2501.
+    # Per-TIFF-tile guard: hostile-input defense against a forged
+    # tile-width / tile-length tag, independent of the chunk-scoped
+    # ``max_pixels`` contract below. A real chunk task allocates a
+    # buffer the chunk's shape, not a single tile, so the chunk-extent
+    # guard further down is what bounds peak GPU memory per task.
     _check_dimensions(tw, th, samples, max_pixels)
     validate_tile_layout(ifd)
 
@@ -1554,6 +1555,12 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         ch_h, ch_w = chunks
     if ch_h <= 0 or ch_w <= 0:
         raise ValueError(f"Invalid chunks: {chunks}")
+
+    # Chunk-extent guard: each ``_chunk_task`` allocates a
+    # ``(ch_h, ch_w, samples)`` buffer on the GPU. Cap that against
+    # ``max_pixels`` to match the per-chunk semantics the CPU dask
+    # path enforces inside ``_read_to_array``. See issue #2501.
+    _check_dimensions(ch_w, ch_h, samples, max_pixels)
 
     # Validate band kwarg against the file's band count.
     n_bands_out = samples if samples > 1 else 0
