@@ -140,8 +140,12 @@ def read_geotiff_gpu(source: str, *,
     name : str or None
         [experimental] Name for the DataArray.
     max_pixels : int or None
-        [experimental] Maximum allowed pixel count
-        (width * height * samples). None uses the default (~1 billion).
+        [experimental] Maximum allowed pixel count per materialised
+        buffer. With ``chunks=None`` it bounds the full image
+        (width * height * samples); with ``chunks=`` it bounds the
+        per-chunk decode buffer instead so chunked reads of large
+        rasters do not need to widen the cap to the full file. None
+        uses the default (~1 billion).
     on_gpu_failure : {'auto', 'strict'}, default 'auto'
         [experimental] Behaviour when any GPU decode stage raises an
         exception.
@@ -1485,7 +1489,11 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     offsets = list(ifd.tile_offsets)
     byte_counts = list(ifd.tile_byte_counts)
 
-    _check_dimensions(full_w, full_h, samples, max_pixels)
+    # Per-TIFF-tile guard: hostile-input defense against a forged
+    # tile-width / tile-length tag, independent of the chunk-scoped
+    # ``max_pixels`` contract below. A real chunk task allocates a
+    # buffer the chunk's shape, not a single tile, so the chunk-extent
+    # guard further down is what bounds peak GPU memory per task.
     _check_dimensions(tw, th, samples, max_pixels)
     validate_tile_layout(ifd)
 
@@ -1531,6 +1539,12 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         ch_h, ch_w = chunks
     if ch_h <= 0 or ch_w <= 0:
         raise ValueError(f"Invalid chunks: {chunks}")
+
+    # Chunk-extent guard: each ``_chunk_task`` allocates a
+    # ``(ch_h, ch_w, samples)`` buffer on the GPU. Cap that against
+    # ``max_pixels`` to match the per-chunk semantics the CPU dask
+    # path enforces inside ``_read_to_array``.
+    _check_dimensions(ch_w, ch_h, samples, max_pixels)
 
     # Validate band kwarg against the file's band count.
     n_bands_out = samples if samples > 1 else 0

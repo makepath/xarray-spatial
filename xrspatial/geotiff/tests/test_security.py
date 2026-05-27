@@ -131,6 +131,38 @@ class TestDimensionGuard:
         with pytest.raises(ValueError, match="exceed the safety limit"):
             open_geotiff(path, max_pixels=10)
 
+    def test_open_geotiff_max_pixels_chunked_bounds_chunk(self, tmp_path):
+        """``open_geotiff(chunks=...)`` scopes max_pixels to the chunk (#2501).
+
+        A 6x6 image is 36 pixels. ``max_pixels=10`` would reject the eager
+        read, but ``chunks=2`` keeps each materialised buffer at 2x2=4
+        pixels, well under the cap. The cap still fires when a chunk
+        actually exceeds it.
+        """
+        from xrspatial.geotiff import open_geotiff
+
+        expected = np.arange(36, dtype=np.float32).reshape(6, 6)
+        data = make_minimal_tiff(6, 6, np.dtype('float32'),
+                                 pixel_data=expected)
+        path = str(tmp_path / "small_2501_chunked.tif")
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        # Eager path still rejects: full image > max_pixels.
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            open_geotiff(path, max_pixels=10)
+
+        # Dask path with chunks small enough to fit: succeeds and
+        # round-trips the values.
+        da = open_geotiff(path, chunks=2, max_pixels=10)
+        np.testing.assert_array_equal(da.values, expected)
+
+        # Dask path with chunks too large for the cap: per-chunk guard
+        # fires at compute time.
+        da = open_geotiff(path, chunks=4, max_pixels=10)
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            da.compute()
+
 
 # ---------------------------------------------------------------------------
 # Cat 1c: Tile dimension guard

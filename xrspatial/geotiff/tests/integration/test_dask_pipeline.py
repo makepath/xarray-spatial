@@ -252,22 +252,36 @@ def _write_oversized_dask_max_pixels_default_guard(path, *, h: int, w: int) -> N
     path.write_bytes(bytes(raw))
 
 
-def test_default_max_pixels_guard_fires_for_full_region(tmp_path):
-    """``max_pixels=None`` must apply the module default cap at the
-    up-front region guard, matching the eager / VRT paths.
+def test_default_max_pixels_guard_does_not_fire_up_front(tmp_path):
+    """The dask path no longer rejects an oversized full image at graph-
+    build time (#2501). The cap is now per-chunk, so a forged
+    multi-billion-pixel header builds a lazy graph without erroring;
+    each chunk task decodes against ``max_pixels`` separately.
     """
-    path = tmp_path / "tmp_1838_oversized.tif"
+    path = tmp_path / "tmp_2501_oversized.tif"
     side = int((MAX_PIXELS_DEFAULT ** 0.5)) + 2
     _write_oversized_dask_max_pixels_default_guard(path, h=side, w=side)
-    with pytest.raises(ValueError, match=r"max_pixels"):
-        read_geotiff_dask(str(path))
+    # The graph builds; the up-front guard is gone. Chunk-level decode
+    # may still fail when a task actually runs, but that is a separate
+    # path. ``read_geotiff_dask(...)`` itself returns a DataArray.
+    da = read_geotiff_dask(str(path))
+    assert da.shape == (side, side)
 
 
-def test_explicit_max_pixels_still_enforced(tmp_path):
-    path = tmp_path / "tmp_1838_explicit_cap.tif"
-    _write_oversized_dask_max_pixels_default_guard(path, h=2048, w=2048)
-    with pytest.raises(ValueError, match=r"max_pixels"):
-        read_geotiff_dask(str(path), max_pixels=1024)
+def test_explicit_max_pixels_enforced_per_chunk(tmp_path):
+    """Per-chunk decode honours ``max_pixels`` even when the full image
+    would have fit under it (#2501). Build a real 64x64 file, request
+    chunks of 32, and set ``max_pixels`` below the per-chunk cost.
+    """
+    arr = np.arange(64 * 64, dtype=np.uint8).reshape(64, 64)
+    path = tmp_path / "tmp_2501_per_chunk_cap.tif"
+    tifffile_dask_max_pixels_default_guard.imwrite(
+        str(path), arr, tile=(16, 16),
+        photometric="minisblack", compression="none")
+    # 32x32 chunk = 1024 pixels; cap is 100. Graph builds, compute fails.
+    da = read_geotiff_dask(str(path), chunks=32, max_pixels=100)
+    with pytest.raises(ValueError, match="exceed the safety limit"):
+        da.compute()
 
 
 def test_small_region_unaffected(tmp_path):

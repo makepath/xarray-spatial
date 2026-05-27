@@ -85,12 +85,12 @@ def read_geotiff_dask(source: str, *,
         multi-band files, 2D for single-band). Selecting a single band
         produces a 2D DataArray.
     max_pixels : int or None
-        [stable] Maximum allowed pixel count (width * height *
-        samples) for the windowed region. None uses the reader default
-        (~1 billion). The cap is checked once up-front against the
-        lazy region; each chunk task also re-checks against
-        ``max_pixels`` so windowed reads stay bounded even when
-        ``read_to_array`` is invoked directly.
+        [stable] Maximum allowed pixel count for a single materialised
+        chunk buffer (chunk_h * chunk_w * samples). None uses the
+        reader default (~1 billion). The full windowed region can
+        exceed this cap; only per-chunk decodes are bounded. To bound
+        the whole region instead, call ``read_to_array`` directly (or
+        ``open_geotiff`` without ``chunks=``).
     name : str or None
         [stable] Name for the DataArray.
     band_nodata : {'first', None}, optional
@@ -468,26 +468,13 @@ def read_geotiff_dask(source: str, *,
             raise IndexError(
                 f"band={band} out of range for {n_bands}-band file.")
 
-    # Up-front pixel-count guard against the windowed extent. Chunk
-    # tasks re-check via read_to_array's own ``max_pixels`` (which we
-    # forward through ``_delayed_read_window``), but catching an
-    # oversized request before any task is scheduled saves the caller
-    # from a misleading "tile size exceeds max_pixels" error in a
-    # chunk that happens to align with the file's tile grid.
-    # ``max_pixels=None`` substitutes the module default to match the
-    # eager (``read_to_array``) and VRT chunked paths. Without the
-    # substitution the guard would skip entirely on ``None`` and a
-    # caller could build a lazy graph over a region far larger than the
-    # documented safety cap.
-    from .._reader import MAX_PIXELS_DEFAULT as _MAX_PIXELS_DEFAULT
-    effective_max_pixels = (max_pixels if max_pixels is not None
-                            else _MAX_PIXELS_DEFAULT)
-    eff_bands = (1 if band is not None
-                 else (n_bands if n_bands > 0 else 1))
-    if full_h * full_w * eff_bands > effective_max_pixels:
-        raise ValueError(
-            f"Requested region {full_h}x{full_w}x{eff_bands} "
-            f"exceeds max_pixels={effective_max_pixels:,}.")
+    # ``max_pixels`` bounds each chunk's materialised buffer, not the
+    # full windowed region. The per-chunk cap is enforced inside
+    # ``_delayed_read_window`` -> ``_read_to_array`` -> ``_check_dimensions``
+    # against the chunk's output window. The eager (no-``chunks``) path
+    # still applies the cap to the full image, so callers who want the
+    # old semantics can drop ``chunks=`` to get a single-shot decode
+    # under the same limit.
 
     if name is None:
         import os
