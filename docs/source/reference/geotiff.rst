@@ -53,7 +53,7 @@ What you should NOT rely on:
   does NOT widen the GPU codec set; on the GPU writer, codecs outside the
   GPU-supported set route through a CPU fallback inside
   ``write_geotiff_gpu`` rather than executing on the GPU. Locked by
-  ``xrspatial/geotiff/tests/test_gpu_writer_cpu_fallback_codecs_2026_05_12.py``.
+  ``xrspatial/geotiff/tests/gpu/test_writer.py``.
 * GPU promotion to ``stable`` inside this release cycle. See the GPU
   rows in :ref:`reference.geotiff_release_gate` for the current tier
   and the regression tests behind each row.
