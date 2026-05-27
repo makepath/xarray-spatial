@@ -1,4 +1,4 @@
-"""Regression tests for issue #2073.
+"""Regression tests for the streaming photometric-override guard.
 
 The eager writer rejects an ``extra_tags`` entry that overrides
 ``TAG_PHOTOMETRIC`` across the MinIsWhite boundary for a single-band

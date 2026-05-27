@@ -1,13 +1,10 @@
 """Unit tests for the read-finalization helpers in ``_attrs.py``.
 
-Issue #2177 (PR B of #2162).
-
 The two helpers ``_finalize_eager_read`` and ``_finalize_lazy_read_attrs``
 capture the post-decode finalization steps duplicated across the four
 read backends. This test file pins their behaviour in isolation: it
 synthesises ``GeoInfo`` fixtures and exercises the helpers directly,
-without going through the read backends (those are migrated in waves 2
-and 3).
+without going through the read backends.
 
 The four invariants covered here:
 
@@ -17,7 +14,7 @@ The four invariants covered here:
 2. ``mask_nodata=False`` leaves the buffer alone and surfaces
    ``nodata_pixels_present`` without rewriting.
 3. Lazy helper produces the same attrs minus ``nodata_pixels_present``
-   (the dask contract from #2135).
+   (the dask contract: the lazy path cannot afford an eager scan).
 4. Both helpers validate ``geo_info`` first so a rejected file does not
    leak partial attrs onto the caller's dict.
 5. Both helpers route ``mask_sentinel != nodata`` through the masking
@@ -191,7 +188,7 @@ def test_eager_no_sentinel_pixels_present_is_false():
 
 
 # ---------------------------------------------------------------------------
-# Eager helper: mask_nodata=False opt-out (issue #2052)
+# Eager helper: mask_nodata=False opt-out
 # ---------------------------------------------------------------------------
 
 
@@ -212,10 +209,10 @@ def test_eager_mask_nodata_false_skips_mask_keeps_attr_surface():
 
     # The sentinel pixel is preserved literally.
     assert da.values[0, 1] == -9999.0
-    # ``masked_nodata=False`` per the #2092 contract.
+    # ``masked_nodata=False`` per the declared-vs-masked nodata contract.
     assert da.attrs['masked_nodata'] is False
     # ``nodata_pixels_present`` still surfaces so callers know a sentinel
-    # pixel exists in the buffer (#2135).
+    # pixel exists in the buffer.
     assert da.attrs['nodata_pixels_present'] is True
 
 
@@ -265,7 +262,7 @@ def test_eager_no_nodata_omits_nodata_attrs():
 
 
 # ---------------------------------------------------------------------------
-# Eager helper: mask_sentinel != nodata (GPU MinIsWhite inversion, #1809)
+# Eager helper: mask_sentinel != nodata (GPU MinIsWhite inversion)
 # ---------------------------------------------------------------------------
 
 
@@ -386,7 +383,7 @@ def test_eager_attrs_in_seed_is_copied_onto_dataarray():
 
 
 # ---------------------------------------------------------------------------
-# Lazy helper: attrs surface (pixels_present is None per #2135 dask contract)
+# Lazy helper: attrs surface (pixels_present is None per the dask contract)
 # ---------------------------------------------------------------------------
 
 
@@ -405,7 +402,7 @@ def test_lazy_float_dtype_sets_masked_true_no_pixels_present_attr():
     assert attrs['nodata'] == -9999
     assert attrs['masked_nodata'] is True
     assert attrs['nodata_dtype_cast'] == 'float64'
-    # pixels_present stays absent on the lazy path (#2135 dask contract).
+    # pixels_present stays absent on the lazy path (dask contract).
     assert 'nodata_pixels_present' not in attrs
     assert attrs['georef_status'] == 'full'
 
@@ -423,10 +420,11 @@ def test_lazy_int_graph_dtype_keeps_masked_false():
     )
 
     # Integer graph -> the per-chunk mask cannot have run, so masked=False
-    # mirrors the #2092 contract even though the caller asked for masking.
+    # mirrors the declared-vs-masked contract even though the caller
+    # asked for masking.
     assert attrs['masked_nodata'] is False
-    # Post-#2206 split: no caller cast -> ``nodata_dtype_cast`` stays
-    # absent. The auto-promoted graph dtype never leaks into the attr.
+    # No caller cast -> ``nodata_dtype_cast`` stays absent. The
+    # auto-promoted graph dtype never leaks into the attr.
     assert 'nodata_dtype_cast' not in attrs
 
 
@@ -507,7 +505,7 @@ def test_lazy_mask_nodata_false_sets_masked_false():
 
 def test_lazy_no_graph_dtype_resolves_to_masked_false():
     # ``graph_dtype=None`` means the caller didn't resolve a graph dtype
-    # to compare against (matches the pre-#2135 dask paths in tests).
+    # to compare against.
     gi = _default_geo_info()
 
     attrs = _finalize_lazy_read_attrs(
@@ -525,11 +523,10 @@ def test_lazy_no_graph_dtype_resolves_to_masked_false():
 
 def test_lazy_pixels_present_true_lands_when_caller_forwards(
 ):
-    """PR-D of #2211: callers that already scanned for sentinel pixels
-    (e.g. the eager VRT path's VRT-aware mask) can pass the result
-    through the lazy helper's ``pixels_present`` kwarg so the attr is
-    stamped via the same finalization helper rather than written
-    ad-hoc by the backend.
+    """Callers that already scanned for sentinel pixels (e.g. the eager
+    VRT path's VRT-aware mask) can pass the result through the lazy
+    helper's ``pixels_present`` kwarg so the attr is stamped via the
+    same finalization helper rather than written ad-hoc by the backend.
     """
     gi = _default_geo_info()
 
@@ -549,8 +546,8 @@ def test_lazy_pixels_present_true_lands_when_caller_forwards(
 def test_lazy_pixels_present_false_lands_when_caller_forwards():
     """Companion to the True case: a forwarded ``False`` lands as
     ``attrs['nodata_pixels_present'] is False`` rather than being
-    treated as "absent". The presence-vs-absence distinction is what
-    issue #2135 added the attr for.
+    treated as "absent". The presence-vs-absence distinction is the
+    whole point of the attr.
     """
     gi = _default_geo_info()
 
@@ -568,10 +565,10 @@ def test_lazy_pixels_present_false_lands_when_caller_forwards():
 
 
 def test_lazy_pixels_present_default_keeps_dask_contract():
-    """Default ``pixels_present=None`` keeps the issue #2135 dask
-    contract intact: the attr stays absent on lazy outputs because the
-    dask backends cannot afford the eager ``.compute()`` a strict
-    per-chunk scan would force.
+    """Default ``pixels_present=None`` keeps the dask contract intact:
+    the attr stays absent on lazy outputs because the dask backends
+    cannot afford the eager ``.compute()`` a strict per-chunk scan
+    would force.
     """
     gi = _default_geo_info()
 

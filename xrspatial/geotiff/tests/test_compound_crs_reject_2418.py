@@ -1,4 +1,4 @@
-"""Reject compound EPSG codes on the stable-EPSG writer path (#2418).
+"""Reject compound EPSG codes on the stable-EPSG writer path.
 
 The writer's stable-path emits only ``GeographicTypeGeoKey`` (2048) and
 ``ProjectedCSTypeGeoKey`` (3072). Both are spec'd to hold a 2D
@@ -122,7 +122,7 @@ def test_horizontal_crs_still_round_trips_through_rasterio(epsg, tmp_path):
 
 
 def test_compound_wkt_takes_user_defined_path(tmp_path):
-    """A compound CRS passed as WKT writes via the citation path (#1768).
+    """A compound CRS passed as WKT writes via the citation path.
 
     ``_wkt_to_epsg`` returns None for a compound CRS so the writer
     treats it as a user-defined CRS rather than emitting a compound
@@ -137,9 +137,9 @@ def test_compound_wkt_takes_user_defined_path(tmp_path):
         dims=('y', 'x'),
     )
     path = tmp_path / "tmp_2418_compound_wkt.tif"
-    # The WKT-only path emits a UserWarning per #1768; we don't care
-    # about that here, just that the write succeeds and the CRS info
-    # survives in xrspatial's own attrs.
+    # The WKT-only path emits a UserWarning; we don't care about that
+    # here, just that the write succeeds and the CRS info survives in
+    # xrspatial's own attrs.
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

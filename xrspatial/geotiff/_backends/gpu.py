@@ -1,16 +1,8 @@
 """GPU read backend: ``read_geotiff_gpu`` and its private helpers.
 
-Step 7 of issue #1813. With the leaf helpers in ``_backends/_gpu_helpers``
-already extracted (#1884), validators in ``_validation`` (#1882), attrs
-helpers in ``_attrs`` (#1883), and sentinels in ``_runtime`` (#1880),
-moving the entry-point body is a near-mechanical lift; the body stays
-unchanged except for adjusted relative imports.
-
 ``_read_geotiff_gpu_chunked`` calls into ``read_geotiff_dask`` for its
-CPU-decode fallback path. That import was originally lazy because
-``read_geotiff_dask`` still lived in ``__init__.py``; once it moved
-to a sibling module in #1886, the import was promoted to a static
-top-of-module ``from .dask import read_geotiff_dask``.
+CPU-decode fallback path, imported statically at the top of the module
+via ``from .dask import read_geotiff_dask``.
 """
 from __future__ import annotations
 
@@ -42,7 +34,7 @@ def _preflight_cuda_runtime(cupy) -> None:
     than the build expects, was uninstalled, or belongs to a suspended
     VM. Without this check the failure surfaces as a
     ``cudaErrorInsufficientDriver`` from a deep ``cupy.asarray(...)``
-    call in the CPU-fallback path (issue #1903). Raises a clean
+    call in the CPU-fallback path. Raises a clean
     ``RuntimeError`` that names the underlying CUDA error so the user
     can fix the driver, switch CuPy builds, or pass ``gpu=False``.
     """
@@ -86,7 +78,7 @@ def read_geotiff_gpu(source: str, *,
                      ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
-    Release-contract tier (epic #2340; see
+    Release-contract tier (see
     ``docs/source/reference/release_gate_geotiff.rst`` and
     ``docs/source/reference/geotiff_release_contract.rst``): the
     entire entry point is [experimental]. The surface may shift
@@ -95,7 +87,7 @@ def read_geotiff_gpu(source: str, *,
     nvJPEG2K libraries for codec-specific acceleration; cross-backend
     numerical parity with the CPU reader is tested for the Tier 1
     codec set only. See :data:`xrspatial.geotiff.SUPPORTED_FEATURES`
-    for the full tier map (issue #2137).
+    for the full tier map.
 
     Decompresses all tiles in parallel on the GPU and returns a
     CuPy-backed DataArray that stays on device memory. No CPU->GPU
@@ -175,7 +167,7 @@ def read_geotiff_gpu(source: str, *,
         kwarg does not affect them. The function preflights the CUDA
         runtime via ``cupy.cuda.runtime.getDeviceCount()`` immediately
         after importing cupy and raises ``RuntimeError`` if the driver
-        is unusable (#1903); transient errors inside a later
+        is unusable; transient errors inside a later
         ``cupy.asarray(...)`` upload (e.g. device OOM) still propagate
         unchanged in both modes.
     gpu : str, optional
@@ -192,7 +184,7 @@ def read_geotiff_gpu(source: str, *,
         ``attrs['nodata']`` carries the sentinel either way. Pass
         ``mask_nodata=False`` together with ``dtype=<integer>`` to
         preserve an integer source dtype on a file with a matching
-        sentinel. See issue #2052.
+        sentinel.
     allow_rotated : bool, default False
         [experimental] Read-side opt-in for rotated / sheared
         ``ModelTransformationTag`` files. Forwarded through both GPU
@@ -202,40 +194,39 @@ def read_geotiff_gpu(source: str, *,
         the result still lands as a CuPy-backed DataArray.
     allow_unparseable_crs : bool, default False
         [experimental] Read-side opt-in for CRS strings that pyproj
-        cannot resolve and do not parse as WKT. ``False`` (the default
-        since #1929) raises ``UnparseableCRSError``; ``True`` keeps
-        the pre-#1929 permissive behaviour. See ``open_geotiff`` for
-        the full description.
+        cannot resolve and do not parse as WKT. ``False`` (the default)
+        raises ``UnparseableCRSError``; ``True`` keeps the legacy
+        permissive behaviour. See ``open_geotiff`` for the full
+        description.
     allow_inconsistent_geokeys : bool, default False
         [experimental] Read-side opt-in for sources whose GeoKey
         directory is internally contradictory. ``False`` (the default)
         raises ``InconsistentGeoKeysError``; ``True`` restores the
         legacy silent acceptance. See ``open_geotiff`` for the full
-        description (issue #2417).
+        description.
     allow_invalid_nodata : bool, default False
         [experimental] Read-side opt-in for integer-dtype sources whose
         ``GDAL_NODATA`` tag is non-finite or fractional. Mirrors the CPU
         eager and dask paths; default raises
         ``InvalidIntegerNodataError``. See ``open_geotiff`` for the full
-        description (#1774 follow-up, #2441).
+        description.
     stable_only : bool, default False
         [experimental] Read-side opt-in for stable-tier sources only.
         The GPU read path does not consume VRT sources directly (VRT
         routing happens in ``open_geotiff``), so this kwarg is accepted
         for cross-backend signature symmetry and is a no-op on the GPU
         eager / chunked paths. See ``open_geotiff`` for the full
-        description (epic #2342).
+        description.
     allow_experimental_codecs : bool, default False
         [experimental] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). The GPU read path
         mirrors the CPU eager and dask paths so all three readers agree
         on the opt-in contract. See ``open_geotiff`` for the full
-        description (epic #2340 PR 4).
+        description.
     allow_internal_only_jpeg : bool, default False
         [internal-only] Read-side opt-in for JPEG-in-TIFF sources. Not
         covered by ``allow_experimental_codecs``. See ``open_geotiff``
-        for the full description (epic #2340 PR 4, original writer gate
-        #1845).
+        for the full description.
     band_nodata : {'first', None}, optional
         [internal-only] VRT-only. Accepted at the signature level for
         parity with ``open_geotiff``; passing it to ``read_geotiff_gpu``
@@ -250,8 +241,8 @@ def read_geotiff_gpu(source: str, *,
     max_cloud_bytes : int or None, optional
         [internal-only] Accepted for cross-backend signature symmetry
         only. The GPU reader does not consume the cloud-byte budget;
-        passing this kwarg raises ``ValueError`` at dispatch (issue
-        #1974). See ``open_geotiff`` for the eager-path description.
+        passing this kwarg raises ``ValueError`` at dispatch. See
+        ``open_geotiff`` for the eager-path description.
 
     Returns
     -------
@@ -261,22 +252,21 @@ def read_geotiff_gpu(source: str, *,
     # Coerce ``pathlib.Path`` and other ``os.PathLike`` inputs to ``str``
     # before the validator so the file-like guard inside
     # ``_validate_dispatch_kwargs`` does not misclassify a Path as a
-    # file-like buffer (review feedback on #2175). The downstream
+    # file-like buffer. The downstream
     # ``_coerce_path`` call near the eager-path setup below is now a
     # no-op for the same object but kept for the chunked branch's
     # reuse of the same imported binding.
     source = _coerce_path(source)
 
     # Shared dispatcher-kwarg validator so direct callers see the same
-    # rejections as ``open_geotiff`` (issue #2175 / parent #2162). Runs
-    # ``_validate_overview_level_arg`` first to match ``open_geotiff``'s
-    # ordering -- a bad ``overview_level`` is reported before unrelated
-    # ``on_gpu_failure`` / ``chunks=`` / source errors mask it (issue
-    # #2160). The helper also rejects ``missing_sources`` on non-VRT,
-    # ``band_nodata`` on non-VRT (issue #1987), ``max_cloud_bytes`` (the
-    # GPU reader does not consume the cloud-byte budget, issue #1974),
-    # and the file-like-source guard. ``gpu=True`` because this entry
-    # point is always GPU.
+    # rejections as ``open_geotiff``. Runs ``_validate_overview_level_arg``
+    # first to match ``open_geotiff``'s ordering -- a bad
+    # ``overview_level`` is reported before unrelated ``on_gpu_failure`` /
+    # ``chunks=`` / source errors mask it. The helper also rejects
+    # ``missing_sources`` on non-VRT, ``band_nodata`` on non-VRT,
+    # ``max_cloud_bytes`` (the GPU reader does not consume the cloud-byte
+    # budget), and the file-like-source guard. ``gpu=True`` because this
+    # entry point is always GPU.
     _validate_dispatch_kwargs(
         source=source,
         gpu=True,
@@ -315,7 +305,7 @@ def read_geotiff_gpu(source: str, *,
         raise ValueError(
             f"on_gpu_failure must be 'auto' or 'strict', got {gpu!r}")
     # Reject non-positive chunk sizes up front so the GPU dask+cupy path
-    # surfaces the same error as ``read_geotiff_dask`` (#1776). Previously
+    # surfaces the same error as ``read_geotiff_dask``. Previously
     # ``chunks=0`` raised ``ZeroDivisionError`` deep in cupy/dask, and
     # ``chunks=-1`` was silently accepted (negative chunks fall out of
     # the dask chunk grid as a no-op). ``chunks=None`` is the default
@@ -331,7 +321,7 @@ def read_geotiff_gpu(source: str, *,
     # Preflight CUDA. ``cupy`` can import on machines whose driver is
     # older than the build expects or whose GPU is offline; the error
     # otherwise surfaces as a low-level CUDA failure from
-    # ``cupy.asarray(...)`` deep in the CPU-fallback path (#1903).
+    # ``cupy.asarray(...)`` deep in the CPU-fallback path.
     _preflight_cuda_runtime(cupy)
 
     # When ``chunks=`` is set, bound peak GPU memory to chunk size by
@@ -344,7 +334,7 @@ def read_geotiff_gpu(source: str, *,
     # out-of-core behaviour for the read; the trade-off is per-chunk
     # CPU decode rather than the eager path's bulk GPU decode. Users
     # who want full GPU-side decode (and have device memory for the
-    # whole image) pass ``chunks=None``. See issue #1876.
+    # whole image) pass ``chunks=None``.
     if chunks is not None:
         return _read_geotiff_gpu_chunked(
             source, dtype=dtype, chunks=chunks,
@@ -390,10 +380,10 @@ def read_geotiff_gpu(source: str, *,
     # HTTP / HTTPS / fsspec sources can't drive the disk-based GPU decode
     # pipeline: every internal step (``_FileSource``, KvikIO GDS,
     # ``gpu_decode_tiles_from_file``) opens the path as a local file and
-    # would raise a raw ``FileNotFoundError`` on a URL string (issue #2161).
+    # would raise a raw ``FileNotFoundError`` on a URL string.
     # Route them through the CPU decode + GPU upload fallback, matching
-    # what ``_read_geotiff_gpu_chunked`` already does for the same sources
-    # (around line 1106-1150 in this file). The peak GPU memory is the
+    # what ``_read_geotiff_gpu_chunked`` already does for the same
+    # sources. The peak GPU memory is the
     # whole image either way for the eager path; the trade-off is a CPU
     # decode instead of nvCOMP-on-GPU. Callers who want bounded GPU
     # memory should pass ``chunks=...``.
@@ -426,8 +416,8 @@ def read_geotiff_gpu(source: str, *,
             raise ValueError("No IFDs found in TIFF file")
 
         # Append sibling `.tif.ovr` sidecar IFDs onto the pyramid list so
-        # ``overview_level`` indexes both internal and external overviews
-        # (issue #2112). When the selected IFD comes from the sidecar,
+        # ``overview_level`` indexes both internal and external overviews.
+        # When the selected IFD comes from the sidecar,
         # tile / strip reads below use ``ifd_data`` / ``ifd_header`` for
         # the sidecar's buffers, and we skip the GDS fast path -- GDS
         # reads the source file path, which would point at the base
@@ -437,7 +427,7 @@ def read_geotiff_gpu(source: str, *,
         # release contract puts ``reader.local_file`` at the stable tier
         # and ``reader.sidecar_ovr`` at advanced; matches the eager CPU
         # path in ``_reader._read_to_array`` and the dask metadata
-        # helper ``_sidecar.discover_remote_sidecar``. Issue #2416.
+        # helper ``_sidecar.discover_remote_sidecar``.
         from .._sidecar import attach_sidecar_origin, close_sidecar, find_sidecar, load_sidecar
         sidecar_origin: dict[int, tuple] = {}
         sidecar_path = find_sidecar(source)
@@ -473,7 +463,7 @@ def read_geotiff_gpu(source: str, *,
         # Reject experimental / internal-only codecs on the GPU read
         # path unless the caller opted in. Mirrors the CPU eager and
         # dask paths so all three read backends agree on the opt-in
-        # contract. PR 4 of epic #2340.
+        # contract.
         from .._attrs import _validate_read_codec_optin
         _validate_read_codec_optin(
             ifd.compression,
@@ -486,7 +476,7 @@ def read_geotiff_gpu(source: str, *,
         # the georef extractor below resolves base-IFD tag offsets
         # against the right bytes. Introduce ``ifd_data`` / ``ifd_header``
         # for tile / strip reads that need the sidecar buffer when the
-        # selected IFD lives in the sidecar (issue #2324).
+        # selected IFD lives in the sidecar.
         ifd_data, ifd_header = data, header
         origin = sidecar_origin.get(id(ifd))
         if origin is not None:
@@ -496,13 +486,13 @@ def read_geotiff_gpu(source: str, *,
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         # Inherit georef from the level-0 IFD when the overview itself
-        # has no geokeys (issue #1640); pass-through for level 0.
+        # has no geokeys; pass-through for level 0.
         # ``sidecar_origin`` routes tag-offset parsing to the sidecar
         # bytes for any IFD that lives in the sidecar AND declares its
         # own georef payload, mirroring the CPU eager path
         # (``_reader.py``) and dask path (``__init__.py``). Without
         # this, a sidecar-owned IFD that lacks geokeys would parse the
-        # base IFD against the sidecar bytes (issue #2324).
+        # base IFD against the sidecar bytes.
         georef_origin = (
             {iid: (od, oh.byte_order)
              for iid, (od, oh) in sidecar_origin.items()}
@@ -547,7 +537,6 @@ def read_geotiff_gpu(source: str, *,
             # ``True < ifd_samples`` evaluates without raising and silently
             # reads band 1. ``np.bool_`` is not a subclass of ``bool`` so it
             # needs its own check to match the VRT path's rejection.
-            # See #1786.
             if isinstance(band, (bool, np.bool_)):
                 raise ValueError(
                     f"band must be a non-negative int, got {band!r}")
@@ -555,7 +544,7 @@ def read_geotiff_gpu(source: str, *,
             # slips past the bool guard. ``band=0.0`` passes the range
             # check below and either silently reads band 0 or fails with
             # a raw numpy/cupy ``IndexError`` on multi-band files. The
-            # VRT paths already enforce this. See #1910.
+            # VRT paths already enforce this.
             if not isinstance(band, (int, np.integer)):
                 raise TypeError(
                     f"band must be a non-negative int, got {band!r}")
@@ -577,7 +566,7 @@ def read_geotiff_gpu(source: str, *,
                     f"({ifd_h}x{ifd_w}).")
 
         # float16 on disk (bps=16 + SampleFormat=3) is exposed as float32
-        # by the reader (#1941). The CPU decode path views the raw 2-byte
+        # by the reader. The CPU decode path views the raw 2-byte
         # samples as numpy float16 and upcasts; the GPU tile-assembly
         # kernels assume bps == file_dtype.itemsize * 8 and would
         # mis-stride the buffer. Route the rare half-precision read to
@@ -586,22 +575,21 @@ def read_geotiff_gpu(source: str, *,
         if not ifd.is_tiled or bps_mismatch:
             # Fall back to CPU for stripped files. read_to_array remaps
             # the array but only updates geo_info.transform for orientations
-            # 5-8 today (the 2/3/4 fix in #1539 is in a sibling PR). Discard
-            # its geo_info and apply our own transform update below so the
-            # result is correct regardless of merge order.
+            # 5-8 today. Discard its geo_info and apply our own transform
+            # update below so the result is correct regardless of the
+            # array remap.
             #
             # Forward ``max_pixels``, ``window``, and ``band`` so the
             # caller's safety cap is honoured, windowed reads avoid
             # decoding the full image, and single-band selection on a
-            # multi-band source skips the unused channels. Without this,
-            # the stripped GPU path bypassed all three (issue #1732).
-            # Orientation != 1 + window is already rejected at line 2495,
-            # so ``window`` is None whenever ``geo_info`` will be remapped
+            # multi-band source skips the unused channels.
+            # Orientation != 1 + window is already rejected above, so
+            # ``window`` is None whenever ``geo_info`` will be remapped
             # below.
             #
             # ``allow_rotated`` is forwarded so rotated stripped files do
             # not trip ``_read_to_array``'s rotation guard on the fallback
-            # path (issue #2238).
+            # path.
             src.close()
             arr_cpu, _stripped_geo = _read_to_array(
                 source, overview_level=overview_level,
@@ -619,9 +607,9 @@ def read_geotiff_gpu(source: str, *,
                 import os
                 name = os.path.splitext(os.path.basename(source))[0]
             # Hand the windowed+banded GPU buffer to the shared eager
-            # finalizer (issue #2179). ``read_to_array`` stashes the
-            # post-MinIsWhite sentinel on ``_stripped_geo._mask_nodata``
-            # for the masking step (#1809); fall back to the raw
+            # finalizer. ``read_to_array`` stashes the post-MinIsWhite
+            # sentinel on ``_stripped_geo._mask_nodata`` for the masking
+            # step; fall back to the raw
             # sentinel on non-MinIsWhite files. The helper's host-side
             # mask block runs on CuPy arrays via numpy duck-typing.
             nodata = geo_info.nodata
@@ -677,12 +665,12 @@ def read_geotiff_gpu(source: str, *,
 
         # Reject malformed TIFFs whose declared tile grid exceeds the
         # supplied TileOffsets length. The GPU tile-assembly kernel would
-        # read OOB otherwise. See issue #1219.
+        # read OOB otherwise.
         validate_tile_layout(ifd)
 
         # Per-tile compressed-byte cap, matching the CPU paths
         # ``_read_tiles`` and ``_fetch_decode_cog_http_tiles`` apply
-        # via the same env var (issue #1664). ``validate_tile_layout``
+        # via the same env var. ``validate_tile_layout``
         # bounds the offsets array length but not the byte_counts
         # entries; a crafted ``TileByteCounts`` value can still ask
         # the GPU pipeline to fetch and decompress a multi-hundred-MB
@@ -714,7 +702,7 @@ def read_geotiff_gpu(source: str, *,
         # LERC tiles can carry a per-pixel valid mask that GDAL writes
         # zero-filled in the data array.  Compute the nodata fill the same
         # way the CPU reader does so the GPU decode path can restore it
-        # post-assembly (mirrors PR #1529 for the CPU path). Only the
+        # post-assembly (mirrors the CPU path). Only the
         # chunky (planar=1) GPU path threads masked_fill into its kernel
         # call below; the planar=2 per-band branch falls back to the CPU
         # reader for masked pixels (rare in practice -- LERC files
@@ -724,14 +712,13 @@ def read_geotiff_gpu(source: str, *,
 
         # Track whether the array we end up with was already orientation-flipped
         # by `read_to_array`. Any path that falls back to CPU decode picks up
-        # the orientation remap from PR #1521 + #1537 for free; the pure GPU
-        # paths still need the explicit remap added in #1540.
+        # the orientation remap for free; the pure GPU paths still need the
+        # explicit remap.
         arr_was_cpu_decoded = False
         # When a CPU fallback runs, ``read_to_array`` has already applied the
         # MinIsWhite inversion and stashed the post-inversion sentinel on
         # ``_mask_nodata``. Keep that geo_info alongside the pre-extracted one
-        # so the downstream nodata mask compares against the correct value
-        # (Copilot review of #1817).
+        # so the downstream nodata mask compares against the correct value.
         _cpu_fallback_geo = None
 
         # PlanarConfiguration=2 (separate bands): each band has its own list
@@ -795,13 +782,13 @@ def read_geotiff_gpu(source: str, *,
             if cpu_fallback_needed:
                 # Drop read_to_array's geo_info for orientation transform
                 # handling (below operates on our pre-extracted geo_info so the
-                # 2/3/4 case is covered regardless of #1539's merge state), but
-                # keep it on ``_cpu_fallback_geo`` so the MinIsWhite-aware nodata
+                # 2/3/4 case is always covered), but keep it on
+                # ``_cpu_fallback_geo`` so the MinIsWhite-aware nodata
                 # mask below sees ``_mask_nodata``.
                 #
                 # Forward ``allow_rotated``, ``window``, ``band``, and
-                # ``max_pixels`` so caller intent reaches the fallback parser
-                # (issue #2238). Without these the CPU parser rejects rotated
+                # ``max_pixels`` so caller intent reaches the fallback parser.
+                # Without these the CPU parser rejects rotated
                 # ModelTransformation files even with ``allow_rotated=True``,
                 # and a caller-raised ``max_pixels`` still trips the default
                 # 1B-pixel cap inside the fallback. The shape repair in
@@ -824,7 +811,7 @@ def read_geotiff_gpu(source: str, *,
                         f"({height}, {width}, {samples})"
                     )
         elif has_sparse_tile:
-            # Forward caller kwargs to the CPU fallback (issue #2238).
+            # Forward caller kwargs to the CPU fallback.
             arr_cpu, _cpu_fallback_geo = _read_to_array(
                 source, overview_level=overview_level,
                 window=window, band=band, max_pixels=max_pixels,
@@ -843,7 +830,7 @@ def read_geotiff_gpu(source: str, *,
                 # offsets index into the sidecar's bytes, not the base file
                 # path that ``gpu_decode_tiles_from_file`` would open via
                 # kvikio. Skip GDS and let the CPU-mmap fallback below slice
-                # the already-loaded sidecar buffer (issue #2112).
+                # the already-loaded sidecar buffer.
                 arr_gpu = None
             else:
                 try:
@@ -902,7 +889,7 @@ def read_geotiff_gpu(source: str, *,
                     RuntimeWarning,
                     stacklevel=2,
                 )
-                # Forward caller kwargs to the CPU fallback (issue #2238).
+                # Forward caller kwargs to the CPU fallback.
                 arr_cpu, _cpu_fallback_geo = _read_to_array(
                     source, overview_level=overview_level,
                     window=window, band=band, max_pixels=max_pixels,
@@ -918,9 +905,9 @@ def read_geotiff_gpu(source: str, *,
         # dims/coords below. Plain `raise` rather than `assert` so the check
         # survives `python -O`.
         #
-        # Skip the check on CPU-fallback paths: ``_read_to_array`` is now
-        # called with ``window``/``band`` (issue #2238), so the returned
-        # buffer is already sliced and will not equal the full IFD shape.
+        # Skip the check on CPU-fallback paths: ``_read_to_array`` is
+        # called with ``window``/``band``, so the returned buffer is
+        # already sliced and will not equal the full IFD shape.
         # The pure-GPU branches still need the guard because they hand
         # back a fully-decoded ``(H, W, samples)`` buffer and rely on the
         # downstream ``_gpu_apply_window_band`` for the slice.
@@ -948,9 +935,9 @@ def read_geotiff_gpu(source: str, *,
 
         _mw_mask_nodata = None
         if (ifd.photometric == 0 and samples == 1 and not arr_was_cpu_decoded):
-            # PR-C #2226: route the post-MinIsWhite sentinel through the
-            # shared lifecycle helper so the GPU path no longer reaches
-            # into ``_reader`` for the inversion math. The lifecycle's
+            # Route the post-MinIsWhite sentinel through the shared
+            # lifecycle helper so the GPU path no longer reaches into
+            # ``_reader`` for the inversion math. The lifecycle's
             # ``effective_sentinel`` matches ``_miniswhite_inverted_nodata``
             # exactly for the MinIsWhite (photometric==0, spp==1) case.
             gpu_dtype = np.dtype(str(arr_gpu.dtype))
@@ -966,7 +953,7 @@ def read_geotiff_gpu(source: str, *,
                 arr_gpu = -arr_gpu
             elif gpu_dtype.kind == 'i':
                 # Mirror the CPU reader's signed-int MinIsWhite
-                # rejection (issue #2278). Without this the pure-GPU
+                # rejection. Without this the pure-GPU
                 # decode path would silently return un-inverted
                 # signed pixels while the CPU decode path raises,
                 # breaking backend parity.
@@ -1000,9 +987,9 @@ def read_geotiff_gpu(source: str, *,
         # also returns coords, but the helper rebuilds them from
         # ``geo_info`` / ``window`` so the local copy is discarded.
         #
-        # Skip the slice on CPU-fallback paths: ``_read_to_array`` is now
-        # called with ``window``/``band`` (issue #2238), so the buffer is
-        # already windowed and banded. Re-slicing here would double-window
+        # Skip the slice on CPU-fallback paths: ``_read_to_array`` is
+        # called with ``window``/``band``, so the buffer is already
+        # windowed and banded. Re-slicing here would double-window
         # or raise an out-of-range slice. The orientation block above
         # similarly skips ``_apply_orientation_gpu`` on CPU-decoded paths
         # because ``_read_to_array`` did the flip.
@@ -1011,17 +998,16 @@ def read_geotiff_gpu(source: str, *,
                 arr_gpu, geo_info, window=window, band=band)
 
         # Hand the windowed+banded GPU buffer to the shared eager
-        # finalizer (issue #2179). ``mask_sentinel`` resolution mirrors
-        # the original three-way pick: prefer the post-MinIsWhite value
-        # the pure GPU path stamps on ``_mw_mask_nodata``; otherwise
-        # fall back to the CPU-fallback path's stash on
-        # ``_cpu_fallback_geo._mask_nodata`` (#1817); otherwise the raw
-        # declared sentinel. The helper's host-side mask block runs on
-        # CuPy arrays via numpy duck-typing.
+        # finalizer. ``mask_sentinel`` resolution mirrors the three-way
+        # pick: prefer the post-MinIsWhite value the pure GPU path stamps
+        # on ``_mw_mask_nodata``; otherwise fall back to the CPU-fallback
+        # path's stash on ``_cpu_fallback_geo._mask_nodata``; otherwise
+        # the raw declared sentinel. The helper's host-side mask block
+        # runs on CuPy arrays via numpy duck-typing.
         #
         # The sentinel is resolved even when ``mask_nodata=False``
         # because the helper still needs it for the
-        # ``nodata_pixels_present`` scan in that branch (#2135); only
+        # ``nodata_pixels_present`` scan in that branch; only
         # ``nodata is None`` short-circuits the resolution.
         nodata = geo_info.nodata
         if nodata is None:
@@ -1060,8 +1046,7 @@ def read_geotiff_gpu(source: str, *,
         # has finished reading ``data`` -- the decode slices
         # ``sidecar.data`` directly when ``sidecar_owned_ifd`` is true.
         # Deferring to Python GC instead would leak file descriptors
-        # in long-running processes opening many GeoTIFFs in sequence
-        # (review of #2112).
+        # in long-running processes opening many GeoTIFFs in sequence.
         src.close()
         if sidecar is not None:
             close_sidecar(sidecar)
@@ -1076,7 +1061,7 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
                                     allow_experimental_codecs: bool = False,
                                     allow_internal_only_jpeg: bool = False,
                                     mask_nodata: bool = True):
-    """Eager CPU decode + GPU upload for HTTP / fsspec sources (issue #2161).
+    """Eager CPU decode + GPU upload for HTTP / fsspec sources.
 
     Reached via ``open_geotiff(url, gpu=True)`` and the direct
     ``read_geotiff_gpu(url)`` entry point. The eager GPU pipeline
@@ -1092,9 +1077,9 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
     uploading to the device via ``cupy.asarray`` produces a CuPy-backed
     DataArray with the same ``attrs`` / ``coords`` / ``dims`` the eager
     GPU path would have built. The chunked GPU path makes the same
-    choice for HTTP/fsspec sources (see ``_read_geotiff_gpu_chunked``
-    around line 1106): take the CPU dask graph, ``map_blocks(cupy.asarray)``
-    each block, return. This helper is the eager analogue: read the
+    choice for HTTP/fsspec sources (see ``_read_geotiff_gpu_chunked``):
+    take the CPU dask graph, ``map_blocks(cupy.asarray)`` each block,
+    return. This helper is the eager analogue: read the
     whole array on CPU, push it to the device in one shot.
 
     The user-facing ``on_gpu_failure`` / ``gpu='strict'`` kwarg is a
@@ -1135,10 +1120,10 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
         # stable label, which is fine for a default.
         name = os.path.splitext(os.path.basename(source))[0]
 
-    # Hand the GPU buffer to the shared eager finalizer (issue #2179).
+    # Hand the GPU buffer to the shared eager finalizer.
     # ``_read_to_array`` already applied window + band slicing and
     # stashed the post-MinIsWhite sentinel on ``geo_info._mask_nodata``
-    # for the masking step (#1809); fall back to the raw sentinel on
+    # for the masking step; fall back to the raw sentinel on
     # non-MinIsWhite files. The helper's host-side mask block runs on
     # CuPy arrays via numpy duck-typing.
     nodata = geo_info.nodata
@@ -1184,7 +1169,7 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     # import failure would silently let an HTTP URL into the kvikio
     # branch (which opens the path as a local file and panics). The
     # canonical case-insensitive helper is a sibling module, so the
-    # import is safe at module load time. Issues #2323 / #2332.
+    # import is safe at module load time.
     from .._sources import _is_http_source
     if _is_http_source(source):
         return False
@@ -1211,7 +1196,7 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
     if ifd.photometric == 0:
         return False
     # float16 on disk (bps=16 + SampleFormat=3) is auto-promoted to
-    # float32 by the CPU decoder (#1941). The GDS path uses the raw
+    # float32 by the CPU decoder. The GDS path uses the raw
     # on-disk bps for byte striding and would mis-decode the
     # half-precision samples; route those rare reads to the CPU
     # decode path.
@@ -1241,7 +1226,7 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
     once per chunk and only pulls the tiles that chunk needs from disk.
 
     ``masked_fill`` is forwarded to both GPU decoders for LERC files
-    with a per-pixel valid mask, matching the eager-GPU path (#1896).
+    with a per-pixel valid mask, matching the eager-GPU path.
     Without it, masked pixels read back as LERC's zero fill instead of
     the file's nodata sentinel.
     """
@@ -1338,8 +1323,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     src_path = _coerce_path(source)
 
     # Per-tile compressed-byte cap, mirroring the eager GPU path and
-    # the CPU readers (issue #1664 + the GPU eager fix in this PR).
-    # The chunked dask + GPU path either qualifies for the GDS fast
+    # the CPU readers. The chunked dask + GPU path either qualifies for
+    # the GDS fast
     # path (handled in ``_read_geotiff_gpu_chunked_gds`` which runs
     # the same cap on its own metadata parse) or falls through to
     # ``read_geotiff_dask`` whose per-chunk ``read_to_array`` calls
@@ -1395,8 +1380,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
             # and the chunked path falls through to ``read_geotiff_dask``
             # which carries its own sidecar handling. Pass
             # ``sidecar_origin=None`` explicitly so all four call sites
-            # of this helper share the same call shape (review nit
-            # on #2324).
+            # of this helper share the same call shape.
             geo_info = extract_geo_info_with_overview_inheritance(
                 ifd, ifds, raw, header.byte_order,
                 allow_rotated=allow_rotated,
@@ -1503,8 +1487,8 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     _check_dimensions(tw, th, samples, max_pixels)
     validate_tile_layout(ifd)
 
-    # Per-tile compressed-byte cap, mirroring the eager GPU path's loop
-    # (issue #1664 + the original eager fix above). The chunked GDS
+    # Per-tile compressed-byte cap, mirroring the eager GPU path's loop.
+    # The chunked GDS
     # graph fans tile reads out across dask tasks, so a forged
     # ``TileByteCount`` would otherwise slip past every task's GDS
     # request and the downstream ``_check_gpu_memory`` guard, which
@@ -1552,15 +1536,14 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         # Reject ``bool`` / ``np.bool_`` up front; ``isinstance(True, int)``
         # is True in Python so ``True < n_bands_out`` would silently read
         # band 1. The eager GPU path and the dask path already reject
-        # bools here (#1786); mirror them so the GDS chunked path agrees
-        # (#1896).
+        # bools here; mirror them so the GDS chunked path agrees.
         if isinstance(band, (bool, np.bool_)):
             raise ValueError(
                 f"band must be a non-negative int, got {band!r}")
         # Reject non-integer numeric types and anything else that slips
         # past the bool guard. ``band=0.0`` passes the range check below
         # and either silently reads band 0 or fails with a raw IndexError
-        # from deep in the GDS read path on multi-band files. See #1910.
+        # from deep in the GDS read path on multi-band files.
         if not isinstance(band, (int, np.integer)):
             raise TypeError(
                 f"band must be a non-negative int, got {band!r}")
@@ -1584,7 +1567,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     # LERC tiles can carry a per-pixel valid mask that GDAL writes
     # zero-filled in the data array. Resolve the nodata fill the same way
     # the eager GPU path does so each chunk task restores it inside the
-    # GPU decode kernels (#1896). Without this, masked pixels read back
+    # GPU decode kernels. Without this, masked pixels read back
     # at LERC's zero fill on the chunked path while the eager path
     # restores the sentinel.
     masked_fill = (_resolve_masked_fill(ifd.nodata_str, file_dtype)
@@ -1625,15 +1608,14 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         # dask array's promised dtype. ``_apply_nodata_mask_gpu`` only
         # promotes integer arrays to float64 when at least one sentinel
         # pixel hits, mirroring the eager GPU semantics; the dask graph
-        # always-promotes (matching the CPU dask path's #1597 contract),
+        # always-promotes (matching the CPU dask path's contract),
         # so chunks with no sentinel hit need an explicit cast here.
         # Without this, a uint16 file + declared nodata sentinel
         # produces a graph that advertises float64 but emits uint16
         # buffers from any chunk that didn't hit the sentinel -- a
-        # silent declared/actual dtype mismatch (issue #1909). Skip
-        # the cast when the dtype already matches to avoid the
-        # ``astype(copy=True)`` per-chunk allocation that #1624 fixed
-        # for the CPU dask path.
+        # silent declared/actual dtype mismatch. Skip the cast when the
+        # dtype already matches to avoid the ``astype(copy=True)``
+        # per-chunk allocation.
         if arr.dtype != declared_dtype:
             arr = arr.astype(declared_dtype)
         return arr
@@ -1672,17 +1654,17 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     else:
         dims = ['y', 'x']
 
-    # Wave 2 of #2162: share the validate-then-populate-then-stamp
-    # block with the dask+numpy backend via ``_finalize_lazy_read_attrs``.
+    # Share the validate-then-populate-then-stamp block with the
+    # dask+numpy backend via ``_finalize_lazy_read_attrs``.
     #
     # ``graph_dtype`` is the resolved graph dtype so ``masked_nodata``
     # reflects whether per-chunk masking actually runs in the lazy
-    # graph (#2092). ``caller_dtype`` is the user's ``dtype=`` kwarg so
+    # graph. ``caller_dtype`` is the user's ``dtype=`` kwarg so
     # ``nodata_dtype_cast`` surfaces caller intent, not the
     # masking-induced int->float64 auto-promotion.
     # ``nodata_pixels_present`` stays unset on this path for the same
     # reason as the dask+numpy path: a strict per-chunk reduction
-    # would force an eager ``.compute()`` (#2135).
+    # would force an eager ``.compute()``.
     attrs = _finalize_lazy_read_attrs(
         geo_info=geo_info,
         nodata=nodata,

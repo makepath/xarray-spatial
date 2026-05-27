@@ -1,4 +1,4 @@
-"""Tests for accuracy bugs fixed in #1081.
+"""Tests for three GeoTIFF accuracy bugs.
 
 Bug 1: Windowed read ignores PixelIsPoint raster type
 Bug 2: CRS WKT silently lost on write for non-EPSG CRS

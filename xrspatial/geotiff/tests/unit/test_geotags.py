@@ -100,7 +100,7 @@ class TestBuildGeoTags:
 
 
 class TestModelTypeFromEPSG:
-    """Regression coverage for issue #2277.
+    """Model type must be classified from CRS metadata, not EPSG range.
 
     The legacy heuristic at build_geo_tags decided geographic-vs-projected
     from the EPSG number range (4326 plus 4000-4999). That silently
@@ -323,7 +323,7 @@ def _build_tiff_with_transformation_tag(matrix_16: tuple) -> bytes:
 
 
 class TestModelTransformationTag_1486:
-    """Issue #1486: handle ModelTransformationTag (34264) explicitly.
+    """Handle ModelTransformationTag (34264) explicitly.
 
     The reader previously read the matrix but silently discarded any
     rotation, skew, or z-coupling.  The fix raises NotImplementedError
@@ -474,7 +474,7 @@ def _build_tiff_with_tiepoint_only(tiepoint_6: tuple) -> bytes:
 
 
 class TestTiepointWithoutScale_1750:
-    """Issue #1750: ModelTiepointTag present, ModelPixelScaleTag absent.
+    """ModelTiepointTag present, ModelPixelScaleTag absent.
 
     Previously the reader returned a default GeoTransform with origin (0, 0)
     while still flagging the raster as georeferenced, silently relocating it.

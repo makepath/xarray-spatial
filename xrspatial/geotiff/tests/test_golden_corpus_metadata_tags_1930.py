@@ -1,6 +1,6 @@
 """Smoke tests for the GDAL_METADATA + extra_tags golden-corpus fixtures.
 
-Phase 2 PR 9 of issue #1930 adds two fixtures:
+Two fixtures:
 
 * ``gdal_metadata_namespaced_uint16`` -- a stripped uint16 raster with
   GDAL_METADATA entries spread across the default domain, the
@@ -19,7 +19,7 @@ that an xarray DataArray built from a plain rasterio read still satisfies
 contract.
 
 The full canonical-attrs contract for GDAL_METADATA / pass-through tags
-lands in issue #1984; this PR does not assert it.
+is asserted elsewhere; these smoke tests do not pin it.
 """
 from __future__ import annotations
 

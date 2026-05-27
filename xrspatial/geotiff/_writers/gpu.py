@@ -1,7 +1,7 @@
 """GPU writer entry point.
 
-Step 10 of issue #1813. Holds ``write_geotiff_gpu``, which compresses
-tiles on the device via nvCOMP (when available) and falls back to the
+Holds ``write_geotiff_gpu``, which compresses tiles on the device via
+nvCOMP (when available) and falls back to the
 eager CPU writer when nvCOMP is missing or the device path raises
 under ``on_gpu_failure='auto'``.
 """
@@ -34,7 +34,7 @@ from .._validation import (_validate_3d_writer_dims, _validate_no_rotated_affine
 
 def _compute_gpu_samples_hint(data) -> int:
     """Return the band count using the same convention the GPU writer's
-    band-first -> band-last remap uses (issue #2097).
+    band-first -> band-last remap uses.
 
     The remap below in ``write_geotiff_gpu`` moves bands from
     ``shape[0]`` to ``shape[2]`` for band-first DataArrays. The
@@ -81,7 +81,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
-    Release-contract tier (epic #2340; see
+    Release-contract tier (see
     ``docs/source/reference/release_gate_geotiff.rst`` and
     ``docs/source/reference/geotiff_release_contract.rst``): the
     entire entry point is [experimental]. The surface may shift
@@ -94,8 +94,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     ``allow_experimental_codecs=True`` opt-in; the [internal-only]
     ``'jpeg'`` codec keeps its own dedicated
     ``allow_internal_only_jpeg`` flag. See
-    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map
-    (issue #2137).
+    :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier map.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
     assembled into a TIFF file on CPU. The CuPy array stays on device
@@ -120,15 +119,14 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         method (e.g. ``io.BytesIO``). ``cog=True`` requires a string
         path: the auto-dispatch path through
         ``to_geotiff(gpu=True, cog=True)`` rejects file-like
-        destinations, and the explicit GPU writer mirrors that rule
-        (issue #1652).
+        destinations, and the explicit GPU writer mirrors that rule.
     crs : int, numpy.integer, str, or None
         [experimental] EPSG code (int or numpy integer scalar) or WKT
         string. EPSG codes are strongly preferred for interop; the
         WKT-only path emits a user-defined CRS (32767) with the WKT
         stored in ``GTCitationGeoKey``, which many non-libgeotiff
         readers ignore. A ``UserWarning`` is emitted when the WKT-only
-        path is taken. See issue #1768.
+        path is taken.
     nodata : float, int, or None
         [experimental] NoData value.
     compression : str
@@ -154,7 +152,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
           nvJPEG when libnvjpeg is loadable and falls back to Pillow
           otherwise, and emits a ``GeoTIFFFallbackWarning`` so the
           caller knows the output will not round-trip through external
-          readers. See issue #1845.
+          readers.
         - ``'jpeg2000'`` and ``'j2k'``: nvJPEG2K GPU encode when
           available, glymur CPU encode otherwise. The two paths are
           not byte-for-byte identical (different libraries, different
@@ -222,8 +220,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         Photometric tag (262). See :func:`to_geotiff` for the full set
         of accepted values; the GPU writer forwards this kwarg
         unchanged. Default ``'auto'`` writes MinIsBlack for any band
-        count, so a 4-band raster is not silently tagged as RGB+alpha
-        (issue #1769).
+        count, so a 4-band raster is not silently tagged as RGB+alpha.
     allow_experimental_codecs : bool
         [experimental] Opt in to the Tier 3 experimental codecs
         ``'lerc'``,
@@ -236,7 +233,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         flag set, the write proceeds and a ``GeoTIFFFallbackWarning``
         is emitted once per call. Does NOT cover ``compression='jpeg'``:
         the internal-only JPEG path keeps its own dedicated
-        ``allow_internal_only_jpeg`` flag. See issue #2137.
+        ``allow_internal_only_jpeg`` flag.
     allow_internal_only_jpeg : bool
         [internal-only] Opt in to the ``compression='jpeg'`` encode
         path (default ``False``). The encoder emits self-contained
@@ -245,20 +242,19 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         GDAL, or rasterio. With the flag set, the write proceeds and a
         ``GeoTIFFFallbackWarning`` is emitted at call time. Without
         the flag, ``compression='jpeg'`` raises ``ValueError`` for
-        parity with ``to_geotiff``. See issue #1845.
+        parity with ``to_geotiff``.
     allow_unparseable_crs : bool
         [experimental] Opt in to writing an unvalidatable CRS string
         into ``GTCitationGeoKey`` (default ``False``). See
         :func:`to_geotiff` for the full description; the GPU writer
-        applies the same fail-closed default. See issue #1929.
+        applies the same fail-closed default.
     drop_rotation : bool, default False
         [experimental] Opt in to writing a DataArray that carries
         ``attrs['rotated_affine']``. Mirrors the same kwarg on
         ``to_geotiff`` so the two writers share one gate. Default
         ``False`` refuses the write with ``ValueError``; the GPU
-        writer does not emit a ``ModelTransformationTag`` either
-        (tracked in #2115), so the silent-loss surface is identical
-        on both backends. See issue #2216.
+        writer does not emit a ``ModelTransformationTag`` either, so
+        the silent-loss surface is identical on both backends.
 
     Returns
     -------
@@ -266,7 +262,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         The ``path`` argument (a string for filesystem paths, the
         file-like object for BytesIO destinations). Returning the path
         mirrors ``to_geotiff`` and ``write_vrt`` so callers can handle
-        the three writers uniformly. See issue #1938.
+        the three writers uniformly.
 
     Raises
     ------
@@ -276,7 +272,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         aliases ``bands`` / ``channel`` and spatial-name aliases
         ``lat`` / ``lon`` / ``row`` / ``col``). A leading non-band
         dim such as ``time`` would otherwise silently round-trip with
-        the leading axis treated as ``y`` (issue #1812).
+        the leading axis treated as ``y``.
     """
     if not tiled:
         raise ValueError(
@@ -284,8 +280,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
-    # JPEG-in-TIFF parity with to_geotiff (issue #1845). The GPU encode
-    # path writes self-contained JFIF tiles without the TIFF JPEGTables
+    # JPEG-in-TIFF parity with to_geotiff. The GPU encode path writes
+    # self-contained JFIF tiles without the TIFF JPEGTables
     # tag (347), matching the broken CPU encoder. ``to_geotiff`` refuses
     # the codec outright; this writer offered no rejection at all, so
     # callers could produce GeoTIFFs that decoded through xrspatial but
@@ -315,8 +311,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             GeoTIFFFallbackWarning,
             stacklevel=2,
         )
-    # Tier 3 experimental-codec gate (issue #2137). Lerc, jpeg2000 /
-    # j2k, and lz4 require ``allow_experimental_codecs=True``; the GPU
+    # Tier 3 experimental-codec gate. Lerc, jpeg2000 / j2k, and lz4
+    # require ``allow_experimental_codecs=True``; the GPU
     # writer mirrors the same gate ``to_geotiff`` enforces so the two
     # entry points agree.  The GPU dispatch path through
     # ``to_geotiff(gpu=True, compression='lerc', ...)`` forwards the
@@ -345,7 +341,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 GeoTIFFFallbackWarning,
                 stacklevel=2,
             )
-    # MinIsWhite pre-inversion (issue #1836) runs in the eager CPU writer.
+    # MinIsWhite pre-inversion runs in the eager CPU writer.
     # The GPU writer assembles tile bytes directly on device; threading
     # the pixel + nodata-sentinel transform through that pipeline is out
     # of scope for the round-trip fix. Refuse the combination so callers
@@ -369,8 +365,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _validate_tile_size_arg(tile_size)
     _validate_nodata_arg(nodata)
 
-    # Issue #2216: refuse to silently drop ``attrs['rotated_affine']``.
-    # Mirror the gate ``to_geotiff`` runs upstream so direct callers of
+    # Refuse to silently drop ``attrs['rotated_affine']``. Mirror the
+    # gate ``to_geotiff`` runs upstream so direct callers of
     # ``write_geotiff_gpu`` get the same rejection.
     _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
     _validate_no_rotated_affine(
@@ -379,8 +375,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         entry_point="write_geotiff_gpu",
     )
 
-    # Issue #2075: reject empty spatial shapes. ``write_geotiff_gpu`` is
-    # a public entry point and direct callers (with cupy.ndarray or raw
+    # Reject empty spatial shapes. ``write_geotiff_gpu`` is a public
+    # entry point and direct callers (with cupy.ndarray or raw
     # numpy) do not flow through ``to_geotiff``'s guard, so check here
     # before any GPU work starts.
     _validate_writer_spatial_shape(
@@ -392,7 +388,6 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # Reject ``gdal_metadata_xml`` / ``extra_tags`` pass-through writes
     # unless the caller opted in via ``allow_experimental_codecs=True``.
     # Mirrors ``to_geotiff`` so the two writers expose the same surface.
-    # PR 4 of epic #2340.
     from .._attrs import _validate_write_rich_tag_optin
     _attrs_for_optin = getattr(data, 'attrs', None) or {}
     _validate_write_rich_tag_optin(
@@ -401,10 +396,10 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         entry_point="write_geotiff_gpu",
     )
 
-    # Issue #1987 ambiguous-metadata checks; mirrors ``to_geotiff`` so the
-    # GPU writer enforces the same crs/crs_wkt consistency rule. Alias
-    # resolution (issue #2215) keeps the validator consistent across
-    # alias-named coord arrays (lat/lon, latitude/longitude, row/col).
+    # Ambiguous-metadata checks; mirrors ``to_geotiff`` so the GPU
+    # writer enforces the same crs/crs_wkt consistency rule. Alias
+    # resolution keeps the validator consistent across alias-named
+    # coord arrays (lat/lon, latitude/longitude, row/col).
     _attrs = getattr(data, 'attrs', None) or {}
     _coord_y, _coord_x = _resolve_spatial_coords(data)
     validate_write_metadata({
@@ -430,8 +425,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # see identical errors from the two entry points. The auto-dispatch
     # path through ``to_geotiff(gpu=True, cog=True, path=BytesIO)`` raises
     # before reaching here; the explicit GPU writer mirrors the same gate
-    # so callers cannot bypass it (issue #1652). Non-cog file-like writes
-    # remain supported on this entry point.
+    # so callers cannot bypass it. Non-cog file-like writes remain
+    # supported on this entry point.
     _path_is_file_like = (
         not isinstance(path, str)) and hasattr(path, 'write')
     if _path_is_file_like:
@@ -477,10 +472,10 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         if epsg is None:
             wkt_fallback = crs
 
-    # Issue #1988: ``attrs['masked_nodata']`` records whether the read
-    # side promoted the sentinel to NaN. Default True preserves the
-    # pre-#1988 NaN->sentinel rewrite for external DataArrays and bare
-    # cupy / numpy positional arrays that have no attrs to read from.
+    # ``attrs['masked_nodata']`` records whether the read side promoted
+    # the sentinel to NaN. Default True preserves the NaN->sentinel
+    # rewrite for external DataArrays and bare cupy / numpy positional
+    # arrays that have no attrs to read from.
     restore_sentinel = True
     if isinstance(data, xr.DataArray):
         restore_sentinel = _should_restore_nan_sentinel(data.attrs)
@@ -494,8 +489,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         else:
             arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
 
-        # Reject ambiguous 3D layouts (issue #1812). Mirrors the gate
-        # in ``to_geotiff``: a leading non-band dim like ``time`` would
+        # Reject ambiguous 3D layouts. Mirrors the gate in
+        # ``to_geotiff``: a leading non-band dim like ``time`` would
         # otherwise round-trip with the leading axis silently treated
         # as ``y``.
         if arr.ndim == 3:
@@ -503,20 +498,20 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # Handle band-first dimension order (band, y, x) -> (y, x, band).
         # rioxarray and CF-style multi-band rasters land here; without
         # this remap the writer treats arr.shape[2] as the band axis and
-        # produces a transposed file (issue #1580). The CPU writer does
-        # the same remap at the matching step in to_geotiff().
+        # produces a transposed file. The CPU writer does the same remap
+        # at the matching step in to_geotiff().
         if arr.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
             arr = cupy.ascontiguousarray(cupy.moveaxis(arr, 0, -1))
 
-        # Resolve via the centralised resolver (#2225). Same precedence
-        # as the CPU writer: prefer attrs['transform'] (bit-stable on
-        # round-trip) over the coord-derived transform (drifts on
-        # fractional pixel sizes -- the same reasoning behind #1484).
+        # Resolve via the centralised resolver. Same precedence as the
+        # CPU writer: prefer attrs['transform'] (bit-stable on
+        # round-trip) over the coord-derived transform, which drifts on
+        # fractional pixel sizes.
         geo_transform = _resolve_georef(data).transform
         # Match the CPU writer's fail-closed guard: an array with spatial
         # coords but no derivable transform (e.g. 1x1 without
         # ``attrs['transform']``) must not silently round-trip as a
-        # non-georeferenced TIFF (#1945).
+        # non-georeferenced TIFF.
         _require_transform_for_georeferenced(data, geo_transform)
         # Resolve CRS the same way the CPU writer does. attrs['crs'] may
         # be an int EPSG or a WKT string; attrs['crs_wkt'] only carries
@@ -533,7 +528,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 # Same gate as the kwarg path: reject bool / non-int
                 # types and confirm the EPSG resolves before writing it
                 # to disk. Without this, ``attrs={'crs': True}`` round-
-                # trips as EPSG=1 (issue #1971 follow-up).
+                # trips as EPSG=1.
                 _validate_crs_arg(crs_attr)
                 epsg = int(crs_attr)
             if epsg is None:
@@ -548,7 +543,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # extra_tags list, the friendly image_description / extra_samples
         # / colormap synthesis, and the resolution tags. Without these,
         # a GPU write -> CPU read round-trip silently drops every rich
-        # tag (#1563).
+        # tag.
         _rich = _extract_rich_tags(data.attrs)
         raster_type = _rich['raster_type']
         gdal_meta_xml = _rich['gdal_metadata_xml']
@@ -573,7 +568,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     samples = arr.shape[2] if arr.ndim == 3 else 1
     np_dtype = np.dtype(str(arr.dtype))  # cupy dtype -> numpy dtype
 
-    # Mirror the CPU writer's NaN-to-sentinel substitution (issue #1599).
+    # Mirror the CPU writer's NaN-to-sentinel substitution.
     # Without this step the GPU writer emits raw NaN bytes interleaved
     # with valid data even when ``nodata=<finite>`` is supplied; the
     # GDAL_NODATA tag still advertises the sentinel but external readers
@@ -592,7 +587,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # the cost is one GPU array allocation, only on the NaN-present
     # path, and it guarantees the CPU writer's defensive-copy semantics
     # in every case.
-    # PR-C #2226: shared NodataLifecycle gate for NaN->sentinel restore.
+    # Shared NodataLifecycle gate for NaN->sentinel restore.
     if _NL(declared=nodata, dtype_in=np_dtype).writer_restore_sentinel(
             buffer_dtype=np_dtype,
             restore_sentinel=restore_sentinel,
@@ -623,14 +618,14 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # Full resolution
     parts = [_gpu_compress_to_part(arr, width, height, samples)]
 
-    # Overview generation -- mirrors the CPU writer's 8-level cap.
+    # Overview generation mirrors the CPU writer's 8-level cap.
     if cog:
         if overview_levels is None:
             from .._overview import _MAX_OVERVIEW_LEVELS
 
             # Auto-generated lists hold actual decimation factors (2,
             # 4, 8, ...) so the loop below treats auto-generated and
-            # user-supplied lists identically (issue #1766).
+            # user-supplied lists identically.
             overview_levels = []
             oh, ow = height, width
             factor = 2
@@ -645,7 +640,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             # Validate explicit lists: power-of-two factors >= 2,
             # strictly increasing, feasible for the input shape.
             # Previously the values were ignored and only the list
-            # length mattered (issue #1766).
+            # length mattered.
             from .._overview import _validate_overview_levels
             overview_levels = _validate_overview_levels(
                 overview_levels, height=height, width=width)
@@ -653,8 +648,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # Pass ``nodata`` so the GPU reducer masks the sentinel back to
         # NaN before averaging. Without this, the NaN->sentinel rewrite
         # done above on ``arr`` leaks the sentinel into the overview
-        # reduction and poisons the pyramid (issue #1613). Rewrite any
-        # all-sentinel cell NaN back to the sentinel after each level
+        # reduction and poisons the pyramid. Rewrite any all-sentinel
+        # cell NaN back to the sentinel after each level
         # so the on-disk overview tiles still carry the sentinel value
         # external readers expect.
         #
@@ -667,16 +662,15 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # aliases the buffer between the return and the rewrite.
         # Dropping the redundant ``copy()`` skips one chunk-sized GPU
         # allocation per overview level. Mirrors the in-place sentinel
-        # rewrite ``_apply_nodata_mask_gpu`` adopted in #1934. See
-        # issue #1948.
+        # rewrite ``_apply_nodata_mask_gpu`` uses.
         current = arr
         cumulative_factor = 1
         # ``make_overview_gpu`` preserves dtype, so the sentinel cast is
         # loop-invariant. Hoist it (and the float/finite gate) out of the
         # inner ``while`` to skip redundant per-level scalar work.
-        # PR-C #2226: lifecycle's writer_restore_sentinel mirrors the
-        # gate used for the full-resolution rewrite above so the
-        # overview loop stays in sync with the base rewrite.
+        # The lifecycle's writer_restore_sentinel mirrors the gate used
+        # for the full-resolution rewrite above so the overview loop
+        # stays in sync with the base rewrite.
         rewrite_nodata = _NL(
             declared=nodata, dtype_in=np_dtype,
         ).writer_restore_sentinel(
@@ -702,8 +696,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
-    # Issue #1929: refuse to write an unvalidatable CRS string into
-    # GTCitationGeoKey unless the caller opts in.
+    # Refuse to write an unvalidatable CRS string into GTCitationGeoKey
+    # unless the caller opts in.
     if epsg is None:
         _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
     file_bytes = _assemble_tiff(

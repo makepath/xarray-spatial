@@ -47,8 +47,7 @@ def _is_http_url(source: str) -> bool:
     """Case-insensitive HTTP(S) scheme test for sidecar routing.
 
     Delegates to :func:`xrspatial.geotiff._sources._is_http_source` so
-    the SSRF-relevant routing decision matches the rest of the package
-    (issues #2323 / #2332).
+    the SSRF-relevant routing decision matches the rest of the package.
     """
     return _is_http_source(source)
 
@@ -95,9 +94,9 @@ def _probe_http(url: str) -> str | None:
 
     * SSRF allow-list via :func:`_validate_http_url` -- loopback /
       link-local / private hostnames are rejected unless
-      ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set (#1664).
+      ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set.
     * IP pinning so a DNS-rebind between probe and download cannot
-      flip the target (#1846).
+      flip the target.
     * Shared urllib3 ``PoolManager`` with retries and connection reuse,
       so opening many sidecar-bearing files in a row keeps TCP/TLS
       state warm instead of re-handshaking per probe.
@@ -162,7 +161,7 @@ def load_sidecar(path: str,
         (the default) means unbounded -- matches the base-file semantics
         when the caller passes ``max_cloud_bytes=None`` explicitly.
         Ignored on the local-file path because mmap does not allocate
-        the file. Issue #2121.
+        the file.
 
     The returned ``data`` is either an ``mmap`` (local) or ``bytes``
     (remote). Callers should close the mmap variant via
@@ -195,7 +194,7 @@ def load_sidecar(path: str,
         # ``max_bytes`` here closes a separate gap: without it, the
         # sidecar fetch ignores the ``max_cloud_bytes`` budget the
         # caller set on the base file and a hostile server can serve a
-        # multi-GB ``.ovr`` to OOM the process. Issue #2121.
+        # multi-GB ``.ovr`` to OOM the process.
         from ._reader import CloudSizeLimitError, _HTTPSource
         try:
             data = _HTTPSource(path).read_all(max_bytes=max_cloud_bytes)
@@ -222,8 +221,7 @@ def load_sidecar(path: str,
     else:
         # fsspec URI. Stat the sidecar first so an oversized object is
         # rejected before any bytes hit memory, mirroring the
-        # ``_CloudSource`` size guard at ``_reader.py:3239-3260``.
-        # Issue #2121.
+        # ``_CloudSource`` size guard.
         import fsspec
         fs, fs_path = fsspec.core.url_to_fs(path)
         if max_cloud_bytes is not None:
@@ -302,7 +300,7 @@ def discover_remote_sidecar(
     fsspec dask metadata path, the eager HTTP path, and
     ``_read_geo_info``'s fsspec branch can resolve ``overview_level``
     against the same merged pyramid the eager local/fsspec reader
-    already does (issue #2239).
+    already does.
 
     Returns:
 

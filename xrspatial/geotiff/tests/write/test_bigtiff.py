@@ -4,8 +4,6 @@ Covers the BigTIFF-specific layout (header magic, 8-byte offsets,
 20-byte IFD entries, tile and overview offset tables) for the
 codec / dtype / band-count matrix, plus the auto-promotion row that
 drives the threshold via the IFD-overhead helper.
-
-Tests-only restructure for epic #2390.
 """
 
 from __future__ import annotations
@@ -313,7 +311,7 @@ def test_auto_bigtiff_threshold_promotes_for_cog(tmp_path, monkeypatch):
     monkeypatching ``_compute_classic_ifd_overhead`` to return a value
     just past UINT32_MAX. Mirrors the strategy used by the eager-writer
     BigTIFF overhead tests in the
-    "Eager writer BigTIFF auto-detection (#1905)" section below -- the
+    "Eager writer BigTIFF auto-detection" section below -- the
     writer's auto-decision pipes ``estimated_file_size > UINT32_MAX``
     through the same helper for both the GeoTIFF and COG layouts. If a
     future refactor decouples the COG estimate from this helper this
@@ -356,12 +354,10 @@ def test_auto_bigtiff_threshold_promotes_for_cog(tmp_path, monkeypatch):
 
 
 # =============================================================================
-# Section: Eager writer BigTIFF auto-detection (#1905)
+# Section: Eager writer BigTIFF auto-detection
 # =============================================================================
 #
-# Original: ``test_eager_bigtiff_overhead_exact_1905.py``.
-#
-# Regression for issue #1905. The eager writer previously decided
+# The eager writer previously decided
 # BigTIFF with a fixed-fudge estimate:
 #
 #     ifd_overhead = num_levels * (2 + 12 * max_tags_per_ifd + 4 + 1024)
@@ -369,7 +365,7 @@ def test_auto_bigtiff_threshold_promotes_for_cog(tmp_path, monkeypatch):
 # The 1 KB constant under-promoted near the 4 GiB boundary when
 # ``gdal_metadata_xml`` or ``extra_tags`` pushed the actual overflow
 # heap past it. The fix reuses ``_compute_classic_ifd_overhead`` from
-# the streaming writer (added in #1785, #1787) so eager and streaming
+# the streaming writer so eager and streaming
 # paths agree on the estimate.
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 from xrspatial.geotiff._dtypes import ASCII, LONG  # noqa: E402
@@ -507,14 +503,12 @@ def test_overhead_matches_actual_emitted_size_via_writer_1905(tmp_path):
 
 
 # =============================================================================
-# Section: BigTIFF docstring parity (#1683)
+# Section: BigTIFF docstring parity
 # =============================================================================
 #
-# Original: ``test_to_geotiff_bigtiff_doc_1683.py``.
-#
-# The api-consistency sweep on 2026-05-12 flagged that ``to_geotiff``
-# accepts a ``bigtiff`` kwarg but the Parameters block of the
-# docstring jumps from ``overview_resampling`` directly to ``gpu``.
+# ``to_geotiff`` accepts a ``bigtiff`` kwarg but the Parameters block of
+# the docstring used to jump from ``overview_resampling`` directly to
+# ``gpu``.
 # ``write_geotiff_gpu`` documents the same kwarg correctly, so users
 # learning the API from ``to_geotiff(...)`` could not tell the option
 # existed. This section pins the docstring entry against future drift.

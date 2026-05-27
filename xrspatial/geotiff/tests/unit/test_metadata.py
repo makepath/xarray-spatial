@@ -1,19 +1,15 @@
-"""Consolidated metadata tests (#2439 cluster 15 sub-cluster 1).
+"""Consolidated metadata tests.
 
-Folds four metadata regression files into one module per epic #2424:
+Folds four metadata regression areas into one module:
 
-* ``test_ambiguous_metadata_hooks_1987.py`` -- error hierarchy, register /
-  dispatch contract for the ambiguous-metadata validator framework.
-* ``test_geotiff_metadata_2139.py`` -- ``GeoTIFFMetadata`` dataclass /
-  ``metadata_to_attrs`` / ``attrs_to_metadata`` round trip.
-* ``test_metadata_round_trip_1484.py`` -- transform / CRS / tag
-  pass-through round trip end-to-end (M-1, M-2, M-3, M-4 audit items).
-* ``test_mixed_band_metadata_fail_closed_1987.py`` -- VRT mixed-band
-  nodata fail-closed behaviour at every entry point.
+* error hierarchy, register / dispatch contract for the
+  ambiguous-metadata validator framework.
+* ``GeoTIFFMetadata`` dataclass / ``metadata_to_attrs`` /
+  ``attrs_to_metadata`` round trip.
+* transform / CRS / tag pass-through round trip end-to-end.
+* VRT mixed-band nodata fail-closed behaviour at every entry point.
 
-Section headers below match the original file boundaries. Helpers are
-suffixed with the source issue number so the four sections stay
-collision-free.
+Helpers are suffixed so the four sections stay collision-free.
 """
 from __future__ import annotations
 
@@ -45,20 +41,18 @@ from xrspatial.geotiff._writer import write
 
 
 # =============================================================================
-# Section: Ambiguous metadata hooks (#1987 PR 0)
+# Section: Ambiguous metadata hooks
 # =============================================================================
 #
-# Original: ``test_ambiguous_metadata_hooks_1987.py``.
-#
-# PR 0 lands the error class hierarchy in ``_errors.py`` and the
-# register / dispatch framework in ``_validation.py``. No raises yet;
-# each per-case PR (#1987 PRs 2-7) registers its own check.
+# The error class hierarchy lives in ``_errors.py`` and the register /
+# dispatch framework in ``_validation.py``; each per-case check
+# registers itself.
 #
 # These tests cover:
 #
-# - the error class hierarchy is what the per-case PRs expect to subclass
-# - the hooks are no-ops when no checks are registered (so PR 0 cannot
-#   regress any existing entry point)
+# - the error class hierarchy is what the per-case checks subclass
+# - the hooks are no-ops when no checks are registered (so the framework
+#   cannot regress any existing entry point)
 # - registration is idempotent and ordered
 # - unregistration is tolerant of unknown callables
 # - a registered check that raises propagates through the hook
@@ -67,7 +61,7 @@ from xrspatial.geotiff._writer import write
 
 @pytest.fixture
 def _reset_metadata_check_registries_1987():
-    """Snapshot and restore the process-global check registries (#1987).
+    """Snapshot and restore the process-global check registries.
 
     The registries are module-global lists. A test that registers a
     check and crashes before its ``try/finally unregister`` would
@@ -150,7 +144,7 @@ def test_subclass_catch_does_not_catch_siblings_1987():
 def test_read_hook_is_noop_when_no_checks_registered_1987(
     _reset_metadata_check_registries_1987,
 ):
-    """PR 0 must not change behaviour at any read entry point."""
+    """An empty registry must not change behaviour at any read entry point."""
     # Clear any process-wide registered checks so the no-op test runs
     # against an empty registry.
     _validation_mod._READ_METADATA_CHECKS[:] = []
@@ -162,7 +156,7 @@ def test_read_hook_is_noop_when_no_checks_registered_1987(
 def test_write_hook_is_noop_when_no_checks_registered_1987(
     _reset_metadata_check_registries_1987,
 ):
-    """PR 0 must not change behaviour at any write entry point."""
+    """An empty registry must not change behaviour at any write entry point."""
     _validation_mod._WRITE_METADATA_CHECKS[:] = []
     validate_write_metadata()
     validate_write_metadata({})
@@ -445,10 +439,8 @@ def test_none_context_is_treated_as_empty_mapping_1987(
 
 
 # =============================================================================
-# Section: GeoTIFFMetadata dataclass round-trip (#2139)
+# Section: GeoTIFFMetadata dataclass round-trip
 # =============================================================================
-#
-# Original: ``test_geotiff_metadata_2139.py``.
 #
 # The dataclass and the two boundary functions (``metadata_to_attrs``
 # and ``attrs_to_metadata``) replace the manual ``attrs[...] = ...``
@@ -751,21 +743,17 @@ def test_with_nodata_masked_false_records_false_2139():
 
 
 # =============================================================================
-# Section: Transform / CRS / tag metadata round-trip (#1484)
+# Section: Transform / CRS / tag metadata round-trip
 # =============================================================================
 #
-# Original: ``test_metadata_round_trip_1484.py``.
-#
-# Covers findings M-1 through M-4 from the geotiff metadata audit:
-#
-# * M-1 / M-2: ``attrs['crs']`` stays as the same int EPSG and
+# * ``attrs['crs']`` stays as the same int EPSG and
 #   ``attrs['transform']`` survives write -> read -> write -> read with
 #   the same numeric values up to float precision.
-# * M-3: ColorMap, ExtraSamples, and ImageDescription survive a single
+# * ColorMap, ExtraSamples, and ImageDescription survive a single
 #   write -> read cycle. ColorMap exits the writer through the
 #   ``extra_tags`` pass-through (the tag is no longer in
 #   ``_MANAGED_TAGS``); ImageDescription gets a friendly ``attrs`` entry.
-# * M-4: integer rasters with a nodata sentinel get promoted to float64
+# * integer rasters with a nodata sentinel get promoted to float64
 #   with NaN, and a user-requested ``dtype='uint16'`` cast on the read
 #   side raises ValueError (existing float-to-int guard).
 
@@ -1128,10 +1116,8 @@ class TestIntegerNodataPromotion_1484:
 
 
 # =============================================================================
-# Section: Mixed-band metadata fail-closed (#1987 PR 5)
+# Section: Mixed-band metadata fail-closed
 # =============================================================================
-#
-# Original: ``test_mixed_band_metadata_fail_closed_1987.py``.
 #
 # A VRT can mosaic source bands that declare disagreeing per-band
 # ``<NoDataValue>`` sentinels. The legacy reader picked band 0's sentinel

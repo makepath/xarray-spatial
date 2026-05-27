@@ -1,6 +1,6 @@
-"""VRT backend cells against the golden-corpus oracle (issue #1930).
+"""VRT backend cells against the golden-corpus oracle.
 
-Phase 3 PR 6 of the corpus plan. The VRT path in ``xrspatial.geotiff``
+The VRT path in ``xrspatial.geotiff``
 is reached when ``open_geotiff`` sees a ``.vrt`` source path; it
 delegates to ``read_vrt`` which parses the GDAL VRT XML and stitches
 the listed source GeoTIFFs back into a single DataArray.
@@ -36,9 +36,9 @@ rasterio = pytest.importorskip("rasterio")
 from xrspatial.geotiff import open_geotiff, write_vrt  # noqa: E402
 
 # Golden-corpus fixtures span every codec/tier, including the
-# experimental and internal-only ones gated by epic #2340 PR 4. Opting
-# in here lets the parity check exercise the full corpus; the per-codec
-# release-contract tests pin the rejection shape separately.
+# experimental and internal-only ones. Opting in here lets the parity
+# check exercise the full corpus; the per-codec release-contract tests
+# pin the rejection shape separately.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
@@ -133,7 +133,7 @@ def test_vrt_two_source_horizontal_mosaic(
 
     # Parity check via the shared oracle. Compares pixels, dtype,
     # transform, CRS, and nodata against the rasterio reference read of
-    # the same VRT, the same as every other phase 3 backend module.
+    # the same VRT, the same as every other backend module.
     candidate = open_geotiff(str(vrt_path), **_OPTIN)
     compare_to_oracle(vrt_path, candidate)
 

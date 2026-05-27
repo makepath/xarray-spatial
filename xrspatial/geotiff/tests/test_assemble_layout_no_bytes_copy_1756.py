@@ -1,4 +1,4 @@
-"""Regression tests for issue #1756.
+"""Regression tests for the no-copy layout assembler return.
 
 ``_assemble_standard_layout`` and ``_assemble_cog_layout`` previously
 ended with ``return bytes(output)``, which copies the entire output
@@ -165,7 +165,7 @@ def test_assemble_tiff_output_is_mutable_buffer_with_valid_header():
     module namespace would not intercept calls without invasive
     rebinding. The type and slice-type assertions below are sufficient
     to catch a re-introduction of the full-buffer copy in the assembler
-    return statement, which was the specific regression fixed in #1756.
+    return statement.
     """
     arr = np.arange(64, dtype=np.uint8).reshape(8, 8)
     parts = _build_parts(arr)

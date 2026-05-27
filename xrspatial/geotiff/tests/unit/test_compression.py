@@ -1,6 +1,6 @@
 """Pure-unit coverage for the codec helpers in ``_compression``.
 
-Two clusters share this file because they fail in the same ways:
+Two groups of cases share this file because they fail in the same ways:
 
 * PackBits decoder JIT kernel boundary cases (the 128-byte run boundary,
   the ``-128`` no-op sentinel, the decompression-bomb cap, truncated

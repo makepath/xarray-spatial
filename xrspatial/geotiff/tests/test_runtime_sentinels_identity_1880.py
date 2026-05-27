@@ -1,10 +1,10 @@
 """Identity contract: sentinels survive the move from __init__.py to _runtime.py.
 
-PR for issue #1880 (step 2 of #1813) extracted four module-level
-sentinels, a UserWarning subclass, the strict-mode helper, and the
-GPU-fallback message helper from ``xrspatial/geotiff/__init__.py``
-into ``xrspatial/geotiff/_runtime.py``. ``__init__.py`` keeps every
-name importable via re-export.
+Four module-level sentinels, a UserWarning subclass, the strict-mode
+helper, and the GPU-fallback message helper were extracted from
+``xrspatial/geotiff/__init__.py`` into
+``xrspatial/geotiff/_runtime.py``. ``__init__.py`` keeps every name
+importable via re-export.
 
 If a future refactor accidentally rebinds one of these names to a
 fresh ``object()`` (or shadows ``GeoTIFFFallbackWarning`` with a local

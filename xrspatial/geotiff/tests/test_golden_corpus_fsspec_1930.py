@@ -1,7 +1,6 @@
-"""fsspec backend cells against the golden-corpus oracle (issue #1930).
+"""fsspec backend cells against the golden-corpus oracle.
 
-Final corpus-coverage backend per issue #1930's proposal text
-("fsspec where applicable"). Mirrors the eager, dask, and GPU parity
+Mirrors the eager, dask, and GPU parity
 layers but reads each fixture through an fsspec ``memory://`` URL:
 the fixture's bytes are pushed into the in-process fsspec memory
 filesystem, then ``open_geotiff('memory:///corpus/<id>.tif')`` walks
@@ -12,18 +11,17 @@ so it works in plain CI while still exercising the cloud read path.
 
 The cloud-eager read path returns a numpy-backed DataArray (the
 ``_CloudSource`` constructor downloads the bytes via ``read_all()``
-within the ``max_cloud_bytes`` budget; see #1928). It does NOT chunk
-into dask. ``test_fsspec_candidate_is_actually_numpy`` pins that
-contract.
+within the ``max_cloud_bytes`` budget). It does NOT chunk into dask.
+``test_fsspec_candidate_is_actually_numpy`` pins that contract.
 
 Skip / xfail taxonomy
 ---------------------
 ``_PARITY_GAPS`` lists shared codec / attrs gaps; ``_FSSPEC_SKIPS``
 lists gaps that surface only on the fsspec path; ``_INTENTIONAL_SKIPS``
 covers by-design divergences (MinIsWhite inversion). All three tables
-start empty on this PR because every shared gap has been closed at
-the oracle / codec layer and the fsspec read path piggybacks on the
-eager decode primitives.
+start empty because every shared gap has been closed at the oracle /
+codec layer and the fsspec read path piggybacks on the eager decode
+primitives.
 
 Resolved gaps (no longer xfail):
 
@@ -37,8 +35,8 @@ Resolved gaps (no longer xfail):
 Intentional skip (``skip``):
 
 * ``nodata_miniswhite_uint8`` -- MinIsWhite photometric inversion.
-  xrspatial inverts pixels per #1797; rasterio leaves them raw.
-  Covered by ``test_miniswhite_backend_parity_1797.py``.
+  xrspatial inverts pixels; rasterio leaves them raw. Covered by
+  ``test_miniswhite_backend_parity_1797.py``.
 
 Memory filesystem hygiene
 -------------------------
@@ -61,7 +59,7 @@ import numpy as np  # noqa: E402
 
 from xrspatial.geotiff import open_geotiff
 
-# PR 4 of epic #2340: corpus has experimental + jpeg entries.
+# Corpus has experimental + jpeg entries.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
   # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
@@ -77,8 +75,8 @@ FIXTURES_DIR = (
 # has been closed at the oracle / codec layer.
 _PARITY_GAPS: dict[str, str] = {}
 
-# fsspec-only gaps. Empty in the first pass; add an entry only when
-# a fixture is fsspec-specific (i.e. eager passes, fsspec does not).
+# fsspec-only gaps. Empty; add an entry only when a fixture is
+# fsspec-specific (i.e. eager passes, fsspec does not).
 _FSSPEC_SKIPS: dict[str, str] = {}
 
 # Fixtures whose overview-IFD code path is not yet wired into the
@@ -126,7 +124,7 @@ def _build_param(entry: dict) -> pytest.param:
     ``xfail`` so the cell flips to a hard failure the day the gap
     closes. Intentional skips get a plain skip. Slow fixtures inherit
     ``pytest.mark.slow`` from the corpus helper so the fast / slow
-    split (#2062) cooperates.
+    split cooperates.
     """
     fid = entry["id"]
     marks = list(fast_slow_marks_for(entry))

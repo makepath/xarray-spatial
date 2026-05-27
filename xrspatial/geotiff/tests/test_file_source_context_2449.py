@@ -1,4 +1,4 @@
-# Tests for _FileSource context manager protocol (issue #2449).
+# Tests for the _FileSource context manager protocol.
 import os
 import struct
 

@@ -1,30 +1,24 @@
-"""Fail-closed checks for ambiguous geospatial metadata (issue #1987).
+"""Fail-closed checks for ambiguous geospatial metadata.
 
-PR 1 of the #1987 series wired ``ConflictingCRSError`` (PR 6 in the
-issue's PR numbering). This file pins the remaining four checks that
-land in the bundled follow-up:
+This file pins four checks that refuse ambiguous metadata rather than
+silently guessing:
 
-* ``UnparseableCRSError`` (#1987 PR 2): read + write paths refuse a
-  CRS string that pyproj cannot parse. The existing write-side
-  ``_validate_crs_fallback`` raise was retyped from ``ValueError`` to
-  the new subclass; the read-side check is new.
-* ``RotatedTransformError`` (#1987 PR 3): the four read entry points
-  refuse a non-axis-aligned affine transform. Opt-out via
-  ``allow_rotated=True``.
-* ``NonUniformCoordsError`` (#1987 PR 4): the writer refuses coords
-  that imply a non-uniform pixel grid. The int-dtype sentinel
-  exemption from #1969 still applies.
-* ``ConflictingNodataError`` (#1987 PR 7): the writer refuses a
-  DataArray whose ``attrs['nodata']`` disagrees with every concrete
-  entry in ``attrs['nodatavals']``. Opt-out via explicit ``nodata=``
-  kwarg.
+* ``UnparseableCRSError``: read + write paths refuse a CRS string that
+  pyproj cannot parse. The existing write-side ``_validate_crs_fallback``
+  raise was retyped from ``ValueError`` to the new subclass; the
+  read-side check is new.
+* ``RotatedTransformError``: the four read entry points refuse a
+  non-axis-aligned affine transform. Opt-out via ``allow_rotated=True``.
+* ``NonUniformCoordsError``: the writer refuses coords that imply a
+  non-uniform pixel grid. The int-dtype no-georef sentinel exemption
+  still applies.
+* ``ConflictingNodataError``: the writer refuses a DataArray whose
+  ``attrs['nodata']`` disagrees with every concrete entry in
+  ``attrs['nodatavals']``. Opt-out via explicit ``nodata=`` kwarg.
 
-``MixedBandMetadataError`` (#1987 PR 5) was staged but unregistered in
-the bundle above. The activation, opt-out wiring on ``open_geotiff`` /
-``read_geotiff_dask``, and VRT test sweep ship in a follow-up PR; the
-dedicated fail-closed coverage for that case lives in
-``unit/test_metadata.py`` under the "Mixed-band metadata fail-closed
-(#1987 PR 5)" section.
+The mixed-band metadata check is staged but unregistered here; its
+dedicated fail-closed coverage lives in ``unit/test_metadata.py`` under
+the mixed-band metadata section.
 """
 from __future__ import annotations
 
@@ -188,7 +182,7 @@ def _write_rotated_vrt(
 
 
 def test_four_checks_registered():
-    """Four of the five #1987 PR 2-7 checks are active by default. The
+    """Four of the five fail-closed checks are active by default. The
     mixed-band check is intentionally deferred to a follow-up that also
     migrates the legacy VRT test fixtures."""
     write_names = {c.__name__ for c in _registered_write_metadata_checks()}
@@ -224,7 +218,7 @@ def test_write_rejects_garbage_crs_kwarg(tmp_path):
 
 
 def test_write_garbage_crs_kwarg_opt_in_passes(tmp_path):
-    """``allow_unparseable_crs=True`` keeps the pre-#1929 citation-only
+    """``allow_unparseable_crs=True`` keeps the legacy citation-only
     behaviour for callers who need it."""
     da = _da()
     to_geotiff(
@@ -348,8 +342,8 @@ def test_write_accepts_uniform_coords(tmp_path):
 
 
 def test_write_accepts_integer_coord_sentinel(tmp_path):
-    """Int-dtype coords (the no-georef sentinel from #1969) bypass the
-    uniformity check because they don't represent geographic positions."""
+    """Int-dtype coords (the no-georef sentinel) bypass the uniformity
+    check because they don't represent geographic positions."""
     coords = {
         'y': np.array([0, 1, 2, 3], dtype=np.int64),
         'x': np.array([0, 1, 2, 3], dtype=np.int64),

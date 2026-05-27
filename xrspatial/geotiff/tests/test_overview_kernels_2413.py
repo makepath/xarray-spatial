@@ -1,10 +1,10 @@
-"""Parity tests for the ngjit 2x2 overview kernels (issue #2413).
+"""Parity tests for the ngjit 2x2 overview kernels.
 
 The float ``mean`` / ``min`` / ``max`` / ``median`` paths in
 :func:`xrspatial.geotiff._overview._block_reduce_2d` route through the
 type-specialized kernels in :mod:`xrspatial.geotiff._overview_kernels`.
 These tests pin the kernels' output against a numpy reference
-implementation that mirrors the pre-#2413 nan-aware aggregation, across
+implementation that mirrors the original nan-aware aggregation, across
 float32 / float64, even / odd shapes, with and without a sentinel, and
 across NaN edge cases (no valid cells, all-sentinel block, partial
 block).
@@ -21,7 +21,7 @@ from xrspatial.geotiff._overview_kernels import KERNELS
 def _reference_reduce(arr, method, nodata=None):
     """Numpy reference: pad to even, mask sentinel to NaN, nan-aggregate.
 
-    Mirrors the pre-#2413 implementation so the new kernels can be
+    Mirrors the original implementation so the new kernels can be
     compared cell-by-cell on the same input.
     """
     h, w = arr.shape

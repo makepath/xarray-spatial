@@ -1,8 +1,8 @@
-"""Regression tests for issue #2349.
+"""Regression tests for unsupported GeoTIFF feature combinations.
 
-Epic #2340 PR 5: unsupported GeoTIFF feature combinations fail loudly
-with an actionable error message that names the feature, names the
-offending input, and points the caller at the release tier map.
+Unsupported feature combinations fail loudly with an actionable error
+message that names the feature, names the offending input, and points
+the caller at the release tier map.
 
 Unsupported features covered here:
 
@@ -179,7 +179,7 @@ def test_dataset_level_gcplist_rejected_at_parse():
 
     GCPList signals a non-axis-aligned georeferencing model that
     read_vrt cannot honour. Pin the rejection so a future refactor
-    cannot regress to the silent no-op pre-#2349 behaviour.
+    cannot regress to the earlier silent no-op behaviour.
     """
     xml = (
         '<VRTDataset rasterXSize="4" rasterYSize="4">'
@@ -199,7 +199,7 @@ def test_overview_list_band_child_still_passes(tmp_path):
     declarations (the source-side reader handles overviews via
     ``overview_level=``), so the elements were and remain
     no-ops. Pin the allow-list so the catch-all "unknown element"
-    branch added in #2349 does not regress this case.
+    branch does not regress this case.
     """
     src = tmp_path / f'src_2349_ov_{uuid.uuid4().hex[:6]}.tif'
     arr = np.arange(16, dtype=np.float32).reshape(4, 4)
@@ -453,11 +453,11 @@ def test_vrt_with_skewed_geotransform_rejected(tmp_path):
         f'  </VRTRasterBand>'
         f'</VRTDataset>'
     )
-    # Sub-PR 2 of epic #2321 (#2329) centralised this rejection in
-    # ``_vrt_validation.py`` and re-typed it as ``VRTUnsupportedError``
-    # with a message naming the skew terms. Accept either the legacy
-    # ``RotatedTransformError`` or the new typed error so the regression
-    # pin survives the validator refactor.
+    # This rejection was centralised in ``_vrt_validation.py`` and
+    # re-typed as ``VRTUnsupportedError`` with a message naming the skew
+    # terms. Accept either the legacy ``RotatedTransformError`` or the
+    # new typed error so the regression pin survives the validator
+    # refactor.
     with pytest.raises(
         (RotatedTransformError, VRTUnsupportedError),
         match=r"rotated affine|rotation/shear",

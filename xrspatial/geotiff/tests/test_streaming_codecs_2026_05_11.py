@@ -1,4 +1,4 @@
-"""Streaming dask-write coverage for codecs not in the original #1084 matrix.
+"""Streaming dask-write coverage for codecs not in the original matrix.
 
 The original streaming-write test suite (``test_streaming_write.py``)
 covers ``none / deflate / lzw / zstd`` round-trips and the predictor flag.
@@ -16,9 +16,6 @@ dask-streaming-write coverage before today. This file pins:
 * COG output with ``overview_resampling='cubic'`` round-trips through
   scipy.ndimage.zoom (the only overview method that takes a separate
   code path in ``_block_reduce_2d``).
-
-Coverage-gap sweep 2026-05-11: closes the dask-streaming codec gap
-remaining after PR #1565.
 """
 from __future__ import annotations
 
@@ -77,7 +74,7 @@ class TestStreamingLerc:
                                  tmp_path):
         """Dask + LERC (max_z_error=0) round-trips exactly."""
         path = str(tmp_path / 'stream_lerc_lossless.tif')
-        # Tier 3 codec (issue #2137); opt in to exercise the encode path.
+        # Tier 3 codec; opt in to exercise the encode path.
         to_geotiff(dask_float_raster, path, compression='lerc',
                    allow_experimental_codecs=True)
         result = open_geotiff(path, allow_experimental_codecs=True)
@@ -127,7 +124,7 @@ class TestStreamingLerc:
 class TestStreamingLz4:
     def test_round_trip(self, float_raster, dask_float_raster, tmp_path):
         path = str(tmp_path / 'stream_lz4.tif')
-        # Tier 3 codec (issue #2137); opt in to exercise the encode path.
+        # Tier 3 codec; opt in to exercise the encode path.
         to_geotiff(dask_float_raster, path, compression='lz4',
                    allow_experimental_codecs=True)
         result = open_geotiff(path, allow_experimental_codecs=True)

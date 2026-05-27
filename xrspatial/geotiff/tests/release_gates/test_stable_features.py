@@ -16,26 +16,20 @@ Tests are grouped by feature area:
 * ``COG``              (``writer.cog`` / ``reader.local_cog``, stable)
 * ``Windowed read``    (``reader.windowed``, stable)
 * ``Dask parity``      (``reader.dask``, stable)
-* ``Eager / dask full parity`` (epic #2341, four corpus scenarios)
+* ``Eager / dask full parity`` (four corpus scenarios)
 * ``Attrs contract``   (canonical attrs round-trip, stable)
-* ``Codec round-trip`` (cartesian stable codec x dtype, epic #2341)
+* ``Codec round-trip`` (cartesian stable codec x dtype)
 * ``Overview / sidecar metadata`` (overview level attrs survive)
-* ``Windowed reads -- shifted-transform parity`` (epic #2341)
+* ``Windowed reads -- shifted-transform parity``
 * ``Negative cases``   (ambiguous metadata fails closed)
-* ``Cross-cutting meta-gates`` (#2321 -- checklist parity)
+* ``Cross-cutting meta-gates`` (checklist parity)
 
 Each section's helper functions are private to that section
 (``_<section>_<name>``) so the consolidation does not introduce
 cross-section coupling.
 
-History
-=======
-
-This file replaces the per-cluster ``test_release_gate_*.py`` files that
-used to live alongside it. Filenames carrying issue numbers
-(``_2321``, ``_2341``, ...) are gone -- the git log is the audit trail
-for which PR introduced each gate. The ``release_gate`` marker is the
-single signal a release engineer keys on:
+The ``release_gate`` marker is the single signal a release engineer
+keys on:
 
 .. code-block:: bash
 
@@ -879,7 +873,7 @@ def test_release_gate_dask_read_is_lazy(tmp_path) -> None:
 
 
 # =========================================================================== #
-# Section: Eager / dask full parity (epic #2341)                              #
+# Section: Eager / dask full parity                                           #
 # =========================================================================== #
 #
 # Pixels matching while ``attrs``, ``coords``, or ``dims`` silently
@@ -1191,7 +1185,7 @@ def test_release_gate_attrs_round_trip_preserves_crs_transform_nodata(
 
 
 # =========================================================================== #
-# Section: Codec round-trip (cartesian stable codec x dtype, epic #2341)      #
+# Section: Codec round-trip (cartesian stable codec x dtype)                  #
 # =========================================================================== #
 #
 # Cartesian product of every stable codec with every promised dtype,
@@ -1416,7 +1410,7 @@ def test_release_gate_codec_round_trip_stable_set_matches_supported_features() -
 
 
 # =========================================================================== #
-# Section: Overview / sidecar metadata survival (epic #2341)                  #
+# Section: Overview / sidecar metadata survival                              #
 # =========================================================================== #
 #
 # For an internal-overview COG and for a file whose overviews live in an
@@ -1768,7 +1762,7 @@ def test_release_gate_internal_vs_sidecar_metadata_agree(
 
 
 # =========================================================================== #
-# Section: Windowed reads -- shifted-transform parity (epic #2341)            #
+# Section: Windowed reads -- shifted-transform parity                        #
 # =========================================================================== #
 #
 # Windowed reads must return shapes matching the requested window,
@@ -2104,7 +2098,7 @@ def test_release_gate_windowed_read_canonical_attrs_unchanged(
 
 
 # =========================================================================== #
-# Section: Negative cases -- ambiguous metadata fails closed (epic #2341)     #
+# Section: Negative cases -- ambiguous metadata fails closed                 #
 # =========================================================================== #
 #
 # When metadata is ambiguous and the caller did NOT opt in via the
@@ -2418,9 +2412,9 @@ def test_release_gate_negative_rotated_gpu(
 def test_release_gate_negative_mixed_tier_vrt_children(tmp_path) -> None:
     """The reader must refuse mixed-tier VRT children when stable-only is asked.
 
-    Pinned by epic #2342 / issue #2443: when the caller asks for
-    stable-only sources via ``stable_only=True`` and the source is a
-    VRT, the read raises :class:`VRTStableSourcesOnlyError` (a
+    When the caller asks for stable-only sources via
+    ``stable_only=True`` and the source is a VRT, the read raises
+    :class:`VRTStableSourcesOnlyError` (a
     :class:`GeoTIFFAmbiguousMetadataError` subclass) before any pixel
     decode. The message must name either ``stable_only`` or
     ``allow_experimental_codecs`` and cite the release-contract docs
@@ -2445,7 +2439,7 @@ def test_release_gate_negative_mixed_tier_vrt_children(tmp_path) -> None:
 
 
 # =========================================================================== #
-# Section: Cross-cutting meta-gates (#2321)                                   #
+# Section: Cross-cutting meta-gates                                          #
 # =========================================================================== #
 #
 # Checklist-parity gates: every file cited in the release-gate checklist
@@ -2558,9 +2552,8 @@ def test_release_gate_http_ssrf_rejects_loopback() -> None:
 def test_release_gate_http_ssrf_rejects_loopback_uppercase_scheme() -> None:
     """Uppercase HTTP scheme must take the same SSRF path.
 
-    PR #2326 (sub-PR 5 of #2321) made the SSRF check case-insensitive,
-    so the xfail this test originally carried is gone: uppercase HTTP
-    now raises :class:`UnsafeURLError` like its lowercase sibling.
+    The SSRF check is case-insensitive, so uppercase HTTP raises
+    :class:`UnsafeURLError` like its lowercase sibling.
     """
     with pytest.raises(UnsafeURLError):
         open_geotiff("HTTP://127.0.0.1/does-not-matter.tif")

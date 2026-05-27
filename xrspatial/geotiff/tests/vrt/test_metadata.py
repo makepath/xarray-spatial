@@ -1,27 +1,21 @@
-"""Consolidated VRT metadata test suite.
+"""VRT metadata test suite.
 
-Folds twelve issue-numbered VRT test files under
-``xrspatial/geotiff/tests/`` into one place, organised by sub-concern.
-Each section preserves the helpers, fixtures, and assertions of its
-originating file; helpers are prefixed (e.g. ``_holes_attr_*``) so the
-cross-file folds do not collide. Test names dropped their trailing
-issue number where the originating file already namespaced them.
+Organised by sub-concern; helpers are prefixed (e.g. ``_holes_attr_*``)
+so they do not collide across sections.
 
 Sections:
-* ``vrt_holes`` attr on missing-source reads (#1734)
-* ``masked_nodata`` attr honours ``mask_nodata`` kwarg (#2159)
-* Per-band ``<NoDataValue>`` selection (#1598)
-* SimpleSource ``<NODATA>0</NODATA>`` survives the falsy-zero bug (#1655)
-* Integer-with-nodata promotion through ``read_vrt`` (#1564)
-* ``mask_nodata=False`` preserves float sentinels (#2158)
-* Tile-level metadata parity for VRT tiled writes (#1606)
-* VRT XML parsed once on the chunked path (#1825)
-* ``write_vrt`` escapes XML special characters (#1607)
-* XML size cap on eager ``read_vrt`` (#1815)
-* XML size cap on chunked ``read_vrt`` (#1831)
-* VRT metadata parity across backends (#2321 sub-PR 3)
-
-See ``CLUSTER_AUDIT_PR6.md`` for the file:test -> section:test mapping.
+* ``vrt_holes`` attr on missing-source reads
+* ``masked_nodata`` attr honours ``mask_nodata`` kwarg
+* Per-band ``<NoDataValue>`` selection
+* SimpleSource ``<NODATA>0</NODATA>`` survives the falsy-zero bug
+* Integer-with-nodata promotion through ``read_vrt``
+* ``mask_nodata=False`` preserves float sentinels
+* Tile-level metadata parity for VRT tiled writes
+* VRT XML parsed once on the chunked path
+* ``write_vrt`` escapes XML special characters
+* XML size cap on eager ``read_vrt``
+* XML size cap on chunked ``read_vrt``
+* VRT metadata parity across backends
 """
 from __future__ import annotations
 
@@ -56,8 +50,7 @@ from xrspatial.geotiff.tests.conftest import requires_gpu
 
 
 # ---------------------------------------------------------------------------
-# vrt_holes attr on missing-source reads (#1734)
-# Originally: test_vrt_holes_attr_1734.py
+# vrt_holes attr on missing-source reads
 # ---------------------------------------------------------------------------
 
 
@@ -74,7 +67,7 @@ def holes_attr_set_strict_env(monkeypatch):
 def _holes_attr_write_vrt_with_missing_source(vrt_path, missing_src) -> None:
     """Write a VRT with an Int32 band whose only source is missing.
 
-    Integer ``dataType`` is the failure mode issue #1734 was about: the
+    Integer ``dataType`` is the failure mode of interest here: the
     pre-fix lenient path zero-fills the output buffer (``fill = 0`` for
     integer dtypes) and the user cannot distinguish that hole from real
     zero-valued data. ``NoDataValue`` is omitted on purpose -- having
@@ -90,7 +83,7 @@ def test_skipped_source_records_vrt_holes_attr(holes_attr_clear_strict_env, tmp_
     and underlying error.
 
     Uses an Int32 VRT so the hole is zero-filled (the exact failure
-    mode #1734 was about): without the attr there is no way to tell
+    mode of interest): without the attr there is no way to tell
     the all-zeros tile from real data.
     """
     import numpy as np
@@ -167,8 +160,7 @@ def test_warning_mentions_how_to_detect_holes(holes_attr_clear_strict_env, tmp_p
 
 
 # ---------------------------------------------------------------------------
-# masked_nodata attr honours mask_nodata kwarg (#2159)
-# Originally: test_vrt_masked_nodata_attr_2159.py
+# masked_nodata attr honours mask_nodata kwarg
 # ---------------------------------------------------------------------------
 
 
@@ -296,8 +288,7 @@ def test_vrt_attr_matches_dask_backend_under_mask_off(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# per-band <NoDataValue> selection (#1598)
-# Originally: test_vrt_band_nodata_1598.py
+# per-band <NoDataValue> selection
 # ---------------------------------------------------------------------------
 
 
@@ -324,8 +315,8 @@ def test_read_vrt_band0_uses_band0_nodata(tmp_path):
     Confirms the refactor did not flip the index.
 
     The fixture mosaics two bands with distinct per-band sentinels, so
-    after #1987 PR 5 the default read raises ``MixedBandMetadataError``.
-    The pre-#1987 flatten-to-first-band semantics this regression tests
+    the default read raises ``MixedBandMetadataError``.
+    The older flatten-to-first-band semantics this regression tests
     are still reachable via ``band_nodata='first'``; the opt-in surfaces
     at the call site that the test is exercising the legacy behaviour.
     """
@@ -399,8 +390,7 @@ def test_read_vrt_non_integer_band_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# SimpleSource <NODATA>0</NODATA> survives (#1655)
-# Originally: test_vrt_source_nodata_zero_1655.py
+# SimpleSource <NODATA>0</NODATA> survives
 # ---------------------------------------------------------------------------
 
 
@@ -477,8 +467,7 @@ class TestVRTSourceNodataZero:
 
 
 # ---------------------------------------------------------------------------
-# integer-with-nodata promotion (#1564)
-# Originally: test_vrt_int_nodata_1564.py
+# integer-with-nodata promotion
 # ---------------------------------------------------------------------------
 
 
@@ -592,8 +581,7 @@ def test_vrt_open_geotiff_parity_uint16_nodata(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# mask_nodata=False preserves float sentinels (#2158)
-# Originally: test_vrt_mask_nodata_float_source_2158.py
+# mask_nodata=False preserves float sentinels
 # ---------------------------------------------------------------------------
 
 
@@ -653,7 +641,7 @@ def test_default_mask_nodata_true_rewrites_float_sentinel(tmp_path):
 def test_eager_mask_nodata_false_preserves_float_sentinel(tmp_path):
     """Eager VRT path: ``mask_nodata=False`` keeps the literal sentinel.
 
-    Before #2158 this assertion failed -- the sentinel pixels were
+    Previously this assertion failed -- the sentinel pixels were
     silently rewritten to NaN inside ``_vrt._read_data`` regardless
     of the kwarg.
     """
@@ -674,8 +662,8 @@ def test_chunked_mask_nodata_false_preserves_float_sentinel(tmp_path):
 
     The chunked path used to call ``_read_vrt_internal`` from
     ``_vrt_chunk_read`` without forwarding the kwarg, so per-chunk
-    decodes silently rewrote float sentinels too. With #2158 the
-    kwarg is forwarded into the internal reader and both paths agree.
+    decodes silently rewrote float sentinels too. The
+    kwarg is now forwarded into the internal reader and both paths agree.
     """
     src, original = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
@@ -693,7 +681,7 @@ def test_chunked_mask_nodata_false_preserves_float_sentinel(tmp_path):
 def test_eager_and_chunked_agree_under_mask_nodata_false(tmp_path):
     """Cross-path parity: eager and chunked produce the same buffer.
 
-    Before #2158 the two paths could disagree because both rewrote
+    Previously the two paths could disagree because both rewrote
     the sentinel inline but at slightly different points in the
     pipeline. With the opt-out honored, both paths land on the
     untouched source array.
@@ -757,7 +745,7 @@ def _mask_nodata_float_write_uint16_with_sentinel(tmp_path, sentinel=65535, file
 def test_int_source_float_vrt_mask_nodata_false_keeps_literal(tmp_path):
     """Integer source feeding a Float32 VRT preserves the literal sentinel.
 
-    Pins the second branch of the inline masking that #2158 gated.
+    Pins the second branch of the inline masking opt-out.
     Before the fix, ``_vrt._read_data`` ran the int->float-with-NaN
     promotion unconditionally, so even ``mask_nodata=False`` lost the
     sentinel. After the fix the integer source pixel survives the
@@ -778,9 +766,9 @@ def test_int_source_float_vrt_mask_nodata_false_keeps_literal(tmp_path):
 def test_int_source_float_vrt_default_still_promotes(tmp_path):
     """Default ``mask_nodata=True`` still NaN-masks the int->float promotion.
 
-    Baseline that documents the pre-#2158 contract for the integer
-    source path: the existing #1616 behavior is unchanged when the
-    opt-out is not requested.
+    Baseline that documents the default contract for the integer
+    source path: the int->float NaN-promotion behavior is unchanged
+    when the opt-out is not requested.
     """
     src, _ = _mask_nodata_float_write_uint16_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_default_2158.vrt', shape=(2, 2))
@@ -793,8 +781,7 @@ def test_int_source_float_vrt_default_still_promotes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# tile metadata parity for VRT tiled writes (#1606)
-# Originally: test_vrt_tiled_metadata_1606.py
+# tile metadata parity for VRT tiled writes
 # ---------------------------------------------------------------------------
 
 
@@ -928,8 +915,7 @@ class TestVrtTiledMetadataDask:
 
 
 # ---------------------------------------------------------------------------
-# VRT XML parsed once on the chunked path (#1825)
-# Originally: test_vrt_single_parse_1825.py
+# VRT XML parsed once on the chunked path
 # ---------------------------------------------------------------------------
 
 
@@ -965,8 +951,8 @@ def test_chunked_path_parses_xml_once(monkeypatch, single_parse_two_by_two_vrt_1
     """Construction parses once, and ``.compute()`` adds zero parses.
 
     The previous implementation re-parsed inside every per-chunk task,
-    so a 4x4 chunk grid produced 17 parses total. After #1825 the
-    dispatcher parses once and threads the already-parsed VRTDataset
+    so a 4x4 chunk grid produced 17 parses total. The
+    dispatcher now parses once and threads the already-parsed VRTDataset
     through the task graph.
     """
     vrt_path, _ = single_parse_two_by_two_vrt_1825
@@ -989,7 +975,7 @@ def test_chunked_path_parses_xml_once(monkeypatch, single_parse_two_by_two_vrt_1
 def test_chunked_path_reads_xml_file_once(monkeypatch, single_parse_two_by_two_vrt_1825):
     """The chunked dispatcher reads the VRT XML file exactly once.
 
-    Pin the file-read side too: before #1825 every per-chunk task
+    Pin the file-read side too: previously every per-chunk task
     re-opened the .vrt file via ``_read_vrt_xml``. After the refactor
     only the dispatcher reads it.
     """
@@ -1103,8 +1089,7 @@ def test_parsed_kwarg_does_not_mutate_caller_holes(single_parse_single_tile_vrt_
 
 
 # ---------------------------------------------------------------------------
-# write_vrt escapes XML special chars (#1607)
-# Originally: test_vrt_xml_escape_1607.py
+# write_vrt escapes XML special chars
 # ---------------------------------------------------------------------------
 
 
@@ -1134,7 +1119,7 @@ def test_crs_wkt_with_xml_special_chars_round_trips(xml_escape_sample_tif, tmp_p
 
 
 def test_crs_wkt_injection_does_not_change_raster_type(xml_escape_sample_tif, tmp_path):
-    """The headline #1607 case: a crafted WKT trying to close ``<SRS>``
+    """The headline XML-injection case: a crafted WKT trying to close ``<SRS>``
     and inject ``<Metadata><MDI key="AREA_OR_POINT">Point</MDI>...``
     must NOT change ``raster_type`` from its default 'area' value."""
     injection = '</SRS><Metadata><MDI key="AREA_OR_POINT">Point</MDI></Metadata><SRS>'
@@ -1179,8 +1164,7 @@ def test_written_vrt_is_well_formed_xml(xml_escape_sample_tif, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# XML size cap on eager read_vrt (#1815)
-# Originally: test_vrt_xml_size_cap_1815.py
+# XML size cap on eager read_vrt
 # ---------------------------------------------------------------------------
 
 
@@ -1246,8 +1230,7 @@ def test_invalid_cap_raises_value_error(tmp_path, monkeypatch, bad_value):
 
 
 # ---------------------------------------------------------------------------
-# XML size cap on chunked read_vrt (#1831)
-# Originally: test_vrt_xml_size_cap_chunked_1831.py
+# XML size cap on chunked read_vrt
 # ---------------------------------------------------------------------------
 
 
@@ -1303,8 +1286,7 @@ def test_chunked_read_vrt_raised_cap_allows_padded(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# VRT metadata parity across backends (#2321 sub-PR 3)
-# Originally: test_vrt_metadata_parity_2321.py
+# VRT metadata parity across backends
 # ---------------------------------------------------------------------------
 
 
@@ -1560,12 +1542,10 @@ def _metadata_parity_write_mixed_crs_vrt(tmp_path: pathlib.Path) -> str:
     """Two single-band sources with disagreeing CRS at the VRT.
 
     The VRT XML carries one SRS (WGS84) but the second underlying TIFF
-    carries a UTM CRS. The fail-closed contract calls for the read to
-    reject this up front, but today the per-source CRS check does NOT
-    surface the conflict: the read succeeds and silently flattens to
-    the VRT-declared SRS. See the xfail on
+    carries a UTM CRS. The fail-closed contract rejects this up front
+    rather than silently flattening to the VRT-declared SRS. See
     ``test_mixed_crs_vrt_does_not_silently_flatten`` for the
-    consumer-side pin and the gap PR 2 must close.
+    consumer-side pin.
     """
     import xarray as xr
     src0 = tmp_path / 'tmp_2321_mix_crs_src0.tif'
@@ -1585,7 +1565,7 @@ def test_mixed_crs_vrt_does_not_silently_flatten(tmp_path):
     """A mixed-CRS VRT must not return a mosaic that silently inherits
     one source's CRS while pixels came from a CRS-incompatible source.
 
-    Closed by #2444: ``validate_parsed_vrt`` now opens each source
+    ``validate_parsed_vrt`` opens each source
     TIFF and raises ``VRTUnsupportedError`` when any source CRS
     disagrees with the VRT-declared ``<SRS>``. The error message names
     both the offending source and the disagreeing CRS so the caller
@@ -1651,7 +1631,7 @@ def _metadata_parity_write_unsupported_resample_vrt(tmp_path: pathlib.Path) -> s
 
     A 4x4 source projected into a 2x2 destination with Bilinear must
     raise because the implementation only honours nearest-neighbour
-    resampling at the placement site. See #1751.
+    resampling at the placement site.
     """
     src_arr = np.arange(16, dtype=np.uint16).reshape(4, 4)
     src_path = tmp_path / 'tmp_2321_resample_src.tif'
@@ -1667,12 +1647,12 @@ def test_unsupported_resample_alg_raises(tmp_path):
     must raise ``NotImplementedError`` rather than return
     silently-nearest-sampled pixels mislabelled as Bilinear.
 
-    The ``match=`` clause pins the algorithm name and the issue number
+    The ``match=`` clause pins the algorithm name
     so an unrelated ``NotImplementedError`` from some other VRT code
     path cannot keep the test green. See ``_vrt.py`` for the existing
-    raise that names both fields. Sub-PR 2 (#2329) added
-    ``VRTUnsupportedError`` to the centralised validator; the
-    assertion below accepts either type.
+    raise that names the field. The centralised validator raises
+    ``VRTUnsupportedError`` for the same case; the assertion below
+    accepts either type.
     """
     vrt = _metadata_parity_write_unsupported_resample_vrt(tmp_path)
     with pytest.raises((NotImplementedError, VRTUnsupportedError), match='Bilinear'):
@@ -1682,7 +1662,7 @@ def test_unsupported_resample_alg_raises(tmp_path):
 def _metadata_parity_write_bad_srcrect_vrt(tmp_path: pathlib.Path, *, x_size: int=-50) -> str:
     """VRT with a negative-size ``<SrcRect>``.
 
-    See #1784: the validator must reject this up front rather than
+    The validator must reject this up front rather than
     swallow it in the missing-source ``try/except``.
     """
     src_arr = np.zeros((10, 10), dtype=np.uint8)
@@ -1696,8 +1676,8 @@ def _metadata_parity_write_bad_srcrect_vrt(tmp_path: pathlib.Path, *, x_size: in
 
 def test_negative_srcrect_size_rejected(tmp_path):
     """Malformed ``SrcRect`` rejected with a ``ValueError`` (legacy
-    path) or ``VRTUnsupportedError`` (centralised validator from
-    sub-PR 2 of #2321) that names the offending field.
+    path) or ``VRTUnsupportedError`` (centralised validator) that names
+    the offending field.
     """
     vrt = _metadata_parity_write_bad_srcrect_vrt(tmp_path, x_size=-50)
     with pytest.raises((ValueError, VRTUnsupportedError), match='SrcRect.*negative'):
@@ -1707,7 +1687,7 @@ def test_negative_srcrect_size_rejected(tmp_path):
 def _metadata_parity_write_bad_dstrect_vrt(tmp_path: pathlib.Path, *, x_size: int=-10) -> str:
     """VRT with a negative-size ``<DstRect>`` for the negative test.
 
-    Mirrors the DstRect rejection added for #1737; the regression
+    Mirrors the existing DstRect rejection; the regression
     coverage today targets oversized DstRects, this test pins the
     sister case for negative dimensions.
     """
@@ -1728,7 +1708,7 @@ def test_negative_dstrect_size_rejected(tmp_path):
     (...)`` before any pixel work begins). The ``match=`` clause pins
     the field name and the rejection reason so an unrelated
     ``ValueError`` from some other VRT code path cannot silently keep
-    the test green. The centralised validator from sub-PR 2 of #2321
+    the test green. The centralised validator
     raises ``VRTUnsupportedError`` for the same case; both are accepted.
     """
     vrt = _metadata_parity_write_bad_dstrect_vrt(tmp_path, x_size=-10)
@@ -1739,7 +1719,7 @@ def test_negative_dstrect_size_rejected(tmp_path):
 def _metadata_parity_write_missing_source_vrt(tmp_path: pathlib.Path, *, name: str='tmp_2321_missing.vrt') -> str:
     """VRT pointing at a single source path that does not exist.
 
-    The dispatcher's static missing-source sweep (#2265) raises at
+    The dispatcher's static missing-source scan raises at
     construction time for both eager and dask routes when
     ``missing_sources='raise'`` is in effect.
     """
@@ -1752,7 +1732,7 @@ def _metadata_parity_write_missing_source_vrt(tmp_path: pathlib.Path, *, name: s
 
 
 def test_missing_sources_raise_eager(tmp_path):
-    """``missing_sources='raise'`` (the public default since #1860)
+    """``missing_sources='raise'`` (the public default)
     must abort the read up front on the eager path."""
     vrt = _metadata_parity_write_missing_source_vrt(tmp_path, name='tmp_2321_miss_eager.vrt')
     with pytest.raises((OSError, ValueError, FileNotFoundError)):
@@ -1761,7 +1741,7 @@ def test_missing_sources_raise_eager(tmp_path):
 
 def test_missing_sources_raise_dask(tmp_path):
     """``missing_sources='raise'`` (default) on the dask path raises
-    at graph-build time per #2265, not at ``.compute()``.
+    at graph-build time, not at ``.compute()``.
 
     Pin both the build-time raise and the value path so a regression
     that defers the check to compute surfaces here.
@@ -1777,14 +1757,13 @@ def test_missing_sources_warn_records_holes(tmp_path):
 
     The lenient path must emit ``GeoTIFFFallbackWarning`` and populate
     ``attrs['vrt_holes']`` so callers branching on the attr can detect
-    a partial mosaic. This is the contract documented in #1734 / #1843;
+    a partial mosaic. This is the documented contract;
     the test pins it via the public ``read_vrt`` entry point so a
     regression in the warn-policy attr emission surfaces.
 
-    The plan calls for parity tests against ``missing_sources='skip'``;
-    the public API exposes ``'warn'`` as the lenient option (skip is
-    used internally inside ``_vrt.read_vrt``). Use the documented public
-    value here so the test pins the user-facing contract.
+    The public API exposes ``'warn'`` as the lenient option (``'skip'``
+    is used internally inside ``_vrt.read_vrt``). Use the documented
+    public value here so the test pins the user-facing contract.
     """
     vrt = _metadata_parity_write_missing_source_vrt(tmp_path, name='tmp_2321_miss_warn.vrt')
     with pytest.warns(GeoTIFFFallbackWarning, match='could not be read'):

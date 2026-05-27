@@ -1,21 +1,18 @@
-"""Consolidated VRT dtype-conversion test suite.
+"""VRT dtype-conversion test suite.
 
-Folds seven issue-numbered VRT test files covering source-vs-output
-dtype handling, integer-with-nodata promotion, multiband dtype, and
-the positive mosaic coverage that exercises dtype passthrough end to
-end. Helpers are prefixed (e.g. ``_dtype_validation_*``) to avoid
-collisions across folds.
+Covers source-vs-output dtype handling, integer-with-nodata promotion,
+multiband dtype, and the positive mosaic coverage that exercises dtype
+passthrough end to end. Helpers are prefixed (e.g.
+``_dtype_validation_*``) to avoid collisions across sections.
 
 Sections:
-* VRT dataType attribute validation and band-nodata parsing (#1783)
-* VRT writer dtype name resolution (#1914)
-* Integer source feeding a float VRT (#1616)
-* Multiband dtype promotion and band-select (#1696)
-* Multiband per-band integer nodata (#1611)
-* VRT resample algorithm validation (#1751)
-* Simple VRT mosaic positive coverage (#2369)
-
-See ``CLUSTER_AUDIT_PR6.md`` for the file:test -> section:test mapping.
+* VRT dataType attribute validation and band-nodata parsing
+* VRT writer dtype name resolution
+* Integer source feeding a float VRT
+* Multiband dtype promotion and band-select
+* Multiband per-band integer nodata
+* VRT resample algorithm validation
+* Simple VRT mosaic positive coverage
 """
 from __future__ import annotations
 
@@ -39,8 +36,7 @@ from xrspatial.geotiff._writer import write
 
 
 # ---------------------------------------------------------------------------
-# VRT dataType attribute validation and parsing (#1783)
-# Originally: test_vrt_dtype_1783.py
+# VRT dataType attribute validation and parsing
 # ---------------------------------------------------------------------------
 
 
@@ -410,8 +406,7 @@ def test_float64_scientific_nodata_still_works(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# VRT writer dtype name resolution (#1914)
-# Originally: test_vrt_dtype_12bit_1914.py
+# VRT writer dtype name resolution
 # ---------------------------------------------------------------------------
 
 
@@ -482,8 +477,7 @@ def test_int16_source_writes_int16_vrt_datatype(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# integer source feeding float VRT (#1616)
-# Originally: test_vrt_int_source_float_dtype_1616.py
+# integer source feeding float VRT
 # ---------------------------------------------------------------------------
 
 
@@ -616,8 +610,7 @@ def test_float_vrt_int_source_with_band_select(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# multiband dtype promotion (#1696)
-# Originally: test_vrt_multiband_dtype_1696.py
+# multiband dtype promotion
 # ---------------------------------------------------------------------------
 
 
@@ -848,8 +841,7 @@ def test_zero_band_vrt_raises_value_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# multiband per-band int nodata (#1611)
-# Originally: test_vrt_multiband_int_nodata_1611.py
+# multiband per-band int nodata
 # ---------------------------------------------------------------------------
 
 
@@ -946,8 +938,8 @@ def test_multiband_no_sentinel_present_anywhere_keeps_int_dtype(tmp_path):
 
 def test_multiband_per_band_out_of_range_sentinel_is_no_op(tmp_path):
     """A sentinel out of the integer dtype's range should be a no-op
-    for that band rather than raising. Mirrors PR #1583's behaviour
-    (#1581): the helper ``_int_nodata_in_range`` gates the cast.
+    for that band rather than raising: the helper
+    ``_int_nodata_in_range`` gates the cast.
     """
     vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, dtype_str='UInt16', np_dtype=np.uint16, band0_sentinel=65535, band1_sentinel=10, band0_other=(1, 2, 3), band1_other=(7, 8, 9))
     with open(vrt_path) as f:
@@ -961,7 +953,7 @@ def test_multiband_per_band_out_of_range_sentinel_is_no_op(tmp_path):
 
 
 def test_multiband_band_kwarg_still_per_band_post_pr1602(tmp_path):
-    """Non-regression check that PR #1602's band=N path still works.
+    """Non-regression check that the band=N path still works.
 
     The fix here only changes the ``band is None`` branch; ``band=N``
     must still route through the single-band masking with its own
@@ -989,8 +981,7 @@ def test_multiband_attrs_nodata_still_band0(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# VRT resample algorithm validation (#1751)
-# Originally: test_vrt_resample_alg_1751.py
+# VRT resample algorithm validation
 # ---------------------------------------------------------------------------
 
 
@@ -1081,8 +1072,7 @@ def test_bilinear_at_same_size_does_not_raise(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# simple VRT mosaic positive coverage (#2369)
-# Originally: test_vrt_simple_mosaic_2369.py
+# simple VRT mosaic positive coverage
 # ---------------------------------------------------------------------------
 
 

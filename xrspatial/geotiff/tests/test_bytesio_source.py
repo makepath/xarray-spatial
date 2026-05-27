@@ -1,6 +1,6 @@
 """Round-trip and concurrency tests for file-like (BytesIO) read/write paths.
 
-Closes #1511. The reader and writer accept any binary file-like that exposes
+The reader and writer accept any binary file-like that exposes
 ``read``/``seek`` (reader) or ``write`` (writer), so users can keep encoded
 TIFF bytes in memory or stream them through a non-filesystem destination.
 """
@@ -23,7 +23,7 @@ def _gpu_available() -> bool:
 
     Mirrors the helper used in other geotiff GPU tests so the BytesIO
     GPU-writer tests skip cleanly on hosts where CuPy is installed but
-    CUDA is unavailable (Copilot review on #1653).
+    CUDA is unavailable.
     """
     if importlib.util.find_spec("cupy") is None:
         return False
@@ -122,7 +122,7 @@ class TestBytesIORejectsVrt:
         assert head in (b'II*\x00', b'MM\x00*', b'II+\x00', b'MM\x00+')
 
     def test_explicit_vrt_path_string_with_file_like_data_works(self, tmp_path):
-        """A real .vrt path with file-like data is unrelated to this PR.
+        """A real .vrt path with file-like data is a separate concern.
 
         This test just sanity-checks that string-path VRT handling still
         rejects cog=True (existing behaviour) -- the regression we worry
@@ -178,8 +178,8 @@ class TestBytesIOConcurrentReads:
 
 
 # ---------------------------------------------------------------------------
-# PR #1512 review followups: pathlib.Path normalisation, GPU+file-like reject,
-# truncate-on-rewrite semantics, _is_file_like requires tell.
+# pathlib.Path normalisation, GPU+file-like reject, truncate-on-rewrite
+# semantics, _is_file_like requires tell.
 # ---------------------------------------------------------------------------
 
 
@@ -245,9 +245,9 @@ def test_to_geotiff_buffer_rewritten_in_place():
     """Reusing the same BytesIO should overwrite, not append.
 
     Mirrors ``to_geotiff('/tmp/x.tif', ...)`` followed by another call to
-    the same path -- the second call replaces, not concatenates. PR #1512
-    review found that file-like writes used to ``write()`` at the cursor
-    so two writes to one buffer produced two TIFFs back-to-back.
+    the same path -- the second call replaces, not concatenates. An
+    earlier version had file-like writes ``write()`` at the cursor, so
+    two writes to one buffer produced two TIFFs back-to-back.
     """
     buf = io.BytesIO()
     to_geotiff(_make_small_da(), buf)
@@ -298,8 +298,8 @@ class TestWriteGeotiffGpuBytesIO:
     with ``cog=True`` (the auto-dispatch path's existing guard). The explicit
     GPU writer used to silently accept that combo and produce a COG into the
     buffer, so the two entry points disagreed on what ``to_geotiff(gpu=True,
-    cog=True, path=BytesIO)`` does. These tests pin the mirrored gate added
-    by issue #1652 and confirm the non-cog file-like path still works.
+    cog=True, path=BytesIO)`` does. These tests pin the mirrored gate and
+    confirm the non-cog file-like path still works.
     """
 
     @_gpu_only
@@ -320,8 +320,7 @@ class TestWriteGeotiffGpuBytesIO:
     @_gpu_only
     def test_cog_with_bytesio_error_matches_to_geotiff_1652(self):
         """The error string must match ``to_geotiff``'s gate verbatim so
-        downstream callers can rely on a single message (Copilot review
-        on #1653)."""
+        downstream callers can rely on a single message."""
         import cupy
         da = xr.DataArray(
             cupy.asarray(np.random.rand(64, 64).astype(np.float32)),

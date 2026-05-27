@@ -1,4 +1,4 @@
-"""Regression tests for issue #2322.
+"""Regression tests for source cleanup on the eager-read failure path.
 
 ``_read_to_array`` constructed a source (``_FileSource``,
 ``_BytesIOSource``, or ``_CloudSource``) and immediately called
@@ -47,11 +47,10 @@ class _FailingSource:
     """Fake source whose ``read_all()`` raises.
 
     Records the number of ``close()`` calls so the test can verify
-    cleanup ran on the exception path. Mirrors the ``_CloseTracker``
-    pattern in ``test_cog_http_close_on_error_1816.py`` but as a
-    standalone fake rather than a delegating wrapper, because the
-    failure happens inside ``read_all()`` itself (no real source ever
-    succeeds in this scenario).
+    cleanup ran on the exception path. Implemented as a standalone fake
+    rather than a delegating wrapper, because the failure happens inside
+    ``read_all()`` itself (no real source ever succeeds in this
+    scenario).
     """
 
     def __init__(self, exc: Exception):
@@ -135,7 +134,7 @@ def test_cloud_source_closed_when_read_all_raises():
     bypassed by passing ``max_cloud_bytes=None`` so the
     pre-``read_all`` size check does not consume the close() call
     on its own error path (that branch is already exception-safe and
-    is exercised separately in ``test_cloud_read_byte_limit_1928``).
+    is exercised by the cloud byte-limit tests).
     """
     fake = _FailingSource(OSError("simulated S3 mid-download failure"))
 

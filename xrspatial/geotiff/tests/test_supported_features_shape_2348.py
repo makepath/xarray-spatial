@@ -1,13 +1,13 @@
-"""Structural invariants for ``SUPPORTED_FEATURES`` (issue #2348).
+"""Structural invariants for ``SUPPORTED_FEATURES``.
 
 Background
 ----------
-Epic #2340 reconciles ``SUPPORTED_FEATURES`` with the GeoTIFF release
-contract. The tier label on each entry is the source of truth that the
-docs page, the user-guide notebook table, and the writer gates all
-read from. If a new entry lands without a tier, or with a tier outside
-the closed set ``{stable, advanced, experimental, internal_only}``,
-the downstream consumers silently mis-render or skip it.
+``SUPPORTED_FEATURES`` reconciles with the GeoTIFF release contract.
+The tier label on each entry is the source of truth that the docs page,
+the user-guide notebook table, and the writer gates all read from. If a
+new entry lands without a tier, or with a tier outside the closed set
+``{stable, advanced, experimental, internal_only}``, the downstream
+consumers silently mis-render or skip it.
 
 The tier-coverage test (``test_supported_features_tiers_2137.py``)
 exercises the codec gate. This file pins the structural invariants of
@@ -22,10 +22,10 @@ What this test pins
   / ``internal_only``. The tier set is closed.
 * Every key is unique (defended against accidental dict-literal
   duplicates that Python silently dedupes).
-* The wave-1 reconciliation under #2340 lands the expected
-  promotions / demotions (``reader.windowed`` and ``reader.dask``
-  added at ``stable``; ``reader.allow_rotated`` and
-  ``reader.allow_unparseable_crs`` at ``experimental``).
+* The wave-1 reconciliation lands the expected promotions / demotions
+  (``reader.windowed`` and ``reader.dask`` added at ``stable``;
+  ``reader.allow_rotated`` and ``reader.allow_unparseable_crs`` at
+  ``experimental``).
 """
 from __future__ import annotations
 
@@ -138,10 +138,10 @@ def test_keys_are_unique_in_source():
     ('reader.allow_unparseable_crs', 'experimental'),
 ])
 def test_epic_2340_wave_1_reconciliation(key, tier):
-    """Wave-1 reconciliation under epic #2340 lands the expected
-    promotions and demotions. Pinned so a future revert that bumps
-    these back to ``advanced`` or drops them entirely fails this
-    test before it reaches the docs / release notes.
+    """Wave-1 reconciliation lands the expected promotions and
+    demotions. Pinned so a future revert that bumps these back to
+    ``advanced`` or drops them entirely fails this test before it
+    reaches the docs / release notes.
     """
     assert key in SUPPORTED_FEATURES, (
         f"{key!r} dropped from SUPPORTED_FEATURES; epic #2340 introduced "

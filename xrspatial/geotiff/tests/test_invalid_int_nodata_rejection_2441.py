@@ -1,11 +1,11 @@
-"""Default-rejection tests for non-finite / fractional integer nodata (#2441).
+"""Default-rejection tests for non-finite / fractional integer nodata.
 
-Companion to the #1774 opt-in no-op coverage (folded into
-``read/test_nodata.py`` by cluster 10 of epic #2424). These tests pin
-the release-contract upgrade: integer sources whose ``GDAL_NODATA`` tag
-is non-finite or fractional must raise ``InvalidIntegerNodataError`` at
-the read boundary unless the caller explicitly opts back into the legacy
-silent no-op via ``allow_invalid_nodata=True``.
+Companion to the opt-in no-op coverage in ``read/test_nodata.py``.
+These tests pin the release-contract upgrade: integer sources whose
+``GDAL_NODATA`` tag is non-finite or fractional must raise
+``InvalidIntegerNodataError`` at the read boundary unless the caller
+explicitly opts back into the legacy silent no-op via
+``allow_invalid_nodata=True``.
 """
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ def test_open_geotiff_int_finite_nodata_unaffected(tmp_path):
 
 @pytest.mark.parametrize('nodata_str', ['nan', 'inf', '3.5'])
 def test_open_geotiff_opt_in_restores_noop_eager(tmp_path, nodata_str):
-    """``allow_invalid_nodata=True`` keeps the pre-2441 no-op behaviour."""
+    """``allow_invalid_nodata=True`` keeps the legacy no-op behaviour."""
     path = _build_uint16_tiff(nodata_str, tmp_path)
     da = open_geotiff(path, allow_invalid_nodata=True)
     assert da.dtype == np.uint16
@@ -163,7 +163,7 @@ def test_open_geotiff_opt_in_restores_noop_eager(tmp_path, nodata_str):
 
 @pytest.mark.parametrize('nodata_str', ['nan', '30.5'])
 def test_read_geotiff_dask_opt_in_restores_noop(tmp_path, nodata_str):
-    """``allow_invalid_nodata=True`` keeps the pre-2441 no-op for dask."""
+    """``allow_invalid_nodata=True`` keeps the legacy no-op for dask."""
     path = _build_uint16_tiff(nodata_str, tmp_path)
     da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     assert da.dtype == np.uint16

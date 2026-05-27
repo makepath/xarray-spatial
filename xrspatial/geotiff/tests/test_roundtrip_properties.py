@@ -1,14 +1,10 @@
-"""Hypothesis property tests for the GeoTIFF write/read round trip (#2134).
+"""Hypothesis property tests for the GeoTIFF write/read round trip.
 
-This file backs the metadata round-trip contract that the geotiff module
-has accumulated through a long list of incident-specific tests
-(``unit/test_metadata.py`` (#1484 section), ``test_descending_coords_1716.py``,
-``test_no_georef_writer_round_trip_1949.py``,
-``test_int_coords_round_trip_hotfix_1962.py``,
-``test_round_trip_invariants.py``) plus the dtype/codec/predictor fuzz in
-``test_fuzz_hypothesis_1661.py``. The incident files stay as regression
-markers for their bug numbers; this file is the canonical metadata
-contract going forward.
+This file is the canonical metadata round-trip contract for the geotiff
+module. It generalises the behaviour that had accumulated across a list
+of incident-specific regression tests plus the dtype/codec/predictor
+fuzz in ``test_fuzz_hypothesis_1661.py``. The incident files stay as
+regression markers; this file is the contract going forward.
 
 Strategy: one Hypothesis strategy per axis, composed into a single draw
 that builds a DataArray, writes it through ``to_geotiff``, reads it back
@@ -32,13 +28,13 @@ Axes covered:
 Cross-references to the adjacent contracts this back-stops:
 
 * backend parity matrix -- ``test_backend_parity_matrix.py``
-* no-georef marker (#2120) -- ``_xrspatial_no_georef`` in attrs
-* nodata semantics split (#2092) -- declared vs masked nodata, see
+* no-georef marker -- ``_xrspatial_no_georef`` in attrs
+* nodata semantics split -- declared vs masked nodata, see
   ``read/test_nodata.py``
-* int coords sentinel (#2087) -- integer ``x`` / ``y`` are a no-georef
+* int coords sentinel -- integer ``x`` / ``y`` are a no-georef
   signal, the writer must not synthesise a transform from them
 
-Out of scope (deferred):
+Out of scope:
 
 * GPU (cupy, dask+cupy) -- same writer/reader code but needs a CUDA
   runner. Pin the numpy invariants here first.
@@ -127,7 +123,7 @@ def _make_coord(direction: str, length: int, dtype_name: str) -> np.ndarray:
 
     Floats land on a regular grid so ``coords_to_transform`` accepts
     them; ints are an arange (the no-georef placeholder pattern the
-    writer recognises via the #2120 marker).
+    writer recognises via the no-georef marker).
     """
     dtype = np.dtype(dtype_name)
     if dtype.kind in ('i', 'u'):
@@ -281,9 +277,9 @@ def _build_dataarray(spec: dict) -> xr.DataArray:
 
     * ``transform_only`` / ``both`` -- spatial coords with the chosen
       direction and dtype. Integer coords trigger the writer's
-      no-georef path (#2120 marker on read), so this case effectively
-      collapses to the same coverage as ``crs_only`` / ``neither``
-      when coord dtype is int.
+      no-georef path (no-georef marker on read), so this case
+      effectively collapses to the same coverage as ``crs_only`` /
+      ``neither`` when coord dtype is int.
     * ``crs_only`` -- no spatial coords; the writer can't derive a
       transform, the on-disk file has CRS GeoKeys but no
       transform/scale/tiepoint tags.

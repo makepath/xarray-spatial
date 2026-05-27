@@ -1,4 +1,4 @@
-"""Regression test for #1708: ``read_to_array`` no longer leaks into
+"""Regression test: ``read_to_array`` no longer leaks into
 ``xrspatial.geotiff``'s public namespace.
 
 Before the fix, ``xrspatial/geotiff/__init__.py`` did
@@ -7,9 +7,8 @@ Before the fix, ``xrspatial/geotiff/__init__.py`` did
 
 so ``from xrspatial.geotiff import read_to_array`` worked even though
 ``read_to_array`` was not in ``__all__`` and not documented as public.
-The api-consistency sweep on 2026-05-12 flagged this as an orphan API
-(Cat 5): the name is reachable from the public namespace and tests
-relied on it, but the maintainer had not committed to it as a
+This was an orphan API: the name is reachable from the public
+namespace and tests relied on it, but it was never committed to as a
 supported entry point. A future cleanup that removed the top-level
 import would have broken users with no deprecation path.
 
@@ -58,7 +57,7 @@ def test_read_to_array_still_importable_from_reader_submodule():
 
 def test_import_from_top_level_now_fails():
     """Direct top-level import is the regression we are guarding
-    against. Before #1708 this succeeded; afterwards it must raise
+    against. This import used to succeed; it must now raise
     ImportError."""
     with pytest.raises(ImportError):
         from xrspatial.geotiff import read_to_array  # noqa: F401

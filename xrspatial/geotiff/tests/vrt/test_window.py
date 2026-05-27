@@ -1,23 +1,18 @@
-"""Consolidated VRT window / scaling / tiling / chunking tests.
+"""VRT window / scaling / tiling / chunking tests.
 
-Folds nine issue-numbered VRT test files into one place. Each section
-preserves its originating file's helpers, fixtures and assertions;
-helpers are prefixed (e.g. ``_window_validation_*``) so the folds do
-not collide. Test names dropped their trailing issue numbers where
-the originating file already namespaced them.
+Organised by sub-concern; helpers are prefixed (e.g.
+``_window_validation_*``) so they do not collide across sections.
 
 Sections:
-* Window kwarg validation (#1697)
-* Resample + window inverse parity (#1704)
-* DstRect resample-time cap (#1737)
-* Scaled SrcRect / DstRect nearest resampling (#1694)
-* Per-source tile-size sanity check (#1823)
-* Per-source max-pixel cap (#1796)
-* Lazy chunks construction (#1814)
-* Shared parsed VRTDataset in the chunked graph (#1923)
-* Tiled VRT writer uses the threaded scheduler (#1714)
-
-See ``CLUSTER_AUDIT_PR6.md`` for the file:test -> section:test mapping.
+* Window kwarg validation
+* Resample + window inverse parity
+* DstRect resample-time cap
+* Scaled SrcRect / DstRect nearest resampling
+* Per-source tile-size sanity check
+* Per-source max-pixel cap
+* Lazy chunks construction
+* Shared parsed VRTDataset in the chunked graph
+* Tiled VRT writer uses the threaded scheduler
 """
 from __future__ import annotations
 
@@ -46,8 +41,7 @@ from xrspatial.geotiff._writer import write
 
 
 # ---------------------------------------------------------------------------
-# window kwarg validation (#1697)
-# Originally: test_vrt_window_validation_1697.py
+# window kwarg validation
 # ---------------------------------------------------------------------------
 
 
@@ -199,8 +193,7 @@ def test_vrt_and_local_paths_share_window_validation(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# resample+window inverse parity (#1704)
-# Originally: test_vrt_resample_window_inverse_1704.py
+# resample+window inverse parity
 # ---------------------------------------------------------------------------
 
 
@@ -349,8 +342,7 @@ def test_only_minimal_source_rect_is_read(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# DstRect resample cap (#1737)
-# Originally: test_vrt_dstrect_resample_cap_1737.py
+# DstRect resample cap
 # ---------------------------------------------------------------------------
 
 
@@ -376,7 +368,7 @@ def _dstrect_cap_write_vrt(td: str, *, dst_x_size: int, dst_y_size: int, raster_
 
 
 def test_huge_dstrect_no_longer_allocates_full_intermediate():
-    """After #1704 the windowed read clips a 50000x50000 DstRect down to
+    """The windowed read clips a 50000x50000 DstRect down to
     the 100x100 VRT extent, so the resample intermediate is 100x100 and
     no longer hits the pixel-budget cap. The earlier behaviour rejected
     the read up front; the new behaviour just returns the assembled
@@ -432,8 +424,8 @@ def test_per_source_cap_bites_when_sub_window_exceeds_budget():
 
 def test_per_source_cap_inclusive_boundary():
     """The per-source cap is inclusive: exactly ``max_pixels`` succeeds,
-    one below rejects. Mirrors the boundary the original #1737 test
-    pinned down, on the new sub-window semantics."""
+    one below rejects. Mirrors the existing DstRect cap boundary,
+    on the new sub-window semantics."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _dstrect_cap_write_source(td)
         vrt_path = _dstrect_cap_write_vrt(td, dst_x_size=100, dst_y_size=100, raster_x=100, raster_y=100)
@@ -465,8 +457,7 @@ def test_negative_dstrect_y_size_rejected():
 
 
 # ---------------------------------------------------------------------------
-# scaled SrcRect/DstRect resampling (#1694)
-# Originally: test_vrt_scaled_rects_1694.py
+# scaled SrcRect/DstRect resampling
 # ---------------------------------------------------------------------------
 
 
@@ -481,8 +472,7 @@ def test_downsample_4x4_to_2x2_does_not_raise_and_uses_nearest(tmp_path):
     """SrcRect 4x4 -> DstRect 2x2: result is (2,2), nearest-neighbour.
 
     Before the fix the source (4,4) array was assigned directly into the
-    (2,2) destination slice, raising the broadcast error documented in
-    issue #1694.
+    (2,2) destination slice, raising a broadcast error.
     """
     src = np.arange(16, dtype=np.uint16).reshape(4, 4)
     src_path = str(tmp_path / 'src.tif')
@@ -632,8 +622,7 @@ def test_resample_nearest_rejects_empty_source(shape):
 
 
 # ---------------------------------------------------------------------------
-# per-source tile-size sanity check (#1823)
-# Originally: test_vrt_source_tile_check_1823.py
+# per-source tile-size sanity check
 # ---------------------------------------------------------------------------
 
 
@@ -675,10 +664,10 @@ class TestPerTileCheckDoesNotUseCallerBudget:
 
 class TestOutputWindowCheckStillEnforced:
     """The output-window check still rejects a read whose VRT extent
-    exceeds ``max_pixels``. After #1704 the source read is bounded by
+    exceeds ``max_pixels``. The source read is bounded by
     the clipped destination sub-window, so the per-source guard now
     rarely fires; the top-level ``_check_dimensions`` call against the
-    output extent catches over-budget requests up front. The #1796
+    output extent catches over-budget requests up front. The
     protection (tiny VRT cannot force huge source decode) is preserved
     structurally.
     """
@@ -709,15 +698,14 @@ class TestPerTileCheckStillRejectsCraftedHeader:
 
 
 # ---------------------------------------------------------------------------
-# per-source max-pixel cap (#1796)
-# Originally: test_vrt_source_max_pixels_1796.py
+# per-source max-pixel cap
 # ---------------------------------------------------------------------------
 
 
 def test_tiny_vrt_with_huge_srcrect_now_reads_minimally(tmp_path):
     """A 1x1 VRT pointing at a 4x4 SrcRect now reads only the one source
     pixel that maps to the single output pixel, so ``max_pixels=1`` is
-    no longer exceeded. Locks in the structural improvement from #1704."""
+    no longer exceeded. Locks in the structural improvement."""
     src = tmp_path / 'tmp_1796_source.tif'
     data = np.arange(16, dtype=np.uint8).reshape(4, 4)
     to_geotiff(data, str(src), compression='none')
@@ -731,7 +719,7 @@ def test_source_cap_still_fires_when_sub_window_exceeds_budget(tmp_path):
     """The per-source pixel-budget guard still rejects a sub-window that
     exceeds ``max_pixels``. With the sub-window-bounded read, the cap is
     measured against the clipped destination region rather than the raw
-    SrcRect; the protection from #1796 carries over to that new
+    SrcRect; the per-source protection carries over to that new
     measurement.
     """
     src = tmp_path / 'tmp_1796_big_source.tif'
@@ -744,8 +732,7 @@ def test_source_cap_still_fires_when_sub_window_exceeds_budget(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# lazy chunks construction (#1814)
-# Originally: test_vrt_lazy_chunks_1814.py
+# lazy chunks construction
 # ---------------------------------------------------------------------------
 
 
@@ -926,8 +913,8 @@ def test_chunked_propagates_vrt_holes_when_source_missing(lazy_chunks_two_by_two
     ``"vrt_holes" in da.attrs`` regardless of which code path produced
     the DataArray.
 
-    Note: the default ``missing_sources='raise'`` raises at build time
-    under #2265, so this test exercises the explicit ``'warn'`` opt-in.
+    Note: the default ``missing_sources='raise'`` raises at build time,
+    so this test exercises the explicit ``'warn'`` opt-in.
     """
     import warnings
     from xrspatial.geotiff import GeoTIFFFallbackWarning
@@ -987,8 +974,7 @@ def test_chunked_integer_no_nodata_keeps_source_dtype():
 
 
 # ---------------------------------------------------------------------------
-# shared parsed VRT in chunked graph (#1923)
-# Originally: test_vrt_chunked_shared_dataset_1923.py
+# shared parsed VRT in chunked graph
 # ---------------------------------------------------------------------------
 
 
@@ -1026,7 +1012,7 @@ def _chunked_shared_dataset_make_tile_vrt(tmp_path, n_tiles_per_side=4):
 
 
 def test_vrt_chunked_dataset_is_shared_graph_input(tmp_path):
-    """Issue #1923: parsed VRTDataset is wrapped as a single Delayed.
+    """Parsed VRTDataset is wrapped as a single Delayed.
 
     Walks each ``_vrt_chunk_read`` task's kwargs dict in the dask graph
     and verifies that ``parsed_vrt`` is NOT an inline ``VRTDataset``
@@ -1083,8 +1069,7 @@ def test_vrt_chunked_band_kwarg_still_validates(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# tiled writer uses threaded scheduler (#1714)
-# Originally: test_vrt_tiled_scheduler_1714.py
+# tiled writer uses threaded scheduler
 # ---------------------------------------------------------------------------
 
 
@@ -1152,16 +1137,15 @@ def test_vrt_tiled_threaded_write_is_deterministic():
 
 
 # ---------------------------------------------------------------------------
-# VRT-tail window / chunking folds (cluster 13, #2437)
+# Window / chunking tail cases
 # ---------------------------------------------------------------------------
 #
-# Two originally-standalone files folded here, both exercising the
-# windowed / chunked read paths this module already covers:
+# Two further windowed / chunked read paths this module covers:
 #
-# * read_vrt(chunks=...) lazy-window construction (#1798): chunk layout
+# * read_vrt(chunks=...) lazy-window construction: chunk layout
 #   matches eager values, build does not decode sources, and an
 #   excessive task count is rejected.
-# * read_geotiff_dask('.vrt') kwarg forwarding (#1795): the direct dask
+# * read_geotiff_dask('.vrt') kwarg forwarding: the direct dask
 #   entry point forwards window / band / max_pixels through to read_vrt.
 
 
@@ -1205,7 +1189,7 @@ def _vrttail_write_multi_band_vrt(vrt_path, source_name, *, bands):
 
 
 class TestVrtTailLazyChunks:
-    """read_vrt(chunks=...) builds lazy window tasks (#1798)."""
+    """read_vrt(chunks=...) builds lazy window tasks."""
 
     def test_chunks_matches_eager_values(self, tmp_path):
         arr = np.arange(24, dtype=np.float32).reshape(4, 6)
@@ -1250,7 +1234,7 @@ class TestVrtTailLazyChunks:
 
 
 class TestVrtTailDirectDaskKwargs:
-    """read_geotiff_dask('.vrt') forwards VRT kwargs (#1795)."""
+    """read_geotiff_dask('.vrt') forwards VRT kwargs."""
 
     def test_forwards_window_and_band(self, tmp_path):
         from xrspatial.geotiff import read_geotiff_dask

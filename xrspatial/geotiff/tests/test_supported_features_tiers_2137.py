@@ -2,14 +2,14 @@
 
 Background
 ----------
-Issue #2137 tiers the geotiff public surface into Stable / Advanced /
+The geotiff public surface is tiered into Stable / Advanced /
 Experimental / Internal-only. The :data:`SUPPORTED_FEATURES` constant
 enumerates every feature with its tier and is the single source of
 truth that the docstrings, writer gates, and user-guide notebook all
 read from. The writer adds an ``allow_experimental_codecs=True``
 opt-in for Tier 3 codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``)
 modelled on the existing ``allow_internal_only_jpeg`` flag for the
-Tier 4 ``jpeg`` codec (#1845).
+Tier 4 ``jpeg`` codec.
 
 What this test pins
 -------------------
@@ -103,10 +103,10 @@ def test_supported_features_is_a_mapping():
 
 
 def test_supported_features_has_split_cog_keys():
-    """The COG entry is split into three keys (issue #2291) so the
-    writer, local reader, and HTTP reader can promote between tiers on
-    independent tracks. All three keys must resolve in
-    ``SUPPORTED_FEATURES`` with a known tier label.
+    """The COG entry is split into three keys so the writer, local
+    reader, and HTTP reader can promote between tiers on independent
+    tracks. All three keys must resolve in ``SUPPORTED_FEATURES`` with
+    a known tier label.
 
     Pinned here so a future refactor that folds the keys back together
     has to update the docs, the notebook, and this test in one commit.

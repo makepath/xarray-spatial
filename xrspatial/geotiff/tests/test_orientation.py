@@ -1,4 +1,4 @@
-"""TIFF Orientation tag (274) decode tests for issue #1503.
+"""TIFF Orientation tag (274) decode tests.
 
 Before the fix, the reader silently ignored tag 274 and returned the file's
 stored pixel order regardless of which corner the data was supposed to
@@ -199,8 +199,8 @@ def test_orientation_5_to_8_raise_on_georef(tmp_path, orientation):
     Orientations 5-8 require a per-orientation origin shift plus a
     rotation that the axis-aligned GeoTransform cannot represent.
     The reader used to swap pixel_width/pixel_height and warn; that
-    produced silently wrong coords on georef'd files (issue #1765).
-    The reader now refuses the file instead.
+    produced silently wrong coords on georef'd files. The reader now
+    refuses the file instead.
     """
     arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
     path = tmp_path / f"orient_georef_raise_1765_{orientation}.tif"
@@ -253,7 +253,8 @@ def test_orientation_5_to_8_no_geo_still_swaps(tmp_path, orientation):
     """Without georef, orientations 5-8 still do the axis swap.
 
     No geographic claim to violate, so the existing transpose path is
-    preserved (regression guard for the #1765 fix not over-reaching).
+    preserved (regression guard for the georef-raise fix not
+    over-reaching).
     """
     arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
     path = tmp_path / f"orient_no_geo_1765_{orientation}.tif"
@@ -271,7 +272,7 @@ def test_orientation_5_to_8_no_geo_still_swaps(tmp_path, orientation):
 def test_orientation_1_georef_unchanged_1765(tmp_path):
     """orientation=1 on a georef'd file still reads normally.
 
-    Regression guard: the #1765 raise must be scoped to 5-8, not fire
+    Regression guard: the georef-raise must be scoped to 5-8, not fire
     on any georeferenced file.
     """
     arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
@@ -295,7 +296,7 @@ def test_orientation_1_georef_unchanged_1765(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Geographic coordinate updates for mirror-flip orientations (issue #1537)
+# Geographic coordinate updates for mirror-flip orientations
 # ---------------------------------------------------------------------------
 #
 # Orientations 2/3/4 flip the array horizontally, both axes, or vertically.

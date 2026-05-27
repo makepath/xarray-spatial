@@ -1,4 +1,4 @@
-"""Fail-closed read check for internally contradictory GeoKeys (issue #2417).
+"""Fail-closed read check for internally contradictory GeoKeys.
 
 The legacy reader took ``ProjectedCSTypeGeoKey`` first, fell back to
 ``GeographicTypeGeoKey``, and never cross-checked either against
@@ -52,7 +52,7 @@ def test_error_class_hierarchy():
 
 
 def test_validate_rejects_model_geographic_with_projected_key():
-    """The exact scenario from issue #2417: ModelType=geographic but
+    """The motivating scenario: ModelType=geographic but
     ProjectedCSTypeGeoKey=4326 set, GeographicTypeGeoKey absent."""
     with pytest.raises(InconsistentGeoKeysError) as excinfo:
         validate_read_metadata({
@@ -221,7 +221,7 @@ def test_validate_tolerates_nan_or_inf_geokey_values(bad_value):
     The reader never produces these for type-code GeoKeys (those parse
     as TIFF SHORT ints), but ``validate_read_metadata`` is a public-ish
     helper that takes an arbitrary dict, so the validator stays robust
-    against garbage callers. See PR review follow-up on issue #2417.
+    against garbage callers.
     """
     # bad model_type with an otherwise-conflict-looking projected slot.
     validate_read_metadata({
@@ -261,8 +261,8 @@ def _write_tiff_with_geokeys(
     ``GeographicTypeGeoKey`` are written; the rest of the directory is
     minimal. Pass ``None`` to either type-key argument to omit it.
 
-    Unique fixture for issue #2417 -- name carries the issue number so
-    parallel test runs and other worktrees do not collide on tmp paths.
+    Tmp-path names below carry a unique prefix so parallel test runs and
+    other worktrees do not collide on disk.
     """
     bo = '<'
     pixels = np.zeros((4, 4), dtype=np.float32).tobytes()
@@ -346,7 +346,7 @@ def _write_tiff_with_geokeys(
 
 
 def test_open_geotiff_rejects_model_geographic_with_projected_key(tmp_path):
-    """The exact reproducer from issue #2417. A TIFF declaring
+    """The motivating reproducer. A TIFF declaring
     ``ModelTypeGeoKey=geographic`` with ``ProjectedCSTypeGeoKey=4326``
     used to surface ``attrs['crs']=4326`` silently; now it raises."""
     path = tmp_path / "tmp_2417_model_geographic.tif"
@@ -414,7 +414,7 @@ def test_open_geotiff_accepts_consistent_geographic(tmp_path):
 
 
 def test_open_geotiff_opt_out_restores_legacy_behaviour(tmp_path):
-    """``allow_inconsistent_geokeys=True`` keeps the pre-#2417 silent
+    """``allow_inconsistent_geokeys=True`` keeps the legacy silent
     acceptance for callers with known-quirky historical files."""
     path = tmp_path / "tmp_2417_opt_out.tif"
     _write_tiff_with_geokeys(

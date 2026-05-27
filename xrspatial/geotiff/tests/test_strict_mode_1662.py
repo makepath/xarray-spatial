@@ -1,8 +1,8 @@
-"""Regression tests for #1662: typed warnings + ``XRSPATIAL_GEOTIFF_STRICT``.
+"""Regression tests for typed warnings + ``XRSPATIAL_GEOTIFF_STRICT``.
 
-The audit in issue #1662 flagged ten ``except Exception: return None``
-sites in the geotiff module that silently swallowed errors. Each site
-now emits a ``GeoTIFFFallbackWarning`` (or re-raises in strict mode).
+An audit flagged ten ``except Exception: return None`` sites in the
+geotiff module that silently swallowed errors. Each site now emits a
+``GeoTIFFFallbackWarning`` (or re-raises in strict mode).
 This module pins the contract:
 
 * Default mode: a fallback returns ``None`` (or skips) and a
@@ -156,9 +156,9 @@ def test_vrt_missing_source_default_warns_then_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        # Public ``read_vrt`` defaults to ``missing_sources='raise'``
-        # since #1860. Opt back into the lenient warn-then-continue
-        # behaviour to keep exercising the warning path.
+        # Public ``read_vrt`` defaults to ``missing_sources='raise'``.
+        # Opt back into the lenient warn-then-continue behaviour to keep
+        # exercising the warning path.
         da = read_vrt(str(vrt_path), missing_sources='warn')
 
     # The mosaic should still load (with a hole) and one warning should
@@ -202,8 +202,8 @@ def test_vrt_missing_source_strict_raises(set_strict_env, tmp_path):
 
 # ---------------------------------------------------------------------------
 # _warn_or_raise_gpu_fallback pins the warn-vs-raise contract for every
-# GPU helper site flagged in #1662. Exercised directly so the test does
-# not depend on having a working CUDA/GDS/nvCOMP stack.
+# GPU helper site. Exercised directly so the test does not depend on
+# having a working CUDA/GDS/nvCOMP stack.
 # ---------------------------------------------------------------------------
 
 

@@ -1,9 +1,9 @@
-"""Default-rejection tests for the VRT ``stable_only=True`` gate (#2443).
+"""Default-rejection tests for the VRT ``stable_only=True`` gate.
 
 Companion to ``test_release_gate_negative_mixed_tier_vrt_children`` in
 ``release_gates/test_stable_features.py``. These tests pin the
-release-contract upgrade from epic #2342: a caller who asks for
-stable-tier sources via ``stable_only=True`` on a VRT source must see a
+release-contract upgrade: a caller who asks for stable-tier sources
+via ``stable_only=True`` on a VRT source must see a
 typed :class:`VRTStableSourcesOnlyError` (a
 :class:`GeoTIFFAmbiguousMetadataError` subclass) before any pixel
 decode, and the message must name the file path and the
