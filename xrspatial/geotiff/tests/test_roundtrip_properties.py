@@ -2,7 +2,7 @@
 
 This file backs the metadata round-trip contract that the geotiff module
 has accumulated through a long list of incident-specific tests
-(``test_metadata_round_trip_1484.py``, ``test_descending_coords_1716.py``,
+(``unit/test_metadata.py`` (#1484 section), ``test_descending_coords_1716.py``,
 ``test_no_georef_writer_round_trip_1949.py``,
 ``test_int_coords_round_trip_hotfix_1962.py``,
 ``test_round_trip_invariants.py``) plus the dtype/codec/predictor fuzz in

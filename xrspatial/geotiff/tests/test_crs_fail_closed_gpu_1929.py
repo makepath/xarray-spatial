@@ -2,8 +2,9 @@
 
 #1929 added ``_validate_crs_fallback`` and wired
 ``allow_unparseable_crs`` into ``to_geotiff``, ``write_geotiff_gpu``,
-and the ``to_geotiff(gpu=True)`` dispatcher. ``test_crs_fail_closed_1929``
-only exercises the eager CPU writer (``to_geotiff(gpu=False, ...)``);
+and the ``to_geotiff(gpu=True)`` dispatcher. The eager CPU coverage
+(``write/test_crs.py`` "CRS fail-closed citation guard (#1929)" section)
+only exercises ``to_geotiff(gpu=False, ...)``;
 the GPU writer's invocation of ``_validate_crs_fallback`` at
 ``_writers/gpu.py:507`` and the dispatcher thread-through at
 ``_writers/eager.py:447`` have no targeted tests.

@@ -124,3 +124,227 @@ class TestToGeotiffMetadataRoundTrip:
         # Both dataset-level and per-band entries survive intact.
         assert round_tripped.get("NOTE") == "value < 5 & ok"
         assert round_tripped.get(("STAT", 0)) == 'quote "x"'
+
+
+# =============================================================================
+# Section: Safe extra_tags filter (#1657)
+# =============================================================================
+#
+# Original: ``test_extra_tags_safe_filter_1657.py``.
+#
+# Before the fix, reading an overview level (NewSubfileType=1) or any
+# TIFF with a SubIFDs entry leaked those tags into
+# ``attrs['extra_tags']`` because they were not in ``_MANAGED_TAGS``.
+# Writing the DataArray back via ``to_geotiff`` or
+# ``write_geotiff_gpu`` then re-emitted them on the output IFD,
+# producing:
+#
+# * A primary IFD wrongly marked as a reduced-resolution overview
+#   (``NewSubfileType=1``), so GDAL / rasterio skip it when picking the
+#   primary image.
+# * Stale absolute byte offsets in ``SubIFDs`` that point into the new
+#   file's pixel data, crashing readers that follow the chain.
+#
+# The fix adds both tags to ``_MANAGED_TAGS`` (read-side filter) and to
+# ``_DANGEROUS_EXTRA_TAG_IDS`` in ``_writer.py`` (write-side
+# belt-and-braces guard so caller-supplied ``attrs['extra_tags']``
+# still produces a clean file).
+#
+# These tests pin the contract on every available backend.
+from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
+
+from .._helpers.markers import requires_gpu as _requires_gpu_1657  # noqa: E402
+
+tifffile_1657 = pytest.importorskip("tifffile")
+
+
+def _make_cog_1657(path) -> None:
+    """Write a small COG with overviews so each backend can read an overview."""
+    import xarray as xr
+    da = xr.DataArray(
+        np.arange(512 * 512, dtype=np.float32).reshape(512, 512),
+        dims=['y', 'x'],
+        coords={'y': np.arange(512) * -0.5 + 10.0,
+                'x': np.arange(512) * 0.5 - 10.0},
+        attrs={'crs': 4326},
+    )
+    to_geotiff(da, str(path), cog=True,
+               tile_size=64, overview_levels=[2, 4])
+
+
+def _read_subfile_type_1657(path) -> int | None:
+    """Return the NewSubfileType value on page 0 of a TIFF, or None if absent."""
+    with tifffile_1657.TiffFile(str(path)) as tf:
+        page = tf.pages[0]
+        tag = page.tags.get('NewSubfileType')
+        return None if tag is None else int(tag.value)
+
+
+def test_overview_read_does_not_leak_newsubfiletype_numpy_1657(tmp_path):
+    cog_path = tmp_path / 'cog.tif'
+    _make_cog_1657(cog_path)
+    ov = open_geotiff(str(cog_path), overview_level=1)
+    extra = ov.attrs.get('extra_tags')
+    assert extra is None or not any(t[0] == 254 for t in extra), (
+        f"NewSubfileType (tag 254) leaked into attrs['extra_tags']: {extra}"
+    )
+
+
+def test_overview_read_does_not_leak_newsubfiletype_dask_1657(tmp_path):
+    cog_path = tmp_path / 'cog.tif'
+    _make_cog_1657(cog_path)
+    ov = open_geotiff(str(cog_path), overview_level=1, chunks=32)
+    extra = ov.attrs.get('extra_tags')
+    assert extra is None or not any(t[0] == 254 for t in extra), (
+        f"NewSubfileType (tag 254) leaked under dask: {extra}"
+    )
+
+
+@_requires_gpu_1657
+def test_overview_read_does_not_leak_newsubfiletype_cupy_1657(tmp_path):
+    cog_path = tmp_path / 'cog.tif'
+    _make_cog_1657(cog_path)
+    ov = open_geotiff(str(cog_path), overview_level=1, gpu=True)
+    extra = ov.attrs.get('extra_tags')
+    assert extra is None or not any(t[0] == 254 for t in extra), (
+        f"NewSubfileType (tag 254) leaked under cupy: {extra}"
+    )
+
+
+@_requires_gpu_1657
+def test_overview_read_does_not_leak_newsubfiletype_dask_cupy_1657(tmp_path):
+    cog_path = tmp_path / 'cog.tif'
+    _make_cog_1657(cog_path)
+    ov = open_geotiff(
+        str(cog_path), overview_level=1, gpu=True, chunks=32)
+    extra = ov.attrs.get('extra_tags')
+    assert extra is None or not any(t[0] == 254 for t in extra), (
+        f"NewSubfileType (tag 254) leaked under dask+cupy: {extra}"
+    )
+
+
+def test_subifds_does_not_leak_into_attrs_1657(tmp_path):
+    """tifffile writes SubIFDs by default on multi-page TIFFs.
+
+    Anything carrying tag 330 must not surface in ``attrs['extra_tags']``
+    because the byte offsets are file-absolute and cannot be replayed
+    into a rewritten file.
+    """
+    data = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    path = tmp_path / 'subifd.tif'
+    with tifffile_1657.TiffWriter(str(path)) as tw:
+        tw.write(data, tile=(32, 32), subifds=1)
+        tw.write(data[::2, ::2], tile=(32, 32), subfiletype=1)
+
+    da = open_geotiff(str(path))
+    extra = da.attrs.get('extra_tags')
+    assert extra is None or not any(t[0] == 330 for t in extra), (
+        f"SubIFDs (tag 330) leaked into attrs['extra_tags']: {extra}"
+    )
+
+
+def test_overview_roundtrip_primary_ifd_clean_numpy_1657(tmp_path):
+    cog_path = tmp_path / 'cog.tif'
+    _make_cog_1657(cog_path)
+    ov = open_geotiff(str(cog_path), overview_level=1)
+    out = tmp_path / 'out_numpy.tif'
+    to_geotiff(ov, str(out))
+    sft = _read_subfile_type_1657(out)
+    assert sft in (None, 0), (
+        f"Round-tripped overview produced NewSubfileType={sft} on the "
+        f"primary IFD (expected None or 0)."
+    )
+
+
+def test_overview_roundtrip_primary_ifd_clean_dask_1657(tmp_path):
+    cog_path = tmp_path / 'cog.tif'
+    _make_cog_1657(cog_path)
+    ov = open_geotiff(str(cog_path), overview_level=1, chunks=32)
+    out = tmp_path / 'out_dask.tif'
+    to_geotiff(ov, str(out))
+    sft = _read_subfile_type_1657(out)
+    assert sft in (None, 0), (
+        f"Dask round-tripped overview produced NewSubfileType={sft}."
+    )
+
+
+@_requires_gpu_1657
+def test_overview_roundtrip_primary_ifd_clean_cupy_1657(tmp_path):
+    cog_path = tmp_path / 'cog.tif'
+    _make_cog_1657(cog_path)
+    ov = open_geotiff(str(cog_path), overview_level=1, gpu=True)
+    out = tmp_path / 'out_cupy.tif'
+    to_geotiff(ov, str(out))
+    sft = _read_subfile_type_1657(out)
+    assert sft in (None, 0), (
+        f"Cupy round-tripped overview produced NewSubfileType={sft}."
+    )
+
+
+def test_writer_filters_caller_supplied_newsubfiletype_1657(tmp_path):
+    import xarray as xr
+    da = xr.DataArray(
+        np.zeros((32, 32), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.arange(32) * -0.5 + 10.0,
+                'x': np.arange(32) * 0.5 - 10.0},
+        attrs={
+            'crs': 4326,
+            'extra_tags': [(254, 4, 1, 1)],
+        },
+    )
+    out = tmp_path / 'with_dangerous_extra_tag.tif'
+    to_geotiff(da, str(out), allow_experimental_codecs=True)
+    sft = _read_subfile_type_1657(out)
+    assert sft in (None, 0), (
+        f"Writer accepted dangerous extra_tags[254]={sft}, expected None/0."
+    )
+
+
+def test_writer_filters_caller_supplied_subifds_1657(tmp_path):
+    import xarray as xr
+    da = xr.DataArray(
+        np.zeros((32, 32), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.arange(32) * -0.5 + 10.0,
+                'x': np.arange(32) * 0.5 - 10.0},
+        attrs={
+            'crs': 4326,
+            'extra_tags': [(330, 4, 2, (999999, 888888))],
+        },
+    )
+    out = tmp_path / 'with_subifds.tif'
+    to_geotiff(da, str(out), allow_experimental_codecs=True)
+    with tifffile_1657.TiffFile(str(out)) as tf:
+        sub = tf.pages[0].tags.get('SubIFDs')
+        assert sub is None, (
+            f"Writer emitted SubIFDs={sub.value}, should have filtered it."
+        )
+
+
+def test_writer_keeps_benign_extra_tags_1657(tmp_path):
+    import xarray as xr
+    da = xr.DataArray(
+        np.zeros((32, 32), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.arange(32) * -0.5 + 10.0,
+                'x': np.arange(32) * 0.5 - 10.0},
+        attrs={
+            'crs': 4326,
+            'extra_tags': [
+                (254, 4, 1, 1),
+                (305, 2, 12, 'tifffile.py'),
+            ],
+        },
+    )
+    out = tmp_path / 'mixed_extra_tags.tif'
+    to_geotiff(da, str(out), allow_experimental_codecs=True)
+    with tifffile_1657.TiffFile(str(out)) as tf:
+        page = tf.pages[0]
+        assert page.tags.get('NewSubfileType') is None
+        software = page.tags.get('Software')
+        assert software is not None, (
+            "Benign extra_tag (305 Software) was filtered too -- "
+            "filter is too aggressive."
+        )
+        assert 'tifffile' in str(software.value)

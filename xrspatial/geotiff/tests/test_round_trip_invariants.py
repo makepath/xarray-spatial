@@ -40,11 +40,11 @@ Cases NOT covered here (deferred to follow-up PRs):
 * float with non-NaN declared nodata -- requires the masked / declared
   nodata split from issue #1988 to express the invariant cleanly.
 
-The per-incident round-trip test files
-(``test_metadata_round_trip_1484.py``,
-``test_int_coords_round_trip_hotfix_1962.py``, etc.) stay as regression
-markers for their bug numbers. This module is the canonical contract
-the writer must satisfy going forward.
+The per-incident round-trip test coverage
+(``unit/test_metadata.py`` (#1484 section),
+``test_int_coords_round_trip_hotfix_1962.py``, etc.) stays as regression
+marker for the underlying bug numbers. This module is the canonical
+contract the writer must satisfy going forward.
 """
 from __future__ import annotations
 

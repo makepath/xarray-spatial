@@ -23,7 +23,8 @@ land in the bundled follow-up:
 the bundle above. The activation, opt-out wiring on ``open_geotiff`` /
 ``read_geotiff_dask``, and VRT test sweep ship in a follow-up PR; the
 dedicated fail-closed coverage for that case lives in
-``test_mixed_band_metadata_fail_closed_1987.py``.
+``unit/test_metadata.py`` under the "Mixed-band metadata fail-closed
+(#1987 PR 5)" section.
 """
 from __future__ import annotations
 

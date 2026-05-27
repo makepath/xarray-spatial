@@ -311,13 +311,13 @@ def test_auto_bigtiff_threshold_promotes_for_cog(tmp_path, monkeypatch):
     Allocating an actual >4 GiB raster would dominate CI runtime and
     memory budgets, so this row drives the decision boundary by
     monkeypatching ``_compute_classic_ifd_overhead`` to return a value
-    just past UINT32_MAX. Mirrors the strategy used by
-    ``test_eager_writer_promotes_to_bigtiff_when_overhead_dominates`` in
-    ``test_eager_bigtiff_overhead_exact_1905.py`` -- the writer's
-    auto-decision pipes ``estimated_file_size > UINT32_MAX`` through the
-    same helper for both the GeoTIFF and COG layouts. If a future refactor
-    decouples the COG estimate from this helper this row will surface
-    that drift loudly.
+    just past UINT32_MAX. Mirrors the strategy used by the eager-writer
+    BigTIFF overhead tests in the
+    "Eager writer BigTIFF auto-detection (#1905)" section below -- the
+    writer's auto-decision pipes ``estimated_file_size > UINT32_MAX``
+    through the same helper for both the GeoTIFF and COG layouts. If a
+    future refactor decouples the COG estimate from this helper this
+    row will surface that drift loudly.
     """
     arr = _make_data(np.float32, bands=1, height=64, width=64)
     da = _build_da(arr, crs=4326)
@@ -353,3 +353,228 @@ def test_auto_bigtiff_threshold_promotes_for_cog(tmp_path, monkeypatch):
         )
         np.testing.assert_array_equal(src.read(1), arr)
     _assert_ifds_before_data(path)
+
+
+# =============================================================================
+# Section: Eager writer BigTIFF auto-detection (#1905)
+# =============================================================================
+#
+# Original: ``test_eager_bigtiff_overhead_exact_1905.py``.
+#
+# Regression for issue #1905. The eager writer previously decided
+# BigTIFF with a fixed-fudge estimate:
+#
+#     ifd_overhead = num_levels * (2 + 12 * max_tags_per_ifd + 4 + 1024)
+#
+# The 1 KB constant under-promoted near the 4 GiB boundary when
+# ``gdal_metadata_xml`` or ``extra_tags`` pushed the actual overflow
+# heap past it. The fix reuses ``_compute_classic_ifd_overhead`` from
+# the streaming writer (added in #1785, #1787) so eager and streaming
+# paths agree on the estimate.
+from xrspatial.geotiff import open_geotiff  # noqa: E402
+from xrspatial.geotiff._dtypes import ASCII, LONG  # noqa: E402
+from xrspatial.geotiff._writer import _build_ifd, _compute_classic_ifd_overhead  # noqa: E402
+
+
+def _make_4x4_float32_1905(
+    crs: int = 4326, gdal_metadata_xml: str | None = None,
+) -> xr.DataArray:
+    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+    attrs = {"crs": crs}
+    if gdal_metadata_xml is not None:
+        attrs["gdal_metadata_xml"] = gdal_metadata_xml
+    return xr.DataArray(
+        arr,
+        dims=["y", "x"],
+        coords={
+            "y": np.array([0.5, 1.5, 2.5, 3.5]),
+            "x": np.array([0.5, 1.5, 2.5, 3.5]),
+        },
+        attrs=attrs,
+    )
+
+
+def test_overhead_matches_built_ifd_size_1905():
+    """Spot check ``_compute_classic_ifd_overhead`` exactness."""
+    metadata = "x" * 4096
+    tags = [
+        (256, LONG, 1, 16),
+        (257, LONG, 1, 16),
+        (270, ASCII, len(metadata) + 1, metadata),
+    ]
+    expected = _compute_classic_ifd_overhead(tags)
+
+    ifd_bytes, overflow_bytes = _build_ifd(
+        tags, overflow_base=0, bigtiff=False,
+    )
+    actual = len(ifd_bytes) + len(overflow_bytes)
+    assert expected == actual
+
+
+def test_overhead_includes_strip_offset_arrays_1905():
+    offsets = list(range(64))
+    byte_counts = [10] * 64
+    tags = [
+        (256, LONG, 1, 16),
+        (257, LONG, 1, 16),
+        (273, LONG, 64, offsets),
+        (279, LONG, 64, byte_counts),
+    ]
+    overhead = _compute_classic_ifd_overhead(tags)
+    assert overhead >= 2 + 12 * 4 + 4 + 64 * 4 * 2
+
+
+def test_overhead_exceeds_old_fudge_for_large_metadata_1905():
+    metadata = "x" * 8192
+    tags = [
+        (256, LONG, 1, 16),
+        (257, LONG, 1, 16),
+        (42112, ASCII, len(metadata) + 1, metadata),
+    ]
+    overhead = _compute_classic_ifd_overhead(tags)
+    old_fudge = 2 + 12 * len(tags) + 4 + 1024
+    assert overhead > old_fudge
+
+
+def test_eager_writer_round_trip_with_large_gdal_metadata_1905(tmp_path):
+    metadata_xml = (
+        "<GDALMetadata>"
+        + "<Item name='note'>" + ("y" * 4096) + "</Item>"
+        + "</GDALMetadata>"
+    )
+    da = _make_4x4_float32_1905(gdal_metadata_xml=metadata_xml)
+    path = str(tmp_path / "large_metadata_1905.tif")
+    to_geotiff(da, path, allow_experimental_codecs=True)
+
+    rt = open_geotiff(path)
+    np.testing.assert_array_equal(rt.values, da.values)
+
+    with open(path, "rb") as f:
+        head = f.read(8)
+    assert head[:2] == b"II"
+    magic = struct.unpack_from("<H", head, 2)[0]
+    assert magic == 42
+
+
+def test_eager_writer_promotes_to_bigtiff_when_overhead_dominates_1905(
+    tmp_path, monkeypatch,
+):
+    da = _make_4x4_float32_1905()
+    path = str(tmp_path / "bigtiff_decision_1905.tif")
+
+    from xrspatial.geotiff import _writer as writer_mod
+
+    real = writer_mod._compute_classic_ifd_overhead
+
+    def _huge_overhead(tags):
+        return real(tags) + 0x100000000
+
+    monkeypatch.setattr(
+        writer_mod, "_compute_classic_ifd_overhead", _huge_overhead,
+    )
+
+    to_geotiff(da, path, allow_experimental_codecs=True)
+    with open(path, "rb") as f:
+        head = f.read(8)
+    assert head[:2] == b"II"
+    magic = struct.unpack_from("<H", head, 2)[0]
+    assert magic == 43, "writer should have chosen BigTIFF"
+
+
+def test_eager_writer_keeps_classic_when_overhead_fits_1905(tmp_path):
+    da = _make_4x4_float32_1905()
+    path = str(tmp_path / "classic_1905.tif")
+    to_geotiff(da, path, allow_experimental_codecs=True)
+    with open(path, "rb") as f:
+        head = f.read(8)
+    magic = struct.unpack_from("<H", head, 2)[0]
+    assert magic == 42
+
+
+def test_overhead_matches_actual_emitted_size_via_writer_1905(tmp_path):
+    metadata_xml = "<GDALMetadata><Item>" + ("z" * 1024) + "</Item></GDALMetadata>"
+    da = _make_4x4_float32_1905(gdal_metadata_xml=metadata_xml)
+    path = str(tmp_path / "match_actual_1905.tif")
+    to_geotiff(da, path, allow_experimental_codecs=True)
+
+    with open(path, "rb") as f:
+        data = f.read()
+    assert data[:2] == b"II"
+    ifd_offset = struct.unpack_from("<I", data, 4)[0]
+    num_entries = struct.unpack_from("<H", data, ifd_offset)[0]
+    entry_block_end = ifd_offset + 2 + num_entries * 12 + 4
+    assert entry_block_end - ifd_offset == 2 + 12 * num_entries + 4
+
+
+# =============================================================================
+# Section: BigTIFF docstring parity (#1683)
+# =============================================================================
+#
+# Original: ``test_to_geotiff_bigtiff_doc_1683.py``.
+#
+# The api-consistency sweep on 2026-05-12 flagged that ``to_geotiff``
+# accepts a ``bigtiff`` kwarg but the Parameters block of the
+# docstring jumps from ``overview_resampling`` directly to ``gpu``.
+# ``write_geotiff_gpu`` documents the same kwarg correctly, so users
+# learning the API from ``to_geotiff(...)`` could not tell the option
+# existed. This section pins the docstring entry against future drift.
+import inspect  # noqa: E402
+import re  # noqa: E402
+
+from xrspatial.geotiff import to_geotiff as _to_geotiff_1683  # noqa: E402
+from xrspatial.geotiff import write_geotiff_gpu as _write_geotiff_gpu_1683  # noqa: E402
+
+
+def _documented_params_1683(fn) -> list[str]:
+    """Return the parameter names listed under the docstring's
+    ``Parameters`` section, in document order.
+    """
+    doc = inspect.getdoc(fn) or ""
+    documented: list[str] = []
+    in_params = False
+    for line in doc.splitlines():
+        if re.match(r"^Parameters\s*$", line.strip()):
+            in_params = True
+            continue
+        if in_params and re.match(r"^[A-Z][a-z]+\s*$", line.strip()):
+            in_params = False
+        if in_params:
+            m = re.match(r"^(\S+(?:,\s*\S+)*)\s*:\s*", line)
+            if m:
+                for name in m.group(1).split(","):
+                    documented.append(name.strip())
+    return documented
+
+
+def test_to_geotiff_bigtiff_documented_1683():
+    """``bigtiff`` is in the signature and must be in the docstring too."""
+    params = list(inspect.signature(_to_geotiff_1683).parameters)
+    assert "bigtiff" in params, (
+        "to_geotiff signature lost the bigtiff kwarg")
+    documented = _documented_params_1683(_to_geotiff_1683)
+    assert "bigtiff" in documented, (
+        f"to_geotiff docstring is missing the bigtiff parameter "
+        f"description (documented params: {documented})"
+    )
+
+
+def test_to_geotiff_parameters_match_signature_1683():
+    """Every public kwarg of ``to_geotiff`` is documented."""
+    params = [p for p in inspect.signature(_to_geotiff_1683).parameters]
+    documented = _documented_params_1683(_to_geotiff_1683)
+    missing = [p for p in params if p not in documented]
+    assert not missing, (
+        f"to_geotiff docstring is missing parameter descriptions for "
+        f"{missing}; documented params were {documented}"
+    )
+
+
+def test_write_geotiff_gpu_parameters_match_signature_1683():
+    """Sibling writer keeps its full parameter set documented too."""
+    params = [p for p in inspect.signature(_write_geotiff_gpu_1683).parameters]
+    documented = _documented_params_1683(_write_geotiff_gpu_1683)
+    missing = [p for p in params if p not in documented]
+    assert not missing, (
+        f"write_geotiff_gpu docstring is missing parameter "
+        f"descriptions for {missing}; documented params were {documented}"
+    )

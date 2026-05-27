@@ -1,0 +1,1341 @@
+"""Consolidated metadata tests (#2439 cluster 15 sub-cluster 1).
+
+Folds four metadata regression files into one module per epic #2424:
+
+* ``test_ambiguous_metadata_hooks_1987.py`` -- error hierarchy, register /
+  dispatch contract for the ambiguous-metadata validator framework.
+* ``test_geotiff_metadata_2139.py`` -- ``GeoTIFFMetadata`` dataclass /
+  ``metadata_to_attrs`` / ``attrs_to_metadata`` round trip.
+* ``test_metadata_round_trip_1484.py`` -- transform / CRS / tag
+  pass-through round trip end-to-end (M-1, M-2, M-3, M-4 audit items).
+* ``test_mixed_band_metadata_fail_closed_1987.py`` -- VRT mixed-band
+  nodata fail-closed behaviour at every entry point.
+
+Section headers below match the original file boundaries. Helpers are
+suffixed with the source issue number so the four sections stay
+collision-free.
+"""
+from __future__ import annotations
+
+import struct
+import warnings
+
+import numpy as np
+import pytest
+import xarray as xr
+
+from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataError,
+                               MixedBandMetadataError, open_geotiff, read_geotiff_dask, read_vrt,
+                               to_geotiff)
+from xrspatial.geotiff import _validation as _validation_mod
+from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, attrs_to_metadata,
+                                      geo_info_to_metadata, metadata_to_attrs)
+from xrspatial.geotiff._errors import (ConflictingNodataError, InvalidCRSCodeError,
+                                       NonUniformCoordsError, RotatedTransformError,
+                                       UnparseableCRSError)
+from xrspatial.geotiff._geotags import _NO_GEOREF_KEY
+from xrspatial.geotiff._validation import (_registered_read_metadata_checks,
+                                           _registered_write_metadata_checks,
+                                           register_read_metadata_check,
+                                           register_write_metadata_check,
+                                           unregister_read_metadata_check,
+                                           unregister_write_metadata_check, validate_read_metadata,
+                                           validate_write_metadata)
+from xrspatial.geotiff._writer import write
+
+
+# =============================================================================
+# Section: Ambiguous metadata hooks (#1987 PR 0)
+# =============================================================================
+#
+# Original: ``test_ambiguous_metadata_hooks_1987.py``.
+#
+# PR 0 lands the error class hierarchy in ``_errors.py`` and the
+# register / dispatch framework in ``_validation.py``. No raises yet;
+# each per-case PR (#1987 PRs 2-7) registers its own check.
+#
+# These tests cover:
+#
+# - the error class hierarchy is what the per-case PRs expect to subclass
+# - the hooks are no-ops when no checks are registered (so PR 0 cannot
+#   regress any existing entry point)
+# - registration is idempotent and ordered
+# - unregistration is tolerant of unknown callables
+# - a registered check that raises propagates through the hook
+# - a context mapping is forwarded verbatim to each check
+
+
+@pytest.fixture
+def _reset_metadata_check_registries_1987():
+    """Snapshot and restore the process-global check registries (#1987).
+
+    The registries are module-global lists. A test that registers a
+    check and crashes before its ``try/finally unregister`` would
+    leave a stale callable in place and pollute later tests. Scope
+    the snapshot to this section's tests via opt-in fixture so the
+    other sections in this file are not affected.
+    """
+    read_snapshot = list(_validation_mod._READ_METADATA_CHECKS)
+    write_snapshot = list(_validation_mod._WRITE_METADATA_CHECKS)
+    try:
+        yield
+    finally:
+        _validation_mod._READ_METADATA_CHECKS[:] = read_snapshot
+        _validation_mod._WRITE_METADATA_CHECKS[:] = write_snapshot
+
+
+# ----------------------------------------------------------------------
+# Error class hierarchy
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "subclass",
+    [
+        InvalidCRSCodeError,
+        UnparseableCRSError,
+        RotatedTransformError,
+        NonUniformCoordsError,
+        MixedBandMetadataError,
+        ConflictingCRSError,
+        ConflictingNodataError,
+    ],
+)
+def test_subclass_inherits_from_base_1987(subclass):
+    """Each per-case error is catchable via the family base class."""
+    assert issubclass(subclass, GeoTIFFAmbiguousMetadataError)
+
+
+def test_base_is_value_error_subclass_1987():
+    """Existing ``except ValueError`` callers keep catching the family."""
+    assert issubclass(GeoTIFFAmbiguousMetadataError, ValueError)
+
+
+def test_error_classes_reexported_from_public_namespace_1987():
+    """User-facing ambiguity errors must be importable from ``xrspatial.geotiff``."""
+    import xrspatial.geotiff as geotiff_pkg
+
+    for name in (
+        "GeoTIFFAmbiguousMetadataError",
+        "InvalidCRSCodeError",
+        "UnparseableCRSError",
+        "RotatedTransformError",
+        "NonUniformCoordsError",
+        "MixedBandMetadataError",
+        "ConflictingCRSError",
+        "ConflictingNodataError",
+    ):
+        assert hasattr(geotiff_pkg, name), (
+            f"{name} not exposed on xrspatial.geotiff")
+        assert name in geotiff_pkg.__all__, (
+            f"{name} not listed in xrspatial.geotiff.__all__")
+    assert (geotiff_pkg.GeoTIFFAmbiguousMetadataError
+            is GeoTIFFAmbiguousMetadataError)
+
+
+def test_subclass_catch_does_not_catch_siblings_1987():
+    """``except UnparseableCRSError`` must not catch ``RotatedTransformError``."""
+    with pytest.raises(RotatedTransformError):
+        try:
+            raise RotatedTransformError("rotated")
+        except UnparseableCRSError:
+            pytest.fail("sibling subclass should not catch")
+
+
+# ----------------------------------------------------------------------
+# Hook no-op behaviour
+# ----------------------------------------------------------------------
+
+
+def test_read_hook_is_noop_when_no_checks_registered_1987(
+    _reset_metadata_check_registries_1987,
+):
+    """PR 0 must not change behaviour at any read entry point."""
+    # Clear any process-wide registered checks so the no-op test runs
+    # against an empty registry.
+    _validation_mod._READ_METADATA_CHECKS[:] = []
+    validate_read_metadata()
+    validate_read_metadata({})
+    validate_read_metadata({"unused": object()})
+
+
+def test_write_hook_is_noop_when_no_checks_registered_1987(
+    _reset_metadata_check_registries_1987,
+):
+    """PR 0 must not change behaviour at any write entry point."""
+    _validation_mod._WRITE_METADATA_CHECKS[:] = []
+    validate_write_metadata()
+    validate_write_metadata({})
+    validate_write_metadata({"unused": object()})
+
+
+# ----------------------------------------------------------------------
+# Registration / dispatch
+# ----------------------------------------------------------------------
+
+
+def test_register_and_dispatch_read_check_1987(_reset_metadata_check_registries_1987):
+    seen: list[dict] = []
+
+    def check(ctx):
+        seen.append(dict(ctx))
+
+    register_read_metadata_check(check)
+    try:
+        validate_read_metadata({"_dispatch_probe": "value"})
+        # Only the probe payload was seen; built-in checks may also
+        # have run on this empty-context dispatch but seen is scoped
+        # to the custom callable only.
+        assert {"_dispatch_probe": "value"} in seen
+    finally:
+        unregister_read_metadata_check(check)
+
+
+def test_register_and_dispatch_write_check_1987(_reset_metadata_check_registries_1987):
+    seen: list[dict] = []
+
+    def check(ctx):
+        seen.append(dict(ctx))
+
+    register_write_metadata_check(check)
+    try:
+        validate_write_metadata({"_dispatch_probe": "value"})
+        assert {"_dispatch_probe": "value"} in seen
+    finally:
+        unregister_write_metadata_check(check)
+
+
+def test_register_is_idempotent_read_1987(_reset_metadata_check_registries_1987):
+    def check(ctx):
+        return None
+
+    register_read_metadata_check(check)
+    register_read_metadata_check(check)
+    try:
+        assert _registered_read_metadata_checks().count(check) == 1
+    finally:
+        unregister_read_metadata_check(check)
+
+
+def test_register_is_idempotent_write_1987(_reset_metadata_check_registries_1987):
+    def check(ctx):
+        return None
+
+    register_write_metadata_check(check)
+    register_write_metadata_check(check)
+    try:
+        assert _registered_write_metadata_checks().count(check) == 1
+    finally:
+        unregister_write_metadata_check(check)
+
+
+def test_dispatch_preserves_registration_order_1987(
+    _reset_metadata_check_registries_1987,
+):
+    # Clear the registry so we observe only our two callbacks in
+    # deterministic order.
+    _validation_mod._READ_METADATA_CHECKS[:] = []
+    order: list[str] = []
+
+    def first(ctx):
+        order.append("first")
+
+    def second(ctx):
+        order.append("second")
+
+    register_read_metadata_check(first)
+    register_read_metadata_check(second)
+    try:
+        validate_read_metadata({})
+        assert order == ["first", "second"]
+    finally:
+        unregister_read_metadata_check(first)
+        unregister_read_metadata_check(second)
+
+
+def test_write_dispatch_preserves_registration_order_1987(
+    _reset_metadata_check_registries_1987,
+):
+    _validation_mod._WRITE_METADATA_CHECKS[:] = []
+    order: list[str] = []
+
+    def first(ctx):
+        order.append("first")
+
+    def second(ctx):
+        order.append("second")
+
+    register_write_metadata_check(first)
+    register_write_metadata_check(second)
+    try:
+        validate_write_metadata({})
+        assert order == ["first", "second"]
+    finally:
+        unregister_write_metadata_check(first)
+        unregister_write_metadata_check(second)
+
+
+def test_write_first_raising_check_short_circuits_1987(
+    _reset_metadata_check_registries_1987,
+):
+    _validation_mod._WRITE_METADATA_CHECKS[:] = []
+    later_called = {"flag": False}
+
+    def deny(ctx):
+        raise ConflictingCRSError("crs mismatch")
+
+    def later(ctx):
+        later_called["flag"] = True
+
+    register_write_metadata_check(deny)
+    register_write_metadata_check(later)
+    try:
+        with pytest.raises(ConflictingCRSError):
+            validate_write_metadata({})
+        assert later_called["flag"] is False
+    finally:
+        unregister_write_metadata_check(deny)
+        unregister_write_metadata_check(later)
+
+
+def test_read_and_write_registries_are_independent_1987(
+    _reset_metadata_check_registries_1987,
+):
+    _validation_mod._READ_METADATA_CHECKS[:] = []
+    _validation_mod._WRITE_METADATA_CHECKS[:] = []
+    read_calls = {"count": 0}
+    write_calls = {"count": 0}
+
+    def read_check(ctx):
+        read_calls["count"] += 1
+
+    def write_check(ctx):
+        write_calls["count"] += 1
+
+    register_read_metadata_check(read_check)
+    register_write_metadata_check(write_check)
+    try:
+        validate_read_metadata({})
+        assert read_calls["count"] == 1
+        assert write_calls["count"] == 0
+
+        validate_write_metadata({})
+        assert read_calls["count"] == 1
+        assert write_calls["count"] == 1
+    finally:
+        unregister_read_metadata_check(read_check)
+        unregister_write_metadata_check(write_check)
+
+
+def test_unregister_unknown_check_is_safe_1987():
+    """Test teardown must tolerate double-unregister."""
+
+    def never_registered(ctx):
+        return None
+
+    unregister_read_metadata_check(never_registered)
+    unregister_write_metadata_check(never_registered)
+
+
+def test_check_can_raise_typed_error_1987(_reset_metadata_check_registries_1987):
+    def deny(ctx):
+        raise UnparseableCRSError("bad WKT")
+
+    register_read_metadata_check(deny)
+    try:
+        with pytest.raises(UnparseableCRSError, match="bad WKT"):
+            validate_read_metadata({"_dispatch_probe": "value"})
+    finally:
+        unregister_read_metadata_check(deny)
+
+
+def test_first_raising_check_short_circuits_1987(
+    _reset_metadata_check_registries_1987,
+):
+    _validation_mod._READ_METADATA_CHECKS[:] = []
+    later_called = {"flag": False}
+
+    def deny(ctx):
+        raise RotatedTransformError("rotated")
+
+    def later(ctx):
+        later_called["flag"] = True
+
+    register_read_metadata_check(deny)
+    register_read_metadata_check(later)
+    try:
+        with pytest.raises(RotatedTransformError):
+            validate_read_metadata({})
+        assert later_called["flag"] is False
+    finally:
+        unregister_read_metadata_check(deny)
+        unregister_read_metadata_check(later)
+
+
+def test_dispatch_is_safe_against_registry_mutation_read_1987(
+    _reset_metadata_check_registries_1987,
+):
+    _validation_mod._READ_METADATA_CHECKS[:] = []
+    seen: list[str] = []
+
+    def mutating(ctx):
+        seen.append("mutating")
+        unregister_read_metadata_check(mutating)
+
+    def second(ctx):
+        seen.append("second")
+
+    register_read_metadata_check(mutating)
+    register_read_metadata_check(second)
+    try:
+        validate_read_metadata({})
+        assert seen == ["mutating", "second"]
+    finally:
+        unregister_read_metadata_check(mutating)
+        unregister_read_metadata_check(second)
+
+
+def test_dispatch_is_safe_against_registry_mutation_write_1987(
+    _reset_metadata_check_registries_1987,
+):
+    _validation_mod._WRITE_METADATA_CHECKS[:] = []
+    seen: list[str] = []
+
+    def mutating(ctx):
+        seen.append("mutating")
+        unregister_write_metadata_check(mutating)
+
+    def second(ctx):
+        seen.append("second")
+
+    register_write_metadata_check(mutating)
+    register_write_metadata_check(second)
+    try:
+        validate_write_metadata({})
+        assert seen == ["mutating", "second"]
+    finally:
+        unregister_write_metadata_check(mutating)
+        unregister_write_metadata_check(second)
+
+
+def test_none_context_is_treated_as_empty_mapping_1987(
+    _reset_metadata_check_registries_1987,
+):
+    _validation_mod._READ_METADATA_CHECKS[:] = []
+    seen: list[object] = []
+
+    def check(ctx):
+        seen.append(dict(ctx))
+
+    register_read_metadata_check(check)
+    try:
+        validate_read_metadata()
+        assert seen == [{}]
+    finally:
+        unregister_read_metadata_check(check)
+
+
+# =============================================================================
+# Section: GeoTIFFMetadata dataclass round-trip (#2139)
+# =============================================================================
+#
+# Original: ``test_geotiff_metadata_2139.py``.
+#
+# The dataclass and the two boundary functions (``metadata_to_attrs``
+# and ``attrs_to_metadata``) replace the manual ``attrs[...] = ...``
+# blocks scattered across the four read paths and three writers. The
+# public attrs surface does not change; what changes is that every
+# backend now goes through one marshalling step.
+
+
+class _FakeTransform2139:
+    """Stand-in for ``GeoInfo.transform`` used by the reader."""
+
+    def __init__(self, origin_x=0.0, origin_y=0.0,
+                 pixel_width=1.0, pixel_height=-1.0):
+        self.origin_x = origin_x
+        self.origin_y = origin_y
+        self.pixel_width = pixel_width
+        self.pixel_height = pixel_height
+
+
+class _FakeGeoInfo2139:
+    """Minimal ``GeoInfo`` stand-in covering the fields the reader emits."""
+
+    def __init__(
+        self,
+        *,
+        transform=None,
+        crs_epsg=None,
+        crs_wkt=None,
+        raster_type=1,
+        has_georef=True,
+        nodata=None,
+        extra_tags=None,
+        image_description=None,
+        extra_samples=None,
+        gdal_metadata=None,
+        gdal_metadata_xml=None,
+        x_resolution=None,
+        y_resolution=None,
+        resolution_unit=None,
+    ):
+        self.transform = transform
+        self.crs_epsg = crs_epsg
+        self.crs_wkt = crs_wkt
+        self.raster_type = raster_type
+        self.has_georef = has_georef
+        self.nodata = nodata
+        self.extra_tags = extra_tags
+        self.image_description = image_description
+        self.extra_samples = extra_samples
+        self.gdal_metadata = gdal_metadata
+        self.gdal_metadata_xml = gdal_metadata_xml
+        self.x_resolution = x_resolution
+        self.y_resolution = y_resolution
+        self.resolution_unit = resolution_unit
+
+
+def test_geo_info_to_metadata_stamps_contract_version_2139():
+    md = geo_info_to_metadata(_FakeGeoInfo2139())
+    assert md.contract_version == _ATTRS_CONTRACT_VERSION
+    attrs = metadata_to_attrs(md)
+    assert attrs['_xrspatial_geotiff_contract'] == _ATTRS_CONTRACT_VERSION
+
+
+def test_geo_info_to_metadata_transform_present_2139():
+    gi = _FakeGeoInfo2139(
+        transform=_FakeTransform2139(origin_x=1.0, origin_y=10.0,
+                                     pixel_width=0.5, pixel_height=-0.5),
+        crs_epsg=4326, crs_wkt='WKT-CRS',
+    )
+    md = geo_info_to_metadata(gi)
+    assert md.has_georef is True
+    assert md.transform is not None
+    assert md.crs_epsg == 4326
+    assert md.crs_wkt == 'WKT-CRS'
+
+    attrs = metadata_to_attrs(md)
+    assert 'transform' in attrs
+    assert attrs['crs'] == 4326
+    assert attrs['crs_wkt'] == 'WKT-CRS'
+    assert _NO_GEOREF_KEY not in attrs
+
+
+def test_geo_info_to_metadata_no_georef_marker_2139():
+    gi = _FakeGeoInfo2139(transform=None, has_georef=False)
+    md = geo_info_to_metadata(gi)
+    assert md.has_georef is False
+    assert md.transform is None
+
+    attrs = metadata_to_attrs(md)
+    assert 'transform' not in attrs
+    assert attrs[_NO_GEOREF_KEY] is True
+
+
+def test_geo_info_to_metadata_point_raster_2139():
+    gi = _FakeGeoInfo2139(transform=_FakeTransform2139(), raster_type=2)
+    md = geo_info_to_metadata(gi)
+    assert md.raster_type == 'point'
+
+    attrs = metadata_to_attrs(md)
+    assert attrs['raster_type'] == 'point'
+
+
+def test_geo_info_to_metadata_resolution_unit_label_2139():
+    gi = _FakeGeoInfo2139(
+        transform=_FakeTransform2139(),
+        x_resolution=300.0, y_resolution=300.0, resolution_unit=2,
+    )
+    md = geo_info_to_metadata(gi)
+    assert md.resolution_unit == 'inch'
+
+    attrs = metadata_to_attrs(md)
+    assert attrs['resolution_unit'] == 'inch'
+    assert attrs['x_resolution'] == 300.0
+    assert attrs['y_resolution'] == 300.0
+
+
+def test_geo_info_to_metadata_colormap_from_extra_tags_2139():
+    extra_tags = [(320, 3, 6, (10, 20, 30, 40, 50, 60))]
+    gi = _FakeGeoInfo2139(transform=_FakeTransform2139(), extra_tags=extra_tags)
+    md = geo_info_to_metadata(gi)
+    assert md.colormap == (10, 20, 30, 40, 50, 60)
+    attrs = metadata_to_attrs(md)
+    assert attrs['colormap'] == (10, 20, 30, 40, 50, 60)
+
+
+def test_attrs_to_metadata_none_attrs_returns_default_record_2139():
+    md = attrs_to_metadata(None)
+    assert isinstance(md, GeoTIFFMetadata)
+    assert md.transform is None
+    assert md.crs_epsg is None
+    assert md.crs_wkt is None
+    assert md.nodata is None
+
+
+def test_attrs_to_metadata_empty_dict_2139():
+    md = attrs_to_metadata({})
+    assert md.transform is None
+    assert md.has_georef is False
+    assert md.raster_type == 'area'
+
+
+def test_attrs_to_metadata_crs_int_epsg_2139():
+    md = attrs_to_metadata({'crs': 4326, 'crs_wkt': 'WKT-X'})
+    assert md.crs_epsg == 4326
+    assert md.crs_wkt == 'WKT-X'
+
+
+def test_attrs_to_metadata_crs_wkt_string_in_crs_field_2139():
+    md = attrs_to_metadata({'crs': 'PROJCS["X"...]'})
+    assert md.crs_epsg is None
+    assert md.crs_wkt == 'PROJCS["X"...]'
+
+
+def test_attrs_to_metadata_crs_bool_rejected_at_boundary_2139():
+    md = attrs_to_metadata({'crs': True})
+    assert md.crs_epsg is None
+
+
+def test_attrs_to_metadata_nodata_canonical_2139():
+    md = attrs_to_metadata({'nodata': -9999, 'masked_nodata': True})
+    assert md.nodata == -9999
+    assert md.masked_nodata is True
+
+
+def test_attrs_to_metadata_nodata_alias_nodatavals_2139():
+    md = attrs_to_metadata({'nodatavals': (-9999,)})
+    assert md.nodata == -9999
+    assert md.masked_nodata is None
+
+
+def test_attrs_to_metadata_nodata_alias_fill_value_2139():
+    md = attrs_to_metadata({'_FillValue': -1})
+    assert md.nodata == -1
+
+
+def test_attrs_to_metadata_no_georef_marker_clears_has_georef_2139():
+    md = attrs_to_metadata({_NO_GEOREF_KEY: True})
+    assert md.has_georef is False
+
+
+def test_attrs_to_metadata_transform_present_implies_georef_2139():
+    md = attrs_to_metadata({'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0)})
+    assert md.has_georef is True
+    assert md.transform == (1.0, 0.0, 0.0, 0.0, -1.0, 10.0)
+
+
+def _representative_attrs_dicts_2139():
+    yield {
+        '_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION,
+        'crs': 4326,
+        'crs_wkt': 'WKT-4326',
+        'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+        'nodata': -9999,
+        'masked_nodata': True,
+    }
+    yield {
+        '_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION,
+        'crs': 4326,
+        'crs_wkt': 'WKT-4326',
+        'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+        'raster_type': 'point',
+    }
+    yield {
+        '_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION,
+        _NO_GEOREF_KEY: True,
+    }
+    yield {
+        '_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION,
+        'crs_wkt': 'PROJCS["user defined"...]',
+        'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+    }
+    yield {
+        '_xrspatial_geotiff_contract': _ATTRS_CONTRACT_VERSION,
+        'crs': 32610,
+        'crs_wkt': 'WKT-32610',
+        'transform': (10.0, 0.0, 500000.0, 0.0, -10.0, 4000000.0),
+        'vrt_holes': [{'source': '/tmp/missing.tif', 'band': 1}],
+    }
+
+
+@pytest.mark.parametrize(
+    'attrs',
+    list(_representative_attrs_dicts_2139()),
+    ids=['eager', 'point', 'no_georef', 'user_wkt', 'vrt'],
+)
+def test_round_trip_attrs_to_metadata_to_attrs_2139(attrs):
+    md = attrs_to_metadata(attrs)
+    round_tripped = metadata_to_attrs(md)
+    for key, value in attrs.items():
+        assert key in round_tripped, f"key {key!r} dropped on round trip"
+        assert round_tripped[key] == value, (
+            f"value at {key!r} changed: {value!r} -> {round_tripped[key]!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    'attrs',
+    list(_representative_attrs_dicts_2139()),
+    ids=['eager', 'point', 'no_georef', 'user_wkt', 'vrt'],
+)
+def test_round_trip_emits_no_unexpected_keys_2139(attrs):
+    md = attrs_to_metadata(attrs)
+    round_tripped = metadata_to_attrs(md)
+    expected_keys = set(attrs.keys()) | {'_xrspatial_geotiff_contract'}
+    extra = set(round_tripped) - expected_keys
+    assert not extra, (
+        f"metadata_to_attrs emitted unexpected keys {extra!r} not present in input "
+        f"{set(attrs)!r}; either add them to the attrs contract or fix "
+        f"the marshalling step."
+    )
+
+
+def test_round_trip_metadata_to_attrs_to_metadata_2139():
+    md = GeoTIFFMetadata(
+        transform=(1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+        crs_epsg=4326,
+        crs_wkt='WKT-4326',
+        raster_type='point',
+        has_georef=True,
+        nodata=-9999,
+        masked_nodata=True,
+        x_resolution=300.0, y_resolution=300.0, resolution_unit='inch',
+    )
+    attrs = metadata_to_attrs(md)
+    md2 = attrs_to_metadata(attrs)
+
+    assert md2.transform == md.transform
+    assert md2.crs_epsg == md.crs_epsg
+    assert md2.crs_wkt == md.crs_wkt
+    assert md2.raster_type == md.raster_type
+    assert md2.has_georef == md.has_georef
+    assert md2.nodata == md.nodata
+    assert md2.masked_nodata == md.masked_nodata
+    assert md2.x_resolution == md.x_resolution
+    assert md2.y_resolution == md.y_resolution
+    assert md2.resolution_unit == md.resolution_unit
+
+
+def test_with_nodata_sets_pair_2139():
+    md = GeoTIFFMetadata()
+    md2 = md.with_nodata(-9999, masked=True)
+    assert md2.nodata == -9999
+    assert md2.masked_nodata is True
+    assert md.nodata is None
+    assert md is not md2
+
+
+def test_with_nodata_none_returns_unchanged_2139():
+    md = GeoTIFFMetadata(crs_epsg=4326)
+    md2 = md.with_nodata(None, masked=True)
+    assert md2.nodata is None
+    assert md2.masked_nodata is None
+    assert md2.crs_epsg == 4326
+
+
+def test_with_nodata_masked_false_records_false_2139():
+    md = GeoTIFFMetadata()
+    md2 = md.with_nodata(-9999, masked=False)
+    assert md2.masked_nodata is False
+
+
+# =============================================================================
+# Section: Transform / CRS / tag metadata round-trip (#1484)
+# =============================================================================
+#
+# Original: ``test_metadata_round_trip_1484.py``.
+#
+# Covers findings M-1 through M-4 from the geotiff metadata audit:
+#
+# * M-1 / M-2: ``attrs['crs']`` stays as the same int EPSG and
+#   ``attrs['transform']`` survives write -> read -> write -> read with
+#   the same numeric values up to float precision.
+# * M-3: ColorMap, ExtraSamples, and ImageDescription survive a single
+#   write -> read cycle. ColorMap exits the writer through the
+#   ``extra_tags`` pass-through (the tag is no longer in
+#   ``_MANAGED_TAGS``); ImageDescription gets a friendly ``attrs`` entry.
+# * M-4: integer rasters with a nodata sentinel get promoted to float64
+#   with NaN, and a user-requested ``dtype='uint16'`` cast on the read
+#   side raises ValueError (existing float-to-int guard).
+
+
+def _make_palette_uint8_tiff_1484(path, pixels, palette_rgb16):
+    """Write an 8-bit, 256-entry palette TIFF directly (no writer support
+    for ColorMap on the write side).
+
+    palette_rgb16 must have 256 (R, G, B) tuples of uint16 values.
+    """
+    bo = '<'
+    width = pixels.shape[1]
+    height = pixels.shape[0]
+    n_colors = 256
+    assert len(palette_rgb16) == n_colors
+
+    flat = pixels.ravel().astype(np.uint8)
+    pixel_bytes = flat.tobytes()
+
+    r_vals = [c[0] for c in palette_rgb16]
+    g_vals = [c[1] for c in palette_rgb16]
+    b_vals = [c[2] for c in palette_rgb16]
+    cmap_values = r_vals + g_vals + b_vals
+
+    tag_list = []
+
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
+    def add_long(tag, val):
+        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
+    def add_shorts(tag, vals):
+        tag_list.append(
+            (tag, 3, len(vals),
+             struct.pack(f'{bo}{len(vals)}H', *vals)))
+
+    add_short(256, width)
+    add_short(257, height)
+    add_short(258, 8)
+    add_short(259, 1)
+    add_short(262, 3)
+    add_short(277, 1)
+    add_short(278, height)
+    add_long(273, 0)
+    add_long(279, len(pixel_bytes))
+    add_shorts(320, cmap_values)
+    add_short(339, 1)
+
+    tag_list.sort(key=lambda t: t[0])
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+    overflow_start = ifd_start + ifd_size
+
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, _typ, _count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    pixel_data_start = overflow_start + len(overflow_buf)
+
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == 273:
+            patched.append((tag, typ, count,
+                            struct.pack(f'{bo}I', pixel_data_start)))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, _typ, _count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        if len(raw) <= 4:
+            out.extend(raw.ljust(4, b'\x00'))
+        else:
+            ptr = overflow_start + tag_offsets[tag]
+            out.extend(struct.pack(f'{bo}I', ptr))
+    out.extend(struct.pack(f'{bo}I', 0))
+    out.extend(overflow_buf)
+    out.extend(pixel_bytes)
+
+    with open(path, 'wb') as f:
+        f.write(bytes(out))
+
+
+def _write_simple_tiff_with_image_description_1484(path, pixels, description):
+    """Write an uncompressed, single-strip TIFF that carries an
+    ImageDescription tag (270) so we can test the read side."""
+    bo = '<'
+    height, width = pixels.shape
+    pixel_bytes = pixels.astype(np.float32).tobytes()
+    desc_bytes = description.encode('ascii') + b'\x00'
+    if len(desc_bytes) % 2:
+        desc_bytes += b'\x00'
+
+    tag_list = []
+
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
+    def add_long(tag, val):
+        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
+    add_short(256, width)
+    add_short(257, height)
+    add_short(258, 32)
+    add_short(259, 1)
+    add_short(262, 1)
+    tag_list.append((270, 2, len(description) + 1, desc_bytes))
+    add_short(277, 1)
+    add_short(278, height)
+    add_long(273, 0)
+    add_long(279, len(pixel_bytes))
+    add_short(339, 3)
+
+    tag_list.sort(key=lambda t: t[0])
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+    overflow_start = ifd_start + ifd_size
+
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, _t, _c, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    pixel_data_start = overflow_start + len(overflow_buf)
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == 273:
+            patched.append((tag, typ, count,
+                            struct.pack(f'{bo}I', pixel_data_start)))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, _t, _c, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        if len(raw) <= 4:
+            out.extend(raw.ljust(4, b'\x00'))
+        else:
+            ptr = overflow_start + tag_offsets[tag]
+            out.extend(struct.pack(f'{bo}I', ptr))
+    out.extend(struct.pack(f'{bo}I', 0))
+    out.extend(overflow_buf)
+    out.extend(pixel_bytes)
+
+    with open(path, 'wb') as f:
+        f.write(bytes(out))
+
+
+class TestTransformCrsRoundTrip_1484:
+
+    def test_transform_attr_present_on_read(self, tmp_path):
+        arr = np.arange(20, dtype=np.float32).reshape(4, 5)
+        from xrspatial.geotiff._geotags import GeoTransform
+        gt = GeoTransform(
+            origin_x=500000.0, origin_y=4000000.0,
+            pixel_width=30.0, pixel_height=-30.0,
+        )
+        path = str(tmp_path / 'transform_present_1484.tif')
+        write(arr, path, geo_transform=gt, crs_epsg=32610,
+              compression='none', tiled=False)
+        da = open_geotiff(path)
+        assert 'transform' in da.attrs
+        a, b, c, d, e, f = da.attrs['transform']
+        assert b == 0.0 and d == 0.0
+        assert a == pytest.approx(30.0)
+        assert e == pytest.approx(-30.0)
+        assert c == pytest.approx(500000.0)
+        assert f == pytest.approx(4000000.0)
+        assert da.attrs['crs'] == 32610
+
+    def test_double_round_trip_fractional_transform(self, tmp_path):
+        from xrspatial.geotiff._geotags import GeoTransform
+        arr = np.linspace(0, 1, 8 * 12, dtype=np.float64).reshape(8, 12)
+        gt = GeoTransform(
+            origin_x=-122.123456789,
+            origin_y=37.987654321,
+            pixel_width=1.0 / 3600.0 + 1e-12,
+            pixel_height=-(1.0 / 3600.0 + 1e-12),
+        )
+        path1 = str(tmp_path / 'rt1_1484.tif')
+        write(arr, path1, geo_transform=gt, crs_epsg=4326,
+              compression='none', tiled=False)
+        da1 = open_geotiff(path1)
+        assert da1.attrs['crs'] == 4326
+
+        path2 = str(tmp_path / 'rt2_1484.tif')
+        to_geotiff(da1, path2, compression='none')
+        da2 = open_geotiff(path2)
+
+        path3 = str(tmp_path / 'rt3_1484.tif')
+        to_geotiff(da2, path3, compression='none')
+        da3 = open_geotiff(path3)
+
+        assert da3.attrs['crs'] == 4326
+        t1 = da1.attrs['transform']
+        t3 = da3.attrs['transform']
+        for v1, v3 in zip(t1, t3):
+            assert v3 == pytest.approx(v1, abs=1e-15, rel=1e-12)
+
+    def test_crs_string_input_still_tolerated(self, tmp_path):
+        from xrspatial.geotiff._geotags import _epsg_to_wkt
+        wkt = _epsg_to_wkt(4326)
+        if wkt is None:
+            pytest.skip("pyproj not available")
+        arr = np.zeros((3, 3), dtype=np.float32)
+        da = xr.DataArray(
+            arr,
+            dims=['y', 'x'],
+            coords={
+                'y': np.array([0.5, -0.5, -1.5]),
+                'x': np.array([0.5, 1.5, 2.5]),
+            },
+            attrs={'crs': wkt},
+        )
+        path = str(tmp_path / 'wkt_string_crs_1484.tif')
+        to_geotiff(da, path, compression='none')
+        result = open_geotiff(path)
+        assert result.attrs['crs'] == 4326
+
+
+class TestTagPassThrough_1484:
+
+    def test_colormap_round_trip(self, tmp_path):
+        palette = [(i * 257, (255 - i) * 257, (i * 2) % 65536)
+                   for i in range(256)]
+        pixels = np.array([[0, 1, 2, 254, 255],
+                           [10, 20, 30, 40, 50]], dtype=np.uint8)
+        in_path = str(tmp_path / 'colormap_in_1484.tif')
+        _make_palette_uint8_tiff_1484(in_path, pixels, palette)
+
+        da = open_geotiff(in_path)
+        assert da.dtype == np.uint8
+        assert 'colormap' in da.attrs
+        assert len(da.attrs['colormap']) == 768
+
+        out_path = str(tmp_path / 'colormap_out_1484.tif')
+        to_geotiff(da, out_path, compression='none')
+        da2 = open_geotiff(out_path)
+
+        np.testing.assert_array_equal(da2.values, pixels)
+        assert 'colormap' in da2.attrs
+        assert tuple(da2.attrs['colormap']) == tuple(da.attrs['colormap'])
+
+    def test_image_description_round_trip(self, tmp_path):
+        pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+        desc = "elevation tile from issue 1484"
+        in_path = str(tmp_path / 'desc_in_1484.tif')
+        _write_simple_tiff_with_image_description_1484(in_path, pixels, desc)
+
+        da = open_geotiff(in_path)
+        assert da.attrs.get('image_description') == desc
+        et_ids = {t[0] for t in da.attrs['extra_tags']}
+        assert 270 in et_ids
+
+        out_path = str(tmp_path / 'desc_out_1484.tif')
+        to_geotiff(da, out_path, compression='none')
+        da2 = open_geotiff(out_path)
+        assert da2.attrs.get('image_description') == desc
+
+    def test_image_description_added_via_attrs(self, tmp_path):
+        arr = np.zeros((4, 4), dtype=np.float32)
+        da = xr.DataArray(
+            arr, dims=['y', 'x'],
+            coords={'y': np.arange(4), 'x': np.arange(4)},
+            attrs={'image_description': 'synthetic test 1484'},
+        )
+        path = str(tmp_path / 'desc_synth_1484.tif')
+        to_geotiff(da, path, compression='none')
+
+        result = open_geotiff(path)
+        assert result.attrs.get('image_description') == 'synthetic test 1484'
+
+    def test_extra_samples_attr_surfaces_on_read(self, tmp_path):
+        rgba = np.zeros((4, 5, 4), dtype=np.uint8)
+        rgba[..., 3] = 255
+        path = str(tmp_path / 'rgba_es_1484.tif')
+        write(rgba, path, compression='none', tiled=False,
+              photometric='rgba')
+        da = open_geotiff(path)
+        assert da.attrs.get('extra_samples') is not None
+        assert da.attrs['extra_samples'][0] in (1, 2)
+
+
+class TestIntegerNodataPromotion_1484:
+
+    def test_uint16_with_nodata_promotes_to_float64(self, tmp_path):
+        arr = np.array([[1, 2, 3], [65535, 5, 6]], dtype=np.uint16)
+        path = str(tmp_path / 'u16_nodata_1484.tif')
+        write(arr, path, nodata=65535, compression='none', tiled=False)
+
+        da = open_geotiff(path)
+        assert da.dtype == np.float64
+        assert np.isnan(da.values[1, 0])
+        np.testing.assert_array_equal(
+            da.values[~np.isnan(da.values)],
+            np.array([1.0, 2.0, 3.0, 5.0, 6.0]),
+        )
+
+    def test_uint16_with_nodata_dtype_uint16_raises(self, tmp_path):
+        arr = np.array([[1, 2, 3], [65535, 5, 6]], dtype=np.uint16)
+        path = str(tmp_path / 'u16_nodata_cast_1484.tif')
+        write(arr, path, nodata=65535, compression='none', tiled=False)
+        with pytest.raises(ValueError, match='float.*int'):
+            open_geotiff(path, dtype='uint16')
+
+    def test_uint16_no_nodata_keeps_dtype(self, tmp_path):
+        arr = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint16)
+        path = str(tmp_path / 'u16_no_nodata_1484.tif')
+        write(arr, path, compression='none', tiled=False)
+        da = open_geotiff(path)
+        assert da.dtype == np.uint16
+
+
+# =============================================================================
+# Section: Mixed-band metadata fail-closed (#1987 PR 5)
+# =============================================================================
+#
+# Original: ``test_mixed_band_metadata_fail_closed_1987.py``.
+#
+# A VRT can mosaic source bands that declare disagreeing per-band
+# ``<NoDataValue>`` sentinels. The legacy reader picked band 0's sentinel
+# for the whole mosaic, which let band N's valid pixels collide with
+# band 0's sentinel after the flatten-to-scalar step. The fail-closed
+# default refuses the ambiguity; ``band_nodata='first'`` keeps the legacy
+# behaviour explicitly.
+
+
+def _write_mixed_band_vrt_1987(tmp_path, *, sentinel_a=65535, sentinel_b=65000):
+    """Two uint16 sources with distinct sentinels, mosaiced into one VRT."""
+    band0 = np.array([[1, 2], [3, sentinel_a]], dtype=np.uint16)
+    band1 = np.array([[7, 8], [9, sentinel_b]], dtype=np.uint16)
+    p0 = str(tmp_path / 'mixed_band_1987_a.tif')
+    p1 = str(tmp_path / 'mixed_band_1987_b.tif')
+    write(band0, p0, nodata=sentinel_a, compression='none', tiled=False)
+    write(band1, p1, nodata=sentinel_b, compression='none', tiled=False)
+    vrt_path = str(tmp_path / 'mixed_band_1987.vrt')
+    vrt_xml = f"""<VRTDataset rasterXSize="2" rasterYSize="2">
+  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
+  <VRTRasterBand dataType="UInt16" band="1">
+    <NoDataValue>{sentinel_a}</NoDataValue>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+  <VRTRasterBand dataType="UInt16" band="2">
+    <NoDataValue>{sentinel_b}</NoDataValue>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>"""
+    with open(vrt_path, 'w') as f:
+        f.write(vrt_xml)
+    return vrt_path
+
+
+def _write_shared_sentinel_vrt_1987(tmp_path, *, sentinel=65535):
+    band0 = np.array([[1, 2], [3, sentinel]], dtype=np.uint16)
+    band1 = np.array([[7, 8], [9, sentinel]], dtype=np.uint16)
+    p0 = str(tmp_path / 'shared_band_1987_a.tif')
+    p1 = str(tmp_path / 'shared_band_1987_b.tif')
+    write(band0, p0, nodata=sentinel, compression='none', tiled=False)
+    write(band1, p1, nodata=sentinel, compression='none', tiled=False)
+    vrt_path = str(tmp_path / 'shared_band_1987.vrt')
+    vrt_xml = f"""<VRTDataset rasterXSize="2" rasterYSize="2">
+  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
+  <VRTRasterBand dataType="UInt16" band="1">
+    <NoDataValue>{sentinel}</NoDataValue>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+  <VRTRasterBand dataType="UInt16" band="2">
+    <NoDataValue>{sentinel}</NoDataValue>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>"""
+    with open(vrt_path, 'w') as f:
+        f.write(vrt_xml)
+    return vrt_path
+
+
+def _write_one_band_no_sentinel_vrt_1987(tmp_path, *, sentinel=65535):
+    band0 = np.array([[1, 2], [3, sentinel]], dtype=np.uint16)
+    band1 = np.array([[7, 8], [9, 99]], dtype=np.uint16)
+    p0 = str(tmp_path / 'one_band_sentinel_a.tif')
+    p1 = str(tmp_path / 'one_band_sentinel_b.tif')
+    write(band0, p0, nodata=sentinel, compression='none', tiled=False)
+    write(band1, p1, nodata=None, compression='none', tiled=False)
+    vrt_path = str(tmp_path / 'one_band_sentinel.vrt')
+    vrt_xml = f"""<VRTDataset rasterXSize="2" rasterYSize="2">
+  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
+  <VRTRasterBand dataType="UInt16" band="1">
+    <NoDataValue>{sentinel}</NoDataValue>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{p0}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+  <VRTRasterBand dataType="UInt16" band="2">
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{p1}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>"""
+    with open(vrt_path, 'w') as f:
+        f.write(vrt_xml)
+    return vrt_path
+
+
+def _wrap_2d_1987(arr):
+    h, w = arr.shape
+    return xr.DataArray(
+        arr,
+        dims=('y', 'x'),
+        coords={
+            'y': np.arange(h, dtype=np.float64),
+            'x': np.arange(w, dtype=np.float64),
+        },
+        attrs={'crs': 4326,
+               'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 0.0)},
+    )
+
+
+def test_read_vrt_rejects_mixed_per_band_nodata_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    with pytest.raises(MixedBandMetadataError) as exc_info:
+        read_vrt(vrt_path)
+    msg = str(exc_info.value)
+    assert "65535" in msg and "65000" in msg
+    assert "band_nodata='first'" in msg
+    assert "#1987" in msg
+
+
+def test_read_vrt_chunked_rejects_mixed_per_band_nodata_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    with pytest.raises(MixedBandMetadataError):
+        read_vrt(vrt_path, chunks=1)
+
+
+def test_read_vrt_band_nodata_first_opts_back_in_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    r = read_vrt(vrt_path, band_nodata='first')
+    assert r.attrs.get('nodata') == 65535.0
+
+
+def test_read_vrt_shared_sentinel_accepts_1987(tmp_path):
+    vrt_path = _write_shared_sentinel_vrt_1987(tmp_path)
+    r = read_vrt(vrt_path)
+    assert r.attrs.get('nodata') == 65535.0
+
+
+def test_read_vrt_only_one_band_declares_sentinel_accepts_1987(tmp_path):
+    vrt_path = _write_one_band_no_sentinel_vrt_1987(tmp_path)
+    read_vrt(vrt_path)
+
+
+def test_open_geotiff_propagates_mixed_band_rejection_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    with pytest.raises(MixedBandMetadataError):
+        open_geotiff(vrt_path)
+
+
+def test_open_geotiff_band_nodata_first_passes_through_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    r = open_geotiff(vrt_path, band_nodata='first')
+    assert r.attrs.get('nodata') == 65535.0
+
+
+def test_read_geotiff_dask_band_nodata_first_passes_through_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    r = read_geotiff_dask(vrt_path, chunks=1, band_nodata='first')
+    assert r.attrs.get('nodata') == 65535.0
+
+
+def test_open_geotiff_band_nodata_rejected_on_non_vrt_source_1987(tmp_path):
+    arr = np.zeros((2, 2), dtype=np.uint16)
+    arr_da = _wrap_2d_1987(arr)
+    p = tmp_path / 'plain.tif'
+    to_geotiff(arr_da, str(p), compression='none', tiled=False)
+    with pytest.raises(ValueError, match="band_nodata only applies to VRT"):
+        open_geotiff(str(p), band_nodata='first')
+
+
+def test_read_geotiff_dask_band_nodata_rejected_on_non_vrt_source_1987(tmp_path):
+    arr = np.zeros((2, 2), dtype=np.uint16)
+    arr_da = _wrap_2d_1987(arr)
+    p = tmp_path / 'plain.tif'
+    to_geotiff(arr_da, str(p), compression='none', tiled=False)
+    with pytest.raises(ValueError, match="band_nodata only applies to VRT"):
+        read_geotiff_dask(str(p), chunks=1, band_nodata='first')
+
+
+def test_mixed_band_metadata_error_subclasses_base_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    with pytest.raises(GeoTIFFAmbiguousMetadataError):
+        read_vrt(vrt_path)
+
+
+def test_read_vrt_band_nodata_rejects_unknown_value_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    with pytest.raises(ValueError, match="band_nodata must be None or 'first'"):
+        read_vrt(vrt_path, band_nodata='firs')
+
+
+def test_open_geotiff_band_nodata_rejects_unknown_value_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    with pytest.raises(ValueError, match="band_nodata must be None or 'first'"):
+        open_geotiff(vrt_path, band_nodata='legacy')
+
+
+def test_read_geotiff_dask_band_nodata_rejects_unknown_value_1987(tmp_path):
+    vrt_path = _write_mixed_band_vrt_1987(tmp_path)
+    with pytest.raises(ValueError, match="band_nodata must be None or 'first'"):
+        read_geotiff_dask(vrt_path, chunks=1, band_nodata='banana')
