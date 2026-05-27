@@ -453,6 +453,23 @@ def read_geotiff_gpu(source: str, *,
                 # patch routes a cloud-source path through here.
                 raise
             except Exception as exc:
+                # Explicit ``overview_level >= 1`` is a request for the
+                # external sidecar surface. The release contract
+                # (``geotiff_release_contract.md`` row
+                # ``reader.sidecar_ovr``) promises that this surfaces
+                # the underlying parse error rather than degrading to a
+                # misleading "out of range" raise from
+                # ``select_overview_ifd``. Chain via
+                # ``raise ... from exc`` so the traceback carries the
+                # concrete parse failure. Mirrors the eager CPU path
+                # in ``_reader._read_to_array``. Issue #2484.
+                if overview_level is not None and overview_level >= 1:
+                    raise ValueError(
+                        f"Cannot read overview_level={overview_level} "
+                        f"from external sidecar {sidecar_path!r}: "
+                        f"sidecar parse failed with "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
                 warnings.warn(
                     f"Ignoring unreadable sidecar {sidecar_path!r}: "
                     f"{type(exc).__name__}: {exc}. Falling back to "

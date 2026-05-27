@@ -1040,22 +1040,76 @@ def test_open_geotiff_base_read_survives_various_sidecar_payloads(
 
 
 # ---------------------------------------------------------------------------
-# Explicit external-overview requests still surface the error.
+# Explicit external-overview requests surface the underlying parse error.
+#
+# The release contract (``reader.sidecar_ovr`` row in
+# ``docs/source/reference/geotiff_release_contract.md``) and the
+# silent-fallback warning text both promise that ``overview_level >= 1``
+# exposes the actual sidecar parse failure rather than a generic "out of
+# range" from ``select_overview_ifd``. Issue #2484.
 # ---------------------------------------------------------------------------
-def test_open_geotiff_requesting_sidecar_level_still_raises(tmp_path):
-    """Asking for ``overview_level=1`` is asking for the sidecar surface;
-    a parse failure on that surface should not be silently swallowed."""
+def test_open_geotiff_requesting_sidecar_level_surfaces_parse_error(tmp_path):
+    """``overview_level=1`` against a corrupt sidecar must surface the
+    sidecar parse failure, not a misleading "out of range" raised after
+    silent fallback to base-only IFDs (#2484)."""
     path, _ = _make_base_2416(tmp_path)
     _make_corrupt_sidecar_2416(path, b"not a tiff")
 
-    # The base IFD list has length 1, sidecar is unreadable -> level 1
-    # falls outside the merged list. The reader's ``select_overview_ifd``
-    # raises ``ValueError`` for an out-of-range level. The point is that
-    # the error surfaces (warning + then explicit raise) rather than the
-    # base read silently failing.
+    # No silent fallback warning -- the explicit level request short-
+    # circuits the warn-and-fall-through branch and raises directly.
+    with pytest.raises(ValueError, match="external sidecar") as excinfo:
+        open_geotiff(str(path), overview_level=1)
+
+    # The underlying parse exception is chained via ``__cause__`` so the
+    # traceback shows what actually went wrong. The outer message must
+    # not be the generic "overview_level out of range" string that the
+    # pre-fix behaviour produced via ``select_overview_ifd``.
+    assert "out of range" not in str(excinfo.value)
+    assert excinfo.value.__cause__ is not None
+    cause_blob = (
+        f"{type(excinfo.value.__cause__).__name__}: "
+        f"{excinfo.value.__cause__}"
+    )
+    # The chained cause type / message also surface on the outer message
+    # so callers reading only ``str(exc)`` still see the real reason.
+    assert cause_blob in str(excinfo.value)
+
+
+def test_open_geotiff_overview_level_two_surfaces_parse_error(tmp_path):
+    """Any ``overview_level >= 1`` triggers the surface-the-cause path,
+    not just level 1. The level value is reflected in the message."""
+    path, _ = _make_base_2416(tmp_path)
+    _make_corrupt_sidecar_2416(path, b"not a tiff")
+
+    with pytest.raises(ValueError, match="overview_level=2") as excinfo:
+        open_geotiff(str(path), overview_level=2)
+
+    assert excinfo.value.__cause__ is not None
+
+
+def test_open_geotiff_overview_level_none_silently_falls_back(tmp_path):
+    """Contrast case: implicit / auto overview discovery
+    (``overview_level=None``) keeps the documented silent-fallback
+    behaviour. A corrupt sidecar must not break the base read."""
+    path, expected = _make_base_2416(tmp_path)
+    _make_corrupt_sidecar_2416(path, b"not a tiff")
+
     with pytest.warns(RuntimeWarning, match="Ignoring unreadable sidecar"):
-        with pytest.raises(ValueError, match="out of range"):
-            open_geotiff(str(path), overview_level=1)
+        da = open_geotiff(str(path), overview_level=None)
+
+    np.testing.assert_array_equal(da.values, expected)
+
+
+def test_open_geotiff_overview_level_zero_silently_falls_back(tmp_path):
+    """``overview_level=0`` is the base IFD, not a sidecar request, so
+    it follows the same silent-fallback rule as ``None``."""
+    path, expected = _make_base_2416(tmp_path)
+    _make_corrupt_sidecar_2416(path, b"not a tiff")
+
+    with pytest.warns(RuntimeWarning, match="Ignoring unreadable sidecar"):
+        da = open_geotiff(str(path), overview_level=0)
+
+    np.testing.assert_array_equal(da.values, expected)
 
 
 # ---------------------------------------------------------------------------
@@ -1124,6 +1178,35 @@ def test_open_geotiff_gpu_base_read_survives_unreadable_sidecar(tmp_path):
         gpu_da = open_geotiff(str(path), gpu=True)
 
     np.testing.assert_array_equal(gpu_da.data.get(), expected)
+
+
+def test_read_geo_info_requesting_sidecar_level_surfaces_parse_error(tmp_path):
+    """Metadata-only helper mirrors the eager CPU contract: an explicit
+    ``overview_level >= 1`` request against a corrupt sidecar must
+    surface the underlying parse error (#2484)."""
+    path, _ = _make_base_2416(tmp_path)
+    _make_corrupt_sidecar_2416(path, b"not a tiff")
+
+    with pytest.raises(ValueError, match="external sidecar") as excinfo:
+        _read_geo_info(str(path), overview_level=1)
+
+    assert "out of range" not in str(excinfo.value)
+    assert excinfo.value.__cause__ is not None
+
+
+@requires_gpu
+def test_open_geotiff_gpu_requesting_sidecar_level_surfaces_parse_error(
+    tmp_path,
+):
+    """GPU eager path mirrors the CPU contract for explicit external-
+    overview requests (#2484)."""
+    path, _ = _make_base_2416(tmp_path)
+    _make_corrupt_sidecar_2416(path, b"not a tiff")
+
+    with pytest.raises(ValueError, match="external sidecar") as excinfo:
+        open_geotiff(str(path), gpu=True, overview_level=1)
+
+    assert excinfo.value.__cause__ is not None
 
 
 # ============================================================================

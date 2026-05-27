@@ -246,6 +246,26 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
             except CloudSizeLimitError:
                 raise
             except Exception as exc:
+                # An explicit ``overview_level >= 1`` is a request for
+                # the external/sidecar surface. The release contract
+                # (``geotiff_release_contract.md`` row
+                # ``reader.sidecar_ovr``) and the fallback warning text
+                # below both promise that this case surfaces the
+                # underlying parse error; silently falling back would
+                # only hide what went wrong and force the user to
+                # diagnose from a misleading "out of range" raised by
+                # ``select_overview_ifd``. Chain the original exception
+                # via ``raise ... from exc`` so the traceback carries
+                # both the high-level reason ("you asked for level N
+                # which lives in the sidecar") and the concrete parse
+                # failure. Issue #2484.
+                if overview_level is not None and overview_level >= 1:
+                    raise ValueError(
+                        f"Cannot read overview_level={overview_level} "
+                        f"from external sidecar {sidecar_path!r}: "
+                        f"sidecar parse failed with "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
                 warnings.warn(
                     f"Ignoring unreadable sidecar {sidecar_path!r}: "
                     f"{type(exc).__name__}: {exc}. Falling back to "
