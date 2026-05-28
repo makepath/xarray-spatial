@@ -1563,7 +1563,8 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
     )
 
     def _paint(zones_chunk, values_chunk, hi_map_arr):
-        hi_map = hi_map_arr[()] if hi_map_arr.shape == () else hi_map_arr.item()
+        # hi_map_arr is the 0-d object array carrying the lookup dict.
+        hi_map = hi_map_arr[()]
         out = np.full(zones_chunk.shape, np.nan, dtype=np.float64)
         for z, hi_val in hi_map.items():
             mask = (zones_chunk == z) & np.isfinite(values_chunk)

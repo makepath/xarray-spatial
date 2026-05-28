@@ -230,7 +230,7 @@ def test_hypsometric_integral_accessor(backend, hi_zones, hi_values):
 # --- laziness (issue #2563) --------------------------------------------------
 
 @pytest.mark.skipif(da is None, reason="dask not installed")
-def test_hypsometric_integral_dask_returns_lazy():
+def test_hypsometric_integral_dask_returns_lazy(monkeypatch):
     """The dask backend must return a lazy graph — no eager compute on call."""
     import dask
     from xrspatial.zonal import hypsometric_integral
@@ -251,11 +251,9 @@ def test_hypsometric_integral_dask_returns_lazy():
         calls['n'] += 1
         return orig_compute(*args, **kwargs)
 
-    dask.compute = counting_compute
-    try:
-        result = hypsometric_integral(zones, values, nodata=None)
-    finally:
-        dask.compute = orig_compute
+    monkeypatch.setattr(dask, "compute", counting_compute)
+
+    result = hypsometric_integral(zones, values, nodata=None)
 
     assert isinstance(result.data, da.Array), \
         f"expected dask.Array, got {type(result.data).__name__}"
@@ -293,7 +291,7 @@ def test_hypsometric_integral_dask_matches_numpy():
 
 
 @pytest.mark.skipif(da is None, reason="dask not installed")
-def test_hypsometric_integral_dask_empty_lookup_is_lazy():
+def test_hypsometric_integral_dask_empty_lookup_is_lazy(monkeypatch):
     """When every zone is nodata, the result is still a lazy dask array of NaN."""
     import dask
     from xrspatial.zonal import hypsometric_integral
@@ -314,11 +312,9 @@ def test_hypsometric_integral_dask_empty_lookup_is_lazy():
         calls['n'] += 1
         return orig_compute(*args, **kwargs)
 
-    dask.compute = counting_compute
-    try:
-        result = hypsometric_integral(zones, values, nodata=0)
-    finally:
-        dask.compute = orig_compute
+    monkeypatch.setattr(dask, "compute", counting_compute)
+
+    result = hypsometric_integral(zones, values, nodata=0)
 
     assert isinstance(result.data, da.Array)
     assert calls['n'] == 0
