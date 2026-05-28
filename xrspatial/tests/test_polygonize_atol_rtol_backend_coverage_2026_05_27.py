@@ -199,24 +199,22 @@ class TestStrictFloatEqualityDaskCuPy:
         assert_allclose(sorted(v_dc), sorted(_REPRO_2173[0]))
 
     def test_default_tolerance_still_merges_multi_chunk(self):
-        """Sanity pin: default tolerance still merges adjacent pixels.
+        """Multi-chunk dask+cupy parity with single-chunk numpy under the
+        default tolerance (#2583).
 
-        Note the multi-chunk count (2) intentionally differs from the
-        single-chunk numpy reference (1) here.  Single-chunk numpy
-        transitively merges 1.0 -> 1.000009 -> 1.000018 because the
-        middle pixel is within tolerance of both ends.  The dask
-        cross-chunk merge bucket compares values pairwise against bucket
-        keys, so 1.0 and 1.000018 do not merge (their direct gap of
-        18e-6 exceeds the default rtol*|1.0| = 1e-5 threshold), leaving
-        two polygons.  This pin guards against a regression that hard-
-        coded atol=rtol=0 inside the dask+cupy dispatcher (which would
-        produce 3 polygons here instead of 2).
+        Numpy CCL chains 1.0 -> 1.000009 -> 1.000018 within a single
+        chunk because the middle pixel is within tolerance of both ends.
+        After #2583, the dask cross-chunk merge groups boundary polygons
+        by spatial-topology + value-closeness union-find, so the same
+        transitive chain applies across chunk boundaries: all three
+        single-pixel chunks collapse to one region with one DN value,
+        matching numpy.
         """
-        # 1.000009 is within tolerance of 1.0 (diff 9e-6, threshold ~1e-5)
-        # but 1.000018 is outside (diff 18e-6) -> 2 polygons.
+        v_np, _ = polygonize(xr.DataArray(_REPRO_2173))
         v_dc, _ = polygonize(
             _to_dask_cupy_array(_REPRO_2173, chunks=(1, 1)))
-        assert len(v_dc) == 2
+        assert len(v_dc) == len(v_np) == 1
+        assert_allclose(sorted(v_dc), sorted(v_np))
 
 
 # ---------------------------------------------------------------------------

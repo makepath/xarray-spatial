@@ -6,6 +6,22 @@
 
 #### Fixed
 
+- `polygonize` on dask-backed float rasters now matches the numpy
+  reference for both polygon count and DN values across every chunking
+  pattern. The cross-chunk merge previously bucketed chunk-boundary
+  polygons by a single representative float value, which broke
+  transitive value chains (`1.0 -> 1.000009 -> 1.000018` returned 2
+  polygons instead of the numpy reference's 1) and silently rewrote DN
+  values on disconnected near-equal regions (`[1.0, 9.0, 1.000009]`
+  reported DN `1.0` for the third region instead of `1.000009`). The
+  merge now runs a spatial-topology + value-closeness union-find over
+  chunk-boundary polygons: two polygons land in the same group only
+  when their pixel value ranges overlap within `atol`/`rtol` AND they
+  are spatially adjacent (sharing a unit edge for 4-connectivity, or
+  any vertex for 8-connectivity). Disconnected close-valued regions
+  keep their own DN values, and transitive value chains merge
+  correctly across chunk boundaries. (#2583)
+
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an
