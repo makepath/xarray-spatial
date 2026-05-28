@@ -4210,6 +4210,18 @@ class TestGeoidPixelCenterIndexing:
             src_crs, tgt_crs, always_xy=True,
         )
 
+        # pyproj silently falls back to a no-op transform when the EGM96
+        # grid is not installed locally and PROJ network access is
+        # disabled (typical CI). Probe at New York: a real lookup gives
+        # ~-32.8 m, the no-grid fallback gives 0. Skip in the fallback
+        # case -- there's nothing to cross-check against.
+        _, _, h_probe = transformer.transform(-74.0, 40.7, 0.0)
+        if abs(h_probe) < 1.0:
+            pytest.skip(
+                "pyproj EGM96 grid unavailable on this runner "
+                "(transform returned ~0 at New York); cannot cross-check"
+            )
+
         sample_points = [
             (-74.0, 40.7),
             (0.0, 0.0),
