@@ -21,6 +21,18 @@
 
 #### Fixed
 
+- `open_geotiff` no longer rejects a projected GeoTIFF that also carries
+  its base geographic CRS. A file declaring both `ProjectedCSTypeGeoKey`
+  (e.g. UTM 32633) and `GeographicTypeGeoKey` (e.g. WGS84 4326) is the
+  normal projected shape: the geographic key names the base geographic
+  CRS and the coordinates live in the projected CRS. The reader already
+  resolves the projected code first, so it now reads cleanly and stamps
+  the projected EPSG on `attrs['crs']`. The `allow_inconsistent_geokeys`
+  read kwarg is removed; the two genuine `ModelTypeGeoKey` contradictions
+  (a projected model with only `GeographicTypeGeoKey`, or a geographic
+  model carrying `ProjectedCSTypeGeoKey`) still raise
+  `InconsistentGeoKeysError`. (#2602)
+
 - `polygonize` now rejects non-finite values for `simplify_tolerance`
   (`nan`, `+inf`, `-inf`) with a clear `ValueError`. Previously `nan`
   silently disabled simplification (because `nan > 0` is False) and
