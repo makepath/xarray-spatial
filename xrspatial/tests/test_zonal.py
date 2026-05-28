@@ -590,6 +590,137 @@ def test_majority_with_ties(backend):
     check_results(backend, df_result, expected_result)
 
 
+# Regression tests for issue #2562: cupy backend used to drop all-NaN zones
+# and could desync the zone/stats alignment when zone_ids contained IDs that
+# don't appear in the raster.
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Degrees of freedom <= 0 for slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in.*:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_stats_all_nan_zone_preserved(backend):
+    # Zone 5 exists in the zones raster but every value at zone 5 is NaN.
+    # The numpy path returns zone 5 with NaN stats; the cupy path used to
+    # drop the row entirely. After the fix both backends should agree.
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    zones_data = np.array([[1, 1, 2, 2],
+                           [1, 5, 2, 5],
+                           [3, 3, 5, 5]], dtype=np.float64)
+    values_data = np.array([[1.0, 2.0, 3.0, 4.0],
+                            [5.0, np.nan, 7.0, np.nan],
+                            [9.0, 10.0, np.nan, np.nan]])
+
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
+
+    df_result = stats(
+        zones=zones, values=values, stats_funcs=['min', 'max', 'mean', 'count']
+    )
+
+    expected_result = {
+        'zone': [1, 2, 3, 5],
+        'min': [1.0, 3.0, 9.0, np.nan],
+        'max': [5.0, 7.0, 10.0, np.nan],
+        'mean': [(1.0 + 2.0 + 5.0) / 3, (3.0 + 4.0 + 7.0) / 3, 9.5, np.nan],
+        # numpy's _calc_stats leaves an all-NaN zone at NaN for every stat,
+        # including count (the func is only called when len(zone_values) > 0).
+        'count': [3, 3, 2, np.nan],
+    }
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_stats_zone_ids_missing_from_raster(backend):
+    # zone_ids contains 999 which does not appear in the zones raster.
+    # The numpy path drops missing IDs so the result lists only zone 1.
+    # The cupy path used to keep 999 in the zone column while indexing
+    # into a found-only counts/index list, which desynced the rows.
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    zones_data = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2],
+                           [3, 3, 3, 3]], dtype=np.float64)
+    values_data = np.array([[10.0, 20.0, 1.0, 2.0],
+                            [30.0, 40.0, 3.0, 4.0],
+                            [100.0, 100.0, 100.0, 100.0]])
+
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
+
+    df_result = stats(
+        zones=zones, values=values, zone_ids=[1, 999],
+        stats_funcs=['min', 'max', 'sum', 'count']
+    )
+
+    expected_result = {
+        'zone': [1],
+        'min': [10.0],
+        'max': [40.0],
+        'sum': [100.0],
+        'count': [4],
+    }
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Degrees of freedom <= 0 for slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in.*:RuntimeWarning")
+def test_stats_cupy_matches_numpy_row_for_row():
+    # Cross-backend parity check. Run numpy and cupy with the same inputs
+    # (all-NaN zone + zone_ids containing a missing ID) and assert the
+    # resulting DataFrames match row-for-row.
+    if not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    zones_data = np.array([[1, 1, 2, 2, 5],
+                           [1, 5, 2, 5, 5],
+                           [3, 3, 5, 5, 4]], dtype=np.float64)
+    values_data = np.array([[1.0, 2.0, 3.0, 4.0, np.nan],
+                            [5.0, np.nan, 7.0, np.nan, np.nan],
+                            [9.0, 10.0, np.nan, np.nan, 42.0]])
+
+    zones_np = create_test_raster(zones_data, 'numpy')
+    values_np = create_test_raster(values_data, 'numpy')
+    zones_cp = create_test_raster(zones_data, 'cupy')
+    values_cp = create_test_raster(values_data, 'cupy')
+
+    stats_funcs = ['min', 'max', 'mean', 'sum', 'count']
+
+    df_np = stats(zones=zones_np, values=values_np, stats_funcs=stats_funcs)
+    df_cp = stats(zones=zones_cp, values=values_cp, stats_funcs=stats_funcs)
+
+    assert list(df_np.columns) == list(df_cp.columns)
+    assert (df_np['zone'].to_numpy() == df_cp['zone'].to_numpy()).all()
+    for col in df_np.columns[1:]:
+        np.testing.assert_allclose(
+            df_np[col].to_numpy(), df_cp[col].to_numpy(),
+            rtol=1e-05, atol=1e-07, equal_nan=True,
+        )
+
+    # And again with zone_ids requesting a zone that doesn't exist.
+    df_np2 = stats(
+        zones=zones_np, values=values_np, zone_ids=[1, 5, 999],
+        stats_funcs=stats_funcs,
+    )
+    df_cp2 = stats(
+        zones=zones_cp, values=values_cp, zone_ids=[1, 5, 999],
+        stats_funcs=stats_funcs,
+    )
+    assert (df_np2['zone'].to_numpy() == df_cp2['zone'].to_numpy()).all()
+    for col in df_np2.columns[1:]:
+        np.testing.assert_allclose(
+            df_np2[col].to_numpy(), df_cp2[col].to_numpy(),
+            rtol=1e-05, atol=1e-07, equal_nan=True,
+        )
+
+
 @pytest.mark.parametrize("stats_funcs, expected_cols", [
     (['min', 'max'], ['zone', 'min', 'max']),
     (['mean'], ['zone', 'mean']),
@@ -650,9 +781,9 @@ def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_s
 def test_stats_all_nan_zone(backend):
     """Zone where every value is NaN should not crash.
 
-    Backend quirks: numpy keeps the empty zone with all-NaN stats; the dask
-    path uses nansum for count/sum so those become 0; cupy drops the empty
-    zone from the result entirely.
+    All backends now agree: the empty zone stays in the output with NaN
+    stats. The cupy path used to drop the zone (issue #2562) — that is
+    now fixed and the per-backend branching is gone.
     """
     if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
@@ -670,26 +801,14 @@ def test_stats_all_nan_zone(backend):
     funcs = ['mean', 'max', 'min', 'sum', 'count']
     df_result = stats(zones=zones, values=values, stats_funcs=funcs)
 
-    if 'cupy' in backend and 'dask' not in backend:
-        # cupy drops zones with no valid values
-        expected = {
-            'zone':  [2],
-            'mean':  [6.0],
-            'max':   [7.0],
-            'min':   [5.0],
-            'sum':   [12.0],
-            'count': [2],
-        }
-    else:
-        # numpy and dask both return NaN for all-NaN zones
-        expected = {
-            'zone':  [1, 2],
-            'mean':  [np.nan, 6.0],
-            'max':   [np.nan, 7.0],
-            'min':   [np.nan, 5.0],
-            'sum':   [np.nan, 12.0],
-            'count': [np.nan, 2],
-        }
+    expected = {
+        'zone':  [1, 2],
+        'mean':  [np.nan, 6.0],
+        'max':   [np.nan, 7.0],
+        'min':   [np.nan, 5.0],
+        'sum':   [np.nan, 12.0],
+        'count': [np.nan, 2],
+    }
     check_results(backend, df_result, expected)
 
 
@@ -761,7 +880,7 @@ def test_stats_negative_zone_ids(backend):
 def test_stats_nodata_wipes_zone(backend):
     """When nodata_values filters out every finite value in a zone, stats are NaN.
 
-    Same per-backend quirks as test_stats_all_nan_zone.
+    All backends now agree after the issue #2562 fix.
     """
     if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
@@ -779,25 +898,14 @@ def test_stats_nodata_wipes_zone(backend):
     funcs = ['mean', 'max', 'min', 'sum', 'count']
     df_result = stats(zones=zones, values=values, stats_funcs=funcs, nodata_values=5)
 
-    if 'cupy' in backend and 'dask' not in backend:
-        expected = {
-            'zone':  [2],
-            'mean':  [5.0],
-            'max':   [7.0],
-            'min':   [3.0],
-            'sum':   [10.0],
-            'count': [2],
-        }
-    else:
-        # numpy and dask both return NaN for zones with no valid values
-        expected = {
-            'zone':  [1, 2],
-            'mean':  [np.nan, 5.0],
-            'max':   [np.nan, 7.0],
-            'min':   [np.nan, 3.0],
-            'sum':   [np.nan, 10.0],
-            'count': [np.nan, 2],
-        }
+    expected = {
+        'zone':  [1, 2],
+        'mean':  [np.nan, 5.0],
+        'max':   [np.nan, 7.0],
+        'min':   [np.nan, 3.0],
+        'sum':   [np.nan, 10.0],
+        'count': [np.nan, 2],
+    }
     check_results(backend, df_result, expected)
 
 

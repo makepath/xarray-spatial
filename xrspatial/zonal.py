@@ -548,23 +548,18 @@ def _stats_cupy(
     zones = cupy.ravel(orig_zones)
     values = cupy.ravel(orig_values)
 
+    # Sort by zone so each zone's values occupy a contiguous range. Build
+    # unique_zones from the raw zones array (finite zone IDs only) BEFORE
+    # filtering values: a zone whose values are all NaN or all nodata must
+    # still appear in the output with NaN stats, matching the numpy path.
     sorted_indices = cupy.argsort(zones)
-
     sorted_zones = zones[sorted_indices]
     values_by_zone = values[sorted_indices]
 
-    # filter out values that are non-finite or values equal to nodata_values
-    # Note: use `is not None` instead of truthiness so that nodata_values=0
-    # (a common sentinel) still triggers the filter, matching the numpy path.
-    if nodata_values is not None:
-        filter_values = cupy.isfinite(values_by_zone) & (
-            values_by_zone != nodata_values)
-    else:
-        filter_values = cupy.isfinite(values_by_zone)
-    values_by_zone = values_by_zone[filter_values]
-    sorted_zones = sorted_zones[filter_values]
+    finite_zone_mask = cupy.isfinite(sorted_zones)
+    sorted_zones = sorted_zones[finite_zone_mask]
+    values_by_zone = values_by_zone[finite_zone_mask]
 
-    # Now I need to find the unique zones, and zone breaks
     unique_zones, unique_index, unique_counts = cupy.unique(
         sorted_zones, return_index=True, return_counts=True)
 
@@ -574,19 +569,21 @@ def _stats_cupy(
     unique_zones = unique_zones.get()
 
     if zone_ids is not None:
-        # We need to extract the index and element count
-        # only for the elements in zone_ids
+        # Match the numpy path: drop zone_ids that don't exist in the
+        # raster so the zone column and stats columns stay aligned.
         unique_index_lst = []
         unique_counts_lst = []
-        unique_zones = list(unique_zones)
+        kept_zones = []
+        unique_zones_lst = list(unique_zones)
         for z in zone_ids:
             try:
-                idx = unique_zones.index(z)
-                unique_index_lst.append(unique_index[idx])
-                unique_counts_lst.append(unique_counts[idx])
+                idx = unique_zones_lst.index(z)
             except ValueError:
                 continue
-        unique_zones = zone_ids
+            kept_zones.append(z)
+            unique_index_lst.append(unique_index[idx])
+            unique_counts_lst.append(unique_counts[idx])
+        unique_zones = kept_zones
         unique_counts = unique_counts_lst
         unique_index = unique_index_lst
 
@@ -603,14 +600,23 @@ def _stats_cupy(
 
         stats_dict['zone'].append(zone_id)
 
-        # extract zone_values
+        # extract zone_values, then filter per-zone for non-finite values
+        # and the nodata sentinel. If the zone has no valid values left,
+        # emit NaN for every stat instead of dropping the zone.
         zone_values = values_by_zone[unique_index[i]:unique_index[i]+unique_counts[i]]
+        zone_mask = cupy.isfinite(zone_values)
+        if nodata_values is not None:
+            zone_mask = zone_mask & (zone_values != nodata_values)
+        zone_values = zone_values[zone_mask]
 
         # apply stats on the zone data
         for j, stats in enumerate(stats_funcs):
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
+            if zone_values.size == 0:
+                stats_dict[stats].append(float('nan'))
+                continue
             result = stats_func(zone_values)
 
             assert (len(result.shape) == 0)
