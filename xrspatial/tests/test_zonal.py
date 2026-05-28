@@ -1156,6 +1156,56 @@ def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_perc
     assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_crosstab_2d_cat_ids_skips_earlier_category(backend, data_zones, data_values_2d):
+    """Regression test for issue #2560.
+
+    When cat_ids filters out a category that appears in the values raster,
+    the count for later selected categories must not be inflated by cells
+    that belong to the skipped category.
+
+    Zone 3 in the test fixture contains values [3, 3, 0, 3, 3] after nodata
+    filtering. Asking for cat_ids=[3] alone (skipping 0) should report 4
+    threes, not 5.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
+    # cat_ids=[3] alone, with zone 3 containing 0s too. unique_cats is
+    # [0, 1, 2, 3]; the buggy code would let cat_start stay at the start
+    # of the sorted zone array and report 5 threes for zone 3.
+    df_result = crosstab(
+        zones=data_zones, values=data_values_2d,
+        zone_ids=[0, 1, 2, 3], cat_ids=[3],
+    )
+    expected = {
+        'zone': [0, 1, 2, 3],
+        3:      [0, 0, 0, 4],
+    }
+    check_results(backend, df_result, expected)
+
+    # cat_ids=[1, 3] skips category 2 between them. Zone 1 has six 1s
+    # and no 3s; zone 3 has zero 1s and four 3s.
+    df_result = crosstab(
+        zones=data_zones, values=data_values_2d,
+        zone_ids=[0, 1, 2, 3], cat_ids=[1, 3],
+    )
+    expected = {
+        'zone': [0, 1, 2, 3],
+        1:      [0, 6, 0, 0],
+        3:      [0, 0, 0, 4],
+    }
+    check_results(backend, df_result, expected)
+
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_crosstab_3d_count(backend, data_zones, data_values_3d, result_crosstab_3d):
 
