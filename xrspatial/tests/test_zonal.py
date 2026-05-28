@@ -1909,16 +1909,19 @@ class TestVectorZones:
 
     def test_apply_gdf(self):
         values, gdf, zones_raster = self._zones_raster_and_gdf()
-        # rasterize produces float zones; apply needs int zones
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', RuntimeWarning)
-            zones_int = zones_raster.copy(
-                data=zones_raster.values.astype(int))
+        # rasterize produces float zones; apply needs int zones.
+        # Substitute the default NaN fill with 0 (apply's default nodata)
+        # before casting so the cast is well-defined across platforms;
+        # rasterize(..., dtype=int) now requires an explicit integer fill
+        # (#2504), so pass fill=0 to match.
+        zones_float = zones_raster.copy(
+            data=np.where(np.isnan(zones_raster.values),
+                          0.0, zones_raster.values))
+        zones_int = zones_float.copy(data=zones_float.values.astype(int))
         fn = lambda x: x * 2
         expected = apply(zones_int, values, fn)
         result = apply(gdf, values, fn, column='zone_id',
-                       rasterize_kw={'dtype': int})
+                       rasterize_kw={'dtype': int, 'fill': 0})
         xr.testing.assert_identical(result, expected)
 
     # -- crop --
