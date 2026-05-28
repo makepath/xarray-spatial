@@ -36,7 +36,9 @@ ALL_METHODS = set(INTERP_METHODS) | AGGREGATE_METHODS
 # depth because the B-spline prefilter is a global IIR filter whose
 # boundary transient decays as ~0.268^n.  Depth 16 puts the residual at
 # ~7e-10, comfortably below float32 epsilon so chunk-seam parity rounds
-# to zero in the float32 output.
+# to zero in the float32 output.  The dask drivers clamp this per axis
+# down to ``axis_total - 1`` when the array is too small to absorb the
+# full depth; see ``_run_dask_numpy`` for the rationale.
 _INTERP_DEPTH = {'nearest': 1, 'bilinear': 1, 'cubic': 16}
 
 # Approximate working-set size per output cell for the eager backends:

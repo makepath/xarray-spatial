@@ -392,6 +392,11 @@ class TestDaskCubicSmallInput:
     every shape below should run end-to-end and match the eager numpy
     reference within float32 tolerance."""
 
+    # Once depth is clamped to ``axis_total - 1``, ``_ensure_min_chunksize``
+    # always collapses the clamped axis to a single chunk (its min_size is
+    # ``2 * (axis_total - 1) + 1 > axis_total``). A user-supplied multi-chunk
+    # layout on a small axis therefore folds into one chunk anyway, so the
+    # parametrization below only varies shape, not user chunking.
     @pytest.mark.parametrize('backend', ['dask+numpy', 'dask+cupy'])
     @pytest.mark.parametrize(
         'shape,chunks',
@@ -399,7 +404,6 @@ class TestDaskCubicSmallInput:
             ((8, 1), (2, 1)),    # Nx1 column, smaller than depth on rows
             ((1, 8), (1, 2)),    # 1xN row, smaller than depth on cols
             ((4, 4), (4, 4)),    # tiny single-chunk array
-            ((4, 4), (2, 2)),    # tiny multi-chunk array
             ((8, 8), (4, 4)),    # both axes smaller than depth=16
         ],
     )
