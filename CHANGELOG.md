@@ -6,6 +6,12 @@
 
 #### Fixed
 
+- `polygonize` now rejects non-finite values for `simplify_tolerance`
+  (`nan`, `+inf`, `-inf`) with a clear `ValueError`. Previously `nan`
+  silently disabled simplification (because `nan > 0` is False) and
+  `+inf` collapsed every polygon to empty output. Matches the existing
+  `atol` / `rtol` validation contract: finite and non-negative. (#2575)
+
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an
