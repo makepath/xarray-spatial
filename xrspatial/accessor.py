@@ -104,6 +104,41 @@ def _infer_caller_y_chunk(obj):
     return int(y_chunks[0])
 
 
+def _to_pyproj_crs(crs):
+    """Normalize a CRS value (int EPSG, ``"EPSG:xxxx"``, WKT, PROJ
+    string, or ``pyproj.CRS``) into a ``pyproj.CRS`` instance, or
+    ``None`` when the value is missing or unparseable.
+    """
+    if crs is None:
+        return None
+    try:
+        from pyproj import CRS as _PyprojCRS
+        return _PyprojCRS(crs)
+    except Exception:
+        return None
+
+
+def _bbox_edge_samples(x_min, y_min, x_max, y_max, n_per_side=20):
+    """Return ``(xs, ys)`` arrays sampling each edge of the bbox.
+
+    Sampling the perimeter (instead of only the 4 corners) before
+    transforming into the source CRS keeps the envelope of the
+    transformed points close to the true projected bbox even when the
+    transform has curvature across the box (high latitudes, large
+    extents).
+    """
+    import numpy as np
+    a = np.linspace(x_min, x_max, n_per_side)
+    b = np.full(n_per_side, y_min)
+    c = np.full(n_per_side, y_max)
+    d = np.linspace(y_min, y_max, n_per_side)
+    e = np.full(n_per_side, x_min)
+    f = np.full(n_per_side, x_max)
+    xs = np.concatenate([a, a, e, f])
+    ys = np.concatenate([b, c, d, d])
+    return xs, ys
+
+
 def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
     """Shared implementation for ``.xrs.open_geotiff`` on DataArray and
     Dataset.
@@ -111,8 +146,20 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
     ``obj`` is a DataArray that carries the bbox (``y``/``x`` coords),
     the CRS (``attrs['crs']``), and the backend used to infer
     ``gpu=`` / ``chunks=`` kwargs for the underlying read.
+
+    The windowing extent is expanded by half a pixel on each side so
+    edge pixels of the caller's footprint are captured. CRS values on
+    both sides (``attrs['crs']`` and the file's georeference) are
+    normalized through ``pyproj.CRS`` for equality, so int EPSG codes,
+    ``"EPSG:xxxx"`` strings, WKT strings, and ``pyproj.CRS`` instances
+    all compare correctly.
+
+    When ``auto_reproject=True`` and the CRSs differ, the caller's
+    bbox is sampled along its perimeter (not just the four corners)
+    before transformation into the file CRS, so the windowed read
+    covers the full footprint even when the transform has curvature
+    across the bbox.
     """
-    import numpy as np
     from .geotiff import open_geotiff, _read_geo_info, _extent_to_window
     from .utils import _classify_backend
 
@@ -121,42 +168,43 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
             "Caller must have 'y' and 'x' coordinates to compute a "
             "spatial window"
         )
-    y = np.asarray(obj.coords['y'].values)
-    x = np.asarray(obj.coords['x'].values)
+    y = obj.coords['y'].values
+    x = obj.coords['x'].values
     y_min, y_max = float(y.min()), float(y.max())
     x_min, x_max = float(x.min()), float(x.max())
 
     geo_info, file_h, file_w, _dtype, _nbands = _read_geo_info(source)
     t = geo_info.transform
-    file_crs = geo_info.crs_epsg
-    caller_crs = obj.attrs.get('crs')
+    caller_crs_raw = obj.attrs.get('crs')
+    file_crs_raw = geo_info.crs_epsg
+    caller_crs = _to_pyproj_crs(caller_crs_raw)
+    file_crs = _to_pyproj_crs(file_crs_raw)
 
     crs_mismatch = (
         caller_crs is not None
         and file_crs is not None
-        and int(caller_crs) != int(file_crs)
+        and not caller_crs.equals(file_crs)
     )
 
     if crs_mismatch and not auto_reproject:
         raise ValueError(
-            f"CRS mismatch: caller has EPSG:{int(caller_crs)} but file "
-            f"has EPSG:{int(file_crs)}. Pass auto_reproject=True to "
-            f"project the caller bbox into the file CRS for the windowed "
-            f"read and reproject the result back to the caller CRS."
+            f"CRS mismatch: caller has {caller_crs_raw!r} but file has "
+            f"EPSG:{file_crs_raw}. Pass auto_reproject=True to project "
+            f"the caller bbox into the file CRS for the windowed read "
+            f"and reproject the result back to the caller CRS."
         )
 
     if crs_mismatch:
         from pyproj import Transformer
         transformer = Transformer.from_crs(
-            int(caller_crs), int(file_crs), always_xy=True
+            caller_crs, file_crs, always_xy=True
         )
-        xs = (x_min, x_min, x_max, x_max)
-        ys = (y_min, y_max, y_min, y_max)
+        xs, ys = _bbox_edge_samples(x_min, y_min, x_max, y_max)
         px, py = transformer.transform(xs, ys)
-        x_min = float(min(px))
-        x_max = float(max(px))
-        y_min = float(min(py))
-        y_max = float(max(py))
+        x_min = float(px.min())
+        x_max = float(px.max())
+        y_min = float(py.min())
+        y_max = float(py.max())
 
     # Expand extent by half a pixel so we capture edge pixels
     y_min -= abs(t.pixel_height) * 0.5
@@ -183,8 +231,8 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
         from .reproject import reproject
         result = reproject(
             result,
-            target_crs=int(caller_crs),
-            source_crs=int(file_crs),
+            target_crs=caller_crs,
+            source_crs=file_crs,
         )
 
     return result

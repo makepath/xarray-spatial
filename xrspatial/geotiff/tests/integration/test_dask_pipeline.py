@@ -1214,11 +1214,55 @@ class TestOpenGeotiffCRSMismatch_2557:
             attrs={'crs': 3857},
         )
         result = template.xrs.open_geotiff(path, auto_reproject=True)
-        # Result has caller-CRS-shaped y/x coords (mercator y values, not
-        # lat/lon)
-        assert float(result.coords['y'].max()) > 1e5
-        # The result attrs['crs'] is set by reproject() to the target CRS
-        assert result.attrs.get('crs') is not None
+        # Result coords are in caller's CRS (mercator metres). Check the
+        # bbox roughly matches the caller's bbox so a future regression
+        # in projection direction would be caught. Tolerance is one
+        # output pixel's worth of metres at this latitude (~150 km of
+        # bbox / 6 pixels).
+        tol = abs(float(template.coords['x'][1] - template.coords['x'][0]))
+        assert abs(float(result.coords['x'].min())
+                   - float(template.coords['x'].min())) < 2 * tol
+        assert abs(float(result.coords['x'].max())
+                   - float(template.coords['x'].max())) < 2 * tol
+
+    def test_chained_open_geotiff_with_wkt_crs(self, tmp_path):
+        # After auto_reproject, xrspatial.reproject sets attrs['crs'] to
+        # a WKT string. Calling open_geotiff again on that DataArray must
+        # not crash on int() conversion (regression for PR #2598 review).
+        height, width = 20, 20
+        arr = np.arange(height * width,
+                        dtype=np.float32).reshape(height, width)
+        y = np.linspace(45.5, 44.5, height)
+        x = np.linspace(-120.5, -119.5, width)
+        file_da = xr.DataArray(
+            arr, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 4326},
+        )
+        path = str(tmp_path / 'test_2557_wkt.tif')
+        to_geotiff(file_da, path, compression='none')
+
+        # Synthesize a caller with a WKT-string crs (what reproject sets)
+        from pyproj import CRS as _PyprojCRS
+        wkt_3857 = _PyprojCRS(3857).to_wkt()
+        from pyproj import Transformer
+        tr = Transformer.from_crs(4326, 3857, always_xy=True)
+        x0, y0 = tr.transform(-120.25, 45.25)
+        x1, y1 = tr.transform(-119.75, 44.75)
+        template = xr.DataArray(
+            np.zeros((4, 4), dtype=np.float32),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(max(y0, y1), min(y0, y1), 4),
+                    'x': np.linspace(min(x0, x1), max(x0, x1), 4)},
+            attrs={'crs': wkt_3857},
+        )
+        # Should raise ValueError (mismatch), not TypeError/ValueError
+        # from int(wkt_string)
+        with pytest.raises(ValueError, match="CRS mismatch"):
+            template.xrs.open_geotiff(path)
+        # And auto_reproject path also works
+        result = template.xrs.open_geotiff(path, auto_reproject=True)
+        assert result.shape == (4, 4) or result.shape[0] >= 4
 
     def test_no_caller_crs_no_mismatch_check(self, tmp_path):
         # Caller without attrs['crs'] should skip mismatch logic and
@@ -1254,3 +1298,30 @@ class TestOpenGeotiffCRSMismatch_2557:
         ds = xr.Dataset({'elevation': var}, attrs={'crs': 3857})
         with pytest.raises(ValueError, match="CRS mismatch"):
             ds.xrs.open_geotiff(path)
+
+
+# ---------------------------------------------------------------------------
+# GPU backend inference (gated on CUDA + cupy availability) - issue #2557
+# ---------------------------------------------------------------------------
+
+from xrspatial.tests.general_checks import cuda_and_cupy_available  # noqa: E402
+
+
+@cuda_and_cupy_available
+class TestOpenGeotiffGPUBackendInference_2557:
+    def test_cupy_caller_returns_cupy(self, tmp_path):
+        import cupy as cp
+        big = _make_da_accessor_io(height=10, width=10)
+        path = str(tmp_path / 'test_2557_cupy.tif')
+        to_geotiff(big, path, compression='none')
+
+        template = xr.DataArray(
+            cp.zeros((10, 10), dtype=cp.float32),
+            dims=['y', 'x'],
+            coords={'y': big.coords['y'].values,
+                    'x': big.coords['x'].values},
+            attrs={'crs': 4326},
+        )
+        result = template.xrs.open_geotiff(path)
+        # Result should be cupy-backed (gpu=True was inferred)
+        assert type(result.data).__module__.split('.')[0] == 'cupy'
