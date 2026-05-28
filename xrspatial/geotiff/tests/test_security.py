@@ -88,6 +88,63 @@ class TestDimensionGuard:
         assert "2.50 GB at 1 bytes/pixel" in str(exc.value)
         assert "1.00 GB at 1 bytes/pixel" in str(exc.value)
 
+    def test_error_message_includes_window_suggestion(self):
+        """Error message suggests window= for reading a sub-region."""
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        assert "window=(r0, c0, r1, c1)" in msg
+        # Concrete example uses the same chunk-side as the chunks hint.
+        assert "window=(0, 0, 1024, 1024)" in msg
+
+    def test_error_message_suggests_chunks_when_dask_installed(self,
+                                                               monkeypatch):
+        """When dask is importable, suggest chunks=."""
+        # Force the 'dask installed' branch regardless of test env.
+        monkeypatch.setattr(
+            'xrspatial.geotiff._layout.importlib.util.find_spec',
+            lambda name: object() if name == 'dask' else None,
+        )
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        assert "chunks=1024" in msg
+        assert "lazily" in msg
+        # Should not recommend installing dask.
+        assert "pip install dask" not in msg
+        assert "conda install" not in msg
+
+    def test_error_message_recommends_install_when_dask_missing(self,
+                                                                monkeypatch):
+        """When dask is not importable, recommend installation."""
+        monkeypatch.setattr(
+            'xrspatial.geotiff._layout.importlib.util.find_spec',
+            lambda name: None,
+        )
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        assert "pip install dask" in msg
+        assert "conda install -c conda-forge dask" in msg
+        # The chunks= number is still surfaced so the user knows what to
+        # pass once dask is installed.
+        assert "chunks=1024" in msg
+
+    def test_suggested_chunk_side_scales_with_max_pixels(self):
+        """The suggested chunk side fits under max_pixels for the given
+        band count and never exceeds 1024."""
+        from xrspatial.geotiff._layout import _suggest_chunk_side
+        # Default budget: capped at 1024.
+        assert _suggest_chunk_side(1_000_000_000, 1) == 1024
+        # Tight budget: 100 pixels, 1 band -> side 10.
+        assert _suggest_chunk_side(100, 1) == 10
+        # Multi-band reduces the per-side budget.
+        # 1_000_000 budget, 4 bands -> sqrt(250_000) = 500.
+        assert _suggest_chunk_side(1_000_000, 4) == 500
+        # Pathological inputs do not crash.
+        assert _suggest_chunk_side(0, 1) == 1
+        assert _suggest_chunk_side(10, 0) == 3
+
     def test_gb_hint_helper_rounds_to_two_decimals(self):
         """_gb_hint formats bytes/pixel * count as a ~X.XX GB string."""
         from xrspatial.geotiff._layout import _gb_hint

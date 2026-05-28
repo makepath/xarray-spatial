@@ -14,6 +14,7 @@ transport lives in :mod:`._sources`, top-level orchestration lives in
 """
 from __future__ import annotations
 
+import importlib.util
 import math
 
 import numpy as np
@@ -62,6 +63,46 @@ def _gb_hint(pixels, dtype=None):
     return f"~{gb:.2f} GB at {bpp} bytes/pixel"
 
 
+def _suggest_chunk_side(max_pixels, samples):
+    """Pick a square chunksize whose pixel count fits comfortably under
+    ``max_pixels`` for the given band count. Capped at 1024 so the hint
+    stays near common COG tile sizes (256 / 512 / 1024)."""
+    samples = max(1, int(samples))
+    if max_pixels <= 0:
+        return 1
+    side = int(math.isqrt(max_pixels // samples))
+    return max(1, min(1024, side))
+
+
+def _recovery_hint(max_pixels, samples):
+    """Build the multi-line recovery hint appended to PixelSafetyLimitError.
+
+    Always suggests ``window=`` for reading a sub-region. Suggests
+    ``chunks=`` when dask is installed; otherwise recommends installing
+    dask so chunked reads become available. ``importlib.util.find_spec``
+    avoids importing dask just to format an error.
+    """
+    chunk = _suggest_chunk_side(max_pixels, samples)
+    lines = [
+        "To read this file, try one of:",
+        "  * Pass a larger max_pixels= if the allocation is acceptable.",
+        f"  * Read a sub-region with window=(r0, c0, r1, c1), "
+        f"e.g. window=(0, 0, {chunk}, {chunk}).",
+    ]
+    if importlib.util.find_spec('dask') is not None:
+        lines.append(
+            f"  * Read lazily in chunks with chunks={chunk} so each "
+            f"decoded buffer stays under max_pixels."
+        )
+    else:
+        lines.append(
+            "  * Install dask (`pip install dask` or "
+            "`conda install -c conda-forge dask`) to read the file "
+            f"lazily via chunks={chunk}."
+        )
+    return "\n".join(lines)
+
+
 class PixelSafetyLimitError(ValueError):
     """Raised when a requested TIFF allocation exceeds max_pixels."""
 
@@ -80,9 +121,8 @@ def _check_dimensions(width, height, samples, max_pixels, dtype=None):
             f"TIFF image dimensions ({width} x {height} x {samples} = "
             f"{total:,} pixels, {_gb_hint(total, dtype)}) exceed the "
             f"safety limit of {max_pixels:,} pixels "
-            f"({_gb_hint(max_pixels, dtype)}).  Pass a larger "
-            f"max_pixels value to read_to_array() if this file is "
-            f"legitimate."
+            f"({_gb_hint(max_pixels, dtype)}).\n"
+            f"{_recovery_hint(max_pixels, samples)}"
         )
 
 
