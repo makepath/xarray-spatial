@@ -154,8 +154,10 @@ class TestMetadataPropagation:
     @staticmethod
     def _raster_with_orientation(x_asc, y_asc):
         """4x4 raster with the chosen coord orientation and a matching
-        rasterio transform for `(col=0, row=0) -> upper-left edge of
-        pixel [0, 0]`. Issue #2571.
+        rasterio transform for `(col=0, row=0) -> leading-edge corner
+        of pixel [0, 0]` (the geographic "upper-left" only when both
+        coords are in the conventional north-up direction). Issue
+        #2571.
         """
         res = 1.0
         x_step = res if x_asc else -res
@@ -187,7 +189,8 @@ class TestMetadataPropagation:
 
         a, b, c, d, e, f = out.attrs['transform']
         # Off-diagonals are always zero for an axis-aligned grid.
-        assert b == 0.0 and d == 0.0
+        assert b == 0.0
+        assert d == 0.0
         # Scale signs follow the coord direction.
         assert (a > 0) == x_asc
         assert (e > 0) == y_asc
