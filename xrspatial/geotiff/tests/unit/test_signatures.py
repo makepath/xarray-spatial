@@ -397,6 +397,10 @@ def test_write_geotiff_gpu_streaming_buffer_bytes_runtime_noop(tmp_path):
 _CANONICAL_ORDER = (
     "dtype",
     "window",
+    # Geographic-space window. Sits immediately after ``window`` so the
+    # two sub-region kwargs stay grouped; mutual exclusion is enforced
+    # in :func:`open_geotiff`.
+    "bbox",
     "overview_level",
     "band",
     "name",

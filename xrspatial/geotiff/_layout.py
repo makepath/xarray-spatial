@@ -77,10 +77,11 @@ def _suggest_chunk_side(max_pixels, samples):
 def _recovery_hint(max_pixels, samples):
     """Build the multi-line recovery hint appended to PixelSafetyLimitError.
 
-    Always suggests ``window=`` for reading a sub-region. Suggests
-    ``chunks=`` when dask is installed; otherwise recommends installing
-    dask so chunked reads become available. ``importlib.util.find_spec``
-    avoids importing dask just to format an error.
+    Always suggests ``window=`` and ``bbox=`` for reading a sub-region.
+    Suggests ``chunks=`` when dask is installed; otherwise recommends
+    installing dask so chunked reads become available.
+    ``importlib.util.find_spec`` avoids importing dask just to format
+    an error.
     """
     chunk = _suggest_chunk_side(max_pixels, samples)
     lines = [
@@ -88,6 +89,8 @@ def _recovery_hint(max_pixels, samples):
         "  * Pass a larger max_pixels= if the allocation is acceptable.",
         f"  * Read a sub-region with window=(r0, c0, r1, c1), "
         f"e.g. window=(0, 0, {chunk}, {chunk}).",
+        "  * Read a geographic sub-region with "
+        "bbox=(x_min, y_min, x_max, y_max) in the file's CRS.",
     ]
     if importlib.util.find_spec('dask') is not None:
         lines.append(
