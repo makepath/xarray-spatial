@@ -78,7 +78,7 @@ class TestSingleColumnRaster:
             # array. The eager numpy and cupy backends handle Nx1 cubic
             # fine; the dask limitation is documented in the audit notes
             # and tracked as a separate issue rather than a sweep fix.
-            pytest.skip("dask cubic depth>chunk-width: see audit notes")
+            pytest.skip("dask cubic depth>chunk-width; tracked in #2547")
         data = np.array([[1.0], [2.0], [3.0], [4.0]], dtype=np.float32)
         agg = create_test_raster(
             data, backend=backend, dims=['y', 'x'],
@@ -120,7 +120,7 @@ class TestSingleColumnRaster:
             data, backend='numpy', dims=['y', 'x'],
             attrs={'res': (1.0, 1.0)},
         )
-        np_out = resample(np_agg, scale_factor=0.5, method='average').values
+        np_out = _to_numpy(resample(np_agg, scale_factor=0.5, method='average'))
 
         for backend in ['cupy', 'dask+numpy', 'dask+cupy']:
             if not _backend_available(backend):
@@ -267,14 +267,13 @@ class TestAllEqualRaster:
         np.testing.assert_allclose(out.values, 3.0, atol=1e-5)
 
     def test_constant_with_nan_block_aggregate(self):
-        # A constant block with one NaN should still produce the constant
-        # everywhere except where the NaN dominates a window.
+        # The average aggregate is NaN-aware (see _agg_mean / _nan_aware_*
+        # in resample.py): a 2x2 window containing one NaN and three 7s
+        # collapses to 7, not NaN. Other cells are pure 7.
         data = np.full((4, 4), 7.0, dtype=np.float32)
         data[0, 0] = np.nan
         agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
         out = resample(agg, scale_factor=0.5, method='average').values
-        # Output (0, 0) averages a 2x2 window containing one NaN and three 7s
-        # -> 7. Other cells are pure 7.
         np.testing.assert_allclose(out, 7.0, atol=1e-5)
 
 
