@@ -52,12 +52,7 @@ try:
 except ImportError:
     cupy = None
 
-from .utils import (
-    ArrayTypeFunctionMapping,
-    _validate_raster,
-    is_cupy_array,
-    ngjit,
-)
+from .utils import ArrayTypeFunctionMapping, _validate_raster, ngjit
 
 _regions_dtype = np.uint32
 _visited_dtype = np.uint8
@@ -80,12 +75,12 @@ def generated_jit(function=None, cache=False,
 
     if function is not None:
         overload(function, jit_options=jit_options,
-                    strict=False)(function)
+                 strict=False)(function)
         return function
     else:
         def wrapper(func):
             overload(func, jit_options=jit_options,
-                        strict=False)(func)
+                     strict=False)(func)
             return func
         return wrapper
 
