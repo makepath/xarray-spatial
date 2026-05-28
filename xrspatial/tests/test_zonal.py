@@ -1586,6 +1586,38 @@ def test_regions_dask_memory_guard():
             _regions_dask(huge.data if hasattr(huge, 'data') else huge, 4)
 
 
+def test_stats_dataarray_return_type_memory_guard_2523():
+    """stats(return_type='xarray.DataArray') should refuse to allocate
+    an oversized (n_stats, H*W) float64 working buffer.
+
+    Regression guard for issue #2523: the numpy backend's xarray.DataArray
+    return path allocated np.full((n_stats, values.size), nan) with no
+    memory check, scaling linearly with the user-supplied stats_funcs.
+    """
+    from unittest.mock import patch
+
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
+                          dtype=np.float64)
+    zones = xr.DataArray(zones_arr)
+    values = xr.DataArray(values_arr)
+
+    # Mock available memory to a tiny budget so the (n_stats, 8) buffer
+    # exceeds 50% of it.  The default 8 stats * 8 cells * 8 bytes = 512 B;
+    # with avail = 100 B the guard must trip.
+    with patch('xrspatial.zonal._available_memory_bytes', return_value=100):
+        with pytest.raises(MemoryError, match="xarray.DataArray"):
+            stats(zones=zones, values=values,
+                  return_type='xarray.DataArray')
+
+    # Sanity: with the normal memory budget the same call succeeds.
+    out = stats(zones=zones, values=values, return_type='xarray.DataArray')
+    assert isinstance(out, xr.DataArray)
+    # n_stats=8 default, output shape = (8, *values.shape)
+    assert out.shape[0] == 8
+    assert out.shape[1:] == values_arr.shape
+
+
 @pytest.mark.skipif(da is None, reason="dask not installed")
 def test_stats_dask_zone_filter():
     """stats() with zone_ids filter should return only requested zones."""
