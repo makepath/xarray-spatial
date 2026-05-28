@@ -50,7 +50,8 @@ class TestBboxResolution:
     def test_bbox_matches_equivalent_pixel_window(self, georef_raster_2555):
         """bbox= and the pixel window it resolves to must produce the
         same array. Resolved via the internal helper so the test
-        doesn't have to redo the affine math."""
+        doesn't have to redo the affine math. Asserts both shape and
+        pixel values so a row/col swap in the resolver would surface."""
         from xrspatial.geotiff import _bbox_to_window
         bb = (-122.4, 37.4, -122.1, 37.7)
         pixel_window = _bbox_to_window(georef_raster_2555, bb)
@@ -58,6 +59,10 @@ class TestBboxResolution:
         b = open_geotiff(georef_raster_2555, window=pixel_window)
         assert a.shape == b.shape
         np.testing.assert_array_equal(a.values, b.values)
+        # Pixel-value parity against the same slice of the full read.
+        full = open_geotiff(georef_raster_2555)
+        r0, c0, r1, c1 = pixel_window
+        np.testing.assert_array_equal(a.values, full.values[r0:r1, c0:c1])
 
     def test_bbox_clamps_to_file_extent(self, georef_raster_2555):
         """An out-of-extent bbox clamps rather than erroring, as long
@@ -123,6 +128,80 @@ class TestBboxValidation:
             f.write(data)
         with pytest.raises(ValueError, match="has no GeoTIFF tags"):
             open_geotiff(path, bbox=(-1.0, -1.0, 1.0, 1.0))
+
+    def test_bbox_rejects_nan(self, georef_raster_2555):
+        """NaN coordinates pass the ordering check (NaN >= NaN is
+        False), so reject them upfront with a clear error rather than
+        surfacing the downstream integer-cast failure."""
+        import math
+        for bad in (
+            (math.nan, 37.4, -122.1, 37.7),
+            (-122.4, math.nan, -122.1, 37.7),
+            (-122.4, 37.4, math.nan, 37.7),
+            (-122.4, 37.4, -122.1, math.nan),
+        ):
+            with pytest.raises(ValueError, match="finite coordinates"):
+                open_geotiff(georef_raster_2555, bbox=bad)
+
+    def test_bbox_rejects_inf(self, georef_raster_2555):
+        """Infinite coordinates are equally meaningless."""
+        with pytest.raises(ValueError, match="finite coordinates"):
+            open_geotiff(
+                georef_raster_2555,
+                bbox=(float('-inf'), 37.4, -122.1, 37.7),
+            )
+
+    def test_bbox_rejects_rotated_affine(self, tmp_path):
+        """A file with a rotated affine is rejected with guidance to
+        pass allow_rotated=True (which clears the rotation) and re-call."""
+        from xrspatial.geotiff.tests.read.test_crs import _write_rotated_tiff
+        arr = np.arange(20, dtype='<u2').reshape(4, 5)
+        path = str(tmp_path / 'rotated_2555.tif')
+        _write_rotated_tiff(path, arr)
+        # ``allow_rotated=True`` is required to even open the file;
+        # without it the file is rejected upstream. With it, the
+        # transform's rotated_affine is set and bbox= still refuses.
+        with pytest.raises(ValueError, match="rotated affine"):
+            open_geotiff(
+                path,
+                bbox=(0.0, 0.0, 10.0, 10.0),
+                allow_rotated=True,
+            )
+
+
+class TestBboxOverviewLevel:
+    def test_bbox_with_overview_level_uses_overview_transform(self, tmp_path):
+        """``overview_level=`` selects a downsampled IFD whose transform
+        has different pixel sizes. ``bbox=`` must resolve against the
+        overview's transform, not the base IFD's, so the resulting pixel
+        window matches the overview's dimensions."""
+        # Build a 256x256 COG with 2x and 4x reductions. Coarser pixels
+        # at deeper overview levels give the bbox a smaller pixel
+        # window for the same geographic extent.
+        base = np.arange(256 * 256, dtype=np.float32).reshape(256, 256)
+        xs = np.linspace(-122.5, -122.0, 256)
+        ys = np.linspace(37.8, 37.3, 256)
+        arr = xr.DataArray(
+            base, dims=('y', 'x'),
+            coords={'y': ys, 'x': xs},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        path = str(tmp_path / 'overview_2555.tif')
+        to_geotiff(arr, path, cog=True, overview_levels=[2, 4])
+
+        bb = (-122.4, 37.5, -122.1, 37.7)
+        # The overview-level read should succeed and return a sub-region
+        # bounded by the overview's smaller pixel grid, not the base
+        # IFD's 256x256 grid.
+        sub_base = open_geotiff(path, bbox=bb, overview_level=0)
+        sub_ov = open_geotiff(path, bbox=bb, overview_level=1)
+        sub_ov2 = open_geotiff(path, bbox=bb, overview_level=2)
+        # Each successive overview level halves the resolution, so the
+        # bbox slice should shrink monotonically with level.
+        assert sub_base.shape[0] >= sub_ov.shape[0] >= sub_ov2.shape[0]
+        assert sub_base.shape[1] >= sub_ov.shape[1] >= sub_ov2.shape[1]
+        # All slices must be non-empty.
+        assert sub_ov2.shape[0] > 0 and sub_ov2.shape[1] > 0
 
 
 class TestSafetyHintMentionsBbox:

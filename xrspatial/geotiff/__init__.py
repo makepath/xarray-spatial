@@ -396,6 +396,13 @@ def _bbox_to_window(source, bbox, *, overview_level=None,
             "(x_min, y_min, x_max, y_max), "
             f"got {bbox!r}.")
     x_min, y_min, x_max, y_max = bbox
+    # ``NaN >= NaN`` is False, so NaN coordinates would slip past the
+    # ordering check below and only surface later as an unhelpful
+    # integer-cast error inside ``_extent_to_window``. Reject upfront.
+    if not all(np.isfinite(v) for v in (x_min, y_min, x_max, y_max)):
+        raise ValueError(
+            f"open_geotiff: bbox must contain finite coordinates, "
+            f"got bbox={bbox!r}.")
     if x_min >= x_max or y_min >= y_max:
         raise ValueError(
             f"open_geotiff: bbox has non-positive size "
@@ -407,17 +414,24 @@ def _bbox_to_window(source, bbox, *, overview_level=None,
         allow_rotated=allow_rotated,
         allow_invalid_nodata=allow_invalid_nodata)
 
+    # ``allow_rotated=True`` clears a rotated affine and stashes the
+    # original 6-tuple on ``transform.rotated_affine`` while setting
+    # ``has_georef=False`` (the dropped-rotation marker). Check
+    # ``rotated_affine`` first so this case gets the more specific
+    # message that names the recovery path; the plain-no-georef
+    # error then covers everything else.
+    if (geo_info.transform is not None
+            and geo_info.transform.rotated_affine is not None):
+        raise ValueError(
+            "open_geotiff: bbox= requires an axis-aligned transform, "
+            "but this file has a rotated affine. The rotation cannot "
+            "be expressed as a 4-tuple bbox in the file's CRS; pass "
+            "window= for pixel-space windowing instead.")
     if not geo_info.has_georef:
         raise ValueError(
             "open_geotiff: bbox= requires a georeferenced source, "
             "but this file has no GeoTIFF tags. Pass window= instead "
             "for pixel-space windowing.")
-    if geo_info.transform.rotated_affine is not None:
-        raise ValueError(
-            "open_geotiff: bbox= requires an axis-aligned transform, "
-            "but this file has a rotated affine. Open with "
-            "allow_rotated=True (which drops the rotation) and then "
-            "use bbox=, or pass window= for pixel-space windowing.")
 
     from ._attrs import _extent_to_window
     pixel_window = _extent_to_window(
