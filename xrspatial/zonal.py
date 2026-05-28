@@ -863,8 +863,8 @@ def stats(
     if is_dask_values and not isinstance(stats_funcs, list):
         raise ValueError(
             "Got dask-backed DataArray as `values` aggregate. "
-            "`stats_funcs` must be a subset of default supported stats "
-            "`[\'mean\', \'max\', \'min\', \'sum\', \'std\', \'var\', \'count\']`"
+            "`stats_funcs` must be a list that is a subset of "
+            f"{_DEFAULT_STATS_DASK!r}."
         )
 
     if is_dask_values and isinstance(stats_funcs, list):
