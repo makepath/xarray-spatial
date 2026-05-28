@@ -154,6 +154,82 @@ class TestResolutionHonoredExactly:
         assert (vals[3, :] == 0.0).all()  # row below original ymin
         assert (vals[:, 3] == 0.0).all()  # col past original xmax
 
+    def test_get_dataarray_resolution_matches_request(self):
+        """Downstream tools that call ``get_dataarray_resolution`` on the
+        result now read back the cell size the caller asked for.  Before
+        the fix this was the shrunk value computed from the original
+        bounds (0.25 for the 4x4 / 0.3 case), which silently poisoned
+        slope / aspect / proximity callers that prefer the coord-derived
+        cellsize."""
+        from xrspatial.utils import get_dataarray_resolution
+        r = rasterize([(box(0, 0, 1, 1), 1.0)],
+                      resolution=0.3, bounds=(0, 0, 1, 1), fill=0)
+        cx, cy = get_dataarray_resolution(r)
+        assert cx == pytest.approx(0.3, abs=1e-9)
+        assert cy == pytest.approx(0.3, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# ``like=`` + ``resolution=`` with a template whose bounds don't divide
+# evenly by the resolution.  The resolution branch runs after the
+# like-bounds resolution, so the fix should still expand the grid.
+# ---------------------------------------------------------------------------
+
+class TestLikePlusResolutionOvershoot:
+    """``like=`` + ``resolution=`` with non-divisible like-bounds still
+    honors the requested cell size.  The existing
+    ``test_resolution_override_strips_stale_grid_attrs`` in test_rasterize.py
+    uses ``resolution=0.5`` against a 10x10 template (divides evenly), so
+    the overshoot branch wasn't pinned for the like path."""
+
+    @staticmethod
+    def _template():
+        # 10x10 raster on bounds (0, 0, 10, 10).  Cellsize 1.0.
+        x = np.linspace(0.5, 9.5, 10)
+        y = np.linspace(9.5, 0.5, 10)
+        import xarray as xr
+        return xr.DataArray(
+            np.zeros((10, 10), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={
+                'crs': 'EPSG:32610',
+                'res': (1.0, 1.0),
+                'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 10.0),
+            },
+        )
+
+    def test_like_plus_non_divisible_resolution_cell_size_exact(self):
+        like = self._template()
+        r = rasterize(
+            [(box(2, 2, 8, 8), 1.0)],
+            like=like, resolution=0.3, fill=0,
+        )
+        # ceil(10 / 0.3) = 34 cells.
+        assert r.shape == (34, 34)
+        assert _cell_size(r.x) == pytest.approx(0.3, abs=1e-9)
+        assert _cell_size(r.y) == pytest.approx(0.3, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Inferred-bounds + resolution: when ``bounds=`` is omitted and resolved
+# from the geometry envelope, ``total_bounds`` is typically non-divisible.
+# The fix should still honor the requested cell size.
+# ---------------------------------------------------------------------------
+
+class TestInferredBoundsPlusResolution:
+    """No explicit ``bounds=`` plus ``resolution=``: geometry envelope
+    drives final_bounds, then the fix extends it to honor the cell size."""
+
+    def test_inferred_bounds_non_divisible_resolution(self):
+        # Box extent 1.0 in each axis, resolution 0.3 -> ceil(1/0.3) = 4 cells.
+        # No explicit bounds -- inferred from the geom's bbox (0..1).
+        r = rasterize([(box(0, 0, 1, 1), 1.0)],
+                      resolution=0.3, fill=0)
+        assert r.shape == (4, 4)
+        assert _cell_size(r.x) == pytest.approx(0.3, abs=1e-9)
+        assert _cell_size(r.y) == pytest.approx(0.3, abs=1e-9)
+
 
 # ---------------------------------------------------------------------------
 # Cross-backend parity: the new contract holds on cupy and dask backends
