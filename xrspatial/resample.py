@@ -155,6 +155,43 @@ def _check_resample_gpu_memory(out_h, out_w):
         )
 
 
+# -- Input-validation helpers ------------------------------------------------
+
+def _validate_resample_scalar_or_pair(value, param_name):
+    """Validate a scalar-or-2-tuple resolution / scale parameter.
+
+    Accepts either a real scalar or a length-2 tuple/list of scalars.
+    Each component must be finite (not NaN, not inf) and strictly
+    positive. Raises ``ValueError`` with a message naming the parameter
+    and the offending value.
+    """
+    if isinstance(value, (tuple, list)):
+        if len(value) != 2:
+            raise ValueError(
+                f"{param_name} must have length 2, got length {len(value)}"
+            )
+        components = value
+    else:
+        components = (value,)
+
+    for comp in components:
+        try:
+            f = float(comp)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{param_name} must be a finite positive number "
+                f"(or length-2 sequence of them), got {value!r}"
+            )
+        if not np.isfinite(f):
+            raise ValueError(
+                f"{param_name} must be finite and > 0, got {value!r}"
+            )
+        if f <= 0:
+            raise ValueError(
+                f"{param_name} must be > 0, got {value!r}"
+            )
+
+
 # -- Output-geometry helpers -------------------------------------------------
 
 def _output_shape(in_h, in_w, scale_y, scale_x):
@@ -1233,6 +1270,18 @@ def resample(
         raise ValueError(
             "Exactly one of scale_factor or target_resolution must be given"
         )
+
+    # Validate shape, finiteness, and positivity of whichever input was
+    # supplied. Fails fast with a parameter-named message before any
+    # geometry math runs, so overlong/short tuples, zero, and NaN/inf
+    # do not surface later as IndexError / ZeroDivisionError / opaque
+    # numpy conversion errors.
+    if target_resolution is not None:
+        _validate_resample_scalar_or_pair(
+            target_resolution, 'target_resolution'
+        )
+    else:
+        _validate_resample_scalar_or_pair(scale_factor, 'scale_factor')
 
     if target_resolution is not None:
         if agg.shape[-2] < 2 or agg.shape[-1] < 2:
