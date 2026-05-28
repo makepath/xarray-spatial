@@ -1723,16 +1723,19 @@ def test_polygonize_dask_multi_chunk_default_tolerance():
     and at the chunk-stitching step, so close floats in adjacent chunks
     bucket together (#2171, #2173).
 
-    Pairwise (not transitive) bucketing: with [1.0, 1.000009, 1.000018]
-    split across single-pixel chunks, 1.000009 is within tolerance of
-    1.0 (diff 9e-6, threshold ~1.0e-5) and joins that bucket, but
-    1.000018 is outside (diff 18e-6) and stays separate.  Total area
-    still covers the raster.
+    Transitive bucketing across chunks must match numpy CCL within a
+    single chunk (#2583).  With [1.0, 1.000009, 1.000018] split into
+    single-pixel chunks, the middle pixel is within tolerance of both
+    ends so all three pixels join one region -- the same answer numpy
+    returns for the equivalent single-chunk input.
     """
     raster = xr.DataArray(da.from_array(_REPRO_2173, chunks=(1, 1)))
     values, polygons = polygonize(raster)
-    assert len(values) == 2
-    assert_allclose(sorted(values), [1.0, 1.000018])
+    # Numpy parity: single chunk numpy chains 1.0 -> 1.000009 -> 1.000018
+    # into one region, dask must agree.
+    v_np, _ = polygonize(xr.DataArray(_REPRO_2173))
+    assert len(values) == len(v_np) == 1
+    assert_allclose(sorted(values), sorted(v_np))
     total_area = sum(
         assert_polygon_valid_and_get_area(p) for p in polygons)
     assert_allclose(total_area, 3.0)

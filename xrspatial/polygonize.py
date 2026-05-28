@@ -292,36 +292,203 @@ def _values_close(reference, value,
     return abs(value - reference) <= (atol + rtol * abs(reference))
 
 
-def _bucket_key_for_value(boundary_by_value, val,
-                          atol: float = _DEFAULT_ATOL,
-                          rtol: float = _DEFAULT_RTOL):
-    """Return the dict key that ``val`` should bucket into.
+def _ranges_close(range_a, range_b, atol, rtol):
+    """Return True if any value pair across two ``(min, max)`` ranges
+    compares close under ``_values_close``.
 
-    If an existing key in ``boundary_by_value`` is close to ``val`` under
-    ``_values_close`` (using the caller's ``atol`` / ``rtol``), return
-    that key so close float values from adjacent chunks land in the same
-    bucket.  Otherwise return ``val`` unchanged.
-
-    This keeps Dask chunk-stitching consistent with the tolerance-based
-    grouping the NumPy / numba path uses inside a single chunk (#2171),
-    and lets ``polygonize(atol=0, rtol=0)`` opt into exact-value
-    bucketing across chunks (#2173).
-
-    Performance note: the float branch is a linear scan over existing
-    keys, so total cost is O(B^2) in the number of distinct float
-    buckets B.  Polygonize inputs in practice have a small B (a handful
-    of categorical values), so the scan is cheap.  If a workload with
-    many thousand distinct float buckets shows up, swap the scan for a
-    sorted-keys structure (e.g. bisect over a sorted list).
+    Each per-polygon value range from ``_polygonize_chunk`` describes
+    the actual span of pixel values that fall inside a region (after
+    the within-chunk tolerance-chain CCL has run).  Two chunk polygons
+    should union when *some* pair of their pixel values lies within
+    tolerance, which is what numpy CCL would have done if the same
+    pixels lived in one chunk.  Probing the four endpoint combinations
+    is enough because each input range is a single interval.
     """
-    # Integer-valued rasters use exact equality, so the existing dict
-    # lookup is already correct -- skip the linear scan.
-    if isinstance(val, (int, np.integer)):
-        return val
-    for existing in boundary_by_value:
-        if _values_close(existing, val, atol, rtol):
-            return existing
-    return val
+    a_min, a_max = range_a
+    b_min, b_max = range_b
+    if _values_close(a_min, b_min, atol, rtol):
+        return True
+    if _values_close(a_min, b_max, atol, rtol):
+        return True
+    if _values_close(a_max, b_min, atol, rtol):
+        return True
+    if _values_close(a_max, b_max, atol, rtol):
+        return True
+    # The four endpoint checks above can miss wide-but-overlapping
+    # intervals: e.g. ``[0.0, 5.0]`` vs ``[3.0, 10.0]`` has all four
+    # endpoint pairs outside default tolerance, yet the intervals
+    # share the sub-range ``[3.0, 5.0]`` so a per-pixel CCL within a
+    # single chunk would have merged the two clusters.  Detect that
+    # case explicitly so the union-find still fires.
+    if a_min <= b_max and b_min <= a_max:
+        return True
+    return False
+
+
+def _group_boundary_polygons(boundary_polys,
+                             atol: float = _DEFAULT_ATOL,
+                             rtol: float = _DEFAULT_RTOL,
+                             connectivity_8: bool = False):
+    """Group chunk-boundary polygons by spatial topology + value closeness.
+
+    Replaces the legacy value-only bucket in ``_merge_chunk_polygons`` and
+    ``_polygonize_dask`` so dask polygonize matches numpy CCL semantics
+    (#2583).  Two boundary polygons land in the same group when:
+
+    1. their value ranges have at least one close pair under ``atol`` /
+       ``rtol``, AND
+    2. their rings share enough spatial topology to be connected under
+       the user-selected connectivity:
+
+       * ``connectivity_8=False`` (4-conn): they must share at least one
+         opposing unit-length ring edge.  Two polygons that only touch
+         at a corner are not 4-connected and stay in separate groups
+         even when their values are close.
+
+       * ``connectivity_8=True`` (8-conn): sharing any integer-grid
+         vertex is enough, mirroring numpy 8-connectivity which merges
+         diagonal-only neighbours of the same value.
+
+    Connectivity is a union-find closure over those pairs.  Disconnected
+    close-valued polygons fall into separate groups so the merge step
+    cannot silently overwrite their distinct DN values.
+
+    The value-range check (rather than a single representative value)
+    fixes the chunk-chain bug where numpy CCL chains
+    ``1.0 -> 1.000009 -> 1.000018`` via the middle pixel: when a chunk
+    contains both ``1.0`` and ``1.000009``, the polygon's range
+    captures both, so the neighbour chunk's ``1.000018`` pixel finds a
+    close partner (``1.000009``) at the chunk boundary even though
+    the representative ``1.0`` would have looked too far away.
+
+    Parameters
+    ----------
+    boundary_polys : list of (val, rings, (val_min, val_max))
+        Per-chunk boundary polygons collected from ``_polygonize_chunk``.
+    atol, rtol : float
+        Float tolerance forwarded to ``_ranges_close``.
+
+    Returns
+    -------
+    list of list of (val, rings, (val_min, val_max))
+        One sub-list per connected group.  Each sub-list holds all
+        chunk polygons that should be merged with edge cancellation and
+        assigned a single representative DN value downstream.
+    """
+    n = len(boundary_polys)
+    if n == 0:
+        return []
+    if n == 1:
+        return [boundary_polys]
+
+    # Build a spatial-adjacency index from each polygon's ring edges.
+    #
+    # Iterate every unit-length grid point / unit edge along each ring,
+    # not just the simplified ring corners.  Polygon rings only list
+    # turn-points after collinear-vertex simplification, so a ring that
+    # runs straight along a chunk boundary from (5, 1) to (5, 4) does
+    # not list (5, 2) or (5, 3) explicitly.  If a neighbour chunk has a
+    # tiny polygon with corners at (5, 2)-(5, 3), unioning by corners
+    # alone misses the adjacency.  Walk unit steps so every shared
+    # integer-grid point and unit edge is registered.
+    #
+    # For 4-connectivity we key by canonical (undirected) unit edge so
+    # two polygons sharing an opposing unit edge collide here; for
+    # 8-connectivity we key by vertex so diagonal-only neighbours
+    # collide too.
+    adjacency_index = {}
+    for idx, item in enumerate(boundary_polys):
+        rings = item[1]
+        seen = set()
+        for ring in rings:
+            for k in range(len(ring) - 1):
+                x1, y1 = int(ring[k, 0]), int(ring[k, 1])
+                x2, y2 = int(ring[k + 1, 0]), int(ring[k + 1, 1])
+                if x1 == x2 and y1 == y2:
+                    keys = [(x1, y1)] if connectivity_8 else []
+                elif x1 == x2:
+                    step = 1 if y2 > y1 else -1
+                    if connectivity_8:
+                        keys = [(x1, y) for y in range(y1, y2 + step, step)]
+                    else:
+                        keys = [
+                            ((x1, y, x1, y + step) if step > 0
+                             else (x1, y + step, x1, y))
+                            for y in range(y1, y2, step)
+                        ]
+                elif y1 == y2:
+                    step = 1 if x2 > x1 else -1
+                    if connectivity_8:
+                        keys = [(x, y1) for x in range(x1, x2 + step, step)]
+                    else:
+                        keys = [
+                            ((x, y1, x + step, y1) if step > 0
+                             else (x + step, y1, x, y1))
+                            for x in range(x1, x2, step)
+                        ]
+                else:
+                    # Diagonal ring segments should not appear; degrade
+                    # gracefully if they ever do.
+                    keys = [(x1, y1), (x2, y2)] if connectivity_8 else []
+
+                for key in keys:
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    adjacency_index.setdefault(key, []).append(idx)
+
+    # Union-find over polygon indices.
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[max(ri, rj)] = min(ri, rj)
+
+    for poly_indices in adjacency_index.values():
+        if len(poly_indices) < 2:
+            continue
+        # Pairwise close-value check among polys sharing this
+        # adjacency key.  Typical degree is small (2 for a chunk-edge
+        # midpoint, up to 4 at chunk corners) so the inner loop is cheap.
+        for i in range(len(poly_indices)):
+            for j in range(i + 1, len(poly_indices)):
+                pi, pj = poly_indices[i], poly_indices[j]
+                if find(pi) == find(pj):
+                    continue
+                range_i = boundary_polys[pi][2]
+                range_j = boundary_polys[pj][2]
+                if _ranges_close(range_i, range_j, atol, rtol):
+                    union(pi, pj)
+
+    groups = {}
+    for idx in range(n):
+        groups.setdefault(find(idx), []).append(boundary_polys[idx])
+    return list(groups.values())
+
+
+def _representative_value(group):
+    """Pick the row-major-lowest constituent value for a polygon group.
+
+    Mirrors the numpy single-chunk rule (``column.append(values[ij])``
+    in ``_polygonize_numpy``): the DN value reported for a region is
+    the value of the first pixel in row-major order that belongs to it.
+    For a multi-chunk group we approximate that by sorting the
+    constituent chunk polygons by their exterior ring's min (y, x) and
+    taking the first one's value.
+    """
+    def sort_key(item):
+        ext = item[1][0]
+        min_y = float(np.min(ext[:, 1]))
+        min_x = float(np.min(ext[ext[:, 1] == min_y, 0]))
+        return (min_y, min_x)
+    return min(group, key=sort_key)[0]
 
 
 # Calculate region connectivity for the specified values raster and optional
@@ -906,6 +1073,15 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
     boundary, already final) or "boundary" (touches an inter-chunk edge,
     needs merge with neighbours).  Raster-edge boundaries are NOT counted
     as inter-chunk boundaries.
+
+    Boundary polygons carry a ``(value, rings, (val_min, val_max))``
+    triple instead of just ``(value, rings)`` so the cross-chunk merge
+    can do tolerance-based union over the full value range present in
+    each polygon (#2583).  Within a chunk, ``_polygonize_numpy`` already
+    merged tolerance-close pixels into one region, so a polygon may
+    span values from ``val_min`` to ``val_max``; the cross-chunk merge
+    needs the extremes to reconstruct numpy CCL semantics across the
+    chunk boundary.
     """
     block = _to_numpy(block)
     if mask_block is not None:
@@ -915,10 +1091,23 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
         block, mask_block, connectivity_8, transform=None,
         atol=atol, rtol=rtol)
 
-    interior = []  # (value, [ring, ...])
-    boundary = []  # (value, [ring, ...])
+    # Build a per-polygon (min, max) value pair so cross-chunk merging
+    # can probe whichever endpoint sits closest to a neighbour chunk's
+    # value.  Integer CCL uses strict equality, so every polygon
+    # already spans exactly one value -- skip the second
+    # _calculate_regions pass and reuse ``column`` directly.  Float
+    # polygons may span a tolerance-chain cluster, so the full
+    # per-region min/max scan is still needed there.
+    if np.issubdtype(block.dtype, np.floating):
+        val_ranges = _compute_region_value_ranges(
+            block, mask_block, connectivity_8, atol, rtol, column)
+    else:
+        val_ranges = [(c, c) for c in column]
 
-    for val, rings in zip(column, polygon_points):
+    interior = []  # (value, [ring, ...])
+    boundary = []  # (value, [ring, ...], (val_min, val_max))
+
+    for val, rings, val_range in zip(column, polygon_points, val_ranges):
         offset_rings = []
         for ring in rings:
             ring = ring.copy()
@@ -942,11 +1131,87 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
             on_boundary |= np.any(ys == row_offset + ny)
 
         if on_boundary:
-            boundary.append((val, offset_rings))
+            boundary.append((val, offset_rings, val_range))
         else:
             interior.append((val, offset_rings))
 
     return interior, boundary
+
+
+def _compute_region_value_ranges(block, mask_block, connectivity_8,
+                                 atol, rtol, column):
+    """Return ``(val_min, val_max)`` for each region in raster-scan order.
+
+    ``column`` is the polygon-order value list from ``_polygonize_numpy``;
+    the returned list is parallel to it.  Re-runs the same
+    ``_calculate_regions`` pass used inside ``_polygonize_numpy`` (so
+    region IDs match exactly), then groups pixel values by region.
+
+    Used by ``_polygonize_chunk`` (#2583) to carry the actual value
+    extent of each chunk-boundary polygon into the cross-chunk merge
+    where numpy CCL parity needs both endpoints.
+    """
+    ny, nx = block.shape
+    values_flat = block.ravel()
+
+    # Mirror the NaN / nx==1 handling in _polygonize_numpy so the region
+    # IDs line up with what _scan saw.
+    if np.issubdtype(block.dtype, np.floating):
+        nan_mask = ~np.isnan(block)
+        if mask_block is not None:
+            full_mask = mask_block & nan_mask
+        else:
+            full_mask = nan_mask
+    else:
+        full_mask = mask_block
+
+    if nx == 1:
+        nx_eff = 2
+        values_flat = np.hstack(
+            (block, np.empty_like(block))).ravel()
+        if full_mask is not None:
+            full_mask = np.hstack(
+                (full_mask, np.zeros_like(full_mask)))
+        else:
+            full_mask = np.zeros((ny, 2), dtype=bool)
+            full_mask[:, 0] = True
+    else:
+        nx_eff = nx
+
+    mask_flat = full_mask.ravel() if full_mask is not None else None
+    regions = _calculate_regions(
+        values_flat, mask_flat, connectivity_8, nx_eff, ny, atol, rtol)
+
+    # Aggregate min/max value per region in raster-scan order so the
+    # output is parallel to the polygon column from _scan.
+    n_regions = len(column)
+    if n_regions == 0:
+        return []
+    val_min = [None] * n_regions
+    val_max = [None] * n_regions
+    for ij in range(len(regions)):
+        r = regions[ij]
+        if r == 0:
+            continue
+        if mask_flat is not None and not mask_flat[ij]:
+            continue
+        idx = r - 1
+        if idx >= n_regions:
+            continue
+        v = values_flat[ij]
+        if val_min[idx] is None or v < val_min[idx]:
+            val_min[idx] = v
+        if val_max[idx] is None or v > val_max[idx]:
+            val_max[idx] = v
+    out = []
+    for i in range(n_regions):
+        if val_min[i] is None:
+            # Fall back to the polygon's representative value if no
+            # pixel matched (defensive; shouldn't happen).
+            out.append((column[i], column[i]))
+        else:
+            out.append((val_min[i], val_max[i]))
+    return out
 
 
 def _add_or_cancel_edge(edge_set, x1, y1, x2, y2):
@@ -1670,32 +1935,44 @@ def _merge_polygon_rings(polys_list, connectivity_8=False):
     return _group_rings_into_polygons(simplified)
 
 
-def _merge_chunk_polygons(chunk_results, transform, connectivity_8=False):
+def _merge_chunk_polygons(chunk_results, transform, connectivity_8=False,
+                          atol: float = _DEFAULT_ATOL,
+                          rtol: float = _DEFAULT_RTOL):
     """Merge polygons from all chunks and return final output.
 
     ``connectivity_8`` is forwarded to :func:`_merge_polygon_rings` to
     select the degree-4-vertex pairing rule used by the trace step.
+
+    Boundary polygons are grouped by spatial-topology + value-closeness
+    union-find (see :func:`_group_boundary_polygons` -- #2583) so close
+    floats from disconnected chunks no longer collapse onto a single
+    DN, and so transitive value chains across multiple chunks merge the
+    way numpy CCL does within a single chunk.
     """
     all_interior = []
-    boundary_by_value = {}
+    boundary_polys = []
 
     for interior, boundary in chunk_results:
         all_interior.extend(interior)
-        for val, rings in boundary:
-            key = _bucket_key_for_value(boundary_by_value, val)
-            boundary_by_value.setdefault(key, []).append(rings)
+        boundary_polys.extend(boundary)
 
-    # Merge boundary polygons per value using edge cancellation.
+    groups = _group_boundary_polygons(
+        boundary_polys, atol=atol, rtol=rtol,
+        connectivity_8=connectivity_8)
+
+    # Merge each connected group using edge cancellation; assign the
+    # row-major-lowest constituent value as the group's DN value.
     merged = []
-    for val, polys_list in boundary_by_value.items():
+    for group in groups:
+        rep_val = _representative_value(group)
+        polys_list = [item[1] for item in group]
         if len(polys_list) == 1:
-            # Single polygon set for this value -- nothing to merge.
-            merged.append((val, polys_list[0]))
+            merged.append((rep_val, polys_list[0]))
         else:
             merged_polys = _merge_polygon_rings(
                 polys_list, connectivity_8=connectivity_8)
             for rings in merged_polys:
-                merged.append((val, rings))
+                merged.append((rep_val, rings))
 
     # Combine interior and merged boundary polygons.
     all_polys = all_interior + merged
@@ -1722,28 +1999,38 @@ def _merge_chunk_polygons(chunk_results, transform, connectivity_8=False):
     return column, polygon_points
 
 
-def _merge_from_separated(all_interior, boundary_by_value, transform,
-                          connectivity_8=False):
+def _merge_from_separated(all_interior, boundary_polys, transform,
+                          connectivity_8=False,
+                          atol: float = _DEFAULT_ATOL,
+                          rtol: float = _DEFAULT_RTOL):
     """Merge pre-separated interior/boundary polygons into final output.
 
-    Like _merge_chunk_polygons but takes already-separated data so the
-    caller can accumulate incrementally (one chunk at a time) instead of
-    holding all chunk_results in memory simultaneously.
+    Like _merge_chunk_polygons but takes the boundary polygons as a flat
+    ``[(val, rings), ...]`` list (the incremental dask path accumulates
+    that list one chunk at a time).
 
     ``connectivity_8`` is forwarded to :func:`_merge_polygon_rings` so
     the trace step uses the right degree-4-vertex pairing rule when
     stitching boundary polygons across chunks.
+
+    ``atol`` / ``rtol`` are forwarded to :func:`_group_boundary_polygons`
+    (#2583) for the spatial-topology + value-closeness union-find.
     """
-    # Merge boundary polygons per value using edge cancellation.
+    groups = _group_boundary_polygons(
+        boundary_polys, atol=atol, rtol=rtol,
+        connectivity_8=connectivity_8)
+
     merged = []
-    for val, polys_list in boundary_by_value.items():
+    for group in groups:
+        rep_val = _representative_value(group)
+        polys_list = [item[1] for item in group]
         if len(polys_list) == 1:
-            merged.append((val, polys_list[0]))
+            merged.append((rep_val, polys_list[0]))
         else:
             merged_polys = _merge_polygon_rings(
                 polys_list, connectivity_8=connectivity_8)
             for rings in merged_polys:
-                merged.append((val, rings))
+                merged.append((rep_val, rings))
 
     all_polys = all_interior + merged
 
@@ -1789,7 +2076,7 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
     # peak memory proportional to boundary_polygon_count rather than
     # total_polygon_count * n_chunks.
     all_interior = []
-    boundary_by_value = {}
+    boundary_polys = []
 
     for iy in range(len(row_chunks)):
         for ix in range(len(col_chunks)):
@@ -1804,14 +2091,12 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
                     atol, rtol,
                 ))[0]
             all_interior.extend(interior)
-            for val, rings in boundary:
-                key = _bucket_key_for_value(
-                    boundary_by_value, val, atol, rtol)
-                boundary_by_value.setdefault(key, []).append(rings)
+            boundary_polys.extend(boundary)
 
     return _merge_from_separated(
-        all_interior, boundary_by_value, transform,
-        connectivity_8=connectivity_8)
+        all_interior, boundary_polys, transform,
+        connectivity_8=connectivity_8,
+        atol=atol, rtol=rtol)
 
 
 def polygonize(
