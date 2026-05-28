@@ -2992,7 +2992,14 @@ def rasterize(
         When given, the merge function receives a 1D float64 array of
         length ``len(columns)`` as its ``props`` argument.
     fill : float, default np.nan
-        Value for pixels not covered by any geometry.
+        Value for pixels not covered by any geometry.  When ``dtype``
+        resolves to an integer type (either via the ``dtype`` argument or
+        via ``like`` carrying an integer dtype), the default NaN fill is
+        rejected with ``ValueError`` because NaN has no integer
+        representation and the cast would silently land on a
+        platform-specific sentinel with no ``_FillValue`` attr to mark
+        it; pass an explicit integer sentinel (e.g. ``fill=0`` or
+        ``fill=-9999``) or use a floating dtype.
     dtype : numpy dtype, optional
         Data type of the output array.  Defaults to np.float64, or
         to the dtype of ``like`` if provided.
@@ -3221,14 +3228,15 @@ def rasterize(
     # the metadata sweep (issue #2504).
     #
     # Checked before any host / device allocation so the error surfaces
-    # cleanly regardless of backend (numpy, cupy, dask+numpy, dask+cupy)
-    # and before ``_check_output_dimensions`` -- the dtype mismatch is a
-    # configuration bug, not an OOM hazard, and naming it first gives the
-    # user the actionable diagnostic.
+    # cleanly regardless of backend (numpy, cupy, dask+numpy, dask+cupy).
+    # It runs after ``_check_output_dimensions`` because the
+    # width/height/resolution guard reports a more actionable diagnostic
+    # for oversized grids; both checks land before the allocator either
+    # way.
     final_dtype_np = np.dtype(final_dtype)
     try:
         fill_is_nan_for_dtype_check = (
-            isinstance(fill, (int, float, np.integer, np.floating))
+            isinstance(fill, (float, np.floating))
             and np.isnan(float(fill)))
     except (TypeError, ValueError):
         fill_is_nan_for_dtype_check = False
