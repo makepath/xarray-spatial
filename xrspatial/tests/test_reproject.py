@@ -5260,6 +5260,131 @@ class TestBoundsPolicy:
             f"{[str(m.message) for m in matched]}"
         )
 
+    # -- Issue #2582: unit-aware blow-up heuristic --------------------
+
+    def test_auto_does_not_crop_benign_geographic_to_mercator(self):
+        """Regression for #2582.
+
+        Reprojecting a small EPSG:4326 bbox to EPSG:3857 under
+        bounds_policy='auto' must match bounds_policy='raw' to a
+        small tolerance. The old span-ratio heuristic compared
+        degrees to metres and always tripped on geographic-to-
+        projected pairs, silently trimming tens of km per side.
+        """
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(64, 64).astype(np.float32)
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(10, -10, 64),
+                    'x': np.linspace(-10, 10, 64)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            auto_r = reproject(r, 'EPSG:3857', bounds_policy='auto')
+            raw_r = reproject(r, 'EPSG:3857', bounds_policy='raw')
+
+        # Spans should match within one output pixel of res.
+        ax = auto_r.coords['x'].values
+        rx = raw_r.coords['x'].values
+        ay = auto_r.coords['y'].values
+        ry = raw_r.coords['y'].values
+
+        res_x = (rx.max() - rx.min()) / max(1, len(rx) - 1)
+        res_y = (ry.max() - ry.min()) / max(1, len(ry) - 1)
+
+        # No more than one pixel of crop on each side (was ~106 km / ~70 km).
+        assert abs((ax.max() - ax.min()) - (rx.max() - rx.min())) < 2 * res_x
+        assert abs((ay.max() - ay.min()) - (ry.max() - ry.min())) < 2 * res_y
+
+    def test_auto_silent_on_benign_geographic_to_mercator(self):
+        """No bounds_policy warning fires for a benign 4326->3857 case (#2582)."""
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(32, 32).astype(np.float32)
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(10, -10, 32),
+                    'x': np.linspace(-10, 10, 32)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            reproject(r, 'EPSG:3857', bounds_policy='auto')
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        assert not matched, (
+            f"unexpected bounds_policy warning(s) on benign 4326->3857 "
+            f"input: {[str(m.message) for m in matched]}"
+        )
+
+    def test_auto_still_trips_polar_stereographic_blowup(self):
+        """Pathological 4326->polar-stereo case must still trip auto (#2582).
+
+        A global EPSG:4326 raster projected to EPSG:3413 (NSIDC north
+        polar stereographic) produces finite-but-astronomical
+        coordinates near the south pole. The new unit-agnostic
+        heuristic must still catch this and apply the percentile
+        fallback.
+        """
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._crs_utils import _resolve_crs
+
+        src_crs = _resolve_crs('EPSG:4326')
+        tgt_crs = _resolve_crs('EPSG:3413')
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            grid = _compute_output_grid(
+                (-180.0, -90.0, 180.0, 90.0), (100, 200),
+                src_crs, tgt_crs, bounds_policy='auto',
+            )
+        # The auto bounds should be reasonable Earth-scale (well under
+        # 1e10 m), not the 1e23-scale raw projection.
+        left, bottom, right, top = grid['bounds']
+        assert abs(left) < 1e10 and abs(right) < 1e10
+        assert abs(bottom) < 1e10 and abs(top) < 1e10
+        # And the warning must fire.
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+            and ('blow-up' in str(wi.message) or 'percentile' in str(wi.message))
+        ]
+        assert matched, (
+            "expected a blow-up/percentile warning under auto for "
+            "global 4326 -> polar stereographic"
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_auto_does_not_crop_benign_geographic_dask(self):
+        """Dask-backed input also gets the unit-aware fix (#2582)."""
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(64, 64).astype(np.float32)
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(10, -10, 64),
+                    'x': np.linspace(-10, 10, 64)},
+            attrs={'crs': 'EPSG:4326'},
+        ).chunk({'y': 32, 'x': 32})
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            auto_r = reproject(r, 'EPSG:3857', bounds_policy='auto')
+            raw_r = reproject(r, 'EPSG:3857', bounds_policy='raw')
+        ax = auto_r.coords['x'].values
+        rx = raw_r.coords['x'].values
+        res_x = (rx.max() - rx.min()) / max(1, len(rx) - 1)
+        assert abs((ax.max() - ax.min()) - (rx.max() - rx.min())) < 2 * res_x
+
 
 # ---------------------------------------------------------------------------
 # Integer dtype nodata handling (#2185)

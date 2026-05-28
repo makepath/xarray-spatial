@@ -27,6 +27,23 @@
   `+inf` collapsed every polygon to empty output. Matches the existing
   `atol` / `rtol` validation contract: finite and non-negative. (#2575)
 
+- `reproject(..., bounds_policy="auto")` no longer crops valid edge data
+  on ordinary geographic-to-projected reprojections. The old blow-up
+  heuristic compared source span (e.g. degrees for EPSG:4326) against
+  target span (e.g. metres for EPSG:3857) and tripped on almost any
+  geographic-to-projected pair. The new heuristic is unit-agnostic:
+  it compares the max absolute projected coordinate to the median
+  and also checks the non-finite fraction of raw edge samples in the
+  target CRS. Benign reprojections stay untouched; real singularities
+  (Mercator at the poles, polar-stereographic on the opposite pole)
+  still trigger the percentile fallback. (#2582)
+- `zonal_stats` now validates `return_type` at entry. Previously any
+  string other than `'pandas.DataFrame'` or `'xarray.DataArray'` fell
+  through to an internal branch that returned a raw `numpy.ndarray`,
+  hiding typos. Allowed values are now enforced and a clear
+  `ValueError` is raised otherwise. `return_type='xarray.DataArray'`
+  on dask-backed input also raises instead of silently returning
+  the wrong shape. (#2558)
 - `rasterize(like=...)` no longer silently mislabels output when the
   template's x axis is descending. Previously the burned array was
   written ascending-x (column 0 = xmin) but `reuse_like_coords`
