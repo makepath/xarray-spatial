@@ -1,13 +1,13 @@
-"""Unit tests for the golden-corpus oracle harness (issue #1930, Phase 1.2).
+"""Unit tests for the golden-corpus oracle harness.
 
 These tests exercise the oracle in isolation: they synthesise a tiny TIFF
 in a tmp_path with rasterio, build an ``xarray.DataArray`` by hand that
 mirrors what an xrspatial reader would emit, and verify the oracle accepts
 the matching case and rejects each property mismatch individually.
 
-The tests do NOT depend on the Phase 1 PR 1 manifest or generator; the
-oracle takes raw filesystem paths, so unit tests for the oracle only need
-a writable temp directory.
+The tests do NOT depend on the corpus manifest or generator; the oracle
+takes raw filesystem paths, so unit tests for the oracle only need a
+writable temp directory.
 """
 from __future__ import annotations
 
@@ -392,7 +392,7 @@ def test_no_georef_fixture_tolerates_missing_candidate_transform(
     tmp_path: Path,
 ) -> None:
     """A fixture with no CRS *and* identity transform may match a candidate
-    that drops the transform attr entirely (xrspatial #1710 behaviour).
+    that drops the transform attr entirely (xrspatial's no-georef behaviour).
     """
     from rasterio.transform import Affine
     data = np.zeros((2, 2), dtype=np.int16)
@@ -423,13 +423,12 @@ def test_missing_fixture_raises_filenotfounderror(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 PR 8 CRS-variant fixtures
+# CRS-variant fixtures
 #
-# Smoke tests for the three CRS-representation fixtures added in PR 8 of
-# issue #1930. Each test reads the on-disk fixture with rasterio to pin
-# the bytes-on-disk behaviour, then drives the oracle with a hand-built
-# candidate to verify the comparison path the fixture is meant to
-# exercise. Phase 3 will wire real backends to these same files.
+# Smoke tests for the three CRS-representation fixtures. Each test reads
+# the on-disk fixture with rasterio to pin the bytes-on-disk behaviour,
+# then drives the oracle with a hand-built candidate to verify the
+# comparison path the fixture is meant to exercise.
 # ---------------------------------------------------------------------------
 
 _CRS_FIXTURE_DIR = Path(__file__).resolve().parent / 'fixtures'
@@ -523,7 +522,7 @@ def test_crs_citation_only_open_geotiff_stamps_canonical_wkt() -> None:
     inverse flattening, and angular-units GeoKeys are populated. The
     reader synthesizes a canonical WKT from those parameters via
     :func:`xrspatial.geotiff._geotags._synthesize_user_defined_wkt`,
-    which closes the Phase 3 ``crs_citation_only`` parity gap.
+    which closes the ``crs_citation_only`` parity gap.
 
     Pinned here so any future refactor that drops the synthesis branch
     re-opens the gap visibly. The companion oracle test
@@ -561,10 +560,9 @@ def test_crs_citation_only_xrspatial_round_trips_through_oracle() -> None:
     """``compare_to_oracle`` accepts the xrspatial-stamped citation CRS.
 
     Drives the citation fixture through ``open_geotiff`` (the exact
-    code path the Phase 3 backend parametrizations use) and runs the
+    code path the per-backend parametrizations use) and runs the
     result through ``compare_to_oracle``. This is the end-to-end
-    parity check that flips the corpus from xfail to pass once
-    ``_synthesize_user_defined_wkt`` is wired in.
+    parity check covering ``_synthesize_user_defined_wkt``.
     """
     from xrspatial.geotiff import open_geotiff
 
@@ -590,7 +588,7 @@ def test_crs_wkt_utm10n_fixture_accepts_wkt_attr() -> None:
 def test_crs_equal_rejects_empty_proj_dict() -> None:
     """``_crs_equal`` must refuse to declare two LOCAL_CS-style CRSes equal.
 
-    Regression pin for the PROJ-dict fallback added in this PR. PROJ
+    Regression pin for the PROJ-dict fallback. PROJ
     returns ``{}`` from ``to_dict()`` for LOCAL_CS WKTs; an unguarded
     fallback would treat any two such CRSes as equal, which is a
     silent-false-positive in the oracle. The fallback must short-circuit
@@ -619,7 +617,7 @@ def test_crs_equal_rejects_empty_proj_dict() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Masked-nodata contract (issue #1988)
+# Masked-nodata contract
 # ---------------------------------------------------------------------------
 
 def _masked_nodata_pair(
@@ -828,7 +826,7 @@ def test_masked_nodata_out_of_range_sentinel_does_not_mask() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Multi-band axis-order normalisation (issue #1930)
+# Multi-band axis-order normalisation
 #
 # rasterio reads every TIFF as ``(bands, H, W)``; xrspatial reads multi-band
 # rasters as ``(H, W, B)``. The convention difference is documented, not a
@@ -1031,7 +1029,7 @@ def test_normalise_axis_order_helper_directly() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Overview-level parity (issue #1930)
+# Overview-level parity
 #
 # ``compare_to_oracle`` accepts an optional ``candidate_factory`` so a
 # caller can plumb the same backend through every overview level the
@@ -1310,12 +1308,12 @@ def test_compare_to_oracle_overview_corpus_external_ovr_fixture() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 fixtures: planar-separate + sparse tiles (#1930)
+# Planar-separate + sparse-tile fixtures
 #
-# Bytes-on-disk pins for the two fixtures added by this PR. The smoke
-# tests open each one with rasterio (planar) or tifffile (sparse) and
-# assert the on-disk property the fixture is meant to expose. Phase 3
-# backend parametrisations run the same files through compare_to_oracle.
+# Bytes-on-disk pins for the two fixtures. The smoke tests open each one
+# with rasterio (planar) or tifffile (sparse) and assert the on-disk
+# property the fixture is meant to expose. The per-backend
+# parametrisations run the same files through compare_to_oracle.
 # The shared ``_CRS_FIXTURE_DIR`` constant declared above already points
 # at the corpus fixtures directory; reusing it keeps the module from
 # growing parallel path constants.

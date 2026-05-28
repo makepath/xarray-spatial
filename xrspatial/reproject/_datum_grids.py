@@ -226,11 +226,23 @@ def _grid_interp_point(lon, lat, dlat_grid, dlon_grid,
                        grid_h, grid_w):
     """Bilinear interpolation of a single point in the shift grid.
 
+    The shift grids are pixel-center anchored (matches rasterio's
+    ``bounds`` convention): ``dlat_grid[r, c]`` is the offset at
+    ``(grid_left + (c + 0.5) * grid_res_x, grid_top - (r + 0.5) * grid_res_y)``.
+    Indexing into the array therefore needs ``(coord - edge) / res - 0.5``,
+    not ``(coord - edge) / res``; without the ``-0.5`` shift the lookup
+    is biased by half a pixel, which produces a sub-decimetre to
+    decimetre horizontal residual depending on grid resolution
+    (NADCON5: ~5 mm typical, NTv2: 10+ cm). See GH #2508.
+
     Returns (dlat_arcsec, dlon_arcsec) or (0, 0) if outside the grid.
     """
-    col_f = (lon - grid_left) / grid_res_x
-    row_f = (grid_top - lat) / grid_res_y
+    col_f = (lon - grid_left) / grid_res_x - 0.5
+    row_f = (grid_top - lat) / grid_res_y - 0.5
 
+    # Outside the rectangle bounded by the outer pixel centers: no shift
+    # rather than an extrapolated one. This matches PROJ's hgridshift,
+    # which only applies inside the populated grid extent.
     if col_f < 0 or col_f > grid_w - 1 or row_f < 0 or row_f > grid_h - 1:
         return 0.0, 0.0
 

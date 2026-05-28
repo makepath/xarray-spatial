@@ -1,24 +1,21 @@
 """Write-side nodata semantics and validation.
 
-Cluster 10 of long-tail epic #2424 folds the write / validation nodata
-files into one parametrised home:
+Covers the write / validation nodata paths:
 
-* ``test_nodata_validation_1973.py`` -- refuse non-numeric / bool
-  ``nodata=`` and ``attrs['_FillValue']`` at every writer entry point.
-* ``test_nodata_bool_rejection_1911.py`` -- reject ``bool`` / ``np.bool_``
-  sentinels at ``to_geotiff`` and ``build_geo_tags``.
-* ``test_nodata_int64_precision_1847.py`` -- parse 64-bit integer
-  sentinels at full precision (int-first, float-fallback) across the
-  eager / dask / VRT / GPU write+read round-trips.
-* ``test_nodata_out_of_range_1581.py`` -- an out-of-range integer
-  sentinel (e.g. uint16 + ``-9999``) is a value-match no-op rather than
-  an ``OverflowError``.
-* ``test_mask_nodata_kwarg_2052.py`` -- ``mask_nodata=False`` keeps the
-  source integer dtype so the ``dtype=`` cast contract is reachable.
+* refuse non-numeric / bool ``nodata=`` and ``attrs['_FillValue']`` at
+  every writer entry point.
+* reject ``bool`` / ``np.bool_`` sentinels at ``to_geotiff`` and
+  ``build_geo_tags``.
+* parse 64-bit integer sentinels at full precision (int-first,
+  float-fallback) across the eager / dask / VRT / GPU write+read
+  round-trips.
+* an out-of-range integer sentinel (e.g. uint16 + ``-9999``) is a
+  value-match no-op rather than an ``OverflowError``.
+* ``mask_nodata=False`` keeps the source integer dtype so the
+  ``dtype=`` cast contract is reachable.
 
-GPU-only nodata cases (``test_gpu_nodata_1542.py`` etc.) stay in the GPU
-cluster; the GPU parity tests that live here are gated through the
-shared ``requires_gpu`` marker.
+GPU-only nodata cases live with the GPU tests; the GPU parity tests
+here are gated through the shared ``requires_gpu`` marker.
 """
 from __future__ import annotations
 
@@ -39,7 +36,7 @@ from xrspatial.geotiff._writer import write
 from xrspatial.geotiff.tests._helpers.markers import requires_gpu
 
 # ===========================================================================
-# Non-numeric / bool nodata rejection (#1973, #1911)
+# Non-numeric / bool nodata rejection
 # ===========================================================================
 
 
@@ -123,7 +120,7 @@ def test_to_geotiff_accepts_numeric_nodata_kwarg():
 
 
 # --- Bool rejection across the three writer entry points -------------------
-# The eager path already rejected bools for #1911 but the GPU/VRT validators
+# The eager path already rejected bools but the GPU/VRT validators
 # previously routed bool through ``float(True) == 1.0`` and silently coerced.
 # The shared validator now refuses bools so all three paths behave the same.
 
@@ -193,7 +190,7 @@ def test_resolve_nodata_attr_no_warning_when_nodatavals_all_nan():
         assert _resolve_nodata_attr({'nodatavals': (float('nan'),)}) is None
 
 
-# --- ``build_geo_tags`` lower-level bool rejection (#1911) ------------------
+# --- ``build_geo_tags`` lower-level bool rejection -------------------------
 
 
 @pytest.mark.parametrize(
@@ -264,7 +261,7 @@ def test_build_geo_tags_accepts_numeric_nodata():
 
 
 # ===========================================================================
-# 64-bit integer sentinel full-precision parsing (#1847)
+# 64-bit integer sentinel full-precision parsing
 # ===========================================================================
 
 
@@ -497,7 +494,7 @@ class TestGpuPathParity:
 
 
 # ===========================================================================
-# Out-of-range integer sentinel is a value-match no-op (#1581)
+# Out-of-range integer sentinel is a value-match no-op
 # ===========================================================================
 
 
@@ -609,7 +606,7 @@ def test_apply_nodata_mask_gpu_out_of_range_no_crash():
 
 
 # ===========================================================================
-# ``mask_nodata=False`` keeps the source integer dtype (#2052)
+# ``mask_nodata=False`` keeps the source integer dtype
 # ===========================================================================
 
 

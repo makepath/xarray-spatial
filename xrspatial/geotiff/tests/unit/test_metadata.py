@@ -1,19 +1,15 @@
-"""Consolidated metadata tests (#2439 cluster 15 sub-cluster 1).
+"""Consolidated metadata tests.
 
-Folds four metadata regression files into one module per epic #2424:
+Folds four metadata regression areas into one module:
 
-* ``test_ambiguous_metadata_hooks_1987.py`` -- error hierarchy, register /
-  dispatch contract for the ambiguous-metadata validator framework.
-* ``test_geotiff_metadata_2139.py`` -- ``GeoTIFFMetadata`` dataclass /
-  ``metadata_to_attrs`` / ``attrs_to_metadata`` round trip.
-* ``test_metadata_round_trip_1484.py`` -- transform / CRS / tag
-  pass-through round trip end-to-end (M-1, M-2, M-3, M-4 audit items).
-* ``test_mixed_band_metadata_fail_closed_1987.py`` -- VRT mixed-band
-  nodata fail-closed behaviour at every entry point.
+* error hierarchy, register / dispatch contract for the
+  ambiguous-metadata validator framework.
+* ``GeoTIFFMetadata`` dataclass / ``metadata_to_attrs`` /
+  ``attrs_to_metadata`` round trip.
+* transform / CRS / tag pass-through round trip end-to-end.
+* VRT mixed-band nodata fail-closed behaviour at every entry point.
 
-Section headers below match the original file boundaries. Helpers are
-suffixed with the source issue number so the four sections stay
-collision-free.
+Helpers are suffixed so the four sections stay collision-free.
 """
 from __future__ import annotations
 
@@ -30,8 +26,8 @@ from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataErro
                                MixedBandMetadataError, _runtime)
 from xrspatial.geotiff import _validation as _validation_mod
 from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt, to_geotiff
-from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, attrs_to_metadata,
-                                      geo_info_to_metadata, metadata_to_attrs)
+from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, _resolve_nodata_attr,
+                                      attrs_to_metadata, geo_info_to_metadata, metadata_to_attrs)
 from xrspatial.geotiff._errors import (ConflictingNodataError, InvalidCRSCodeError,
                                        NonUniformCoordsError, RotatedTransformError,
                                        UnparseableCRSError)
@@ -50,20 +46,18 @@ from xrspatial.geotiff._validation import (_check_read_rotated_transform,
 from xrspatial.geotiff._writer import write
 
 # =============================================================================
-# Section: Ambiguous metadata hooks (#1987 PR 0)
+# Section: Ambiguous metadata hooks
 # =============================================================================
 #
-# Original: ``test_ambiguous_metadata_hooks_1987.py``.
-#
-# PR 0 lands the error class hierarchy in ``_errors.py`` and the
-# register / dispatch framework in ``_validation.py``. No raises yet;
-# each per-case PR (#1987 PRs 2-7) registers its own check.
+# The error class hierarchy lives in ``_errors.py`` and the register /
+# dispatch framework in ``_validation.py``; each per-case check
+# registers itself.
 #
 # These tests cover:
 #
-# - the error class hierarchy is what the per-case PRs expect to subclass
-# - the hooks are no-ops when no checks are registered (so PR 0 cannot
-#   regress any existing entry point)
+# - the error class hierarchy is what the per-case checks subclass
+# - the hooks are no-ops when no checks are registered (so the framework
+#   cannot regress any existing entry point)
 # - registration is idempotent and ordered
 # - unregistration is tolerant of unknown callables
 # - a registered check that raises propagates through the hook
@@ -72,7 +66,7 @@ from xrspatial.geotiff._writer import write
 
 @pytest.fixture
 def _reset_metadata_check_registries_1987():
-    """Snapshot and restore the process-global check registries (#1987).
+    """Snapshot and restore the process-global check registries.
 
     The registries are module-global lists. A test that registers a
     check and crashes before its ``try/finally unregister`` would
@@ -155,7 +149,7 @@ def test_subclass_catch_does_not_catch_siblings_1987():
 def test_read_hook_is_noop_when_no_checks_registered_1987(
     _reset_metadata_check_registries_1987,
 ):
-    """PR 0 must not change behaviour at any read entry point."""
+    """An empty registry must not change behaviour at any read entry point."""
     # Clear any process-wide registered checks so the no-op test runs
     # against an empty registry.
     _validation_mod._READ_METADATA_CHECKS[:] = []
@@ -167,7 +161,7 @@ def test_read_hook_is_noop_when_no_checks_registered_1987(
 def test_write_hook_is_noop_when_no_checks_registered_1987(
     _reset_metadata_check_registries_1987,
 ):
-    """PR 0 must not change behaviour at any write entry point."""
+    """An empty registry must not change behaviour at any write entry point."""
     _validation_mod._WRITE_METADATA_CHECKS[:] = []
     validate_write_metadata()
     validate_write_metadata({})
@@ -450,10 +444,8 @@ def test_none_context_is_treated_as_empty_mapping_1987(
 
 
 # =============================================================================
-# Section: GeoTIFFMetadata dataclass round-trip (#2139)
+# Section: GeoTIFFMetadata dataclass round-trip
 # =============================================================================
-#
-# Original: ``test_geotiff_metadata_2139.py``.
 #
 # The dataclass and the two boundary functions (``metadata_to_attrs``
 # and ``attrs_to_metadata``) replace the manual ``attrs[...] = ...``
@@ -756,21 +748,17 @@ def test_with_nodata_masked_false_records_false_2139():
 
 
 # =============================================================================
-# Section: Transform / CRS / tag metadata round-trip (#1484)
+# Section: Transform / CRS / tag metadata round-trip
 # =============================================================================
 #
-# Original: ``test_metadata_round_trip_1484.py``.
-#
-# Covers findings M-1 through M-4 from the geotiff metadata audit:
-#
-# * M-1 / M-2: ``attrs['crs']`` stays as the same int EPSG and
+# * ``attrs['crs']`` stays as the same int EPSG and
 #   ``attrs['transform']`` survives write -> read -> write -> read with
 #   the same numeric values up to float precision.
-# * M-3: ColorMap, ExtraSamples, and ImageDescription survive a single
+# * ColorMap, ExtraSamples, and ImageDescription survive a single
 #   write -> read cycle. ColorMap exits the writer through the
 #   ``extra_tags`` pass-through (the tag is no longer in
 #   ``_MANAGED_TAGS``); ImageDescription gets a friendly ``attrs`` entry.
-# * M-4: integer rasters with a nodata sentinel get promoted to float64
+# * integer rasters with a nodata sentinel get promoted to float64
 #   with NaN, and a user-requested ``dtype='uint16'`` cast on the read
 #   side raises ValueError (existing float-to-int guard).
 
@@ -1133,10 +1121,8 @@ class TestIntegerNodataPromotion_1484:
 
 
 # =============================================================================
-# Section: Mixed-band metadata fail-closed (#1987 PR 5)
+# Section: Mixed-band metadata fail-closed
 # =============================================================================
-#
-# Original: ``test_mixed_band_metadata_fail_closed_1987.py``.
 #
 # A VRT can mosaic source bands that declare disagreeing per-band
 # ``<NoDataValue>`` sentinels. The legacy reader picked band 0's sentinel
@@ -1799,6 +1785,120 @@ def test_write_none_in_nodatavals_tuple_is_skipped(tmp_path):
     band" and don't count as disagreement."""
     da = _da(attrs={'nodata': -9999.0, 'nodatavals': (None, -9999.0)})
     to_geotiff(da, str(tmp_path / 'none_skipped.tif'))
+
+
+# ---------------------------------------------------------------------------
+# Distinct per-band nodatavals (#2514).
+#
+# A TIFF stores one GDAL_NODATA tag per file, so per-band tuples with
+# multiple distinct concrete sentinels cannot round-trip safely. The
+# legacy resolver flattened the tuple to the first usable entry and the
+# silent drop turned the remaining bands' sentinel cells into real data.
+# The validator now rejects this on write so the corruption never
+# reaches disk. The existing conflict check covered only the case where
+# every tuple member disagreed with attrs['nodata']; these tests cover
+# the dangerous case where the tuple itself carries the disagreement.
+# ---------------------------------------------------------------------------
+
+
+def _da_2514(*, attrs=None, shape=(2, 4, 4)):
+    """Multi-band DataArray for the per-band nodata tests (#2514)."""
+    data = np.zeros(shape, dtype=np.float32)
+    coords = {
+        'band': np.arange(1, shape[0] + 1),
+        'y': np.linspace(3.0, 0.0, shape[1], dtype=np.float64),
+        'x': np.linspace(0.0, 3.0, shape[2], dtype=np.float64),
+    }
+    return xr.DataArray(
+        data, dims=('band', 'y', 'x'), coords=coords, attrs=dict(attrs or {}),
+    )
+
+
+def test_write_rejects_distinct_per_band_nodatavals_no_scalar(tmp_path):
+    """Two distinct concrete entries in ``nodatavals`` without a scalar
+    ``nodata`` key still raises. The earlier conflict check only
+    inspected the (nodata, nodatavals) disagreement axis and let this
+    case through."""
+    da = _da_2514(attrs={'nodatavals': (-9999.0, -8888.0)})
+    out_path = str(tmp_path / 'tmp_2514_no_scalar.tif')
+    with pytest.raises(ConflictingNodataError, match='distinct per-band'):
+        to_geotiff(da, out_path)
+    # The error must surface before any file write.
+    assert not os.path.exists(out_path)
+
+
+def test_write_rejects_distinct_per_band_nodatavals_with_matching_scalar(tmp_path):
+    """A scalar ``nodata`` that happens to match one band does not
+    rescue the write -- the other band's sentinel would still be
+    silently dropped."""
+    da = _da_2514(attrs={'nodata': -9999.0, 'nodatavals': (-9999.0, -8888.0)})
+    out_path = str(tmp_path / 'tmp_2514_match_one_band.tif')
+    with pytest.raises(ConflictingNodataError, match='distinct per-band'):
+        to_geotiff(da, out_path)
+    assert not os.path.exists(out_path)
+
+
+def test_write_rejects_three_distinct_per_band_nodatavals(tmp_path):
+    """Three bands with three distinct sentinels: the check should
+    surface every concrete value in the error message so the user can
+    see which ones collided."""
+    da = _da_2514(
+        shape=(3, 4, 4),
+        attrs={'nodatavals': (-9999.0, -8888.0, 0.0)},
+    )
+    out_path = str(tmp_path / 'tmp_2514_three_distinct.tif')
+    with pytest.raises(ConflictingNodataError) as exc:
+        to_geotiff(da, out_path)
+    msg = str(exc.value)
+    assert '-9999' in msg and '-8888' in msg and '0.0' in msg
+    assert not os.path.exists(out_path)
+
+
+def test_write_distinct_nodatavals_explicit_kwarg_bypasses(tmp_path):
+    """``to_geotiff(..., nodata=X)`` overrides attrs and short-circuits
+    the per-band check the same way it short-circuits the conflict
+    check."""
+    da = _da_2514(attrs={'nodatavals': (-9999.0, -8888.0)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_kwarg.tif'), nodata=-1.0)
+
+
+def test_write_repeated_concrete_nodatavals_accepted(tmp_path):
+    """A tuple where every concrete entry is the same value (the rioxarray
+    convention for "all bands share this sentinel") must still write."""
+    da = _da_2514(attrs={'nodatavals': (-9999.0, -9999.0)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_repeated.tif'))
+
+
+def test_write_none_and_single_concrete_nodatavals_accepted(tmp_path):
+    """``(None, -9999.0)`` means "band 0 has no sentinel, band 1's
+    sentinel is -9999". One distinct concrete value -- safe."""
+    da = _da_2514(attrs={'nodatavals': (None, -9999.0)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_none_and_one.tif'))
+
+
+def test_write_all_nan_nodatavals_accepted(tmp_path):
+    """All-NaN ``nodatavals`` means "the float NaN is the sentinel" on
+    every band -- there is nothing to disagree about."""
+    nan = float('nan')
+    da = _da_2514(attrs={'nodatavals': (nan, nan)})
+    to_geotiff(da, str(tmp_path / 'tmp_2514_all_nan.tif'))
+
+
+def test_resolve_nodata_attr_raises_on_distinct_per_band():
+    """Defense-in-depth path: ``_resolve_nodata_attr`` itself raises on
+    distinct per-band sentinels even when called outside the writer
+    (where ``_check_write_distinct_per_band_nodatavals`` would
+    normally fire first). Guards against bypass paths that might
+    skip the write-side validator. The two sites share the error
+    message via ``_distinct_per_band_nodatavals_msg`` in ``_errors``."""
+    with pytest.raises(ConflictingNodataError, match='distinct per-band'):
+        _resolve_nodata_attr({'nodatavals': (-9999.0, -8888.0)})
+    # ``attrs['nodata']`` short-circuits the resolver before the
+    # distinct-check runs; that path is the responsibility of the
+    # write-side validator (and is already covered).
+    assert _resolve_nodata_attr(
+        {'nodata': -9999.0, 'nodatavals': (-9999.0, -8888.0)}
+    ) == -9999.0
 
 
 # ---------------------------------------------------------------------------

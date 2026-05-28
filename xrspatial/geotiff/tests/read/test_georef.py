@@ -1,50 +1,35 @@
 """Georef status, no-georef variants, and rotated-affine handling.
 
-Consolidates cluster 11 of the long-tail GeoTIFF test epic (#2424 /
-#2435). The files folded here cover one concern: how the reader and
-writer agree on whether a file is georeferenced, what
-``attrs['georef_status']`` records, and how rotated affines are
-surfaced or rejected.
+These tests cover one concern: how the reader and writer agree on
+whether a file is georeferenced, what ``attrs['georef_status']``
+records, and how rotated affines are surfaced or rejected.
 
 Read side:
 
-* ``test_georef_edges.py`` -- non-georeferenced reads and south-up
-  orientation round trips (#1482).
-* ``test_georef_resolver_parity_2211.py`` -- ``resolve_georef`` parity
-  across reader / writer call sites (#2225).
-* ``test_georef_status_2136.py`` -- canonical ``georef_status`` attr
-  for the five reader states (#2136).
-* ``test_no_georef_attr_migration_2133.py`` -- no-georef marker
-  migration from coord dtype to ``attrs`` (#2133).
-* ``test_no_georef_marker_2120.py`` -- int64 step-1 user grids keep
-  their georef on round trip (#2120).
-* ``test_no_georef_windowed_coords_1710.py`` -- windowed reads emit the
-  same integer pixel coords as full reads (#1710).
-* ``test_rotated_affine_attr_2129.py`` -- ``allow_rotated=True``
-  surfaces ``attrs['rotated_affine']`` (#2129).
-* ``test_rotated_transform_attr_1764.py`` -- ``_transform_from_attr``
-  rejects rotated / sheared 6-tuples (#1764).
-* ``test_rotated_typed_error_2267.py`` -- GeoTIFF and VRT rotated reads
-  raise the same typed error (#2267).
+* Non-georeferenced reads and south-up orientation round trips.
+* ``resolve_georef`` parity across reader / writer call sites.
+* Canonical ``georef_status`` attr for the five reader states.
+* No-georef marker migration from coord dtype to ``attrs``.
+* int64 step-1 user grids keep their georef on round trip.
+* Windowed reads emit the same integer pixel coords as full reads.
+* ``allow_rotated=True`` surfaces ``attrs['rotated_affine']``.
+* ``_transform_from_attr`` rejects rotated / sheared 6-tuples.
+* GeoTIFF and VRT rotated reads raise the same typed error.
 
 Write side:
 
-* ``test_degenerate_georef_1945.py`` -- 1xN / Nx1 / 1x1 georeferenced
-  writes preserve their transform (#1945).
-* ``test_no_georef_writer_round_trip_1949.py`` -- no-georef files keep
-  integer coords across read -> write -> read (#1949 / #2087).
-* ``test_to_geotiff_drop_rotation_2216.py`` -- ``to_geotiff`` refuses
-  to silently drop a rotated affine (#2216).
+* 1xN / Nx1 / 1x1 georeferenced writes preserve their transform.
+* No-georef files keep integer coords across read -> write -> read.
+* ``to_geotiff`` refuses to silently drop a rotated affine.
 
 The write-side cases stay in this file rather than a sibling
 ``write/test_georef.py`` because they share the rotated-affine and
 no-georef-marker fixtures with the read-side tests; splitting them
 would scatter one concern across two modules.
 
-``read/test_crs.py`` owns the rotated-CRS read surface (epic #2390 PR
-3) and is not touched here. The status tests below import its
-``_write_rotated_tiff`` helper so the two suites share one rotated-TIFF
-byte layout.
+``read/test_crs.py`` owns the rotated-CRS read surface and is not
+touched here. The status tests below import its ``_write_rotated_tiff``
+helper so the two suites share one rotated-TIFF byte layout.
 """
 from __future__ import annotations
 
@@ -75,7 +60,7 @@ from xrspatial.geotiff._writers.eager import _write_vrt_tiled
 from .._helpers.markers import gpu_available
 from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.tiff_builders import make_minimal_tiff
-# Share the rotated-TIFF byte layout with the CRS suite (epic #2390 PR 3).
+# Share the rotated-TIFF byte layout with the CRS suite.
 from .test_crs import _write_rotated_tiff as _write_rotated_tiff_crs
 
 tifffile = pytest.importorskip("tifffile")
@@ -91,8 +76,7 @@ _STATUS_KEY = 'georef_status'
 
 
 # ===========================================================================
-# Non-georeferenced reads and south-up orientation (#1482).
-# Originally test_georef_edges.py.
+# Non-georeferenced reads and south-up orientation.
 # ===========================================================================
 
 
@@ -234,8 +218,7 @@ class TestDescendingYWrite:
 
 
 # ===========================================================================
-# resolve_georef parity across reader / writer call sites (#2225).
-# Originally test_georef_resolver_parity_2211.py.
+# resolve_georef parity across reader / writer call sites.
 # ===========================================================================
 
 
@@ -389,7 +372,7 @@ def test_resolve_georef_reader_path(
 
 
 def test_reader_compute_georef_status_routes_through_resolver():
-    """``_compute_georef_status`` is a thin wrapper now (#2225).
+    """``_compute_georef_status`` is a thin wrapper over the resolver.
 
     Every supported ``GeoInfo`` bucket must map to the same string the
     resolver returns. If the two ever drift the read-path
@@ -458,7 +441,7 @@ def test_resolve_georef_writer_no_georef_marker():
 
     The reader-stamped placeholder int64 coord arrays would otherwise
     produce a synthetic unit transform. The marker is the gate that
-    keeps that synthesis from running on round-trip (#1949, #2120).
+    keeps that synthesis from running on round-trip.
     """
     da = _make_no_georef_da()
     result = resolve_georef(da)
@@ -552,10 +535,9 @@ def test_writer_and_reader_agree_on_no_georef_case():
 def test_writer_rotated_attr_transform_rejected():
     """A rotated 6-tuple in ``attrs['transform']`` raises through the resolver.
 
-    The writers' ``transform_from_attr`` already rejected rotated /
-    sheared affines with a ``ValueError`` for #2216 -- the resolver
-    must preserve that diagnostic so writer callers see the same
-    failure as before the refactor.
+    The writers' ``transform_from_attr`` rejects rotated / sheared
+    affines with a ``ValueError``; the resolver must preserve that
+    diagnostic so writer callers see the same failure.
     """
     da = xr.DataArray(
         np.zeros((4, 5), dtype=np.float32),
@@ -606,23 +588,22 @@ def test_bare_input_none_signal():
 
 
 # ===========================================================================
-# Canonical georef_status attr for the five reader states (#2136).
-# Originally test_georef_status_2136.py.
+# Canonical georef_status attr for the five reader states.
 # ===========================================================================
 
 
 def test_contract_version_is_at_least_three():
     """The ``georef_status`` attr lands in v3; pin a lower bound so future
-    contract bumps that keep the attr (e.g. ``rotated_affine`` in v4 /
-    issue #2129) do not regress this test."""
+    contract bumps that keep the attr (e.g. a later ``rotated_affine``
+    addition) do not regress this test."""
     assert _ATTRS_CONTRACT_VERSION >= 3
 
 
 def test_public_constants_reexported():
     """The five status constants and ``GEOREF_STATUS_VALUES`` are part
-    of the public surface (issue #2136 / review follow-up). Downstream
-    consumers should be able to import them from ``xrspatial.geotiff``
-    rather than reaching into the private ``_attrs`` module."""
+    of the public surface. Downstream consumers should be able to import
+    them from ``xrspatial.geotiff`` rather than reaching into the private
+    ``_attrs`` module."""
     import xrspatial.geotiff as pkg
     assert pkg.GEOREF_STATUS_FULL == GEOREF_STATUS_FULL
     assert pkg.GEOREF_STATUS_TRANSFORM_ONLY == GEOREF_STATUS_TRANSFORM_ONLY
@@ -814,7 +795,7 @@ def test_rotated_default_still_raises(tmp_path):
     """Default ``allow_rotated=False`` keeps the existing refusal so the
     rotated_dropped state is only reachable via the explicit opt-in.
     Pinned here so the status attr does not accidentally relax the
-    refusal contract from #2115."""
+    rotated-read refusal contract."""
     path = str(tmp_path / "georef_status_2136_rotated_default.tif")
     arr = np.arange(20, dtype='<u2').reshape(4, 5)
     _write_rotated_tiff_crs(path, arr)
@@ -966,8 +947,7 @@ def test_roundtrip_preserves_status(tmp_path, make, expected):
 
 
 # ===========================================================================
-# No-georef marker migration from coord dtype to attrs (#2133).
-# Originally test_no_georef_attr_migration_2133.py.
+# No-georef marker migration from coord dtype to attrs.
 # ===========================================================================
 
 
@@ -983,14 +963,13 @@ def no_georef_path_2133(tmp_path):
 def test_non_uniform_int_coords_without_marker_raise(tmp_path):
     """User-authored int coords with non-uniform spacing must not get a free pass.
 
-    Pre-#2133, ``_check_write_non_uniform_coords`` exempted any integer
-    dtype on the assumption that integer coords were the reader's
-    placeholder. A non-uniform int-coord grid would slip past the
-    validator and either reach the lower-level uniform-spacing check
-    in ``coords_to_transform`` (raising a different error class) or,
-    in some windowed paths, silently write a misrepresented transform.
-    Post-#2133 the validator raises ``NonUniformCoordsError`` directly
-    because the marker is absent.
+    Exempting any integer dtype on the assumption that integer coords are
+    the reader's placeholder is wrong: a non-uniform int-coord grid would
+    slip past the validator and either reach the lower-level
+    uniform-spacing check in ``coords_to_transform`` (raising a different
+    error class) or, in some windowed paths, silently write a
+    misrepresented transform. With the marker absent, the validator raises
+    ``NonUniformCoordsError`` directly.
     """
     da = xr.DataArray(
         np.zeros((3, 3), dtype=np.float32),
@@ -1048,8 +1027,7 @@ def test_uniform_int_coords_still_write(tmp_path):
     """A uniform int-coord grid without the marker writes a real transform.
 
     Regression guard: making the validator stricter must not break the
-    common case of user-authored int-coord projected grids
-    (the #2087 / #2120 fix).
+    common case of user-authored int-coord projected grids.
     """
     da = xr.DataArray(
         np.zeros((3, 3), dtype=np.float32),
@@ -1171,8 +1149,7 @@ def test_3d_no_georef_round_trip(tmp_path):
 
 
 # ===========================================================================
-# int64 step-1 user grids keep their georef on round trip (#2120).
-# Originally test_no_georef_marker_2120.py.
+# int64 step-1 user grids keep their georef on round trip.
 # ===========================================================================
 
 
@@ -1266,8 +1243,7 @@ def test_marker_on_user_grid_skips_transform_synthesis(tmp_path):
 
 
 # ===========================================================================
-# Windowed reads emit the same integer pixel coords as full reads (#1710).
-# Originally test_no_georef_windowed_coords_1710.py.
+# Windowed reads emit the same integer pixel coords as full reads.
 # ===========================================================================
 
 
@@ -1356,9 +1332,9 @@ class TestGpuWindowedCoords:
 
     def test_offset_window_integer_coords(self, no_georef_path_1710):
         """GPU windowed read at a non-zero origin: the stripped-GPU
-        fallback in ``read_geotiff_gpu`` checked ``t is None`` instead
-        of ``has_georef`` (issue #1753 / regression of #1710), so a
-        non-georef TIFF emitted ``[-0.5, -1.5, ...]`` via the unit
+        fallback in ``read_geotiff_gpu`` must check ``has_georef`` rather
+        than ``t is None``; otherwise a non-georef TIFF emits
+        ``[-0.5, -1.5, ...]`` via the unit
         ``GeoTransform`` placeholder. Pin the contract that the offset
         window produces file-relative integer coords identical to the
         eager numpy path.
@@ -1453,8 +1429,7 @@ class TestGeorefStillWorks:
 
 
 # ===========================================================================
-# _transform_from_attr rejects rotated / sheared 6-tuples (#1764).
-# Originally test_rotated_transform_attr_1764.py.
+# _transform_from_attr rejects rotated / sheared 6-tuples.
 # ===========================================================================
 
 
@@ -1562,8 +1537,7 @@ class TestToGeotiffRejectsRotated:
 
 
 # ===========================================================================
-# allow_rotated=True surfaces attrs['rotated_affine'] (#2129).
-# Originally test_rotated_affine_attr_2129.py.
+# allow_rotated=True surfaces attrs['rotated_affine'].
 # ===========================================================================
 
 _ROTATED_TUPLE_2129 = (8.66, -5.0, 100.0, 5.0, 8.66, 200.0)
@@ -1590,7 +1564,7 @@ def test_rotated_optin_emits_rotated_affine_tuple():
     _populate_attrs_from_geo_info(attrs, gi)
 
     assert attrs.get('rotated_affine') == _ROTATED_TUPLE_2129
-    # Sanity: rotated path still drops crs / transform (existing #2126
+    # Sanity: rotated path still drops crs / transform (existing
     # contract). Re-checked here so a regression to either branch
     # surfaces in the same test file as the new attr.
     assert 'crs' not in attrs
@@ -1649,9 +1623,9 @@ def test_rotated_affine_is_tuple_not_list():
 def test_attrs_to_metadata_drops_rotated_affine():
     """The write-side boundary parser intentionally does not carry the
     rotated 6-tuple forward; the writer would otherwise need a
-    ``ModelTransformationTag`` emit path (#2115). Keeping it off the
-    record ensures ``to_geotiff`` keeps writing a plain no-georef file
-    until that follow-up lands."""
+    ``ModelTransformationTag`` emit path. Keeping it off the record
+    ensures ``to_geotiff`` keeps writing a plain no-georef file until
+    that follow-up lands."""
     attrs = {
         'rotated_affine': _ROTATED_TUPLE_2129,
         '_xrspatial_no_georef': True,
@@ -1708,7 +1682,7 @@ def test_open_geotiff_rotated_emits_rotated_affine(tmp_path):
     expected = (m[0], m[1], m[3], m[4], m[5], m[7])
     assert da.attrs.get('rotated_affine') == expected
     assert isinstance(da.attrs['rotated_affine'], tuple)
-    # CRS attrs stay dropped on this path (#2126).
+    # CRS attrs stay dropped on this path.
     assert 'crs' not in da.attrs
     assert 'transform' not in da.attrs
 
@@ -1784,7 +1758,7 @@ def test_open_geotiff_rotated_vrt_emits_rotated_affine(tmp_path):
 
     assert da.attrs.get('rotated_affine') == expected
     assert isinstance(da.attrs['rotated_affine'], tuple)
-    # Same drops as the non-VRT path (#2126).
+    # Same drops as the non-VRT path.
     assert 'crs' not in da.attrs
     assert 'transform' not in da.attrs
 
@@ -1844,8 +1818,7 @@ def test_open_geotiff_axis_aligned_omits_rotated_affine(tmp_path):
 
 
 # ===========================================================================
-# GeoTIFF and VRT rotated reads raise the same typed error (#2267).
-# Originally test_rotated_typed_error_2267.py.
+# GeoTIFF and VRT rotated reads raise the same typed error.
 # ===========================================================================
 
 _COS30 = 0.8660254037844387
@@ -1871,11 +1844,11 @@ def _make_rotated_ifd_2267() -> IFD:
 
 
 def _write_rotated_tiff_2267(path, arr: np.ndarray) -> None:
-    """Mirror the minimal rotated TIFF writer used in #2115's tests.
+    """Minimal rotated TIFF writer.
 
     Single-band, single-strip, uncompressed, with only a rotated
     ``ModelTransformationTag``. Self-contained so this test does not
-    depend on the #2115 fixture module surviving in its current shape.
+    depend on any external fixture module surviving in its current shape.
     """
     h, w = arr.shape
     arr = np.ascontiguousarray(arr.astype('<u2'))
@@ -1943,10 +1916,10 @@ def test_rotated_error_is_geotiff_ambiguous_subclass():
 def test_rotated_error_not_a_notimplemented_subclass():
     """Type-hierarchy invariant: ``RotatedTransformError`` must NOT be
     a subclass of ``NotImplementedError`` (which descends from
-    ``RuntimeError``). This is what makes the #2267 change a real
-    contract change: a caller using ``except NotImplementedError`` no
-    longer catches the rotated case, and that is the intended
-    breaking half of the fix. Pinning the relationship here makes any
+    ``RuntimeError``). This is a deliberate contract: a caller using
+    ``except NotImplementedError`` does not catch the rotated case, which
+    is the intended breaking behaviour. Pinning the relationship here
+    makes any
     accidental re-parenting of the typed-error hierarchy fail loudly
     instead of silently restoring the old contract.
     """
@@ -1997,8 +1970,7 @@ def test_open_geotiff_rotated_allow_rotated_still_reads(tmp_path):
 
 
 # ===========================================================================
-# write side: degenerate georeferenced writes preserve their transform (#1945).
-# Originally test_degenerate_georef_1945.py.
+# write side: degenerate georeferenced writes preserve their transform.
 # ===========================================================================
 
 _PIXEL_1945 = 1.0
@@ -2007,9 +1979,9 @@ _Y0_1945 = 45.0
 
 
 def _strip_1xN(raster_type: str = "area") -> xr.DataArray:
-    # The borrow-from-other-axis fallback (#1945) is now opt-in (#2214).
-    # These tests document the borrow path, so they set the opt-in flag.
-    # Round-trip semantics are unchanged once the flag is set.
+    # The borrow-from-other-axis fallback is opt-in. These tests document
+    # the borrow path, so they set the opt-in flag. Round-trip semantics
+    # are unchanged once the flag is set.
     attrs = {"crs": 4326, "assume_square_pixels_for_degenerate_axis": True}
     if raster_type == "point":
         attrs["raster_type"] = "point"
@@ -2243,7 +2215,7 @@ class TestCoordsToTransformBorrowSignPinning:
                 # y ascending: 38, 39, 40, ... so pixel_height = +1.0
                 "y": 38.0 + np.arange(8, dtype="float64") * _PIXEL_1945,
             },
-            # Opt in to the borrow-from-other-axis path (#2214).
+            # Opt in to the borrow-from-other-axis path.
             attrs={"assume_square_pixels_for_degenerate_axis": True},
         )
         t = coords_to_transform(da)
@@ -2275,15 +2247,14 @@ class TestCoordsToTransformBorrowSignPinning:
 
 
 # ===========================================================================
-# write side: no-georef files keep int coords across read -> write -> read
-# (#1949 / #2087). Originally test_no_georef_writer_round_trip_1949.py.
+# write side: no-georef files keep int coords across read -> write -> read.
 # ===========================================================================
 
 
 def test_coords_to_transform_returns_transform_for_int_y_float_x():
     """Mixed int / float coords are user-authored, not the read-side
     sentinel; the sentinel requires both axes to match. The transform
-    inference path runs and produces a real GeoTransform (#2087)."""
+    inference path runs and produces a real GeoTransform."""
     da = xr.DataArray(
         np.zeros((4, 5), dtype=np.float32),
         dims=['y', 'x'],
@@ -2319,8 +2290,7 @@ def test_coords_to_transform_returns_transform_for_non_int64_kinds(kind):
     """The tightened sentinel only matches ``int64``. int32 / int16 /
     uint32 are not the read-side placeholder (the reader explicitly
     uses ``np.int64``), so a user authoring an integer-coord grid in
-    those dtypes gets a real transform instead of silent georef loss
-    (#2087)."""
+    those dtypes gets a real transform instead of silent georef loss."""
     da = xr.DataArray(
         np.zeros((4, 5), dtype=np.float32),
         dims=['y', 'x'],
@@ -2354,12 +2324,11 @@ def test_coords_to_transform_float_coords_unchanged():
 def test_coords_to_transform_3d_yxband_with_marker_returns_none():
     """3D (y, x, band) carrying the no-georef marker short-circuits.
 
-    Pre-#2120 the helper short-circuited on coord shape alone (int64
-    step-1 on both spatial axes). After #2120 the marker
-    ``attrs[_NO_GEOREF_KEY] = True`` is the only signal; the same
-    coord shape without the marker now synthesises a real transform.
-    The helper picks the y/x dims (filtering out 'band'); the marker
-    check applies regardless of the band-axis layout.
+    The marker ``attrs[_NO_GEOREF_KEY] = True`` is the only no-georef
+    signal; the same coord shape without the marker synthesises a real
+    transform rather than short-circuiting on coord shape alone. The
+    helper picks the y/x dims (filtering out 'band'); the marker check
+    applies regardless of the band-axis layout.
     """
     da = xr.DataArray(
         np.zeros((4, 5, 3), dtype=np.float32),
@@ -2377,10 +2346,9 @@ def test_coords_to_transform_3d_yxband_with_marker_returns_none():
 def test_coords_to_transform_3d_yxband_without_marker_synthesises_transform():
     """3D (y, x, band) without the marker now writes a real transform.
 
-    Pre-#2120 this returned ``None`` because the shape-based check
-    treated the int64 step-1 coords as the no-georef placeholder. That
-    silently stripped georef from user-authored 3D arrays with
-    integer-aligned coords.
+    A shape-based check would treat the int64 step-1 coords as the
+    no-georef placeholder and return ``None``, silently stripping georef
+    from user-authored 3D arrays with integer-aligned coords.
     """
     da = xr.DataArray(
         np.zeros((4, 5, 3), dtype=np.float32),
@@ -2551,8 +2519,7 @@ def test_gpu_writer_preserves_int_coords(tmp_path):
 
 
 # ===========================================================================
-# write side: to_geotiff refuses to silently drop a rotated affine (#2216).
-# Originally test_to_geotiff_drop_rotation_2216.py.
+# write side: to_geotiff refuses to silently drop a rotated affine.
 # ===========================================================================
 
 _ROTATED_TUPLE_2216 = (8.66, -5.0, 100.0, 5.0, 8.66, 200.0)
@@ -2615,10 +2582,9 @@ def test_to_geotiff_rejects_rotated_affine_without_opt_in(tmp_path):
 
 
 def test_to_geotiff_error_message_points_at_issue(tmp_path):
-    """The rejection message references issue #2216 so a grep
-    ties back to this PR. The check is on the issue number, not on
-    surrounding phrasing, so the wording can evolve without breaking
-    the test."""
+    """The rejection message embeds the ``#2216`` issue reference. The
+    check is on that token, not on surrounding phrasing, so the wording
+    can evolve without breaking the test."""
     da = _rotated_dataarray_2216()
     out = tmp_path / "tmp_2216_issue_ref.tif"
 
@@ -2771,6 +2737,6 @@ def test_write_vrt_tiled_direct_call_rejects_rotated_affine(tmp_path):
 
     # The error names the function actually running the check, not the
     # public wrapper, so a direct caller of the private helper learns
-    # which entry point fired (review nit on #2216).
+    # which entry point fired.
     with pytest.raises(ValueError, match="_write_vrt_tiled"):
         _write_vrt_tiled(da, str(vrt_out))

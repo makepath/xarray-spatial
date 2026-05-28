@@ -1,6 +1,6 @@
-"""GPU (cupy) backend cells against the golden-corpus oracle (issue #1930).
+"""GPU (cupy) backend cells against the golden-corpus oracle.
 
-Phase 3 PR 3 of the corpus plan. Mirrors the eager and dask parity layers
+Mirrors the eager and dask parity layers
 but reads each fixture through ``open_geotiff(str(path), gpu=True)``,
 returning a CuPy-backed DataArray. The oracle's ``_candidate_pixels``
 pulls the CuPy array back to host via ``.get()`` before comparing, so
@@ -56,9 +56,9 @@ except Exception as exc:  # pragma: no cover - CI without CUDA
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 
 # Golden-corpus fixtures span every codec/tier, including the
-# experimental and internal-only ones gated by epic #2340 PR 4. Opting
-# in here lets the parity check exercise the full corpus; the per-codec
-# release-contract tests pin the rejection shape separately.
+# experimental and internal-only ones. Opting in here lets the parity
+# check exercise the full corpus; the per-codec release-contract tests
+# pin the rejection shape separately.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402

@@ -78,6 +78,18 @@ The contract covers:
 * Normal CRS, transform, dtype, nodata, band, and
   pixel-is-area / pixel-is-point behavior.
 
+What the stable COG contract does NOT cover is the overview pyramid
+customisation surface itself. The presence of an internal overview
+pyramid is part of the stable COG layout, but the
+``overview_levels`` and ``overview_resampling`` knobs on
+``to_geotiff`` (and the pyramid bytes the resampling kernels produce)
+are tracked as ``advanced`` under
+``SUPPORTED_FEATURES['writer.overviews']``. The two registry entries
+exist precisely so that the COG layout and the pyramid-generation
+knobs can promote independently; the ``to_geotiff`` docstring marks
+``cog=True`` as stable but flags ``overview_levels`` and
+``overview_resampling`` as advanced for the same reason.
+
 The promotion is backed by the writer compliance suite (#2292), the
 cross-backend parity gate (#2293), and the per-tile byte-budget contract
 (#2294 / #2298). These tests run on every CI build so a regression in

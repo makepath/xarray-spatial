@@ -1,10 +1,9 @@
 """Strip/tile decode orchestration for TIFF/COG reads.
 
-This module holds the transport-independent decode helpers extracted
-from :mod:`xrspatial.geotiff._reader` in PR-G of the GeoTIFF refactor
-epic (issue #2211, sub-issue #2246). The functions here take an already
-materialised byte slice plus an IFD and a header, and produce a numpy
-array. Everything that knows how to *fetch* those bytes (local mmap,
+This module holds the transport-independent decode helpers. The
+functions here take an already materialised byte slice plus an IFD and
+a header, and produce a numpy array. Everything that knows how to
+*fetch* those bytes (local mmap,
 HTTP, fsspec) stays in :mod:`xrspatial.geotiff._sources`; everything
 that orchestrates the top-level read flow (windowing, overview
 selection, DataArray packaging) stays in :mod:`xrspatial.geotiff._reader`.
@@ -19,7 +18,7 @@ This module deliberately has *no* module-level import of
 ``_reader.py`` imports the decode functions back at module load, and
 the layout helpers (``MAX_PIXELS_DEFAULT``, ``_check_dimensions``,
 ``_check_source_dimensions``, ``_sparse_fill_value``, ``_has_sparse``)
-that PR-H moved into :mod:`._layout` are imported lazily inside
+in :mod:`._layout` are imported lazily inside
 ``_read_strips`` / ``_read_tiles`` at call time so that
 ``_layout._sparse_fill_value``'s own lazy import of
 ``_int_nodata_in_range`` from this module cannot turn into a
@@ -54,9 +53,9 @@ def _resolve_max_pixels(value):
     """Return ``MAX_PIXELS_DEFAULT`` when *value* is the unset sentinel.
 
     The lookup hits :mod:`._reader` rather than :mod:`._layout` so test
-    monkeypatches of ``_reader.MAX_PIXELS_DEFAULT`` keep taking effect
-    -- the layout extraction (issue #2247) introduced the alias on
-    ``_reader`` precisely so the long-standing patch contract survives.
+    monkeypatches of ``_reader.MAX_PIXELS_DEFAULT`` keep taking effect:
+    the layout module aliases its binding onto ``_reader`` precisely so
+    the long-standing patch contract survives.
     """
     if value is _MAX_PIXELS_UNSET:
         from ._reader import MAX_PIXELS_DEFAULT
@@ -66,7 +65,7 @@ def _resolve_max_pixels(value):
 
 #: Per-tile pixel count at and above which the local and HTTP tile-read paths
 #: spread codec decode across a ``ThreadPoolExecutor``. Below this, pool
-#: startup costs outweigh the parallelism win (issue #1551). Bound is inclusive
+#: startup costs outweigh the parallelism win. Bound is inclusive
 #: so the default ``tile_size=256`` (256*256 == 64*1024) lands on the parallel
 #: path. Used by both ``_read_tiles`` and ``_fetch_decode_cog_http_tiles``.
 _PARALLEL_DECODE_PIXEL_THRESHOLD = 64 * 1024
@@ -153,7 +152,7 @@ def _resolve_masked_fill(nodata_str: str | None, dtype: np.dtype):
     if nodata_str is not None:
         # Try ``int`` first so 64-bit sentinels survive without the
         # float64 round-trip; fall back to ``float`` for NaN / Inf /
-        # scientific notation / fractional values.  See issue #1847.
+        # scientific notation / fractional values.
         from ._geotags import _parse_nodata_str as _parse_nd
         parsed = _parse_nd(nodata_str)
         if parsed is not None:
@@ -215,7 +214,7 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         # below, instead of leaking LERC's zero fill into the output.
         # Forward ``expected`` so the wrapper rejects bombs at the
         # blob-header level rather than after the full buffer is
-        # materialised (issue #1625).
+        # materialised.
         decoded_bytes, lerc_mask = lerc_decompress_with_mask(
             data_slice, expected_size=expected)
         chunk = np.frombuffer(decoded_bytes, dtype=np.uint8)
@@ -253,7 +252,7 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         # The view dtype must match the on-disk sample width: float16
         # files (bps=16 + SampleFormat=3) are auto-promoted to float32
         # for the user-visible array, but the raw bytes have to be
-        # viewed as float16 first then cast (#1941). Detect the
+        # viewed as float16 first then cast. Detect the
         # promotion via the bps-vs-dtype.itemsize mismatch so the
         # surrounding pipeline stays unchanged for byte-equal cases.
         if dtype.itemsize * 8 != bps and bps == 16 and dtype.kind == 'f':
@@ -313,18 +312,18 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     -------
     np.ndarray with shape (height, width) or windowed subset.
     """
-    # Layout / validation helpers live in ``_layout`` (issue #2247).
-    # Imported lazily so the decode module stays cycle-free against the
-    # layout module's lazy import of ``_int_nodata_in_range`` from here.
+    # Layout / validation helpers live in ``_layout``. Imported lazily
+    # so the decode module stays cycle-free against the layout module's
+    # lazy import of ``_int_nodata_in_range`` from here.
     from ._layout import (_check_dimensions, _check_source_dimensions, _has_sparse,
                           _sparse_fill_value)
     max_pixels = _resolve_max_pixels(max_pixels)
     width = ifd.width
     height = ifd.height
     samples = ifd.samples_per_pixel
-    # Source-IFD dim check (issue #2053). The tiled path is already
-    # covered by ``validate_tile_layout``; this is its stripped-path
-    # parity. Run before any window clamping so a malformed
+    # Source-IFD dim check. The tiled path is already covered by
+    # ``validate_tile_layout``; this is its stripped-path parity. Run
+    # before any window clamping so a malformed
     # ``ImageWidth=0`` IFD fails at the source rather than collapsing
     # to an empty post-clamp window.
     _check_source_dimensions(width, height, samples)
@@ -344,7 +343,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
 
-    # Per-strip compressed-byte cap (issue #1664). Mirrors the HTTP path:
+    # Per-strip compressed-byte cap. Mirrors the HTTP path:
     # a crafted ``StripByteCounts`` can declare a huge value and even
     # though mmap slicing on the local path is bounded by the file size,
     # the slice is still passed into the decompressor which can expand
@@ -433,7 +432,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     # codec decode (deflate, zstd, LZW) releases the GIL inside the C
     # extension so threads actually overlap codec work across cores. The
     # placement loop that copies pixels into ``result`` stays serial to
-    # avoid contending writes to the output buffer. See issue #2100.
+    # avoid contending writes to the output buffer.
     strip_jobs: list[tuple[int, int, int]] = []  # (band_idx, strip_idx, global_idx)
     if planar == 2 and samples > 1:
         first_strip = r0 // rps
@@ -484,7 +483,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
         # Function-local import (rather than the module-level binding)
         # so tests that monkey-patch ``concurrent.futures.ThreadPoolExecutor``
         # see the spy class here. The tile path uses the same pattern;
-        # both gates share ``_PARALLEL_DECODE_PIXEL_THRESHOLD`` (#1551).
+        # both gates share ``_PARALLEL_DECODE_PIXEL_THRESHOLD``.
         from concurrent.futures import ThreadPoolExecutor
         n_workers = min(n_strips, _os_module.cpu_count() or 4)
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -573,12 +572,11 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # TIFF header against malformed values; it is not the caller's output
     # budget. The output-window check below uses ``max_pixels`` and is
     # what enforces the user's per-call memory cap. The source-read path
-    # under ``read_vrt`` (#1796) relies on that output check to honour a
-    # small caller ``max_pixels`` against a normal-tile source; see
-    # #1823.
+    # under ``read_vrt`` relies on that output check to honour a small
+    # caller ``max_pixels`` against a normal-tile source.
     _check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)
 
-    # Per-tile compressed-byte cap (issue #1664). Same env var as the
+    # Per-tile compressed-byte cap. Same env var as the
     # HTTP path. mmap slicing is bounded by the file size, but the slice
     # gets handed to the decompressor, and a small slice can balloon
     # into gigabytes through deflate / zstd / lzw / lerc.
@@ -614,7 +612,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
 
     # Reject malformed TIFFs whose declared tile grid exceeds the number of
     # supplied TileOffsets entries. Silent skipping in the CPU loop below
-    # would mask the problem, and the GPU path reads OOB. See issue #1219.
+    # would mask the problem, and the GPU path reads OOB.
     validate_tile_layout(ifd)
 
     # Sparse tiles (TileByteCounts == 0) must materialise as nodata or 0
@@ -663,8 +661,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # Decode tiles in parallel when the work per tile is large enough to
     # outweigh the thread-pool overhead. Uncompressed multi-tile reads also
     # benefit because numpy frombuffer + slice copies aren't free at large
-    # tile sizes. Threshold is shared with the HTTP COG path below
-    # (issue #1551).
+    # tile sizes. Threshold is shared with the HTTP COG path below.
     n_tiles = len(tile_jobs)
     tile_pixels = tw * th
     use_parallel = (n_tiles > 1 and tile_pixels >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
@@ -682,7 +679,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     if use_parallel:
         # Function-local import (rather than the module-level binding)
         # so tests that monkey-patch ``concurrent.futures.ThreadPoolExecutor``
-        # see the spy class here. Issue #1551.
+        # see the spy class here.
         from concurrent.futures import ThreadPoolExecutor
         n_workers = min(n_tiles, _os_module.cpu_count() or 4)
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -789,8 +786,7 @@ def _apply_orientation_with_geo(
     """Apply Orientation tag to ``arr`` and update ``geo_info`` to match.
 
     Shared helper used by the local-file and HTTP COG paths so both
-    return the same pixel order and transform for a given file. See
-    issue #1717 for the HTTP-path parity break this consolidates.
+    return the same pixel order and transform for a given file.
     """
     if orientation == 1:
         return arr, geo_info
@@ -849,7 +845,7 @@ def _apply_orientation_with_geo(
 def _apply_photometric_miniswhite(arr: np.ndarray, ifd: IFD) -> np.ndarray:
     """Apply TIFF MinIsWhite inversion for single-band grayscale images.
 
-    Signed-integer single-band MinIsWhite is rejected (issue #2278). The
+    Signed-integer single-band MinIsWhite is rejected. The
     reader used to pass these through unchanged, which round-tripped
     inside xrspatial but produced files whose pixel values disagreed
     with the on-disk Photometric tag against every other TIFF consumer
@@ -887,7 +883,7 @@ def _miniswhite_inverted_nodata(nodata, ifd: IFD, dtype: np.dtype):
     inverted sentinel rather than the original, otherwise they flag the
     wrong pixels: inverted real data colliding with the original
     sentinel value is incorrectly masked while the real nodata cells
-    keep their inverted-sentinel value (issue #1809).
+    keep their inverted-sentinel value.
 
     Returns the inverted nodata sentinel, or the original ``nodata``
     when MinIsWhite was not applied / not applicable.  Non-finite or

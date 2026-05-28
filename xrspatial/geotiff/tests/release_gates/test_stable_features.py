@@ -16,26 +16,20 @@ Tests are grouped by feature area:
 * ``COG``              (``writer.cog`` / ``reader.local_cog``, stable)
 * ``Windowed read``    (``reader.windowed``, stable)
 * ``Dask parity``      (``reader.dask``, stable)
-* ``Eager / dask full parity`` (epic #2341, four corpus scenarios)
+* ``Eager / dask full parity`` (four corpus scenarios)
 * ``Attrs contract``   (canonical attrs round-trip, stable)
-* ``Codec round-trip`` (cartesian stable codec x dtype, epic #2341)
+* ``Codec round-trip`` (cartesian stable codec x dtype)
 * ``Overview / sidecar metadata`` (overview level attrs survive)
-* ``Windowed reads -- shifted-transform parity`` (epic #2341)
+* ``Windowed reads -- shifted-transform parity``
 * ``Negative cases``   (ambiguous metadata fails closed)
-* ``Cross-cutting meta-gates`` (#2321 -- checklist parity)
+* ``Cross-cutting meta-gates`` (checklist parity)
 
 Each section's helper functions are private to that section
 (``_<section>_<name>``) so the consolidation does not introduce
 cross-section coupling.
 
-History
-=======
-
-This file replaces the per-cluster ``test_release_gate_*.py`` files that
-used to live alongside it. Filenames carrying issue numbers
-(``_2321``, ``_2341``, ...) are gone -- the git log is the audit trail
-for which PR introduced each gate. The ``release_gate`` marker is the
-single signal a release engineer keys on:
+The ``release_gate`` marker is the single signal a release engineer
+keys on:
 
 .. code-block:: bash
 
@@ -44,6 +38,7 @@ single signal a release engineer keys on:
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import re
 import struct
@@ -868,7 +863,7 @@ def test_release_gate_dask_read_is_lazy(tmp_path) -> None:
 
 
 # =========================================================================== #
-# Section: Eager / dask full parity (epic #2341)                              #
+# Section: Eager / dask full parity                                           #
 # =========================================================================== #
 #
 # Pixels matching while ``attrs``, ``coords``, or ``dims`` silently
@@ -1180,7 +1175,7 @@ def test_release_gate_attrs_round_trip_preserves_crs_transform_nodata(
 
 
 # =========================================================================== #
-# Section: Codec round-trip (cartesian stable codec x dtype, epic #2341)      #
+# Section: Codec round-trip (cartesian stable codec x dtype)                  #
 # =========================================================================== #
 #
 # Cartesian product of every stable codec with every promised dtype,
@@ -1405,7 +1400,7 @@ def test_release_gate_codec_round_trip_stable_set_matches_supported_features() -
 
 
 # =========================================================================== #
-# Section: Overview / sidecar metadata survival (epic #2341)                  #
+# Section: Overview / sidecar metadata survival                              #
 # =========================================================================== #
 #
 # For an internal-overview COG and for a file whose overviews live in an
@@ -1757,7 +1752,7 @@ def test_release_gate_internal_vs_sidecar_metadata_agree(
 
 
 # =========================================================================== #
-# Section: Windowed reads -- shifted-transform parity (epic #2341)            #
+# Section: Windowed reads -- shifted-transform parity                        #
 # =========================================================================== #
 #
 # Windowed reads must return shapes matching the requested window,
@@ -2093,7 +2088,7 @@ def test_release_gate_windowed_read_canonical_attrs_unchanged(
 
 
 # =========================================================================== #
-# Section: Negative cases -- ambiguous metadata fails closed (epic #2341)     #
+# Section: Negative cases -- ambiguous metadata fails closed                 #
 # =========================================================================== #
 #
 # When metadata is ambiguous and the caller did NOT opt in via the
@@ -2407,9 +2402,9 @@ def test_release_gate_negative_rotated_gpu(
 def test_release_gate_negative_mixed_tier_vrt_children(tmp_path) -> None:
     """The reader must refuse mixed-tier VRT children when stable-only is asked.
 
-    Pinned by epic #2342 / issue #2443: when the caller asks for
-    stable-only sources via ``stable_only=True`` and the source is a
-    VRT, the read raises :class:`VRTStableSourcesOnlyError` (a
+    When the caller asks for stable-only sources via
+    ``stable_only=True`` and the source is a VRT, the read raises
+    :class:`VRTStableSourcesOnlyError` (a
     :class:`GeoTIFFAmbiguousMetadataError` subclass) before any pixel
     decode. The message must name either ``stable_only`` or
     ``allow_experimental_codecs`` and cite the release-contract docs
@@ -2434,7 +2429,7 @@ def test_release_gate_negative_mixed_tier_vrt_children(tmp_path) -> None:
 
 
 # =========================================================================== #
-# Section: Cross-cutting meta-gates (#2321)                                   #
+# Section: Cross-cutting meta-gates                                          #
 # =========================================================================== #
 #
 # Checklist-parity gates: every file cited in the release-gate checklist
@@ -2547,9 +2542,8 @@ def test_release_gate_http_ssrf_rejects_loopback() -> None:
 def test_release_gate_http_ssrf_rejects_loopback_uppercase_scheme() -> None:
     """Uppercase HTTP scheme must take the same SSRF path.
 
-    PR #2326 (sub-PR 5 of #2321) made the SSRF check case-insensitive,
-    so the xfail this test originally carried is gone: uppercase HTTP
-    now raises :class:`UnsafeURLError` like its lowercase sibling.
+    The SSRF check is case-insensitive, so uppercase HTTP raises
+    :class:`UnsafeURLError` like its lowercase sibling.
     """
     with pytest.raises(UnsafeURLError):
         open_geotiff("HTTP://127.0.0.1/does-not-matter.tif")
@@ -2588,3 +2582,138 @@ def test_release_gate_vrt_rows_point_at_real_test_functions() -> None:
         "file was emptied or the row should be removed: "
         f"{empty}"
     )
+
+
+# =========================================================================== #
+# Section: COG stability contract parity (issue #2513)                        #
+# =========================================================================== #
+#
+# Three surfaces have to agree on whether COG writes are stable:
+#
+# 1. The runtime tier registry ``SUPPORTED_FEATURES`` in ``_attrs.py``.
+# 2. The release contract / reference docs in ``docs/source/reference/``.
+# 3. The ``to_geotiff`` docstring's release-contract tier block and the
+#    per-parameter ``[tier]`` marker on ``cog``.
+#
+# Issue #2513 documented that surface (3) declared ``cog=True`` as
+# ``[advanced]`` while (1) and (2) said ``stable``. This gate locks the
+# resolution: ``writer.cog`` is the stable COG layout contract;
+# ``writer.overviews`` is the separately tracked advanced pyramid
+# customisation surface. If a future change demotes ``writer.cog`` or
+# re-introduces an ``[advanced]`` framing on the ``cog`` docstring, this
+# gate fails so the drift is caught before release.
+
+
+@pytest.mark.release_gate
+def test_release_gate_writer_cog_stays_stable() -> None:
+    """``SUPPORTED_FEATURES['writer.cog']`` is the stable COG layout entry."""
+    assert SUPPORTED_FEATURES.get("writer.cog") == "stable", (
+        "release gate: SUPPORTED_FEATURES['writer.cog'] is no longer "
+        "'stable'. The release contract and the to_geotiff docstring "
+        "promise stable COG writes; demoting the registry entry breaks "
+        "that contract. See issue #2513."
+    )
+
+
+@pytest.mark.release_gate
+def test_release_gate_writer_overviews_stays_advanced() -> None:
+    """``writer.overviews`` is the advanced sub-behaviour of COG writes.
+
+    Issue #2513: the stable COG layout (``writer.cog``) and the advanced
+    overview-customisation surface (``writer.overviews``) are tracked as
+    two separate registry entries so they can promote independently. If
+    overview customisation gets promoted, the docstring and contract
+    have to be updated together.
+    """
+    assert SUPPORTED_FEATURES.get("writer.overviews") == "advanced", (
+        "release gate: SUPPORTED_FEATURES['writer.overviews'] is no "
+        "longer 'advanced'. If overview customisation has been promoted "
+        "(or demoted), update the to_geotiff docstring's "
+        "[advanced]/[stable] markers on overview_levels and "
+        "overview_resampling and the matching rows in "
+        "docs/source/reference/geotiff_release_contract.md and "
+        "docs/source/reference/geotiff.rst together. See issue #2513."
+    )
+
+
+@pytest.mark.release_gate
+def test_release_gate_to_geotiff_docstring_marks_cog_stable() -> None:
+    """The ``to_geotiff`` docstring marks ``cog=True`` as ``[stable]``.
+
+    Tripwire for issue #2513: an earlier version of the docstring
+    described ``cog=True`` as ``[advanced]``, contradicting the registry
+    and the release contract. This assertion fails if the contradiction
+    creeps back in. The check is deliberately strict on the wording so
+    a copy-paste from another parameter cannot satisfy it accidentally.
+
+    ``inspect.getdoc`` normalises docstring indentation across every
+    supported Python (3.12 keeps the source-level indent on ``__doc__``;
+    3.13+ strips the common leading whitespace at compile time). The
+    regexes anchor at column 0 of the cleaned text so the assertion
+    matches on every supported version.
+    """
+    doc = inspect.getdoc(to_geotiff) or ""
+    # The function-level tier block must list cog=True under [stable].
+    # Match the bullet body across line wraps without taking a hard
+    # dependency on a single line layout.
+    stable_bullet_re = re.compile(
+        r"\*\s+\[stable\][^*]*?cog=True",
+        re.DOTALL,
+    )
+    assert stable_bullet_re.search(doc), (
+        "release gate: the to_geotiff docstring's [stable] tier bullet "
+        "no longer mentions ``cog=True``. The COG layout is stable per "
+        "SUPPORTED_FEATURES['writer.cog']; the docstring has to agree. "
+        "See issue #2513."
+    )
+
+    # The per-parameter marker on the ``cog`` parameter must be [stable].
+    # ``inspect.getdoc`` already removed the common indent, so the
+    # parameter line is at column 0 and the body is indented one level.
+    cog_param_re = re.compile(
+        r"^cog : bool\n    \[(?P<tier>[\w-]+)\]",
+        re.MULTILINE,
+    )
+    match = cog_param_re.search(doc)
+    assert match is not None, (
+        "release gate: cannot find the ``cog`` parameter docstring "
+        "block in to_geotiff. The tier-marker regex needs updating, or "
+        "the parameter was renamed."
+    )
+    assert match.group("tier") == "stable", (
+        "release gate: to_geotiff's ``cog`` parameter is marked "
+        f"[{match.group('tier')}] in its docstring. "
+        "SUPPORTED_FEATURES['writer.cog'] is stable, so the docstring "
+        "marker has to be [stable] too. See issue #2513."
+    )
+
+
+@pytest.mark.release_gate
+def test_release_gate_to_geotiff_docstring_marks_overview_knobs_advanced() -> None:
+    """``overview_levels`` and ``overview_resampling`` stay ``[advanced]``.
+
+    The pyramid-customisation surface is the advanced sub-behaviour of
+    COG writes (``SUPPORTED_FEATURES['writer.overviews'] == 'advanced'``).
+    If those knobs ever get promoted, this gate fails together with the
+    registry gate above so the change is forced through both surfaces.
+    Uses ``inspect.getdoc`` for the same cross-version reason as the
+    ``cog`` gate above.
+    """
+    doc = inspect.getdoc(to_geotiff) or ""
+    for param in ("overview_levels", "overview_resampling"):
+        param_re = re.compile(
+            rf"^{param} : [^\n]+\n    \[(?P<tier>[\w-]+)\]",
+            re.MULTILINE,
+        )
+        match = param_re.search(doc)
+        assert match is not None, (
+            f"release gate: cannot find the ``{param}`` parameter "
+            "docstring block in to_geotiff. The tier-marker regex "
+            "needs updating, or the parameter was renamed."
+        )
+        assert match.group("tier") == "advanced", (
+            f"release gate: to_geotiff's ``{param}`` parameter is "
+            f"marked [{match.group('tier')}] in its docstring. "
+            "SUPPORTED_FEATURES['writer.overviews'] is advanced, so the "
+            "docstring marker has to be [advanced] too. See issue #2513."
+        )

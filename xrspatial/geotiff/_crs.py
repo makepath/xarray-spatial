@@ -5,10 +5,6 @@
 machinery from ``_runtime``. They are called from ``to_geotiff``,
 ``write_geotiff_gpu``, and ``write_vrt`` to normalise the EPSG / WKT /
 PROJ kwarg they each accept.
-
-Extracted here in step 3 of issue #1813 so the still-inline writer
-entry points and the future ``_backends/`` / ``_writers/`` modules can
-import one canonical version.
 """
 from __future__ import annotations
 
@@ -23,8 +19,7 @@ from ._runtime import GeoTIFFFallbackWarning, _geotiff_strict_mode
 #: to land in ``GTCitationGeoKey`` even when pyproj is not available
 #: to validate it. Anything else (``"EPSG:4326"`` minus pyproj,
 #: ``"+proj=..."`` minus pyproj, free-form garbage) is rejected by
-#: :func:`_validate_crs_fallback` unless the caller opts in. See
-#: issue #1929.
+#: :func:`_validate_crs_fallback` unless the caller opts in.
 _WKT_ROOT_KEYWORDS = (
     'PROJCS', 'GEOGCS', 'PROJCRS', 'GEOGCRS',
     'COMPD_CS', 'COMPOUNDCRS', 'BOUNDCRS', 'LOCAL_CS', 'ENGCRS',
@@ -47,7 +42,7 @@ def _looks_like_wkt(s: str) -> bool:
 
 def _reject_non_representable_epsg(crs_int: int, crs_obj) -> None:
     """Refuse compound EPSG codes that the stable EPSG writer cannot
-    round-trip through rasterio / GDAL (#2418).
+    round-trip through rasterio / GDAL.
 
     The GeoTIFF writer's stable-path emits only two EPSG-carrying
     GeoKeys: ``GeographicTypeGeoKey`` (2048) and
@@ -65,8 +60,8 @@ def _reject_non_representable_epsg(crs_int: int, crs_obj) -> None:
     Reject the code at validation time so the failure surfaces at the
     write call instead of after the file is on disk. Callers who need
     to preserve the compound semantics can pass the full WKT (which
-    takes the user-defined / citation path -- see issue #1768) or
-    pass the horizontal sub-CRS code directly.
+    takes the user-defined / citation path) or pass the horizontal
+    sub-CRS code directly.
 
     pyproj exposes ``is_compound`` on every CRS object since 2.x;
     callers without pyproj never reach this function (the caller
@@ -91,7 +86,7 @@ def _reject_non_representable_epsg(crs_int: int, crs_obj) -> None:
 def _validate_crs_arg(crs) -> None:
     """Reject malformed ``crs=`` arguments before they reach the writer.
 
-    Closes two gaps in the writer entry points (issue #1971):
+    Closes two gaps in the writer entry points:
 
     * ``bool`` is an ``int`` subclass, so ``crs=True`` and ``crs=False``
       would otherwise slip through ``isinstance(crs, int)`` and write
@@ -166,7 +161,7 @@ def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
         from pyproj import CRS
         crs = CRS.from_user_input(wkt_or_proj)
         epsg = crs.to_epsg()
-        # Issue #2418: ``epsg`` is set when pyproj recognises the WKT,
+        # ``epsg`` is set when pyproj recognises the WKT,
         # but if the resolved CRS is compound (horizontal + vertical),
         # the integer-EPSG writer path cannot represent it -- the GeoKey
         # slots only carry 2D horizontal codes. Return None so the
@@ -193,7 +188,7 @@ def _validate_crs_fallback(
 ) -> None:
     """Refuse to land an unvalidatable string in ``GTCitationGeoKey``.
 
-    Issue #1929: when ``_wkt_to_epsg`` cannot resolve the caller's CRS
+    When ``_wkt_to_epsg`` cannot resolve the caller's CRS
     to an EPSG code, the writer stores the original string as
     ``wkt_fallback`` and emits it into ``GTCitationGeoKey``. If the
     string is a malformed PROJ / EPSG token (e.g. ``"EPSG:4326"`` on a
@@ -239,7 +234,7 @@ def _resolve_crs_to_wkt(crs) -> str | None:
     ``crs`` is ``None``) for forwarding to ``_vrt.write_vrt``, which only
     speaks WKT.
 
-    Used by ``write_vrt`` (see issue #1715) to close the parameter-naming
+    Used by ``write_vrt`` to close the parameter-naming
     drift versus the eager and GPU writer entry points.
 
     Parameters
