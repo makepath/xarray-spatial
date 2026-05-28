@@ -956,13 +956,17 @@ def _single_zone_crosstab_2d(
     sorted_zone_values = np.sort(zone_values)
     zone_cat_breaks = _strides(sorted_zone_values, unique_cats)
 
+    # cat_start must advance for every unique category, not only those
+    # in cat_ids. If we only advanced for selected categories, filtering
+    # out an earlier category would leave cat_start behind and inflate
+    # the next selected category's count. See issue #2560.
     cat_start = 0
 
     for j, cat in enumerate(unique_cats):
         if cat in cat_ids:
             count = zone_cat_breaks[j] - cat_start
             crosstab_dict[cat].append(count)
-            cat_start = zone_cat_breaks[j]
+        cat_start = zone_cat_breaks[j]
 
 
 def _single_zone_crosstab_3d(
