@@ -405,8 +405,8 @@ def test_crop_cupy_matches_numpy(crop_input):
     zones_np = xr.DataArray(crop_input, dims=['y', 'x'])
     zones_cp = xr.DataArray(cp.asarray(crop_input), dims=['y', 'x'])
 
-    out_np = crop(zones_np, zones_np, zones_ids=(1.0, 3.0))
-    out_cp = crop(zones_cp, zones_cp, zones_ids=(1.0, 3.0))
+    out_np = crop(zones_np, zones_np, zone_ids=(1.0, 3.0))
+    out_cp = crop(zones_cp, zones_cp, zone_ids=(1.0, 3.0))
 
     assert out_cp.shape == out_np.shape == (4, 3)
     np.testing.assert_array_equal(_to_numpy(out_cp), _to_numpy(out_np))
@@ -420,8 +420,8 @@ def test_crop_dask_numpy_matches_numpy(crop_input):
         da.from_array(crop_input, chunks=(3, 2)), dims=['y', 'x'],
     )
 
-    out_np = crop(zones_np, zones_np, zones_ids=(1.0, 3.0))
-    out_da = crop(zones_da, zones_da, zones_ids=(1.0, 3.0))
+    out_np = crop(zones_np, zones_np, zone_ids=(1.0, 3.0))
+    out_da = crop(zones_da, zones_da, zone_ids=(1.0, 3.0))
 
     assert out_da.shape == out_np.shape == (4, 3)
     np.testing.assert_array_equal(_to_numpy(out_da), _to_numpy(out_np))
@@ -443,8 +443,8 @@ def test_crop_dask_cupy_matches_numpy(crop_input):
         dims=['y', 'x'],
     )
 
-    out_np = crop(zones_np, zones_np, zones_ids=(1.0, 3.0))
-    out_dc = crop(zones_dc, values_dc, zones_ids=(1.0, 3.0))
+    out_np = crop(zones_np, zones_np, zone_ids=(1.0, 3.0))
+    out_dc = crop(zones_dc, values_dc, zone_ids=(1.0, 3.0))
 
     assert out_dc.shape == out_np.shape == (4, 3)
     np.testing.assert_array_equal(_to_numpy(out_dc), _to_numpy(out_np))
@@ -457,7 +457,7 @@ def test_crop_preserves_name_attribute(crop_input):
         dims=['y', 'x'],
         attrs={'res': (1.0, 1.0), 'crs': 'EPSG:4326'},
     )
-    out = crop(arr, arr, zones_ids=(1.0, 3.0))
+    out = crop(arr, arr, zone_ids=(1.0, 3.0))
     assert out.name == 'crop'
     # attrs propagated from input values
     assert out.attrs.get('res') == (1.0, 1.0)
@@ -547,7 +547,7 @@ def test_crop_single_pixel(backend):
         pytest.skip("Requires dask.array")
 
     arr = create_test_raster(np.array([[3.0]]), backend, chunks=(1, 1))
-    out = crop(arr, arr, zones_ids=(3.0,))
+    out = crop(arr, arr, zone_ids=(3.0,))
     assert out.shape == (1, 1)
     np.testing.assert_array_equal(_to_numpy(out), np.array([[3.0]]))
 
