@@ -67,6 +67,129 @@ def _listed_colormap_from_attrs(attrs):
     return ListedColormap(colors, name='tiff_palette')
 
 
+def _pick_representative_dataarray(ds, *, var=None):
+    """Return the DataArray used to drive backend / CRS lookup for
+    Dataset-level GeoTIFF accessor methods.
+
+    ``var`` -> ``ds[var]``. Otherwise the first 2D ``y``/``x`` variable.
+    """
+    if var is not None:
+        return ds[var]
+    for v in ds.data_vars:
+        d = ds[v]
+        if d.ndim >= 2 and 'y' in d.dims and 'x' in d.dims:
+            return d
+    raise ValueError(
+        "Dataset has no 2D variable with 'y' and 'x' dimensions to use "
+        "for backend inference. Pass var='<name>' to select one, or "
+        "call xrspatial.geotiff.open_geotiff(source, ...) directly."
+    )
+
+
+def _infer_caller_y_chunk(obj):
+    """First y-axis chunk size of a dask-backed DataArray, or None."""
+    try:
+        y_axis = obj.get_axis_num('y')
+    except (ValueError, KeyError):
+        return None
+    chunks_tuple = getattr(obj, 'chunks', None)
+    if not chunks_tuple:
+        return None
+    try:
+        y_chunks = chunks_tuple[y_axis]
+    except (IndexError, TypeError):
+        return None
+    if not y_chunks:
+        return None
+    return int(y_chunks[0])
+
+
+def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
+    """Shared implementation for ``.xrs.open_geotiff`` on DataArray and
+    Dataset.
+
+    ``obj`` is a DataArray that carries the bbox (``y``/``x`` coords),
+    the CRS (``attrs['crs']``), and the backend used to infer
+    ``gpu=`` / ``chunks=`` kwargs for the underlying read.
+    """
+    import numpy as np
+    from .geotiff import open_geotiff, _read_geo_info, _extent_to_window
+    from .utils import _classify_backend
+
+    if 'y' not in obj.coords or 'x' not in obj.coords:
+        raise ValueError(
+            "Caller must have 'y' and 'x' coordinates to compute a "
+            "spatial window"
+        )
+    y = np.asarray(obj.coords['y'].values)
+    x = np.asarray(obj.coords['x'].values)
+    y_min, y_max = float(y.min()), float(y.max())
+    x_min, x_max = float(x.min()), float(x.max())
+
+    geo_info, file_h, file_w, _dtype, _nbands = _read_geo_info(source)
+    t = geo_info.transform
+    file_crs = geo_info.crs_epsg
+    caller_crs = obj.attrs.get('crs')
+
+    crs_mismatch = (
+        caller_crs is not None
+        and file_crs is not None
+        and int(caller_crs) != int(file_crs)
+    )
+
+    if crs_mismatch and not auto_reproject:
+        raise ValueError(
+            f"CRS mismatch: caller has EPSG:{int(caller_crs)} but file "
+            f"has EPSG:{int(file_crs)}. Pass auto_reproject=True to "
+            f"project the caller bbox into the file CRS for the windowed "
+            f"read and reproject the result back to the caller CRS."
+        )
+
+    if crs_mismatch:
+        from pyproj import Transformer
+        transformer = Transformer.from_crs(
+            int(caller_crs), int(file_crs), always_xy=True
+        )
+        xs = (x_min, x_min, x_max, x_max)
+        ys = (y_min, y_max, y_min, y_max)
+        px, py = transformer.transform(xs, ys)
+        x_min = float(min(px))
+        x_max = float(max(px))
+        y_min = float(min(py))
+        y_max = float(max(py))
+
+    # Expand extent by half a pixel so we capture edge pixels
+    y_min -= abs(t.pixel_height) * 0.5
+    y_max += abs(t.pixel_height) * 0.5
+    x_min -= abs(t.pixel_width) * 0.5
+    x_max += abs(t.pixel_width) * 0.5
+
+    window = _extent_to_window(t, file_h, file_w,
+                               y_min, y_max, x_min, x_max)
+    kwargs.pop('window', None)
+
+    # Infer backend kwargs. Caller-supplied values always win.
+    backend = _classify_backend(obj)
+    if backend in ("cupy", "dask+cupy"):
+        kwargs.setdefault('gpu', True)
+    if backend in ("dask+numpy", "dask+cupy"):
+        inferred_chunk = _infer_caller_y_chunk(obj)
+        if inferred_chunk is not None:
+            kwargs.setdefault('chunks', inferred_chunk)
+
+    result = open_geotiff(source, window=window, **kwargs)
+
+    if crs_mismatch:
+        from .reproject import reproject
+        result = reproject(
+            result,
+            target_crs=int(caller_crs),
+            source_crs=int(file_crs),
+        )
+
+    return result
+
+
 @xr.register_dataarray_accessor("xrs")
 class XrsSpatialDataArrayAccessor:
     """DataArray accessor exposing xarray-spatial operations."""
@@ -602,6 +725,41 @@ class XrsSpatialDataArrayAccessor:
         from .geotiff import to_geotiff
         return to_geotiff(self._obj, path, **kwargs)
 
+    def open_geotiff(self, source, *, auto_reproject=False, **kwargs):
+        """Read a GeoTIFF windowed to this DataArray's spatial extent.
+
+        Uses ``self``'s ``y``/``x`` coordinates to compute a pixel window
+        and reads only that region from the file. The returned DataArray's
+        backend is matched to ``self``'s backend by inferring
+        ``gpu=`` / ``chunks=`` from ``self`` (caller-supplied ``gpu=`` /
+        ``chunks=`` override the inference).
+
+        Parameters
+        ----------
+        source : str
+            File path to the GeoTIFF.
+        auto_reproject : bool
+            If False (default) and ``self.attrs['crs']`` differs from
+            the file's CRS, raises ``ValueError``. If True, projects
+            ``self``'s bbox into the file CRS for the windowed read,
+            then reprojects the result back to ``self``'s CRS via
+            :func:`xrspatial.reproject.reproject` so the returned
+            DataArray lines up with ``self``.
+        **kwargs
+            Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
+            ``window=``, which is computed automatically).
+
+        Returns
+        -------
+        xr.DataArray
+            The windowed portion of the GeoTIFF, in ``self``'s CRS when
+            ``auto_reproject`` reprojection occurred and otherwise in the
+            file's native CRS.
+        """
+        return _open_geotiff_windowed(
+            self._obj, source, auto_reproject=auto_reproject, **kwargs
+        )
+
     # ---- Chunking ----
 
     def rechunk_no_shuffle(self, **kwargs):
@@ -1065,50 +1223,52 @@ class XrsSpatialDatasetAccessor:
             "Dataset has no variable with 'y' and 'x' dimensions to write"
         )
 
-    def open_geotiff(self, source, **kwargs):
+    def open_geotiff(self, source, *, auto_reproject=False, var=None, **kwargs):
         """Read a GeoTIFF windowed to this Dataset's spatial extent.
 
-        Uses the Dataset's y/x coordinates to compute a pixel window,
-        then reads only that region from the file.
+        Uses the Dataset's ``y``/``x`` coordinates to compute a pixel
+        window and reads only that region from the file. The returned
+        DataArray's backend is matched to the Dataset's first 2D
+        ``y``/``x`` data variable (or ``ds[var]`` if ``var`` is given)
+        by inferring ``gpu=`` / ``chunks=`` from that variable.
+        Caller-supplied ``gpu=`` / ``chunks=`` override the inference.
 
         Parameters
         ----------
         source : str
             File path to the GeoTIFF.
+        auto_reproject : bool
+            If False (default) and the Dataset's CRS differs from the
+            file's CRS, raises ``ValueError``. If True, projects the
+            Dataset's bbox into the file CRS for the windowed read and
+            reprojects the result back to the Dataset's CRS via
+            :func:`xrspatial.reproject.reproject`.
+        var : str or None
+            Data variable used for backend inference and CRS lookup. If
+            None, picks the first 2D variable with ``y``/``x`` dims.
         **kwargs
-            Passed to :func:`xrspatial.geotiff.open_geotiff` (except
-            ``window``, which is computed automatically).
+            Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
+            ``window=``, which is computed automatically).
 
         Returns
         -------
         xr.DataArray
             The windowed portion of the GeoTIFF.
         """
-        from .geotiff import open_geotiff, _read_geo_info, _extent_to_window
         ds = self._obj
         if 'y' not in ds.coords or 'x' not in ds.coords:
             raise ValueError(
                 "Dataset must have 'y' and 'x' coordinates to compute "
                 "a spatial window"
             )
-        y = ds.coords['y'].values
-        x = ds.coords['x'].values
-        y_min, y_max = float(y.min()), float(y.max())
-        x_min, x_max = float(x.min()), float(x.max())
-
-        geo_info, file_h, file_w, _dtype, _nbands = _read_geo_info(source)
-        t = geo_info.transform
-
-        # Expand extent by half a pixel so we capture edge pixels
-        y_min -= abs(t.pixel_height) * 0.5
-        y_max += abs(t.pixel_height) * 0.5
-        x_min -= abs(t.pixel_width) * 0.5
-        x_max += abs(t.pixel_width) * 0.5
-
-        window = _extent_to_window(t, file_h, file_w,
-                                   y_min, y_max, x_min, x_max)
-        kwargs.pop('window', None)
-        return open_geotiff(source, window=window, **kwargs)
+        rep = _pick_representative_dataarray(ds, var=var)
+        # Fall back to Dataset-level CRS when the variable lacks it
+        if 'crs' not in rep.attrs and 'crs' in ds.attrs:
+            rep = rep.copy()
+            rep.attrs = {**rep.attrs, 'crs': ds.attrs['crs']}
+        return _open_geotiff_windowed(
+            rep, source, auto_reproject=auto_reproject, **kwargs
+        )
 
     # ---- Chunking ----
 
