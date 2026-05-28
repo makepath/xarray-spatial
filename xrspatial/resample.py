@@ -1158,11 +1158,15 @@ def _resolve_nodata(agg, nodata):
     # dtype so the equality test in _apply_nodata_mask compares
     # integer-to-integer. A NaN sentinel can never match an integer
     # value, so signal a no-op mask by returning NaN unchanged.
-    try:
-        if isinstance(nodata, float) and np.isnan(nodata):
-            return float('nan')
-    except TypeError:
-        pass
+    if isinstance(nodata, float) and np.isnan(nodata):
+        return float('nan')
+    # Reject fractional float sentinels for integer inputs -- silently
+    # truncating to int would mask cells the caller never asked to mask.
+    if isinstance(nodata, float) and not nodata.is_integer():
+        raise ValueError(
+            f"nodata={nodata!r} is not representable in integer dtype "
+            f"{agg.dtype}; pass an integer sentinel instead."
+        )
     return np.asarray(nodata).astype(agg.dtype).item()
 
 

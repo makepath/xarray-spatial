@@ -1454,8 +1454,8 @@ class TestNodataIntegerPrecision:
         agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
         out = resample(agg, scale_factor=1.0, method='nearest',
                        nodata=sentinel)
-        # Valid cell survives -- this is the bug being regressed.
-        assert np.isfinite(out.values[1, 1])
+        # Valid cell survives AND keeps the right value (float32-quantized).
+        assert out.values[1, 1] == np.float32(valid)
         # Sentinel cells are NaN.
         assert np.isnan(out.values[0, 0])
 
@@ -1528,3 +1528,11 @@ class TestNodataIntegerPrecision:
         out = resample(agg, scale_factor=0.5, method='nearest', nodata=-1.0)
         assert np.isnan(out.values[0, 0])
         assert np.isfinite(out.values[1, 1])
+
+    def test_fractional_float_sentinel_on_int_input_raises(self):
+        # Silently truncating -9999.5 to -9999 on int input would mask
+        # cells the caller never asked to mask -- reject up front.
+        data = np.zeros((4, 4), dtype=np.int32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        with pytest.raises(ValueError, match="not representable"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=-9999.5)
