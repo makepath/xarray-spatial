@@ -437,6 +437,27 @@ def test_per_source_cap_inclusive_boundary():
         assert arr.shape == (100, 100)
 
 
+def test_per_source_cap_error_includes_gb_hint():
+    """Both the per-source resample-intermediate guard and the output
+    dimension guard now mention a GB allocation hint. Whichever fires
+    first for this VRT, the error string must include the hint so
+    callers see the byte cost without doing the multiplication."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        _dstrect_cap_write_source(td)
+        vrt_path = _dstrect_cap_write_vrt(
+            td,
+            dst_x_size=2000,
+            dst_y_size=2000,
+            raster_x=2000,
+            raster_y=2000,
+        )
+        with pytest.raises(ValueError) as exc:
+            _dstrect_cap_read_vrt_internal(vrt_path, max_pixels=1_000_000)
+        msg = str(exc.value)
+        assert 'GB at 4 bytes/pixel' in msg
+        assert 'pixels' in msg
+
+
 def test_negative_dstrect_rejected():
     """Negative ``xSize`` / ``ySize`` must surface as ``ValueError``
     rather than be silently skipped by the overlap check.  The error

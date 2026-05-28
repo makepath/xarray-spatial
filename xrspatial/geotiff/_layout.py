@@ -32,6 +32,18 @@ from ._sources import _max_tile_bytes_from_env
 #: Override per-call via the ``max_pixels`` keyword argument.
 MAX_PIXELS_DEFAULT = 1_000_000_000
 
+#: Bytes-per-pixel basis used for the GB hint in PixelSafetyLimitError.
+#: float32 matches the constant docstring above and the dtype the
+#: decoder produces for the common single-band float case. The hint is
+#: approximate; the actual decoded dtype may differ.
+_PIXEL_HINT_BYTES = 4
+
+
+def _gb_hint(pixels):
+    """Return a ``~X.XX GB at N bytes/pixel`` string for ``pixels``."""
+    gb = (pixels * _PIXEL_HINT_BYTES) / (1024 ** 3)
+    return f"~{gb:.2f} GB at {_PIXEL_HINT_BYTES} bytes/pixel"
+
 
 class PixelSafetyLimitError(ValueError):
     """Raised when a requested TIFF allocation exceeds max_pixels."""
@@ -43,9 +55,10 @@ def _check_dimensions(width, height, samples, max_pixels):
     if total > max_pixels:
         raise PixelSafetyLimitError(
             f"TIFF image dimensions ({width} x {height} x {samples} = "
-            f"{total:,} pixels) exceed the safety limit of "
-            f"{max_pixels:,} pixels.  Pass a larger max_pixels value to "
-            f"read_to_array() if this file is legitimate."
+            f"{total:,} pixels, {_gb_hint(total)}) exceed the safety "
+            f"limit of {max_pixels:,} pixels ({_gb_hint(max_pixels)}).  "
+            f"Pass a larger max_pixels value to read_to_array() if this "
+            f"file is legitimate."
         )
 
 

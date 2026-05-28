@@ -1533,13 +1533,16 @@ def read_vrt(vrt_path: str, *, window=None,
                 if (sub_dst_w > max_pixels
                         or sub_dst_h > max_pixels
                         or sub_dst_w * sub_dst_h > max_pixels):
+                    from ._layout import _gb_hint
+                    sub_total = sub_dst_w * sub_dst_h
                     raise ValueError(
                         f"VRT SimpleSource DstRect "
                         f"(xSize={dr.x_size}, ySize={dr.y_size}) requires "
                         f"a resample intermediate of "
-                        f"{sub_dst_w * sub_dst_h:,} pixels for the "
-                        f"requested window, which exceeds the safety "
-                        f"limit of {max_pixels:,} pixels. Pass a larger "
+                        f"{sub_total:,} pixels ({_gb_hint(sub_total)}) "
+                        f"for the requested window, which exceeds the "
+                        f"safety limit of {max_pixels:,} pixels "
+                        f"({_gb_hint(max_pixels)}). Pass a larger "
                         f"max_pixels= to read_vrt() if this file is "
                         f"legitimate."
                     )

@@ -51,6 +51,29 @@ class TestDimensionGuard:
         # Relaxed: passes with large limit
         _check_dimensions(100_000, 100_000, 1, max_pixels=100_000_000_000)
 
+    def test_error_message_includes_gb_estimate(self):
+        """Error message reports both pixels and a GB allocation hint."""
+        # 50000 x 50000 x 1 = 2.5e9 pixels = ~9.31 GB at 4 bytes/pixel
+        # MAX_PIXELS_DEFAULT = 1e9 pixels = ~3.73 GB at 4 bytes/pixel
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        # Pixel count still present (preserves existing assertions).
+        assert "2,500,000,000 pixels" in msg
+        assert "1,000,000,000 pixels" in msg
+        # GB hint added for both the requested and the limit allocations.
+        assert "~9.31 GB at 4 bytes/pixel" in msg
+        assert "~3.73 GB at 4 bytes/pixel" in msg
+
+    def test_gb_hint_helper_rounds_to_two_decimals(self):
+        """_gb_hint formats bytes/pixel * count as a ~X.XX GB string."""
+        from xrspatial.geotiff._layout import _gb_hint
+        # 1 GiB worth of pixels at 4 bytes each -> 4.00 GB hint.
+        pixels = (1024 ** 3)  # 1 GiB pixel count
+        assert _gb_hint(pixels) == "~4.00 GB at 4 bytes/pixel"
+        # Zero pixels still formats sensibly.
+        assert _gb_hint(0) == "~0.00 GB at 4 bytes/pixel"
+
     def test_read_strips_rejects_huge_header(self):
         """_read_strips refuses to allocate when header claims huge dims."""
         # Build a valid TIFF with small pixel data but huge header dimensions.
