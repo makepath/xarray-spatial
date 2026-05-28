@@ -153,10 +153,7 @@ class TestParityAllTouched:
         data = arr.data
         # Dask-backed: materialise first so the cupy chunks can be
         # transferred (avoids the implicit __array__ on cupy that
-        # numpy's asarray would trigger). The Skill instructions
-        # forbid .compute() inside performance-analysis scripts, but
-        # an explicit parity test that asserts pixel equality has no
-        # other way to read the result.
+        # numpy's asarray would trigger).
         if hasattr(data, "compute"):
             data = data.compute()
         if hasattr(data, "get"):
