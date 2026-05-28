@@ -581,18 +581,17 @@ def test_validate_rejects_model_projected_with_only_geographic_key():
     assert '4326' in msg
 
 
-def test_validate_rejects_both_type_keys_with_different_epsg():
-    """Both ProjectedCSTypeGeoKey and GeographicTypeGeoKey set to
-    different EPSG codes."""
-    with pytest.raises(InconsistentGeoKeysError) as excinfo:
-        validate_read_metadata({
-            'model_type': 1,
-            'projected_cs_type': 32633,
-            'geographic_type': 4326,
-        })
-    msg = str(excinfo.value)
-    assert '32633' in msg
-    assert '4326' in msg
+def test_validate_accepts_both_type_keys_with_different_epsg():
+    """Both ProjectedCSTypeGeoKey and GeographicTypeGeoKey populated with
+    different EPSG codes is the normal projected GeoTIFF shape (#2602):
+    the geographic key names the base geographic CRS and the projected
+    key the CRS the coordinates live in. The validator must not reject
+    it."""
+    validate_read_metadata({
+        'model_type': 1,
+        'projected_cs_type': 32633,
+        'geographic_type': 4326,
+    })
 
 
 def test_validate_passes_consistent_projected():
@@ -656,30 +655,6 @@ def test_validate_passes_when_model_type_undefined():
         'model_type': 0,
         'projected_cs_type': 4326,
         'geographic_type': None,
-    })
-
-
-def test_opt_out_short_circuits_each_case():
-    """``allow_inconsistent_geokeys=True`` keeps the legacy permissive
-    behaviour across all three rejection cases."""
-    # Case 2 (the issue's exact reproducer).
-    validate_read_metadata({
-        'model_type': 2,
-        'projected_cs_type': 4326,
-        'allow_inconsistent_geokeys': True,
-    })
-    # Case 1.
-    validate_read_metadata({
-        'model_type': 1,
-        'geographic_type': 4326,
-        'allow_inconsistent_geokeys': True,
-    })
-    # Case 3.
-    validate_read_metadata({
-        'model_type': 1,
-        'projected_cs_type': 32633,
-        'geographic_type': 4326,
-        'allow_inconsistent_geokeys': True,
     })
 
 
@@ -874,16 +849,22 @@ def test_open_geotiff_rejects_model_projected_with_only_geographic_key(tmp_path)
         open_geotiff(str(path))
 
 
-def test_open_geotiff_rejects_both_keys_with_different_epsg(tmp_path):
-    path = tmp_path / "tmp_2417_both_keys_disagree.tif"
+def test_open_geotiff_accepts_both_keys_with_different_epsg(tmp_path):
+    """A projected GeoTIFF that also carries its base geographic CRS
+    (e.g. UTM 32633 over WGS84 4326) must read, with the projected code
+    surfacing in ``attrs['crs']`` (#2602). Both keys populated with
+    different EPSG codes is the normal shape, not a contradiction."""
+    path = tmp_path / "tmp_2602_both_keys_projected_over_geographic.tif"
     _write_tiff_with_geokeys(
         str(path),
         model_type=1,
         projected_cs_type=32633,
         geographic_type=4326,
     )
-    with pytest.raises(InconsistentGeoKeysError):
-        open_geotiff(str(path))
+    da = open_geotiff(str(path))
+    assert da.shape == (4, 4)
+    # Projected code wins; the geographic key is the base geographic CRS.
+    assert da.attrs.get('crs') == 32633
 
 
 def test_open_geotiff_accepts_consistent_projected(tmp_path):
@@ -915,19 +896,3 @@ def test_open_geotiff_accepts_consistent_geographic(tmp_path):
     assert da.attrs.get('crs') == 4326
 
 
-def test_open_geotiff_opt_out_restores_legacy_behaviour(tmp_path):
-    """``allow_inconsistent_geokeys=True`` keeps the pre-#2417 silent
-    acceptance for callers with known-quirky historical files."""
-    path = tmp_path / "tmp_2417_opt_out.tif"
-    _write_tiff_with_geokeys(
-        str(path),
-        model_type=2,
-        projected_cs_type=4326,
-        geographic_type=None,
-    )
-    da = open_geotiff(str(path), allow_inconsistent_geokeys=True)
-    # The legacy reader takes ProjectedCSTypeGeoKey first, so the EPSG
-    # surfaces in attrs['crs'] verbatim. The bug is that the surface
-    # looks trustworthy; the opt-in is the documented way to keep that
-    # behaviour for callers who need the legacy contract.
-    assert da.attrs.get('crs') == 4326
