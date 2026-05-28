@@ -6,6 +6,14 @@
 
 #### Fixed
 
+- Reproject test suite now gates GPU tests on
+  `xrspatial.utils.has_cuda_and_cupy()` instead of an import-only
+  `try: import cupy` check. On hosts where `cupy` imports cleanly but
+  the CUDA driver is missing or too old, the GPU tests now skip with a
+  clear reason instead of erroring at allocation time with
+  `cudaErrorInsufficientDriver`. Affects `test_reproject.py` and
+  `test_reproject_coverage_2026_05_27.py`. (#2564)
+
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an
