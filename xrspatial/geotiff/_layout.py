@@ -32,33 +32,57 @@ from ._sources import _max_tile_bytes_from_env
 #: Override per-call via the ``max_pixels`` keyword argument.
 MAX_PIXELS_DEFAULT = 1_000_000_000
 
-#: Bytes-per-pixel basis used for the GB hint in PixelSafetyLimitError.
-#: float32 matches the constant docstring above and the dtype the
-#: decoder produces for the common single-band float case. The hint is
-#: approximate; the actual decoded dtype may differ.
-_PIXEL_HINT_BYTES = 4
+#: Fallback bytes-per-pixel used by ``_gb_hint`` when the caller has
+#: not resolved the decoded dtype yet. float32 matches the constant
+#: docstring above and the dtype the decoder produces for the common
+#: single-band float case. Real call sites pass the actual dtype so
+#: the GB hint reflects the allocation that would have happened.
+_DEFAULT_HINT_BYTES = 4
 
 
-def _gb_hint(pixels):
-    """Return a ``~X.XX GB at N bytes/pixel`` string for ``pixels``."""
-    gb = (pixels * _PIXEL_HINT_BYTES) / (1024 ** 3)
-    return f"~{gb:.2f} GB at {_PIXEL_HINT_BYTES} bytes/pixel"
+def _gb_hint(pixels, dtype=None):
+    """Return a ``~X.XX GB at N bytes/pixel`` string for ``pixels``.
+
+    ``dtype`` is the numpy dtype of the would-be allocation. When
+    provided, the hint uses ``dtype.itemsize`` so f64 reports 8
+    bytes/pixel, u8 reports 1, etc. When omitted, the hint falls
+    back to ``_DEFAULT_HINT_BYTES`` (float32) for older call sites
+    that have not threaded the dtype through yet.
+
+    Uses decimal GB (10**9 bytes) so the printed number matches the
+    ``~4 GB`` figure quoted in the :data:`MAX_PIXELS_DEFAULT`
+    docstring above and the convention reported by ``df`` / ``du`` /
+    most cloud object stores.
+    """
+    if dtype is None:
+        bpp = _DEFAULT_HINT_BYTES
+    else:
+        bpp = int(np.dtype(dtype).itemsize)
+    gb = (pixels * bpp) / 1_000_000_000
+    return f"~{gb:.2f} GB at {bpp} bytes/pixel"
 
 
 class PixelSafetyLimitError(ValueError):
     """Raised when a requested TIFF allocation exceeds max_pixels."""
 
 
-def _check_dimensions(width, height, samples, max_pixels):
-    """Raise PixelSafetyLimitError if the request exceeds *max_pixels*."""
+def _check_dimensions(width, height, samples, max_pixels, dtype=None):
+    """Raise PixelSafetyLimitError if the request exceeds *max_pixels*.
+
+    ``dtype`` is forwarded to :func:`_gb_hint` so the byte-allocation
+    estimate in the error message reflects the actual dtype that
+    would have been allocated. Optional for callers that do not have
+    the dtype resolved yet (the hint then falls back to float32).
+    """
     total = width * height * samples
     if total > max_pixels:
         raise PixelSafetyLimitError(
             f"TIFF image dimensions ({width} x {height} x {samples} = "
-            f"{total:,} pixels, {_gb_hint(total)}) exceed the safety "
-            f"limit of {max_pixels:,} pixels ({_gb_hint(max_pixels)}).  "
-            f"Pass a larger max_pixels value to read_to_array() if this "
-            f"file is legitimate."
+            f"{total:,} pixels, {_gb_hint(total, dtype)}) exceed the "
+            f"safety limit of {max_pixels:,} pixels "
+            f"({_gb_hint(max_pixels, dtype)}).  Pass a larger "
+            f"max_pixels value to read_to_array() if this file is "
+            f"legitimate."
         )
 
 

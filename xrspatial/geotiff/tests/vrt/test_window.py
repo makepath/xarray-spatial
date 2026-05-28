@@ -437,11 +437,22 @@ def test_per_source_cap_inclusive_boundary():
         assert arr.shape == (100, 100)
 
 
-def test_per_source_cap_error_includes_gb_hint():
-    """Both the per-source resample-intermediate guard and the output
-    dimension guard now mention a GB allocation hint. Whichever fires
-    first for this VRT, the error string must include the hint so
-    callers see the byte cost without doing the multiplication."""
+def test_per_source_cap_error_includes_gb_hint(monkeypatch):
+    """The per-source resample-intermediate guard reports the GB
+    allocation hint alongside the pixel count.
+
+    The output-dimension guard fires before the per-source guard at
+    the same ``max_pixels`` threshold, so to verify the per-source
+    error string in isolation we no-op the dimension guard for the
+    duration of the read. That keeps the test honest about which
+    branch's format string is being asserted.
+    """
+    # ``read_vrt`` imports ``_check_dimensions`` from ``_reader`` at
+    # call time, so patching the reader module's binding takes effect
+    # on the next call.
+    from xrspatial.geotiff import _reader as reader_mod
+    monkeypatch.setattr(reader_mod, '_check_dimensions',
+                        lambda *args, **kwargs: None)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _dstrect_cap_write_source(td)
         vrt_path = _dstrect_cap_write_vrt(
@@ -451,11 +462,13 @@ def test_per_source_cap_error_includes_gb_hint():
             raster_x=2000,
             raster_y=2000,
         )
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ValueError, match='resample intermediate') as exc:
             _dstrect_cap_read_vrt_internal(vrt_path, max_pixels=1_000_000)
         msg = str(exc.value)
-        assert 'GB at 4 bytes/pixel' in msg
-        assert 'pixels' in msg
+        # Sub-window is 2000x2000 = 4_000_000 pixels. The VRT band's
+        # dataType is "Byte" (uint8), so the GB hint uses 1 byte/pixel.
+        assert '4,000,000 pixels' in msg
+        assert 'GB at 1 bytes/pixel' in msg
 
 
 def test_negative_dstrect_rejected():

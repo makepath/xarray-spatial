@@ -383,7 +383,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     out_h = r1 - r0
     out_w = c1 - c0
 
-    _check_dimensions(out_w, out_h, samples, max_pixels)
+    _check_dimensions(out_w, out_h, samples, max_pixels, dtype=dtype)
 
     # StripByteCounts must have at least one entry per strip; a corrupt count
     # field can shrink it.  Detect the mismatch after the dimension safety
@@ -574,7 +574,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # what enforces the user's per-call memory cap. The source-read path
     # under ``read_vrt`` relies on that output check to honour a small
     # caller ``max_pixels`` against a normal-tile source.
-    _check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)
+    _check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT, dtype=dtype)
 
     # Per-tile compressed-byte cap. Same env var as the
     # HTTP path. mmap slicing is bounded by the file size, but the slice
@@ -608,7 +608,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     out_h = r1 - r0
     out_w = c1 - c0
 
-    _check_dimensions(out_w, out_h, samples, max_pixels)
+    _check_dimensions(out_w, out_h, samples, max_pixels, dtype=dtype)
 
     # Reject malformed TIFFs whose declared tile grid exceeds the number of
     # supplied TileOffsets entries. Silent skipping in the CPU loop below

@@ -52,9 +52,13 @@ class TestDimensionGuard:
         _check_dimensions(100_000, 100_000, 1, max_pixels=100_000_000_000)
 
     def test_error_message_includes_gb_estimate(self):
-        """Error message reports both pixels and a GB allocation hint."""
-        # 50000 x 50000 x 1 = 2.5e9 pixels = ~9.31 GB at 4 bytes/pixel
-        # MAX_PIXELS_DEFAULT = 1e9 pixels = ~3.73 GB at 4 bytes/pixel
+        """Error message reports both pixels and a GB allocation hint.
+
+        With no dtype passed the hint falls back to float32
+        (4 bytes/pixel). Real call sites pass the actual dtype.
+        """
+        # 50000 x 50000 x 1 = 2.5e9 pixels = 10.00 GB at 4 bytes/pixel
+        # MAX_PIXELS_DEFAULT = 1e9 pixels = 4.00 GB at 4 bytes/pixel
         with pytest.raises(ValueError) as exc:
             _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
         msg = str(exc.value)
@@ -62,17 +66,43 @@ class TestDimensionGuard:
         assert "2,500,000,000 pixels" in msg
         assert "1,000,000,000 pixels" in msg
         # GB hint added for both the requested and the limit allocations.
-        assert "~9.31 GB at 4 bytes/pixel" in msg
-        assert "~3.73 GB at 4 bytes/pixel" in msg
+        # Uses decimal GB (10**9 bytes) to match the docstring convention.
+        assert "~10.00 GB at 4 bytes/pixel" in msg
+        assert "~4.00 GB at 4 bytes/pixel" in msg
+
+    def test_error_message_uses_passed_dtype_for_gb_hint(self):
+        """When the caller passes the decoded dtype, the GB hint reports
+        the exact byte width: f64 → 8 bytes/pixel (double the float32
+        default), u8 → 1 byte/pixel (a quarter)."""
+        # float64: 1e9 pixels * 8 bytes = 8.00 GB
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT,
+                              dtype=np.float64)
+        assert "20.00 GB at 8 bytes/pixel" in str(exc.value)
+        assert "8.00 GB at 8 bytes/pixel" in str(exc.value)
+
+        # uint8: 1e9 pixels * 1 byte = 1.00 GB
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT,
+                              dtype=np.uint8)
+        assert "2.50 GB at 1 bytes/pixel" in str(exc.value)
+        assert "1.00 GB at 1 bytes/pixel" in str(exc.value)
 
     def test_gb_hint_helper_rounds_to_two_decimals(self):
         """_gb_hint formats bytes/pixel * count as a ~X.XX GB string."""
         from xrspatial.geotiff._layout import _gb_hint
-        # 1 GiB worth of pixels at 4 bytes each -> 4.00 GB hint.
-        pixels = (1024 ** 3)  # 1 GiB pixel count
-        assert _gb_hint(pixels) == "~4.00 GB at 4 bytes/pixel"
+        # No dtype: 1 billion pixels * 4 bytes (float32 default) ->
+        # 4.00 GB hint, matching MAX_PIXELS_DEFAULT's docstring.
+        assert _gb_hint(1_000_000_000) == "~4.00 GB at 4 bytes/pixel"
         # Zero pixels still formats sensibly.
         assert _gb_hint(0) == "~0.00 GB at 4 bytes/pixel"
+        # With dtype: itemsize drives the byte multiplier.
+        assert _gb_hint(1_000_000_000, dtype=np.float64) == \
+            "~8.00 GB at 8 bytes/pixel"
+        assert _gb_hint(1_000_000_000, dtype=np.uint8) == \
+            "~1.00 GB at 1 bytes/pixel"
+        assert _gb_hint(1_000_000_000, dtype=np.int16) == \
+            "~2.00 GB at 2 bytes/pixel"
 
     def test_read_strips_rejects_huge_header(self):
         """_read_strips refuses to allocate when header claims huge dims."""
