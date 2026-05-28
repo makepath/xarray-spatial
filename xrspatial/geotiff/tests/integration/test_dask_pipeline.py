@@ -1260,9 +1260,16 @@ class TestOpenGeotiffCRSMismatch_2557:
         # from int(wkt_string)
         with pytest.raises(ValueError, match="CRS mismatch"):
             template.xrs.open_geotiff(path)
-        # And auto_reproject path also works
+        # And auto_reproject path also works. reproject preserves the
+        # file's native pixel resolution, so the result shape reflects
+        # the windowed slice of the file rather than the caller's
+        # template shape -- the (20x20-pixel, 1deg-extent) file at a
+        # ~0.5deg caller bbox gives ~10 pixels per side plus boundary
+        # rounding. Bound generously.
         result = template.xrs.open_geotiff(path, auto_reproject=True)
-        assert result.shape == (4, 4) or result.shape[0] >= 4
+        assert result.ndim == 2
+        assert 4 <= result.shape[0] <= 20
+        assert 4 <= result.shape[1] <= 20
 
     def test_no_caller_crs_no_mismatch_check(self, tmp_path):
         # Caller without attrs['crs'] should skip mismatch logic and
@@ -1298,6 +1305,23 @@ class TestOpenGeotiffCRSMismatch_2557:
         ds = xr.Dataset({'elevation': var}, attrs={'crs': 3857})
         with pytest.raises(ValueError, match="CRS mismatch"):
             ds.xrs.open_geotiff(path)
+
+    def test_malformed_crs_raises(self, tmp_path):
+        # A garbage attrs['crs'] must raise rather than silently skip
+        # the mismatch check (follow-up review hardening).
+        big = _make_da_accessor_io(height=10, width=10, crs=4326)
+        path = str(tmp_path / 'test_2557_bad_crs.tif')
+        to_geotiff(big, path, compression='none')
+
+        template = xr.DataArray(
+            np.zeros((4, 4), dtype=np.float32),
+            dims=['y', 'x'],
+            coords={'y': big.coords['y'].values[:4],
+                    'x': big.coords['x'].values[:4]},
+            attrs={'crs': 'not-a-real-crs'},
+        )
+        with pytest.raises(ValueError, match="not a valid CRS"):
+            template.xrs.open_geotiff(path)
 
 
 # ---------------------------------------------------------------------------

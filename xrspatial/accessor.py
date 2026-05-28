@@ -106,16 +106,23 @@ def _infer_caller_y_chunk(obj):
 
 def _to_pyproj_crs(crs):
     """Normalize a CRS value (int EPSG, ``"EPSG:xxxx"``, WKT, PROJ
-    string, or ``pyproj.CRS``) into a ``pyproj.CRS`` instance, or
-    ``None`` when the value is missing or unparseable.
+    string, or ``pyproj.CRS``) into a ``pyproj.CRS`` instance.
+
+    Returns ``None`` only when ``crs`` is itself ``None`` (the
+    backward-compatible "no CRS to compare" path). A malformed but
+    present value raises ``ValueError`` so the caller sees the typo
+    instead of having the mismatch safety net silently disabled.
     """
     if crs is None:
         return None
+    from pyproj import CRS as _PyprojCRS
+    from pyproj.exceptions import CRSError
     try:
-        from pyproj import CRS as _PyprojCRS
         return _PyprojCRS(crs)
-    except Exception:
-        return None
+    except CRSError as e:
+        raise ValueError(
+            f"attrs['crs']={crs!r} is not a valid CRS: {e}"
+        ) from e
 
 
 def _bbox_edge_samples(x_min, y_min, x_max, y_max, n_per_side=20):
@@ -199,6 +206,9 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
         transformer = Transformer.from_crs(
             caller_crs, file_crs, always_xy=True
         )
+        # 20 samples per side is enough to keep the projected envelope
+        # within sub-pixel of the true bbox at any realistic latitude
+        # without making the transform call noticeably slower.
         xs, ys = _bbox_edge_samples(x_min, y_min, x_max, y_max)
         px, py = transformer.transform(xs, ys)
         x_min = float(px.min())
