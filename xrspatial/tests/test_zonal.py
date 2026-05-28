@@ -1901,6 +1901,95 @@ def test_crop_missing_zone_ids_raises():
 
 
 # ---------------------------------------------------------------------------
+# Regression tests for #2561: crop() must return the same shape across all
+# backends when the requested zone_ids are absent (previously the dask path
+# returned the full input raster while numpy/cupy returned an empty (0, 0)).
+# ---------------------------------------------------------------------------
+
+_CROP_ARR_2561 = np.array([[0, 4, 0, 3],
+                           [0, 4, 4, 3],
+                           [0, 1, 1, 3],
+                           [0, 1, 1, 3],
+                           [0, 0, 0, 0]], dtype=np.int64)
+
+
+def _crop_backends_2561():
+    backends = ['numpy']
+    if has_dask_array():
+        backends.append('dask+numpy')
+    if has_cuda_and_cupy():
+        backends.append('cupy')
+        if has_dask_array():
+            backends.append('dask+cupy')
+    return backends
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_absent_zone_ids_returns_empty_2561(backend):
+    """All backends must return shape (0, 0) when no requested zone exists."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # zone_id 99 is not present anywhere in the raster.
+    result = crop(zones, values, zone_ids=(99,))
+
+    # Output array type must match input type.
+    assert isinstance(result.data, type(zones.data))
+    assert result.shape == (0, 0)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_partial_zone_ids_2561(backend):
+    """Mix of present and absent zone_ids crops to the present ones only."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # Only zone_id 1 is actually present here. 77 and 88 are absent.
+    result_partial = crop(zones, values, zone_ids=(77, 1, 88))
+    result_present_only = crop(zones, values, zone_ids=(1,))
+
+    assert result_partial.shape == result_present_only.shape
+
+    if backend.startswith('dask'):
+        partial_np = result_partial.data.compute()
+        present_np = result_present_only.data.compute()
+    else:
+        partial_np = result_partial.data
+        present_np = result_present_only.data
+
+    if 'cupy' in backend:
+        partial_np = partial_np.get()
+        present_np = present_np.get()
+
+    np.testing.assert_array_equal(partial_np, present_np)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_happy_path_matches_numpy_2561(backend):
+    """All backends agree on the standard crop result."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    result = crop(zones, values, zone_ids=(1, 3))
+    assert result.shape == (4, 3)
+
+    expected = np.array([[4, 0, 3],
+                         [4, 4, 3],
+                         [1, 1, 3],
+                         [1, 1, 3]], dtype=np.int64)
+
+    if backend.startswith('dask'):
+        result_np = result.data.compute()
+    else:
+        result_np = result.data
+
+    if 'cupy' in backend:
+        result_np = result_np.get()
+
+    np.testing.assert_array_equal(result_np, expected)
+
+
+# ---------------------------------------------------------------------------
 # Regression tests for #2528: dask backend must not silently drop 'majority'
 # from the requested stats list.
 # ---------------------------------------------------------------------------
