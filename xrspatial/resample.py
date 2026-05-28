@@ -1134,8 +1134,12 @@ def _resolve_nodata(agg, nodata):
     ``nodata`` in ``agg.attrs``. Returns ``None`` when no sentinel was
     found (the caller skips the masking step).
 
-    NaN sentinels are returned as NaN so the caller can branch on
-    ``np.isnan`` rather than ``==`` (which never matches NaN).
+    For floating-point inputs the sentinel is returned as a Python
+    ``float`` so the caller can branch on ``np.isnan`` rather than
+    ``==`` (which never matches NaN). For integer / bool inputs the
+    sentinel is cast to the input dtype so the comparison happens in
+    integer space -- routing it through ``float`` would lose precision
+    for int64 values above 2**53.
     """
     if nodata is None:
         for key in ('_FillValue', 'nodata'):
@@ -1145,10 +1149,21 @@ def _resolve_nodata(agg, nodata):
                 break
     if nodata is None:
         return None
-    nd = float(nodata)
-    if np.isinf(nd):
-        raise ValueError(f"nodata must be finite or NaN, got {nodata!r}")
-    return nd
+    if np.issubdtype(agg.dtype, np.floating):
+        nd = float(nodata)
+        if np.isinf(nd):
+            raise ValueError(f"nodata must be finite or NaN, got {nodata!r}")
+        return nd
+    # Integer / bool input: keep the sentinel in the input's native
+    # dtype so the equality test in _apply_nodata_mask compares
+    # integer-to-integer. A NaN sentinel can never match an integer
+    # value, so signal a no-op mask by returning NaN unchanged.
+    try:
+        if isinstance(nodata, float) and np.isnan(nodata):
+            return float('nan')
+    except TypeError:
+        pass
+    return np.asarray(nodata).astype(agg.dtype).item()
 
 
 def _apply_nodata_mask(agg, nodata):
@@ -1159,13 +1174,22 @@ def _apply_nodata_mask(agg, nodata):
     """
     if nodata is None:
         return agg
-    # Promote to float so NaN can be stored. xr.where keeps the backend.
-    # Integer / bool inputs become float32 (consistent with _output_dtype).
-    if not np.issubdtype(agg.dtype, np.floating):
+    is_float_input = np.issubdtype(agg.dtype, np.floating)
+    # For floating-point input a NaN sentinel needs no replacement
+    # (NaN is already the output convention). For integer input a NaN
+    # sentinel can never match any cell, so the mask is a no-op; still
+    # promote to float so downstream NaN handling has somewhere to
+    # write its sentinels.
+    if is_float_input and isinstance(nodata, float) and np.isnan(nodata):
+        return agg
+    # Compare in the input dtype FIRST so integer comparisons keep
+    # full precision (float64 cannot represent int64 values above
+    # 2**53 without rounding). Then promote to float so NaN can be
+    # stored in the masked output.
+    mask = agg != nodata
+    if not is_float_input:
         agg = agg.astype(np.float32)
-    if np.isnan(nodata):
-        return agg  # already-NaN sentinels need no replacement
-    return agg.where(agg != nodata)
+    return agg.where(mask)
 
 
 @supports_dataset
