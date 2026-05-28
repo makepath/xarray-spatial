@@ -3154,6 +3154,23 @@ def rasterize(
         raise TypeError(
             f"merge must be a string or callable, got {type(merge).__name__}")
 
+    # Reject partial width/height before any geometry or template work.
+    # Passing only one of the two has no well-defined meaning here.
+    # When ``like`` is given, the bounds also come from the template, so
+    # deriving the missing dimension from aspect ratio would make the x
+    # and y pixel resolutions diverge and the output coords would no
+    # longer match ``like``.  When ``like`` is not given, there's
+    # nothing to derive from at all.  Either way, the old code silently
+    # fell through to the ``resolution`` or ``like`` branch and
+    # discarded the explicit dimension without warning.
+    if (width is None) != (height is None):
+        missing = 'height' if width is not None else 'width'
+        given = 'width' if width is not None else 'height'
+        raise ValueError(
+            f"{given} was provided but {missing} was not. Pass both "
+            f"width and height together, or omit both and supply "
+            f"resolution or like to size the output.")
+
     # Extract defaults from template raster
     like_width = like_height = like_bounds = like_dtype = None
     like_x_coord = like_y_coord = None
@@ -3210,22 +3227,6 @@ def rasterize(
         raise ValueError(
             f"Invalid bounds: xmin ({xmin}) must be < xmax ({xmax}) and "
             f"ymin ({ymin}) must be < ymax ({ymax})")
-
-    # Reject partial width/height: passing only one of the two has no
-    # well-defined meaning here.  When ``like`` is given, the bounds also
-    # come from the template, so deriving the missing dimension from
-    # aspect ratio would make the x and y pixel resolutions diverge and
-    # the output coords would no longer match ``like``.  When ``like`` is
-    # not given, there's nothing to derive from at all.  Either way, the
-    # old code silently fell through to the ``resolution`` or ``like``
-    # branch and discarded the explicit dimension without warning.
-    if (width is None) != (height is None):
-        missing = 'height' if width is not None else 'width'
-        given = 'width' if width is not None else 'height'
-        raise ValueError(
-            f"{given} was provided but {missing} was not. Pass both "
-            f"width and height, or neither (and use resolution or like "
-            f"to size the output).")
 
     # Resolve width/height: explicit > resolution > like
     if width is not None and height is not None:
