@@ -21,6 +21,13 @@
 
 #### Fixed
 
+- `zonal_stats` now validates `return_type` at entry. Previously any
+  string other than `'pandas.DataFrame'` or `'xarray.DataArray'` fell
+  through to an internal branch that returned a raw `numpy.ndarray`,
+  hiding typos. Allowed values are now enforced and a clear
+  `ValueError` is raised otherwise. `return_type='xarray.DataArray'`
+  on dask-backed input also raises instead of silently returning
+  the wrong shape. (#2558)
 - `rasterize(like=...)` no longer silently mislabels output when the
   template's x axis is descending. Previously the burned array was
   written ascending-x (column 0 = xmin) but `reuse_like_coords`
