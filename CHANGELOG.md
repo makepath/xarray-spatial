@@ -6,6 +6,15 @@
 
 #### Fixed
 
+- `zonal.trim()` with the default `values=(np.nan,)` (or any NaN
+  sentinel) now trims a NaN-framed raster on the numpy and cupy
+  backends, matching the existing dask behaviour. The numba kernel
+  `_trim` matched sentinels with `e == val` and `NaN == NaN` is False,
+  so NaN borders were silently ignored on those backends. NaN matching
+  is now handled in a numpy bounds helper that mirrors the dask
+  reduction. Behaviour for finite sentinels (zero, integer zone ids,
+  etc.) is unchanged. (#2559)
+
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an

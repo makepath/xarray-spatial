@@ -334,12 +334,12 @@ def test_trim_dask_cupy_matches_numpy(trim_input):
 
 @dask_required
 def test_trim_dask_nan_values(trim_input):
-    """Cat 2 HIGH: dask trim with default NaN sentinel.
+    """trim with a NaN sentinel agrees across numpy and dask backends.
 
-    The dask branch ``_trim_bounds_dask`` has a dedicated ``isnan`` path
-    (zonal.py:2287) that the numpy backend lacks: numpy's ``_trim`` uses
-    a plain equality check, which never matches NaN. This test pins the
-    backend asymmetry so any future change is visible as a diff.
+    Originally pinned a numpy/dask asymmetry: ``_trim``'s ``e == val``
+    check never matched NaN, so the numpy path left a NaN-framed
+    raster unchanged while dask trimmed it. Fixed in #2559 by routing
+    NaN sentinels through ``_trim_bounds_numpy`` in the wrapper.
     """
     arr_with_nan = np.where(trim_input == 0, np.nan, trim_input)
 
@@ -348,22 +348,20 @@ def test_trim_dask_nan_values(trim_input):
         da.from_array(arr_with_nan, chunks=(3, 2)), dims=['y', 'x'],
     )
 
-    # Dask path trims the all-NaN frame to the bounding box of finite
-    # data.  Interior NaNs (the original 0 in the middle of row 1) are
+    # Bounding box covers rows 1-3, cols 1-2 of the input.
+    # Interior NaNs (the original 0 in the middle of row 1) are
     # preserved.
-    out_da = trim(arr_da, values=(np.nan,))
-    out_da_np = _to_numpy(out_da)
-    assert out_da_np.shape == (3, 2)
-    # bounding box covers rows 1-3, cols 1-2 of the input
     expected = np.array([[4.0, np.nan],
                          [4.0, 4.0],
                          [1.0, 1.0]])
-    np.testing.assert_array_equal(out_da_np, expected)
 
-    # numpy path doesn't match NaN with equality, so the result is
-    # unchanged.  Pin this asymmetry so a future change is visible.
-    out_np_nan = trim(arr_np, values=(np.nan,))
-    assert out_np_nan.shape == arr_np.shape
+    out_da = _to_numpy(trim(arr_da, values=(np.nan,)))
+    out_np = _to_numpy(trim(arr_np, values=(np.nan,)))
+
+    assert out_da.shape == (3, 2)
+    assert out_np.shape == (3, 2)
+    np.testing.assert_array_equal(out_da, expected)
+    np.testing.assert_array_equal(out_np, expected)
 
 
 def test_trim_preserves_name_attribute():
@@ -378,6 +376,151 @@ def test_trim_preserves_name_attribute():
     # attrs propagated from input
     assert out.attrs.get('res') == (1.0, 1.0)
     assert out.attrs.get('crs') == 'EPSG:4326'
+
+
+# ---------------------------------------------------------------------------
+# trim() with default NaN sentinel -- cross-backend agreement (#2559)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def trim_nan_input():
+    return np.array(
+        [[np.nan, np.nan, np.nan, np.nan],
+         [np.nan, 4.0,    np.nan, np.nan],
+         [np.nan, 4.0,    4.0,    np.nan],
+         [np.nan, 1.0,    1.0,    np.nan],
+         [np.nan, np.nan, np.nan, np.nan]],
+        dtype=np.float64,
+    )
+
+
+def test_trim_numpy_default_nan(trim_nan_input):
+    """Default values=(np.nan,) trims a NaN-framed numpy raster (#2559).
+
+    Pre-fix this returned the input unchanged because ``_trim`` matched
+    sentinels with ``e == val`` and ``NaN == NaN`` is False.
+    """
+    arr = xr.DataArray(trim_nan_input, dims=['y', 'x'])
+
+    out = trim(arr)  # default values=(np.nan,)
+    out_np = _to_numpy(out)
+
+    expected = np.array([[4.0, np.nan],
+                         [4.0, 4.0],
+                         [1.0, 1.0]])
+    assert out_np.shape == (3, 2)
+    np.testing.assert_array_equal(out_np, expected)
+
+
+def test_trim_numpy_explicit_nan_matches_default(trim_nan_input):
+    """Passing values=(np.nan,) explicitly matches the default (#2559)."""
+    arr = xr.DataArray(trim_nan_input, dims=['y', 'x'])
+
+    out_default = _to_numpy(trim(arr))
+    out_explicit = _to_numpy(trim(arr, values=(np.nan,)))
+
+    np.testing.assert_array_equal(out_default, out_explicit)
+
+
+@cuda_and_cupy_available
+def test_trim_cupy_default_nan_matches_numpy(trim_nan_input):
+    """cupy backend trims a NaN-framed raster identically to numpy (#2559)."""
+    import cupy as cp
+
+    arr_np = xr.DataArray(trim_nan_input, dims=['y', 'x'])
+    arr_cp = xr.DataArray(cp.asarray(trim_nan_input), dims=['y', 'x'])
+
+    out_np = _to_numpy(trim(arr_np))
+    out_cp = _to_numpy(trim(arr_cp))
+
+    assert out_cp.shape == out_np.shape == (3, 2)
+    np.testing.assert_array_equal(out_cp, out_np)
+
+
+@dask_required
+def test_trim_dask_numpy_default_nan_matches_numpy(trim_nan_input):
+    """dask+numpy backend trims a NaN-framed raster identically to numpy (#2559)."""
+    arr_np = xr.DataArray(trim_nan_input, dims=['y', 'x'])
+    arr_da = xr.DataArray(
+        da.from_array(trim_nan_input, chunks=(3, 2)), dims=['y', 'x'],
+    )
+
+    out_np = _to_numpy(trim(arr_np))
+    out_da = _to_numpy(trim(arr_da))
+
+    assert out_da.shape == out_np.shape == (3, 2)
+    np.testing.assert_array_equal(out_da, out_np)
+
+
+@cuda_and_cupy_available
+@dask_required
+def test_trim_dask_cupy_default_nan_matches_numpy(trim_nan_input):
+    """dask+cupy backend trims a NaN-framed raster identically to numpy (#2559)."""
+    import cupy as cp
+
+    arr_np = xr.DataArray(trim_nan_input, dims=['y', 'x'])
+    arr_dc = xr.DataArray(
+        da.from_array(cp.asarray(trim_nan_input), chunks=(3, 2)),
+        dims=['y', 'x'],
+    )
+
+    out_np = _to_numpy(trim(arr_np))
+    out_dc = _to_numpy(trim(arr_dc))
+
+    assert out_dc.shape == out_np.shape == (3, 2)
+    np.testing.assert_array_equal(out_dc, out_np)
+
+
+def test_trim_numpy_mixed_nan_and_finite_sentinels():
+    """Passing both NaN and a finite sentinel trims either kind of border (#2559)."""
+    data = np.array(
+        [[0.0,    0.0, 0.0,    0.0],
+         [0.0,    5.0, np.nan, 0.0],
+         [np.nan, 5.0, 5.0,    np.nan],
+         [0.0,    0.0, 0.0,    0.0]],
+        dtype=np.float64,
+    )
+    arr = xr.DataArray(data, dims=['y', 'x'])
+
+    out = _to_numpy(trim(arr, values=(0.0, np.nan)))
+
+    # Rows 0 and 3 are all-zero -> trimmed.
+    # Row 1 col 2 is NaN, row 2 cols 0 and 3 are NaN -> all trimmable
+    # via the mixed-sentinel rule. The first non-trimmable row is 1
+    # (because of the 5.0), last is 2. Same for cols (1, 2).
+    expected = np.array([[5.0, np.nan],
+                         [5.0, 5.0]])
+    assert out.shape == (2, 2)
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_trim_numpy_integer_dtype_non_nan_sentinel_still_works():
+    """Integer-dtype input with a non-NaN sentinel goes through the numba
+    kernel and trims correctly (#2559 regression guard)."""
+    data = np.array(
+        [[0, 0, 0, 0, 0],
+         [0, 0, 7, 0, 0],
+         [0, 0, 7, 7, 0],
+         [0, 0, 0, 0, 0]],
+        dtype=np.int32,
+    )
+    arr = xr.DataArray(data, dims=['y', 'x'])
+
+    out = _to_numpy(trim(arr, values=(0,)))
+
+    expected = np.array([[7, 0],
+                         [7, 7]], dtype=np.int32)
+    assert out.shape == (2, 2)
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_trim_numpy_all_nan_input():
+    """trim() of an all-NaN raster returns an empty slice on numpy (#2559)."""
+    arr = xr.DataArray(np.full((4, 4), np.nan), dims=['y', 'x'])
+
+    out = _to_numpy(trim(arr))
+
+    assert out.size == 0
 
 
 # ---------------------------------------------------------------------------

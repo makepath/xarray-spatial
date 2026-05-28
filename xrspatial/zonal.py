@@ -2374,6 +2374,47 @@ def _trim_bounds_dask(data, excludes):
             int(data_cols[0]), int(data_cols[-1]))
 
 
+def _split_nan_excludes(values):
+    """Return (finite_excludes_array, has_nan).
+
+    NaN sentinels cannot be matched by the numba kernel's ``e == val``
+    test (``NaN == NaN`` is False) and ``np.isnan`` is not callable on
+    integer dtypes inside numba, so NaN matching is handled in the
+    wrapper instead of inside ``_trim``.
+    """
+    has_nan = False
+    finite = []
+    for v in values:
+        if isinstance(v, float) and np.isnan(v):
+            has_nan = True
+        else:
+            finite.append(v)
+    return np.asarray(finite), has_nan
+
+
+def _trim_bounds_numpy(data, excludes):
+    """Find trim bounds using a numpy row/col reduction (handles NaN)."""
+    finite, has_nan = _split_nan_excludes(excludes)
+
+    excluded = np.zeros(data.shape, dtype=bool)
+    if has_nan and np.issubdtype(data.dtype, np.floating):
+        excluded |= np.isnan(data)
+    for v in finite:
+        excluded |= (data == v)
+
+    all_excl_rows = excluded.all(axis=1)
+    all_excl_cols = excluded.all(axis=0)
+
+    data_rows = np.where(~all_excl_rows)[0]
+    data_cols = np.where(~all_excl_cols)[0]
+
+    if len(data_rows) == 0 or len(data_cols) == 0:
+        return 0, -1, 0, -1  # empty slice
+
+    return (int(data_rows[0]), int(data_rows[-1]),
+            int(data_cols[0]), int(data_cols[-1]))
+
+
 def trim(
     raster: xr.DataArray,
     values: Union[list, tuple] = (np.nan,),
@@ -2487,7 +2528,14 @@ def trim(
     else:
         if is_cupy_array(data):
             data = data.get()
-        top, bottom, left, right = _trim(data, np.asarray(values))
+        finite, has_nan = _split_nan_excludes(values)
+        # NaN sentinels cannot be matched by the numba kernel
+        # (NaN == NaN is False). Route to the numpy bounds helper
+        # whenever NaN matching is needed.
+        if has_nan:
+            top, bottom, left, right = _trim_bounds_numpy(data, values)
+        else:
+            top, bottom, left, right = _trim(data, finite)
 
     arr = raster[top: bottom + 1, left: right + 1]
     arr.name = name
