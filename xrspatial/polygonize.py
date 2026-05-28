@@ -2280,10 +2280,15 @@ def polygonize(
             raise ValueError(
                 f"Incorrect transform length of {len(transform)} instead of 6")
 
-    # Check simplification parameters.
-    if simplify_tolerance is not None and simplify_tolerance < 0:
+    # Check simplification parameters.  Mirror the atol/rtol validation
+    # below: reject NaN and +/-inf along with negative values.  NaN would
+    # silently disable simplification because ``nan > 0`` is False, and
+    # +inf would collapse every polygon to empty output -- neither is
+    # what a caller asking for simplification wants.
+    if simplify_tolerance is not None and (
+            not np.isfinite(simplify_tolerance) or simplify_tolerance < 0):
         raise ValueError(
-            "simplify_tolerance must be non-negative, "
+            "simplify_tolerance must be a non-negative finite number, "
             f"got {simplify_tolerance}")
     if simplify_method not in ("douglas-peucker", "visvalingam-whyatt"):
         raise ValueError(

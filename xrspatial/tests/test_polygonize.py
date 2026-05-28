@@ -954,6 +954,34 @@ class TestPolygonizeSimplify:
         with pytest.raises(ValueError, match="simplify_tolerance"):
             polygonize(data, simplify_tolerance=-1.0)
 
+    @pytest.mark.parametrize("bad", [
+        float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_tolerance_raises(self, bad):
+        """nan/inf/-inf for simplify_tolerance must raise ValueError.
+
+        Regression for #2575: ``nan`` silently disabled simplification
+        (because ``nan > 0`` is False) and ``inf`` collapsed every
+        polygon to empty output.  Mirror the atol/rtol validation
+        contract: require finite + non-negative.
+        """
+        raster = np.array([[1, 1], [1, 1]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        with pytest.raises(ValueError, match="simplify_tolerance"):
+            polygonize(data, simplify_tolerance=bad)
+
+    def test_zero_and_small_positive_tolerance_still_work(self):
+        """0.0 and small positive tolerances must still be accepted.
+
+        Regression for #2575: guard against an over-eager fix that
+        bans non-positive values along with non-finite ones.
+        """
+        raster = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        # Both calls should succeed without raising.
+        polygonize(data, simplify_tolerance=0.0)
+        polygonize(data, simplify_tolerance=1e-9)
+
     def test_invalid_method_raises(self):
         """Unknown method should raise ValueError."""
         raster = np.array([[1, 1], [1, 1]], dtype=np.int64)

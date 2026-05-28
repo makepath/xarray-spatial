@@ -21,6 +21,12 @@
 
 #### Fixed
 
+- `polygonize` now rejects non-finite values for `simplify_tolerance`
+  (`nan`, `+inf`, `-inf`) with a clear `ValueError`. Previously `nan`
+  silently disabled simplification (because `nan > 0` is False) and
+  `+inf` collapsed every polygon to empty output. Matches the existing
+  `atol` / `rtol` validation contract: finite and non-negative. (#2575)
+
 - `reproject(..., bounds_policy="auto")` no longer crops valid edge data
   on ordinary geographic-to-projected reprojections. The old blow-up
   heuristic compared source span (e.g. degrees for EPSG:4326) against
