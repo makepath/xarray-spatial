@@ -199,7 +199,19 @@ class TestStrictFloatEqualityDaskCuPy:
         assert_allclose(sorted(v_dc), sorted(_REPRO_2173[0]))
 
     def test_default_tolerance_still_merges_multi_chunk(self):
-        """Sanity pin: default tolerance still merges adjacent pixels."""
+        """Sanity pin: default tolerance still merges adjacent pixels.
+
+        Note the multi-chunk count (2) intentionally differs from the
+        single-chunk numpy reference (1) here.  Single-chunk numpy
+        transitively merges 1.0 -> 1.000009 -> 1.000018 because the
+        middle pixel is within tolerance of both ends.  The dask
+        cross-chunk merge bucket compares values pairwise against bucket
+        keys, so 1.0 and 1.000018 do not merge (their direct gap of
+        18e-6 exceeds the default rtol*|1.0| = 1e-5 threshold), leaving
+        two polygons.  This pin guards against a regression that hard-
+        coded atol=rtol=0 inside the dask+cupy dispatcher (which would
+        produce 3 polygons here instead of 2).
+        """
         # 1.000009 is within tolerance of 1.0 (diff 9e-6, threshold ~1e-5)
         # but 1.000018 is outside (diff 18e-6) -> 2 polygons.
         v_dc, _ = polygonize(
@@ -262,6 +274,20 @@ class TestIntermediateAtolDaskCuPy:
             xr.DataArray(_REPRO_2173), atol=1e-4, rtol=0.0)
         v_dc, _ = polygonize(
             _to_dask_cupy_array(_REPRO_2173, chunks=_REPRO_2173.shape),
+            atol=1e-4, rtol=0.0)
+        assert len(v_dc) == len(v_np) == 1
+
+    def test_large_atol_one_polygon_multi_chunk(self):
+        """Large atol on a multi-chunk dask+cupy raster exercises the
+        cross-chunk merge bucket (_bucket_key_for_value at polygonize.py
+        line 1758) with non-default atol.  A regression that hard-coded
+        the default atol inside the merge bucket would split the result
+        into multiple polygons here.
+        """
+        v_np, _ = polygonize(
+            xr.DataArray(_REPRO_2173), atol=1e-4, rtol=0.0)
+        v_dc, _ = polygonize(
+            _to_dask_cupy_array(_REPRO_2173, chunks=(1, 1)),
             atol=1e-4, rtol=0.0)
         assert len(v_dc) == len(v_np) == 1
 
@@ -341,3 +367,38 @@ class TestRtolCuPy:
         v_cp, _ = polygonize(
             _to_cupy_array(_REPRO_2173), atol=0.0, rtol=1e-7)
         assert len(v_cp) == 3
+
+
+# ---------------------------------------------------------------------------
+# dask+cupy non-default rtol coverage (rtol-only variant, atol=0)
+# ---------------------------------------------------------------------------
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestRtolDaskCuPy:
+    """Non-default rtol on float dask+cupy raster must reach
+    _polygonize_numpy through _polygonize_chunk and _bucket_key_for_value.
+
+    Mirrors TestRtolCuPy on the dask+cupy backend.  Multi-chunk variants
+    additionally exercise the cross-chunk merge bucket with rtol>0.
+    """
+
+    def test_large_rtol_merges_all_single_chunk(self):
+        v_dc, _ = polygonize(
+            _to_dask_cupy_array(_REPRO_2173, chunks=_REPRO_2173.shape),
+            atol=0.0, rtol=1e-3)
+        assert len(v_dc) == 1
+
+    def test_large_rtol_merges_all_multi_chunk(self):
+        """Per-pixel chunks force the merge bucket to honour rtol=1e-3."""
+        v_dc, _ = polygonize(
+            _to_dask_cupy_array(_REPRO_2173, chunks=(1, 1)),
+            atol=0.0, rtol=1e-3)
+        assert len(v_dc) == 1
+
+    def test_small_rtol_keeps_distinct_multi_chunk(self):
+        v_dc, _ = polygonize(
+            _to_dask_cupy_array(_REPRO_2173, chunks=(1, 1)),
+            atol=0.0, rtol=1e-7)
+        assert len(v_dc) == 3
