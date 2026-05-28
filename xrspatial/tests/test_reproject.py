@@ -61,6 +61,28 @@ def _gradient_raster(h=64, w=64, crs='EPSG:4326',
     return _make_raster(data, crs=crs, x_range=x_range, y_range=y_range)
 
 
+def _pyproj_geoid_probe_is_usable(probe, zero_tol=1.0):
+    """Return True if a pyproj vertical-transform probe value indicates the
+    geoid grid is actually installed and usable for a cross-check.
+
+    pyproj has two failure modes when the EGM96 grid is missing and PROJ
+    network access is disabled:
+
+    - it silently returns the input ellipsoidal height unchanged (so the
+      probe comes back as ~0.0 at a well-known sample point where the
+      true geoid undulation is tens of metres), or
+    - it returns a non-finite sentinel (``-inf``, ``+inf``, ``nan``).
+
+    Treat both as "grid unavailable" so the caller skips the cross-check
+    instead of asserting against the local lookup.
+    """
+    if not np.isfinite(probe):
+        return False
+    if abs(probe) < zero_tol:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # CRS utils
 # ---------------------------------------------------------------------------
@@ -4253,6 +4275,42 @@ class TestGeoidHeightBehaviour:
         assert np.isfinite(out.values).all()
 
 
+class TestPyprojGeoidProbeUsable:
+    """Coverage for ``_pyproj_geoid_probe_is_usable`` (#2567).
+
+    The helper guards pyproj-based geoid cross-checks against runners
+    where the EGM96 grid is not installed. Both the no-op fallback (~0)
+    and the non-finite fallback (-inf / +inf / nan) must be classified
+    as "grid unavailable" so the test skips instead of asserting.
+    """
+
+    def test_typical_finite_probe_is_usable(self):
+        # ~-32.8 m at New York when the grid is actually installed.
+        assert _pyproj_geoid_probe_is_usable(-32.8)
+
+    def test_near_zero_probe_is_not_usable(self):
+        # No-op fallback at a point with real undulation.
+        assert not _pyproj_geoid_probe_is_usable(0.0)
+        assert not _pyproj_geoid_probe_is_usable(0.5)
+        assert not _pyproj_geoid_probe_is_usable(-0.5)
+
+    def test_negative_inf_probe_is_not_usable(self):
+        # Regression for the original bug: -inf used to slip past the
+        # near-zero guard and fire the assert in the pyproj cross-check.
+        assert not _pyproj_geoid_probe_is_usable(float('-inf'))
+
+    def test_positive_inf_probe_is_not_usable(self):
+        assert not _pyproj_geoid_probe_is_usable(float('inf'))
+
+    def test_nan_probe_is_not_usable(self):
+        assert not _pyproj_geoid_probe_is_usable(float('nan'))
+
+    def test_zero_tol_is_configurable(self):
+        # A real lookup that happens to be 0.5 m should still count as
+        # usable when the caller picks a tighter tolerance.
+        assert _pyproj_geoid_probe_is_usable(0.5, zero_tol=0.1)
+
+
 class TestGeoidPixelCenterIndexing:
     """Regression coverage for the half-pixel offset bug (#2508).
 
@@ -4300,16 +4358,18 @@ class TestGeoidPixelCenterIndexing:
             src_crs, tgt_crs, always_xy=True,
         )
 
-        # pyproj silently falls back to a no-op transform when the EGM96
-        # grid is not installed locally and PROJ network access is
-        # disabled (typical CI). Probe at New York: a real lookup gives
-        # ~-32.8 m, the no-grid fallback gives 0. Skip in the fallback
-        # case -- there's nothing to cross-check against.
+        # pyproj falls back when the EGM96 grid is not installed locally
+        # and PROJ network access is disabled (typical CI). The fallback
+        # is either a no-op transform (~0 at New York, where the real
+        # geoid undulation is tens of metres) or a non-finite sentinel
+        # (-inf / +inf / nan). Probe at New York and skip in either case
+        # -- there's nothing to cross-check against.
         _, _, h_probe = transformer.transform(-74.0, 40.7, 0.0)
-        if abs(h_probe) < 1.0:
+        if not _pyproj_geoid_probe_is_usable(h_probe):
             pytest.skip(
                 "pyproj EGM96 grid unavailable on this runner "
-                "(transform returned ~0 at New York); cannot cross-check"
+                f"(probe at New York returned {h_probe!r}); "
+                "cannot cross-check"
             )
 
         sample_points = [
