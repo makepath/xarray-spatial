@@ -831,7 +831,7 @@ def stats(
     # Validate return_type up front. The internal _stats_numpy path silently
     # returns its raw ndarray buffer for anything that is not
     # 'pandas.DataFrame', so an unrecognised value (typo, stale name) used to
-    # produce a numpy array instead of one of the documented types.
+    # leak that undocumented intermediate to the caller.
     _allowed_return_types = ('pandas.DataFrame', 'xarray.DataArray')
     if return_type not in _allowed_return_types:
         raise ValueError(
@@ -869,11 +869,19 @@ def stats(
     validate_arrays(zones, values)
 
     is_dask_values = has_dask_array() and isinstance(values.data, da.Array)
+    is_cupy_values = is_cupy_array(values.data)
 
-    if is_dask_values and return_type == 'xarray.DataArray':
+    # Only the pure-numpy backend computes the (n_stats, *shape) buffer
+    # that the xarray.DataArray return type needs. The cupy and dask
+    # backends produce a DataFrame instead, so wrapping that in
+    # xr.DataArray downstream would crash or silently misalign. Reject
+    # 'xarray.DataArray' for non-numpy backends with a clear message
+    # instead of letting it fail deep in the dispatch.
+    if return_type == 'xarray.DataArray' and (is_dask_values or is_cupy_values):
+        backend = 'dask-backed' if is_dask_values else 'cupy-backed'
         raise ValueError(
-            "return_type='xarray.DataArray' is not supported for "
-            "dask-backed input. Use 'pandas.DataFrame' instead."
+            f"return_type='xarray.DataArray' is not supported for "
+            f"{backend} input. Use 'pandas.DataFrame' instead."
         )
 
     # Resolve the default stats_funcs based on backend. The dask path cannot

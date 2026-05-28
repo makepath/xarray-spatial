@@ -2195,7 +2195,8 @@ class TestVectorZones:
 # ---------------------------------------------------------------------------
 
 
-def _small_zones_values_2558():
+@pytest.fixture
+def small_zones_values_2558():
     zones = xr.DataArray(np.array([[0, 0, 1, 1],
                                    [0, 0, 1, 1]], dtype=np.int32))
     values = xr.DataArray(np.array([[1.0, 2.0, 3.0, 4.0],
@@ -2203,24 +2204,24 @@ def _small_zones_values_2558():
     return zones, values
 
 
-def test_stats_return_type_default_is_dataframe_2558():
+def test_stats_return_type_default_is_dataframe_2558(small_zones_values_2558):
     """Default return_type should still produce a pandas.DataFrame."""
-    zones, values = _small_zones_values_2558()
+    zones, values = small_zones_values_2558
     result = stats(zones=zones, values=values)
     assert isinstance(result, pd.DataFrame)
     assert 'zone' in result.columns
 
 
-def test_stats_return_type_pandas_dataframe_2558():
+def test_stats_return_type_pandas_dataframe_2558(small_zones_values_2558):
     """Explicit 'pandas.DataFrame' should produce a pandas.DataFrame."""
-    zones, values = _small_zones_values_2558()
+    zones, values = small_zones_values_2558
     result = stats(zones=zones, values=values, return_type='pandas.DataFrame')
     assert isinstance(result, pd.DataFrame)
 
 
-def test_stats_return_type_xarray_dataarray_2558():
+def test_stats_return_type_xarray_dataarray_2558(small_zones_values_2558):
     """Explicit 'xarray.DataArray' should produce an xarray.DataArray."""
-    zones, values = _small_zones_values_2558()
+    zones, values = small_zones_values_2558
     result = stats(zones=zones, values=values, return_type='xarray.DataArray')
     assert isinstance(result, xr.DataArray)
     assert result.dims[0] == 'stats'
@@ -2229,17 +2230,18 @@ def test_stats_return_type_xarray_dataarray_2558():
 
 @pytest.mark.parametrize("bad", ['bogus', 'numpy.ndarray', '', 'DataFrame',
                                  'xarray.dataarray'])
-def test_stats_return_type_invalid_raises_2558(bad):
+def test_stats_return_type_invalid_raises_2558(small_zones_values_2558, bad):
     """Unknown return_type values should raise ValueError, not silently
     return a numpy.ndarray (regression for issue #2558)."""
-    zones, values = _small_zones_values_2558()
+    zones, values = small_zones_values_2558
     with pytest.raises(ValueError, match="return_type"):
         stats(zones=zones, values=values, return_type=bad)
 
 
-def test_stats_return_type_invalid_message_lists_allowed_2558():
+def test_stats_return_type_invalid_message_lists_allowed_2558(
+        small_zones_values_2558):
     """The ValueError message should enumerate the allowed values."""
-    zones, values = _small_zones_values_2558()
+    zones, values = small_zones_values_2558
     with pytest.raises(ValueError) as excinfo:
         stats(zones=zones, values=values, return_type='bogus')
     msg = str(excinfo.value)
@@ -2260,10 +2262,25 @@ def test_stats_return_type_dataarray_rejected_for_dask_2558():
         stats(zones=zones, values=values, return_type='xarray.DataArray')
 
 
-def test_stats_return_type_invalid_rejected_for_dataset_2558():
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="Requires CUDA and CuPy")
+def test_stats_return_type_dataarray_rejected_for_cupy_2558():
+    """'xarray.DataArray' is documented as numpy-only; cupy input should
+    raise ValueError instead of crashing inside the xr.DataArray wrapper."""
+    import cupy
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0],
+                           [5.0, 6.0, 7.0, 8.0]], dtype=np.float64)
+    zones = xr.DataArray(cupy.asarray(zones_arr))
+    values = xr.DataArray(cupy.asarray(values_arr))
+    with pytest.raises(ValueError, match="xarray.DataArray"):
+        stats(zones=zones, values=values, return_type='xarray.DataArray')
+
+
+def test_stats_return_type_invalid_rejected_for_dataset_2558(
+        small_zones_values_2558):
     """Invalid return_type on Dataset input should raise ValueError
     (the entry-point validator runs before the Dataset branch)."""
-    zones, values = _small_zones_values_2558()
+    zones, values = small_zones_values_2558
     ds = xr.Dataset({'v': values})
     with pytest.raises(ValueError, match="return_type"):
         stats(zones=zones, values=ds, return_type='bogus')
