@@ -14,6 +14,7 @@ the reproject test modules; the gate must follow.
 from __future__ import annotations
 
 import importlib
+import sys
 
 import pytest
 
@@ -31,7 +32,6 @@ def test_has_cupy_tracks_runtime_probe(module_name, monkeypatch):
     """``HAS_CUPY`` must reflect ``has_cuda_and_cupy()``, not just import."""
     monkeypatch.setattr(xu, "has_cuda_and_cupy", lambda: False)
 
-    import sys
     sys.modules.pop(module_name, None)
     module = importlib.import_module(module_name)
 
