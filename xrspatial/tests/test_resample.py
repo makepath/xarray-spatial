@@ -245,7 +245,7 @@ class TestMetadataPropagation:
         )
         out = resample(raster, scale_factor=0.5)
         assert 'spatial_ref' in out.coords
-        assert int(out.coords['spatial_ref'].values) == 0
+        assert out.coords['spatial_ref'].values == 0
 
     def test_scalar_band_coord_preserved(self):
         # A squeezed scalar band/time selector should round-trip.
@@ -262,7 +262,7 @@ class TestMetadataPropagation:
         )
         out = resample(raster, scale_factor=0.5)
         assert 'band' in out.coords
-        assert int(out.coords['band'].values) == 1
+        assert out.coords['band'].values == 1
         assert 'time' in out.coords
 
     def test_identity_and_downsample_coords_consistent(self):
@@ -282,6 +282,64 @@ class TestMetadataPropagation:
         identity = resample(raster, scale_factor=1.0)
         downsampled = resample(raster, scale_factor=0.5)
         assert set(identity.coords) - {'y', 'x'} == set(downsampled.coords) - {'y', 'x'}
+
+    def test_spatial_ref_preserved_3d(self):
+        # The 3D per-band path hands each band to the 2D resample(), so
+        # spatial_ref should ride through xr.concat back onto the stacked
+        # result.
+        data = np.arange(3 * 4 * 4, dtype=np.float32).reshape(3, 4, 4)
+        raster = xr.DataArray(
+            data, dims=('band', 'y', 'x'),
+            coords={
+                'band': [1, 2, 3],
+                'y': np.linspace(3, 0, 4),
+                'x': np.linspace(0, 3, 4),
+                'spatial_ref': 0,
+            },
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'spatial_ref' in out.coords
+        assert out.coords['spatial_ref'].values == 0
+
+    @cuda_and_cupy_available
+    def test_spatial_ref_preserved_cupy(self):
+        # The fix lives at the shared 2D output constructor, so all four
+        # backends should preserve spatial_ref. Pin the cupy path
+        # explicitly so a backend-divergent regression would surface.
+        import cupy
+        data = cupy.arange(16, dtype=cupy.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={
+                'y': np.linspace(3, 0, 4),
+                'x': np.linspace(0, 3, 4),
+                'spatial_ref': 0,
+            },
+            attrs={'res': (1.0, 1.0), 'crs': 'EPSG:4326'},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'spatial_ref' in out.coords
+        assert out.coords['spatial_ref'].values == 0
+
+    @dask_array_available
+    def test_spatial_ref_preserved_dask(self):
+        import dask.array as da
+        data = da.from_array(
+            np.arange(16, dtype=np.float32).reshape(4, 4), chunks=(2, 2),
+        )
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={
+                'y': np.linspace(3, 0, 4),
+                'x': np.linspace(0, 3, 4),
+                'spatial_ref': 0,
+            },
+            attrs={'res': (1.0, 1.0), 'crs': 'EPSG:4326'},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'spatial_ref' in out.coords
+        assert out.coords['spatial_ref'].values == 0
 
     def test_2d_spatial_extra_coord_not_carried(self):
         # A non-dim coord whose dims include the spatial axes has a
