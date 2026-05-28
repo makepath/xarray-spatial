@@ -43,20 +43,16 @@ except ImportError:
     da = None
 
 from xrspatial.zonal import (
-    apply, crop, crosstab, regions, stats, suggest_zonal_canvas, trim,
+    apply, crop, crosstab, regions, suggest_zonal_canvas, trim,
 )
 
 from .general_checks import (
-    create_test_raster, dask_array_available, has_cuda_and_cupy,
+    create_test_raster, cuda_and_cupy_available, dask_array_available,
     has_dask_array,
 )
 
-cuda_and_cupy_available = pytest.mark.skipif(
-    not has_cuda_and_cupy(), reason="Requires CUDA and CuPy",
-)
-dask_required = pytest.mark.skipif(
-    not has_dask_array(), reason="Requires dask.array",
-)
+# Local alias kept for readability at decorator sites in this file.
+dask_required = dask_array_available
 
 
 def _to_numpy(arr):
@@ -75,6 +71,28 @@ def _to_pandas(df):
     if hasattr(df, 'compute'):
         return df.compute()
     return df
+
+
+def _canonical_labels(a):
+    """Re-label a region map so labels are assigned in raster-scan order.
+
+    scipy.ndimage.label and cupyx.scipy.ndimage.label may emit labels in
+    different orders for the same input.  Canonicalising lets the parity
+    tests compare cell partitions, not raw label values.
+    """
+    out = np.full_like(a, -1, dtype=np.int64)
+    seen = {}
+    next_id = 0
+    flat = a.ravel()
+    for i, v in enumerate(flat):
+        if not np.isfinite(v):
+            continue
+        key = float(v)
+        if key not in seen:
+            seen[key] = next_id
+            next_id += 1
+        out.ravel()[i] = seen[key]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -198,25 +216,7 @@ def test_regions_cupy_matches_numpy(regions_input):
     out_np = _to_numpy(regions(arr_np, neighborhood=4))
     out_cp = _to_numpy(regions(arr_cp, neighborhood=4))
 
-    # region labels may be assigned in different orders by scipy / cupyx
-    # but the *partition* of cells into labeled regions must match.
-    def _canonical_labels(a):
-        # map each unique label to the lexicographically smallest cell
-        # index that carries it
-        out = np.full_like(a, -1, dtype=np.int64)
-        seen = {}
-        next_id = 0
-        flat = a.ravel()
-        for i, v in enumerate(flat):
-            key = float(v) if np.isfinite(v) else None
-            if key is None:
-                continue
-            if key not in seen:
-                seen[key] = next_id
-                next_id += 1
-            out.ravel()[i] = seen[key]
-        return out
-
+    # Labels may differ between scipy / cupyx; partitions must match.
     np.testing.assert_array_equal(
         _canonical_labels(out_np), _canonical_labels(out_cp),
     )
@@ -236,22 +236,6 @@ def test_regions_dask_cupy_matches_numpy(regions_input):
 
     out_np = _to_numpy(regions(arr_np, neighborhood=4))
     out_dc = _to_numpy(regions(arr_dc, neighborhood=4))
-
-    # canonicalise label assignment for parity
-    def _canonical_labels(a):
-        out = np.full_like(a, -1, dtype=np.int64)
-        seen = {}
-        next_id = 0
-        flat = a.ravel()
-        for i, v in enumerate(flat):
-            if not np.isfinite(v):
-                continue
-            key = float(v)
-            if key not in seen:
-                seen[key] = next_id
-                next_id += 1
-            out.ravel()[i] = seen[key]
-        return out
 
     np.testing.assert_array_equal(
         _canonical_labels(out_np), _canonical_labels(out_dc),
@@ -606,10 +590,8 @@ def test_regions_strip_Nx1(backend):
 def test_suggest_zonal_canvas_geographic_crs():
     """Cat 4 LOW: pin Geographic CRS branch of suggest_zonal_canvas.
 
-    Both built-in projections have square 1:1 aspect-ratio extents
-    (Mercator: ±20e6 / ±20e6, Geographic: ±180 / ±90) -- wait, Geographic
-    is ±180 / ±90 which is 2:1.  This test pins the Geographic-projection
-    aspect ratio so a regression switching to a different extent surfaces.
+    Geographic uses a 2:1 (x:y) aspect ratio (extent ±180 / ±90).  This
+    test pins that ratio so a regression that changes the extent surfaces.
     """
     h_g, w_g = suggest_zonal_canvas(
         smallest_area=1.0,
