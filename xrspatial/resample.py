@@ -155,6 +155,48 @@ def _check_resample_gpu_memory(out_h, out_w):
         )
 
 
+# -- Input-validation helpers ------------------------------------------------
+
+def _validate_resample_scalar_or_pair(value, param_name):
+    """Validate a scalar-or-2-tuple resolution / scale parameter.
+
+    Accepts either a real scalar or a length-2 tuple/list of scalars.
+    Each component must be finite (not NaN, not inf) and strictly
+    positive. Raises ``ValueError`` with a message naming the parameter
+    and the offending value.
+    """
+    is_pair = isinstance(value, (tuple, list))
+    if is_pair:
+        if len(value) != 2:
+            raise ValueError(
+                f"{param_name} must have length 2, got length {len(value)}"
+            )
+        components = value
+    else:
+        components = (value,)
+
+    for i, comp in enumerate(components):
+        # Suffix points at the bad slot when the input was a pair, so
+        # `(0.0, 1.0)` reports "got 0.0 at index 0 of (0.0, 1.0)"
+        # instead of dumping the whole tuple.
+        where = f"{comp!r} at index {i} of {value!r}" if is_pair else f"{value!r}"
+        try:
+            f = float(comp)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{param_name} must be a finite positive number "
+                f"(or length-2 sequence of them), got {where}"
+            ) from None
+        if not np.isfinite(f):
+            raise ValueError(
+                f"{param_name} must be finite and > 0, got {where}"
+            )
+        if f <= 0:
+            raise ValueError(
+                f"{param_name} must be > 0, got {where}"
+            )
+
+
 # -- Output-geometry helpers -------------------------------------------------
 
 def _output_shape(in_h, in_w, scale_y, scale_x):
@@ -1220,6 +1262,14 @@ def resample(
         Output dtype matches the input float dtype (float32 or float64);
         integer inputs return float32 since NaN-sentinel resampling
         requires a float type.
+
+    Raises
+    ------
+    ValueError
+        If neither or both of ``scale_factor`` and ``target_resolution``
+        are given; if either is a sequence whose length is not 2; if any
+        component is zero, negative, NaN, or infinite; or if ``method``
+        is not in :data:`ALL_METHODS`.
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
 
@@ -1233,6 +1283,18 @@ def resample(
         raise ValueError(
             "Exactly one of scale_factor or target_resolution must be given"
         )
+
+    # Validate shape, finiteness, and positivity of whichever input was
+    # supplied. Fails fast with a parameter-named message before any
+    # geometry math runs, so overlong/short tuples, zero, and NaN/inf
+    # do not surface later as IndexError / ZeroDivisionError / opaque
+    # numpy conversion errors.
+    if target_resolution is not None:
+        _validate_resample_scalar_or_pair(
+            target_resolution, 'target_resolution'
+        )
+    else:
+        _validate_resample_scalar_or_pair(scale_factor, 'scale_factor')
 
     if target_resolution is not None:
         if agg.shape[-2] < 2 or agg.shape[-1] < 2:
@@ -1251,6 +1313,11 @@ def resample(
     else:
         scale_y = scale_x = float(scale_factor)
 
+    # Defence-in-depth: the public inputs were already validated above
+    # by ``_validate_resample_scalar_or_pair``, so on the scale_factor
+    # path this branch is unreachable. It still fires on the
+    # target_resolution path if ``calc_res(agg)`` returns zero from a
+    # degenerate coord array.
     if scale_y <= 0 or scale_x <= 0:
         raise ValueError(
             f"Scale factors must be positive, got ({scale_y}, {scale_x})"
