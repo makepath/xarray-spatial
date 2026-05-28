@@ -1180,23 +1180,25 @@ def _apply_nodata_mask(agg, nodata):
 
 @supports_dataset
 def resample(
-    agg,
-    scale_factor=None,
-    target_resolution=None,
-    method='nearest',
-    nodata=None,
-    name='resample',
-):
+    agg: xr.DataArray,
+    scale_factor: float | tuple[float, float] | None = None,
+    target_resolution: float | tuple[float, float] | None = None,
+    method: str = 'nearest',
+    nodata: float | None = None,
+    name: str = 'resample',
+) -> xr.DataArray:
     """Change raster resolution without changing its CRS.
 
     Exactly one of *scale_factor* or *target_resolution* must be given.
 
     Parameters
     ----------
-    agg : xarray.DataArray
+    agg : xarray.DataArray or xarray.Dataset
         Input raster. 2-D ``(y, x)`` or 3-D ``(band, y, x)``. For 3-D
         inputs each band is resampled independently and the leading
-        non-spatial coordinate is preserved.
+        non-spatial coordinate is preserved. If a Dataset is passed,
+        the operation is applied to each data variable independently
+        (via the ``@supports_dataset`` decorator).
     scale_factor : float or (float, float), optional
         Multiplicative factor applied to the number of pixels.
         ``0.5`` halves the pixel count (doubles the cell size);
