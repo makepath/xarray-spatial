@@ -1376,22 +1376,41 @@ def resample(
             out_res_x, 0.0, left, 0.0, -out_res_y, top,
         )
 
-    # Resample currently emits float32 with NaN as the missing-data
-    # sentinel regardless of input dtype. If the input declared a
-    # different sentinel via `_FillValue` or `nodatavals`, replace the
-    # value with NaN so the metadata matches the actual data. Leave the
-    # keys absent when the input did not have them.
+    # Resample replaces sentinel pixels with NaN regardless of input
+    # dtype. If the input declared a sentinel via `_FillValue`,
+    # `nodatavals`, or the rasterio-style `nodata` attr, refresh each
+    # one to NaN so the metadata matches the actual data. Leave the
+    # keys absent when the input did not have them. `_resolve_nodata`
+    # reads `nodata` as a fallback, so we must refresh it too -- a
+    # stale finite value here would silently mismatch the masked data
+    # on any downstream consumer that trusts `attrs['nodata']`.
     if '_FillValue' in agg.attrs:
         new_attrs['_FillValue'] = float('nan')
     if 'nodatavals' in agg.attrs:
         old = agg.attrs['nodatavals']
         new_attrs['nodatavals'] = tuple(float('nan') for _ in old)
+    if 'nodata' in agg.attrs:
+        new_attrs['nodata'] = float('nan')
+
+    # Carry across scalar (zero-dim) non-dim coords like rioxarray's
+    # `spatial_ref` or a squeezed `time` / `band` selector. The
+    # identity path (scale==1.0) preserves these via `agg.copy()`;
+    # the 2D non-identity path must match so chained rioxarray
+    # pipelines don't silently lose CRS / spatial_ref / scalar
+    # selector coords. Spatially-shaped non-dim coords (dims include
+    # ydim or xdim) are not carried because their length changed.
+    extra_coords = {}
+    for coord_name, coord in agg.coords.items():
+        if coord_name in (ydim, xdim):
+            continue  # spatial dim-coords are rebuilt above
+        if coord.ndim == 0:
+            extra_coords[coord_name] = coord
 
     result = xr.DataArray(
         result_data,
         name=name,
         dims=agg.dims,
-        coords={ydim: new_y, xdim: new_x},
+        coords={ydim: new_y, xdim: new_x, **extra_coords},
         attrs=new_attrs,
     )
 
