@@ -2935,7 +2935,9 @@ def _extract_grid_from_like(like):
     # up against the wrong cells.  Only the first and last samples are
     # inspected; the ``_check_uniform_axis`` call above has already
     # rejected non-monotonic or duplicate-valued coords on both axes,
-    # so this is safe.
+    # so this is safe.  Single-row / single-column templates have no
+    # direction to detect, so the ``> 1`` guard short-circuits to
+    # ``False`` (no flip) for those.
     y_ascending = height > 1 and float(y[-1]) > float(y[0])
     x_descending = width > 1 and float(x[-1]) < float(x[0])
 
