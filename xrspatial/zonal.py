@@ -1542,7 +1542,7 @@ def _hi_dask_cupy(zones_data, values_data, nodata):
 
     The per-zone HI lookup table is a Python dict so the reduce step has to
     pass through host memory. The painted output is wrapped back as cupy
-    chunks so the returned dask graph yields cupy arrays — keeping the
+    chunks so the returned dask graph yields cupy arrays, keeping the
     backend consistent with the dask+cupy input (issue #2525).
     """
     zones_cpu = zones_data.map_blocks(

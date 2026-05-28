@@ -258,15 +258,6 @@ def test_hypsometric_integral_list_of_pairs_zones():
 
 # --- backend-consistency regression (#2525) ---------------------------------
 
-def _has_cuda_and_cupy():
-    try:
-        from numba import cuda
-        import cupy  # noqa: F401
-        return cuda.is_available()
-    except Exception:
-        return False
-
-
 @pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
 def test_hi_preserves_backend_2525(backend):
     """Regression: output backend must match input backend.
@@ -276,15 +267,17 @@ def test_hi_preserves_backend_2525(backend):
     dask+cupy. Downstream dispatch via ArrayTypeFunctionMapping then routed
     through the numpy path silently. See issue #2525.
     """
-    if 'cupy' in backend and not _has_cuda_and_cupy():
+    from xrspatial.utils import (
+        has_cuda_and_cupy, has_dask_array,
+        is_cupy_array, is_dask_cupy,
+    )
+
+    if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
-    if 'dask' in backend and da is None:
+    if 'dask' in backend and not has_dask_array():
         pytest.skip("Requires Dask")
 
     from xrspatial.zonal import hypsometric_integral
-    from xrspatial.utils import (
-        is_cupy_array, is_dask_cupy, has_dask_array,
-    )
 
     zones_np = np.array([[1, 1, 2, 2],
                          [1, 1, 2, 2]], dtype=np.int32)
