@@ -6,6 +6,16 @@
 
 #### Fixed
 
+- `reproject(..., bounds_policy="auto")` no longer crops valid edge data
+  on ordinary geographic-to-projected reprojections. The old blow-up
+  heuristic compared source span (e.g. degrees for EPSG:4326) against
+  target span (e.g. metres for EPSG:3857) and tripped on almost any
+  geographic-to-projected pair. The new heuristic is unit-agnostic:
+  it compares the max absolute projected coordinate to the median
+  and also checks the non-finite fraction of raw edge samples in the
+  target CRS. Benign reprojections stay untouched; real singularities
+  (Mercator at the poles, polar-stereographic on the opposite pole)
+  still trigger the percentile fallback. (#2582)
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an
