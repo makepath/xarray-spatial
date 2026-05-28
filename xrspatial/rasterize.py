@@ -2057,10 +2057,12 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
     # under ``all_touched=True``. Hoist the host-to-device transfer above
     # the conditional so the two launches share the same device buffers;
     # without the hoist the props/global tables would be uploaded twice
-    # per call. See issue #2506.
+    # per call. Skip the upload when neither launch will consume it
+    # (``len(edge_y_min) == 0`` and ``not all_touched``), so the hoist
+    # never costs more than the prior code. See issue #2506.
     poly_props_gpu = None
     poly_global_gpu = None
-    if poly_geoms:
+    if poly_geoms and (len(edge_y_min) > 0 or all_touched):
         poly_props_gpu = cupy.asarray(poly_props)
         poly_global_gpu = cupy.asarray(poly_global)
 
@@ -2538,16 +2540,22 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
     if poly_wkb:
         poly_geoms = _polys_from_wkb(poly_wkb)
         poly_ids = np.arange(len(poly_geoms), dtype=np.int32)
-        # Upload ``poly_props_2d`` and ``poly_global_2d`` once; both the
-        # scanline ``poly_launch`` and the supercover ``boundary_launch``
-        # under ``all_touched=True`` reference these tables, and without
-        # the hoist they would be transferred twice per tile. Issue #2506.
-        poly_props_2d_gpu = cupy.asarray(poly_props_2d)
-        poly_global_2d_gpu = cupy.asarray(poly_global_2d)
         edge_arrays = _extract_edges(
             poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
         edge_arrays = _sort_edges(edge_arrays)
         edge_y_min = edge_arrays[0]
+        # Upload ``poly_props_2d`` and ``poly_global_2d`` once; both the
+        # scanline ``poly_launch`` and the supercover ``boundary_launch``
+        # under ``all_touched=True`` reference these tables, and without
+        # the hoist they would be transferred twice per tile. Skip the
+        # upload when neither launch will consume it (no edges and not
+        # ``all_touched``) so the hoist never costs more than the prior
+        # code. Issue #2506.
+        poly_props_2d_gpu = None
+        poly_global_2d_gpu = None
+        if len(edge_y_min) > 0 or all_touched:
+            poly_props_2d_gpu = cupy.asarray(poly_props_2d)
+            poly_global_2d_gpu = cupy.asarray(poly_global_2d)
         if len(edge_y_min) > 0:
             edge_y_max, edge_x_at_ymin, edge_inv_slope, edge_geom_id = \
                 edge_arrays[1:]
