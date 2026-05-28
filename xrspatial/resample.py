@@ -9,10 +9,8 @@ from functools import partial
 
 import numpy as np
 import xarray as xr
-from scipy.ndimage import (
-    map_coordinates as _scipy_map_coords,
-    spline_filter as _scipy_spline_filter,
-)
+from scipy.ndimage import map_coordinates as _scipy_map_coords
+from scipy.ndimage import spline_filter as _scipy_spline_filter
 
 try:
     import dask.array as da
@@ -24,14 +22,8 @@ try:
 except ImportError:
     cupy = None
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _validate_raster,
-    calc_res,
-    ngjit,
-)
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.utils import ArrayTypeFunctionMapping, _validate_raster, calc_res, ngjit
 
 # -- Constants ---------------------------------------------------------------
 
@@ -301,10 +293,8 @@ def _nan_aware_interp_np(data, out_h, out_w, order):
 
 def _nan_aware_interp_cupy(data, out_h, out_w, order):
     """CuPy variant of :func:`_nan_aware_interp_np`."""
-    from cupyx.scipy.ndimage import (
-        map_coordinates as _cupy_map_coords,
-        spline_filter as _cupy_spline_filter,
-    )
+    from cupyx.scipy.ndimage import map_coordinates as _cupy_map_coords
+    from cupyx.scipy.ndimage import spline_filter as _cupy_spline_filter
 
     iy = cupy.asarray(_block_centered_coords(data.shape[0], out_h))
     ix = cupy.asarray(_block_centered_coords(data.shape[1], out_w))
@@ -781,10 +771,8 @@ def _interp_block_cupy(block, global_in_h, global_in_w,
                        cum_in_y, cum_in_x, cum_out_y, cum_out_x,
                        depth, order, work_dtype, out_dtype, block_info=None):
     """CuPy variant of :func:`_interp_block_np`."""
-    from cupyx.scipy.ndimage import (
-        map_coordinates as _cupy_map_coords,
-        spline_filter as _cupy_spline_filter,
-    )
+    from cupyx.scipy.ndimage import map_coordinates as _cupy_map_coords
+    from cupyx.scipy.ndimage import spline_filter as _cupy_spline_filter
 
     yi, xi = block_info[0]['chunk-location']
     target_h = int(cum_out_y[yi + 1] - cum_out_y[yi])
@@ -1012,6 +1000,7 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
                              dtype=out_dt, meta=meta)
 
     import math
+
     # Aggregate windows can cross chunk boundaries; size chunks to satisfy
     # both the scale-driven minimum and the depth-driven minimum in one pass,
     # then build the cumulative arrays once.
@@ -1096,6 +1085,7 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
                              dtype=out_dt, meta=meta)
 
     import math
+
     # Aggregate windows can cross chunk boundaries; size chunks to satisfy
     # both the scale-driven minimum and the depth-driven minimum in one pass,
     # then build the cumulative arrays once.
