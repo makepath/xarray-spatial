@@ -1333,6 +1333,42 @@ def test_apply_3d(backend):
     np.testing.assert_equal(result_np[1, 0, :], [5.0, 5.0, 5.0])
 
 
+@pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
+def test_apply_dask_3d_axis2_rechunked_2526():
+    """Regression for #2526: apply 3D dask path must not leave axis-2
+    chunks at size 1 after da.stack.
+    """
+    shape = (4, 4, 3)
+    zones_data = np.array([[1, 1, 0, 2],
+                           [1, 0, 2, 2],
+                           [0, 2, 2, 0],
+                           [2, 0, 1, 1]], dtype=np.int32)
+    values_data = np.arange(np.prod(shape)).reshape(shape).astype(np.float64)
+
+    zones = xr.DataArray(
+        da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'],
+    )
+    values = xr.DataArray(
+        da.from_array(values_data, chunks=(2, 2, 3)),
+        dims=['y', 'x', 'band'],
+    )
+
+    result = apply(zones, values, lambda x: x * 2, nodata=0)
+
+    # Axis-2 chunks should match the input chunking, not be split
+    # into unit chunks by da.stack.
+    assert result.data.chunks[2] == values.data.chunks[2], (
+        f"axis-2 chunks should be {values.data.chunks[2]}, "
+        f"got {result.data.chunks[2]}"
+    )
+    # Sanity: result is numerically correct on a non-nodata cell.
+    out = result.data.compute()
+    # cell (0, 0) is zone 1 (non-nodata) so func applied
+    np.testing.assert_array_equal(
+        out[0, 0, :], values_data[0, 0, :] * 2,
+    )
+
+
 def test_apply_nodata_none():
     zones_data = np.array([[0, 1], [2, 3]], dtype=np.int32)
     values_data = np.array([[1.0, 2.0], [3.0, 4.0]])
@@ -1548,6 +1584,38 @@ def test_regions_dask_memory_guard():
     with patch('xrspatial.zonal._available_memory_bytes', return_value=1 * 1024**3):
         with pytest.raises(MemoryError, match="Connected-component labeling"):
             _regions_dask(huge.data if hasattr(huge, 'data') else huge, 4)
+
+
+def test_stats_dataarray_return_type_memory_guard_2523():
+    """stats(return_type='xarray.DataArray') should refuse to allocate
+    an oversized (n_stats, H*W) float64 working buffer.
+
+    Regression guard for issue #2523: the numpy backend's xarray.DataArray
+    return path allocated np.full((n_stats, values.size), nan) with no
+    memory check, scaling linearly with the user-supplied stats_funcs.
+    """
+    from unittest.mock import patch
+
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
+                          dtype=np.float64)
+    zones = xr.DataArray(zones_arr)
+    values = xr.DataArray(values_arr)
+
+    # Mock available memory to a tiny budget so the (n_stats, 8) buffer
+    # exceeds 50% of it.  The default 8 stats * 8 cells * 8 bytes = 512 B;
+    # with avail = 100 B the guard must trip.
+    with patch('xrspatial.zonal._available_memory_bytes', return_value=100):
+        with pytest.raises(MemoryError, match="xarray.DataArray"):
+            stats(zones=zones, values=values,
+                  return_type='xarray.DataArray')
+
+    # Sanity: with the normal memory budget the same call succeeds.
+    out = stats(zones=zones, values=values, return_type='xarray.DataArray')
+    assert isinstance(out, xr.DataArray)
+    # n_stats=8 default, output shape = (8, *values.shape)
+    assert out.shape[0] == 8
+    assert out.shape[1:] == values_arr.shape
 
 
 @pytest.mark.skipif(da is None, reason="dask not installed")
@@ -1833,6 +1901,78 @@ def test_crop_missing_zone_ids_raises():
 
 
 # ---------------------------------------------------------------------------
+# Regression tests for #2528: dask backend must not silently drop 'majority'
+# from the requested stats list.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="dask.array not available")
+def test_stats_dask_explicit_majority_raises_2528():
+    """Explicit 'majority' on dask must raise instead of being silently dropped."""
+    zones_data = np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=float)
+    values_data = np.array([[1.0, 1, 2, 2], [3, 3, 5, 5]])
+
+    zones = xr.DataArray(da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'])
+    values = xr.DataArray(da.from_array(values_data, chunks=(2, 2)), dims=['y', 'x'])
+
+    with pytest.raises(ValueError, match="majority"):
+        stats(zones=zones, values=values, stats_funcs=['mean', 'majority'])
+
+    # Single-stat majority request also raises.
+    with pytest.raises(ValueError, match="majority"):
+        stats(zones=zones, values=values, stats_funcs=['majority'])
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="dask.array not available")
+def test_stats_dask_default_omits_majority_2528():
+    """Bare stats() on dask should resolve to the dask default (no majority).
+
+    Regression for #2528: the previous mutable default included 'majority'
+    and the dask path silently dropped it.  After the fix the dask default
+    resolves to the supported subset, so the result columns match the
+    documented contract and no stat is silently filtered.
+    """
+    zones_data = np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=float)
+    values_data = np.array([[1.0, 1, 2, 2], [3, 3, 5, 5]])
+
+    zones = xr.DataArray(da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'])
+    values = xr.DataArray(da.from_array(values_data, chunks=(2, 2)), dims=['y', 'x'])
+
+    df = stats(zones=zones, values=values).compute()
+    expected_cols = ['zone', 'mean', 'max', 'min', 'sum', 'std', 'var', 'count']
+    assert df.columns.tolist() == expected_cols
+    assert 'majority' not in df.columns
+
+
+def test_stats_numpy_default_includes_majority_2528():
+    """Bare stats() on numpy keeps 'majority' in the resolved default list."""
+    zones = xr.DataArray(np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=float),
+                         dims=['y', 'x'])
+    values = xr.DataArray(np.array([[1.0, 1, 2, 2], [3, 3, 5, 5]]),
+                          dims=['y', 'x'])
+
+    df = stats(zones=zones, values=values)
+    assert 'majority' in df.columns
+
+
+def test_stats_default_list_is_not_mutated_2528():
+    """Repeated calls with the default must not accumulate state.
+
+    The previous implementation used a mutable list literal as the default
+    argument.  After the switch to ``stats_funcs=None``, the resolved list
+    is freshly constructed each call, so a caller that mutates it locally
+    cannot leak state into the next caller.
+    """
+    zones = xr.DataArray(np.array([[1, 1], [2, 2]], dtype=float), dims=['y', 'x'])
+    values = xr.DataArray(np.array([[1.0, 2.0], [3.0, 4.0]]), dims=['y', 'x'])
+
+    df1 = stats(zones=zones, values=values)
+    df2 = stats(zones=zones, values=values)
+    assert df1.columns.tolist() == df2.columns.tolist()
+    assert 'majority' in df1.columns and 'majority' in df2.columns
+
+
+# ---------------------------------------------------------------------------
 # Regression tests for #881: np.unique / np.isfinite must not materialise
 # the full dask array.
 # ---------------------------------------------------------------------------
@@ -2004,16 +2144,19 @@ class TestVectorZones:
 
     def test_apply_gdf(self):
         values, gdf, zones_raster = self._zones_raster_and_gdf()
-        # rasterize produces float zones; apply needs int zones
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', RuntimeWarning)
-            zones_int = zones_raster.copy(
-                data=zones_raster.values.astype(int))
+        # rasterize produces float zones; apply needs int zones.
+        # Substitute the default NaN fill with 0 (apply's default nodata)
+        # before casting so the cast is well-defined across platforms;
+        # rasterize(..., dtype=int) now requires an explicit integer fill
+        # (#2504), so pass fill=0 to match.
+        zones_float = zones_raster.copy(
+            data=np.where(np.isnan(zones_raster.values),
+                          0.0, zones_raster.values))
+        zones_int = zones_float.copy(data=zones_float.values.astype(int))
         fn = lambda x: x * 2
         expected = apply(zones_int, values, fn)
         result = apply(gdf, values, fn, column='zone_id',
-                       rasterize_kw={'dtype': int})
+                       rasterize_kw={'dtype': int, 'fill': 0})
         xr.testing.assert_identical(result, expected)
 
     # -- crop --

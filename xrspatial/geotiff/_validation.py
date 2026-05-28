@@ -24,7 +24,8 @@ import numpy as np
 from ._coords import _BAND_DIM_NAMES
 from ._errors import (ConflictingCRSError, ConflictingNodataError, InconsistentGeoKeysError,
                       InvalidIntegerNodataError, MixedBandMetadataError, NonUniformCoordsError,
-                      RotatedTransformError, UnparseableCRSError, VRTStableSourcesOnlyError)
+                      RotatedTransformError, UnparseableCRSError, VRTStableSourcesOnlyError,
+                      _distinct_per_band_nodatavals_msg)
 from ._runtime import (_MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, _TIME_DIM_NAMES,
                        _X_DIM_NAMES, _Y_DIM_NAMES)
 
@@ -1075,6 +1076,89 @@ def _check_write_conflicting_nodata(context: Mapping[str, Any]) -> None:
 
 
 register_write_metadata_check(_check_write_conflicting_nodata)
+
+
+# ---------------------------------------------------------------------------
+# Distinct per-band nodatavals write check
+# ---------------------------------------------------------------------------
+
+
+def _check_write_distinct_per_band_nodatavals(
+    context: Mapping[str, Any],
+) -> None:
+    """Refuse writes whose ``attrs['nodatavals']`` declares two or more
+    distinct concrete per-band sentinels.
+
+    The TIFF / GDAL data model stores a single ``GDAL_NODATA`` tag per
+    file, so a multi-band raster shares one sentinel across every band
+    (see ``tests/parity/test_reference.py::TestMultibandUint16SharedNodata``
+    for the documented limitation). The legacy resolver in
+    ``_attrs._resolve_nodata_attr`` would silently pick the first usable
+    value and drop the rest, so bands that declared a different sentinel
+    would keep their sentinel cells as real data on the resulting file.
+
+    The earlier conflict check ``_check_write_conflicting_nodata`` only
+    catches the case where every entry in the tuple disagrees with the
+    canonical ``attrs['nodata']`` scalar. It misses the more dangerous
+    case where the tuple itself carries multiple distinct concrete
+    values (with or without an accompanying ``attrs['nodata']``), because
+    one of the per-band values happens to equal the flattened scalar.
+
+    Allowed:
+
+    * A tuple with a single distinct concrete value (possibly repeated).
+    * A tuple of all NaN / None entries.
+    * A tuple mixing ``None`` with a single concrete value.
+
+    Refused:
+
+    * Two or more distinct concrete (non-NaN, non-None) values, e.g.
+      ``(-9999.0, -8888.0)`` or ``(-9999.0, -9999.0, 0.0)``.
+
+    The explicit ``nodata=`` writer kwarg overrides attrs entirely and
+    short-circuits this check; the caller has stated which single
+    sentinel to write, so the per-band disagreement is irrelevant.
+
+    Context keys consumed:
+
+    * ``nodata_kwarg`` -- the explicit ``nodata=`` writer kwarg.
+    * ``attrs_nodatavals`` -- ``data.attrs.get('nodatavals')``.
+    """
+    if context.get('nodata_kwarg') is not None:
+        return
+    nodatavals_attr = context.get('attrs_nodatavals')
+    if nodatavals_attr is None:
+        return
+    try:
+        vals = list(nodatavals_attr)
+    except TypeError:
+        return
+    concrete: list[float] = []
+    for v in vals:
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(fv):
+            continue
+        concrete.append(fv)
+    # Deduplicate by exact float equality. The TIFF GDAL_NODATA tag is a
+    # single scalar, so any two concrete values that compare unequal are
+    # a collision the writer cannot represent.
+    distinct = []
+    for fv in concrete:
+        if not any(fv == d for d in distinct):
+            distinct.append(fv)
+    if len(distinct) < 2:
+        return
+    raise ConflictingNodataError(
+        _distinct_per_band_nodatavals_msg(nodatavals_attr, distinct)
+    )
+
+
+register_write_metadata_check(_check_write_distinct_per_band_nodatavals)
 
 
 # ---------------------------------------------------------------------------

@@ -121,7 +121,16 @@ def _load_geoid(model='EGM96'):
 
 @njit(nogil=True, cache=True)
 def _interp_geoid_point(lon, lat, data, left, top, res_x, res_y, h, w):
-    """Bilinear interpolation of geoid undulation at a single point."""
+    """Bilinear interpolation of geoid undulation at a single point.
+
+    The geoid GeoTIFF is pixel-center anchored: ``data[r, c]`` is the
+    value at ``(left + (c + 0.5) * res_x, top - (r + 0.5) * res_y)``.
+    The continuous interpolation index is therefore
+    ``(coord - edge) / res - 0.5`` rather than ``(coord - edge) / res``.
+    Without the ``-0.5`` correction the lookup at a pixel center
+    returned a blend of the target pixel and its neighbour, giving up to
+    ~2 m error on EGM96 at 15 arcmin. See GH #2508.
+    """
     # Wrap longitude to [-180, 180)
     lon_w = lon
     while lon_w < -180.0:
@@ -129,21 +138,37 @@ def _interp_geoid_point(lon, lat, data, left, top, res_x, res_y, h, w):
     while lon_w >= 180.0:
         lon_w -= 360.0
 
-    col_f = (lon_w - left) / res_x
-    row_f = (top - lat) / res_y
+    # Pixel-center index space: data[r, c] sits at fractional index (r, c).
+    col_f = (lon_w - left) / res_x - 0.5
+    row_f = (top - lat) / res_y - 0.5
 
-    if row_f < 0 or row_f > h - 1:
-        return math.nan  # outside latitude range
+    # Latitude beyond the outermost pixel centers is treated as outside
+    # the defined region. Querying exactly on the southern edge (lat ==
+    # bottom + 0.5*res_y) gives row_f == h-1 which is still in-bounds.
+    if row_f < -0.5 or row_f > h - 0.5:
+        return math.nan
 
-    # Wrap column for global grids
-    c0 = int(col_f) % w
+    # Clamp half-pixel border to the edge pixel center so a query that
+    # falls between the outer pixel center and the raster bound returns
+    # that pixel's value rather than NaN. This matches PROJ's edge
+    # handling for vgridshift.
+    if row_f < 0.0:
+        row_f = 0.0
+    if row_f > h - 1:
+        row_f = h - 1.0
+
+    # Wrap column for global grids. ``int(...)`` rounds toward zero so
+    # negative fractions need ``math.floor`` to stay on the left
+    # neighbour (col_f = -0.5 -> c0 = -1 -> w-1, the antipodal column).
+    c0_raw = int(math.floor(col_f))
+    c0 = c0_raw % w
     c1 = (c0 + 1) % w
     r0 = int(row_f)
     if r0 >= h - 1:
         r0 = h - 2
     r1 = r0 + 1
 
-    dc = col_f - int(col_f)
+    dc = col_f - c0_raw
     dr = row_f - r0
 
     N = (data[r0, c0] * (1.0 - dr) * (1.0 - dc) +

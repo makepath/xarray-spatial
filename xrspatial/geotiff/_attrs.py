@@ -164,6 +164,7 @@ import xarray as xr
 from ._coords import coords_from_geo_info as _coords_from_geo_info
 from ._coords import resolve_georef as _resolve_georef
 from ._coords import transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry
+from ._errors import ConflictingNodataError, _distinct_per_band_nodatavals_msg
 from ._geotags import (_NO_GEOREF_KEY, GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_MODEL_TYPE,
                        GEOKEY_PROJECTED_CS_TYPE, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT)
 
@@ -1276,6 +1277,17 @@ def _resolve_nodata_attr(attrs: dict):
         except TypeError:
             seq = [vals]
         saw_non_numeric = False
+        # Collect usable (numeric, non-NaN, non-None) entries first so we
+        # can detect distinct per-band sentinels rather than silently
+        # picking the first one. Issue #2514: the writer cannot represent
+        # multiple sentinels in a single GDAL_NODATA tag, so flattening a
+        # tuple like ``(-9999.0, -8888.0)`` to ``-9999.0`` drops band 1's
+        # sentinel and turns its missing-data cells into real values on
+        # the resulting file. The write-side validator catches this at
+        # the boundary, but the resolver is also called from the writer
+        # itself after validation, so a defensive check here guards
+        # against accidental bypass paths.
+        usable: list[tuple[float, Any]] = []
         for v in seq:
             if v is None:
                 continue
@@ -1286,7 +1298,22 @@ def _resolve_nodata_attr(attrs: dict):
                 continue
             if np.isnan(fv):
                 continue
-            return v
+            usable.append((fv, v))
+        if usable:
+            distinct: list[float] = []
+            for fv, _ in usable:
+                if not any(fv == d for d in distinct):
+                    distinct.append(fv)
+            if len(distinct) > 1:
+                # Defense-in-depth raise: the writer-side validator
+                # ``_check_write_distinct_per_band_nodatavals`` normally
+                # fires first, but the resolver is also called from the
+                # writer itself after validation. Share the message via
+                # the helper in ``_errors`` so the two sites stay in sync.
+                raise ConflictingNodataError(
+                    _distinct_per_band_nodatavals_msg(vals, distinct)
+                )
+            return usable[0][1]
         # A tuple where every entry is non-numeric is almost certainly a
         # user error (typo, stringified sentinel) rather than a legitimate
         # "no sentinel" signal. Warn so the caller sees it, but still fall

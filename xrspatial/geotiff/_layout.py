@@ -14,6 +14,7 @@ transport lives in :mod:`._sources`, top-level orchestration lives in
 """
 from __future__ import annotations
 
+import importlib.util
 import math
 
 import numpy as np
@@ -32,20 +33,96 @@ from ._sources import _max_tile_bytes_from_env
 #: Override per-call via the ``max_pixels`` keyword argument.
 MAX_PIXELS_DEFAULT = 1_000_000_000
 
+#: Fallback bytes-per-pixel used by ``_gb_hint`` when the caller has
+#: not resolved the decoded dtype yet. float32 matches the constant
+#: docstring above and the dtype the decoder produces for the common
+#: single-band float case. Real call sites pass the actual dtype so
+#: the GB hint reflects the allocation that would have happened.
+_DEFAULT_HINT_BYTES = 4
+
+
+def _gb_hint(pixels, dtype=None):
+    """Return a ``~X.XX GB at N bytes/pixel`` string for ``pixels``.
+
+    ``dtype`` is the numpy dtype of the would-be allocation. When
+    provided, the hint uses ``dtype.itemsize`` so f64 reports 8
+    bytes/pixel, u8 reports 1, etc. When omitted, the hint falls
+    back to ``_DEFAULT_HINT_BYTES`` (float32) for older call sites
+    that have not threaded the dtype through yet.
+
+    Uses decimal GB (10**9 bytes) so the printed number matches the
+    ``~4 GB`` figure quoted in the :data:`MAX_PIXELS_DEFAULT`
+    docstring above and the convention reported by ``df`` / ``du`` /
+    most cloud object stores.
+    """
+    if dtype is None:
+        bpp = _DEFAULT_HINT_BYTES
+    else:
+        bpp = int(np.dtype(dtype).itemsize)
+    gb = (pixels * bpp) / 1_000_000_000
+    return f"~{gb:.2f} GB at {bpp} bytes/pixel"
+
+
+def _suggest_chunk_side(max_pixels, samples):
+    """Pick a square chunksize whose pixel count fits comfortably under
+    ``max_pixels`` for the given band count. Capped at 1024 so the hint
+    stays near common COG tile sizes (256 / 512 / 1024)."""
+    samples = max(1, int(samples))
+    if max_pixels <= 0:
+        return 1
+    side = int(math.isqrt(max_pixels // samples))
+    return max(1, min(1024, side))
+
+
+def _recovery_hint(max_pixels, samples):
+    """Build the multi-line recovery hint appended to PixelSafetyLimitError.
+
+    Always suggests ``window=`` for reading a sub-region. Suggests
+    ``chunks=`` when dask is installed; otherwise recommends installing
+    dask so chunked reads become available. ``importlib.util.find_spec``
+    avoids importing dask just to format an error.
+    """
+    chunk = _suggest_chunk_side(max_pixels, samples)
+    lines = [
+        "To read this file, try one of:",
+        "  * Pass a larger max_pixels= if the allocation is acceptable.",
+        f"  * Read a sub-region with window=(r0, c0, r1, c1), "
+        f"e.g. window=(0, 0, {chunk}, {chunk}).",
+    ]
+    if importlib.util.find_spec('dask') is not None:
+        lines.append(
+            f"  * Read lazily in chunks with chunks={chunk} so each "
+            f"decoded buffer stays under max_pixels."
+        )
+    else:
+        lines.append(
+            "  * Install dask (`pip install dask` or "
+            "`conda install -c conda-forge dask`) to read the file "
+            f"lazily via chunks={chunk}."
+        )
+    return "\n".join(lines)
+
 
 class PixelSafetyLimitError(ValueError):
     """Raised when a requested TIFF allocation exceeds max_pixels."""
 
 
-def _check_dimensions(width, height, samples, max_pixels):
-    """Raise PixelSafetyLimitError if the request exceeds *max_pixels*."""
+def _check_dimensions(width, height, samples, max_pixels, dtype=None):
+    """Raise PixelSafetyLimitError if the request exceeds *max_pixels*.
+
+    ``dtype`` is forwarded to :func:`_gb_hint` so the byte-allocation
+    estimate in the error message reflects the actual dtype that
+    would have been allocated. Optional for callers that do not have
+    the dtype resolved yet (the hint then falls back to float32).
+    """
     total = width * height * samples
     if total > max_pixels:
         raise PixelSafetyLimitError(
             f"TIFF image dimensions ({width} x {height} x {samples} = "
-            f"{total:,} pixels) exceed the safety limit of "
-            f"{max_pixels:,} pixels.  Pass a larger max_pixels value to "
-            f"read_to_array() if this file is legitimate."
+            f"{total:,} pixels, {_gb_hint(total, dtype)}) exceed the "
+            f"safety limit of {max_pixels:,} pixels "
+            f"({_gb_hint(max_pixels, dtype)}).\n"
+            f"{_recovery_hint(max_pixels, samples)}"
         )
 
 

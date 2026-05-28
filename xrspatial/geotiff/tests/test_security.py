@@ -51,6 +51,116 @@ class TestDimensionGuard:
         # Relaxed: passes with large limit
         _check_dimensions(100_000, 100_000, 1, max_pixels=100_000_000_000)
 
+    def test_error_message_includes_gb_estimate(self):
+        """Error message reports both pixels and a GB allocation hint.
+
+        With no dtype passed the hint falls back to float32
+        (4 bytes/pixel). Real call sites pass the actual dtype.
+        """
+        # 50000 x 50000 x 1 = 2.5e9 pixels = 10.00 GB at 4 bytes/pixel
+        # MAX_PIXELS_DEFAULT = 1e9 pixels = 4.00 GB at 4 bytes/pixel
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        # Pixel count still present (preserves existing assertions).
+        assert "2,500,000,000 pixels" in msg
+        assert "1,000,000,000 pixels" in msg
+        # GB hint added for both the requested and the limit allocations.
+        # Uses decimal GB (10**9 bytes) to match the docstring convention.
+        assert "~10.00 GB at 4 bytes/pixel" in msg
+        assert "~4.00 GB at 4 bytes/pixel" in msg
+
+    def test_error_message_uses_passed_dtype_for_gb_hint(self):
+        """When the caller passes the decoded dtype, the GB hint reports
+        the exact byte width: f64 → 8 bytes/pixel (double the float32
+        default), u8 → 1 byte/pixel (a quarter)."""
+        # float64: 1e9 pixels * 8 bytes = 8.00 GB
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT,
+                              dtype=np.float64)
+        assert "20.00 GB at 8 bytes/pixel" in str(exc.value)
+        assert "8.00 GB at 8 bytes/pixel" in str(exc.value)
+
+        # uint8: 1e9 pixels * 1 byte = 1.00 GB
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT,
+                              dtype=np.uint8)
+        assert "2.50 GB at 1 bytes/pixel" in str(exc.value)
+        assert "1.00 GB at 1 bytes/pixel" in str(exc.value)
+
+    def test_error_message_includes_window_suggestion(self):
+        """Error message suggests window= for reading a sub-region."""
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        assert "window=(r0, c0, r1, c1)" in msg
+        # Concrete example uses the same chunk-side as the chunks hint.
+        assert "window=(0, 0, 1024, 1024)" in msg
+
+    def test_error_message_suggests_chunks_when_dask_installed(self,
+                                                               monkeypatch):
+        """When dask is importable, suggest chunks=."""
+        # Force the 'dask installed' branch regardless of test env.
+        monkeypatch.setattr(
+            'xrspatial.geotiff._layout.importlib.util.find_spec',
+            lambda name: object() if name == 'dask' else None,
+        )
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        assert "chunks=1024" in msg
+        assert "lazily" in msg
+        # Should not recommend installing dask.
+        assert "pip install dask" not in msg
+        assert "conda install" not in msg
+
+    def test_error_message_recommends_install_when_dask_missing(self,
+                                                                monkeypatch):
+        """When dask is not importable, recommend installation."""
+        monkeypatch.setattr(
+            'xrspatial.geotiff._layout.importlib.util.find_spec',
+            lambda name: None,
+        )
+        with pytest.raises(ValueError) as exc:
+            _check_dimensions(50_000, 50_000, 1, MAX_PIXELS_DEFAULT)
+        msg = str(exc.value)
+        assert "pip install dask" in msg
+        assert "conda install -c conda-forge dask" in msg
+        # The chunks= number is still surfaced so the user knows what to
+        # pass once dask is installed.
+        assert "chunks=1024" in msg
+
+    def test_suggested_chunk_side_scales_with_max_pixels(self):
+        """The suggested chunk side fits under max_pixels for the given
+        band count and never exceeds 1024."""
+        from xrspatial.geotiff._layout import _suggest_chunk_side
+        # Default budget: capped at 1024.
+        assert _suggest_chunk_side(1_000_000_000, 1) == 1024
+        # Tight budget: 100 pixels, 1 band -> side 10.
+        assert _suggest_chunk_side(100, 1) == 10
+        # Multi-band reduces the per-side budget.
+        # 1_000_000 budget, 4 bands -> sqrt(250_000) = 500.
+        assert _suggest_chunk_side(1_000_000, 4) == 500
+        # Pathological inputs do not crash.
+        assert _suggest_chunk_side(0, 1) == 1
+        assert _suggest_chunk_side(10, 0) == 3
+
+    def test_gb_hint_helper_rounds_to_two_decimals(self):
+        """_gb_hint formats bytes/pixel * count as a ~X.XX GB string."""
+        from xrspatial.geotiff._layout import _gb_hint
+        # No dtype: 1 billion pixels * 4 bytes (float32 default) ->
+        # 4.00 GB hint, matching MAX_PIXELS_DEFAULT's docstring.
+        assert _gb_hint(1_000_000_000) == "~4.00 GB at 4 bytes/pixel"
+        # Zero pixels still formats sensibly.
+        assert _gb_hint(0) == "~0.00 GB at 4 bytes/pixel"
+        # With dtype: itemsize drives the byte multiplier.
+        assert _gb_hint(1_000_000_000, dtype=np.float64) == \
+            "~8.00 GB at 8 bytes/pixel"
+        assert _gb_hint(1_000_000_000, dtype=np.uint8) == \
+            "~1.00 GB at 1 bytes/pixel"
+        assert _gb_hint(1_000_000_000, dtype=np.int16) == \
+            "~2.00 GB at 2 bytes/pixel"
+
     def test_read_strips_rejects_huge_header(self):
         """_read_strips refuses to allocate when header claims huge dims."""
         # Build a valid TIFF with small pixel data but huge header dimensions.

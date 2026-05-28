@@ -4253,6 +4253,123 @@ class TestGeoidHeightBehaviour:
         assert np.isfinite(out.values).all()
 
 
+class TestGeoidPixelCenterIndexing:
+    """Regression coverage for the half-pixel offset bug (#2508).
+
+    The EGM96 GeoTIFF is pixel-center anchored: ``data[r, c]`` is the
+    value at ``(left + (c + 0.5) * res_x, top - (r + 0.5) * res_y)``.
+    Before #2508 the bilinear lookup indexed in pixel-edge space, which
+    produced up to ~2 m error at pixel centers and an 8-9 cm error at
+    representative locations like New York vs pyproj's geoid lookup.
+    """
+
+    def test_geoid_at_pixel_center_returns_stored_value(self):
+        """A query at the exact pixel center must return the stored cell
+        value (modulo float round-off), not a blend with the neighbour.
+        """
+        from xrspatial.reproject._vertical import (
+            _interp_geoid_point, _load_geoid,
+        )
+
+        data, left, top, res_x, res_y, h, w = _load_geoid('EGM96')
+
+        for (i, j) in [(0, 0), (10, 100), (h // 2, w // 2),
+                       (h - 1, w - 1)]:
+            lon_c = left + (j + 0.5) * res_x
+            lat_c = top - (i + 0.5) * res_y
+            N = _interp_geoid_point(
+                lon_c, lat_c, data, left, top, res_x, res_y, h, w,
+            )
+            assert abs(N - data[i, j]) < 1e-9, (
+                f"pixel ({i},{j}) center query expected "
+                f"data[{i},{j}]={data[i, j]!r}, got {N!r}; "
+                f"half-pixel offset bug from #2508?"
+            )
+
+    def test_geoid_height_matches_pyproj_within_cm(self):
+        """``geoid_height`` must agree with pyproj's EGM96 lookup to the
+        centimetre at well-sampled locations. The old half-pixel bias was
+        ~9 cm at New York; this test would fail by ~9 cm if reintroduced.
+        """
+        pyproj = pytest.importorskip('pyproj')
+        from xrspatial.reproject import geoid_height
+
+        src_crs = pyproj.CRS('EPSG:4979')
+        tgt_crs = pyproj.CRS('EPSG:5773')
+        transformer = pyproj.Transformer.from_crs(
+            src_crs, tgt_crs, always_xy=True,
+        )
+
+        # pyproj silently falls back to a no-op transform when the EGM96
+        # grid is not installed locally and PROJ network access is
+        # disabled (typical CI). Probe at New York: a real lookup gives
+        # ~-32.8 m, the no-grid fallback gives 0. Skip in the fallback
+        # case -- there's nothing to cross-check against.
+        _, _, h_probe = transformer.transform(-74.0, 40.7, 0.0)
+        if abs(h_probe) < 1.0:
+            pytest.skip(
+                "pyproj EGM96 grid unavailable on this runner "
+                "(transform returned ~0 at New York); cannot cross-check"
+            )
+
+        sample_points = [
+            (-74.0, 40.7),
+            (0.0, 0.0),
+            (139.7, 35.7),
+            (-150.0, 60.0),
+            (-180.0, 90.0),  # data[0,0]: the offset bug was largest here
+        ]
+        for lon, lat in sample_points:
+            _, _, h_ortho = transformer.transform(lon, lat, 0.0)
+            N_expected = -h_ortho  # h_ellip(=0) - h_ortho = -h_ortho
+            N_actual = geoid_height(lon, lat)
+            assert abs(N_actual - N_expected) < 1e-2, (
+                f"N({lon},{lat}) = {N_actual}, pyproj says "
+                f"{N_expected}; diff {N_actual - N_expected:.4f} m"
+            )
+
+    def test_grid_interp_point_pixel_center_returns_stored_value(self):
+        """``_grid_interp_point`` (datum shift grids) has the same
+        pixel-center anchoring as the geoid grid and was fixed in #2508.
+        Verify with a synthetic grid so the test doesn't depend on a
+        downloaded NADCON file.
+        """
+        from xrspatial.reproject._datum_grids import _grid_interp_point
+
+        # 4x5 synthetic grid with distinctive values; pixel-center anchored.
+        dlat_grid = np.array([
+            [10.0, 20.0, 30.0, 40.0, 50.0],
+            [11.0, 22.0, 33.0, 44.0, 55.0],
+            [12.0, 24.0, 36.0, 48.0, 60.0],
+            [13.0, 26.0, 39.0, 52.0, 65.0],
+        ], dtype=np.float64)
+        dlon_grid = dlat_grid * 2.0
+        grid_h, grid_w = dlat_grid.shape
+
+        grid_left = -110.0
+        grid_top = 45.0
+        grid_res_x = 1.0
+        grid_res_y = 1.0
+
+        for i in range(grid_h - 1):
+            for j in range(grid_w - 1):
+                lon_c = grid_left + (j + 0.5) * grid_res_x
+                lat_c = grid_top - (i + 0.5) * grid_res_y
+                dlat, dlon = _grid_interp_point(
+                    lon_c, lat_c, dlat_grid, dlon_grid,
+                    grid_left, grid_top, grid_res_x, grid_res_y,
+                    grid_h, grid_w,
+                )
+                assert abs(dlat - dlat_grid[i, j]) < 1e-12, (
+                    f"pixel ({i},{j}) center: expected dlat "
+                    f"{dlat_grid[i, j]}, got {dlat}"
+                )
+                assert abs(dlon - dlon_grid[i, j]) < 1e-12, (
+                    f"pixel ({i},{j}) center: expected dlon "
+                    f"{dlon_grid[i, j]}, got {dlon}"
+                )
+
+
 class TestVerticalHelperConversions:
     """Direct coverage for the four public vertical-conversion helpers.
 

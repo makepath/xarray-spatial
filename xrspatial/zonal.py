@@ -41,6 +41,16 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_ar
 
 TOTAL_COUNT = '_total_count'
 
+_DEFAULT_STATS_NUMPY = [
+    "mean", "max", "min", "sum", "std", "var", "count", "majority",
+]
+
+# 'majority' cannot be computed block-by-block, so it is omitted from the
+# dask default list and rejected when explicitly requested on a dask input.
+_DEFAULT_STATS_DASK = [
+    "mean", "max", "min", "sum", "std", "var", "count",
+]
+
 
 def _maybe_rasterize_zones(zones, values, column=None, rasterize_kw=None):
     """If *zones* is vector data, rasterize it using *values* as the template.
@@ -501,6 +511,7 @@ def _stats_numpy(
         result = pd.DataFrame(stats_dict)
 
     else:
+        _check_stats_dataarray_memory(len(stats_funcs), values.shape)
         result = np.full((len(stats_funcs), values.size), np.nan)
         zone_ids_map = {z: i for i, z in enumerate(unique_zones) if z in zone_ids}
         stats_id = 0
@@ -633,16 +644,7 @@ def stats(
     zones,
     values: xr.DataArray,
     zone_ids: Optional[List[Union[int, float]]] = None,
-    stats_funcs: Union[Dict, List] = [
-        "mean",
-        "max",
-        "min",
-        "sum",
-        "std",
-        "var",
-        "count",
-        "majority",
-    ],
+    stats_funcs: Optional[Union[Dict, List]] = None,
     nodata_values: Union[int, float] = None,
     return_type: str = 'pandas.DataFrame',
     column: Optional[str] = None,
@@ -687,16 +689,19 @@ def stats(
         List of zones to be included in calculation. If no zone_ids provided,
         all zones will be used.
 
-    stats_funcs : dict, or list of strings, default=['mean', 'max', 'min',
-        'sum', 'std', 'var', 'count', 'majority']
-        The statistics to calculate for each zone. If a list, possible
+    stats_funcs : dict, or list of strings, optional
+        The statistics to calculate for each zone.  If a list, possible
         choices are subsets of the default options.
         In the dictionary case, all of its values must be
         callable. Function takes only one argument that is the `values` raster.
-        The key become the column name in the output DataFrame.
-        Note that if `zones` and `values` are dask backed DataArrays,
-        `stats_funcs` must be provided as a list that is a subset of
-        default supported stats.
+        The key becomes the column name in the output DataFrame.
+        Defaults: ``['mean', 'max', 'min', 'sum', 'std', 'var', 'count',
+        'majority']`` for numpy/cupy and ``['mean', 'max', 'min', 'sum',
+        'std', 'var', 'count']`` for dask-backed inputs.  ``'majority'``
+        cannot be computed block-by-block so requesting it on a dask
+        input raises ``ValueError`` instead of being silently dropped.
+        Note that if `zones` and `values` are dask-backed DataArrays,
+        `stats_funcs` must be provided as a list (or left unset).
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
@@ -843,13 +848,32 @@ def stats(
 
     validate_arrays(zones, values)
 
+    is_dask_values = has_dask_array() and isinstance(values.data, da.Array)
+
+    # Resolve the default stats_funcs based on backend. The dask path cannot
+    # compute 'majority' block-by-block, so its default list omits it.  Using
+    # None as the sentinel default also avoids the mutable-default pitfall.
+    if stats_funcs is None:
+        stats_funcs = (
+            list(_DEFAULT_STATS_DASK) if is_dask_values
+            else list(_DEFAULT_STATS_NUMPY)
+        )
+
     # validate stats_funcs
-    if has_dask_array() and isinstance(values.data, da.Array) and not isinstance(stats_funcs, list):
+    if is_dask_values and not isinstance(stats_funcs, list):
         raise ValueError(
             "Got dask-backed DataArray as `values` aggregate. "
-            "`stats_funcs` must be a subset of default supported stats "
-            "`[\'mean\', \'max\', \'min\', \'sum\', \'std\', \'var\', \'count\']`"
+            "`stats_funcs` must be a list that is a subset of "
+            f"{_DEFAULT_STATS_DASK!r}."
         )
+
+    if is_dask_values and isinstance(stats_funcs, list):
+        unsupported = [s for s in stats_funcs if s not in _DEFAULT_STATS_DASK]
+        if unsupported:
+            raise ValueError(
+                f"stats_funcs={unsupported!r} not supported on dask-backed "
+                f"input.  Supported on dask: {_DEFAULT_STATS_DASK!r}."
+            )
 
     if isinstance(stats_funcs, list):
         # create a dict of stats
@@ -1687,7 +1711,10 @@ def _apply_dask_numpy(zones_data, values_data, func, nodata):
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=np.array(()),
             ))
-        return da.stack(layers, axis=2)
+        stacked = da.stack(layers, axis=2)
+        # da.stack produces unit chunks along the new axis; merge back
+        # to the input chunking so downstream ops see the same shape.
+        return stacked.rechunk({2: values_data.chunks[2]})
 
 
 def _apply_dask_cupy(zones_data, values_data, func, nodata):
@@ -1727,7 +1754,10 @@ def _apply_dask_cupy(zones_data, values_data, func, nodata):
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=cupy.array(()),
             ))
-        return da.stack(layers, axis=2)
+        stacked = da.stack(layers, axis=2)
+        # da.stack produces unit chunks along the new axis; merge back
+        # to the input chunking so downstream ops see the same shape.
+        return stacked.rechunk({2: values_data.chunks[2]})
 
 
 def apply(
@@ -1752,8 +1782,10 @@ def apply(
         - A list of ``(shapely geometry, zone_id)`` pairs.
 
         When vector input is provided, ``rasterize()`` is called internally
-        using *values* as the template grid. Use ``rasterize_kw={'dtype': int}``
-        to produce integer zones (required by ``apply``).
+        using *values* as the template grid. Use
+        ``rasterize_kw={'dtype': int, 'fill': 0}`` to produce integer zones
+        (required by ``apply``); ``rasterize`` rejects an integer dtype with
+        the default NaN fill (#2504).
 
     values : xr.DataArray
         values.data is either a 2D or 3D array of integers or floats.
@@ -2010,6 +2042,30 @@ def _available_memory_bytes():
     except (ImportError, AttributeError):
         pass
     return 2 * 1024 ** 3
+
+
+def _check_stats_dataarray_memory(n_stats, values_shape):
+    """Guard the (n_stats, H*W) float64 buffer in ``_stats_numpy``.
+
+    The ``return_type='xarray.DataArray'`` branch allocates a same-shape
+    output replicated per requested statistic, so peak memory scales
+    linearly with ``len(stats_funcs)``.  Refuse the request when the
+    buffer would exceed half of available RAM.
+    """
+    n_cells = 1
+    for s in values_shape:
+        n_cells *= int(s)
+    required = n_stats * n_cells * 8  # float64
+    avail = _available_memory_bytes()
+    if required > 0.5 * avail:
+        raise MemoryError(
+            f"stats(return_type='xarray.DataArray') needs "
+            f"~{required / 1e9:.1f} GB for an "
+            f"({n_stats}, {n_cells}) float64 result buffer "
+            f"but only ~{avail / 1e9:.1f} GB is available. "
+            "Reduce `stats_funcs`, use a smaller raster, or call "
+            "stats(..., return_type='pandas.DataFrame') instead."
+        )
 
 
 def _regions_dask(data, neighborhood):

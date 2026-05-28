@@ -103,6 +103,28 @@ class ConflictingNodataError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+def _distinct_per_band_nodatavals_msg(vals, distinct) -> str:
+    """Shared error text for the issue #2514 distinct-per-band check.
+
+    Both ``_validation._check_write_distinct_per_band_nodatavals`` (the
+    write-side validator) and ``_attrs._resolve_nodata_attr`` (the
+    defense-in-depth raise in the resolver) format the same case the
+    same way. Centralising the message here keeps the two sites in
+    sync if the wording is later revised.
+    """
+    return (
+        f"attrs['nodatavals']={vals!r} declares multiple distinct "
+        f"per-band nodata sentinels {distinct!r}, but a GeoTIFF "
+        f"stores a single file-wide GDAL_NODATA value. The writer "
+        f"would silently flatten the tuple to one scalar and the "
+        f"remaining bands' sentinel cells would round-trip as real "
+        f"data. Reconcile the tuple to a single sentinel (or NaN / "
+        f"None for bands with no sentinel), or pass the intended "
+        f"sentinel via the ``nodata=`` kwarg, which overrides "
+        f"attrs. See issue #2514."
+    )
+
+
 class VRTUnsupportedError(GeoTIFFAmbiguousMetadataError):
     """A parsed VRT declares a feature the read pipeline does not honour.
 

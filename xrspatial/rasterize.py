@@ -2051,6 +2051,21 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
 
     # Stage the per-launch inputs once; first/last reuses these tensors
     # for the pass-2 stamp launches.
+    #
+    # ``poly_props`` and ``poly_global`` are referenced by both the
+    # scanline ``poly_launch`` and the supercover ``boundary_launch``
+    # under ``all_touched=True``. Hoist the host-to-device transfer above
+    # the conditional so the two launches share the same device buffers;
+    # without the hoist the props/global tables would be uploaded twice
+    # per call. Skip the upload when neither launch will consume it
+    # (``len(edge_y_min) == 0`` and ``not all_touched``), so the hoist
+    # never costs more than the prior code. See issue #2506.
+    poly_props_gpu = None
+    poly_global_gpu = None
+    if poly_geoms and (len(edge_y_min) > 0 or all_touched):
+        poly_props_gpu = cupy.asarray(poly_props)
+        poly_global_gpu = cupy.asarray(poly_global)
+
     poly_launch = None
     if len(edge_y_min) > 0:
         row_ptr, col_idx = _build_row_csr_numba(
@@ -2062,7 +2077,7 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
         poly_launch = (
             cupy.asarray(edge_y_min), cupy.asarray(edge_x_at_ymin),
             cupy.asarray(edge_inv_slope), cupy.asarray(edge_geom_id),
-            cupy.asarray(poly_props), cupy.asarray(poly_global),
+            poly_props_gpu, poly_global_gpu,
             cupy.asarray(row_ptr), cupy.asarray(col_idx))
 
     # all_touched boundaries.  ``poly_geoms`` and ``poly_ids`` come
@@ -2080,8 +2095,8 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
             boundary_launch = (
                 cupy.asarray(bx0), cupy.asarray(by0),
                 cupy.asarray(bx1), cupy.asarray(by1),
-                cupy.asarray(bidx), cupy.asarray(poly_props),
-                cupy.asarray(poly_global), len(bx0))
+                cupy.asarray(bidx), poly_props_gpu,
+                poly_global_gpu, len(bx0))
 
     r0, c0, r1, c1, line_idx = _extract_line_segments(
         line_geoms, bounds, height, width)
@@ -2529,6 +2544,18 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
             poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
         edge_arrays = _sort_edges(edge_arrays)
         edge_y_min = edge_arrays[0]
+        # Upload ``poly_props_2d`` and ``poly_global_2d`` once; both the
+        # scanline ``poly_launch`` and the supercover ``boundary_launch``
+        # under ``all_touched=True`` reference these tables, and without
+        # the hoist they would be transferred twice per tile. Skip the
+        # upload when neither launch will consume it (no edges and not
+        # ``all_touched``) so the hoist never costs more than the prior
+        # code. Issue #2506.
+        poly_props_2d_gpu = None
+        poly_global_2d_gpu = None
+        if len(edge_y_min) > 0 or all_touched:
+            poly_props_2d_gpu = cupy.asarray(poly_props_2d)
+            poly_global_2d_gpu = cupy.asarray(poly_global_2d)
         if len(edge_y_min) > 0:
             edge_y_max, edge_x_at_ymin, edge_inv_slope, edge_geom_id = \
                 edge_arrays[1:]
@@ -2538,7 +2565,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
             poly_launch = (
                 cupy.asarray(edge_y_min), cupy.asarray(edge_x_at_ymin),
                 cupy.asarray(edge_inv_slope), cupy.asarray(edge_geom_id),
-                cupy.asarray(poly_props_2d), cupy.asarray(poly_global_2d),
+                poly_props_2d_gpu, poly_global_2d_gpu,
                 cupy.asarray(row_ptr), cupy.asarray(col_idx))
 
         # all_touched: stage the supercover boundary burn through
@@ -2552,8 +2579,8 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                 boundary_launch = (
                     cupy.asarray(bx0), cupy.asarray(by0),
                     cupy.asarray(bx1), cupy.asarray(by1),
-                    cupy.asarray(bidx), cupy.asarray(poly_props_2d),
-                    cupy.asarray(poly_global_2d), len(bx0))
+                    cupy.asarray(bidx), poly_props_2d_gpu,
+                    poly_global_2d_gpu, len(bx0))
 
     line_launch = None
     if len(seg_r0) > 0:
@@ -2992,7 +3019,14 @@ def rasterize(
         When given, the merge function receives a 1D float64 array of
         length ``len(columns)`` as its ``props`` argument.
     fill : float, default np.nan
-        Value for pixels not covered by any geometry.
+        Value for pixels not covered by any geometry.  When ``dtype``
+        resolves to an integer type (either via the ``dtype`` argument or
+        via ``like`` carrying an integer dtype), the default NaN fill is
+        rejected with ``ValueError`` because NaN has no integer
+        representation and the cast would silently land on a
+        platform-specific sentinel with no ``_FillValue`` attr to mark
+        it; pass an explicit integer sentinel (e.g. ``fill=0`` or
+        ``fill=-9999``) or use a floating dtype.
     dtype : numpy dtype, optional
         Data type of the output array.  Defaults to np.float64, or
         to the dtype of ``like`` if provided.
@@ -3210,6 +3244,38 @@ def rasterize(
         final_dtype = like_dtype
     else:
         final_dtype = np.float64
+
+    # Reject NaN fill against an integer output dtype.  Without this guard
+    # the final ``astype(int_dtype)`` silently coerces NaN to either 0
+    # (unsigned) or ``np.iinfo(dtype).min`` (signed), and the rasterizer
+    # emits no ``_FillValue`` / ``nodata`` / ``nodatavals`` attr to mark
+    # the unwritten pixels.  Downstream consumers (geotiff writer,
+    # rioxarray masks) have no sentinel to key off and treat unwritten
+    # cells as valid data -- a metadata-propagation failure surfaced by
+    # the metadata sweep (issue #2504).
+    #
+    # Checked before any host / device allocation so the error surfaces
+    # cleanly regardless of backend (numpy, cupy, dask+numpy, dask+cupy).
+    # It runs after ``_check_output_dimensions`` because the
+    # width/height/resolution guard reports a more actionable diagnostic
+    # for oversized grids; both checks land before the allocator either
+    # way.
+    final_dtype_np = np.dtype(final_dtype)
+    try:
+        fill_is_nan_for_dtype_check = (
+            isinstance(fill, (float, np.floating))
+            and np.isnan(float(fill)))
+    except (TypeError, ValueError):
+        fill_is_nan_for_dtype_check = False
+    if (fill_is_nan_for_dtype_check
+            and np.issubdtype(final_dtype_np, np.integer)):
+        raise ValueError(
+            f"fill=NaN cannot be represented in integer dtype "
+            f"{final_dtype_np}: the cast would silently coerce NaN to a "
+            f"dtype-specific sentinel (0 for unsigned, INT_MIN for signed) "
+            f"with no _FillValue attr to mark unwritten pixels. Pass an "
+            f"explicit integer fill (e.g. fill=0 or fill=-9999) or use a "
+            f"floating dtype.")
 
     # For GPU paths, resolve string merge names to GPU (merge_fn,
     # should_write_fn) pairs.  User callables are paired with the
