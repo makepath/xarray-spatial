@@ -6,6 +6,15 @@
 
 #### Fixed
 
+- `rasterize` now validates the `resolution=` argument shape and element
+  type before unpacking. A scalar number or a length-2 sequence of
+  numbers is accepted; anything else (length-0, length-1, length-3+
+  sequences, strings, dicts, non-numeric elements) raises a clean
+  `ValueError` naming the offending input. Previously a 3-tuple was
+  silently truncated to its first two elements, a 1-tuple crashed with
+  `IndexError`, strings leaked a raw `float()` conversion error, and
+  dicts raised `KeyError: 0`. (#2576)
+
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an

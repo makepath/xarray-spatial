@@ -3209,10 +3209,32 @@ def rasterize(
     if width is not None and height is not None:
         final_width, final_height = int(width), int(height)
     elif resolution is not None:
+        # Validate shape and element type up front so bad inputs surface a
+        # single clean ValueError naming the offending value, instead of
+        # leaking IndexError (length-1 sequences), KeyError (dicts), or a
+        # raw float() conversion error (strings, since strings iterate
+        # character-by-character into resolution[0]/[1]).  A 3+-element
+        # sequence was previously silently truncated to the first two
+        # elements -- reject it here too.
+        if isinstance(resolution, bool) or not isinstance(
+                resolution, (int, float, tuple, list)):
+            raise ValueError(
+                f"resolution must be a number or a length-2 sequence of "
+                f"numbers (x_res, y_res), got {resolution!r}")
         if isinstance(resolution, (int, float)):
             x_res = y_res = float(resolution)
         else:
-            x_res, y_res = float(resolution[0]), float(resolution[1])
+            if len(resolution) != 2:
+                raise ValueError(
+                    f"resolution sequence must have length 2 (x_res, y_res), "
+                    f"got length {len(resolution)}: {resolution!r}")
+            try:
+                x_res = float(resolution[0])
+                y_res = float(resolution[1])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"resolution sequence elements must be numbers, "
+                    f"got {resolution!r}")
         # Reject non-finite or non-positive resolution before dimension math.
         # Without this, inf/-1 quietly produce a 1x1 raster, 0 raises an
         # opaque ZeroDivisionError, and nan raises an int-conversion error.
