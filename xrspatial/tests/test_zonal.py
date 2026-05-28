@@ -1948,6 +1948,10 @@ def test_crop_partial_zone_ids_2561(backend):
     result_partial = crop(zones, values, zone_ids=(77, 1, 88))
     result_present_only = crop(zones, values, zone_ids=(1,))
 
+    # Pin the expected bounding box of zone_id=1 in _CROP_ARR_2561
+    # (rows 2-3, cols 1-2) so a regression cannot pass by drifting
+    # both code paths in the same direction.
+    assert result_partial.shape == (2, 2)
     assert result_partial.shape == result_present_only.shape
 
     if backend.startswith('dask'):

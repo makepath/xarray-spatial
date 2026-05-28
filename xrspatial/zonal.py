@@ -2599,7 +2599,7 @@ def _crop(data, values):
             if scan_complete:
                 break
 
-    return top, bottom, left, right, 1
+    return top, bottom, left, right, found
 
 
 def _crop_bounds_dask(data, target_values):
