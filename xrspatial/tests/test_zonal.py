@@ -620,6 +620,7 @@ def test_stats_all_nan_zone_preserved(backend):
         zones=zones, values=values, stats_funcs=['min', 'max', 'mean', 'count']
     )
 
+    assert list(df_result.columns) == ['zone', 'min', 'max', 'mean', 'count']
     expected_result = {
         'zone': [1, 2, 3, 5],
         'min': [1.0, 3.0, 9.0, np.nan],
@@ -658,6 +659,7 @@ def test_stats_zone_ids_missing_from_raster(backend):
         stats_funcs=['min', 'max', 'sum', 'count']
     )
 
+    assert list(df_result.columns) == ['zone', 'min', 'max', 'sum', 'count']
     expected_result = {
         'zone': [1],
         'min': [10.0],
@@ -666,6 +668,23 @@ def test_stats_zone_ids_missing_from_raster(backend):
         'count': [4],
     }
     check_results(backend, df_result, expected_result)
+
+    # Also verify that zone_ids passed in reverse order (or with duplicates)
+    # produces the same numpy-style ordering: np.unique sorts ascending and
+    # dedupes, so [3, 1, 1] becomes [1, 3]. This pins the cupy path's
+    # np.unique normalization that matches the numpy backend.
+    df_result_reversed = stats(
+        zones=zones, values=values, zone_ids=[3, 1, 1],
+        stats_funcs=['min', 'max', 'sum', 'count'],
+    )
+    expected_reversed = {
+        'zone': [1, 3],
+        'min': [10.0, 100.0],
+        'max': [40.0, 100.0],
+        'sum': [100.0, 400.0],
+        'count': [4, 4],
+    }
+    check_results(backend, df_result_reversed, expected_reversed)
 
 
 @pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")

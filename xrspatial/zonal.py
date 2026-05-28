@@ -569,8 +569,10 @@ def _stats_cupy(
     unique_zones = unique_zones.get()
 
     if zone_ids is not None:
-        # Match the numpy path: drop zone_ids that don't exist in the
-        # raster so the zone column and stats columns stay aligned.
+        # Match the numpy path: deduplicate / sort with np.unique and drop
+        # zone_ids that don't exist in the raster so the zone column and
+        # stats columns stay aligned and the row order matches numpy.
+        zone_ids = np.unique(zone_ids)
         unique_index_lst = []
         unique_counts_lst = []
         kept_zones = []
@@ -609,14 +611,16 @@ def _stats_cupy(
             zone_mask = zone_mask & (zone_values != nodata_values)
         zone_values = zone_values[zone_mask]
 
+        if zone_values.size == 0:
+            for stats in stats_funcs:
+                stats_dict[stats].append(float('nan'))
+            continue
+
         # apply stats on the zone data
         for j, stats in enumerate(stats_funcs):
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
-            if zone_values.size == 0:
-                stats_dict[stats].append(float('nan'))
-                continue
             result = stats_func(zone_values)
 
             assert (len(result.shape) == 0)
