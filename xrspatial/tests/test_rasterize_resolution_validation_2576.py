@@ -72,6 +72,26 @@ def test_length_2_list_accepted(simple_gdf):
     assert out.shape == (10, 5)
 
 
+def test_numpy_scalar_resolution_accepted(simple_gdf):
+    """numpy scalars (np.float32, np.int32, ...) are common in pipelines."""
+    out = rasterize(simple_gdf, column="val", resolution=np.float32(2.0),
+                    bounds=(0, 0, 10, 10), fill=0)
+    assert out.shape == (5, 5)
+    out = rasterize(simple_gdf, column="val", resolution=np.int32(2),
+                    bounds=(0, 0, 10, 10), fill=0)
+    assert out.shape == (5, 5)
+
+
+def test_numpy_1d_array_resolution_accepted(simple_gdf):
+    """1-D numpy array of length 2 is treated as (x_res, y_res)."""
+    out = rasterize(
+        simple_gdf, column="val",
+        resolution=np.array([2.0, 1.0]),
+        bounds=(0, 0, 10, 10), fill=0,
+    )
+    assert out.shape == (10, 5)
+
+
 # --- rejection paths ---
 
 def test_three_tuple_resolution_rejected(simple_gdf):
@@ -127,6 +147,14 @@ def test_none_element_in_pair_rejected(simple_gdf):
 def test_non_numeric_element_rejected(simple_gdf):
     with pytest.raises(ValueError, match="elements must be numbers"):
         rasterize(simple_gdf, column="val", resolution=(1.0, "bar"),
+                  bounds=(0, 0, 10, 10), fill=0)
+
+
+def test_2d_numpy_array_rejected(simple_gdf):
+    """A 2-D numpy array should not slip past as a length-2 sequence."""
+    with pytest.raises(ValueError, match="1-D"):
+        rasterize(simple_gdf, column="val",
+                  resolution=np.array([[1.0, 2.0], [3.0, 4.0]]),
                   bounds=(0, 0, 10, 10), fill=0)
 
 
