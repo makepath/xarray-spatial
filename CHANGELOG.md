@@ -4,6 +4,21 @@
 
 ### Unreleased
 
+#### Added
+
+- `da.xrs.open_geotiff(source, *, auto_reproject=False, **kwargs)`
+  DataArray accessor that mirrors the existing Dataset method, plus
+  backend-aware enhancements on both accessors. The accessor infers
+  the caller's backend (numpy / cupy / dask+numpy / dask+cupy) and
+  passes matching `gpu=` / `chunks=` to `open_geotiff` so the
+  returned DataArray matches the caller. Caller-supplied `gpu=` /
+  `chunks=` always override the inference. On CRS mismatch between
+  the caller and the file, the accessor raises a clear `ValueError`
+  by default (replacing the previous silently-wrong window) and
+  with `auto_reproject=True` it projects the caller's bbox into the
+  file's CRS for the windowed read and reprojects the result back
+  to the caller's CRS via `xrspatial.reproject.reproject`. (#2557)
+
 #### Fixed
 
 - `open_geotiff` no longer rejects a projected GeoTIFF that also carries
@@ -18,6 +33,59 @@
   model carrying `ProjectedCSTypeGeoKey`) still raise
   `InconsistentGeoKeysError`. (#2602)
 
+- `polygonize` now rejects non-finite values for `simplify_tolerance`
+  (`nan`, `+inf`, `-inf`) with a clear `ValueError`. Previously `nan`
+  silently disabled simplification (because `nan > 0` is False) and
+  `+inf` collapsed every polygon to empty output. Matches the existing
+  `atol` / `rtol` validation contract: finite and non-negative. (#2575)
+
+- `reproject(..., bounds_policy="auto")` no longer crops valid edge data
+  on ordinary geographic-to-projected reprojections. The old blow-up
+  heuristic compared source span (e.g. degrees for EPSG:4326) against
+  target span (e.g. metres for EPSG:3857) and tripped on almost any
+  geographic-to-projected pair. The new heuristic is unit-agnostic:
+  it compares the max absolute projected coordinate to the median
+  and also checks the non-finite fraction of raw edge samples in the
+  target CRS. Benign reprojections stay untouched; real singularities
+  (Mercator at the poles, polar-stereographic on the opposite pole)
+  still trigger the percentile fallback. (#2582)
+- `zonal_stats` now validates `return_type` at entry. Previously any
+  string other than `'pandas.DataFrame'` or `'xarray.DataArray'` fell
+  through to an internal branch that returned a raw `numpy.ndarray`,
+  hiding typos. Allowed values are now enforced and a clear
+  `ValueError` is raised otherwise. `return_type='xarray.DataArray'`
+  on dask-backed input also raises instead of silently returning
+  the wrong shape. (#2558)
+- `rasterize(like=...)` no longer silently mislabels output when the
+  template's x axis is descending. Previously the burned array was
+  written ascending-x (column 0 = xmin) but `reuse_like_coords`
+  assigned the descending x-coord unchanged, so a polygon at world
+  x=0.5 landed under coord x=3.5. The array is now flipped along
+  axis 1 so `result.sel(x=...)` agrees with the geometry's world
+  coordinates, mirroring the existing ascending-y flip on axis 0.
+  Works for numpy, cupy, dask+numpy, and dask+cupy. (#2568)
+- `polygonize` on dask-backed float rasters now matches the numpy
+  reference for both polygon count and DN values across every chunking
+  pattern. The cross-chunk merge previously bucketed chunk-boundary
+  polygons by a single representative float value, which broke
+  transitive value chains (`1.0 -> 1.000009 -> 1.000018` returned 2
+  polygons instead of the numpy reference's 1) and silently rewrote DN
+  values on disconnected near-equal regions (`[1.0, 9.0, 1.000009]`
+  reported DN `1.0` for the third region instead of `1.000009`). The
+  merge now runs a spatial-topology + value-closeness union-find over
+  chunk-boundary polygons: two polygons land in the same group only
+  when their pixel value ranges overlap within `atol`/`rtol` AND they
+  are spatially adjacent (sharing a unit edge for 4-connectivity, or
+  any vertex for 8-connectivity). Disconnected close-valued regions
+  keep their own DN values, and transitive value chains merge
+  correctly across chunk boundaries. (#2583)
+
+- `crosstab(cat_ids=[...])` no longer overcounts when `cat_ids` skips a
+  category that is present in the values raster. The 2D helper now
+  advances its cumulative cursor for every unique category instead of
+  only the selected ones, so each selected category's count starts from
+  the correct offset. All four backends (numpy, dask+numpy, cupy,
+  dask+cupy) share the helper and are fixed together. (#2560)
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an
