@@ -4,6 +4,21 @@
 
 ### Unreleased
 
+#### Added
+
+- `da.xrs.open_geotiff(source, *, auto_reproject=False, **kwargs)`
+  DataArray accessor that mirrors the existing Dataset method, plus
+  backend-aware enhancements on both accessors. The accessor infers
+  the caller's backend (numpy / cupy / dask+numpy / dask+cupy) and
+  passes matching `gpu=` / `chunks=` to `open_geotiff` so the
+  returned DataArray matches the caller. Caller-supplied `gpu=` /
+  `chunks=` always override the inference. On CRS mismatch between
+  the caller and the file, the accessor raises a clear `ValueError`
+  by default (replacing the previous silently-wrong window) and
+  with `auto_reproject=True` it projects the caller's bbox into the
+  file's CRS for the windowed read and reprojects the result back
+  to the caller's CRS via `xrspatial.reproject.reproject`. (#2557)
+
 #### Fixed
 
 - `polygonize` now rejects non-finite values for `simplify_tolerance`
