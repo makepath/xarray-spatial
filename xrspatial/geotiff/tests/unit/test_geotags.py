@@ -594,6 +594,21 @@ def test_validate_accepts_both_type_keys_with_different_epsg():
     })
 
 
+def test_validate_accepts_projected_with_unexpected_base_geographic():
+    """Acceptance does not cross-validate the projected code against the
+    declared base geographic key (#2602). A projected model that names a
+    base geographic CRS the projection was not actually built on (here
+    UTM 32633 over NAD27 4267 instead of WGS84) still passes: the reader
+    takes the projected code as the file's CRS and treats the geographic
+    key as the base, by design. This is the one shape the old Case 3
+    rejected; the silent-accept is deliberate, not an oversight."""
+    validate_read_metadata({
+        'model_type': 1,
+        'projected_cs_type': 32633,
+        'geographic_type': 4267,
+    })
+
+
 def test_validate_passes_consistent_projected():
     """ModelType=projected with a projected EPSG and no geographic key."""
     validate_read_metadata({
