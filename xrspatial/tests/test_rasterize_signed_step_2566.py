@@ -24,6 +24,9 @@ These tests pin:
 5. Strictly increasing but non-uniform spacing is still rejected
    (the original #2168 case).
 6. Single-cell axes still short-circuit cleanly.
+7. The zig-zag symptom from the issue (``.sel(x=0.5)`` returning two
+   columns) cannot occur because the call raises before producing a
+   DataArray with duplicate coords.
 """
 
 import numpy as np

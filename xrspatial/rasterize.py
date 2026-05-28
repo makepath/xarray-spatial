@@ -2922,11 +2922,12 @@ def _extract_grid_from_like(like):
     # pixel lives.  Validate uniform spacing here so the rasterizer never
     # produces a DataArray whose coords disagree with its data layout.
     #
-    # Compare ``abs(diff)`` against the first interval so the check stays
-    # agnostic to axis direction -- ascending or descending y both pass as
-    # long as the spacing is uniform.  Use ``np.allclose`` rather than
-    # strict equality because affine-transform-derived coords drift by a
-    # few ulps.
+    # Compare *signed* diffs against the signed first interval so the
+    # check accepts ascending and descending axes (the sign of the
+    # first interval carries the direction) but rejects zig-zag /
+    # duplicate-coord patterns whose abs(diff) happens to be uniform.
+    # Use ``np.allclose`` rather than strict equality because affine-
+    # transform-derived coords drift by a few ulps.
     _check_uniform_axis('x', x, px)
     _check_uniform_axis('y', y, py)
 
