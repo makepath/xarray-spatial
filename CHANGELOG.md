@@ -6,6 +6,14 @@
 
 #### Fixed
 
+- `zonal_stats` now validates `return_type` at entry. Previously any
+  string other than `'pandas.DataFrame'` or `'xarray.DataArray'` fell
+  through to an internal branch that returned a raw `numpy.ndarray`,
+  hiding typos. Allowed values are now enforced and a clear
+  `ValueError` is raised otherwise. `return_type='xarray.DataArray'`
+  on dask-backed input also raises instead of silently returning
+  the wrong shape. (#2558)
+
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an
