@@ -200,6 +200,109 @@ class TestMetadataPropagation:
         assert len(nv) == 1
         assert np.isnan(nv[0])
 
+    def test_nodata_attr_refreshed_to_nan(self):
+        # `_resolve_nodata` reads `attrs['nodata']` as a fallback sentinel.
+        # If we mask its pixels to NaN we must also refresh the attr so
+        # downstream consumers don't trust the now-stale finite value.
+        data = np.array([[-9999, -9999, 10, 10],
+                         [-9999, -9999, 10, 10],
+                         [20, 20, 30, 30],
+                         [20, 20, 30, 30]], dtype=np.float32)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0), 'nodata': -9999},
+        )
+        out = resample(raster, scale_factor=0.5, method='nearest')
+        assert 'nodata' in out.attrs
+        assert np.isnan(out.attrs['nodata'])
+        # And the corresponding data pixel is NaN, matching the new sentinel.
+        assert np.isnan(out.values[0, 0])
+
+    def test_nodata_attr_absent_stays_absent(self):
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'nodata' not in out.attrs
+
+    def test_spatial_ref_coord_preserved(self):
+        # rioxarray stores CRS metadata on a scalar `spatial_ref` non-dim
+        # coord.  Dropping it on resample silently breaks chained
+        # ``out.rio.crs`` calls even when ``attrs['crs']`` round-trips.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={
+                'y': np.linspace(3, 0, 4),
+                'x': np.linspace(0, 3, 4),
+                'spatial_ref': 0,
+            },
+            attrs={'res': (1.0, 1.0), 'crs': 'EPSG:4326'},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'spatial_ref' in out.coords
+        assert int(out.coords['spatial_ref'].values) == 0
+
+    def test_scalar_band_coord_preserved(self):
+        # A squeezed scalar band/time selector should round-trip.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={
+                'y': np.linspace(3, 0, 4),
+                'x': np.linspace(0, 3, 4),
+                'band': 1,
+                'time': np.datetime64('2024-01-01'),
+            },
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'band' in out.coords
+        assert int(out.coords['band'].values) == 1
+        assert 'time' in out.coords
+
+    def test_identity_and_downsample_coords_consistent(self):
+        # Cat 5: identity path (scale=1.0, agg.copy()) and the 2D
+        # non-identity path must agree on which non-dim coords survive.
+        # Before #2542 only the identity path kept `spatial_ref`.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={
+                'y': np.linspace(3, 0, 4),
+                'x': np.linspace(0, 3, 4),
+                'spatial_ref': 0,
+            },
+            attrs={'res': (1.0, 1.0)},
+        )
+        identity = resample(raster, scale_factor=1.0)
+        downsampled = resample(raster, scale_factor=0.5)
+        assert set(identity.coords) - {'y', 'x'} == set(downsampled.coords) - {'y', 'x'}
+
+    def test_2d_spatial_extra_coord_not_carried(self):
+        # A non-dim coord whose dims include the spatial axes has a
+        # length tied to the input resolution; it must NOT be carried
+        # over after a resize.  Skipping it cleanly is the right
+        # behaviour (the user would need to resample it separately).
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        mask = np.zeros((4, 4), dtype=np.float32)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            coords={
+                'y': np.linspace(3, 0, 4),
+                'x': np.linspace(0, 3, 4),
+                'mask': (('y', 'x'), mask),
+            },
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        # Spatial extra coords drop (would otherwise shape-mismatch the output).
+        assert 'mask' not in out.coords
+
     def test_other_attrs_preserved(self):
         # crs, units, long_name, scales, offsets should round-trip.
         data = np.arange(16, dtype=np.float32).reshape(4, 4)
