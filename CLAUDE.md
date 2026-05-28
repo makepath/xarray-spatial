@@ -1,3 +1,11 @@
+<!--
+Source: https://github.com/forrestchang/andrej-karpathy-skills/blob/main/CLAUDE.md
+Upstream license: not specified at time of fetch (2026-05-28). If the upstream
+repo adds a LICENSE later, re-verify redistribution terms here.
+To refresh from upstream:
+  curl -o CLAUDE.md https://raw.githubusercontent.com/forrestchang/andrej-karpathy-skills/main/CLAUDE.md
+-->
+
 # CLAUDE.md
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
