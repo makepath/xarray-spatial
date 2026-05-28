@@ -599,6 +599,62 @@ def _detect_raster_crs(raster: xr.DataArray):
     return None
 
 
+def _detect_raster_transform(raster: xr.DataArray):
+    """Detect the affine transform of an input raster.
+
+    Returns a rasterio-ordered 6-tuple ``(pixel_width, 0.0, origin_x,
+    0.0, pixel_height, origin_y)`` -- the same layout that
+    ``_transform_points`` consumes -- or ``None`` if no transform is
+    available.
+
+    Resolution order, parallel to ``_detect_raster_crs``:
+
+    1. ``raster.attrs['transform']`` (xrspatial.geotiff convention, an
+       already rasterio-ordered 6-tuple).
+    2. ``raster.rio.transform()`` (rioxarray, if installed). Returns an
+       ``affine.Affine``; iterating it yields the rasterio-ordered 6
+       coefficients ``(a, b, c, d, e, f)``.
+    3. ``None``.
+
+    A raster carrying ``attrs['_xrspatial_no_georef']=True`` (the
+    xrspatial.geotiff "no georeference" marker) is treated as having
+    no transform even if ``rio.transform()`` is present, because that
+    marker explicitly opts out of georeferencing.
+    """
+    # Honour the xrspatial.geotiff "no georeference" marker if set.
+    if raster.attrs.get('_xrspatial_no_georef'):
+        return None
+
+    transform_attr = raster.attrs.get('transform')
+    if transform_attr is not None:
+        try:
+            t = tuple(float(v) for v in transform_attr)
+        except (TypeError, ValueError):
+            t = None
+        if t is not None and len(t) == 6:
+            return t
+
+    try:
+        rio_transform = raster.rio.transform()
+        if rio_transform is not None:
+            # rasterio's Affine iterates as (a, b, c, d, e, f); the
+            # first 6 coefficients are the rasterio-ordered tuple. The
+            # 7th-9th elements are the (0, 0, 1) projective row, which
+            # _transform_points does not need.
+            t = tuple(float(v) for v in tuple(rio_transform)[:6])
+            # rioxarray returns the identity affine when no transform
+            # is available, which would silently shift outputs by (0,0)
+            # and look identical to "no transform". Treat the identity
+            # the same as None so callers get an unambiguous answer.
+            if t == (1.0, 0.0, 0.0, 0.0, 1.0, 0.0):
+                return None
+            return t
+    except Exception:
+        pass
+
+    return None
+
+
 def _to_geopandas(
     column: List[Union[int, float]],
     polygon_points: List[np.ndarray],
@@ -1890,6 +1946,18 @@ def polygonize(
     value is dropped rather than raised.  The ``spatialpandas`` and
     ``geojson`` return types do not carry CRS metadata: spatialpandas
     has no CRS slot, and GeoJSON (RFC 7946) is WGS84 only.
+
+    When ``transform`` is not supplied explicitly, the raster's affine
+    transform is auto-detected in this order: ``raster.attrs['transform']``
+    (xrspatial.geotiff convention, a rasterio-ordered 6-tuple), then
+    ``raster.rio.transform()`` (if rioxarray is installed).  An explicit
+    ``transform=`` argument always overrides the auto-detected value.
+    Auto-detection is skipped when the raster carries
+    ``attrs['_xrspatial_no_georef']=True``.  This applies to all return
+    types -- the geometries themselves are transformed, so the
+    coordinates emitted in the "numpy", "awkward", "spatialpandas" and
+    "geojson" outputs are also in CRS coordinate space, not pixel
+    space, when the raster carries a transform.
     """
     _validate_raster(raster, func_name='polygonize', name='raster', ndim=2)
     if raster.shape[0] < 1 or raster.shape[1] < 1:
@@ -1917,9 +1985,17 @@ def polygonize(
             f"connectivity must be either 4 or 8, not {connectivity}")
     connectivity_8 = (connectivity == 8)
 
-    # Check transform.
+    # Check transform.  When the caller did not pass an explicit
+    # transform, fall back to one carried on the raster (attrs[
+    # 'transform'] or rio.transform()).  This keeps the
+    # ``return_type='geopandas'`` output consistent with the
+    # auto-detected CRS: pre-#2536, the GeoDataFrame got the raster's
+    # CRS but stayed in pixel space, so the metadata lied about the
+    # data.  See _detect_raster_transform() for the resolution order.
+    if transform is None:
+        transform = _detect_raster_transform(raster)
     if transform is not None:
-        transform = np.asarray(transform)
+        transform = np.asarray(transform, dtype=np.float64)
         if len(transform) != 6:
             raise ValueError(
                 f"Incorrect transform length of {len(transform)} instead of 6")
