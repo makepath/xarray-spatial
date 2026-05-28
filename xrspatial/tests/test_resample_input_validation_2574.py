@@ -53,8 +53,10 @@ class TestTargetResolutionValidation:
             resample(grid_4x4, target_resolution=0)
 
     def test_zero_component(self, grid_4x4):
+        # Pair errors point at the failing index.
         with pytest.raises(
-            ValueError, match=r"target_resolution must be > 0",
+            ValueError,
+            match=r"target_resolution must be > 0, got 0.0 at index 0 of",
         ):
             resample(grid_4x4, target_resolution=(0.0, 1.0))
 
@@ -105,8 +107,10 @@ class TestScaleFactorValidation:
             resample(grid_4x4, scale_factor=0)
 
     def test_zero_component(self, grid_4x4):
+        # Pair errors point at the failing index.
         with pytest.raises(
-            ValueError, match=r"scale_factor must be > 0",
+            ValueError,
+            match=r"scale_factor must be > 0, got 0.0 at index 0 of",
         ):
             resample(grid_4x4, scale_factor=(0.0, 2.0))
 
