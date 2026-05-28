@@ -3002,10 +3002,14 @@ def rasterize(
         ``(shapely.geometry, numeric_value)`` pair.
     width : int, optional
         Number of columns in the output raster.  Required unless
-        ``resolution`` or ``like`` is given.
+        ``resolution`` or ``like`` is given.  Must be passed together
+        with ``height``: a partial override (only one of the two) is
+        rejected with ``ValueError`` rather than silently filling the
+        missing dimension from ``like`` or ``resolution``.
     height : int, optional
         Number of rows in the output raster.  Required unless
-        ``resolution`` or ``like`` is given.
+        ``resolution`` or ``like`` is given.  Must be passed together
+        with ``width`` (see above).
     bounds : tuple of (xmin, ymin, xmax, ymax), optional
         Geographic extent of the output raster.  Inferred from the
         geometries (or ``like``) if omitted.
@@ -3048,7 +3052,9 @@ def rasterize(
         A single float uses the same resolution for both axes.
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
-        from this array (any can still be overridden explicitly).
+        from this array.  Bounds and dtype can be overridden one at a
+        time; width and height must be overridden together (passing
+        only one raises ``ValueError``).
         Must have uniformly spaced ``x`` and ``y`` dim coords -- the
         rasterizer only writes to a regular grid, so a non-uniform
         ``like`` is rejected with ``ValueError`` rather than silently
@@ -3204,6 +3210,22 @@ def rasterize(
         raise ValueError(
             f"Invalid bounds: xmin ({xmin}) must be < xmax ({xmax}) and "
             f"ymin ({ymin}) must be < ymax ({ymax})")
+
+    # Reject partial width/height: passing only one of the two has no
+    # well-defined meaning here.  When ``like`` is given, the bounds also
+    # come from the template, so deriving the missing dimension from
+    # aspect ratio would make the x and y pixel resolutions diverge and
+    # the output coords would no longer match ``like``.  When ``like`` is
+    # not given, there's nothing to derive from at all.  Either way, the
+    # old code silently fell through to the ``resolution`` or ``like``
+    # branch and discarded the explicit dimension without warning.
+    if (width is None) != (height is None):
+        missing = 'height' if width is not None else 'width'
+        given = 'width' if width is not None else 'height'
+        raise ValueError(
+            f"{given} was provided but {missing} was not. Pass both "
+            f"width and height, or neither (and use resolution or like "
+            f"to size the output).")
 
     # Resolve width/height: explicit > resolution > like
     if width is not None and height is not None:
