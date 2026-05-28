@@ -2816,12 +2816,14 @@ def _check_uniform_axis(axis_name, coords, expected_step):
     than three points cannot be non-uniform in a way this check would
     catch, so they pass trivially.
 
-    The comparison is on ``abs(diff)`` so the validation does not care
-    whether the axis is ascending or descending -- ascending-y ``like``
-    inputs are supported by the orientation flip in ``rasterize``, and
-    gating on the sign here would block that.  ``np.allclose`` is used
-    (rather than strict equality) because affine-transform-derived
-    coords drift by a few ulps in practice.
+    The comparison uses the *signed* ``np.diff`` against the signed
+    first interval so the validation does not care whether the axis
+    is ascending or descending -- the sign of the first interval
+    carries the direction.  This also rejects zig-zag /
+    duplicate-coord patterns like ``[0.5, 1.5, 0.5, 1.5]`` whose
+    ``abs(diff)`` is uniform but whose signed diffs alternate.
+    ``np.allclose`` is used (rather than strict equality) because
+    affine-transform-derived coords drift by a few ulps in practice.
     """
     if coords.size < 3:
         return
@@ -2845,16 +2847,23 @@ def _check_uniform_axis(axis_name, coords, expected_step):
             "xarray's ``interp`` or ``reindex``) before passing it."
         )
 
-    diffs = np.abs(np.diff(coords))
-    if not np.allclose(diffs, expected_step, rtol=1e-5, atol=1e-8):
-        max_dev = float(np.max(np.abs(diffs - expected_step)))
+    # Compare signed diffs, not magnitudes.  Comparing only
+    # ``abs(diff)`` against ``abs(expected_step)`` accepts zig-zag
+    # patterns like ``[0.5, 1.5, 0.5, 1.5]`` whose magnitudes are
+    # uniform but whose coords are non-monotonic with duplicate
+    # values -- which then poisons ``.sel`` and any other coord-aware
+    # lookup on the output.
+    signed_step = float(coords[1] - coords[0])
+    signed_diffs = np.diff(coords)
+    if not np.allclose(signed_diffs, signed_step, rtol=1e-5, atol=1e-8):
+        max_dev = float(np.max(np.abs(signed_diffs - signed_step)))
         raise ValueError(
             "'like' DataArray has non-uniform spacing along the "
-            f"{axis_name!r} axis (expected step {expected_step}, "
+            f"{axis_name!r} axis (expected step {signed_step}, "
             f"largest deviation {max_dev}). rasterize() requires a "
-            "regular grid; resample 'like' to a uniform grid (e.g. "
-            "with xarray's ``interp`` or ``reindex``) before passing "
-            "it."
+            "regular, strictly monotonic grid; resample 'like' to a "
+            "uniform grid (e.g. with xarray's ``interp`` or "
+            "``reindex``) before passing it."
         )
 
 
