@@ -14,6 +14,13 @@
   on dask-backed input also raises instead of silently returning
   the wrong shape. (#2558)
 
+- `crosstab(cat_ids=[...])` no longer overcounts when `cat_ids` skips a
+  category that is present in the values raster. The 2D helper now
+  advances its cumulative cursor for every unique category instead of
+  only the selected ones, so each selected category's count starts from
+  the correct offset. All four backends (numpy, dask+numpy, cupy,
+  dask+cupy) share the helper and are fixed together. (#2560)
+
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an
