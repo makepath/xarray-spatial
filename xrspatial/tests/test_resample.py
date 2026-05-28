@@ -61,7 +61,7 @@ class TestResampleAPI:
             resample(grid_4x4, scale_factor=0.5, target_resolution=2.0)
 
     def test_negative_scale(self, grid_4x4):
-        with pytest.raises(ValueError, match="positive"):
+        with pytest.raises(ValueError, match="scale_factor must be > 0"):
             resample(grid_4x4, scale_factor=-1.0)
 
     def test_aggregate_upsample_rejected(self, grid_4x4):
