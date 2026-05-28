@@ -22,11 +22,10 @@ test-coverage sweep on 2026-05-17:
 - Cat 1 MEDIUM -- eager cupy ``all_touched=True`` is covered only on the
   dask+cupy path; the eager cupy branch invokes a different kernel and
   had no direct test.
-- Cat 2 MEDIUM -- integer dtype with the default ``fill=nan`` is
-  unpinned behaviour: ``np.full(..., np.nan).astype(int)`` silently
-  casts to the platform-specific int-min sentinel.  Pin the observed
-  cast (numpy backend) so a future refactor that switches to an explicit
-  raise surfaces in CI.
+- Cat 2 MEDIUM -- integer dtype with the default ``fill=nan`` was
+  silently casting NaN to a platform-specific int-min sentinel and
+  emitting no _FillValue/nodata attrs.  Issue #2504 turned that into
+  an explicit ValueError; the test now pins the raise.
 
 The "fix" in this sweep is *adding tests*.  No source changes.  CUDA is
 available on this host so cupy / dask+cupy tests execute live.
@@ -558,47 +557,36 @@ class TestEagerCupyAllTouched:
 # ---------------------------------------------------------------------------
 
 class TestIntegerDtypeNanFill:
-    """Pin the observed behaviour when ``dtype`` is integer but ``fill``
-    defaults to ``np.nan``.
+    """Integer ``dtype`` with the default ``fill=np.nan`` is rejected
+    rather than silently casting NaN to a platform-specific sentinel.
 
-    Scope: numpy backend only.  ``np.full((H, W), np.nan).astype(np.int32)``
-    silently casts NaN to a platform-dependent sentinel: x86 yields
-    ``INT32_MIN`` while Apple Silicon yields ``0``.  Both values are
-    unspecified by C and by numpy, so the test pins "rasterize emits the
-    same cast numpy emits" rather than a specific number.  The cupy and
-    dask+cupy backends allocate their own backing arrays and the
-    CUDA-side NaN-to-int cast may differ from numpy's by CUDA version;
-    a cross-backend parametrization is deferred to a follow-up sweep
-    that can investigate per-backend cast semantics.  This is
-    undocumented but must remain stable on the numpy backend: a future
-    refactor that switched to raising
-    ``ValueError("integer dtype requires explicit fill")`` would break
-    every caller that currently passes ``dtype=np.int32`` without
-    overriding ``fill``.  Pin the cast so the choice is visible as a
-    code-review diff.
+    Earlier versions of this test pinned the platform NaN-cast
+    (``INT32_MIN`` on x86, ``0`` on Apple Silicon) on the grounds that
+    the cast was at least stable on a single host.  Issue #2504
+    (metadata sweep) argued that the cast quietly poisons downstream
+    masks: no ``_FillValue`` / ``nodata`` / ``nodatavals`` attr is
+    emitted, so geotiff writers and rioxarray masks have no sentinel to
+    key off and treat unwritten cells as legitimate burns.  The
+    rasterize entrypoint now raises ``ValueError`` before any host or
+    device allocation when an integer output dtype meets a NaN default
+    fill; the caller has to opt into an explicit integer sentinel.
     """
 
-    def test_int32_dtype_with_default_nan_fill_pins_sentinel(self):
-        """NaN fill on int32 dtype takes numpy's platform NaN-cast."""
-        r = rasterize([(box(0, 0, 3, 3), 7.0)],
+    def test_int32_dtype_with_default_nan_fill_raises(self):
+        """NaN fill against int32 dtype raises with a clear pointer."""
+        with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+            rasterize([(box(0, 0, 3, 3), 7.0)],
                       width=5, height=5, bounds=(0, 0, 5, 5),
                       dtype=np.int32)
-        assert r.dtype == np.int32
-        # Derive the sentinel from numpy itself: whatever the platform
-        # produces when casting NaN to int32 is what rasterize must
-        # produce too.  x86 -> INT32_MIN, Apple Silicon -> 0.
-        with np.errstate(invalid="ignore"):
-            sentinel = np.array([np.nan], dtype=np.float64).astype(np.int32)[0]
-        # Lower-left quadrant covered by polygon.
-        assert r.values[4, 0] == 7
-        # Outside the polygon (top-right corner) takes the platform NaN-cast.
-        assert r.values[0, 4] == sentinel
 
     def test_int32_dtype_with_explicit_int_fill(self):
-        """Explicit int fill is honoured exactly (no NaN cast surprise)."""
+        """Explicit int fill is honoured and recorded in the nodata triplet."""
         r = rasterize([(box(0, 0, 3, 3), 7.0)],
                       width=5, height=5, bounds=(0, 0, 5, 5),
                       fill=-1, dtype=np.int32)
         assert r.dtype == np.int32
         assert r.values[4, 0] == 7
         assert r.values[0, 4] == -1
+        assert r.attrs.get('nodata') == -1
+        assert r.attrs.get('_FillValue') == -1
+        assert r.attrs.get('nodatavals') == (-1,)

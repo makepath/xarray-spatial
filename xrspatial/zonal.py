@@ -1759,8 +1759,10 @@ def apply(
         - A list of ``(shapely geometry, zone_id)`` pairs.
 
         When vector input is provided, ``rasterize()`` is called internally
-        using *values* as the template grid. Use ``rasterize_kw={'dtype': int}``
-        to produce integer zones (required by ``apply``).
+        using *values* as the template grid. Use
+        ``rasterize_kw={'dtype': int, 'fill': 0}`` to produce integer zones
+        (required by ``apply``); ``rasterize`` rejects an integer dtype with
+        the default NaN fill (#2504).
 
     values : xr.DataArray
         values.data is either a 2D or 3D array of integers or floats.
