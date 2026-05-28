@@ -1,6 +1,6 @@
 """Eager (CPU) writer entry point and helpers.
 
-Step 10 of issue #1813. Holds ``to_geotiff`` (the public eager writer),
+Holds ``to_geotiff`` (the public eager writer),
 ``_write_single_tile`` (per-tile worker used by ``_write_vrt_tiled``),
 and ``_write_vrt_tiled`` (the deprecated ``vrt_tiled=True`` path on
 ``to_geotiff``). Companion modules ``_writers/gpu.py`` and
@@ -62,17 +62,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                drop_rotation: bool = False) -> str | BinaryIO:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
-    Release-contract tier (epic #2340; see
+    Release-contract tier (see
     ``docs/source/reference/release_gate_geotiff.rst`` and
     ``docs/source/reference/geotiff_release_contract.rst``):
 
     * [stable] Local-file output on an axis-aligned grid with
       ``compression`` in ``{'none', 'deflate', 'lzw', 'packbits',
       'zstd'}``; CRS / transform / nodata attrs round-trip; ``bigtiff``
-      auto-promotion.
-    * [advanced] ``cog=True`` and overview generation; explicit
-      ``bigtiff=True``; ``photometric=`` overrides; ``extra_tags``
-      pass-through.
+      auto-promotion; ``cog=True`` (the IFD-first tiled COG layout with
+      a stable codec, covered by ``SUPPORTED_FEATURES['writer.cog']``).
+    * [advanced] Internal overview pyramid generation
+      (``SUPPORTED_FEATURES['writer.overviews']``): the
+      ``overview_levels`` and ``overview_resampling`` knobs and the
+      pyramid bytes themselves. Also explicit ``bigtiff=True``;
+      ``photometric=`` overrides; ``extra_tags`` pass-through.
     * [experimental] GPU dispatch via ``gpu=True``;
       ``compression`` in ``{'lerc', 'jpeg2000', 'j2k', 'lz4'}`` behind
       the explicit ``allow_experimental_codecs=True`` opt-in;
@@ -83,11 +86,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
       xrspatial's own use and is not part of the externally
       interoperable surface.
     * Out of scope for this release (allowed to raise): rotated /
-      sheared write support (``ModelTransformationTag`` emit, tracked
-      separately in #2115); silent mixed-metadata flattening.
+      sheared write support (no ``ModelTransformationTag`` emit path);
+      silent mixed-metadata flattening.
 
     See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
-    map (issue #2137). Per-parameter tier markers below describe the
+    map. Per-parameter tier markers below describe the
     tier the parameter itself carries; a parameter's effective tier
     is bounded by the function-level surface above (e.g. ``[stable]``
     ``nodata`` is still only stable when combined with a ``[stable]``
@@ -129,7 +132,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         GDAL can round-trip this but many other GeoTIFF readers treat
         the citation as a free-form name and lose the CRS. A
         ``UserWarning`` is emitted when the WKT-only path is taken.
-        See issue #1768.
     nodata : float, int, or None
         [stable] NoData value.
     compression : str
@@ -171,7 +173,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         [stable] Use tiled layout (default True). Incompatible with
         ``cog=True`` because the COG specification requires a tiled
         internal layout; passing ``cog=True, tiled=False`` raises
-        ``ValueError`` (#2312).
+        ``ValueError``.
     tile_size : int
         [stable] Tile size in pixels (default 256). Must be a positive
         multiple of 16 when ``tiled=True``; this is a TIFF 6 spec
@@ -187,13 +189,19 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         * ``3`` -> floating-point predictor (float dtypes only; typically
           gives better deflate/zstd ratios on float data than predictor 2).
     cog : bool
-        [advanced] COG output materialises the full array because
-        overview pyramids need it, and the all-IFDs-at-file-start
-        layout only round-trips through readers that honour the COG
-        layout contract. Write as Cloud Optimized GeoTIFF. Requires
-        ``tiled=True`` (the default): the COG specification mandates a
-        tiled internal layout, so ``cog=True, tiled=False`` raises
-        ``ValueError`` (#2312).
+        [stable] Write as Cloud Optimized GeoTIFF. The CPU writer
+        emits the spec-conforming COG layout (IFD-first, tiled,
+        internal overviews, lossless codec) covered by
+        ``SUPPORTED_FEATURES['writer.cog']``. Requires ``tiled=True``
+        (the default): the COG specification mandates a tiled internal
+        layout, so ``cog=True, tiled=False`` raises ``ValueError``.
+        COG output also materialises the full array, because the
+        overview pyramid needs random access to every pixel; the
+        ``streaming_buffer_bytes`` kwarg is a no-op on this path.
+        Customisation of the overview pyramid itself
+        (``overview_levels``, ``overview_resampling``) is tracked
+        separately as advanced under
+        ``SUPPORTED_FEATURES['writer.overviews']``.
     overview_levels : list[int] or None
         [advanced] Overview pyramids are an optional COG feature; the
         decimation factors and resampling choice affect downstream
@@ -249,7 +257,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
           round-trip through this default without being silently
           labelled as RGB+alpha. Prior versions treated any 3+ band
           array as RGB and the 4th band as unassociated alpha -- the
-          behaviour change is intentional (issue #1769).
+          behaviour change is intentional.
         * ``'rgb'`` -- RGB (Photometric=2). Three colour bands; any
           additional bands are tagged ``0`` (unspecified).
         * ``'rgba'`` -- RGB with the 4th band tagged as unassociated
@@ -260,9 +268,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
           xrspatial has no semantically correct inversion for signed
           MinIsWhite and the silent passthrough that used to happen
           produced files that disagreed with the on-disk Photometric
-          tag against every standards-compliant TIFF reader (issue
-          #2278). Cast to an unsigned dtype or pass
-          ``photometric='minisblack'``.
+          tag against every standards-compliant TIFF reader. Cast to
+          an unsigned dtype or pass ``photometric='minisblack'``.
         * An ``int`` -- written verbatim into Photometric for advanced
           callers (e.g. ``3`` for Palette, ``5`` for CMYK).
 
@@ -286,7 +293,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``allow_internal_only_jpeg`` flag because internal-only is a
         stricter tier than experimental. The kwarg is forwarded
         unchanged to ``write_geotiff_gpu`` on the GPU dispatch path.
-        See issue #2137.
     allow_internal_only_jpeg : bool
         [internal-only] Opt in to the ``compression='jpeg'`` encode
         path (default ``False``). The encoder writes self-contained
@@ -300,28 +306,27 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         the flag, ``compression='jpeg'`` raises ``ValueError``. The
         kwarg is forwarded unchanged to ``write_geotiff_gpu`` on the
         GPU dispatch path so callers can reach the same experimental
-        encode via ``to_geotiff(..., gpu=True)``. See issue #1845.
+        encode via ``to_geotiff(..., gpu=True)``.
     allow_unparseable_crs : bool
         [experimental] Opt in to writing an unvalidatable CRS string
         into ``GTCitationGeoKey`` (default ``False``). When ``False``
-        (the default since #1929), a ``crs=`` value that is neither an
-        EPSG
+        (the default), a ``crs=`` value that is neither an EPSG
         int nor a string that pyproj can resolve and is not
         structurally WKT (no ``PROJCS`` / ``GEOGCS`` / ``PROJCRS`` /
         ``GEOGCRS`` root) raises ``ValueError`` instead of landing
         verbatim in the citation field. Set to ``True`` to keep the
-        pre-#1929 permissive behaviour. The fail-closed default
-        protects against files where a typo'd PROJ string or an
-        ``"EPSG:4326"`` token on a host without pyproj produces a
-        citation that most readers cannot interpret. See issue #1929.
+        permissive behaviour. The fail-closed default protects against
+        files where a typo'd PROJ string or an ``"EPSG:4326"`` token on
+        a host without pyproj produces a citation that most readers
+        cannot interpret.
     drop_rotation : bool, default False
         [advanced] Opt in to writing a DataArray that carries
-        ``attrs['rotated_affine']`` (issue #2216). The reader sets that
-        attr when called with ``allow_rotated=True`` on a file whose
+        ``attrs['rotated_affine']``. The reader sets that attr when
+        called with ``allow_rotated=True`` on a file whose
         ``ModelTransformationTag`` contains rotation, shear, or
-        z-coupling terms (issue #2129). The writer does not emit a
-        ``ModelTransformationTag`` (tracked in #2115), so passing such
-        a DataArray through ``to_geotiff`` produces an identity-affine
+        z-coupling terms. The writer does not emit a
+        ``ModelTransformationTag``, so passing such a DataArray through
+        ``to_geotiff`` produces an identity-affine
         output and loses the rotated mapping; a subsequent
         ``open_geotiff`` round-trip cannot recover it. Default
         ``False`` refuses the write with ``ValueError`` so the loss is
@@ -337,7 +342,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         lines up with ``write_vrt`` and lets callers chain a write into
         a read without round-tripping through a variable; existing
         callers that discarded the previous ``None`` return are
-        unaffected. See issue #1938.
+        unaffected.
 
     Raises
     ------
@@ -349,10 +354,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     ValueError
         If ``data.attrs['rotated_affine']`` is set and ``drop_rotation``
         is False. The reader sets that attr on the ``allow_rotated=True``
-        path; the writer cannot emit a ``ModelTransformationTag``
-        (#2115) so writing would silently lose the rotation. Pass
-        ``drop_rotation=True`` to accept the loss explicitly
-        (issue #2216).
+        path; the writer cannot emit a ``ModelTransformationTag`` so
+        writing would silently lose the rotation. Pass
+        ``drop_rotation=True`` to accept the loss explicitly.
     ValueError
         If ``data`` is a 3D DataArray whose ``dims`` is not
         ``(band, y, x)`` or ``(y, x, band)`` (accepting the band-name
@@ -360,8 +364,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         ``lat`` / ``lon`` / ``latitude`` / ``longitude`` / ``row`` /
         ``col``). A leading non-band dim such as ``time`` is rejected
         because the writer cannot infer the band axis from arbitrary
-        names and used to silently treat the leading axis as ``y``
-        (issue #1812).
+        names and used to silently treat the leading axis as ``y``.
     """
     from .._reader import _coerce_path
 
@@ -373,8 +376,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # builder then writes ``str(True)`` -> ``"True"`` into GDAL_NODATA,
     # which no reader parses as numeric, so the round-trip drops the
     # sentinel without warning. Refuse rather than coerce ``True`` to 1:
-    # the caller almost certainly meant a real numeric sentinel. See
-    # issue #1911.
+    # the caller almost certainly meant a real numeric sentinel.
     if isinstance(nodata, (bool, np.bool_)):
         raise TypeError(
             f"nodata must be numeric (int or float), got {nodata!r}")
@@ -384,7 +386,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # (cog=True) still reads tile_size to auto-generate overviews in
     # ``_writer.py`` regardless of the strip-vs-tiled choice, so a
     # non-positive tile_size with cog=True drove the overview loop
-    # into a hang once oh, ow halved to 0 (issue #2311). Validate
+    # into a hang once oh, ow halved to 0. Validate
     # tile_size whenever either path will consume it: tiled output OR
     # COG overview generation. Shared with write_geotiff_gpu via
     # _validate_tile_size_arg so both writers keep identical validation.
@@ -393,11 +395,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     _validate_nodata_arg(nodata)
 
-    # Issue #2216: refuse to silently drop the rotated 6-tuple that the
-    # reader surfaces on ``attrs['rotated_affine']`` when called with
+    # Refuse to silently drop the rotated 6-tuple that the reader
+    # surfaces on ``attrs['rotated_affine']`` when called with
     # ``allow_rotated=True``. The writer has no ``ModelTransformationTag``
-    # emit path (#2115), so writing a rotated input produces an
-    # identity-affine file with no signal to the caller. Run the check
+    # emit path, so writing a rotated input produces an identity-affine
+    # file with no signal to the caller. Run the check
     # at the entry point so the GPU dispatch path, the VRT path, and the
     # eager path all hit the same gate.
     _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
@@ -407,16 +409,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         entry_point="to_geotiff",
     )
 
-    # Issue #2301: ``attrs['transform']`` carrying a rasterio
-    # ``Affine`` with non-zero rotation/shear (``b != 0`` or ``d != 0``)
-    # silently slipped past ``transform_from_attr`` because ``Affine``
-    # iterates as a 9-element augmented matrix and the 6-tuple gate
-    # there ran ``len(seq) != 6 -> return None``. Without the
-    # rejection the writer falls back to coord-derived or no-georef
-    # output and the rotation is lost on disk. Detect the Affine shape
-    # by duck-typing the (b, d) attrs and surface the same diagnostic
-    # the 6-tuple branch raises (#1987 PR 3 wording, kept verbatim so
-    # the existing match patterns still hit).
+    # ``attrs['transform']`` carrying a rasterio ``Affine`` with
+    # non-zero rotation/shear (``b != 0`` or ``d != 0``) silently
+    # slipped past ``transform_from_attr`` because ``Affine`` iterates
+    # as a 9-element augmented matrix and the 6-tuple gate there ran
+    # ``len(seq) != 6 -> return None``. Without the rejection the writer
+    # falls back to coord-derived or no-georef output and the rotation
+    # is lost on disk. Detect the Affine shape by duck-typing the (b, d)
+    # attrs and surface the same diagnostic the 6-tuple branch raises
+    # (wording kept verbatim so the existing match patterns still hit).
     _attr_transform = _drop_rotation_attrs.get('transform')
     if (_attr_transform is not None
             and hasattr(_attr_transform, 'b')
@@ -448,8 +449,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 f"grid before writing."
             )
 
-    # Issue #2075: reject zero-height / zero-width inputs before any
-    # dispatch decision. Clip / window pipelines naturally produce empty
+    # Reject zero-height / zero-width inputs before any dispatch
+    # decision. Clip / window pipelines naturally produce empty
     # rasters and the writers used to accept them, produce a TIFF whose
     # IFD claimed shape ``(0, N)`` / ``(N, 0)``, and surface a generic
     # "Invalid image dimensions" only at read time. Fail closed at the
@@ -458,11 +459,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     _dims = getattr(data, 'dims', None)
     _validate_writer_spatial_shape(_shape, _dims)
 
-    # Issue #1987 ambiguous-metadata checks. The hook is a no-op
-    # when no check is registered, so this call is safe even if every
-    # check is later unregistered for a specific entry point.
+    # Ambiguous-metadata checks. The hook is a no-op when no check is
+    # registered, so this call is safe even if every check is later
+    # unregistered for a specific entry point.
     #
-    # Issue #2215: resolve documented spatial-dim aliases (lat/lon,
+    # Resolve documented spatial-dim aliases (lat/lon,
     # latitude/longitude, row/col) here so the NonUniformCoordsError
     # check fires consistently regardless of which alias the caller
     # picked. Before this, only literal coords['y'] / coords['x']
@@ -503,7 +504,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # opt-in that ``write_geotiff_gpu`` already accepts, so the
         # auto-dispatch entry point can reach the experimental
         # internal-reader-only path the explicit GPU entry point
-        # exposes (issue #1845).
+        # exposes.
         if compression.lower() == 'jpeg' and not allow_internal_only_jpeg:
             raise ValueError(
                 "compression='jpeg' is not supported: the encoder writes "
@@ -519,7 +520,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # of ``to_geotiff(gpu=True, compression='jpeg',
         # allow_internal_only_jpeg=True)``.
 
-        # Tier 3 experimental-codec gate (issue #2137). Lerc, jpeg2000 /
+        # Tier 3 experimental-codec gate. Lerc, jpeg2000 /
         # j2k, and lz4 sit in ``_VALID_COMPRESSIONS`` for wire-format
         # reasons but their cross-backend numerical parity, reader
         # support across GDAL versions, and (for lerc) bounded lossy
@@ -591,8 +592,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             GeoTIFFFallbackWarning,
             stacklevel=2,
         )
-    # Tier 3 experimental-codec opt-in warning (issue #2137). Mirrors
-    # the JPEG flag's "warn once, after dispatch is resolved" shape:
+    # Tier 3 experimental-codec opt-in warning. Mirrors the JPEG
+    # flag's "warn once, after dispatch is resolved" shape:
     # ``write_geotiff_gpu`` emits its own warning on the GPU path with
     # a backend-specific caveat, so the CPU dispatcher only warns when
     # the write is staying on CPU.
@@ -614,7 +615,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # Both surfaces ride the Experimental tier in ``SUPPORTED_FEATURES``
     # because the on-disk bytes are written verbatim and downstream
     # interop with rasterio / libtiff / GDAL depends on the payload.
-    # PR 4 of epic #2340.
     _data_attrs_for_optin = (
         data.attrs if isinstance(data, xr.DataArray) else {}
     )
@@ -625,13 +625,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         entry_point="to_geotiff",
     )
 
-    # Issue #2312: ``cog=True`` requires a tiled internal layout per the
-    # COG spec. The writer used to accept ``cog=True, tiled=False``, warn
-    # that ``tile_size`` was ignored, and then write strips via
-    # ``_write`` -- silently producing a file that violates the stable
-    # COG contract promoted in #2300. Reject the combination at the
-    # public boundary with the same actionable-error shape as the other
-    # COG input gates pinned in #2301 (commit f5fbad54): the message
+    # ``cog=True`` requires a tiled internal layout per the COG spec.
+    # The writer used to accept ``cog=True, tiled=False``, warn that
+    # ``tile_size`` was ignored, and then write strips via ``_write`` --
+    # silently producing a file that violates the stable COG contract.
+    # Reject the combination at the public boundary with the same
+    # actionable-error shape as the other COG input gates: the message
     # names the violated constraint and lists both fixes the caller can
     # apply in one line. The defense-in-depth gate in ``_writer._write``
     # catches direct callers that bypass this wrapper.
@@ -643,8 +642,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # ignored). The VRT path always tiles, so the warning would be
     # misleading there -- the VRT branch below rejects tiled=False up front
     # instead. The ``cog=True, tiled=False`` arm of this warning is dead
-    # under the #2312 gate above (that combination raises before reaching
-    # this line), so the condition below only fires for ``cog=False,
+    # under the cog/tiled gate above (that combination raises before
+    # reaching this line), so the condition below only fires for ``cog=False,
     # tiled=False, tile_size != 256``.
     if not tiled and tile_size != 256 and not _is_vrt_path:
         warnings.warn(
@@ -786,10 +785,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     res_unit = None
     gdal_meta_xml = None
     extra_tags_list = None
-    # Default for the issue #1988 gate. Overwritten with the actual
-    # ``attrs['masked_nodata']`` value below when ``data`` is a
+    # Default for the NaN-sentinel restore gate. Overwritten with the
+    # actual ``attrs['masked_nodata']`` value below when ``data`` is a
     # DataArray; bare numpy / cupy positional inputs have no attrs
-    # so they keep the pre-#1988 NaN->sentinel rewrite.
+    # so they keep the NaN->sentinel rewrite.
     restore_sentinel = True
 
     # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ).
@@ -808,8 +807,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         raw = data.data
 
         # Extract metadata from DataArray attrs (no materialisation needed).
-        # Resolve the affine through the centralised resolver (#2225) so
-        # this writer, the GPU writer, and the per-tile VRT path share
+        # Resolve the affine through the centralised resolver so this
+        # writer, the GPU writer, and the per-tile VRT path share
         # the same precedence rule: prefer ``attrs['transform']`` (which
         # round-trips bit-exactly) over a coord-derived transform (which
         # drifts on fractional pixel sizes because ``x[1] - x[0]`` is
@@ -819,7 +818,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # Fail closed when coords are present but no transform could be
         # derived (e.g. 1x1 without ``attrs['transform']``) instead of
         # silently writing a non-georeferenced TIFF that round-trips back
-        # with integer pixel coords (#1945).
+        # with integer pixel coords.
         _require_transform_for_georeferenced(data, geo_transform)
         if epsg is None and crs is None:
             crs_attr = data.attrs.get('crs')
@@ -831,7 +830,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 # Same gate as the kwarg path: reject bool / non-int
                 # types and confirm the EPSG resolves before writing it
                 # to disk. Without this, ``attrs={'crs': True}`` round-
-                # trips as EPSG=1 (issue #1971 follow-up).
+                # trips as EPSG=1.
                 _validate_crs_arg(crs_attr)
                 epsg = int(crs_attr)
             if epsg is None:
@@ -842,11 +841,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                         wkt_fallback = wkt
         if nodata is None:
             nodata = _resolve_nodata_attr(data.attrs)
-        # Issue #1988: ``attrs['masked_nodata']`` records whether the
-        # reader promoted the sentinel to NaN. Writers reverse that
-        # rewrite only when the read side did the forward step. Default
-        # (attr absent) is True, which preserves pre-#1988 behaviour for
-        # external DataArrays.
+        # ``attrs['masked_nodata']`` records whether the reader promoted
+        # the sentinel to NaN. Writers reverse that rewrite only when the
+        # read side did the forward step. Default (attr absent) is True,
+        # which preserves behaviour for external DataArrays.
         restore_sentinel = _should_restore_nan_sentinel(data.attrs)
         # Pull raster_type, gdal_metadata_xml, extra_tags (folded with
         # the friendly image_description / extra_samples / colormap
@@ -870,7 +868,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             # Reject ambiguous 3D layouts at the entry point so a leading
             # non-band dim like ``('time', 'y', 'x')`` cannot silently
             # round-trip as a TIFF whose ``y`` axis carries the time
-            # values (issue #1812).
+            # values.
             if raw.ndim == 3:
                 _validate_3d_writer_dims(data.dims)
             # Handle band-first dimension order (band, y, x) -> (y, x, band)
@@ -891,9 +889,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                             f"range for {compression} (valid: {lo}-{hi})")
             from .._writer import write_streaming
 
-            # Issue #1929: refuse to write an unvalidatable CRS string
-            # into GTCitationGeoKey unless the caller opts in. ``epsg``
-            # is set when ``_wkt_to_epsg`` succeeded; only the fallback
+            # Refuse to write an unvalidatable CRS string into
+            # GTCitationGeoKey unless the caller opts in. ``epsg`` is
+            # set when ``_wkt_to_epsg`` succeeded; only the fallback
             # branch needs the guard.
             if epsg is None:
                 _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
@@ -923,7 +921,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 # fallback gates upstream; forwarding the kwargs lets
                 # ``_write_streaming``'s push-down check stay aligned
                 # rather than rejecting input the wrapper accepted.
-                # Issue #2138.
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
                 allow_unparseable_crs=allow_unparseable_crs,
             )
@@ -938,7 +935,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 arr = arr.get()  # Dask+CuPy -> numpy
         else:
             arr = np.asarray(raw)
-        # Reject ambiguous 3D layouts (issue #1812). The validator runs
+        # Reject ambiguous 3D layouts. The validator runs
         # on ``data.dims`` (the original DataArray's dim names) rather
         # than on ``arr`` so the error fires before the move-axis even
         # for COG and file-like destinations that fall through here.
@@ -970,12 +967,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # not a copy) or ``np.moveaxis(arr, 0, -1)`` of one (also a view).
     # Mutating without a copy would corrupt the user's input buffer.
     #
-    # PR-C #2226: ``NodataLifecycle.writer_restore_sentinel`` owns the
-    # "should we restore?" decision (no declared sentinel, non-float
-    # buffer, NaN sentinel all collapse to False there). The
-    # ``restore_sentinel`` local was resolved upstream from
-    # ``attrs['masked_nodata']`` (issue #1988) and is passed through
-    # the helper's ``restore_sentinel=`` kwarg as a single bool.
+    # ``NodataLifecycle.writer_restore_sentinel`` owns the "should we
+    # restore?" decision (no declared sentinel, non-float buffer, NaN
+    # sentinel all collapse to False there). The ``restore_sentinel``
+    # local was resolved upstream from ``attrs['masked_nodata']`` and
+    # is passed through the helper's ``restore_sentinel=`` kwarg as a
+    # single bool.
     if _NL(declared=nodata, dtype_in=arr.dtype).writer_restore_sentinel(
             buffer_dtype=arr.dtype,
             restore_sentinel=restore_sentinel,
@@ -995,8 +992,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                     f"compression_level={compression_level} out of range "
                     f"for {compression} (valid: {lo}-{hi})")
 
-    # Issue #1929: refuse to write an unvalidatable CRS string into
-    # GTCitationGeoKey unless the caller opts in.
+    # Refuse to write an unvalidatable CRS string into GTCitationGeoKey
+    # unless the caller opts in.
     if epsg is None:
         _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
     write(
@@ -1026,7 +1023,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # ``to_geotiff`` ran the JPEG opt-in and the CRS fallback
         # gates upstream; forwarding the kwargs keeps ``_write``'s
         # push-down check from rejecting input the wrapper accepted.
-        # Issue #2138.
         allow_internal_only_jpeg=allow_internal_only_jpeg,
         allow_unparseable_crs=allow_unparseable_crs,
     )
@@ -1054,7 +1050,7 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
     every per-tile file under a VRT carries the same metadata it would
     have received from a single-file ``to_geotiff(..., out.tif)`` write.
     Without this, ``to_geotiff(da, "out.vrt")`` silently drops everything
-    except the per-tile geo_transform / crs / nodata. See issue #1606.
+    except the per-tile geo_transform / crs / nodata.
     """
     if hasattr(chunk_data, 'compute'):
         chunk_data = chunk_data.compute()
@@ -1076,8 +1072,8 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
     # caller-owned numpy buffer. Mutating without a copy would corrupt
     # the user's input.
     #
-    # PR-C #2226: ``NodataLifecycle.writer_restore_sentinel`` owns the
-    # gate; see the matching block in ``to_geotiff`` above.
+    # ``NodataLifecycle.writer_restore_sentinel`` owns the gate; see
+    # the matching block in ``to_geotiff`` above.
     if _NL(declared=nodata, dtype_in=arr.dtype).writer_restore_sentinel(
             buffer_dtype=arr.dtype,
             restore_sentinel=restore_sentinel,
@@ -1109,7 +1105,7 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
           restore_sentinel=restore_sentinel,
           # Forward the JPEG / CRS-fallback opt-ins so the per-tile
           # write does not re-trip the push-down gate ``to_geotiff``
-          # / ``_write_vrt_tiled`` already cleared upstream (#2138).
+          # / ``_write_vrt_tiled`` already cleared upstream.
           allow_internal_only_jpeg=allow_internal_only_jpeg,
           allow_unparseable_crs=allow_unparseable_crs)
 
@@ -1129,15 +1125,15 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     """
     _validate_nodata_arg(nodata)
 
-    # Mirror to_geotiff's rotated_affine gate (#2216) so the VRT path
-    # rejects rotated inputs at the same boundary. ``to_geotiff`` already
-    # ran the check upstream when the caller reached this branch through
+    # Mirror to_geotiff's rotated_affine gate so the VRT path rejects
+    # rotated inputs at the same boundary. ``to_geotiff`` already ran
+    # the check upstream when the caller reached this branch through
     # the dispatcher, but a direct call to ``_write_vrt_tiled`` would
     # otherwise bypass the gate. ``entry_point`` names the private helper
     # so a direct caller sees the function actually running the check;
     # the public ``to_geotiff`` dispatch path raised at its own gate
     # before reaching this point so the helper-name surface is only
-    # visible to direct callers (review nit on #2216).
+    # visible to direct callers.
     _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
     _validate_no_rotated_affine(
         _drop_rotation_attrs,
@@ -1145,10 +1141,10 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         entry_point="_write_vrt_tiled",
     )
 
-    # Issue #1987 ambiguous-metadata checks; mirrors the call in
-    # ``to_geotiff`` so the dask-VRT write path enforces the same
-    # crs/crs_wkt / nodata / coord rules. Alias resolution (issue
-    # #2215) keeps the validator consistent across both entry points.
+    # Ambiguous-metadata checks; mirrors the call in ``to_geotiff`` so
+    # the dask-VRT write path enforces the same crs/crs_wkt / nodata /
+    # coord rules. Alias resolution keeps the validator consistent
+    # across both entry points.
     _attrs = getattr(data, 'attrs', None) or {}
     _coord_y, _coord_x = _resolve_spatial_coords(data)
     validate_write_metadata({
@@ -1219,7 +1215,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 # Same gate as the kwarg path: reject bool / non-int
                 # types and confirm the EPSG resolves before writing it
                 # to disk. Without this, ``attrs={'crs': True}`` round-
-                # trips as EPSG=1 (issue #1971 follow-up).
+                # trips as EPSG=1.
                 _validate_crs_arg(crs_attr)
                 epsg = int(crs_attr)
             if epsg is None:
@@ -1233,20 +1229,20 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
             # write_geotiff_gpu apply so a rioxarray-style DataArray
             # (``attrs['nodatavals']``) or a CF-style one
             # (``attrs['_FillValue']``) round-trips through ``.vrt``
-            # the same way it does through ``.tif``. Before this fix
-            # the VRT path used ``attrs.get('nodata')`` directly and
-            # silently dropped both aliases (issue #1606).
+            # the same way it does through ``.tif``. Using
+            # ``attrs.get('nodata')`` directly would silently drop both
+            # aliases.
             nodata = _resolve_nodata_attr(data.attrs)
-        # Issue #1988: mirror the ``to_geotiff`` gate so per-tile
-        # writes only NaN-rewrite when the read side promoted the
-        # sentinel. See ``_should_restore_nan_sentinel`` for the
-        # semantics; default True keeps existing behaviour.
+        # Mirror the ``to_geotiff`` gate so per-tile writes only
+        # NaN-rewrite when the read side promoted the sentinel. See
+        # ``_should_restore_nan_sentinel`` for the semantics; default
+        # True keeps existing behaviour.
         restore_sentinel = _should_restore_nan_sentinel(data.attrs)
-        # Resolve via the centralised resolver (#2225). Same precedence
-        # as ``to_geotiff``: attrs['transform'] wins over coord-derived.
+        # Resolve via the centralised resolver. Same precedence as
+        # ``to_geotiff``: attrs['transform'] wins over coord-derived.
         geo_transform = _resolve_georef(data).transform
         # Match the to_geotiff fail-closed guard so VRT writes don't
-        # silently produce non-georeferenced tiles either (#1945).
+        # silently produce non-georeferenced tiles either.
         _require_transform_for_georeferenced(data, geo_transform)
         # Pull the same rich-tag set that to_geotiff forwards to
         # ``write`` so per-tile files under the VRT carry it too.
@@ -1260,8 +1256,8 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     else:
         raw = data
 
-    # Issue #1929: refuse to write an unvalidatable CRS string into the
-    # per-tile GTCitationGeoKey fields unless the caller opts in.
+    # Refuse to write an unvalidatable CRS string into the per-tile
+    # GTCitationGeoKey fields unless the caller opts in.
     # ``_write_single_tile`` forwards ``wkt_fallback`` to the geokey
     # builder once per tile, so validate once up front rather than
     # per-tile.
@@ -1383,7 +1379,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # lets zlib / zstd / LZW release the GIL during compression and the
     # OS coalesce concurrent writes; in a 256-tile zstd write on a
     # 4096x4096 dask DataArray the wall time drops ~33% versus the
-    # ``synchronous`` scheduler this used to call (issue #1714).
+    # ``synchronous`` scheduler this used to call.
     if delayed_tasks:
         import dask
         dask.compute(*delayed_tasks, scheduler='threads')

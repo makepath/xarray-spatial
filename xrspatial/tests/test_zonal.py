@@ -1333,6 +1333,42 @@ def test_apply_3d(backend):
     np.testing.assert_equal(result_np[1, 0, :], [5.0, 5.0, 5.0])
 
 
+@pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
+def test_apply_dask_3d_axis2_rechunked_2526():
+    """Regression for #2526: apply 3D dask path must not leave axis-2
+    chunks at size 1 after da.stack.
+    """
+    shape = (4, 4, 3)
+    zones_data = np.array([[1, 1, 0, 2],
+                           [1, 0, 2, 2],
+                           [0, 2, 2, 0],
+                           [2, 0, 1, 1]], dtype=np.int32)
+    values_data = np.arange(np.prod(shape)).reshape(shape).astype(np.float64)
+
+    zones = xr.DataArray(
+        da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'],
+    )
+    values = xr.DataArray(
+        da.from_array(values_data, chunks=(2, 2, 3)),
+        dims=['y', 'x', 'band'],
+    )
+
+    result = apply(zones, values, lambda x: x * 2, nodata=0)
+
+    # Axis-2 chunks should match the input chunking, not be split
+    # into unit chunks by da.stack.
+    assert result.data.chunks[2] == values.data.chunks[2], (
+        f"axis-2 chunks should be {values.data.chunks[2]}, "
+        f"got {result.data.chunks[2]}"
+    )
+    # Sanity: result is numerically correct on a non-nodata cell.
+    out = result.data.compute()
+    # cell (0, 0) is zone 1 (non-nodata) so func applied
+    np.testing.assert_array_equal(
+        out[0, 0, :], values_data[0, 0, :] * 2,
+    )
+
+
 def test_apply_nodata_none():
     zones_data = np.array([[0, 1], [2, 3]], dtype=np.int32)
     values_data = np.array([[1.0, 2.0], [3.0, 4.0]])
@@ -1550,6 +1586,38 @@ def test_regions_dask_memory_guard():
             _regions_dask(huge.data if hasattr(huge, 'data') else huge, 4)
 
 
+def test_stats_dataarray_return_type_memory_guard_2523():
+    """stats(return_type='xarray.DataArray') should refuse to allocate
+    an oversized (n_stats, H*W) float64 working buffer.
+
+    Regression guard for issue #2523: the numpy backend's xarray.DataArray
+    return path allocated np.full((n_stats, values.size), nan) with no
+    memory check, scaling linearly with the user-supplied stats_funcs.
+    """
+    from unittest.mock import patch
+
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
+                          dtype=np.float64)
+    zones = xr.DataArray(zones_arr)
+    values = xr.DataArray(values_arr)
+
+    # Mock available memory to a tiny budget so the (n_stats, 8) buffer
+    # exceeds 50% of it.  The default 8 stats * 8 cells * 8 bytes = 512 B;
+    # with avail = 100 B the guard must trip.
+    with patch('xrspatial.zonal._available_memory_bytes', return_value=100):
+        with pytest.raises(MemoryError, match="xarray.DataArray"):
+            stats(zones=zones, values=values,
+                  return_type='xarray.DataArray')
+
+    # Sanity: with the normal memory budget the same call succeeds.
+    out = stats(zones=zones, values=values, return_type='xarray.DataArray')
+    assert isinstance(out, xr.DataArray)
+    # n_stats=8 default, output shape = (8, *values.shape)
+    assert out.shape[0] == 8
+    assert out.shape[1:] == values_arr.shape
+
+
 @pytest.mark.skipif(da is None, reason="dask not installed")
 def test_stats_dask_zone_filter():
     """stats() with zone_ids filter should return only requested zones."""
@@ -1673,7 +1741,7 @@ def test_crop():
                     [0, 0, 0, 0]], dtype=np.int64)
 
     raster = create_test_arr(arr)
-    result = crop(raster, raster, zones_ids=(1, 3))
+    result = crop(raster, raster, zone_ids=(1, 3))
     assert result.shape == (4, 3)
 
     trimmed_arr = np.array([[4, 0, 3],
@@ -1731,10 +1799,105 @@ def test_crop_nothing_to_crop():
                     [0, 0, 0, 0]], dtype=np.int64)
 
     raster = create_test_arr(arr)
-    result = crop(raster, raster, zones_ids=(0,))
+    result = crop(raster, raster, zone_ids=(0,))
     assert result.shape == arr.shape
     compare = arr == result.data
     assert compare.all()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for #2521: crop() should accept the canonical zone_ids
+# kwarg (matching stats() and crosstab()), with zones_ids kept as a
+# deprecated alias.
+# ---------------------------------------------------------------------------
+
+def test_crop_zone_ids_canonical_matches_zones_ids_legacy():
+    """crop(..., zone_ids=...) produces the same result as the legacy alias."""
+    import warnings
+
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    new = crop(raster, raster, zone_ids=(1, 3))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        legacy = crop(raster, raster, zones_ids=(1, 3))
+
+    assert new.shape == legacy.shape
+    assert (new.data == legacy.data).all()
+
+
+def test_crop_zones_ids_emits_deprecation_warning():
+    """Passing zones_ids must emit a DeprecationWarning."""
+    import warnings
+
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        crop(raster, raster, zones_ids=(1, 3))
+
+    dep = [w for w in caught if issubclass(w.category, DeprecationWarning)
+           and "zones_ids" in str(w.message)]
+    assert len(dep) >= 1, (
+        f"Expected a DeprecationWarning mentioning zones_ids, got: "
+        f"{[str(w.message) for w in caught]}"
+    )
+
+
+def test_crop_zone_ids_does_not_warn():
+    """Passing zone_ids (canonical) must not emit a DeprecationWarning."""
+    import warnings
+
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        crop(raster, raster, zone_ids=(1, 3))
+
+    dep = [w for w in caught if issubclass(w.category, DeprecationWarning)
+           and "zones_ids" in str(w.message)]
+    assert dep == [], (
+        f"Expected no DeprecationWarning for zone_ids, got: "
+        f"{[str(w.message) for w in dep]}"
+    )
+
+
+def test_crop_both_aliases_raises():
+    """Passing both zone_ids and zones_ids must raise TypeError."""
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with pytest.raises(TypeError, match="zone_ids.*zones_ids|zones_ids.*zone_ids"):
+        crop(raster, raster, zone_ids=(1,), zones_ids=(3,))
+
+
+def test_crop_missing_zone_ids_raises():
+    """crop() with neither zone_ids nor zones_ids must raise TypeError."""
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3]], dtype=np.int64)
+    raster = create_test_arr(arr)
+
+    with pytest.raises(TypeError, match="zone_ids"):
+        crop(raster, raster)
 
 
 # ---------------------------------------------------------------------------
@@ -1925,8 +2088,8 @@ class TestVectorZones:
 
     def test_crop_gdf(self):
         values, gdf, zones_raster = self._zones_raster_and_gdf()
-        expected = crop(zones_raster, values, zones_ids=[1.0])
-        result = crop(gdf, values, zones_ids=[1.0], column='zone_id')
+        expected = crop(zones_raster, values, zone_ids=[1.0])
+        result = crop(gdf, values, zone_ids=[1.0], column='zone_id')
         xr.testing.assert_identical(result, expected)
 
     # -- rasterize_kw forwarding --

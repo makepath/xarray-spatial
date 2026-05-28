@@ -1,8 +1,6 @@
 """GeoTIFF reader / writer input-validation surface.
 
-Consolidated from the per-failure-mode top-level files listed in
-``CLUSTER_AUDIT_INPUT_VALIDATION.md`` (cluster 6 of long-tail epic
-#2424). Every test here pins how the public read / write entry points
+Every test here pins how the public read / write entry points
 reject malformed inputs, before any decode or schedule work runs.
 
 Sections, by validation axis:
@@ -10,20 +8,20 @@ Sections, by validation axis:
 1. ``band`` type / bool rejection -- ``band`` must be a non-negative
    ``int`` / ``np.integer``; ``bool`` / ``np.bool_`` raise ``ValueError``
    and ``float`` / ``str`` raise ``TypeError``, across every read entry
-   point (issues #1786 and #1910).
+   point.
 2. Size-parameter validation -- ``tile_size`` and ``read_geotiff_dask``
    ``chunks`` must be positive, and ``tile_size`` must be a multiple of
-   16 when ``tiled=True`` (issues #1752 and #1767).
+   16 when ``tiled=True``.
 3. Source-dimension validation -- zero / negative ``ImageWidth`` /
    ``ImageLength`` / ``SamplesPerPixel`` are rejected on both stripped
-   and tiled read paths, local and HTTP (issue #2053).
+   and tiled read paths, local and HTTP.
 4. 3D writer-dim validation -- ``(y, x, <non-band>)`` DataArray inputs
-   are rejected rather than silently written band-last (issue #2240).
+   are rejected rather than silently written band-last.
 5. Window-bounds validation -- out-of-bounds ``window`` raises a clear
-   ``ValueError`` on both the eager and dask read paths (issue #1634).
+   ``ValueError`` on both the eager and dask read paths.
 6. Degenerate pixel-size fail-closed -- a 1xN / Nx1 write with no
    explicit transform and no opt-in raises rather than borrowing the
-   other axis's pixel size (issue #2214).
+   other axis's pixel size.
 """
 from __future__ import annotations
 
@@ -50,7 +48,7 @@ from xrspatial.geotiff._validation import _validate_3d_writer_dims
 from .._helpers.markers import requires_gpu
 
 # ===========================================================================
-# Section 1: band type / bool rejection (#1786, #1910)
+# Section 1: band type / bool rejection
 #
 # Every non-VRT read path range-checks ``band`` but historically did not
 # reject ``bool`` (``isinstance(True, int)`` is True, so ``band=True``
@@ -58,8 +56,8 @@ from .._helpers.markers import requires_gpu
 # range check). The VRT path already used the stricter
 # ``isinstance(band, (int, np.integer))`` form, so the contract differed
 # across backends. ``band`` must be a non-negative int: ``bool`` /
-# ``np.bool_`` raise ``ValueError`` (the #1786 guard fires first for
-# back-compat), and ``float`` / ``str`` raise ``TypeError`` (#1910).
+# ``np.bool_`` raise ``ValueError`` (the bool guard fires first for
+# back-compat), and ``float`` / ``str`` raise ``TypeError``.
 # ===========================================================================
 
 
@@ -119,7 +117,7 @@ def multiband_vrt_path(tmp_path, multiband_tiff_path):
     d = tmp_path / f'vrt_input_validation_{uuid.uuid4().hex[:8]}'
     d.mkdir()
     # The VRT needs the source TIFF inside (or under an allowed root)
-    # for path-containment (#1671). Copy bytes rather than symlink so
+    # for path-containment. Copy bytes rather than symlink so
     # the test does not depend on the platform's symlink behaviour.
     local_tif = d / 'data.tif'
     shutil.copy(src_tif, local_tif)
@@ -287,7 +285,7 @@ class TestBandTypeRejection:
         np.testing.assert_array_equal(out, arr[:, :, 1])
 
     def test_read_to_array_band_bool_still_rejected(self, multiband_tiff_path):
-        """The #1786 bool guard fires first and keeps the ValueError."""
+        """The bool guard fires first and keeps the ValueError."""
         path, _ = multiband_tiff_path
         with pytest.raises(ValueError, match="band must be a non-negative int"):
             read_to_array(path, band=True)
@@ -348,16 +346,16 @@ class TestBandTypeRejection:
 
 
 # ===========================================================================
-# Section 2: size-parameter validation (#1752, #1767)
+# Section 2: size-parameter validation
 #
 # Two writer/reader size parameters used to flow through unchecked:
 # ``to_geotiff(..., tiled=True, tile_size=0)`` reached the tiled writer
 # where ``math.ceil(width / tile_size)`` raised a bare ZeroDivisionError,
 # and ``read_geotiff_dask(chunks=0)`` propagated zero into dask's chunk
 # math. Both now validate up front and raise ``ValueError`` naming the
-# parameter (#1752). On top of positivity, ``tile_size`` must be a
+# parameter. On top of positivity, ``tile_size`` must be a
 # multiple of 16 when ``tiled=True`` per the TIFF 6 spec; the error
-# suggests the nearest valid value(s) (#1767). ``write_geotiff_gpu`` is
+# suggests the nearest valid value(s). ``write_geotiff_gpu`` is
 # always tiled and shares the same check before any cupy import.
 # ===========================================================================
 
@@ -381,7 +379,7 @@ def _make_da(shape=(32, 32)):
 
 class TestTileSizePositive:
     """``to_geotiff(..., tiled=True, tile_size=...)`` must be a positive
-    int (#1752)."""
+    int."""
 
     def test_to_geotiff_tile_size_zero_raises(self, tmp_path):
         da = _make_da((10, 10))
@@ -411,7 +409,7 @@ class TestTileSizePositive:
 
 
 class TestTileSizeMultipleOf16:
-    """``tile_size`` must be a multiple of 16 when ``tiled=True`` (#1767)."""
+    """``tile_size`` must be a multiple of 16 when ``tiled=True``."""
 
     def test_tile_size_17_rejected(self, tmp_path):
         """``tile_size=17`` is not a multiple of 16 and must be rejected."""
@@ -526,7 +524,7 @@ class TestTileSizeMultipleOf16:
 
 class TestReadDaskChunksValidation:
     """``read_geotiff_dask(chunks=...)`` must be a positive int or a
-    length-2 tuple of positive ints (#1752)."""
+    length-2 tuple of positive ints."""
 
     def test_chunks_zero_raises(self, tmp_path):
         path = _make_raster(str(tmp_path))
@@ -582,7 +580,7 @@ class TestReadDaskChunksValidation:
 
 
 # ===========================================================================
-# Section 3: source-dimension validation (#2053, #1901)
+# Section 3: source-dimension validation
 #
 # Two related defenses against malformed IFD geometry:
 #
@@ -590,12 +588,12 @@ class TestReadDaskChunksValidation:
 #   ImageLength / SamplesPerPixel before any window clamp, on both
 #   stripped read paths (local ``_read_strips`` and HTTP
 #   ``_fetch_decode_cog_http_strips``). Tiled paths already validate via
-#   ``validate_tile_layout``; the tests pin that parity (#2053).
+#   ``validate_tile_layout``; the tests pin that parity.
 # * The pixel-array tags (Strip/Tile Offsets & ByteCounts, ColorMap) are
 #   exempt from the generic ``MAX_IFD_ENTRY_COUNT`` cap, so their
 #   ``count`` is instead bounded against the IFD geometry (and an
 #   absolute ``MAX_PIXEL_ARRAY_COUNT`` when geometry is missing) to stop
-#   a crafted ``count`` from driving a multi-GiB tuple allocation (#1901).
+#   a crafted ``count`` from driving a multi-GiB tuple allocation.
 # ===========================================================================
 
 
@@ -905,7 +903,7 @@ def _build_classic_tiff(
 
 class TestPixelArrayCountCap:
     """Pixel-array tag ``count`` is bounded against IFD geometry (and an
-    absolute cap when geometry is missing) (#1901)."""
+    absolute cap when geometry is missing)."""
 
     def test_tile_offsets_count_exceeds_geometry_rejected(self):
         """TileOffsets ``count`` larger than tiles_across * tiles_down raises.
@@ -1130,14 +1128,14 @@ class TestPixelArrayCountCap:
 
 
 # ===========================================================================
-# Section 4: 3D writer-dim validation (#2240)
+# Section 4: 3D writer-dim validation
 #
 # ``_validate_3d_writer_dims`` used to accept any ``(y_alias, x_alias, *)``
 # DataArray dim tuple whose trailing dim was not a recognized temporal
 # name, so ``('y', 'x', 'z')`` / ``('lat', 'lon', 'scenario')`` slipped
-# through and were silently written band-last. #2240 closes that escape
-# hatch for DataArray inputs; raw-ndarray band-last writes (which never
-# reach the validator) are unaffected.
+# through and were silently written band-last. The validator now closes
+# that escape hatch for DataArray inputs; raw-ndarray band-last writes
+# (which never reach the validator) are unaffected.
 # ===========================================================================
 
 
@@ -1183,8 +1181,8 @@ class TestValidate3DWriterDims:
     def test_still_routes_temporal_to_temporal_message(self):
         """Temporal trailing dims still take the dedicated temporal error path.
 
-        The #1972 message gives more specific remediation (``isel`` /
-        ``mean`` along the time axis) than the #2240 generic non-band
+        The temporal message gives more specific remediation (``isel`` /
+        ``mean`` along the time axis) than the generic non-band
         message, so the temporal-name branch must fire first.
         """
         with pytest.raises(ValueError, match="temporal trailing dim"):
@@ -1206,7 +1204,7 @@ class TestValidate3DWriterDims:
 
 
 class TestValidate3DWriterEndToEnd:
-    """End-to-end writer coverage for the #2240 tightening."""
+    """End-to-end writer coverage for the 3D-dim tightening."""
 
     def test_to_geotiff_rejects_yxz_dataarray(self):
         """``(y, x, z)`` DataArray writes are rejected."""
@@ -1283,7 +1281,7 @@ class TestValidate3DWriterEndToEnd:
             assert int(rt.values[:, :, k].sum()) == (k + 1) * 20
 
     def test_raw_ndarray_band_last_still_writes(self, tmp_path):
-        """Raw ndarray inputs with band-last layout are unaffected by #2240.
+        """Raw ndarray inputs with band-last layout are unaffected.
 
         The validator is only invoked from the ``isinstance(data,
         xr.DataArray)`` branch of every writer entry point, so a bare
@@ -1303,8 +1301,8 @@ class TestValidate3DWriterEndToEnd:
         """Raw ndarray with no dim metadata is band-last by definition.
 
         Passing a bare ndarray bypasses the DataArray dim contract
-        entirely; the writer treats the trailing axis as bands. The #2240
-        tightening only constrains DataArray inputs.
+        entirely; the writer treats the trailing axis as bands. The
+        3D-dim tightening only constrains DataArray inputs.
         """
         arr = np.empty((4, 5, 3), dtype=np.float32)
         for k in range(3):
@@ -1318,16 +1316,15 @@ class TestValidate3DWriterEndToEnd:
 
 
 # ===========================================================================
-# Section 5: window-bounds validation (#1634)
+# Section 5: window-bounds validation
 #
 # ``open_geotiff(path, window=...)`` on the eager (numpy) path used to
 # produce a confusing ``CoordinateValidationError`` when the window ran
 # past the source extent: ``read_to_array`` clamped the window and
 # returned a smaller array, but the eager path built coord arrays from
 # the unclamped indices. The eager branch now validates ``window`` up
-# front, mirroring the dask path's validator (which has rejected
-# out-of-bounds windows since #1561), so both backends share the
-# contract.
+# front, mirroring the dask path's validator (which already rejects
+# out-of-bounds windows), so both backends share the contract.
 # ===========================================================================
 
 
@@ -1445,7 +1442,7 @@ class TestWindowBackendParity:
 
 
 # ===========================================================================
-# Section 6: degenerate pixel-size fail-closed (#2214)
+# Section 6: degenerate pixel-size fail-closed
 #
 # ``coords_to_transform`` used to borrow the non-degenerate axis's pixel
 # size for a length-1 axis, so a 30m x 10m source served as a 1xN strip
@@ -1568,7 +1565,7 @@ class TestDegenerateWritesWithExplicitTransform:
 class TestDegenerateWritesWithOptIn:
     """``attrs['assume_square_pixels_for_degenerate_axis'] = True`` opts in.
 
-    Behaviour matches the pre-#2214 #1945 borrow path: the writer assumes
+    Behaviour matches the legacy borrow path: the writer assumes
     the source raster is square and copies the non-degenerate axis's
     pixel size onto the degenerate axis. The opt-in must be the boolean
     ``True`` -- a stray truthy string must not enable the borrow.

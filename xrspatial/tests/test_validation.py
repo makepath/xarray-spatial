@@ -142,7 +142,7 @@ class TestTypeChecks:
 
     def test_crop_rejects_ndarray(self):
         with pytest.raises(TypeError, match="xarray.DataArray"):
-            crop(np.zeros((5, 5)), _raster_2d, zones_ids=[1])
+            crop(np.zeros((5, 5)), _raster_2d, zone_ids=[1])
 
     # Classify — all 10 functions
     @pytest.mark.parametrize('func,args', [

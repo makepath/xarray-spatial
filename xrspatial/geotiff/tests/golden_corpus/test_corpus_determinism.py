@@ -1,4 +1,4 @@
-"""Corpus determinism gate (issue #1930, refined in #2299).
+"""Corpus determinism gate.
 
 The golden corpus generator is built to be reproducible: fixed seeds,
 sorted iteration, and an explicit ``os.utime`` pass that pins file
@@ -15,7 +15,7 @@ What this catches:
   committed ``.tif`` was edited (or stale) so it no longer matches
   what the manifest would produce.
 
-How the comparison runs (issue #2299):
+How the comparison runs:
 
 Most fixtures use a byte-level md5 check. That is the strictest signal
 available and catches generator-side regressions immediately.
@@ -211,8 +211,8 @@ def _assert_pixels_close_lossy(
 ) -> None:
     """Coarse per-band mean comparison for lossy (JPEG) cells.
 
-    Bit-exact comparison would re-introduce the libjpeg coupling this
-    PR removed, but the per-band mean is stable enough across libjpeg
+    Bit-exact comparison would re-introduce the libjpeg coupling the
+    semantic check avoids, but the per-band mean is stable enough across libjpeg
     versions to catch a real content regression (a swapped input
     array, a band-permutation bug) while tolerating ordinary codec
     drift.
@@ -269,7 +269,7 @@ def test_fixture_bytes_are_deterministic(
     against generator drift. For ``cog`` and ``jpeg`` fixtures the
     GDAL / libjpeg encoder output is toolchain-coupled, so the check
     falls back to a semantic comparison via rasterio (see
-    ``_assert_semantic_equal``). Issue #2299 has the rationale.
+    ``_assert_semantic_equal``).
 
     Skip rather than fail when the committed file is missing -- that
     means the fixture is declared but intentionally not shipped
@@ -360,8 +360,7 @@ def _write_doctored_copy(
 
 def test_semantic_equal_rejects_lossless_pixel_drift(tmp_path) -> None:
     """A doctored lossless fixture with one flipped pixel must fail
-    ``_assert_semantic_equal``. Locks the drift-detection path that the
-    PR refactor depends on.
+    ``_assert_semantic_equal``. Locks the drift-detection path.
     """
     src = FIXTURES_DIR / "cog_internal_overview_uint16.tif"
     if not src.exists():

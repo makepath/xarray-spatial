@@ -1,11 +1,11 @@
-"""Smoke test for the layout x byte_order fixture batch (Phase 2 PR 3 of #1930).
+"""Smoke test for the layout x byte_order fixture batch.
 
-Verifies that the four fixtures added by PR 3 exist on disk, parse as
+Verifies that the four layout/byte-order fixtures exist on disk, parse as
 TIFFs with the on-disk properties the manifest promises (layout flag and
 byte-order magic), and round-trip through ``_oracle.compare_to_oracle``
 as an identity check. The identity round-trip is a thin assertion that
 the oracle accepts these fixtures; the real backend-vs-oracle parity
-checks land in Phase 3.
+checks live in the per-backend modules.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def test_le_and_be_pixels_match():
     Locks in the matrix invariant that the only axis varying between LE
     and BE is on-disk byte order. If a future generator change starts
     seeding the two endianness siblings differently, this test catches it
-    before Phase 3 backends start comparing decoded values.
+    before the backends start comparing decoded values.
     """
     pairs = [
         ("stripped_le_uint16", "stripped_be_uint16"),
@@ -86,8 +86,8 @@ def test_fixture_round_trips_through_oracle(fid, _tiled, _magic):
 
     This is an identity check: we feed the oracle the same bytes it reads
     internally. It asserts only that the oracle accepts the fixture shape
-    (dtype, transform, CRS, nodata, pixels) for the four new variants;
-    Phase 3 adds the real backend-vs-oracle parity tests.
+    (dtype, transform, CRS, nodata, pixels) for the four variants; the
+    per-backend modules add the real backend-vs-oracle parity tests.
     """
     xr = pytest.importorskip("xarray")
     path = FIXTURES_DIR / f"{fid}.tif"

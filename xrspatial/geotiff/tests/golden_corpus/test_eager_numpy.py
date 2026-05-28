@@ -1,11 +1,11 @@
-"""Eager numpy backend cells against the golden-corpus oracle (issue #1930).
+"""Eager numpy backend cells against the golden-corpus oracle.
 
-Phase 3 PR 1 of the corpus plan. The phase 2 smoke tests build a candidate
-DataArray by reading each fixture through rasterio directly; they prove the
-oracle agrees with itself but say nothing about whether xrspatial's reader
-agrees with rasterio. This module is the first real parity layer: it opens
-every shipped fixture with the eager numpy ``open_geotiff`` path and feeds
-the result to ``compare_to_oracle``.
+This module is the eager numpy parity layer: it opens every shipped
+fixture with the eager numpy ``open_geotiff`` path and feeds the result
+to ``compare_to_oracle``. Unlike the smoke tests that build a candidate
+DataArray by reading each fixture through rasterio directly (which prove
+the oracle agrees with itself but say nothing about whether xrspatial's
+reader agrees with rasterio), this layer exercises xrspatial's reader.
 
 The fixture list is discovered from the manifest at module-import time so
 ``pytest.mark.parametrize`` can attach per-fixture marks (``xfail`` for real
@@ -52,12 +52,11 @@ Resolved gaps (no longer xfail):
 Intentional skip (``skip``):
 
 * ``nodata_miniswhite_uint8`` -- MinIsWhite photometric inversion.
-  xrspatial inverts pixels per #1797; rasterio leaves them raw. The
-  inversion is asserted by ``test_miniswhite_backend_parity_1797.py``.
+  xrspatial inverts pixels; rasterio leaves them raw. The inversion is
+  asserted by the backend-parity tests.
 
 Each backend gets its own module under ``xrspatial/geotiff/tests/``; this
-file owns the eager numpy slice. Phase 3 PRs for dask, GPU, dask+GPU, HTTP,
-and VRT add their own siblings.
+file owns the eager numpy slice.
 """
 from __future__ import annotations
 
@@ -70,13 +69,16 @@ pytest.importorskip("rasterio")
 
 from xrspatial.geotiff import open_geotiff  # noqa: E402
 
-# PR 4 of epic #2340: the golden corpus has experimental-codec
-# and JPEG-in-TIFF entries; the parity check is orthogonal to the
-# read-side opt-in so pass both flags through every open.
+# The golden corpus has experimental-codec and JPEG-in-TIFF entries;
+# the parity check is orthogonal to the read-side opt-in so pass both
+# flags through every open.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
-from xrspatial.geotiff.tests.golden_corpus._marks import fast_slow_marks_for  # noqa: E402
+from xrspatial.geotiff.tests.golden_corpus._marks import (  # noqa: E402
+    fast_slow_marks_for,
+    optional_dep_marks_for,
+)
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 FIXTURES_DIR = (
@@ -87,9 +89,8 @@ FIXTURES_DIR = (
 _PARITY_GAPS: dict[str, str] = {}
 
 # Fixtures whose overview-IFD code path is not yet wired into the
-# xrspatial reader. Empty as of issue #2112, which taught the eager
-# numpy reader to discover and parse sibling ``.tif.ovr`` files. New
-# entries should include a follow-up issue link so the gap stays visible.
+# xrspatial reader. Empty now that the eager numpy reader discovers and
+# parses sibling ``.tif.ovr`` files.
 _OVERVIEW_READER_GAPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
@@ -130,7 +131,7 @@ def _build_param(entry: dict) -> pytest.param:
     pick up ``pytest.mark.slow`` from the corpus helper.
     """
     fid = entry["id"]
-    marks = list(fast_slow_marks_for(entry))
+    marks = list(fast_slow_marks_for(entry)) + list(optional_dep_marks_for(entry))
     if fid in _PARITY_GAPS:
         marks.append(
             pytest.mark.xfail(reason=_PARITY_GAPS[fid], strict=True)

@@ -20,9 +20,6 @@ these source objects through a small interface:
 The module also contains the byte-range coalescing helpers
 (:func:`coalesce_ranges`, :func:`split_coalesced_bytes`) used by the
 HTTP and cloud sources to merge nearby tile fetches into fewer GETs.
-
-History: extracted from ``_reader.py`` in PR-E of the GeoTIFF refactor
-epic (issue #2228). Behaviour-preserving move; no public API change.
 """
 from __future__ import annotations
 
@@ -48,7 +45,7 @@ import urllib3
 #: radius of a crafted or oversized remote object. Override per call
 #: with the ``max_cloud_bytes`` kwarg, or env-wide with
 #: ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES``. Pass ``max_cloud_bytes=None``
-#: to skip the check entirely (the pre-#1928 behaviour). See issue #1928.
+#: to skip the check entirely.
 MAX_CLOUD_BYTES_DEFAULT = 256 * 1024 * 1024
 
 #: Sentinel for "caller did not pass ``max_cloud_bytes``". Distinguishes
@@ -96,8 +93,7 @@ class CloudSizeLimitError(ValueError):
 #: lzw) into hundreds of MiB. 256 MiB tolerates legitimate large tiles
 #: (RGB JPEG2000 at very high resolution can land in the tens of MB)
 #: while keeping the fetch / decode bounded. Override via the
-#: ``XRSPATIAL_COG_MAX_TILE_BYTES`` environment variable. Issues #1536
-#: (HTTP) and #1664 (local).
+#: ``XRSPATIAL_COG_MAX_TILE_BYTES`` environment variable.
 MAX_TILE_BYTES_DEFAULT = 256 << 20  # 256 MiB
 
 
@@ -427,7 +423,7 @@ class _FileSource:
 
 
 # ---------------------------------------------------------------------------
-# HTTP source: pool, timeouts, SSRF defences (issue #1664)
+# HTTP source: pool, timeouts, SSRF defences
 # ---------------------------------------------------------------------------
 
 
@@ -445,7 +441,7 @@ def _get_http_pool():
             # Redirects are *not* delegated to urllib3 -- they're
             # followed manually in ``_HTTPSource._request`` so each
             # ``Location`` runs through ``_validate_http_url`` before
-            # the next GET. Issue #1664.
+            # the next GET.
             redirect=False,
         ),
     )
@@ -555,7 +551,7 @@ def _validate_http_url(url: str) -> str | None:
     * hostname is non-empty
 
     Raises :class:`UnsafeURLError` (a ``ValueError`` subclass) on any of
-    the above. Issue #1664.
+    the above.
 
     Returns the first resolved IP literal so the caller can pin the
     actual TCP connection to that exact address. Without pinning, the
@@ -564,7 +560,6 @@ def _validate_http_url(url: str) -> str | None:
     IP here and a private IP at connect. Returns ``None`` when the
     escape hatch ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set, in
     which case the caller falls back to urllib3's default DNS path.
-    Issues #1664 (validation) and #1846 (pinning).
     """
     import socket
     from urllib.parse import urlparse
@@ -655,7 +650,6 @@ COALESCE_GAP_THRESHOLD_DEFAULT = 1 << 20  # 1 MB
 #: This cap seals the current merged range and starts a new one once
 #: extending it would exceed the limit. Override via the
 #: ``XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES`` environment variable.
-#: Issue #2266.
 MAX_COALESCED_RANGE_BYTES_DEFAULT = MAX_TILE_BYTES_DEFAULT  # 256 MiB
 
 
@@ -702,7 +696,7 @@ def coalesce_ranges(
         default) reads the cap from
         ``XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES`` (falling back to
         :data:`MAX_COALESCED_RANGE_BYTES_DEFAULT`, 256 MiB). A
-        non-positive value disables the cap. Issue #2266.
+        non-positive value disables the cap.
 
     Returns
     -------
@@ -796,7 +790,7 @@ def split_coalesced_bytes(
 
 
 # ---------------------------------------------------------------------------
-# Pinned-IP urllib3 connection (issue #1846)
+# Pinned-IP urllib3 connection
 # ---------------------------------------------------------------------------
 #
 # Security: ``_validate_http_url`` resolves the hostname and rejects any URL
@@ -992,9 +986,9 @@ class _HTTPSource:
     and a per-hop pinned ``HTTP[S]ConnectionPool`` for the default path,
     so TCP and TLS state is reused across range requests to the same host.
     urllib3 is a hard install dependency; there is no stdlib fallback.
-    The stdlib ``urllib.request`` path was removed in #2050 because it
+    The stdlib ``urllib.request`` path was removed because it
     re-resolved the hostname at request time, defeating the IP pin that
-    closes the DNS-rebinding TOCTOU from #1846.
+    closes the DNS-rebinding TOCTOU.
     """
 
     def __init__(self, url: str):
@@ -1008,7 +1002,7 @@ class _HTTPSource:
         # ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` returns ``None``
         # here -- we then fall back to urllib3's default DNS path.
         # UnsafeURLError subclasses ValueError so callers that already
-        # catch ValueError keep working. Issues #1664, #1846.
+        # catch ValueError keep working.
         self._pinned_ip = _validate_http_url(url)
         self._url = url
         self._size = None
@@ -1055,20 +1049,20 @@ class _HTTPSource:
         we set ``redirect=False`` and walk the chain ourselves. Each
         ``Location`` runs through :func:`_validate_http_url` before the
         next GET, defeating a public-to-private 3xx bounce. Cap at
-        :data:`_HTTP_MAX_REDIRECTS` hops. Issue #1664.
+        :data:`_HTTP_MAX_REDIRECTS` hops.
 
         Security: each hop also gets the resolved IP pinned into the
         connection's TCP target. The pin closes the DNS-rebind window
         that exists between ``getaddrinfo`` in the validator and the
         second ``getaddrinfo`` urllib3 would otherwise do at connect
-        time. Issue #1846.
+        time.
 
         ``preload_content=False`` returns a streaming response: the body
         is not buffered into ``resp.data`` and the caller must drain it
         via ``resp.stream(...)``. Used by :meth:`read_all` when a
         ``max_bytes`` budget is in play, so the body is bounded
         on-the-wire instead of being fully allocated before the cap is
-        checked. Issue #2051.
+        checked.
         """
         from urllib.parse import urljoin
         timeout = self._urllib3_timeout()
@@ -1159,9 +1153,9 @@ class _HTTPSource:
     #: call. :meth:`read_ranges` fans out across up to 8 threads, so a
     #: full pool against a Range-blind server can hold roughly
     #: ``8 * _RANGE_IGNORED_FULL_OBJECT_CAP`` (~128 MiB) of body bytes
-    #: in flight at once. That is still bounded -- the pre-#2264 path
+    #: in flight at once. That is still bounded -- the earlier path
     #: had no per-call bound at all -- but worth keeping in mind if a
-    #: future caller wants to scale ``max_workers`` higher. Issue #2264.
+    #: future caller wants to scale ``max_workers`` higher.
     _RANGE_IGNORED_FULL_OBJECT_CAP = 16 * 1024 * 1024
 
     def read_range(self, start: int, length: int) -> bytes:
@@ -1185,7 +1179,7 @@ class _HTTPSource:
 
         Raises ``OSError`` when the server's body is past the budget,
         the status code is wrong, or the ``Content-Range`` does not line
-        up with what was requested. Issue #2264.
+        up with what was requested.
         """
         # Match the ``b''``-for-non-positive-length convention used by
         # other source implementations (e.g. ``_BytesIOSource``).
@@ -1203,8 +1197,7 @@ class _HTTPSource:
         # ``preload_content=False`` urllib3 buffers the full response into
         # ``resp.data`` *before* this method returns, so the slice in
         # ``_validate_range_response`` only ever ran after the body was
-        # already resident. Mirrors the ``read_all`` streaming path that
-        # #2051 introduced. Issue #2264.
+        # already resident. Mirrors the ``read_all`` streaming path.
         resp = self._request(headers=headers, preload_content=False)
         try:
             content_range = resp.headers.get('Content-Range')
@@ -1254,7 +1247,7 @@ class _HTTPSource:
         Missing or unparseable ``Content-Length`` returns silently --
         the streaming cap in :meth:`_read_capped` is the real defence
         and will catch an over-sized body whether the header was honest,
-        dishonest, or absent. Issue #2264.
+        dishonest, or absent.
         """
         if raw is None:
             return
@@ -1276,7 +1269,7 @@ class _HTTPSource:
                                  start: int, length: int) -> bytes:
         """Reject HTTP responses that do not satisfy the Range request.
 
-        Without this, three things can go wrong silently (issue #1735):
+        Without this, three things can go wrong silently:
 
         - the server returns a 4xx/5xx body (urllib3 by default does not
           raise on non-2xx, so the bytes would be handed to the caller);
@@ -1330,7 +1323,6 @@ class _HTTPSource:
             # MiB) via the streaming preflight, so ``data`` arriving here
             # is bounded even when the server lied about the body size;
             # the slice below just enforces the caller's contract.
-            # Issue #2264.
             if len(data) > length:
                 return data[:length]
             return data
@@ -1431,7 +1423,7 @@ class _HTTPSource:
         GET. ``None`` (the default) reads the cap from
         ``XRSPATIAL_COG_MAX_COALESCED_RANGE_BYTES`` and otherwise uses
         :data:`MAX_COALESCED_RANGE_BYTES_DEFAULT`. See
-        :func:`coalesce_ranges` for details. Issue #2266.
+        :func:`coalesce_ranges` for details.
         """
         if not ranges:
             return []
@@ -1458,7 +1450,6 @@ class _HTTPSource:
         :func:`xrspatial.geotiff._reader._check_dimensions` can still be
         served as a multi-gigabyte HTTP body and the whole body is
         allocated before TIFF parsing gets a chance to reject it.
-        Issue #2051.
 
         ``max_bytes=None`` preserves the legacy unbounded behaviour for
         callers that already gate the read upstream (e.g. cloud reads
@@ -1487,10 +1478,9 @@ class _HTTPSource:
         below in case the server omits the header or lies about it.
 
         Missing or unparseable ``Content-Length`` returns silently --
-        the streaming cap in :meth:`_read_capped_urllib3` /
-        :meth:`_read_capped_stdlib` is the real defence and will catch
-        an over-sized body whether the header was honest, dishonest, or
-        absent.
+        the streaming cap in :meth:`_read_capped` is the real defence
+        and will catch an over-sized body whether the header was honest,
+        dishonest, or absent.
         """
         raw = None
         try:
@@ -1567,7 +1557,7 @@ def _is_http_source(source) -> bool:
 
     Non-string inputs (``None``, ``bytes``, ``os.PathLike``, file-like
     objects) return ``False`` so callers can drop the surrounding
-    ``isinstance(_, str)`` check where they want to. Issues #2323 / #2332.
+    ``isinstance(_, str)`` check where they want to.
     """
     if not isinstance(source, str) or not source:
         return False
@@ -1576,8 +1566,8 @@ def _is_http_source(source) -> bool:
     return urlparse(source).scheme.lower() in ('http', 'https')
 
 
-# Back-compat alias: earlier patches (#2323) shipped this same helper under
-# the name ``_is_http_url`` and downstream tests / re-exports still use that
+# Back-compat alias: this helper was previously shipped under the name
+# ``_is_http_url`` and downstream tests / re-exports still use that
 # name. Keep the alias so importers and the regression tests stay green.
 _is_http_url = _is_http_source
 
@@ -1586,8 +1576,7 @@ def _is_fsspec_uri(path: str) -> bool:
     """Check if a path is a fsspec-compatible URI (not http/https/local).
 
     Excludes http(s) case-insensitively so uppercase URLs cannot dodge the
-    SSRF allow-list and pinned DNS in :class:`_HTTPSource` (issues #2323 /
-    #2332).
+    SSRF allow-list and pinned DNS in :class:`_HTTPSource`.
     """
     if not isinstance(path, str):
         return False
@@ -1704,7 +1693,7 @@ class _CloudSource:
 
         Mirrors :meth:`_HTTPSource.read_ranges` so that
         :func:`_fetch_decode_cog_http_tiles` can drive a cloud source
-        the same way it drives an HTTP source. See PR #1755.
+        the same way it drives an HTTP source.
         """
         if not ranges:
             return []
@@ -1739,7 +1728,6 @@ class _CloudSource:
         COG decode path can coalesce neighbouring tiles when reading
         from object storage. ``max_coalesced_range_bytes`` caps the
         size of any single merged GET; see :func:`coalesce_ranges`.
-        Issue #2266.
         """
         if not ranges:
             return []

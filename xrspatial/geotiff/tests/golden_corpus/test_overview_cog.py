@@ -1,6 +1,6 @@
-"""Smoke tests for the Phase 2 PR 7 overview / COG fixtures (issue #1930).
+"""Smoke tests for the overview / COG fixtures.
 
-The three fixtures land here:
+The three fixtures:
 
 * ``overview_internal_uint16`` -- internal-IFD overviews at [2, 4]
 * ``overview_external_ovr_uint16`` -- sidecar `.ovr` overviews at [2, 4]
@@ -8,15 +8,13 @@ The three fixtures land here:
 
 Each fixture is rebuilt by the deterministic generator and shipped in
 ``golden_corpus/fixtures``. These tests assert the shape of what is on
-disk and run the Phase 1 oracle against the base (level-0) image.
+disk and run the oracle against the base (level-0) image.
 
-Oracle gap (intentional, tracked separately): the Phase 1 oracle in
-``_oracle.compare_to_oracle`` reads only the base IFD via
-``rasterio.open(...).read()``. It does not inspect overview IFDs or the
-sidecar `.ovr`. A future PR (post Phase 1 PR 2) will add an
-overview-aware comparison; until then, the smoke tests below pin the
-on-disk shape and the base-image parity check is what runs through the
-oracle.
+Oracle gap (intentional, tracked separately): ``_oracle.compare_to_oracle``
+reads only the base IFD via ``rasterio.open(...).read()``. It does not
+inspect overview IFDs or the sidecar `.ovr`. The smoke tests below pin
+the on-disk shape and the base-image parity check is what runs through
+the oracle.
 """
 from __future__ import annotations
 
@@ -63,7 +61,7 @@ def _manifest_entry(fixture_id: str) -> dict:
 def _candidate_from_rasterio(path: pathlib.Path) -> xr.DataArray:
     """Build a candidate DataArray by reading ``path`` via rasterio.
 
-    Phase 3 will swap this for real xrspatial backends; here we use the
+    The per-backend modules use real xrspatial backends; here we use the
     rasterio read so the oracle has something concrete to compare. The
     test asserts the level-0 image only.
     """
@@ -198,7 +196,7 @@ def test_cog_fixture_carries_cog_layout_marker():
     The COG spec mandates IFD ordering (base image before overviews) and a
     leading ghost-IFD layout block. Rather than re-parse the TIFF header,
     we trust GDAL's own marker, which is the public artefact rasterio
-    exposes. Phase 3 backends do the equivalent check before claiming a
+    exposes. The backends do the equivalent check before claiming a
     file is COG-shaped.
     """
     path = _fixture_path(COG_ID)

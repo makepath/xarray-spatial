@@ -1,6 +1,6 @@
-"""HTTP/COG backend cells against the golden-corpus oracle (issue #1930).
+"""HTTP/COG backend cells against the golden-corpus oracle.
 
-Phase 3 PR 5 of the corpus plan. The HTTP path in ``xrspatial.geotiff``
+The HTTP path in ``xrspatial.geotiff``
 is COG-only: ``open_geotiff('http://...')`` routes to
 ``_reader._read_cog_http`` which uses range requests to fetch only
 metadata and the tiles a window needs. The plain stripped / tiled
@@ -44,9 +44,9 @@ from .._helpers.markers import requires_loopback  # noqa: E402
 pytestmark = requires_loopback
 
 # Golden-corpus fixtures span every codec/tier, including the
-# experimental and internal-only ones gated by epic #2340 PR 4. Opting
-# in here lets the parity check exercise the full corpus; the per-codec
-# release-contract tests pin the rejection shape separately.
+# experimental and internal-only ones. Opting in here lets the parity
+# check exercise the full corpus; the per-codec release-contract tests
+# pin the rejection shape separately.
 _OPTIN = {"allow_experimental_codecs": True, "allow_internal_only_jpeg": True}
 from xrspatial.geotiff.tests.golden_corpus import generate  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
@@ -208,10 +208,10 @@ def test_http_cog_parity(fixture_id: str, allow_private_http) -> None:
 def test_at_least_one_cog_fixture_exists() -> None:
     """Sanity check: the corpus has something for this backend to exercise.
 
-    Today there is exactly one COG fixture (``cog_internal_overview_uint16``,
-    phase 2 PR 7). If a future refactor accidentally drops the only
-    COG entry, this test surfaces it so the HTTP cells do not silently
-    cover nothing.
+    Today there is exactly one COG fixture
+    (``cog_internal_overview_uint16``). If a future refactor accidentally
+    drops the only COG entry, this test surfaces it so the HTTP cells do
+    not silently cover nothing.
     """
     assert _COG_IDS, (
         "manifest has no COG fixtures; the HTTP backend has nothing to "

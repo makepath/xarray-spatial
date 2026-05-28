@@ -1,8 +1,7 @@
 """GPU kernels and kwarg-surface tests for the GeoTIFF module.
 
 This module consolidates the GPU kernel + kwarg-surface tests
-previously scattered across twelve top-level files (Sub-PR D of
-issue #2438, cluster 14 of long-tail epic #2424).
+previously scattered across twelve top-level files.
 
 Each section folds one source file. Module helpers and fixtures that
 collided across sources are suffixed with the source issue number so
@@ -62,7 +61,7 @@ _CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
 # Section 1903 -- CUDA preflight in ``read_geotiff_gpu``.
 # =====================================================================
 #
-# Regression for issue #1903. When CuPy imports but the CUDA driver is
+# When CuPy imports but the CUDA driver is
 # unusable (older driver than the build expects, suspended VM, etc.),
 # the failure used to surface as ``cudaErrorInsufficientDriver`` from a
 # ``cupy.asarray(...)`` call deep in the CPU-fallback path. The fix
@@ -76,8 +75,12 @@ _CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
 def _install_cupy_stub_1903(monkeypatch, *, get_device_count):
     """Install a minimal stub ``cupy`` module so the preflight runs.
 
-    Used on machines without cupy installed; lets us exercise the
-    preflight failure path on CPU-only CI.
+    Lets us drive ``_preflight_cuda_runtime`` deterministically
+    regardless of the host's real CUDA state. Pass a ``get_device_count``
+    that raises to exercise the preflight failure path (CPU-only CI or
+    broken-CUDA hosts), or one that returns a positive int to exercise
+    the success path (e.g. so the alias-validation test in #2515 can
+    reach the file-read stage without depending on real CUDA).
     """
     cupy_mod = types.ModuleType("cupy")
     cuda_mod = types.ModuleType("cupy.cuda")
@@ -188,8 +191,6 @@ def test_preflight_when_real_cupy_present_1903(monkeypatch):
 # Section 1560 -- ``gpu=`` -> ``on_gpu_failure=`` rename
 # =====================================================================
 #
-# Regression tests for issue #1560.
-#
 # ``read_geotiff_gpu`` previously took a ``gpu={'auto','strict'}`` kwarg
 # that controlled GPU-failure policy, sharing a name with the boolean
 # ``gpu=`` kwarg on ``open_geotiff`` / ``to_geotiff`` / ``read_vrt``.
@@ -229,26 +230,35 @@ def test_gpu_alias_emits_deprecation_warning_1560():
     assert "on_gpu_failure" in str(deprecations[0].message)
 
 
-def test_gpu_alias_accepts_old_values_without_validation_error_1560():
-    """``gpu='strict'`` was the legacy spelling; should still validate."""
+def test_gpu_alias_accepts_old_values_without_validation_error_1560(
+        monkeypatch):
+    """``gpu='strict'`` was the legacy spelling; should still validate.
+
+    Stub ``cupy`` with a working preflight so the test exercises the
+    alias-validation path on every host, including ones where CuPy
+    imports but the CUDA runtime is unusable (issue #2515). Without the
+    stub, the real ``_preflight_cuda_runtime`` raises ``RuntimeError``
+    on broken-CUDA hosts and the test fails for an environmental
+    reason that has nothing to do with the alias logic under test.
+    """
     from xrspatial.geotiff import read_geotiff_gpu
+
+    # Install a stub cupy whose preflight passes; the call should then
+    # reach the file-read stage and raise ``FileNotFoundError``. This
+    # decouples the alias-validation check from real CUDA state.
+    _install_cupy_stub_1903(monkeypatch, get_device_count=lambda: 1)
 
     with warnings.catch_warnings():
         # Suppress the deprecation noise; we only care that the value
         # passes validation and the call proceeds past the value check.
-        # In CPU-only CI the next step is ``import cupy`` which raises
-        # ``ImportError`` (cupy is an optional extra); on a GPU host it
-        # gets to the file-read stage and raises ``FileNotFoundError``.
-        # Either is fine: both mean validation passed.
         warnings.simplefilter("ignore", DeprecationWarning)
         with pytest.raises(
-                (FileNotFoundError, OSError, ValueError, ImportError)
+                (FileNotFoundError, OSError, ValueError)
         ) as exc_info:
             read_geotiff_gpu("/nonexistent.tif", gpu='strict')
 
     # The validation ValueError carries our exact message; a generic
-    # file-read or cupy-import failure is fine because it means
-    # validation passed.
+    # file-read failure is fine because it means validation passed.
     if isinstance(exc_info.value, ValueError):
         assert "on_gpu_failure must be" not in str(exc_info.value)
 
@@ -306,12 +316,10 @@ def test_gpu_alias_bool_no_longer_misleading_value_error_1560():
 # Section 1516 -- ``gpu='auto'`` warns + falls back; ``'strict'`` raises
 # =====================================================================
 #
-# Regression tests for issue #1516.
-#
 # ``read_geotiff_gpu`` previously wrapped the GPU decode in a too-broad
 # ``try/except Exception: pass`` that silently swallowed any failure
-# and fell through to the CPU path. Real GPU regressions (#1508 was an
-# ``AttributeError``) lived undetected because the user-visible result
+# and fell through to the CPU path. Real GPU regressions (an
+# ``AttributeError``, for one) lived undetected because the user-visible result
 # was still numerically correct.
 #
 # The fix:
@@ -377,7 +385,7 @@ def _ensure_cupy_stub_1516() -> bool:
     cuda_mod = types.ModuleType('cupy.cuda')
     cuda_mod.is_available = lambda: False
 
-    # Pre-flight check in ``read_geotiff_gpu`` (added in #1903) calls
+    # Pre-flight check in ``read_geotiff_gpu`` calls
     # ``cupy.cuda.runtime.getDeviceCount()`` to surface a clean
     # ``RuntimeError`` for broken-driver setups. Tests in this section
     # want to exercise the downstream simulated-failure paths, so the
@@ -576,7 +584,7 @@ def test_invalid_gpu_kwarg_rejected_1516(tiled_tiff_path_1516):
 
         path, _ = tiled_tiff_path_1516
 
-        # The kwarg was renamed to ``on_gpu_failure`` in #1560; the
+        # The kwarg was renamed to ``on_gpu_failure``; the
         # validation error now names the new kwarg even when callers
         # supply the deprecated ``gpu=`` alias.
         with pytest.raises(ValueError,
@@ -595,15 +603,15 @@ def test_invalid_gpu_kwarg_rejected_1516(tiled_tiff_path_1516):
 #
 # ``read_geotiff_gpu`` has four CPU-fallback call sites to
 # ``_read_to_array``:
-# - the stripped-layout branch at gpu.py:491 (long-standing)
-# - the planar=2 per-band stage-2 fallback (gpu.py around line 684)
-# - the sparse-tile fallback (gpu.py around line 697)
-# - the GPU-decode-failure fallback (gpu.py around line 784)
+# - the stripped-layout branch
+# - the planar=2 per-band stage-2 fallback
+# - the sparse-tile fallback
+# - the GPU-decode-failure fallback
 #
-# Before #2238 the last three dropped ``allow_rotated``, ``window``,
-# ``band``, and ``max_pixels`` and the stripped branch dropped
-# ``allow_rotated``. These tests pin the fix: each fallback site must
-# hand the caller's kwargs through to ``_read_to_array``.
+# The last three used to drop ``allow_rotated``, ``window``, ``band``,
+# and ``max_pixels`` and the stripped branch dropped ``allow_rotated``.
+# These tests pin the contract: each fallback site must hand the
+# caller's kwargs through to ``_read_to_array``.
 
 
 # Rotated 4x4 ModelTransformation: pixel_width 1.0, b=0.1 (column-axis
@@ -629,7 +637,7 @@ def _write_rotated_tiled_tiff_2238(path, arr: np.ndarray, *,
     When ``sparse=True``, the last tile is marked with offset=0 and
     byte_count=0 (or the single tile is, for 1x1 grids). This drives
     the reader's ``has_sparse_tile=True`` path so the GPU sparse-tile
-    fallback at ``gpu.py:697`` is exercised.
+    fallback is exercised.
     """
     from xrspatial.geotiff._geotags import TAG_MODEL_TRANSFORMATION
 
@@ -730,7 +738,7 @@ def test_stripped_fallback_forwards_allow_rotated_2238(tmp_path, monkeypatch):
     """Stripped-layout CPU fallback receives ``allow_rotated``.
 
     Earlier the stripped branch already forwarded window/band/max_pixels
-    via #1732 but dropped ``allow_rotated``. The xfail-flipped test in
+    but dropped ``allow_rotated``. The xfail-flipped test in
     ``test_allow_rotated_no_crs_2122.py`` proves the end-to-end
     behaviour; this one pins the kwarg-forwarding contract via a
     recorder so a later refactor cannot silently drop the kwarg again.
@@ -893,7 +901,7 @@ def test_planar2_fallback_forwards_all_kwargs_2238(tmp_path, monkeypatch):
     Uses a non-rotated planar=2 multi-band file (rotated + multi-band
     is a harder fixture to write by hand) and monkeypatches the
     per-band decoder to return ``None``, which drives
-    ``cpu_fallback_needed`` true and exercises gpu.py:684. The kwarg
+    ``cpu_fallback_needed`` true and exercises the planar=2 fallback. The kwarg
     assertions are the invariant; the rotated case is covered by the
     sparse-tile and decode-failure tests above.
     """
@@ -1011,7 +1019,7 @@ def test_decode_failure_fallback_applies_window_band_2238(
 # Section 1688 -- ``_try_kvikio_read_tiles`` single-buffer batched pread
 # =====================================================================
 #
-# Issue #1688: ``_try_kvikio_read_tiles`` used to allocate one
+# ``_try_kvikio_read_tiles`` used to allocate one
 # ``cupy.empty(bc)`` per tile and block on ``IOFuture.get()`` between
 # successive ``pread`` calls. That forced the GDS reads to serialise
 # in kvikio's worker pool and paid the per-tile cupy allocation cost
@@ -1384,13 +1392,13 @@ def test_all_zero_size_tiles_returns_zero_length_views_1688(monkeypatch):
 # Section 1896 -- GDS chunked path parity (bool-band reject, LERC mask)
 # =====================================================================
 #
-# Pin two parity gaps in the GDS chunked GPU read path (#1813, #1895).
+# Pin two parity gaps in the GDS chunked GPU read path.
 #
 # 1. Bool-band rejection. ``_read_geotiff_gpu_chunked_gds`` used to
 #    validate ``band`` with a plain numeric range check. Because
 #    ``isinstance(True, int)`` is True in Python, ``band=True`` slipped
 #    past ``True < n_bands_out`` and silently selected band 1. The
-#    eager GPU path (#1786) and the dask path already rejected bools
+#    eager GPU path and the dask path already rejected bools
 #    up front; the GDS chunked path now does too.
 #
 # 2. LERC ``masked_fill`` forwarding. ``_decode_window_gpu_direct``
@@ -1399,7 +1407,7 @@ def test_all_zero_size_tiles_returns_zero_length_views_1688(monkeypatch):
 #    valid mask, the chunked path left invalid pixels at LERC's zero
 #    fill instead of restoring the sentinel before
 #    ``_apply_nodata_mask_gpu`` ran. The eager GPU path resolved
-#    ``masked_fill`` once (#1529) and threaded it through both kernels;
+#    ``masked_fill`` once and threaded it through both kernels;
 #    the chunked path now mirrors that.
 
 
@@ -1661,7 +1669,7 @@ def test_gds_chunked_lerc_mask_sentinel_nodata_1896(
 # Section 1552 -- batched D2H transfer on the GDS fallback
 # =====================================================================
 #
-# Issue #1552: ``gpu_decode_tiles_from_file`` previously did one
+# ``gpu_decode_tiles_from_file`` previously did one
 # ``.get()`` per tile when GDS read succeeded but nvCOMP could not
 # decompress on device (LZW or non-ZSTD/non-deflate codecs). Each
 # ``.get()`` was an independent D2H copy on the default stream, so
@@ -1796,7 +1804,7 @@ def test_batched_d2h_many_small_tiles_1552():
 # The CPU reader applies the Orientation tag (274) post-decode so
 # pixel (0, 0) is always the visual top-left. The GPU read path used
 # to skip this remap, so reads of any file with orientation != 1
-# returned a different pixel buffer than the CPU reader (#1540).
+# returned a different pixel buffer than the CPU reader.
 
 
 # tifffile is required for the orientation section. Gate per-test
@@ -2037,8 +2045,8 @@ def test_gpu_orientation_5_to_8_no_georef_still_swaps(tmp_path, orientation):
 # Section 1776 -- size-param validation on GPU + VRT entry points
 # =====================================================================
 #
-# Issue #1752 added ``tile_size`` validation to ``to_geotiff`` and
-# ``chunks`` validation to ``read_geotiff_dask``. The matching kwargs
+# ``tile_size`` validation on ``to_geotiff`` and ``chunks`` validation
+# on ``read_geotiff_dask`` landed first. The matching kwargs
 # on three sibling entry points were left unchecked:
 # - ``write_geotiff_gpu(tile_size=)``
 # - ``read_geotiff_gpu(chunks=)`` / ``read_vrt(chunks=)``
@@ -2380,7 +2388,7 @@ class TestChunksNoneAcrossEntryPoints_1776:
 # Section 2052 -- ``mask_nodata=False`` on GPU + VRT entry points
 # =====================================================================
 #
-# The ``mask_nodata`` kwarg added in #2052 is wired through every
+# The ``mask_nodata`` kwarg is wired through every
 # public reader entry point in ``xrspatial.geotiff``
 # (``open_geotiff``, ``read_geotiff_gpu``, ``read_geotiff_dask``,
 # ``read_vrt``). The original test module
@@ -2721,8 +2729,6 @@ def test_read_geotiff_dask_direct_mask_nodata_false_2052(
 # Section 1615 -- ``on_gpu_failure`` threads through ``open_geotiff``
 # =====================================================================
 #
-# Regression tests for issue #1615.
-#
 # ``open_geotiff(gpu=True)`` used to silently drop the
 # ``on_gpu_failure`` kwarg: the dispatcher did not declare it and the
 # GPU branch did not forward it to ``read_geotiff_gpu``. Callers that
@@ -2864,11 +2870,10 @@ def test_invalid_on_gpu_failure_reaches_gpu_validator_on_cpu_1615(
 # Section 1929 -- ``allow_unparseable_crs`` fail-closed on GPU writers
 # =====================================================================
 #
-# #1929 added ``_validate_crs_fallback`` and wired
-# ``allow_unparseable_crs`` into ``to_geotiff``, ``write_geotiff_gpu``,
-# and the ``to_geotiff(gpu=True)`` dispatcher.
-# ``test_crs_fail_closed_1929`` only exercises the eager CPU writer;
-# this section closes the GPU and dispatcher gap.
+# ``_validate_crs_fallback`` wires ``allow_unparseable_crs`` into
+# ``to_geotiff``, ``write_geotiff_gpu``, and the ``to_geotiff(gpu=True)``
+# dispatcher. ``test_crs_fail_closed_1929`` only exercises the eager
+# CPU writer; this section closes the GPU and dispatcher gap.
 
 
 def _make_gpu_da_1929() -> xr.DataArray:

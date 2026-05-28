@@ -1,26 +1,23 @@
-"""GPU reader test consolidation (cluster 14 / Sub-PR A of #2438).
+"""GPU reader tests.
 
-This module folds 10 single-issue regression files for the GPU read
-path into one place so the reader story sits in a single test target.
-The original ``test_gpu_*_<issue>.py`` files lived at the top of
-``xrspatial/geotiff/tests/`` and each re-implemented its own
-``_gpu_available`` / ``_gpu_only`` helper. The consolidated module uses
-the shared ``requires_gpu`` marker from
+This module folds the GPU read-path regression tests into one place so
+the reader story sits in a single test target. It uses the shared
+``requires_gpu`` marker from
 ``xrspatial/geotiff/tests/_helpers/markers.py`` so the GPU probe lives
 in one place.
 
-Sections are grouped by the upstream issue number they pin:
+Sections, by the behaviour they pin:
 
-- #1605 -- ``read_geotiff_gpu(..., window=..., band=...)`` kwarg forwarding
+- ``read_geotiff_gpu(..., window=..., band=...)`` kwarg forwarding
 - ``stripped multiband`` -- 3-D ``(y, x, band)`` reads via the stripped fallback
-- #1753 -- stripped no-georef windowed coord parity
-- #1732 -- stripped fallback forwards ``max_pixels`` / ``window`` / ``band``
-- #1542 -- GPU read nodata promotion + ``attrs['nodata']``
-- #2097 -- ``write_geotiff_gpu`` rejects MinIsWhite on band-first single-band
-- #1876 -- ``read_geotiff_gpu(chunks=...)`` is a real out-of-core dask graph
-- #2324 -- sidecar overview-inheritance georef parity across backends
-- #2161 -- ``read_geotiff_gpu`` accepts HTTP / fsspec URLs on the eager path
-- #1909 -- GDS chunked path casts each chunk to the declared dtype
+- stripped no-georef windowed coord parity
+- stripped fallback forwards ``max_pixels`` / ``window`` / ``band``
+- GPU read nodata promotion + ``attrs['nodata']``
+- ``write_geotiff_gpu`` rejects MinIsWhite on band-first single-band
+- ``read_geotiff_gpu(chunks=...)`` is a real out-of-core dask graph
+- sidecar overview-inheritance georef parity across backends
+- ``read_geotiff_gpu`` accepts HTTP / fsspec URLs on the eager path
+- GDS chunked path casts each chunk to the declared dtype
 
 Markers come from ``_helpers/markers.py``. Every test carries
 ``@requires_gpu`` (aliased ``_gpu_only`` for ergonomic decoration);
@@ -44,7 +41,7 @@ from .._helpers.markers import requires_gpu as _gpu_only
 from .._helpers.markers import requires_loopback
 
 # ---------------------------------------------------------------------------
-# Section: #1605 -- window / band kwarg forwarding on GPU read
+# Section: window / band kwarg forwarding on GPU read
 # ---------------------------------------------------------------------------
 
 
@@ -110,7 +107,7 @@ def test_read_geotiff_gpu_window_matches_eager_1605(single_band_tiff_1605):
 @_gpu_only
 def test_open_geotiff_gpu_window_no_longer_silently_dropped_1605(
         single_band_tiff_1605):
-    """Issue #1605: open_geotiff(gpu=True, window=...) honors the window."""
+    """open_geotiff(gpu=True, window=...) honors the window."""
     path, source_arr = single_band_tiff_1605
     from xrspatial.geotiff import open_geotiff
 
@@ -142,7 +139,7 @@ def test_read_geotiff_gpu_band_selection_1605(multi_band_tiff_1605):
 @_gpu_only
 def test_open_geotiff_gpu_band_no_longer_silently_dropped_1605(
         multi_band_tiff_1605):
-    """Issue #1605: open_geotiff(gpu=True, band=...) honors band."""
+    """open_geotiff(gpu=True, band=...) honors band."""
     path, source_arr = multi_band_tiff_1605
     from xrspatial.geotiff import open_geotiff
 
@@ -338,7 +335,7 @@ def test_stripped_singleband_still_2d_stripped_multiband():
 
 
 # ---------------------------------------------------------------------------
-# Section: #1753 -- stripped no-georef windowed coord parity
+# Section: stripped no-georef windowed coord parity
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -508,7 +505,7 @@ class TestStrippedGpuWindowedGeorefStillWorks1753:
 
 
 # ---------------------------------------------------------------------------
-# Section: #1732 -- stripped fallback forwards max_pixels/window/band
+# Section: stripped fallback forwards max_pixels/window/band
 # ---------------------------------------------------------------------------
 
 @_gpu_only
@@ -604,7 +601,7 @@ def test_stripped_window_plus_band_1732():
 
 
 # ---------------------------------------------------------------------------
-# Section: #1542 -- GPU read nodata promotion + attrs['nodata']
+# Section: GPU read nodata promotion + attrs['nodata']
 # ---------------------------------------------------------------------------
 
 @_gpu_only
@@ -762,7 +759,7 @@ def test_gpu_int16_negative_nodata_1542(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Section: #2097 -- write_geotiff_gpu rejects MinIsWhite (band-first guard)
+# Section: write_geotiff_gpu rejects MinIsWhite (band-first guard)
 #
 # The last test in this section
 # (``test_samples_hint_band_first_without_gpu_2097``) is CPU-only by design:
@@ -847,7 +844,7 @@ def test_samples_hint_band_first_without_gpu_2097():
 
 
 # ---------------------------------------------------------------------------
-# Section: #1876 -- read_geotiff_gpu(chunks=...) out-of-core dask pipeline
+# Section: read_geotiff_gpu(chunks=...) out-of-core dask pipeline
 # ---------------------------------------------------------------------------
 
 def _kvikio_available_1876() -> bool:
@@ -1094,7 +1091,7 @@ def test_read_geotiff_gpu_chunks_fallback_when_kvikio_absent_1876(
 
 
 # ---------------------------------------------------------------------------
-# Section: #2324 -- sidecar overview-inheritance georef parity
+# Section: sidecar overview-inheritance georef parity
 # ---------------------------------------------------------------------------
 
 def _attrs_subset_2324(da):
@@ -1137,7 +1134,7 @@ def test_sidecar_without_geokeys_attrs_match_cpu_vs_dask_2324(tmp_path):
 
 @_gpu_only
 def test_sidecar_without_geokeys_gpu_matches_cpu_2324(tmp_path):
-    """Regression for #2324: GPU eager georef matches CPU / dask."""
+    """GPU eager georef matches CPU / dask."""
     from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
 
     from ..integration.test_sidecar import _write_pair
@@ -1192,7 +1189,7 @@ def test_sidecar_with_own_geokeys_gpu_matches_cpu_2324(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Section: #2161 -- read_geotiff_gpu accepts HTTP / fsspec URLs (eager)
+# Section: read_geotiff_gpu accepts HTTP / fsspec URLs (eager)
 # ---------------------------------------------------------------------------
 
 class _RangeHandler2161(http.server.BaseHTTPRequestHandler):
@@ -1393,7 +1390,7 @@ def test_chunked_url_path_still_uses_chunked_helper_2161(small_tif_bytes_2161,
 
 
 # ---------------------------------------------------------------------------
-# Section: #1909 -- GDS chunked path casts each chunk to declared dtype
+# Section: GDS chunked path casts each chunk to declared dtype
 # ---------------------------------------------------------------------------
 
 def _parse_for_gds_1909(path: str):
