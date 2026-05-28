@@ -1065,19 +1065,15 @@ def _promoted_vertical_dtype(src_dtype):
     """Return the float dtype to use when applying a geoid shift.
 
     The geoid offset is fractional metres, so any integer input has to
-    be promoted before we can add it. We pick ``float32`` for integer
-    and small-float inputs and only upgrade to ``float64`` when the
-    source is already ``float64``. Returns ``None`` when the input is
-    already a float dtype that does not need promotion.
+    be promoted before we can add it. Returns ``None`` when the input
+    is already a float dtype (including ``float64``) -- we leave its
+    precision alone. Returns ``np.float32`` for any non-float input;
+    that gives ~0.1 mm resolution in metres at altitudes up to ~10 km,
+    which is well below the accuracy of the geoid grids themselves.
     """
     src_dtype = np.dtype(src_dtype)
-    if src_dtype == np.float64:
-        return None
     if np.issubdtype(src_dtype, np.floating):
         return None
-    # Integer (or other non-float) input -> promote to float32. That
-    # gives ~0.1 mm precision in metres at altitudes up to ~10 km,
-    # which is well below the accuracy of the geoid grids themselves.
     return np.float32
 
 
