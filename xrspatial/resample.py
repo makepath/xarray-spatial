@@ -706,7 +706,8 @@ _AGG_BLOCK_FUNCS = {
 def _interp_block_np(block, global_in_h, global_in_w,
                      global_out_h, global_out_w,
                      cum_in_y, cum_in_x, cum_out_y, cum_out_x,
-                     depth, order, work_dtype, out_dtype, block_info=None):
+                     depth_y, depth_x, order, work_dtype, out_dtype,
+                     block_info=None):
     """Interpolate one (possibly overlapped) numpy block."""
     yi, xi = block_info[0]['chunk-location']
     target_h = int(cum_out_y[yi + 1] - cum_out_y[yi])
@@ -723,8 +724,8 @@ def _interp_block_np(block, global_in_h, global_in_w,
     ix = (ox + 0.5) * (global_in_w / global_out_w) - 0.5
 
     # Convert to local block coordinates (overlap shifts the origin)
-    iy_local = iy - (cum_in_y[yi] - depth)
-    ix_local = ix - (cum_in_x[xi] - depth)
+    iy_local = iy - (cum_in_y[yi] - depth_y)
+    ix_local = ix - (cum_in_x[xi] - depth_x)
 
     yy, xx = np.meshgrid(iy_local, ix_local, indexing='ij')
     coords = np.array([yy.ravel(), xx.ravel()])
@@ -769,7 +770,8 @@ def _interp_block_np(block, global_in_h, global_in_w,
 def _interp_block_cupy(block, global_in_h, global_in_w,
                        global_out_h, global_out_w,
                        cum_in_y, cum_in_x, cum_out_y, cum_out_x,
-                       depth, order, work_dtype, out_dtype, block_info=None):
+                       depth_y, depth_x, order, work_dtype, out_dtype,
+                       block_info=None):
     """CuPy variant of :func:`_interp_block_np`."""
     from cupyx.scipy.ndimage import map_coordinates as _cupy_map_coords
     from cupyx.scipy.ndimage import spline_filter as _cupy_spline_filter
@@ -790,8 +792,8 @@ def _interp_block_cupy(block, global_in_h, global_in_w,
     iy = (oy + 0.5) * (global_in_h / global_out_h) - 0.5
     ix = (ox + 0.5) * (global_in_w / global_out_w) - 0.5
 
-    iy_local = iy - float(cum_in_y[yi] - depth)
-    ix_local = ix - float(cum_in_x[xi] - depth)
+    iy_local = iy - float(cum_in_y[yi] - depth_y)
+    ix_local = ix - float(cum_in_x[xi] - depth_x)
 
     yy, xx = cupy.meshgrid(iy_local, ix_local, indexing='ij')
     coords = cupy.array([yy.ravel(), xx.ravel()])
@@ -966,7 +968,18 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
         order = INTERP_METHODS[method]
         depth = _INTERP_DEPTH[method]
 
-        min_size = max(2 * depth + 1,
+        # Clamp depth per axis so it never exceeds the array's total size on
+        # that axis. dask.overlap rejects ``depth > sum(chunks)``, which would
+        # otherwise blow up for inputs smaller than the cubic prefilter depth
+        # (e.g. an Nx1 column). The eager kernels have no overlap and accept
+        # arbitrarily small inputs; clamping preserves that behaviour while
+        # keeping the full depth wherever the axis is large enough.
+        global_in_h = int(sum(data.chunks[0]))
+        global_in_w = int(sum(data.chunks[1]))
+        depth_y = min(depth, max(0, global_in_h - 1))
+        depth_x = min(depth, max(0, global_in_w - 1))
+
+        min_size = max(2 * max(depth_y, depth_x) + 1,
                        _min_chunksize_for_scale(scale_y),
                        _min_chunksize_for_scale(scale_x))
         data = _ensure_min_chunksize(data, min_size)
@@ -984,9 +997,9 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
         cum_out_x = np.cumsum([0] + list(out_x))
 
         src = data
-        if depth > 0:
+        if depth_y > 0 or depth_x > 0:
             from dask.array.overlap import overlap as _add_overlap
-            src = _add_overlap(data, depth={0: depth, 1: depth},
+            src = _add_overlap(data, depth={0: depth_y, 1: depth_x},
                                boundary='nearest')
 
         fn = partial(_interp_block_np,
@@ -994,7 +1007,7 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
                      global_out_h=global_out_h, global_out_w=global_out_w,
                      cum_in_y=cum_in_y, cum_in_x=cum_in_x,
                      cum_out_y=cum_out_y, cum_out_x=cum_out_x,
-                     depth=depth, order=order,
+                     depth_y=depth_y, depth_x=depth_x, order=order,
                      work_dtype=work_dt, out_dtype=out_dt)
         return da.map_blocks(fn, src, chunks=(out_y, out_x),
                              dtype=out_dt, meta=meta)
@@ -1051,7 +1064,13 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
         order = INTERP_METHODS[method]
         depth = _INTERP_DEPTH[method]
 
-        min_size = max(2 * depth + 1,
+        # Clamp depth per axis (see _run_dask_numpy for rationale).
+        global_in_h = int(sum(data.chunks[0]))
+        global_in_w = int(sum(data.chunks[1]))
+        depth_y = min(depth, max(0, global_in_h - 1))
+        depth_x = min(depth, max(0, global_in_w - 1))
+
+        min_size = max(2 * max(depth_y, depth_x) + 1,
                        _min_chunksize_for_scale(scale_y),
                        _min_chunksize_for_scale(scale_x))
         data = _ensure_min_chunksize(data, min_size)
@@ -1069,9 +1088,9 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
         cum_out_x = np.cumsum([0] + list(out_x))
 
         src = data
-        if depth > 0:
+        if depth_y > 0 or depth_x > 0:
             from dask.array.overlap import overlap as _add_overlap
-            src = _add_overlap(data, depth={0: depth, 1: depth},
+            src = _add_overlap(data, depth={0: depth_y, 1: depth_x},
                                boundary='nearest')
 
         fn = partial(_interp_block_cupy,
@@ -1079,7 +1098,7 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
                      global_out_h=global_out_h, global_out_w=global_out_w,
                      cum_in_y=cum_in_y, cum_in_x=cum_in_x,
                      cum_out_y=cum_out_y, cum_out_x=cum_out_x,
-                     depth=depth, order=order,
+                     depth_y=depth_y, depth_x=depth_x, order=order,
                      work_dtype=work_dt, out_dtype=out_dt)
         return da.map_blocks(fn, src, chunks=(out_y, out_x),
                              dtype=out_dt, meta=meta)
