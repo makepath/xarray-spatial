@@ -21,6 +21,14 @@
 
 #### Fixed
 
+- `rasterize(like=...)` no longer silently mislabels output when the
+  template's x axis is descending. Previously the burned array was
+  written ascending-x (column 0 = xmin) but `reuse_like_coords`
+  assigned the descending x-coord unchanged, so a polygon at world
+  x=0.5 landed under coord x=3.5. The array is now flipped along
+  axis 1 so `result.sel(x=...)` agrees with the geometry's world
+  coordinates, mirroring the existing ascending-y flip on axis 0.
+  Works for numpy, cupy, dask+numpy, and dask+cupy. (#2568)
 - `polygonize` on dask-backed float rasters now matches the numpy
   reference for both polygon count and DN values across every chunking
   pattern. The cross-chunk merge previously bucketed chunk-boundary
@@ -43,7 +51,6 @@
   only the selected ones, so each selected category's count starts from
   the correct offset. All four backends (numpy, dask+numpy, cupy,
   dask+cupy) share the helper and are fixed together. (#2560)
-
 - `polygonize` now auto-detects the raster's affine transform from
   `attrs['transform']` (xrspatial.geotiff convention) or
   `rio.transform()` (rioxarray) when the caller did not pass an

@@ -2883,6 +2883,7 @@ class _LikeGrid(NamedTuple):
     extra_coords: dict
     attrs: dict
     y_ascending: bool
+    x_descending: bool
 
 
 def _extract_grid_from_like(like):
@@ -2936,16 +2937,19 @@ def _extract_grid_from_like(like):
     ymin = float(np.min(y)) - py / 2
     ymax = float(np.max(y)) + py / 2
 
-    # Detect y-axis orientation.  The rasterizer always burns with row 0
-    # at ymax (standard image convention), so if the template's y is
-    # ascending (low-to-high), the burned rows have to be flipped before
-    # we hand back the coords or downstream coord-aware ops line up
-    # against the wrong rows.  Only the first and last samples are
+    # Detect axis orientation.  The rasterizer always burns with row 0
+    # at ymax and column 0 at xmin (standard image convention).  If the
+    # template's y is ascending (low-to-high) or its x is descending
+    # (high-to-low), the burned array has to be flipped along that axis
+    # before we hand back the coords, or downstream coord-aware ops line
+    # up against the wrong cells.  Only the first and last samples are
     # inspected; the ``_check_uniform_axis`` call above has already
-    # rejected non-monotonic or duplicate-valued y coords, so this is
-    # safe.  The x-axis is assumed ascending; descending-x templates
-    # would hit the same bug class and are not supported here.
+    # rejected non-monotonic or duplicate-valued coords on both axes,
+    # so this is safe.  Single-row / single-column templates have no
+    # direction to detect, so the ``> 1`` guard short-circuits to
+    # ``False`` (no flip) for those.
     y_ascending = height > 1 and float(y[-1]) > float(y[0])
+    x_descending = width > 1 and float(x[-1]) < float(x[0])
 
     # Carry through any non-dim coords (e.g. rioxarray's ``spatial_ref``
     # CRS coord).  The y/x dim coords are returned separately because the
@@ -2965,6 +2969,7 @@ def _extract_grid_from_like(like):
         extra_coords=extra_coords,
         attrs=dict(like.attrs),
         y_ascending=y_ascending,
+        x_descending=x_descending,
     )
 
 
@@ -3187,6 +3192,7 @@ def rasterize(
     like_extra_coords = {}
     like_attrs = None
     like_y_ascending = False
+    like_x_descending = False
     bounds_explicit = bounds is not None
     if like is not None:
         grid = _extract_grid_from_like(like)
@@ -3199,6 +3205,7 @@ def rasterize(
         like_extra_coords = grid.extra_coords
         like_attrs = grid.attrs
         like_y_ascending = grid.y_ascending
+        like_x_descending = grid.x_descending
 
     # Parse input geometries
     geom_list, props_array, inferred_bounds = _parse_input(
@@ -3373,14 +3380,17 @@ def rasterize(
     if reuse_like_coords:
         x_coords = like_x_coord
         y_coords = like_y_coord
-        # The rasterizer always burns with row 0 = ymax (top-down image
-        # convention).  If the template's y axis is ascending, the rows
-        # have to be flipped along axis 0 before assigning the template's
-        # coords so world-y selection still lines up with the geometry.
-        # Works for numpy, cupy, dask+numpy, and dask+cupy alike -- they
-        # all expose the same slicing semantics on axis 0.
+        # The rasterizer always burns with row 0 = ymax and column 0 =
+        # xmin (top-down image convention).  If the template's y axis is
+        # ascending or its x axis is descending, the burned array has to
+        # be flipped along that axis before assigning the template's
+        # coords, so world-coord selection still lines up with the
+        # geometry.  Works for numpy, cupy, dask+numpy, and dask+cupy
+        # alike -- they all expose the same slicing semantics.
         if like_y_ascending:
             out = out[::-1, :]
+        if like_x_descending:
+            out = out[:, ::-1]
     else:
         px = (xmax - xmin) / final_width
         py = (ymax - ymin) / final_height
