@@ -1333,6 +1333,42 @@ def test_apply_3d(backend):
     np.testing.assert_equal(result_np[1, 0, :], [5.0, 5.0, 5.0])
 
 
+@pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
+def test_apply_dask_3d_axis2_rechunked_2526():
+    """Regression for #2526: apply 3D dask path must not leave axis-2
+    chunks at size 1 after da.stack.
+    """
+    shape = (4, 4, 3)
+    zones_data = np.array([[1, 1, 0, 2],
+                           [1, 0, 2, 2],
+                           [0, 2, 2, 0],
+                           [2, 0, 1, 1]], dtype=np.int32)
+    values_data = np.arange(np.prod(shape)).reshape(shape).astype(np.float64)
+
+    zones = xr.DataArray(
+        da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'],
+    )
+    values = xr.DataArray(
+        da.from_array(values_data, chunks=(2, 2, 3)),
+        dims=['y', 'x', 'band'],
+    )
+
+    result = apply(zones, values, lambda x: x * 2, nodata=0)
+
+    # Axis-2 chunks should match the input chunking, not be split
+    # into unit chunks by da.stack.
+    assert result.data.chunks[2] == values.data.chunks[2], (
+        f"axis-2 chunks should be {values.data.chunks[2]}, "
+        f"got {result.data.chunks[2]}"
+    )
+    # Sanity: result is numerically correct on a non-nodata cell.
+    out = result.data.compute()
+    # cell (0, 0) is zone 1 (non-nodata) so func applied
+    np.testing.assert_array_equal(
+        out[0, 0, :], values_data[0, 0, :] * 2,
+    )
+
+
 def test_apply_nodata_none():
     zones_data = np.array([[0, 1], [2, 3]], dtype=np.int32)
     values_data = np.array([[1.0, 2.0], [3.0, 4.0]])
