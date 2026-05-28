@@ -371,9 +371,71 @@ def _read_geo_info(source, *, overview_level: int | None = None,
         close_sidecar(sidecar)
 
 
+def _bbox_to_window(source, bbox, *, overview_level=None,
+                    allow_rotated=False, allow_invalid_nodata=False):
+    """Resolve a geographic ``bbox`` to a pixel ``window`` for the source.
+
+    ``bbox`` is ``(x_min, y_min, x_max, y_max)`` in the source's CRS.
+    The returned tuple is ``(row_start, col_start, row_stop, col_stop)``
+    clamped to the file's extent and ready to forward as the existing
+    ``window=`` kwarg through the backend dispatch.
+
+    Uses ``_read_geo_info`` which already supports local files,
+    BytesIO, HTTP, and fsspec URIs via header-only reads, so this is
+    an O(1)-memory metadata pass rather than a full decode.
+
+    Raises ``ValueError`` if ``bbox`` is malformed, the source is not
+    georeferenced, or the transform is rotated. Rotated-affine files
+    are rejected because ``_extent_to_window`` assumes an
+    axis-aligned grid; the caller can pass ``allow_rotated=True`` to
+    drop the rotation upstream and then re-call with ``bbox=``.
+    """
+    if (not isinstance(bbox, (tuple, list)) or len(bbox) != 4):
+        raise ValueError(
+            "open_geotiff: bbox must be a 4-tuple "
+            "(x_min, y_min, x_max, y_max), "
+            f"got {bbox!r}.")
+    x_min, y_min, x_max, y_max = bbox
+    if x_min >= x_max or y_min >= y_max:
+        raise ValueError(
+            f"open_geotiff: bbox has non-positive size "
+            f"(x_min={x_min}, y_min={y_min}, x_max={x_max}, "
+            f"y_max={y_max}). Expected x_min < x_max and y_min < y_max.")
+
+    geo_info, height, width, _dtype, _nbands = _read_geo_info(
+        source, overview_level=overview_level,
+        allow_rotated=allow_rotated,
+        allow_invalid_nodata=allow_invalid_nodata)
+
+    if not geo_info.has_georef:
+        raise ValueError(
+            "open_geotiff: bbox= requires a georeferenced source, "
+            "but this file has no GeoTIFF tags. Pass window= instead "
+            "for pixel-space windowing.")
+    if geo_info.transform.rotated_affine is not None:
+        raise ValueError(
+            "open_geotiff: bbox= requires an axis-aligned transform, "
+            "but this file has a rotated affine. Open with "
+            "allow_rotated=True (which drops the rotation) and then "
+            "use bbox=, or pass window= for pixel-space windowing.")
+
+    from ._attrs import _extent_to_window
+    pixel_window = _extent_to_window(
+        geo_info.transform, height, width,
+        y_min, y_max, x_min, x_max)
+    row_start, col_start, row_stop, col_stop = pixel_window
+    if row_start >= row_stop or col_start >= col_stop:
+        raise ValueError(
+            f"open_geotiff: bbox={bbox!r} does not overlap the file's "
+            f"extent (height={height}, width={width}). Resolved pixel "
+            f"window={pixel_window} has non-positive size.")
+    return pixel_window
+
+
 def open_geotiff(source: str | BinaryIO, *,
                  dtype: str | np.dtype | None = None,
                  window: tuple | None = None,
+                 bbox: tuple | None = None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
@@ -466,7 +528,14 @@ def open_geotiff(source: str | BinaryIO, *,
         ValueError to prevent accidental data loss.
     window : tuple or None
         [stable] ``(row_start, col_start, row_stop, col_stop)`` for
-        windowed reading.
+        windowed reading. Mutually exclusive with ``bbox=``.
+    bbox : tuple or None
+        [stable] ``(x_min, y_min, x_max, y_max)`` in the file's CRS.
+        Resolved to a pixel ``window=`` via a header-only metadata read
+        and clamped to the file's extent. Requires the source to be
+        georeferenced with an axis-aligned transform; rotated affines
+        require ``allow_rotated=True`` to clear the rotation first.
+        Mutually exclusive with ``window=``.
     overview_level : int or None
         [advanced] Overview level (0 = full resolution). Must be a
         non-negative int or ``None``; passing ``bool`` or any other
@@ -721,6 +790,20 @@ def open_geotiff(source: str | BinaryIO, *,
         band_nodata=band_nodata,
         max_cloud_bytes=max_cloud_bytes,
     )
+
+    # Resolve ``bbox=`` to a pixel ``window=`` via a header-only
+    # metadata read. Done at the dispatcher so every backend
+    # (eager / dask / GPU / VRT) sees a uniform pixel window without
+    # learning a new kwarg.
+    if bbox is not None:
+        if window is not None:
+            raise ValueError(
+                "open_geotiff: window= and bbox= are mutually exclusive; "
+                "pass one or the other.")
+        window = _bbox_to_window(
+            source, bbox, overview_level=overview_level,
+            allow_rotated=allow_rotated,
+            allow_invalid_nodata=allow_invalid_nodata)
 
     missing_sources_passed = (
         missing_sources is not _MISSING_SOURCES_SENTINEL)
