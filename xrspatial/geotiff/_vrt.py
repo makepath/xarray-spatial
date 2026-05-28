@@ -1371,14 +1371,18 @@ def read_vrt(vrt_path: str, *, window=None,
     from ._reader import MAX_PIXELS_DEFAULT, _check_dimensions
     if max_pixels is None:
         max_pixels = MAX_PIXELS_DEFAULT
-    n_bands = len([vrt.bands[band]] if band is not None else vrt.bands)
-    _check_dimensions(out_w, out_h, n_bands, max_pixels)
 
-    # Select bands
+    # Select bands first so the dtype is known for the GB hint in the
+    # safety-limit error.
     if band is not None:
         selected_bands = [vrt.bands[band]]
     else:
         selected_bands = vrt.bands
+    n_bands = len(selected_bands)
+    # All selected bands typically share a dtype; if they differ the
+    # hint uses the first band's dtype as an approximation.
+    _check_dimensions(out_w, out_h, n_bands, max_pixels,
+                      dtype=selected_bands[0].dtype)
 
     # Allocate output.
     #
@@ -1533,15 +1537,20 @@ def read_vrt(vrt_path: str, *, window=None,
                 if (sub_dst_w > max_pixels
                         or sub_dst_h > max_pixels
                         or sub_dst_w * sub_dst_h > max_pixels):
+                    from ._layout import _gb_hint
+                    sub_total = sub_dst_w * sub_dst_h
+                    band_dtype = vrt_band.dtype
                     raise ValueError(
                         f"VRT SimpleSource DstRect "
                         f"(xSize={dr.x_size}, ySize={dr.y_size}) requires "
                         f"a resample intermediate of "
-                        f"{sub_dst_w * sub_dst_h:,} pixels for the "
-                        f"requested window, which exceeds the safety "
-                        f"limit of {max_pixels:,} pixels. Pass a larger "
-                        f"max_pixels= to read_vrt() if this file is "
-                        f"legitimate."
+                        f"{sub_total:,} pixels "
+                        f"({_gb_hint(sub_total, band_dtype)}) "
+                        f"for the requested window, which exceeds the "
+                        f"safety limit of {max_pixels:,} pixels "
+                        f"({_gb_hint(max_pixels, band_dtype)}). Pass a "
+                        f"larger max_pixels= to read_vrt() if this file "
+                        f"is legitimate."
                     )
             else:
                 read_r0 = sr.y_off + (clip_r0 - dst_r0)
