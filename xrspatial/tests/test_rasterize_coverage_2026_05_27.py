@@ -113,11 +113,17 @@ def _materialise(result):
 # and overlapping bounds so the predicate is not degenerate (the existing
 # TestCuPy.test_cupy_matches_numpy uses a single polygon where every merge
 # mode would collapse to the same output).
-_EAGER_CUPY_MERGE_PAIRS = [
-    (box(0, 0, 6, 6), 3.0),
-    (box(2, 2, 8, 8), 5.0),
-    (box(4, 4, 10, 10), 7.0),
-]
+#
+# Guarded under ``has_shapely`` because ``box`` is only imported when
+# shapely is available; without this guard the module fails to import
+# on environments lacking the ``[vector]`` extra and the file-level
+# ``pytestmark`` skip never runs (the NameError fires first).
+if has_shapely:
+    _EAGER_CUPY_MERGE_PAIRS = [
+        (box(0, 0, 6, 6), 3.0),
+        (box(2, 2, 8, 8), 5.0),
+        (box(4, 4, 10, 10), 7.0),
+    ]
 
 
 @skip_no_cuda
@@ -283,13 +289,15 @@ class TestEagerCupyEmptyGeometryList:
 
 # Four overlapping unit squares all burning the same value 1.0.  Under
 # ``count`` the overlap pixel should see a count of 4 regardless of the
-# burn value being equal.
-_ALL_EQUAL_PAIRS = [
-    (box(2, 2, 6, 6), 1.0),
-    (box(3, 3, 7, 7), 1.0),
-    (box(4, 4, 8, 8), 1.0),
-    (box(5, 5, 9, 9), 1.0),
-]
+# burn value being equal.  See the guard note on _EAGER_CUPY_MERGE_PAIRS
+# above -- ``box`` is unbound when shapely is missing.
+if has_shapely:
+    _ALL_EQUAL_PAIRS = [
+        (box(2, 2, 6, 6), 1.0),
+        (box(3, 3, 7, 7), 1.0),
+        (box(4, 4, 8, 8), 1.0),
+        (box(5, 5, 9, 9), 1.0),
+    ]
 
 
 class TestAllEqualValueCount:
@@ -387,12 +395,17 @@ class TestNameKwargBackends:
     not surface from the existing eager test.
     """
 
-    _SIMPLE_PAIR = [(box(1, 1, 4, 4), 1.0)]
+    # Built inside a method (not a class attribute) so ``box`` is only
+    # referenced when the test actually runs.  A class-level
+    # ``[(box(...), 1.0)]`` would be evaluated at import time and crash
+    # the module on shapely-less environments before pytestmark skips.
+    def _simple_pair(self):
+        return [(box(1, 1, 4, 4), 1.0)]
 
     @skip_no_dask
     def test_name_propagated_dask_numpy(self):
         result = rasterize(
-            self._SIMPLE_PAIR, width=5, height=5,
+            self._simple_pair(), width=5, height=5,
             bounds=(0, 0, 5, 5), name='burned_dask', chunks=(3, 3),
         )
         assert result.name == 'burned_dask'
@@ -400,7 +413,7 @@ class TestNameKwargBackends:
     @skip_no_cuda
     def test_name_propagated_eager_cupy(self):
         result = rasterize(
-            self._SIMPLE_PAIR, width=5, height=5,
+            self._simple_pair(), width=5, height=5,
             bounds=(0, 0, 5, 5), name='burned_cupy', use_cuda=True,
         )
         assert result.name == 'burned_cupy'
@@ -409,7 +422,7 @@ class TestNameKwargBackends:
     @skip_no_dask
     def test_name_propagated_dask_cupy(self):
         result = rasterize(
-            self._SIMPLE_PAIR, width=5, height=5,
+            self._simple_pair(), width=5, height=5,
             bounds=(0, 0, 5, 5), name='burned_dask_cupy',
             use_cuda=True, chunks=(3, 3),
         )
