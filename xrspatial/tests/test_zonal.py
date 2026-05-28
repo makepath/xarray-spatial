@@ -1156,6 +1156,56 @@ def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_perc
     assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_crosstab_2d_cat_ids_skips_earlier_category(backend, data_zones, data_values_2d):
+    """Regression test for issue #2560.
+
+    When cat_ids filters out a category that appears in the values raster,
+    the count for later selected categories must not be inflated by cells
+    that belong to the skipped category.
+
+    Zone 3 in the test fixture contains values [3, 3, 0, 3, 3] after nodata
+    filtering. Asking for cat_ids=[3] alone (skipping 0) should report 4
+    threes, not 5.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
+    # cat_ids=[3] alone, with zone 3 containing 0s too. unique_cats is
+    # [0, 1, 2, 3]; the buggy code would let cat_start stay at the start
+    # of the sorted zone array and report 5 threes for zone 3.
+    df_result = crosstab(
+        zones=data_zones, values=data_values_2d,
+        zone_ids=[0, 1, 2, 3], cat_ids=[3],
+    )
+    expected = {
+        'zone': [0, 1, 2, 3],
+        3:      [0, 0, 0, 4],
+    }
+    check_results(backend, df_result, expected)
+
+    # cat_ids=[1, 3] skips category 2 between them. Zone 1 has six 1s
+    # and no 3s; zone 3 has zero 1s and four 3s.
+    df_result = crosstab(
+        zones=data_zones, values=data_values_2d,
+        zone_ids=[0, 1, 2, 3], cat_ids=[1, 3],
+    )
+    expected = {
+        'zone': [0, 1, 2, 3],
+        1:      [0, 6, 0, 0],
+        3:      [0, 0, 0, 4],
+    }
+    check_results(backend, df_result, expected)
+
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_crosstab_3d_count(backend, data_zones, data_values_3d, result_crosstab_3d):
 
@@ -1898,6 +1948,99 @@ def test_crop_missing_zone_ids_raises():
 
     with pytest.raises(TypeError, match="zone_ids"):
         crop(raster, raster)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for #2561: crop() must return the same shape across all
+# backends when the requested zone_ids are absent (previously the dask path
+# returned the full input raster while numpy/cupy returned an empty (0, 0)).
+# ---------------------------------------------------------------------------
+
+_CROP_ARR_2561 = np.array([[0, 4, 0, 3],
+                           [0, 4, 4, 3],
+                           [0, 1, 1, 3],
+                           [0, 1, 1, 3],
+                           [0, 0, 0, 0]], dtype=np.int64)
+
+
+def _crop_backends_2561():
+    backends = ['numpy']
+    if has_dask_array():
+        backends.append('dask+numpy')
+    if has_cuda_and_cupy():
+        backends.append('cupy')
+        if has_dask_array():
+            backends.append('dask+cupy')
+    return backends
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_absent_zone_ids_returns_empty_2561(backend):
+    """All backends must return shape (0, 0) when no requested zone exists."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # zone_id 99 is not present anywhere in the raster.
+    result = crop(zones, values, zone_ids=(99,))
+
+    # Output array type must match input type.
+    assert isinstance(result.data, type(zones.data))
+    assert result.shape == (0, 0)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_partial_zone_ids_2561(backend):
+    """Mix of present and absent zone_ids crops to the present ones only."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # Only zone_id 1 is actually present here. 77 and 88 are absent.
+    result_partial = crop(zones, values, zone_ids=(77, 1, 88))
+    result_present_only = crop(zones, values, zone_ids=(1,))
+
+    # Pin the expected bounding box of zone_id=1 in _CROP_ARR_2561
+    # (rows 2-3, cols 1-2) so a regression cannot pass by drifting
+    # both code paths in the same direction.
+    assert result_partial.shape == (2, 2)
+    assert result_partial.shape == result_present_only.shape
+
+    if backend.startswith('dask'):
+        partial_np = result_partial.data.compute()
+        present_np = result_present_only.data.compute()
+    else:
+        partial_np = result_partial.data
+        present_np = result_present_only.data
+
+    if 'cupy' in backend:
+        partial_np = partial_np.get()
+        present_np = present_np.get()
+
+    np.testing.assert_array_equal(partial_np, present_np)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_happy_path_matches_numpy_2561(backend):
+    """All backends agree on the standard crop result."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    result = crop(zones, values, zone_ids=(1, 3))
+    assert result.shape == (4, 3)
+
+    expected = np.array([[4, 0, 3],
+                         [4, 4, 3],
+                         [1, 1, 3],
+                         [1, 1, 3]], dtype=np.int64)
+
+    if backend.startswith('dask'):
+        result_np = result.data.compute()
+    else:
+        result_np = result.data
+
+    if 'cupy' in backend:
+        result_np = result_np.get()
+
+    np.testing.assert_array_equal(result_np, expected)
 
 
 # ---------------------------------------------------------------------------
