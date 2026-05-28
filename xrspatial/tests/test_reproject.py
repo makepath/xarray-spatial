@@ -4296,7 +4296,7 @@ class TestPyprojGeoidProbeUsable:
 
     def test_negative_inf_probe_is_not_usable(self):
         # Regression for the original bug: -inf used to slip past the
-        # near-zero guard and fire the assert below.
+        # near-zero guard and fire the assert in the pyproj cross-check.
         assert not _pyproj_geoid_probe_is_usable(float('-inf'))
 
     def test_positive_inf_probe_is_not_usable(self):
