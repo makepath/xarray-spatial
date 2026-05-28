@@ -5,7 +5,6 @@ import copy
 from math import sqrt
 from typing import Callable, Dict, List, Optional, Union
 
-
 # 3rd-party
 try:
     import dask
@@ -36,12 +35,9 @@ except ImportError:
         ndarray = False
 
 # local modules
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping, _validate_raster, cuda_args, has_cuda_and_cupy,
-    is_cupy_array, is_dask_cupy,
-    ngjit, not_implemented_func, validate_arrays,
-)
-from xrspatial.utils import has_dask_array
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args,
+                             has_cuda_and_cupy, has_dask_array, is_cupy_array, is_dask_cupy, ngjit,
+                             validate_arrays)
 
 TOTAL_COUNT = '_total_count'
 
@@ -452,7 +448,10 @@ def _stats_dask_numpy(
             )
 
     # generate dask dataframe
-    stats_df = dd.concat([dd.from_dask_array(s) for s in stats_dict.values()], axis=1, ignore_unknown_divisions=True)
+    stats_df = dd.concat(
+        [dd.from_dask_array(s) for s in stats_dict.values()],
+        axis=1, ignore_unknown_divisions=True,
+    )
     # name columns
     stats_df.columns = stats_dict.keys()
     # select columns (only include stats that were actually computed)
@@ -502,6 +501,7 @@ def _stats_numpy(
         result = pd.DataFrame(stats_dict)
 
     else:
+        _check_stats_dataarray_memory(len(stats_funcs), values.shape)
         result = np.full((len(stats_funcs), values.size), np.nan)
         zone_ids_map = {z: i for i, z in enumerate(unique_zones) if z in zone_ids}
         stats_id = 0
@@ -1688,7 +1688,10 @@ def _apply_dask_numpy(zones_data, values_data, func, nodata):
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=np.array(()),
             ))
-        return da.stack(layers, axis=2)
+        stacked = da.stack(layers, axis=2)
+        # da.stack produces unit chunks along the new axis; merge back
+        # to the input chunking so downstream ops see the same shape.
+        return stacked.rechunk({2: values_data.chunks[2]})
 
 
 def _apply_dask_cupy(zones_data, values_data, func, nodata):
@@ -1728,7 +1731,10 @@ def _apply_dask_cupy(zones_data, values_data, func, nodata):
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=cupy.array(()),
             ))
-        return da.stack(layers, axis=2)
+        stacked = da.stack(layers, axis=2)
+        # da.stack produces unit chunks along the new axis; merge back
+        # to the input chunking so downstream ops see the same shape.
+        return stacked.rechunk({2: values_data.chunks[2]})
 
 
 def apply(
@@ -2013,6 +2019,30 @@ def _available_memory_bytes():
     except (ImportError, AttributeError):
         pass
     return 2 * 1024 ** 3
+
+
+def _check_stats_dataarray_memory(n_stats, values_shape):
+    """Guard the (n_stats, H*W) float64 buffer in ``_stats_numpy``.
+
+    The ``return_type='xarray.DataArray'`` branch allocates a same-shape
+    output replicated per requested statistic, so peak memory scales
+    linearly with ``len(stats_funcs)``.  Refuse the request when the
+    buffer would exceed half of available RAM.
+    """
+    n_cells = 1
+    for s in values_shape:
+        n_cells *= int(s)
+    required = n_stats * n_cells * 8  # float64
+    avail = _available_memory_bytes()
+    if required > 0.5 * avail:
+        raise MemoryError(
+            f"stats(return_type='xarray.DataArray') needs "
+            f"~{required / 1e9:.1f} GB for an "
+            f"({n_stats}, {n_cells}) float64 result buffer "
+            f"but only ~{avail / 1e9:.1f} GB is available. "
+            "Reduce `stats_funcs`, use a smaller raster, or call "
+            "stats(..., return_type='pandas.DataFrame') instead."
+        )
 
 
 def _regions_dask(data, neighborhood):
@@ -2558,10 +2588,11 @@ def _crop_bounds_dask(data, target_values):
 def crop(
     zones,
     values: xr.DataArray,
-    zones_ids: Union[list, tuple],
+    zone_ids: Optional[Union[list, tuple]] = None,
     name: str = "crop",
     column: Optional[str] = None,
     rasterize_kw: Optional[dict] = None,
+    zones_ids: Optional[Union[list, tuple]] = None,
 ):
     """
     Crop scans from edges and eliminates rows / cols until one of the
@@ -2576,8 +2607,9 @@ def crop(
     values: xr.DataArray
         Input values raster.
 
-    zones_ids : list or tuple
-        List of zone ids to crop raster.
+    zone_ids : list or tuple
+        List of zone ids to crop raster.  Matches the ``zone_ids`` parameter
+        of :func:`stats` and :func:`crosstab`.
 
     name: str, default='crop'
         Output xr.DataArray.name property.
@@ -2589,6 +2621,10 @@ def crop(
     rasterize_kw : dict, optional
         Extra keyword arguments forwarded to ``rasterize()`` when
         *zones* is vector input.
+
+    zones_ids : list or tuple, optional
+        Deprecated alias for ``zone_ids``.  Will emit a
+        ``DeprecationWarning`` and be removed in a future release.
 
     Returns
     -------
@@ -2646,7 +2682,7 @@ def crop(
         cropped_agg = crop(
             zones=zones_sub,
             values=values_agg,
-            zones_ids=[1],
+            zone_ids=[1],
         )
 
         # Edit Attributes
@@ -2688,6 +2724,31 @@ def crop(
             'Max Elevation': '4000',
         }
     """
+    # Backwards-compatible alias: stats() and crosstab() use `zone_ids`,
+    # crop() historically used `zones_ids` (extra 's').  Accept both,
+    # emit a DeprecationWarning on the old name, raise if both are passed.
+    if zones_ids is not None:
+        import warnings
+        if zone_ids is not None:
+            raise TypeError(
+                "crop() received both `zone_ids` and `zones_ids`; pass "
+                "only `zone_ids` (the canonical name)."
+            )
+        warnings.warn(
+            "crop(zones_ids=...) is deprecated and will be removed in a "
+            "future release; use `zone_ids=...` to match stats() and "
+            "crosstab().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        zone_ids = zones_ids
+
+    if zone_ids is None:
+        raise TypeError(
+            "crop() missing required argument `zone_ids` (list or tuple "
+            "of zone ids to crop to)."
+        )
+
     zones = _maybe_rasterize_zones(zones, values, column=column,
                                    rasterize_kw=rasterize_kw)
 
@@ -2696,11 +2757,11 @@ def crop(
 
     data = zones.data
     if has_dask_array() and isinstance(data, da.Array):
-        top, bottom, left, right = _crop_bounds_dask(data, zones_ids)
+        top, bottom, left, right = _crop_bounds_dask(data, zone_ids)
     else:
         if is_cupy_array(data):
             data = data.get()
-        top, bottom, left, right = _crop(data, np.asarray(zones_ids))
+        top, bottom, left, right = _crop(data, np.asarray(zone_ids))
 
     arr = values[top: bottom + 1, left: right + 1]
     arr.name = name

@@ -1,16 +1,9 @@
 """Dask read backend: ``read_geotiff_dask`` and ``_delayed_read_window``.
 
-Step 8 of issue #1813. With validators (#1882), attrs helpers (#1883),
-and runtime sentinels (#1880) already extracted, the dask entry-point
-body and its delayed-read helper move cleanly into this module.
-
-``read_vrt`` is statically imported from the sibling ``.vrt`` module
-since #1898 promoted it from a lazy import once the target moved out
-of ``__init__.py``. ``_read_geo_info`` still lives in ``__init__.py``
-and is lazy-imported inside ``read_geotiff_dask``'s body to avoid a
-circular import (``__init__.py`` re-exports ``read_geotiff_dask`` from
-here); a later step of #1813 will move it out and the lazy import can
-become static.
+``read_vrt`` is statically imported from the sibling ``.vrt`` module.
+``_read_geo_info`` still lives in ``__init__.py`` and is lazy-imported
+inside ``read_geotiff_dask``'s body to avoid a circular import
+(``__init__.py`` re-exports ``read_geotiff_dask`` from here).
 """
 from __future__ import annotations
 
@@ -51,7 +44,7 @@ def read_geotiff_dask(source: str, *,
                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
-    Release-contract tier (epic #2340; see
+    Release-contract tier (see
     ``docs/source/reference/release_gate_geotiff.rst`` and
     ``docs/source/reference/geotiff_release_contract.rst``):
 
@@ -66,7 +59,7 @@ def read_geotiff_dask(source: str, *,
       the file happens to use them. No cross-backend parity claim.
 
     See :data:`xrspatial.geotiff.SUPPORTED_FEATURES` for the full tier
-    map (issue #2137).
+    map.
 
     Each chunk is loaded lazily via windowed reads.
 
@@ -92,17 +85,17 @@ def read_geotiff_dask(source: str, *,
         multi-band files, 2D for single-band). Selecting a single band
         produces a 2D DataArray.
     max_pixels : int or None
-        [stable] Maximum allowed pixel count (width * height *
-        samples) for the windowed region. None uses the reader default
-        (~1 billion). The cap is checked once up-front against the
-        lazy region; each chunk task also re-checks against
-        ``max_pixels`` so windowed reads stay bounded even when
-        ``read_to_array`` is invoked directly.
+        [stable] Maximum allowed pixel count for a single materialised
+        chunk buffer (chunk_h * chunk_w * samples). None uses the
+        reader default (~1 billion). The full windowed region can
+        exceed this cap; only per-chunk decodes are bounded. To bound
+        the whole region instead, call ``read_to_array`` directly (or
+        ``open_geotiff`` without ``chunks=``).
     name : str or None
         [stable] Name for the DataArray.
     band_nodata : {'first', None}, optional
         [advanced] VRT-only opt-out for the fail-closed
-        mixed-band-metadata check (issue #1987 PR 5). Forwarded
+        mixed-band-metadata check. Forwarded
         verbatim to ``read_vrt`` when the source is a ``.vrt`` file.
         Passing it with a non-VRT GeoTIFF source raises ``ValueError``.
     mask_nodata : bool, default True
@@ -112,8 +105,7 @@ def read_geotiff_dask(source: str, *,
         The raw sentinel is still carried on ``attrs['nodata']``
         either way. Pass ``mask_nodata=False`` together with
         ``dtype=<integer>`` to keep an integer source dtype; the
-        default promotes to ``float64`` and the cast then raises. See
-        issue #2052.
+        default promotes to ``float64`` and the cast then raises.
     allow_rotated : bool, default False
         [advanced] Read-side opt-in for rotated / sheared
         ``ModelTransformationTag`` files. Forwarded to every per-chunk
@@ -124,8 +116,8 @@ def read_geotiff_dask(source: str, *,
         ``rotated_affine`` set).
     allow_unparseable_crs : bool, default False
         [advanced] Read-side opt-in for CRS strings that pyproj cannot
-        resolve and do not parse as WKT. When ``False`` (the default
-        since #1929) the chunk task raises ``UnparseableCRSError``
+        resolve and do not parse as WKT. When ``False`` (the default)
+        the chunk task raises ``UnparseableCRSError``
         instead of carrying the unrecognised payload through
         ``attrs['crs_wkt']``. See ``open_geotiff`` for the full
         description.
@@ -136,30 +128,28 @@ def read_geotiff_dask(source: str, *,
         ``ProjectedCSTypeGeoKey`` and ``GeographicTypeGeoKey`` resolve
         to different EPSG codes). The default raises
         ``InconsistentGeoKeysError``. See ``open_geotiff`` for the
-        full description (issue #2417).
+        full description.
     allow_invalid_nodata : bool, default False
         [advanced] Read-side opt-in for integer-dtype sources whose
         ``GDAL_NODATA`` tag is non-finite or fractional. Default raises
         ``InvalidIntegerNodataError`` at graph-build time. See
-        ``open_geotiff`` for the full description (#1774 follow-up,
-        #2441).
+        ``open_geotiff`` for the full description.
     stable_only : bool, default False
         [advanced] Read-side opt-in for stable-tier sources only.
         Forwarded to ``read_vrt`` when the source ends in ``.vrt`` so
         the rejection fires at graph-build time. Non-VRT sources on
         this entry point already ride the stable ``reader.local_file``
         path, so the flag is a no-op for them. See ``open_geotiff`` for
-        the full description (epic #2342).
+        the full description.
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). Fires at graph
         build, before any chunk task is scheduled. See ``open_geotiff``
-        for the full description (epic #2340 PR 4).
+        for the full description.
     allow_internal_only_jpeg : bool, default False
         [advanced] Read-side opt-in for JPEG-in-TIFF sources. Not
         covered by ``allow_experimental_codecs``. See ``open_geotiff``
-        for the full description (epic #2340 PR 4, original writer gate
-        #1845).
+        for the full description.
     on_gpu_failure : str, optional
         [internal-only] Accepted for cross-backend signature symmetry
         only. The dask path runs CPU decoders, so passing this kwarg
@@ -174,7 +164,7 @@ def read_geotiff_dask(source: str, *,
         only. The dask reader uses bounded range GETs and does not
         consume the cloud-byte budget, so passing this kwarg raises
         ``ValueError`` at dispatch. See ``open_geotiff`` for the
-        eager-path description (issue #1974).
+        eager-path description.
 
     Returns
     -------
@@ -188,14 +178,14 @@ def read_geotiff_dask(source: str, *,
     source = _coerce_path(source)
 
     # Shared dispatcher-kwarg validator so direct callers see the same
-    # rejections as ``open_geotiff`` (issue #2175 / parent #2162).
+    # rejections as ``open_geotiff``.
     # Runs ``_validate_overview_level_arg`` first to match ``open_geotiff``'s
     # ordering -- a bad ``overview_level`` is reported before unrelated
-    # source / ``chunks=`` errors mask it (issue #2160). The helper also
+    # source / ``chunks=`` errors mask it. The helper also
     # rejects ``on_gpu_failure`` (CPU dask has no GPU policy),
-    # ``missing_sources`` on non-VRT, ``band_nodata`` on non-VRT (issue
-    # #1987), ``max_cloud_bytes`` (dask reader does not apply the
-    # cloud-byte budget, issue #1974), and the file-like-source guard.
+    # ``missing_sources`` on non-VRT, ``band_nodata`` on non-VRT,
+    # ``max_cloud_bytes`` (dask reader does not apply the
+    # cloud-byte budget), and the file-like-source guard.
     # ``gpu=False`` because this entry point is always CPU dask.
     _validate_dispatch_kwargs(
         source=source,
@@ -213,7 +203,7 @@ def read_geotiff_dask(source: str, *,
     # ValueError, or empty chunk grids) with no indication that ``chunks``
     # was the problem. Shared with ``read_geotiff_gpu`` / ``read_vrt`` via
     # ``_validate_chunks_arg`` so all three entry points emit the same
-    # error format (#1752 / #1776). ``allow_none=False`` (the default)
+    # error format. ``allow_none=False`` (the default)
     # rejects ``chunks=None`` with the same ValueError; this entry point
     # requires a concrete chunk size since the chunk-unpacking math below
     # would otherwise fail with a confusing TypeError.
@@ -243,17 +233,16 @@ def read_geotiff_dask(source: str, *,
             **vrt_kwargs,
         )
 
-    # P5: HTTP COG sources used to fire one IFD/header GET per chunk
+    # HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
     # The same prefetch path also covers fsspec URIs (s3://, gs://, ...);
     # ``_parse_cog_http_meta`` only needs a ``read_range``-having source,
     # and ``_CloudSource`` satisfies that contract. Going through it
     # bounds metadata reads to ``MAX_HTTP_HEADER_BYTES`` instead of
-    # fetching the whole remote object up front. See PR #1755 review.
+    # fetching the whole remote object up front.
     # Local imports: backend modules avoid eager-importing the reader /
     # sources layer at module load so the package can be imported without
     # urllib3 in environments that only consume the dask path.
-    # Issues #2323 / #2332.
     from .._reader import _is_fsspec_uri
     from .._sources import _is_http_source
     is_http = _is_http_source(source)
@@ -263,7 +252,7 @@ def read_geotiff_dask(source: str, *,
     # ``effective_source`` is the path each per-chunk task should
     # construct its ``_HTTPSource`` / ``_CloudSource`` against. It
     # matches ``source`` unless the requested ``overview_level``
-    # resolves into an external ``.tif.ovr`` sidecar (issue #2239), in
+    # resolves into an external ``.tif.ovr`` sidecar, in
     # which case it is swapped to the sidecar URL so the per-chunk
     # range GETs land on the right object.
     effective_source = source
@@ -275,7 +264,7 @@ def read_geotiff_dask(source: str, *,
             # ``_HTTPSource`` is resolved through ``_reader`` so existing
             # tests that ``monkeypatch.setattr(_reader, '_HTTPSource', ...)``
             # keep intercepting the construction after the COG-HTTP
-            # helpers moved to ``_cog_http`` (PR-J / #2258).
+            # helpers moved to ``_cog_http``.
             from .._reader import _HTTPSource
             _src = _HTTPSource(source)
         else:
@@ -285,16 +274,15 @@ def read_geotiff_dask(source: str, *,
         try:
             # Forward ``allow_rotated`` so the HTTP dask path honours the
             # rotated opt-in the same way as the eager HTTP path and the
-            # local chunked path (#2130). Without this, rotated remote
-            # GeoTIFFs raised ``NotImplementedError`` from
-            # ``_parse_cog_http_meta`` (now ``RotatedTransformError``
-            # after #2267) even when the caller had passed
+            # local chunked path. Without this, rotated remote
+            # GeoTIFFs raised ``RotatedTransformError`` from
+            # ``_parse_cog_http_meta`` even when the caller had passed
             # ``allow_rotated=True``.
             #
             # ``source_path=source`` and ``return_sidecar=True`` opt the
             # parser into external ``.tif.ovr`` discovery so chunked
             # remote reads honour the same overview pyramid the eager
-            # reader resolves (issue #2239). When the selected overview
+            # reader resolves. When the selected overview
             # lives in the sidecar, ``route_path`` points at the
             # sidecar URL and we swap ``effective_source`` so every
             # per-chunk task reads from the sidecar instead of the base
@@ -325,7 +313,7 @@ def read_geotiff_dask(source: str, *,
         # so ``byte_order`` matches the file the per-chunk range GETs
         # land on). Pass that through to the per-chunk decode step so a
         # mixed-endian base / ``.ovr`` pair decodes against the right
-        # endianness. Issue #2314.
+        # endianness.
         http_meta = (http_header, http_ifd)
         if http_ifd.orientation != 1:
             raise ValueError(
@@ -371,7 +359,7 @@ def read_geotiff_dask(source: str, *,
     # Reject experimental / internal-only codecs at graph build, before
     # any chunk task is scheduled. The compression tag is stashed on
     # ``geo_info`` by ``_read_geo_info`` (local / fsspec) and by the
-    # HTTP / fsspec branch above. PR 4 of epic #2340.
+    # HTTP / fsspec branch above.
     #
     # ``getattr(..., None)`` is intentional: a synthesised geo_info
     # (non-TIFF source) carries no compression tag, so the gate must
@@ -389,13 +377,13 @@ def read_geotiff_dask(source: str, *,
             entry_point="read_geotiff_dask",
         )
 
-    # PR-C #2226: centralize the nodata lifecycle in one value object.
+    # Centralize the nodata lifecycle in one value object.
     # ``raw_sentinel`` carries the pre-inversion sentinel that
     # ``attrs['nodata']`` must preserve; ``effective_sentinel`` is what
     # the per-chunk reader's mask compares against (post-MinIsWhite).
     # ``sentinel_fits_buffer`` collapses the previous finite/integer/
     # in-range gate so the integer auto-promotion below skips out-of-
-    # range / fractional / non-finite sentinels (#1774, #1564, #1616).
+    # range / fractional / non-finite sentinels.
     #
     # The ``_ifd_photometric`` and ``_ifd_samples_per_pixel`` attrs are
     # stashed in lockstep by ``_read_geo_info`` (``__init__.py``) and the
@@ -417,7 +405,7 @@ def read_geotiff_dask(source: str, *,
 
     # Nodata masking promotes integer arrays to float64 (for NaN).
     # The lifecycle's ``sentinel_fits_buffer`` already encapsulates the
-    # finite / integer / in-range gates (#1774, #1564, #1616), so the
+    # finite / integer / in-range gates, so the
     # promotion fires iff the helper says the sentinel is comparable.
     effective_dtype = file_dtype
     if (mask_nodata
@@ -446,7 +434,7 @@ def read_geotiff_dask(source: str, *,
                 f"({full_h}x{full_w}) or has non-positive size.")
         # Mirror the eager-path windowed coord computation in open_geotiff,
         # including the ``has_georef=False`` shortcut to integer pixel
-        # coords for non-georef files (#1710).
+        # coords for non-georef files.
         coords = _coords_from_geo_info(
             geo_info, win_r1 - win_r0, win_c1 - win_c0, window=window,
         )
@@ -460,7 +448,7 @@ def read_geotiff_dask(source: str, *,
         # is True in Python so ``True < n_bands`` evaluates without raising
         # and silently reads band 1. ``np.bool_`` is not a subclass of
         # ``bool`` so it needs its own check to match the VRT path's
-        # rejection. See #1786.
+        # rejection.
         if isinstance(band, (bool, np.bool_)):
             raise ValueError(
                 f"band must be a non-negative int, got {band!r}")
@@ -468,7 +456,7 @@ def read_geotiff_dask(source: str, *,
         # slip past the bool guard. ``band=0.0`` passes the range check
         # below and either silently reads band 0 (single-band) or fails
         # with a raw numpy ``IndexError`` (multi-band). The VRT paths
-        # already enforce this; mirror them here. See #1910.
+        # already enforce this; mirror them here.
         if not isinstance(band, (int, np.integer)):
             raise TypeError(
                 f"band must be a non-negative int, got {band!r}")
@@ -480,38 +468,25 @@ def read_geotiff_dask(source: str, *,
             raise IndexError(
                 f"band={band} out of range for {n_bands}-band file.")
 
-    # Up-front pixel-count guard against the windowed extent. Chunk
-    # tasks re-check via read_to_array's own ``max_pixels`` (which we
-    # forward through ``_delayed_read_window``), but catching an
-    # oversized request before any task is scheduled saves the caller
-    # from a misleading "tile size exceeds max_pixels" error in a
-    # chunk that happens to align with the file's tile grid.
-    # ``max_pixels=None`` substitutes the module default to match the
-    # eager (``read_to_array``) and VRT chunked paths. Without the
-    # substitution the guard would skip entirely on ``None`` and a
-    # caller could build a lazy graph over a region far larger than the
-    # documented safety cap. See issue #1838.
-    from .._reader import MAX_PIXELS_DEFAULT as _MAX_PIXELS_DEFAULT
-    effective_max_pixels = (max_pixels if max_pixels is not None
-                            else _MAX_PIXELS_DEFAULT)
-    eff_bands = (1 if band is not None
-                 else (n_bands if n_bands > 0 else 1))
-    if full_h * full_w * eff_bands > effective_max_pixels:
-        raise ValueError(
-            f"Requested region {full_h}x{full_w}x{eff_bands} "
-            f"exceeds max_pixels={effective_max_pixels:,}.")
+    # ``max_pixels`` bounds each chunk's materialised buffer, not the
+    # full windowed region. The per-chunk cap is enforced inside
+    # ``_delayed_read_window`` -> ``_read_to_array`` -> ``_check_dimensions``
+    # against the chunk's output window. The eager (no-``chunks``) path
+    # still applies the cap to the full image, so callers who want the
+    # old semantics can drop ``chunks=`` to get a single-shot decode
+    # under the same limit.
 
     if name is None:
         import os
         name = os.path.splitext(os.path.basename(source))[0]
 
-    # Wave 2 of #2162: share the validate-then-populate-then-stamp
+    # Share the validate-then-populate-then-stamp
     # block with the dask+GPU backend via ``_finalize_lazy_read_attrs``.
     #
     # ``graph_dtype`` is the resolved dask graph dtype so
     # ``masked_nodata`` reflects whether the per-chunk mask actually
     # ran (masking on an int source auto-promotes to float64; an
-    # un-promoted int graph means masking didn't run -- #2092).
+    # un-promoted int graph means masking didn't run).
     # ``caller_dtype`` is the caller's ``dtype=`` kwarg verbatim so
     # ``nodata_dtype_cast`` records caller intent rather than the
     # masking-induced auto-promotion.
@@ -519,7 +494,7 @@ def read_geotiff_dask(source: str, *,
     # ``nodata_attr`` (not the MinIsWhite-inverted ``nodata``) is what
     # ``attrs['nodata']`` must carry; the helper threads it through
     # ``_set_nodata_attrs``. ``nodata_pixels_present`` stays unset on
-    # this path so the lazy contract from #2135 holds (a strict
+    # this path so the lazy contract holds (a strict
     # per-chunk reduction would force eager compute).
     attrs = _finalize_lazy_read_attrs(
         geo_info=geo_info,
@@ -594,18 +569,16 @@ def read_geotiff_dask(source: str, *,
             # chunk happened to contain a sentinel pixel. Dask
             # concatenation then preallocates from the first chunk's
             # actual dtype (uint16), silently casting later float64
-            # chunks back to int and converting their NaNs to 0. See
-            # issue #1597.
+            # chunks back to int and converting their NaNs to 0.
             # Per-chunk nodata mask is skipped when ``mask_nodata=False``;
             # passing ``nodata=None`` short-circuits both the float-NaN and
             # int-promotion branches in ``_delayed_read_window``. The
             # original sentinel is still carried in ``attrs['nodata']`` via
-            # ``nodata_attr`` so write round-trips preserve the tag. See
-            # issue #2052.
+            # ``nodata_attr`` so write round-trips preserve the tag.
             chunk_nodata = nodata if mask_nodata else None
             # ``effective_source`` swaps in the sidecar URL when the
-            # requested overview lives in an external ``.tif.ovr``
-            # (issue #2239). For local files and non-sidecar remote
+            # requested overview lives in an external ``.tif.ovr``.
+            # For local files and non-sidecar remote
             # reads it is identical to ``source``. The per-chunk task
             # uses ``effective_source`` for byte fetches; combined
             # with ``http_meta_key`` (which already carries the
@@ -682,10 +655,10 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             from .._layout import MAX_PIXELS_DEFAULT
             header, ifd = http_meta
             if _is_http_src:
-                # See PR-J / #2258: keep the per-chunk ``_HTTPSource`` /
-                # ``_CloudSource`` construction routed through ``_reader``
-                # so monkeypatches against ``_reader._HTTPSource`` (used
-                # by the dask-HTTP coalesce tests) still take effect.
+                # Keep the per-chunk ``_HTTPSource`` / ``_CloudSource``
+                # construction routed through ``_reader`` so monkeypatches
+                # against ``_reader._HTTPSource`` (used by the dask-HTTP
+                # coalesce tests) still take effect.
                 from .._reader import _HTTPSource
                 src = _HTTPSource(source)
             else:
@@ -733,8 +706,8 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                 # Non-finite sentinels ("NaN" / "Inf" GDAL_NODATA strings)
                 # also cannot match an integer pixel and would raise
                 # ValueError on ``int(nodata)``; the ``np.isfinite`` gate
-                # mirrors ``_resolve_masked_fill`` in ``_reader.py``
-                # (#1774). Fractional sentinels (e.g. ``"3.5"`` on a
+                # mirrors ``_resolve_masked_fill`` in ``_reader.py``.
+                # Fractional sentinels (e.g. ``"3.5"`` on a
                 # ``uint16`` file) also cannot match an integer pixel and
                 # ``int(3.5)`` would truncate to 3 and silently mask
                 # pixel value 3; the ``float(nodata).is_integer()`` gate
@@ -753,7 +726,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             # land in the same dtype the array already has. The int->
             # float64 promotion above (sentinel-hit branch) keeps the
             # contract that every chunk lands in the dask-declared
-            # dtype; this guard only elides no-op casts. See #1624.
+            # dtype; this guard only elides no-op casts.
             arr = arr.astype(target_dtype)
         return arr
     return _read(http_meta_key)

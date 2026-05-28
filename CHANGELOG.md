@@ -4,6 +4,20 @@
 
 ### Unreleased
 
+#### Fixed
+
+- `polygonize(return_type='geopandas')` now auto-detects the raster's
+  affine transform from `attrs['transform']` (xrspatial.geotiff
+  convention) or `rio.transform()` (rioxarray) when the caller did
+  not pass an explicit `transform=` argument. Previously the function
+  auto-detected `attrs['crs']` and stamped it on the `GeoDataFrame`
+  while leaving the geometries in pixel space, so the CRS attribute
+  claimed projected space but the coordinates did not match. Callers
+  who relied on the pre-fix behaviour and expected pixel-space
+  geometries from a rasterio-loaded raster should pass `transform=
+  np.array([1, 0, 0, 0, 1, 0])` explicitly, or strip the transform
+  attr before calling polygonize. (#2536)
+
 
 ### Version 0.10.0 - 2026-05-27
 

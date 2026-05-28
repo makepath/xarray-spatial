@@ -479,11 +479,49 @@ def test_read_geotiff_dask_band_via_dispatcher(small_multiband_tiff_path):
     np.testing.assert_array_equal(da.values, arr[:, :, 2])
 
 
-def test_read_geotiff_dask_max_pixels_rejects_oversized(small_tiff_path):
-    """``max_pixels=`` rejects the windowed region up front."""
-    path, _ = small_tiff_path
-    with pytest.raises(ValueError, match="exceeds max_pixels"):
-        read_geotiff_dask(path, chunks=2, max_pixels=10)
+def test_read_geotiff_dask_max_pixels_bounds_chunk_not_full_image(
+        small_tiff_path):
+    """``max_pixels`` bounds each chunk, not the full lazy region (#2501).
+
+    The 4x6 fixture is 24 pixels in total. With ``chunks=2`` each chunk
+    is at most 2x2 = 4 pixels, so ``max_pixels=10`` permits the read
+    even though the full image exceeds the cap. With ``chunks=4`` a
+    chunk reaches 4x4 = 16 pixels, which trips the per-chunk guard at
+    ``.compute()`` time.
+    """
+    path, arr = small_tiff_path
+
+    # Per-chunk cap is satisfied; full image is not. Should succeed.
+    da = read_geotiff_dask(path, chunks=2, max_pixels=10)
+    np.testing.assert_array_equal(da.values, arr)
+
+    # Per-chunk cap is exceeded. The graph builds, but the chunk task
+    # raises the safety-limit error on compute.
+    da = read_geotiff_dask(path, chunks=4, max_pixels=10)
+    with pytest.raises(ValueError, match="exceed the safety limit"):
+        da.compute()
+
+
+def test_read_geotiff_dask_max_pixels_chunk_includes_band_count(
+        small_multiband_tiff_path):
+    """Multi-band: per-chunk cap is ``chunk_h * chunk_w * samples`` (#2501).
+
+    The 4x6x3 fixture is 72 pixels. With ``chunks=2`` each chunk
+    materialises 2x2x3 = 12 pixels, fitting under ``max_pixels=20``
+    even though the full image (72) does not. With ``chunks=4`` the
+    largest chunk is 4x4x3 = 48 pixels and the per-chunk decode trips
+    the cap on compute.
+    """
+    path, arr = small_multiband_tiff_path
+
+    # Per-chunk cap satisfied (12 px <= 20) but full image (72) is not.
+    da = read_geotiff_dask(path, chunks=2, max_pixels=20)
+    np.testing.assert_array_equal(da.values, arr)
+
+    # Per-chunk cap exceeded (48 px > 20). Graph builds, compute raises.
+    da = read_geotiff_dask(path, chunks=4, max_pixels=20)
+    with pytest.raises(ValueError, match="exceed the safety limit"):
+        da.compute()
 
 
 def test_read_geotiff_dask_window_band_combined(small_multiband_tiff_path):

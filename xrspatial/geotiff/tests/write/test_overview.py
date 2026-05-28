@@ -4,8 +4,6 @@ Covers the overview shape-ceiling contract, the mean / min / max /
 median / mode resampling matrix with int and float nodata, the cubic
 resampling cases for both float and integer dtypes, and the
 block-reduce sentinel-masking gate for int sentinels.
-
-Tests-only restructure for epic #2390.
 """
 
 from __future__ import annotations
@@ -357,7 +355,7 @@ def _arr_with_full_nan_block():
 
 
 def test_cpu_cog_overview_mean_ignores_sentinel(tmp_path):
-    """CPU writer: overview 'mean' must skip sentinel pixels (issue #1613)."""
+    """CPU writer: overview 'mean' must skip sentinel pixels."""
     from xrspatial.geotiff import open_geotiff, to_geotiff
 
     arr = _arr_with_partial_nan()
@@ -385,8 +383,8 @@ def test_cpu_cog_overview_mean_partial_block(tmp_path):
 
     ov = open_geotiff(p, overview_level=1)
     # Top-left 2x2 was all-NaN -> reduces to NaN -> rewritten to -9999
-    #   on disk, then read back as NaN once the overview-nodata
-    #   inheritance fix (#1739) restores attrs['nodata'] and re-masks
+    #   on disk, then read back as NaN once overview-nodata
+    #   inheritance restores attrs['nodata'] and re-masks
     #   the sentinel.
     # Top-right 2x2 [3,4,7,8] -> mean 5.5
     # Bottom-left [10,20,10,20] -> 15
@@ -509,7 +507,7 @@ def test_block_reduce_2d_all_nan_block_does_not_warn():
 
 @_gpu_only
 def test_gpu_cog_overview_mean_ignores_sentinel(tmp_path):
-    """GPU writer: overview 'mean' must skip sentinel pixels (issue #1613)."""
+    """GPU writer: overview 'mean' must skip sentinel pixels."""
     import cupy
 
     from xrspatial.geotiff import open_geotiff, to_geotiff
@@ -762,7 +760,7 @@ def test_block_reduce_cubic_nan_sentinel_skips_mask():
 
 def test_gpu_overview_methods_includes_cubic():
     """The GPU constant must list ``cubic`` so callers do not pre-validate
-    against the smaller pre-#1623 set."""
+    against the older smaller set."""
     from xrspatial.geotiff._gpu_decode import GPU_OVERVIEW_METHODS
     assert 'cubic' in GPU_OVERVIEW_METHODS
 
@@ -935,7 +933,7 @@ def test_cubic_int_all_sentinel_block_becomes_sentinel():
 
 
 def test_cubic_float_branch_still_works():
-    """Float regression guard: the existing #1623 path must still work."""
+    """Float regression guard: the existing cubic path must still work."""
     arr = np.full((64, 64), 100.0, dtype=np.float32)
     arr[:16, :16] = -9999.0
     result = _block_reduce_2d(arr, method='cubic', nodata=-9999.0)
@@ -1326,7 +1324,7 @@ def test_gpu_block_reduce_int_sentinel_masked(method, dtype, sentinel):
 def test_gpu_cpu_int_overview_byte_match(method):
     """CPU and GPU integer overview reductions agree byte-for-byte.
 
-    Same parity contract as #1623 (cubic). Without the GPU fix, the GPU
+    Same parity contract as the cubic case. Without the GPU fix, the GPU
     pyramid would carry poisoned values while the CPU pyramid carried
     sentinels -- two backends disagreeing on identical input.
     """
@@ -1344,7 +1342,7 @@ def test_gpu_cpu_int_overview_byte_match(method):
 
 
 # =========================================================================
-# Section: COG overview tile-block ordering invariant (issue #2308)
+# Section: COG overview tile-block ordering invariant
 # =========================================================================
 #
 # The COG spec requires the on-disk pixel-data layout to run from the
@@ -1402,7 +1400,7 @@ def test_cog_overview_block_order_invariant_2308(tmp_path, bands):
     The IFD walk order is ``[main, ov_factor_2, ov_factor_4]`` (full
     resolution first). The on-disk pixel-block order must be the
     reverse: factor-4 overview blocks first, then factor-2 overview
-    blocks, with the main-resolution blocks last (issue #2308).
+    blocks, with the main-resolution blocks last.
     """
     da = _make_block_order_da((256, 256), bands=bands)
     suffix = "rgb" if bands else "mono"
@@ -1470,7 +1468,7 @@ def test_cog_overview_block_order_rio_cogeo_2308(tmp_path, bands):
     valid, errors, _warnings = cog_validate(path, strict=False)
     assert valid, f"rio_cogeo cog_validate failed: {errors}"
     # Defensive secondary assertion: the two block-order messages
-    # from #2308 must not reappear even if some future writer
+    # must not reappear even if some future writer
     # change keeps the validator happy on the headline check.
     joined = " ".join(errors).lower()
     assert "offset of the first block" not in joined, (
@@ -1478,7 +1476,7 @@ def test_cog_overview_block_order_rio_cogeo_2308(tmp_path, bands):
 
 
 # =========================================================================
-# Section: overview_levels honours decimation factors (issue #1766)
+# Section: overview_levels honours decimation factors
 # =========================================================================
 #
 # Before the fix, ``to_geotiff`` and the underlying writer ignored the
@@ -1521,7 +1519,7 @@ def test_overview_levels_2_4_8_produces_three_correctly_sized_overviews(tmp_path
 def test_overview_levels_2_4_regression_for_buggy_2_8_case(tmp_path):
     """Regression: ``[2, 4]`` now matches the explicit factors.
 
-    Before the #1766 fix the writer ignored the values and only the
+    Before the fix the writer ignored the values and only the
     list length determined how many halvings happened. ``[2, 4]``
     happened to produce the right shapes by accident (2 halvings is
     /2 and /4), but ``[2, 8]`` did not (2 halvings is /2 and /4, not
@@ -1795,7 +1793,7 @@ def test_validate_returns_clean_list_of_ints():
 
 
 # =========================================================================
-# Section: overview nodata / metadata inheritance (issue #1739)
+# Section: overview nodata / metadata inheritance
 # =========================================================================
 #
 # Overview IFDs in COGs typically carry no GDAL_NODATA tag (and no
@@ -2079,11 +2077,11 @@ def test_overview_with_own_nodata_keeps_own_value(tmp_path):
 
 
 # =========================================================================
-# Section: PixelIsPoint overview origin shift (issue #1642)
+# Section: PixelIsPoint overview origin shift
 # =========================================================================
 #
-# PR #1641 (issue #1640) inherits level-0 georef on overview reads but
-# keeps the level-0 origin unchanged. That is correct for the default
+# Overview reads inherit level-0 georef but keep the level-0 origin
+# unchanged. That is correct for the default
 # ``PixelIsArea`` raster_type. It is wrong for ``PixelIsPoint`` (GeoKey
 # 1025 = 2), where the origin is the center of pixel (0, 0): an overview
 # pixel that spans the first ``scale_x`` columns of level 0 has its
@@ -2328,7 +2326,7 @@ def test_helper_point_overview_with_own_geokeys_not_shifted(monkeypatch):
 
 
 def test_area_overview_origin_unchanged_regression(tmp_path):
-    """PixelIsArea overview origin must still equal level-0 origin (#1640)."""
+    """PixelIsArea overview origin must still equal level-0 origin."""
     path = str(tmp_path / "pa_1642_regression.tif")
     _make_pa_cog(path)
     base = open_geotiff(path, overview_level=0)
@@ -2343,7 +2341,7 @@ def test_area_overview_origin_unchanged_regression(tmp_path):
 
 
 # =========================================================================
-# Section: min / max / median resampling parameter coverage (2026-05-11)
+# Section: min / max / median resampling parameter coverage
 # =========================================================================
 #
 # The CPU writer (``_block_reduce_2d``) and the GPU writer
@@ -2441,8 +2439,8 @@ def test_to_geotiff_cog_overview_resampling_cpu(tmp_path, method, expected):
 @pytest.mark.parametrize("method", ['min', 'max', 'median'])
 def test_to_geotiff_cog_overview_resampling_cpu_nodata(tmp_path, method):
     """CPU writer: nan-aware reductions skip the sentinel when ``nodata``
-    is set (the regression that motivated issue #1613, here covering the
-    min/max/median branches that #1613 did not test)."""
+    is set (here covering the min/max/median branches not covered by the
+    'mean' case)."""
     arr = _arr_4x4_with_nan()
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / f'cog_{method}_nodata.tif')
@@ -2584,7 +2582,7 @@ import time  # noqa: E402
 
 
 def _mode_resample_reference(arr2d):
-    """Per-pixel mode reference using GDAL ceil semantics (issue #2105).
+    """Per-pixel mode reference using GDAL ceil semantics.
 
     Walks each ceil-shaped output block over the source array, takes the
     intersection of the 2x2 block window with the actual source extent,

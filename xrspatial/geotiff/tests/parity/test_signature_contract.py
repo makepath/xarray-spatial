@@ -5,18 +5,18 @@ Sibling to ``parity/test_backend_matrix.py``. These tests pin the
 the reader quartet stay consistent with each other and with the docs.
 Three sections, each a former top-level file:
 
-Section 1 -- Writer signature / docstring parity (#1631)
+Section 1 -- Writer signature / docstring parity
     ``write_vrt`` exposes its documented kwargs through an explicit
     signature (no ``**kwargs`` catch-all), ``write_geotiff_gpu`` lists
     ``'cubic'`` in its ``overview_resampling`` docstring, and its
     ``data`` parameter carries the same type hint as ``to_geotiff``.
 
-Section 2 -- Read entry-point docstring/param parity (#2274)
+Section 2 -- Read entry-point docstring/param parity
     Every signature kwarg on ``open_geotiff`` / ``read_geotiff_dask`` /
     ``read_geotiff_gpu`` / ``read_vrt`` has a matching numpy-style
     Parameters entry, and every Parameters entry maps to a real kwarg.
 
-Section 3 -- Release-contract tier parity (#2389)
+Section 3 -- Release-contract tier parity
     ``docs/source/reference/geotiff_release_contract.md`` promises its
     tier strings match ``SUPPORTED_FEATURES`` at runtime. This section
     parses the contract table and asserts every key/tier pair agrees.
@@ -41,10 +41,10 @@ from xrspatial.geotiff import (SUPPORTED_FEATURES, open_geotiff, read_geotiff_da
 from .._helpers.markers import requires_gpu
 
 # ===========================================================================
-# Section 1 -- Writer signature / docstring parity (#1631)
+# Section 1 -- Writer signature / docstring parity
 # ===========================================================================
 #
-# Three drifts flagged by the api-consistency sweep on 2026-05-11:
+# Three drifts this section guards against:
 # ``write_vrt`` swallowed every kwarg into ``**kwargs`` so the documented
 # ``relative`` / ``crs`` / ``nodata`` were invisible to ``inspect.signature``;
 # ``write_geotiff_gpu``'s ``overview_resampling`` docstring omitted
@@ -55,17 +55,17 @@ from .._helpers.markers import requires_gpu
 def test_write_vrt_signature_exposes_documented_kwargs():
     """``inspect.signature(write_vrt)`` reports the four accepted kwargs.
 
-    Prior to #1631 the public wrapper used ``**kwargs``, so
-    ``inspect.signature`` only saw ``vrt_path`` and ``source_files``.
-    Issue #1715 added ``crs`` for parity with ``to_geotiff`` /
-    ``write_geotiff_gpu`` while keeping the historic ``crs_wkt`` as a
-    deprecated alias (sentinel default so the deprecation shim can
-    tell "user passed nothing" from "user passed crs_wkt=None").
+    When the public wrapper used ``**kwargs``, ``inspect.signature``
+    only saw ``vrt_path`` and ``source_files``. ``crs`` was added for
+    parity with ``to_geotiff`` / ``write_geotiff_gpu`` while keeping the
+    historic ``crs_wkt`` as a deprecated alias (sentinel default so the
+    deprecation shim can tell "user passed nothing" from "user passed
+    crs_wkt=None").
     """
     sig = inspect.signature(write_vrt)
     params = sig.parameters
     assert 'relative' in params
-    assert 'crs' in params  # added in #1715
+    assert 'crs' in params  # canonical kwarg
     assert 'crs_wkt' in params  # deprecated alias
     assert 'nodata' in params
     assert params['relative'].default is True
@@ -105,9 +105,8 @@ def test_write_vrt_unknown_kwarg_rejected_at_public_level(tmp_path):
 def test_write_vrt_accepts_documented_kwargs(tmp_path):
     """Each documented kwarg round-trips through the explicit signature.
 
-    Uses the new ``crs=None`` kwarg form (issue #1715). The deprecated
-    ``crs_wkt`` alias is exercised separately in
-    ``test_write_vrt_crs_1715.py``.
+    Uses the canonical ``crs=None`` kwarg form. The deprecated
+    ``crs_wkt`` alias is exercised separately.
     """
     arr = np.zeros((8, 8), dtype=np.float32)
     da = xr.DataArray(
@@ -188,7 +187,7 @@ def test_write_geotiff_gpu_cubic_overview_round_trip(tmp_path):
 
 
 # ===========================================================================
-# Section 2 -- Read entry-point docstring / param parity (#2274)
+# Section 2 -- Read entry-point docstring / param parity
 # ===========================================================================
 #
 # The four read entry points accept ``allow_rotated`` and
@@ -256,7 +255,7 @@ def test_read_entry_point_docstring_does_not_invent_params(fn):
 
 @pytest.mark.parametrize("fn", READ_ENTRY_POINTS, ids=lambda f: f.__name__)
 def test_allow_rotated_documented(fn):
-    """``allow_rotated`` was the load-bearing #2274 gap on the backends.
+    """``allow_rotated`` was the load-bearing documentation gap on the backends.
 
     Pin it explicitly so a future commit that strips the Parameters
     entry while keeping the signature kwarg fails loudly.
@@ -273,7 +272,7 @@ def test_allow_rotated_documented(fn):
 
 @pytest.mark.parametrize("fn", READ_ENTRY_POINTS, ids=lambda f: f.__name__)
 def test_allow_unparseable_crs_documented(fn):
-    """``allow_unparseable_crs`` was the other shared #2274 gap.
+    """``allow_unparseable_crs`` was the other shared documentation gap.
 
     ``open_geotiff`` had the kwarg only in the Tier prose paragraph;
     the three backends did not mention it at all.
@@ -289,13 +288,13 @@ def test_allow_unparseable_crs_documented(fn):
 
 
 # ===========================================================================
-# Section 3 -- Release-contract tier parity (#2389)
+# Section 3 -- Release-contract tier parity
 # ===========================================================================
 #
 # ``docs/source/reference/geotiff_release_contract.md`` lists every public
 # GeoTIFF feature with its tier and promises the tier strings match
 # ``SUPPORTED_FEATURES`` at runtime. Nothing in CI checked that claim before
-# this gate, so the contract drifted twice in two releases (#2381, #2389).
+# this gate, so the contract drifted across releases.
 
 _HERE = Path(__file__).resolve()
 # tests/parity/test_signature_contract.py -> parents: parity, tests,
@@ -368,7 +367,8 @@ def test_contract_keys_are_real_supported_features() -> None:
 
 def test_contract_tiers_match_supported_features() -> None:
     """Every row's tier column matches ``SUPPORTED_FEATURES[key]``.
-    This is the gate that would have caught the #2381 / #2389 drift.
+    This is the gate that catches tier drift between the contract page
+    and the runtime feature table.
     """
     mismatches: list[tuple[str, str, str, str]] = []
     for where, (key, tier) in _contract_rows():

@@ -1,6 +1,6 @@
-"""Smoke test for Phase 2 PR 4 dtype fixtures (issue #1930).
+"""Smoke test for the dtype fixtures.
 
-This test pins the eight dtype fixtures added in Phase 2 PR 4:
+Pins the eight dtype fixtures:
 ``dtype_int8``, ``dtype_uint8``, ``dtype_int16``, ``dtype_uint16``,
 ``dtype_int32``, ``dtype_uint32``, ``dtype_float32``, ``dtype_float64``.
 
@@ -11,12 +11,12 @@ It checks three things per fixture:
 * ``rasterio.open`` reports the dtype the manifest declared;
 * the oracle (`compare_to_oracle`) accepts a candidate DataArray built
   straight from the rasterio read. This is a trivial identity check --
-  no backend wiring lives here (that is Phase 3) -- but it confirms the
-  oracle understands every dtype the corpus now ships.
+  no backend wiring lives here -- but it confirms the oracle understands
+  every dtype the corpus now ships.
 
 For the integer dtypes the test also verifies that the four corner
 pixels carry the dtype's min / max sentinels, since that is the whole
-point of the ``noise_with_corners`` pixel pattern this PR adds.
+point of the ``noise_with_corners`` pixel pattern.
 """
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def test_dtype_fixture_exists_and_dtype_matches(
         f"missing fixture {path}; rerun "
         "`python -m xrspatial.geotiff.tests.golden_corpus.generate`"
     )
-    # 4 kB hard cap per PR 4 plan; the corpus must stay tiny in git.
+    # 4 kB hard cap; the corpus must stay tiny in git.
     assert path.stat().st_size < 4 * 1024, (
         f"{path.name} is {path.stat().st_size} bytes; "
         "dtype fixtures must stay under 4 kB"
@@ -120,9 +120,9 @@ def test_oracle_accepts_dtype_fixture(
 ) -> None:
     """The oracle accepts a rasterio-read DataArray for every dtype.
 
-    This is the dtype-level smoke check the plan asks for: it does not
-    test any xrspatial backend (Phase 3) -- it confirms the oracle
-    understands every dtype the corpus now ships.
+    This is a dtype-level smoke check: it does not test any xrspatial
+    backend -- it confirms the oracle understands every dtype the corpus
+    now ships.
     """
     path = FIXTURES_DIR / f"{fixture_id}.tif"
     with rasterio.open(path) as src:
@@ -140,9 +140,9 @@ def test_int_dtype_fixture_has_corner_sentinels(
 ) -> None:
     """Integer fixtures plant min/max sentinels in the four corner pixels.
 
-    Mirrors the ``noise_with_corners`` contract added to ``generate.py``
-    in this PR. If somebody ever changes the corner-stamping logic this
-    test will tell us.
+    Mirrors the ``noise_with_corners`` contract in ``generate.py``. If
+    somebody ever changes the corner-stamping logic this test will tell
+    us.
     """
     info = np.iinfo(np.dtype(expected_dtype))
     path = FIXTURES_DIR / f"{fixture_id}.tif"

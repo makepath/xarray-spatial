@@ -42,7 +42,7 @@ class TestWriteInvalidInputs:
 
     def test_unsupported_compression(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
-        # ``to_geotiff`` validates ``compression`` up-front (#1488). The
+        # ``to_geotiff`` validates ``compression`` up-front. The
         # earlier "Unsupported compression" message comes from the deeper
         # ``_compression_tag`` and is now only seen when callers reach
         # the writer directly. Both phrasings are acceptable.
@@ -398,8 +398,8 @@ class TestDtypeEdgeCases:
         The writer auto-promotes float16 inputs to float32 before
         encoding, and the reader matches that contract: a file with
         bps=16 + SampleFormat=3 (an externally produced half-precision
-        TIFF) returns float32 to the user. See issue #1941 for the
-        original read-side asymmetry.
+        TIFF) returns float32 to the user. This guards against a
+        read-side asymmetry where only the writer promoted half-precision.
         """
         assert tiff_dtype_to_numpy(16, 3) == np.float32
 
@@ -513,7 +513,8 @@ class TestPublicAPIEdgeCases:
         """PixelIsPoint raster_type preserves origin correctly."""
         # Use truly uniform coords; hand-typed fractional decimals had
         # ~3.6e-3 relative deviation between steps and silently produced
-        # a wrong transform before issue #1720 enforced regularity.
+        # a wrong transform before the writer enforced coordinate
+        # regularity.
         y = np.linspace(41.0, 40.999167, 4)
         x = np.linspace(-75.0, -74.999167, 4)
         da = xr.DataArray(

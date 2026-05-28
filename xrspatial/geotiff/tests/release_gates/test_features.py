@@ -1,27 +1,24 @@
 """Tests for new GeoTIFF features and the release-contract feature surface.
 
-Consolidated in cluster 16 of long-tail epic #2424 (issue #2440). Folds
-four top-level files into the release-gate suite:
+This module folds the legacy feature and supported-feature tests into
+the release-gate suite:
 
-* Original ``test_features.py`` -- end-to-end coverage for multi-band,
-  integer nodata, packbits, zstd, dask, BigTIFF, palette / sub-byte
-  bit depths, planar config, and other writer/reader features. Most
-  cases are not strict release-gate pins but exercise the same public
-  surface the release-gate contract covers, so they sit alongside the
-  gates rather than at the top level.
-* ``test_supported_features_shape_2348.py`` -- structural invariants
-  on the ``SUPPORTED_FEATURES`` mapping (every entry has a tier label;
-  the tier set is closed; keys follow ``<group>.<name>``; the dict
-  literal has no duplicate keys; epic #2340 wave-1 promotions/demotions
-  stay pinned).
-* ``test_supported_features_tiers_2137.py`` -- tier-aware codec gate
-  on the writer (Tier 3 ``allow_experimental_codecs``; Tier 4
-  ``allow_internal_only_jpeg``); ``to_geotiff`` and
-  ``write_geotiff_gpu`` signature pins.
-* ``test_unsupported_features_2349.py`` -- typed-error refusals at the
-  VRT parser and the eager writer for unsupported feature combinations
-  (warped VRTs, derived raster bands, kernel-filtered sources, mixed
-  per-source nodata, rotated transforms, etc.).
+* End-to-end coverage for multi-band, integer nodata, packbits, zstd,
+  dask, BigTIFF, palette / sub-byte bit depths, planar config, and
+  other writer/reader features. Most cases are not strict release-gate
+  pins but exercise the same public surface the release-gate contract
+  covers, so they sit alongside the gates rather than at the top level.
+* Structural invariants on the ``SUPPORTED_FEATURES`` mapping (every
+  entry has a tier label; the tier set is closed; keys follow
+  ``<group>.<name>``; the dict literal has no duplicate keys; the
+  documented promotions and demotions stay pinned).
+* Tier-aware codec gate on the writer (Tier 3
+  ``allow_experimental_codecs``; Tier 4 ``allow_internal_only_jpeg``);
+  ``to_geotiff`` and ``write_geotiff_gpu`` signature pins.
+* Typed-error refusals at the VRT parser and the eager writer for
+  unsupported feature combinations (warped VRTs, derived raster bands,
+  kernel-filtered sources, mixed per-source nodata, rotated transforms,
+  etc.).
 
 Section banners below mark the file boundaries. The ``SUPPORTED_FEATURES``
 test sections are tagged with their issue numbers in the headings so the
@@ -311,9 +308,9 @@ class TestGeoKeys:
     def test_geographic_crs_attrs(self, tmp_path):
         """Geographic CRS files expose ``crs`` / ``crs_wkt``.
 
-        Contract v2 (issue #2016) dropped the secondary GeoKey-derived
-        attrs (``geog_citation``, ``angular_units``, etc.) from the
-        reader. ``crs`` and ``crs_wkt`` are the canonical surface.
+        The reader does not surface the secondary GeoKey-derived attrs
+        (``geog_citation``, ``angular_units``, etc.); ``crs`` and
+        ``crs_wkt`` are the canonical surface.
         """
         from xrspatial.geotiff._geotags import GeoTransform
 
@@ -350,9 +347,9 @@ class TestGeoKeys:
 
         da = open_geotiff(path)
         assert da.attrs['crs'] == 4269
-        # Contract v2 (issue #2016) removed ``geog_citation``,
-        # ``angular_units``, ``semi_major_axis``, ``inv_flattening``.
-        # Callers derive these via pyproj from ``crs`` / ``crs_wkt``.
+        # The reader does not surface ``geog_citation``, ``angular_units``,
+        # ``semi_major_axis``, or ``inv_flattening``. Callers derive these
+        # via pyproj from ``crs`` / ``crs_wkt``.
         for removed in ('geog_citation', 'angular_units',
                         'semi_major_axis', 'inv_flattening'):
             assert removed not in da.attrs
@@ -366,16 +363,16 @@ class TestGeoKeys:
 
         da = open_geotiff(path)
         assert da.attrs['crs'] == 26918
-        # Contract v2 removed the secondary GeoKey-derived attrs.
+        # The reader does not surface the secondary GeoKey-derived attrs.
         for removed in ('crs_name', 'geog_citation', 'linear_units'):
             assert removed not in da.attrs
 
     def test_no_crs_no_geokey_attrs(self, tmp_path):
         """Files without CRS don't get geokey attrs.
 
-        Contract v2 (issue #2016) removed the secondary GeoKey-derived
-        attrs from the reader entirely, so this invariant now holds
-        unconditionally rather than just for the no-CRS case.
+        The reader does not surface the secondary GeoKey-derived attrs at
+        all, so this invariant holds unconditionally rather than just for
+        the no-CRS case.
         """
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'bare.tif')
@@ -592,10 +589,9 @@ class TestFixesBatch:
     def test_extra_samples_rgba(self, tmp_path):
         """RGBA write includes ExtraSamples tag with the alpha marker.
 
-        Since issue #1769 RGBA is opt-in via ``photometric='rgba'``; the
-        old default of treating any 4-band array as RGB+alpha was
-        wrong for multispectral data and has been replaced with
-        MinIsBlack.
+        RGBA is opt-in via ``photometric='rgba'``; treating any 4-band
+        array as RGB+alpha was wrong for multispectral data, so the
+        default is MinIsBlack.
         """
         from xrspatial.geotiff._header import TAG_EXTRA_SAMPLES, parse_all_ifds, parse_header
         arr = np.ones((4, 4, 4), dtype=np.uint8) * 128
@@ -864,7 +860,7 @@ class TestVRT:
         """VRT XML parser extracts all fields correctly."""
         from xrspatial.geotiff._vrt import parse_vrt
 
-        # Use a path under tmp_path so the issue #1671 containment check
+        # Use a path under tmp_path so the source-containment check
         # accepts the source.  The test exercises field-extraction, not
         # the on-disk readability of the source file.
         src_path = str(tmp_path / 'tile.tif')
@@ -1114,7 +1110,7 @@ class TestCloudStorage:
         fs.rm('/roundtrip.tif')
 
     def test_dask_path_fsspec_uri_1749(self, tmp_path):
-        """read_geotiff_dask supports fsspec URIs (issue #1749).
+        """read_geotiff_dask supports fsspec URIs.
 
         The eager path already routed through _CloudSource via
         _read_to_array. The dask path's _read_geo_info used plain
@@ -1155,8 +1151,7 @@ class TestCloudStorage:
         object just to learn its shape/transform. The fix routes fsspec
         sources through ``_parse_cog_http_meta``, which only uses
         ``read_range``. Guard against regression by failing the test if
-        ``read_all`` runs during ``open_geotiff(..., chunks=...)``. See
-        PR #1755 review.
+        ``read_all`` runs during ``open_geotiff(..., chunks=...)``.
         """
         pytest.importorskip('fsspec')
         import fsspec
@@ -1813,7 +1808,6 @@ class TestBigTIFF:
         assert not header.is_bigtiff
 
     def test_bigtiff_read_write_round_trip(self, tmp_path):
-        """Test that BigTIFF files produced internally can be read back."""
         from xrspatial.geotiff._compression import COMPRESSION_NONE
         from xrspatial.geotiff._dtypes import LONG, SHORT, numpy_to_tiff_dtype
         from xrspatial.geotiff._header import (TAG_BITS_PER_SAMPLE, TAG_COMPRESSION,
@@ -1919,11 +1913,10 @@ class TestBigTIFF:
     def test_bigtiff_eager_tile_offsets_are_long8_1247(self, tmp_path):
         """Eager writer emits LONG8 TileOffsets in BigTIFF output.
 
-        Regression for the Medium Cat 3 finding in the #1247 audit:
-        eager ``_assemble_tiff`` hard-coded LONG for TileOffsets /
-        TileByteCounts regardless of the BigTIFF decision.  Anything
-        past 4 GB would silently truncate (or, with ``struct.pack``,
-        fail at pack time).
+        Regression guard: eager ``_assemble_tiff`` once hard-coded LONG
+        for TileOffsets / TileByteCounts regardless of the BigTIFF
+        decision, so anything past 4 GB would silently truncate (or,
+        with ``struct.pack``, fail at pack time).
 
         Asserting on a small-but-forced BigTIFF is enough: the fix
         is width-of-the-offset-field, not value-range.
@@ -1948,10 +1941,9 @@ class TestBigTIFF:
     def test_bigtiff_streaming_tile_offsets_are_long8_1247(self, tmp_path):
         """Streaming writer emits LONG8 TileOffsets in BigTIFF output.
 
-        Covers the pre-fix code comment at ``_writer.write_streaming``
-        that explicitly acknowledged LONG8 was needed and hadn't been
-        done.  Uses a small dask array so the test doesn't actually
-        need to produce a >4 GB file.
+        ``_writer.write_streaming`` once needed LONG8 offsets but emitted
+        LONG.  Uses a small dask array so the test doesn't actually need
+        to produce a >4 GB file.
         """
         import dask.array as da
         import xarray as xr
@@ -2513,7 +2505,7 @@ class TestPalette:
         assert da.dtype == np.uint8
         np.testing.assert_array_equal(da.values, pixels)
 
-        # Contract v2 (issue #2016) removed ``attrs['cmap']`` and
+        # The reader does not surface ``attrs['cmap']`` or
         # ``attrs['colormap_rgba']``. The canonical ``attrs['colormap']``
         # (raw uint16 RGB triples from TIFF tag 320) carries the
         # palette information; callers reconstruct an RGBA palette or a
@@ -2553,14 +2545,14 @@ class TestPalette:
         da = open_geotiff(path)
         assert da.dtype == np.uint8
         np.testing.assert_array_equal(da.values, pixels)
-        # ``attrs['cmap']`` was removed by contract v2 (issue #2016).
+        # ``attrs['cmap']`` is not surfaced by the reader.
         assert 'cmap' not in da.attrs
         # Raw uint16 RGB triples at tag 320: 3 * 16 entries.
         assert len(da.attrs['colormap']) == 3 * 16
 
     def test_palette_cmap_works_with_plot(self, tmp_path):
-        """The ``.xrs.plot()`` accessor still uses the embedded palette
-        after the contract v2 removal."""
+        """The ``.xrs.plot()`` accessor uses the embedded palette even
+        though ``attrs['cmap']`` is no longer surfaced."""
         import matplotlib
         matplotlib.use('Agg')
         from matplotlib.colors import ListedColormap
@@ -2657,10 +2649,9 @@ class TestPalette:
     def test_non_palette_no_cmap(self, tmp_path):
         """Non-palette TIFFs should not have any colormap attr.
 
-        Contract v2 (issue #2016) removed ``cmap`` and
-        ``colormap_rgba`` entirely; ``colormap`` is the canonical raw
-        uint16 RGB triple list and is still absent on a non-palette
-        TIFF.
+        The reader surfaces neither ``cmap`` nor ``colormap_rgba``;
+        ``colormap`` is the canonical raw uint16 RGB triple list and is
+        absent on a non-palette TIFF.
         """
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'no_palette.tif')
@@ -2822,27 +2813,26 @@ class TestPublicAPI:
         # public API. If any of these gets removed or renamed, that is a
         # breaking change and should go through a deprecation cycle.
         expected = {
-            # Ambiguous-metadata error hierarchy (#1987). Re-exported in
-            # PR 0 so callers can ``except`` the family or a specific
-            # case without importing from the private ``_errors`` module.
+            # Ambiguous-metadata error hierarchy. Re-exported so callers
+            # can ``except`` the family or a specific case without
+            # importing from the private ``_errors`` module.
             'ConflictingCRSError',
             'ConflictingNodataError',
             # Issue #2483: read-side fail-closed on TIFF directories that
             # repeat a tag, replacing the legacy silent last-wins parse.
             'DuplicateIFDTagError',
             'GeoTIFFAmbiguousMetadataError',
-            # Issue #2417: read-side fail-closed on contradictory
-            # ModelType / ProjectedCSType / GeographicType GeoKey
-            # combinations.
+            # Read-side fail-closed on contradictory ModelType /
+            # ProjectedCSType / GeographicType GeoKey combinations.
             'InconsistentGeoKeysError',
             'InvalidCRSCodeError',
-            # Issue #2441 (the #1774 follow-up): read-side fail-closed
-            # on non-finite / fractional GDAL_NODATA against an integer
-            # source dtype, replacing the legacy silent no-op.
+            # Read-side fail-closed on non-finite / fractional
+            # GDAL_NODATA against an integer source dtype, replacing the
+            # legacy silent no-op.
             'InvalidIntegerNodataError',
             'MixedBandMetadataError',
-            # Issue #2418: writer rejects compound EPSG codes that cannot
-            # be represented in a single GeographicType / ProjectedCSType
+            # Writer rejects compound EPSG codes that cannot be
+            # represented in a single GeographicType / ProjectedCSType
             # GeoKey, surfacing the corruption instead of silently writing
             # a compound EPSG into a horizontal-CRS slot.
             'NonRepresentableEPSGCRSError',
@@ -2850,30 +2840,30 @@ class TestPublicAPI:
             'RotatedTransformError',
             'UnknownCRSModelTypeError',
             'UnparseableCRSError',
-            # Epic #2340 / PR 5 (#2349): typed error raised at the read
-            # or write entry point when the caller asks for a feature
-            # the GeoTIFF module does not implement (warped /
-            # pansharpened / derived VRT subclasses, unknown VRT band
-            # children, rotated source transforms on a VRT mosaic).
+            # Typed error raised at the read or write entry point when the
+            # caller asks for a feature the GeoTIFF module does not
+            # implement (warped / pansharpened / derived VRT subclasses,
+            # unknown VRT band children, rotated source transforms on a
+            # VRT mosaic).
             'UnsupportedGeoTIFFFeatureError',
-            # Issue #2443 (epic #2342): typed rejection when a caller
-            # opens a VRT under ``stable_only=True``. The VRT reader
-            # itself is advanced-tier so the request cannot be served
-            # without naming the broader-tier opt-in.
+            # Typed rejection when a caller opens a VRT under
+            # ``stable_only=True``. The VRT reader itself is advanced-tier
+            # so the request cannot be served without naming the
+            # broader-tier opt-in.
             'VRTStableSourcesOnlyError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
-            # Canonical georef_status constants (issue #2136). Exposed
-            # so downstream code can branch on the five reader states
-            # via constants rather than string literals.
+            # Canonical georef_status constants. Exposed so downstream
+            # code can branch on the five reader states via constants
+            # rather than string literals.
             'GEOREF_STATUS_CRS_ONLY',
             'GEOREF_STATUS_FULL',
             'GEOREF_STATUS_NONE',
             'GEOREF_STATUS_ROTATED_DROPPED',
             'GEOREF_STATUS_TRANSFORM_ONLY',
             'GEOREF_STATUS_VALUES',
-            # Issue #2137: tiered feature inventory exposed alongside
-            # the writer's ``allow_experimental_codecs`` opt-in.
+            # Tiered feature inventory exposed alongside the writer's
+            # ``allow_experimental_codecs`` opt-in.
             'SUPPORTED_FEATURES',
             'open_geotiff',
             'read_geotiff_gpu',
@@ -3010,10 +3000,11 @@ def test_keys_are_unique_in_source():
     ('reader.allow_unparseable_crs', 'experimental'),
 ])
 def test_epic_2340_wave_1_reconciliation(key, tier):
-    """Wave-1 reconciliation under epic #2340 lands the expected
-    promotions and demotions. Pinned so a future revert that bumps
-    these back to ``advanced`` or drops them entirely fails this
-    test before it reaches the docs / release notes.
+    """The pinned promotions and demotions land in the expected tiers.
+
+    Pinned so a future revert that bumps these back to ``advanced`` or
+    drops them entirely fails this test before it reaches the docs /
+    release notes.
     """
     assert key in SUPPORTED_FEATURES, (
         f"{key!r} dropped from SUPPORTED_FEATURES; epic #2340 introduced "
@@ -3694,11 +3685,11 @@ def test_vrt_with_skewed_geotransform_rejected(tmp_path):
         f'  </VRTRasterBand>'
         f'</VRTDataset>'
     )
-    # Sub-PR 2 of epic #2321 (#2329) centralised this rejection in
-    # ``_vrt_validation.py`` and re-typed it as ``VRTUnsupportedError``
-    # with a message naming the skew terms. Accept either the legacy
-    # ``RotatedTransformError`` or the new typed error so the regression
-    # pin survives the validator refactor.
+    # The rotated-VRT rejection was centralised in ``_vrt_validation.py``
+    # and re-typed as ``VRTUnsupportedError`` with a message naming the
+    # skew terms. Accept either the legacy ``RotatedTransformError`` or
+    # the new typed error so the regression pin survives the validator
+    # refactor.
     with pytest.raises(
         (RotatedTransformError, VRTUnsupportedError),
         match=r"rotated affine|rotation/shear",

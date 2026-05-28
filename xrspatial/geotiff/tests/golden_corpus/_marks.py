@@ -1,5 +1,4 @@
-"""Fast / slow pytest marker helper for the golden-corpus matrix
-(issue #1930, phase 4 PR 1).
+"""Fast / slow pytest marker helper for the golden-corpus matrix.
 
 Each manifest fixture carries a ``tags`` list. Fixtures tagged ``fast``
 run in the PR CI fast lane; everything else is treated as slow and
@@ -32,11 +31,22 @@ is just a ``list(...) + [extra_mark]`` away.
 """
 from __future__ import annotations
 
+from importlib.util import find_spec
 from typing import Any
 
 import pytest
 
 _FAST_TAG = "fast"
+
+# Optional Python packages required to decode specific TIFF compressions.
+# Fixtures using these codecs must be skipped when the package is not
+# importable; otherwise the read-path raises ``ImportError`` and the
+# parity test fails for an environmental reason rather than a real bug.
+# Keep this list in sync with the optional codec imports in
+# ``xrspatial.geotiff._compression``.
+_COMPRESSION_OPTIONAL_DEPS: dict[str, str] = {
+    "lerc": "lerc",
+}
 
 
 def is_fast(entry: dict[str, Any]) -> bool:
@@ -59,3 +69,29 @@ def fast_slow_marks_for(entry: dict[str, Any]) -> list[pytest.MarkDecorator]:
     without an empty-mark guard or a generator-to-list conversion.
     """
     return [pytest.mark.slow] if not is_fast(entry) else []
+
+
+def optional_dep_marks_for(entry: dict[str, Any]) -> list[pytest.MarkDecorator]:
+    """Return a skipif mark when the fixture's codec needs a missing dep.
+
+    Some compressions (currently LERC) rely on a Python package that is
+    not a hard dependency of xrspatial. On a host without that package
+    the read-path raises ``ImportError``; the parity test would then
+    fail for an environmental reason rather than a real bug. This helper
+    yields a ``pytest.mark.skipif`` mark in that case so the run stays
+    green on minimal envs. Returns ``[]`` when the codec has no optional
+    dep or when the dep is importable.
+    """
+    codec = entry.get("compression")
+    dep = _COMPRESSION_OPTIONAL_DEPS.get(codec)
+    if dep is None or find_spec(dep) is not None:
+        return []
+    return [
+        pytest.mark.skipif(
+            True,
+            reason=(
+                f"{dep!r} is not installed; fixture {entry['id']!r} uses "
+                f"the {codec!r} codec which requires it"
+            ),
+        )
+    ]
