@@ -111,6 +111,119 @@ class TestCrsUtils:
         assert val == -1.0
 
 
+class TestDetectNodataDtypeRange:
+    """Regression coverage for #2572.
+
+    Explicit out-of-range nodata used to silently wrap during the
+    worker's cast-back step (e.g. ``-9999`` in a ``uint8`` array landed
+    at ``0``) while ``attrs['nodata']`` kept advertising the original
+    value. ``_detect_nodata`` must reject the explicit case and warn
+    on the attrs-derived case.
+    """
+
+    def test_explicit_negative_nodata_for_uint8_raises(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        raster = _make_raster(np.zeros((4, 4), dtype=np.uint8))
+        with pytest.raises(ValueError, match="uint8"):
+            _detect_nodata(raster, nodata=-9999, dtype=np.uint8)
+
+    def test_explicit_too_large_nodata_for_uint16_raises(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        raster = _make_raster(np.zeros((4, 4), dtype=np.uint16))
+        with pytest.raises(ValueError, match="uint16"):
+            _detect_nodata(raster, nodata=70000, dtype=np.uint16)
+
+    def test_explicit_in_range_nodata_passes(self):
+        """Boundary case: dtype.max stays untouched."""
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        raster = _make_raster(np.zeros((4, 4), dtype=np.uint8))
+        assert _detect_nodata(raster, nodata=255, dtype=np.uint8) == 255.0
+
+    def test_explicit_in_range_signed_min(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        raster = _make_raster(np.zeros((4, 4), dtype=np.int16))
+        assert _detect_nodata(raster, nodata=-32768, dtype=np.int16) == -32768.0
+
+    def test_attrs_out_of_range_warns_and_falls_back(self):
+        """Legacy files (uint16 + nodata=-9999) should warn, not crash."""
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        # nodata in attrs is out of range for uint16
+        raster = _make_raster(np.zeros((4, 4), dtype=np.uint16), nodata=-9999)
+        with pytest.warns(UserWarning, match="uint16"):
+            val = _detect_nodata(raster, dtype=np.uint16)
+        # Falls back to dtype.max for unsigned
+        assert val == float(np.iinfo(np.uint16).max)
+
+
+class TestReprojectIntegerNodataDtypeRange:
+    """End-to-end regression coverage for #2572 through ``reproject()``."""
+
+    def test_reproject_uint8_negative_nodata_raises(self):
+        from xrspatial.reproject import reproject
+        arr = (np.ones((4, 4), dtype=np.uint8) * 10)
+        da_obj = xr.DataArray(
+            arr, dims=['y', 'x'],
+            coords={'y': np.linspace(40, 30, 4),
+                    'x': np.linspace(-5, 5, 4)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match="uint8"):
+            reproject(da_obj, 'EPSG:4326', nodata=-9999)
+
+    def test_reproject_uint16_too_large_nodata_raises(self):
+        from xrspatial.reproject import reproject
+        arr = (np.ones((4, 4), dtype=np.uint16) * 10)
+        da_obj = xr.DataArray(
+            arr, dims=['y', 'x'],
+            coords={'y': np.linspace(40, 30, 4),
+                    'x': np.linspace(-5, 5, 4)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        with pytest.raises(ValueError, match="uint16"):
+            reproject(da_obj, 'EPSG:4326', nodata=70000)
+
+    def test_reproject_uint8_in_range_nodata_writes_correct_pixels(self):
+        """Happy path: representable nodata produces non-corrupted output
+        where unfilled pixels carry the declared sentinel.
+        """
+        from xrspatial.reproject import reproject
+        arr = (np.ones((4, 4), dtype=np.uint8) * 10)
+        da_obj = xr.DataArray(
+            arr, dims=['y', 'x'],
+            coords={'y': np.linspace(40, 30, 4),
+                    'x': np.linspace(-5, 5, 4)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        # Expand bounds so the output has nodata around the edges.
+        out = reproject(
+            da_obj, 'EPSG:4326', nodata=255,
+            bounds=(-20, 20, 20, 50),
+        )
+        assert out.dtype == np.uint8
+        assert out.attrs['nodata'] == 255.0
+        # The sentinel actually appears in the array (no silent wrap).
+        assert (out.values == 255).any()
+        # Edge pixel is the sentinel, not a wrapped 0.
+        assert int(out.values[0, 0]) == 255
+
+    def test_reproject_int16_negative_nodata_works(self):
+        from xrspatial.reproject import reproject
+        arr = (np.ones((4, 4), dtype=np.int16) * 10)
+        da_obj = xr.DataArray(
+            arr, dims=['y', 'x'],
+            coords={'y': np.linspace(40, 30, 4),
+                    'x': np.linspace(-5, 5, 4)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        out = reproject(
+            da_obj, 'EPSG:4326', nodata=-32768,
+            bounds=(-20, 20, 20, 50),
+        )
+        assert out.dtype == np.int16
+        assert out.attrs['nodata'] == -32768.0
+        assert (out.values == -32768).any()
+
+
 # ---------------------------------------------------------------------------
 # ApproximateTransform
 # ---------------------------------------------------------------------------
