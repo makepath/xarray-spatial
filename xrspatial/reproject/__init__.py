@@ -680,7 +680,12 @@ def reproject(
     resampling : str
         One of 'nearest', 'bilinear', 'cubic'.
     nodata : float or None
-        Nodata value. Auto-detected if None.
+        Nodata value. Auto-detected if None. For integer input dtypes,
+        an explicit value that does not fit the dtype range raises
+        ``ValueError`` (e.g. ``nodata=-9999`` with a ``uint8`` raster).
+        Attrs/rioxarray-derived out-of-range values emit a
+        ``UserWarning`` and fall back to ``dtype.min`` for signed or
+        ``dtype.max`` for unsigned so legacy files still load (#2572).
     transform_precision : int
         Control-grid subdivisions for the coordinate transform (default 16).
         Higher values increase accuracy at the cost of more pyproj calls.

@@ -179,6 +179,9 @@ def _detect_nodata(raster, nodata=None, dtype=None):
                         f"or use a wider dtype."
                     )
                 fallback = _default_integer_nodata(dt)
+                # stacklevel=3 surfaces the warning at the public
+                # reproject() call (user -> reproject -> _detect_nodata
+                # -> warn) so the user sees the location they can act on.
                 warnings.warn(
                     f"Raster attrs declare nodata={nd!r}, which is "
                     f"outside the {dt} range "
@@ -186,7 +189,7 @@ def _detect_nodata(raster, nodata=None, dtype=None):
                     f"instead so the worker's cast-back step does not "
                     f"silently wrap the sentinel (#2572).",
                     UserWarning,
-                    stacklevel=2,
+                    stacklevel=3,
                 )
                 return fallback
 

@@ -202,9 +202,13 @@ class TestReprojectIntegerNodataDtypeRange:
         assert out.dtype == np.uint8
         assert out.attrs['nodata'] == 255.0
         # The sentinel actually appears in the array (no silent wrap).
-        assert (out.values == 255).any()
-        # Edge pixel is the sentinel, not a wrapped 0.
-        assert int(out.values[0, 0]) == 255
+        n_nodata = int((out.values == 255).sum())
+        assert n_nodata > 0
+        # The entire top row sits above the source extent (y=40 is the
+        # source max), so it must be all nodata, not a mix of 0 and 255.
+        assert (out.values[0, :] == 255).all(), (
+            f"top row should be all nodata=255, got {out.values[0, :]}"
+        )
 
     def test_reproject_int16_negative_nodata_works(self):
         from xrspatial.reproject import reproject
