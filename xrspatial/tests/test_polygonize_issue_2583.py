@@ -176,3 +176,37 @@ class TestNumpyDaskParity2D:
             f"numpy={len(v_np)} dask={len(v_dk)}"
         )
         assert_allclose(sorted(v_dk), sorted(v_np))
+
+    def test_distant_close_valued_regions_5x5(self):
+        """Two close-valued regions in opposite corners of a 5x5 raster,
+        separated by several chunks of a different value, must NOT
+        merge into a single polygon -- adjacency probing must stay
+        local, not global, even when values lie within tolerance.
+
+        Guards against a future regression that drops the spatial
+        adjacency check and re-collapses on value alone.
+        """
+        arr = np.array([
+            [1.0, 9.0, 9.0, 9.0, 9.0],
+            [9.0, 9.0, 9.0, 9.0, 9.0],
+            [9.0, 9.0, 9.0, 9.0, 9.0],
+            [9.0, 9.0, 9.0, 9.0, 9.0],
+            [9.0, 9.0, 9.0, 9.0, 1.000009],
+        ], dtype=np.float64)
+        v_np, _ = polygonize(xr.DataArray(arr))
+        # Numpy reference: 1.0 region, 1.000009 region, plus a single
+        # 9.0 region with two holes (or two 9.0 regions depending on
+        # connectivity).  What matters here is that the two 1.0-ish
+        # values are reported distinctly with their original DNs.
+        v_dk, _ = polygonize(_to_dask(arr, chunks=(2, 2)))
+        assert len(v_dk) == len(v_np), (
+            f"5x5 distant close-valued count mismatch: "
+            f"numpy={len(v_np)} dask={len(v_dk)}"
+        )
+        assert_allclose(sorted(v_dk), sorted(v_np))
+        assert any(abs(v - 1.000009) < 1e-12 for v in v_dk), (
+            f"5x5 dask lost 1.000009 DN: {v_dk}"
+        )
+        assert any(abs(v - 1.0) < 1e-12 for v in v_dk), (
+            f"5x5 dask lost 1.0 DN: {v_dk}"
+        )

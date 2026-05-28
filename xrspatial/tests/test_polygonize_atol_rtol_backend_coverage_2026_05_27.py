@@ -8,9 +8,10 @@ sweep on 2026-05-27.  The atol / rtol kwargs route through every backend:
               on float dtypes (polygonize.py:823-825 and 829-830) and
               documents them as no-ops on the integer GPU CCL path
   * dask    : _polygonize_dask(...) plumbs atol/rtol through
-              dask.delayed(_polygonize_chunk)(..., atol, rtol) at
-              polygonize.py:1748-1754 and into _bucket_key_for_value(...)
-              at polygonize.py:1757-1758 for cross-chunk merge bucketing
+              dask.delayed(_polygonize_chunk)(..., atol, rtol) and into
+              _group_boundary_polygons(..., atol, rtol) (replaced the
+              legacy _bucket_key_for_value bucket in #2583) for the
+              spatial-topology + value-closeness cross-chunk merge
   * dask+cupy: same _polygonize_dask path -- cupy chunks are converted to
               numpy inside _polygonize_chunk via _to_numpy(block) at
               polygonize.py:859-861, so atol/rtol again reach
@@ -159,10 +160,10 @@ class TestStrictFloatEqualityDaskCuPy:
     """atol=0, rtol=0 must reach _polygonize_numpy through dask+cupy.
 
     The dask+cupy path goes through _polygonize_dask -> _polygonize_chunk
-    -> _polygonize_numpy.  atol/rtol thread through dask.delayed at
-    polygonize.py:1748-1754 and _bucket_key_for_value at lines
-    1757-1758 for cross-chunk merge.  Pin both single-chunk (no merge)
-    and multi-chunk (merge engaged) cases.
+    -> _polygonize_numpy.  atol/rtol thread through dask.delayed and the
+    cross-chunk merge runs _group_boundary_polygons(..., atol, rtol)
+    (replaced the legacy _bucket_key_for_value bucket in #2583).  Pin
+    both single-chunk (no merge) and multi-chunk (merge engaged) cases.
     """
 
     def test_single_chunk(self):
@@ -277,10 +278,10 @@ class TestIntermediateAtolDaskCuPy:
 
     def test_large_atol_one_polygon_multi_chunk(self):
         """Large atol on a multi-chunk dask+cupy raster exercises the
-        cross-chunk merge bucket (_bucket_key_for_value at polygonize.py
-        line 1758) with non-default atol.  A regression that hard-coded
-        the default atol inside the merge bucket would split the result
-        into multiple polygons here.
+        cross-chunk merge (_group_boundary_polygons in polygonize.py,
+        formerly _bucket_key_for_value before #2583) with non-default
+        atol.  A regression that hard-coded the default atol inside the
+        merge would split the result into multiple polygons here.
         """
         v_np, _ = polygonize(
             xr.DataArray(_REPRO_2173), atol=1e-4, rtol=0.0)
@@ -376,10 +377,12 @@ class TestRtolCuPy:
 @dask_array_available
 class TestRtolDaskCuPy:
     """Non-default rtol on float dask+cupy raster must reach
-    _polygonize_numpy through _polygonize_chunk and _bucket_key_for_value.
+    _polygonize_numpy through _polygonize_chunk and
+    _group_boundary_polygons (replaced the legacy _bucket_key_for_value
+    in #2583).
 
     Mirrors TestRtolCuPy on the dask+cupy backend.  Multi-chunk variants
-    additionally exercise the cross-chunk merge bucket with rtol>0.
+    additionally exercise the cross-chunk merge with rtol>0.
     """
 
     def test_large_rtol_merges_all_single_chunk(self):

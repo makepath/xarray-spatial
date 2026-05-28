@@ -292,38 +292,6 @@ def _values_close(reference, value,
     return abs(value - reference) <= (atol + rtol * abs(reference))
 
 
-def _bucket_key_for_value(boundary_by_value, val,
-                          atol: float = _DEFAULT_ATOL,
-                          rtol: float = _DEFAULT_RTOL):
-    """Return the dict key that ``val`` should bucket into.
-
-    If an existing key in ``boundary_by_value`` is close to ``val`` under
-    ``_values_close`` (using the caller's ``atol`` / ``rtol``), return
-    that key so close float values from adjacent chunks land in the same
-    bucket.  Otherwise return ``val`` unchanged.
-
-    This keeps Dask chunk-stitching consistent with the tolerance-based
-    grouping the NumPy / numba path uses inside a single chunk (#2171),
-    and lets ``polygonize(atol=0, rtol=0)`` opt into exact-value
-    bucketing across chunks (#2173).
-
-    Performance note: the float branch is a linear scan over existing
-    keys, so total cost is O(B^2) in the number of distinct float
-    buckets B.  Polygonize inputs in practice have a small B (a handful
-    of categorical values), so the scan is cheap.  If a workload with
-    many thousand distinct float buckets shows up, swap the scan for a
-    sorted-keys structure (e.g. bisect over a sorted list).
-    """
-    # Integer-valued rasters use exact equality, so the existing dict
-    # lookup is already correct -- skip the linear scan.
-    if isinstance(val, (int, np.integer)):
-        return val
-    for existing in boundary_by_value:
-        if _values_close(existing, val, atol, rtol):
-            return existing
-    return val
-
-
 def _ranges_close(range_a, range_b, atol, rtol):
     """Return True if any value pair across two ``(min, max)`` ranges
     compares close under ``_values_close``.
@@ -346,7 +314,12 @@ def _ranges_close(range_a, range_b, atol, rtol):
         return True
     if _values_close(a_max, b_max, atol, rtol):
         return True
-    # Overlapping intervals always have a close pair (zero distance).
+    # The four endpoint checks above can miss wide-but-overlapping
+    # intervals: e.g. ``[0.0, 5.0]`` vs ``[3.0, 10.0]`` has all four
+    # endpoint pairs outside default tolerance, yet the intervals
+    # share the sub-range ``[3.0, 5.0]`` so a per-pixel CCL within a
+    # single chunk would have merged the two clusters.  Detect that
+    # case explicitly so the union-find still fires.
     if a_min <= b_max and b_min <= a_max:
         return True
     return False
@@ -432,34 +405,31 @@ def _group_boundary_polygons(boundary_polys,
                 x1, y1 = int(ring[k, 0]), int(ring[k, 1])
                 x2, y2 = int(ring[k + 1, 0]), int(ring[k + 1, 1])
                 if x1 == x2 and y1 == y2:
-                    units = []
-                    points = [(x1, y1)]
+                    keys = [(x1, y1)] if connectivity_8 else []
                 elif x1 == x2:
                     step = 1 if y2 > y1 else -1
-                    units = [
-                        ((x1, y, x1, y + step) if step > 0
-                         else (x1, y + step, x1, y))
-                        for y in range(y1, y2, step)
-                    ]
-                    points = [(x1, y) for y in range(y1, y2 + step, step)]
+                    if connectivity_8:
+                        keys = [(x1, y) for y in range(y1, y2 + step, step)]
+                    else:
+                        keys = [
+                            ((x1, y, x1, y + step) if step > 0
+                             else (x1, y + step, x1, y))
+                            for y in range(y1, y2, step)
+                        ]
                 elif y1 == y2:
                     step = 1 if x2 > x1 else -1
-                    units = [
-                        ((x, y1, x + step, y1) if step > 0
-                         else (x + step, y1, x, y1))
-                        for x in range(x1, x2, step)
-                    ]
-                    points = [(x, y1) for x in range(x1, x2 + step, step)]
+                    if connectivity_8:
+                        keys = [(x, y1) for x in range(x1, x2 + step, step)]
+                    else:
+                        keys = [
+                            ((x, y1, x + step, y1) if step > 0
+                             else (x + step, y1, x, y1))
+                            for x in range(x1, x2, step)
+                        ]
                 else:
                     # Diagonal ring segments should not appear; degrade
                     # gracefully if they ever do.
-                    units = []
-                    points = [(x1, y1), (x2, y2)]
-
-                if connectivity_8:
-                    keys = points
-                else:
-                    keys = units
+                    keys = [(x1, y1), (x2, y2)] if connectivity_8 else []
 
                 for key in keys:
                     if key in seen:
@@ -1123,13 +1093,16 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
 
     # Build a per-polygon (min, max) value pair so cross-chunk merging
     # can probe whichever endpoint sits closest to a neighbour chunk's
-    # value.  For polygons that span only one value (the common case
-    # for integer rasters or floats with atol=rtol=0) the pair
-    # collapses to (val, val).  Computed by re-running _calculate_regions
-    # to recover per-pixel region IDs; cheaper than threading the regions
-    # array out of _polygonize_numpy across all backends.
-    val_ranges = _compute_region_value_ranges(
-        block, mask_block, connectivity_8, atol, rtol, column)
+    # value.  Integer CCL uses strict equality, so every polygon
+    # already spans exactly one value -- skip the second
+    # _calculate_regions pass and reuse ``column`` directly.  Float
+    # polygons may span a tolerance-chain cluster, so the full
+    # per-region min/max scan is still needed there.
+    if np.issubdtype(block.dtype, np.floating):
+        val_ranges = _compute_region_value_ranges(
+            block, mask_block, connectivity_8, atol, rtol, column)
+    else:
+        val_ranges = [(c, c) for c in column]
 
     interior = []  # (value, [ring, ...])
     boundary = []  # (value, [ring, ...], (val_min, val_max))
