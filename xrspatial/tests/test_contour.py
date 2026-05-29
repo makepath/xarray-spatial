@@ -437,3 +437,152 @@ class TestReferenceValidation:
                 assert np.min(dists) < 0.5, (
                     f"skimage point {pt} not near any of our contour points"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Infinity handling (#2704)
+# ---------------------------------------------------------------------------
+
+class TestInfHandling:
+
+    def _inf_peak(self, value):
+        """5x5 raster of ones with a single +/-inf cell in the center."""
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 1., 1., 1., 0.],
+            [0., 1., value, 1., 0.],
+            [0., 1., 1., 1., 0.],
+            [0., 0., 0., 0., 0.],
+        ], dtype=np.float64)
+        return data
+
+    def test_inf_far_level_no_crossing(self):
+        """A level the inf cell sits above on all sides still traces the
+        surrounding ring without touching the inf quad's interpolation."""
+        data = self._inf_peak(np.inf)
+        agg = create_test_raster(data, backend='numpy')
+        # Level 0.5 crosses the 0/1 boundary; the four quads around the
+        # center are all-finite (1,1,inf,1 only on the four center quads).
+        result = contours(agg, levels=[0.5])
+        assert len(result) >= 1
+        for level, coords in result:
+            assert np.isfinite(coords).all(), (
+                "level 0.5 ring should not include the inf quad")
+
+    @pytest.mark.xfail(
+        reason="contours() emits NaN coordinates near an inf corner; "
+               "see https://github.com/xarray-contrib/xarray-spatial/"
+               "issues/2704",
+        strict=True,
+    )
+    def test_inf_corner_no_nan_coords(self):
+        """A finite level near a +inf cell must not leak NaN coordinates.
+
+        The NaN-skip guard in the kernel uses ``x != x`` which does not
+        catch infinity, so the inf quad is interpolated and produces NaN.
+        Tracked as a source bug in #2704.
+        """
+        data = self._inf_peak(np.inf)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.5])
+        for level, coords in result:
+            assert np.isfinite(coords).all(), (
+                f"non-finite coordinate in contour at level {level}: {coords}")
+
+    @pytest.mark.xfail(
+        reason="contours() emits NaN coordinates near a -inf corner; "
+               "see https://github.com/xarray-contrib/xarray-spatial/"
+               "issues/2704",
+        strict=True,
+    )
+    def test_neg_inf_corner_no_nan_coords(self):
+        """Same NaN leak for a -inf corner. Tracked in #2704."""
+        data = self._inf_peak(-np.inf)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[0.5])
+        for level, coords in result:
+            assert np.isfinite(coords).all(), (
+                f"non-finite coordinate in contour at level {level}: {coords}")
+
+
+# ---------------------------------------------------------------------------
+# CRS propagation to GeoDataFrame output (#2704 audit, Cat 5)
+# ---------------------------------------------------------------------------
+
+class TestCRSPropagation:
+
+    def test_geopandas_crs_from_attrs(self):
+        """return_type='geopandas' copies agg.attrs['crs'] onto the gdf."""
+        pytest.importorskip("geopandas")
+        data = _make_peak()
+        # create_test_raster sets attrs={'res': ..., 'crs': 'EPSG: 5070'}.
+        agg = create_test_raster(data, backend='numpy')
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        # GeoPandas normalizes the CRS; check it resolves to EPSG:5070.
+        assert gdf.crs is not None
+        assert gdf.crs.to_epsg() == 5070
+
+    def test_geopandas_no_crs_attr(self):
+        """A raster with no crs attr yields a GeoDataFrame with crs None."""
+        gpd = pytest.importorskip("geopandas")
+        data = _make_peak()
+        agg = xr.DataArray(data, dims=['y', 'x'])
+        agg['y'] = np.linspace(2.0, 0.0, data.shape[0])
+        agg['x'] = np.linspace(0.0, 2.0, data.shape[1])
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert isinstance(gdf, gpd.GeoDataFrame)
+        assert gdf.crs is None
+
+
+# ---------------------------------------------------------------------------
+# Non-default dim names: index -> coordinate transform (#2704 audit, Cat 5)
+# ---------------------------------------------------------------------------
+
+class TestNonDefaultDims:
+
+    def test_lat_lon_dims_coordinate_transform(self):
+        """Output coordinates map into the lat/lon coordinate space.
+
+        contours() reads agg.dims[0]/[1] coords to convert array indices
+        to coordinate values, so non-y/x dim names must still work and the
+        coordinates must land inside the lat/lon ranges.
+        """
+        data = _make_peak()
+        ny, nx = data.shape
+        lat = np.linspace(40.0, 30.0, ny)   # decreasing, like a north-up DEM
+        lon = np.linspace(-100.0, -90.0, nx)
+        agg = xr.DataArray(data, dims=['lat', 'lon'])
+        agg['lat'] = lat
+        agg['lon'] = lon
+
+        result = contours(agg, levels=[1.5])
+        assert len(result) >= 1
+        for level, coords in result:
+            # coords are (lat, lon) in the input coordinate space.
+            assert np.all(coords[:, 0] >= lat.min() - 1e-9)
+            assert np.all(coords[:, 0] <= lat.max() + 1e-9)
+            assert np.all(coords[:, 1] >= lon.min() - 1e-9)
+            assert np.all(coords[:, 1] <= lon.max() + 1e-9)
+
+    def test_lat_lon_matches_yx_equivalent(self):
+        """Renaming y/x to lat/lon (same coord values) gives same output."""
+        data = _make_peak()
+        ny, nx = data.shape
+        y = np.linspace(2.0, 0.0, ny)
+        x = np.linspace(0.0, 2.5, nx)
+
+        yx = xr.DataArray(data, dims=['y', 'x'])
+        yx['y'] = y
+        yx['x'] = x
+
+        ll = xr.DataArray(data, dims=['lat', 'lon'])
+        ll['lat'] = y
+        ll['lon'] = x
+
+        r_yx = contours(yx, levels=[1.5])
+        r_ll = contours(ll, levels=[1.5])
+
+        assert len(r_yx) == len(r_ll)
+        for (lvl_a, c_a), (lvl_b, c_b) in zip(r_yx, r_ll):
+            assert lvl_a == lvl_b
+            np.testing.assert_allclose(c_a, c_b)
