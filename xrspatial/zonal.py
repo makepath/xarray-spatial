@@ -1308,8 +1308,9 @@ def crosstab(
         List of categories to be included in calculation.
         If no cat_ids provided, all categories will be used.
 
-    layer: int, default=0
-        index of the categorical dimension layer inside the `values` DataArray.
+    layer: int, optional, default=None
+        Index of the categorical dimension layer inside the `values`
+        DataArray. When left as ``None``, layer 0 is used.
 
     agg: str, default = 'count'
         Aggregation method.
@@ -1648,12 +1649,12 @@ def _hi_dask_cupy(zones_data, values_data, nodata):
 
 def hypsometric_integral(
     zones,
-    values,
-    nodata=0,
-    column=None,
-    rasterize_kw=None,
-    name='hypsometric_integral',
-):
+    values: xr.DataArray,
+    nodata: Optional[int] = 0,
+    column: Optional[str] = None,
+    rasterize_kw: Optional[dict] = None,
+    name: str = 'hypsometric_integral',
+) -> xr.DataArray:
     """Hypsometric integral (HI) per zone, painted back to a raster.
 
     HI measures geomorphic maturity: ``(mean - min) / (max - min)``
@@ -1842,7 +1843,7 @@ def apply(
     nodata: Optional[int] = 0,
     column: Optional[str] = None,
     rasterize_kw: Optional[dict] = None,
-):
+) -> xr.DataArray:
     """
     Apply a function to the `values` agg within zones in `zones` agg.
     Returns a new DataArray with the function applied.
