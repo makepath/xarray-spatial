@@ -30,7 +30,6 @@ from ._grid import (
     _validate_grid_params,
 )
 from ._interpolate import (
-    _resample_cupy,
     _resample_cupy_native,
     _resample_numpy,
     _validate_resampling,
@@ -72,6 +71,34 @@ _VERTICAL_DATUM_EPSG = {
     'EGM2008': 3855,      # EGM2008 height
     'ellipsoidal': 4979,  # WGS 84 (3D, ellipsoidal height)
 }
+
+# Sentinel marking the deprecated ``src_vertical_crs`` / ``tgt_vertical_crs``
+# kwargs as "not passed". Distinct from None so we can tell an explicit
+# ``src_vertical_crs=None`` apart from the default and only warn when the
+# caller actually used the old name.
+_DEPRECATED = object()
+
+
+def _resolve_deprecated_vertical_kwarg(old_name, old_val, new_name, new_val):
+    """Map a deprecated vertical-CRS kwarg onto its renamed replacement.
+
+    Emits a ``DeprecationWarning`` when the old name is used and rejects
+    passing both the old and new spellings at once.
+    """
+    if old_val is _DEPRECATED:
+        return new_val
+    import warnings
+    warnings.warn(
+        f"reproject(): {old_name!r} is deprecated, use {new_name!r} instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    if new_val is not None:
+        raise TypeError(
+            f"reproject(): pass either {new_name!r} or the deprecated "
+            f"{old_name!r}, not both."
+        )
+    return old_val
 
 
 def _find_spatial_dims(raster):
@@ -599,25 +626,27 @@ def _reproject_chunk_cupy(
             band_data = window[:, :, b].astype(cp.float64)
             # Mask this band with its own source sentinel when the raster
             # declares per-band nodata; otherwise fall back to the single
-            # resolved sentinel (#2647). We pre-convert to NaN here (rather
-            # than letting the native kernel do it from `nodata`) so each
-            # band can use a different source sentinel while the resample
+            # resolved sentinel (#2647). Pre-converting to NaN here lets
+            # each band use a different source sentinel; the native kernel
             # still fills out-of-bounds pixels with the resolved `nodata`.
             src_nd = band_nodata[b] if band_nodata is not None else nodata
             if not np.isnan(src_nd):
                 band_data = cp.where(
                     band_data == src_nd, cp.nan, band_data,
                 )
-            if _use_native_cuda:
-                band_result = _resample_cupy_native(
-                    band_data, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
-            else:
-                band_result = _resample_cupy(
-                    band_data, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
+            # Always resample through the native CUDA kernels so the cupy
+            # backend matches numpy exactly. They accept CPU coordinate
+            # arrays (transferring them to the GPU) and do the
+            # nodata->NaN conversion internally, so they serve both the
+            # on-device coordinate path and the pyproj fallback. Using
+            # cupyx.scipy.ndimage.map_coordinates here instead would
+            # diverge from numpy: it bleeds the cval=0.0 constant into the
+            # half-pixel boundary band rather than renormalizing, and its
+            # order=3 path is a B-spline rather than Catmull-Rom (#2620).
+            band_result = _resample_cupy_native(
+                band_data, local_row, local_col,
+                resampling=resampling, nodata=nodata,
+            )
             if np.issubdtype(orig_dtype, np.integer):
                 info = np.iinfo(orig_dtype)
                 band_result = cp.clip(
@@ -628,18 +657,14 @@ def _reproject_chunk_cupy(
 
     window = window.astype(cp.float64)
 
-    if _use_native_cuda:
-        # Coordinates are already CuPy arrays -- use native CUDA kernels
-        # (nodata->NaN conversion is handled inside _resample_cupy_native)
-        result = _resample_cupy_native(window, local_row, local_col,
-                                       resampling=resampling, nodata=nodata)
-    else:
-        # CPU coordinates -- convert sentinel nodata to NaN before map_coordinates
-        if not np.isnan(nodata):
-            window[window == nodata] = cp.nan
-
-        result = _resample_cupy(window, local_row, local_col,
-                                resampling=resampling, nodata=nodata)
+    # Always resample through the native CUDA kernels for numpy parity.
+    # local_row/local_col may be CuPy (on-device transform) or numpy
+    # (pyproj fallback); _resample_cupy_native handles both and does the
+    # nodata->NaN conversion internally. The previous
+    # cupyx.scipy.ndimage.map_coordinates fallback diverged from numpy at
+    # chunk edges and for cubic resampling (#2620).
+    result = _resample_cupy_native(window, local_row, local_col,
+                                   resampling=resampling, nodata=nodata)
 
     # Clamp and cast back for integer source dtypes (parity with numpy path)
     if np.issubdtype(orig_dtype, np.integer):
@@ -667,9 +692,11 @@ def reproject(
     chunk_size=None,
     name=None,
     max_memory=None,
-    src_vertical_crs=None,
-    tgt_vertical_crs=None,
+    source_vertical_crs=None,
+    target_vertical_crs=None,
     bounds_policy="auto",
+    src_vertical_crs=_DEPRECATED,
+    tgt_vertical_crs=_DEPRECATED,
 ):
     """Reproject a raster DataArray to a new coordinate reference system.
 
@@ -716,16 +743,22 @@ def reproject(
         ``'512MB'``.  Controls how many output tiles are processed
         in parallel for large-dataset streaming mode.  Default None
         uses 1GB.  Has no effect for small datasets that fit in memory.
-    src_vertical_crs : str or None
+    source_vertical_crs : str or None
         Source vertical datum for height values. One of:
 
         - ``'EGM96'`` -- orthometric heights relative to EGM96 geoid (MSL)
         - ``'EGM2008'`` -- orthometric heights relative to EGM2008 geoid
         - ``'ellipsoidal'`` -- heights relative to the WGS84 ellipsoid
         - ``None`` -- no vertical transformation (default)
-    tgt_vertical_crs : str or None
-        Target vertical datum. Same options as *src_vertical_crs*.
+    target_vertical_crs : str or None
+        Target vertical datum. Same options as *source_vertical_crs*.
         Both must be set to trigger a vertical transformation.
+    src_vertical_crs : str or None
+        Deprecated alias for *source_vertical_crs*. Passing it emits a
+        ``DeprecationWarning``.
+    tgt_vertical_crs : str or None
+        Deprecated alias for *target_vertical_crs*. Passing it emits a
+        ``DeprecationWarning``.
     bounds_policy : {"auto", "raw", "clamp", "percentile"}, default "auto"
         How to derive the output extent from the source extent when
         ``bounds`` is not supplied. Only relevant when projecting near a
@@ -759,13 +792,13 @@ def reproject(
     -------
     xr.DataArray
         The output ``attrs['crs']`` is in WKT format.
-        Whenever *tgt_vertical_crs* is set, ``attrs['vertical_crs']``
+        Whenever *target_vertical_crs* is set, ``attrs['vertical_crs']``
         records the target vertical datum's EPSG code (5773 for EGM96,
         3855 for EGM2008, 4979 for ellipsoidal WGS84) to match the
         convention used by ``xrspatial.geotiff``. The friendly string
         token (``'EGM96'`` etc.) is preserved under ``attrs['vertical_datum']``.
         Both attrs are written even when no shift is applied (e.g. when
-        *src_vertical_crs* equals *tgt_vertical_crs*, or when only the
+        *source_vertical_crs* equals *target_vertical_crs*, or when only the
         target is given), so the output's vertical reference is always
         explicit.
 
@@ -800,6 +833,16 @@ def reproject(
     >>> result.attrs['crs'].startswith(('PROJCRS', 'PROJCS'))
     True
     """
+    # Back-compat shim for the old abbreviated kwarg names. These were
+    # renamed to source_vertical_crs / target_vertical_crs to match the
+    # source_crs / target_crs spelling used by the rest of the signature.
+    source_vertical_crs = _resolve_deprecated_vertical_kwarg(
+        'src_vertical_crs', src_vertical_crs,
+        'source_vertical_crs', source_vertical_crs)
+    target_vertical_crs = _resolve_deprecated_vertical_kwarg(
+        'tgt_vertical_crs', tgt_vertical_crs,
+        'target_vertical_crs', target_vertical_crs)
+
     _validate_raster(raster, func_name='reproject', name='raster',
                      ndim=(2, 3))
 
@@ -826,8 +869,8 @@ def reproject(
 
     # Reject unknown vertical-datum tokens at the API boundary so we never
     # write None into attrs['vertical_crs'] for typos / unsupported values.
-    for _name, _val in (('src_vertical_crs', src_vertical_crs),
-                        ('tgt_vertical_crs', tgt_vertical_crs)):
+    for _name, _val in (('source_vertical_crs', source_vertical_crs),
+                        ('target_vertical_crs', target_vertical_crs)):
         if _val is not None and _val not in _VERTICAL_DATUM_EPSG:
             raise ValueError(
                 f"Unknown {_name}={_val!r}; expected one of "
@@ -999,11 +1042,11 @@ def reproject(
         )
 
     # Vertical datum transformation (if requested)
-    if src_vertical_crs is not None and tgt_vertical_crs is not None:
-        if src_vertical_crs != tgt_vertical_crs:
+    if source_vertical_crs is not None and target_vertical_crs is not None:
+        if source_vertical_crs != target_vertical_crs:
             result_data, nd = _apply_vertical_shift(
                 result_data, y_coords, x_coords,
-                src_vertical_crs, tgt_vertical_crs, nd,
+                source_vertical_crs, target_vertical_crs, nd,
                 tgt_crs_wkt=tgt_wkt,
             )
 
@@ -1038,13 +1081,13 @@ def reproject(
         except TypeError:
             n_entries = 1
         out_attrs['nodatavals'] = tuple(nd for _ in range(n_entries))
-    if tgt_vertical_crs is not None:
+    if target_vertical_crs is not None:
         # Align with xrspatial.geotiff: attrs['vertical_crs'] holds the
         # EPSG integer code. The friendly string token is preserved under
         # attrs['vertical_datum'] so the human-readable name is not lost.
         # See GH issue #1570.
-        out_attrs['vertical_crs'] = _VERTICAL_DATUM_EPSG.get(tgt_vertical_crs)
-        out_attrs['vertical_datum'] = tgt_vertical_crs
+        out_attrs['vertical_crs'] = _VERTICAL_DATUM_EPSG.get(target_vertical_crs)
+        out_attrs['vertical_datum'] = target_vertical_crs
 
     # Handle multi-band output (3D result from multi-band source)
     if result_data.ndim == 3:
@@ -1783,16 +1826,15 @@ def _reproject_dask_cupy(
             local_row = src_row_px - r_min_clip
             local_col = src_col_px - c_min_clip
 
-            if cuda_coords is not None:
-                chunk_data = _resample_cupy_native(
-                    window, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
-            else:
-                chunk_data = _resample_cupy(
-                    window, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
+            # Always use the native CUDA kernels (numpy parity). The
+            # cupyx.scipy.ndimage.map_coordinates fallback diverged from
+            # numpy at chunk edges and for cubic resampling (#2620).
+            # local_row/local_col may be numpy here (pyproj fallback);
+            # _resample_cupy_native transfers them to the GPU.
+            chunk_data = _resample_cupy_native(
+                window, local_row, local_col,
+                resampling=resampling, nodata=nodata,
+            )
 
             # Clamp + cast back for integer source dtypes so this fast
             # path returns the same dtype as the other backends (#2505).
