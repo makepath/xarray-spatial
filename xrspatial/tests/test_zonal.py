@@ -1585,6 +1585,33 @@ def test_apply_nodata_none():
     np.testing.assert_array_equal(result.values, expected)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_apply_name_consistent_across_backends(backend):
+    # Regression for #2611: apply() left .name unset, so numpy/cupy returned
+    # None while the dask backends inherited an internal task name.
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip('cupy not available')
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
+
+    zones_data = np.array([[1, 1, 0],
+                           [0, 2, 2],
+                           [3, 3, 3]], dtype=np.int32)
+    values_data = np.array([[10.0, 20.0, 30.0],
+                            [40.0, 50.0, 60.0],
+                            [70.0, 80.0, 90.0]])
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
+
+    # default name is None on every backend
+    result = apply(zones, values, lambda x: x * 2, nodata=0)
+    assert result.name is None
+
+    # explicit name is honored on every backend
+    named = apply(zones, values, lambda x: x * 2, nodata=0, name='doubled')
+    assert named.name == 'doubled'
+
+
 def test_apply_backward_compat():
     """Same scenario as original test, but with new return semantics."""
     zones_val = np.zeros((3, 3), dtype=np.int32)
@@ -2582,3 +2609,33 @@ def test_stats_return_type_invalid_rejected_for_dataset_2558(
     ds = xr.Dataset({'v': values})
     with pytest.raises(ValueError, match="return_type"):
         stats(zones=zones, values=ds, return_type='bogus')
+
+
+def test_strides_int64_no_overflow_2612():
+    """`_strides` must accumulate counts in int64, not int32.
+
+    The counter runs up to the flattened pixel count. In an int32 array
+    inside the numba kernel, a count above 2**31-1 wraps silently to a
+    negative value, corrupting the slice bounds that `_calc_stats` and
+    crosstab derive from it. See issue #2612.
+    """
+    from xrspatial.zonal import _strides
+
+    # A real >2**31-element input would need ~17 GB to allocate, so the
+    # dtype assertion below stands in for the actual overflow case; a
+    # small input is enough to lock in the int64 contract and correctness.
+    flatten_zones = np.array([0, 0, 0, 1, 1, 2], dtype=np.int64)
+    unique_zones = np.array([0, 1, 2], dtype=np.int64)
+
+    strides = _strides(flatten_zones, unique_zones)
+
+    # The result dtype is the load-bearing guarantee: int64 cannot wrap
+    # at realistic raster sizes (~2.1 billion pixels) the way int32 does.
+    assert strides.dtype == np.int64
+
+    # Cumulative boundaries stay non-negative and non-decreasing, and the
+    # final stride equals the number of finite elements.
+    expected = np.array([3, 5, 6], dtype=np.int64)
+    np.testing.assert_array_equal(strides, expected)
+    assert np.all(strides >= 0)
+    assert np.all(np.diff(strides) >= 0)

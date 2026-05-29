@@ -284,7 +284,7 @@ def _parallel_variance(block_counts, block_sums, block_m2s):
 def _strides(flatten_zones, unique_zones):
     num_elements = flatten_zones.shape[0]
     num_zones = len(unique_zones)
-    strides = np.zeros(len(unique_zones), dtype=np.int32)
+    strides = np.zeros(len(unique_zones), dtype=np.int64)
 
     count = 0
     for i in range(num_zones):
@@ -1308,8 +1308,9 @@ def crosstab(
         List of categories to be included in calculation.
         If no cat_ids provided, all categories will be used.
 
-    layer: int, default=0
-        index of the categorical dimension layer inside the `values` DataArray.
+    layer: int, optional, default=None
+        Index of the categorical dimension layer inside the `values`
+        DataArray. When left as ``None``, layer 0 is used.
 
     agg: str, default = 'count'
         Aggregation method.
@@ -1648,12 +1649,12 @@ def _hi_dask_cupy(zones_data, values_data, nodata):
 
 def hypsometric_integral(
     zones,
-    values,
-    nodata=0,
-    column=None,
-    rasterize_kw=None,
-    name='hypsometric_integral',
-):
+    values: xr.DataArray,
+    nodata: Optional[int] = 0,
+    column: Optional[str] = None,
+    rasterize_kw: Optional[dict] = None,
+    name: str = 'hypsometric_integral',
+) -> xr.DataArray:
     """Hypsometric integral (HI) per zone, painted back to a raster.
 
     HI measures geomorphic maturity: ``(mean - min) / (max - min)``
@@ -1842,7 +1843,8 @@ def apply(
     nodata: Optional[int] = 0,
     column: Optional[str] = None,
     rasterize_kw: Optional[dict] = None,
-):
+    name: Optional[str] = None,
+) -> xr.DataArray:
     """
     Apply a function to the `values` agg within zones in `zones` agg.
     Returns a new DataArray with the function applied.
@@ -1881,6 +1883,11 @@ def apply(
     rasterize_kw : dict, optional
         Extra keyword arguments forwarded to ``rasterize()`` when
         *zones* is vector input.
+
+    name : str, optional
+        Output ``xr.DataArray.name`` property.  Defaults to ``None``,
+        which is the same across every backend (without it the dask
+        backends inherit an internal task name instead).
 
     Returns
     -------
@@ -1945,9 +1952,16 @@ def apply(
     )
     out = mapper(values)(zones.data, values.data, func, nodata)
 
-    return xr.DataArray(
+    result = xr.DataArray(
         out, dims=values.dims, coords=values.coords, attrs=values.attrs,
     )
+    # Assign .name after construction. When `out` is a dask array,
+    # xr.DataArray(..., name=None) inherits the dask graph's task name,
+    # so the result name would differ from the numpy/cupy backends and
+    # change between runs. Setting it here forces a deterministic name
+    # (None by default) across all four backends. See issue #2611.
+    result.name = name
+    return result
 
 
 def get_full_extent(crs):
