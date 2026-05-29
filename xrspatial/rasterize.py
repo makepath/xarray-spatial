@@ -3065,6 +3065,11 @@ def rasterize(
         Pixel size.  Must be finite and ``> 0``.  When given with
         ``bounds``, computes ``width`` and ``height`` automatically.
         A single float uses the same resolution for both axes.
+        The requested cell size is honored exactly.  When the bounds
+        don't divide evenly by the resolution, the output grid extends
+        past the original ``xmax`` / ``ymin`` (anchored at ``xmin`` /
+        ``ymax``) rather than shrinking the cell to fit.  Matches the
+        ``rasterio.transform.from_origin`` convention.
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
         from this array.  Bounds and dtype can be overridden one at a
@@ -3298,6 +3303,18 @@ def rasterize(
                     f"resolution must be finite and > 0, got {resolution!r}")
         final_width = max(int(np.ceil((xmax - xmin) / x_res)), 1)
         final_height = max(int(np.ceil((ymax - ymin) / y_res)), 1)
+        # Honor the requested resolution exactly: rebuild final_bounds so
+        # cell size is ``x_res`` / ``y_res`` instead of letting the
+        # rasterizer compute ``(xmax-xmin)/width`` and silently shrink the
+        # pixel to fit non-divisible bounds (issue #2573).  Anchor the
+        # upper-left corner (xmin, ymax) and extend xmax / ymin outward,
+        # matching rasterio's ``from_origin(west, north, x_res, y_res)``
+        # convention.  When bounds already divide evenly, the new values
+        # equal the originals to within float precision so behaviour is
+        # unchanged.
+        xmax = xmin + final_width * x_res
+        ymin = ymax - final_height * y_res
+        final_bounds = (xmin, ymin, xmax, ymax)
     elif like_width is not None:
         final_width, final_height = like_width, like_height
     else:

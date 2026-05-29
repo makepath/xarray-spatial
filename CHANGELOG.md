@@ -21,6 +21,16 @@
 
 #### Fixed
 
+- `rasterize(..., resolution=R)` now honors the requested cell size
+  exactly when the bounds don't divide evenly. Previously width and
+  height were computed via `ceil(extent / resolution)` but output coords
+  were rebuilt over the original bounds, so the actual cell size shrank
+  to fit (e.g. `bounds=(0,0,1,1), resolution=0.3` gave a 4x4 raster with
+  cell size 0.25 instead of 0.3). The grid now anchors at `(xmin, ymax)`
+  and extends right / down by `width * x_res` / `height * y_res`,
+  matching `rasterio.transform.from_origin(west, north, x_res, y_res)`.
+  When the bounds already divide evenly the new values equal the
+  originals so existing callers see no change. (#2573)
 - `reproject` no longer crashes when the source raster is an integer
   dtype and a vertical-datum shift is requested
   (`src_vertical_crs` / `tgt_vertical_crs`). The shift path now
@@ -30,7 +40,6 @@
   `attrs['nodatavals']` to NaN so the sentinel matches the new dtype.
   Integer nodata pixels propagate as NaN in the promoted output.
   Affects the numpy, cupy, and dask+numpy backends. (#2565)
-
 - `zonal.trim()` with the default `values=(np.nan,)` (or any NaN
   sentinel) now trims a NaN-framed raster on the numpy and cupy
   backends, matching the existing dask behaviour. The numba kernel
