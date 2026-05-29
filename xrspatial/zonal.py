@@ -895,6 +895,11 @@ def stats(
             raise ValueError(
                 "return_type must be 'pandas.DataFrame' when values is a Dataset"
             )
+        if len(values.data_vars) == 0:
+            raise ValueError(
+                "values Dataset has no data variables to compute statistics "
+                "over. Pass a Dataset with at least one data variable."
+            )
         dfs = []
         for var_name in values.data_vars:
             df = stats(

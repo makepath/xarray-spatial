@@ -2685,6 +2685,15 @@ def test_stats_return_type_invalid_rejected_for_dataset_2558(
         stats(zones=zones, values=ds, return_type='bogus')
 
 
+def test_stats_empty_dataset_raises_value_error_2637(small_zones_values_2558):
+    """An empty Dataset (no data variables) should raise a clear ValueError
+    instead of leaking an IndexError from the dfs[0] access."""
+    zones, _ = small_zones_values_2558
+    empty = xr.Dataset()
+    with pytest.raises(ValueError, match="no data variables"):
+        stats(zones=zones, values=empty)
+
+
 def test_strides_int64_no_overflow_2612():
     """`_strides` must accumulate counts in int64, not int32.
 
