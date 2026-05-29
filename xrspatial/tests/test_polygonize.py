@@ -26,7 +26,7 @@ except ImportError:
     sp = None
 
 
-from ..polygonize import polygonize
+from ..polygonize import _polygonize_dask, polygonize
 from .general_checks import cuda_and_cupy_available, dask_array_available
 
 
@@ -323,6 +323,74 @@ def test_polygonize_dask_matches_numpy_big(chunks):
 
     for val in areas_np:
         assert val in areas_da, f"Value {val} missing from dask result"
+        assert_allclose(areas_da[val], areas_np[val],
+                        err_msg=f"Area mismatch for value {val}")
+
+
+def _assert_polygonize_results_equal(result_a, result_b):
+    """Assert two (values, polygons) results are element-wise identical."""
+    vals_a, polys_a = result_a
+    vals_b, polys_b = result_b
+    assert_allclose(vals_a, vals_b)
+    assert len(polys_a) == len(polys_b)
+    for pa, pb in zip(polys_a, polys_b):
+        assert len(pa) == len(pb)
+        for ra, rb in zip(pa, pb):
+            assert_allclose(ra, rb)
+
+
+@dask_array_available
+@pytest.mark.parametrize("batch_size", [1, 2, 3, 100])
+def test_polygonize_dask_batch_size_invariant(batch_size):
+    """Batched dask compute gives byte-identical output regardless of batch.
+
+    The raster is split into 3x3 = 9 chunks, so batch_size=1 (one compute
+    per chunk, the old serial behaviour) and larger batches all exercise
+    the row-major task ordering.  Batching is a performance change only:
+    every batch_size, including ones that force multiple batches, must
+    produce the exact same values and polygon vertices as batch_size=1.
+    """
+    shape = (15, 18)
+    rng = np.random.default_rng(28403)
+    data = rng.integers(low=0, high=3, size=shape, dtype=np.int64)
+    mask = rng.uniform(0, 1, size=shape) < 0.9
+
+    raster_da = xr.DataArray(da.from_array(data, chunks=(5, 6)))
+    mask_da = xr.DataArray(da.from_array(mask, chunks=(5, 6)))
+
+    # batch_size=1 reproduces the pre-batching serial per-chunk loop.
+    result_serial = _polygonize_dask(
+        raster_da.data, mask_da.data, connectivity_8=False,
+        transform=None, batch_size=1)
+    result_batched = _polygonize_dask(
+        raster_da.data, mask_da.data, connectivity_8=False,
+        transform=None, batch_size=batch_size)
+
+    _assert_polygonize_results_equal(result_serial, result_batched)
+
+
+@dask_array_available
+@pytest.mark.parametrize("batch_size", [1, 4, 100])
+def test_polygonize_dask_batched_matches_numpy_areas(batch_size):
+    """Batched multi-chunk dask areas match numpy for every batch size."""
+    shape = (15, 18)
+    rng = np.random.default_rng(28403)
+    data = rng.integers(low=0, high=3, size=shape, dtype=np.int64)
+    mask = rng.uniform(0, 1, size=shape) < 0.9
+
+    vals_np, polys_np = polygonize(
+        xr.DataArray(data), mask=xr.DataArray(mask), connectivity=4)
+    areas_np = _area_by_value(vals_np, polys_np)
+
+    raster_da = xr.DataArray(da.from_array(data, chunks=(5, 6)))
+    mask_da = xr.DataArray(da.from_array(mask, chunks=(5, 6)))
+    vals_da, polys_da = _polygonize_dask(
+        raster_da.data, mask_da.data, connectivity_8=False,
+        transform=None, batch_size=batch_size)
+    areas_da = _area_by_value(vals_da, polys_da)
+
+    assert set(areas_np) == set(areas_da)
+    for val in areas_np:
         assert_allclose(areas_da[val], areas_np[val],
                         err_msg=f"Area mismatch for value {val}")
 
