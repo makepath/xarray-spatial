@@ -548,23 +548,18 @@ def _stats_cupy(
     zones = cupy.ravel(orig_zones)
     values = cupy.ravel(orig_values)
 
+    # Sort by zone so each zone's values occupy a contiguous range. Build
+    # unique_zones from the raw zones array (finite zone IDs only) BEFORE
+    # filtering values: a zone whose values are all NaN or all nodata must
+    # still appear in the output with NaN stats, matching the numpy path.
     sorted_indices = cupy.argsort(zones)
-
     sorted_zones = zones[sorted_indices]
     values_by_zone = values[sorted_indices]
 
-    # filter out values that are non-finite or values equal to nodata_values
-    # Note: use `is not None` instead of truthiness so that nodata_values=0
-    # (a common sentinel) still triggers the filter, matching the numpy path.
-    if nodata_values is not None:
-        filter_values = cupy.isfinite(values_by_zone) & (
-            values_by_zone != nodata_values)
-    else:
-        filter_values = cupy.isfinite(values_by_zone)
-    values_by_zone = values_by_zone[filter_values]
-    sorted_zones = sorted_zones[filter_values]
+    finite_zone_mask = cupy.isfinite(sorted_zones)
+    sorted_zones = sorted_zones[finite_zone_mask]
+    values_by_zone = values_by_zone[finite_zone_mask]
 
-    # Now I need to find the unique zones, and zone breaks
     unique_zones, unique_index, unique_counts = cupy.unique(
         sorted_zones, return_index=True, return_counts=True)
 
@@ -574,19 +569,23 @@ def _stats_cupy(
     unique_zones = unique_zones.get()
 
     if zone_ids is not None:
-        # We need to extract the index and element count
-        # only for the elements in zone_ids
+        # Match the numpy path: deduplicate / sort with np.unique and drop
+        # zone_ids that don't exist in the raster so the zone column and
+        # stats columns stay aligned and the row order matches numpy.
+        zone_ids = np.unique(zone_ids)
         unique_index_lst = []
         unique_counts_lst = []
-        unique_zones = list(unique_zones)
+        kept_zones = []
+        unique_zones_lst = list(unique_zones)
         for z in zone_ids:
             try:
-                idx = unique_zones.index(z)
-                unique_index_lst.append(unique_index[idx])
-                unique_counts_lst.append(unique_counts[idx])
+                idx = unique_zones_lst.index(z)
             except ValueError:
                 continue
-        unique_zones = zone_ids
+            kept_zones.append(z)
+            unique_index_lst.append(unique_index[idx])
+            unique_counts_lst.append(unique_counts[idx])
+        unique_zones = kept_zones
         unique_counts = unique_counts_lst
         unique_index = unique_index_lst
 
@@ -603,8 +602,19 @@ def _stats_cupy(
 
         stats_dict['zone'].append(zone_id)
 
-        # extract zone_values
+        # extract zone_values, then filter per-zone for non-finite values
+        # and the nodata sentinel. If the zone has no valid values left,
+        # emit NaN for every stat instead of dropping the zone.
         zone_values = values_by_zone[unique_index[i]:unique_index[i]+unique_counts[i]]
+        zone_mask = cupy.isfinite(zone_values)
+        if nodata_values is not None:
+            zone_mask = zone_mask & (zone_values != nodata_values)
+        zone_values = zone_values[zone_mask]
+
+        if zone_values.size == 0:
+            for stats in stats_funcs:
+                stats_dict[stats].append(float('nan'))
+            continue
 
         # apply stats on the zone data
         for j, stats in enumerate(stats_funcs):
@@ -709,9 +719,18 @@ def stats(
         and thus excluded from calculation.
 
     return_type: str, default='pandas.DataFrame'
-        Format of returned data. If `zones` and `values` numpy backed xarray DataArray,
-        allowed values are 'pandas.DataFrame', and 'xarray.DataArray'.
-        Otherwise, only 'pandas.DataFrame' is supported.
+        Format of returned data. Must be one of:
+
+        - ``'pandas.DataFrame'``: one row per zone, one column per statistic
+          (plus a ``zone`` column). For dask-backed inputs the result is a
+          ``dask.dataframe.DataFrame``. This is the only value supported
+          for cupy, dask, and Dataset inputs.
+        - ``'xarray.DataArray'``: a DataArray whose first dimension is
+          ``'stats'`` and whose remaining dims match ``values``. Cells
+          outside the requested zones are filled with NaN. Only supported
+          for numpy-backed DataArray inputs.
+
+        Any other value raises ``ValueError``.
 
     column : str, optional
         Column name in the GeoDataFrame that contains zone IDs.
@@ -819,6 +838,17 @@ def stats(
         >>> # Columns: zone, 2020_mean, 2020_max, ..., 2021_mean, 2021_max, ...
     """
 
+    # Validate return_type up front. The internal _stats_numpy path silently
+    # returns its raw ndarray buffer for anything that is not
+    # 'pandas.DataFrame', so an unrecognised value (typo, stale name) used to
+    # leak that undocumented intermediate to the caller.
+    _allowed_return_types = ('pandas.DataFrame', 'xarray.DataArray')
+    if return_type not in _allowed_return_types:
+        raise ValueError(
+            f"return_type={return_type!r} is not supported. "
+            f"Allowed values: {list(_allowed_return_types)!r}."
+        )
+
     zones = _maybe_rasterize_zones(zones, values, column=column,
                                    rasterize_kw=rasterize_kw)
 
@@ -849,6 +879,20 @@ def stats(
     validate_arrays(zones, values)
 
     is_dask_values = has_dask_array() and isinstance(values.data, da.Array)
+    is_cupy_values = is_cupy_array(values.data)
+
+    # Only the pure-numpy backend computes the (n_stats, *shape) buffer
+    # that the xarray.DataArray return type needs. The cupy and dask
+    # backends produce a DataFrame instead, so wrapping that in
+    # xr.DataArray downstream would crash or silently misalign. Reject
+    # 'xarray.DataArray' for non-numpy backends with a clear message
+    # instead of letting it fail deep in the dispatch.
+    if return_type == 'xarray.DataArray' and (is_dask_values or is_cupy_values):
+        backend = 'dask-backed' if is_dask_values else 'cupy-backed'
+        raise ValueError(
+            f"return_type='xarray.DataArray' is not supported for "
+            f"{backend} input. Use 'pandas.DataFrame' instead."
+        )
 
     # Resolve the default stats_funcs based on backend. The dask path cannot
     # compute 'majority' block-by-block, so its default list omits it.  Using
@@ -1529,13 +1573,29 @@ def _hi_reduce(partials_list):
     return hi_lookup
 
 
+@delayed
+def _hi_lookup_as_object_array(hi_lookup):
+    """Wrap the HI lookup dict in a 0-d numpy object array.
+
+    `map_blocks` only threads dask-array positional args through the graph
+    lazily.  Wrapping the dict in a 0-d object array lets us hand the
+    delayed lookup to every paint chunk without computing it up front.
+    """
+    arr = np.empty((), dtype=object)
+    arr[()] = hi_lookup
+    return arr
+
+
 def _hi_dask_numpy(zones_data, values_data, nodata):
     """Dask+numpy backend for hypsometric integral.
 
     Single graph evaluation: each block computes its local (zone -> stats)
-    dict, then a streaming reduce merges them into a lookup table, then
+    dict, a streaming reduce merges them into a lookup table, and
     map_blocks paints the result.  No up-front `_unique_finite_zones`
     compute and no O(n_blocks * n_zones) scheduler-side stack.
+
+    The lookup table stays lazy (a 0-d dask object array) so the whole
+    pipeline is lazy: nothing runs until the caller computes the output.
     """
     zones_blocks = zones_data.to_delayed().ravel()
     values_blocks = values_data.to_delayed().ravel()
@@ -1545,13 +1605,14 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
         for zb, vb in zip(zones_blocks, values_blocks)
     ]
 
-    hi_lookup = dask.compute(_hi_reduce(partials))[0]
+    hi_lookup_delayed = _hi_lookup_as_object_array(_hi_reduce(partials))
+    hi_lookup_arr = da.from_delayed(
+        hi_lookup_delayed, shape=(), dtype=object, meta=np.array((), dtype=object),
+    )
 
-    if not hi_lookup:
-        return da.full(values_data.shape, np.nan, dtype=np.float64,
-                       chunks=values_data.chunks)
-
-    def _paint(zones_chunk, values_chunk, hi_map):
+    def _paint(zones_chunk, values_chunk, hi_map_arr):
+        # hi_map_arr is the 0-d object array carrying the lookup dict.
+        hi_map = hi_map_arr[()]
         out = np.full(zones_chunk.shape, np.nan, dtype=np.float64)
         for z, hi_val in hi_map.items():
             mask = (zones_chunk == z) & np.isfinite(values_chunk)
@@ -1559,7 +1620,7 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
         return out
 
     return da.map_blocks(
-        _paint, zones_data, values_data, hi_map=hi_lookup,
+        _paint, zones_data, values_data, hi_lookup_arr,
         dtype=np.float64, meta=np.array(()),
     )
 

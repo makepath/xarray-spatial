@@ -61,7 +61,7 @@ class TestResampleAPI:
             resample(grid_4x4, scale_factor=0.5, target_resolution=2.0)
 
     def test_negative_scale(self, grid_4x4):
-        with pytest.raises(ValueError, match="positive"):
+        with pytest.raises(ValueError, match="scale_factor must be > 0"):
             resample(grid_4x4, scale_factor=-1.0)
 
     def test_aggregate_upsample_rejected(self, grid_4x4):
@@ -150,6 +150,57 @@ class TestMetadataPropagation:
         assert tuple(out.attrs['transform']) == (
             2.0, 0.0, 100.0, 0.0, -2.0, 200.0,
         )
+
+    @staticmethod
+    def _raster_with_orientation(x_asc, y_asc):
+        """4x4 raster with the chosen coord orientation and a matching
+        rasterio transform for `(col=0, row=0) -> leading-edge corner
+        of pixel [0, 0]` (the geographic "upper-left" only when both
+        coords are in the conventional north-up direction). Issue
+        #2571.
+        """
+        res = 1.0
+        x_step = res if x_asc else -res
+        y_step = res if y_asc else -res
+        # Pick first-pixel center so the leading edge sits on a round
+        # number; the actual value doesn't matter for the round-trip.
+        x0_center = 0.5 if x_asc else 3.5
+        y0_center = 0.5 if y_asc else 3.5
+        x = np.array([x0_center + i * x_step for i in range(4)])
+        y = np.array([y0_center + i * y_step for i in range(4)])
+        left = x0_center - x_step / 2
+        top = y0_center - y_step / 2
+        transform = (x_step, 0.0, left, 0.0, y_step, top)
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        return xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'transform': transform, 'res': (res, res)},
+        )
+
+    @pytest.mark.parametrize('x_asc', [True, False])
+    @pytest.mark.parametrize('y_asc', [True, False])
+    def test_transform_matches_coord_orientation(self, x_asc, y_asc):
+        """The refreshed transform must round-trip against the output
+        coords for every coord orientation (issue #2571)."""
+        raster = self._raster_with_orientation(x_asc, y_asc)
+        out = resample(raster, scale_factor=0.5)
+
+        a, b, c, d, e, f = out.attrs['transform']
+        # Off-diagonals are always zero for an axis-aligned grid.
+        assert b == 0.0
+        assert d == 0.0
+        # Scale signs follow the coord direction.
+        assert (a > 0) == x_asc
+        assert (e > 0) == y_asc
+        # transform * (col + 0.5, row + 0.5) -> pixel-center coord.
+        out_x = out[out.dims[-1]].values
+        out_y = out[out.dims[-2]].values
+        for col, expected_x in enumerate(out_x):
+            assert pytest.approx(c + a * (col + 0.5)) == expected_x
+        for row, expected_y in enumerate(out_y):
+            assert pytest.approx(f + e * (row + 0.5)) == expected_y
 
     def test_transform_absent_stays_absent(self):
         # grid_4x4 fixture has no transform attr.
@@ -1434,3 +1485,105 @@ class TestNodata:
         # Without override the attr would say -999 (no match) and -1 would
         # leak through; with override the top-left output pixel is NaN.
         assert np.isnan(out.values[0, 0])
+
+
+# ---------------------------------------------------------------------------
+# Integer nodata precision (issue #2570)
+# ---------------------------------------------------------------------------
+
+class TestNodataIntegerPrecision:
+    """Regression coverage for #2570 -- nodata equality lost precision
+    when the sentinel was routed through float() before comparison."""
+
+    def test_int64_sentinel_above_2pow53_preserves_distinct_values(self):
+        # float(2**60 + 1) == float(2**60); the old code masked the
+        # valid 2**60 cell because the rounded sentinel collided with it.
+        sentinel = (1 << 60) + 1
+        valid = 1 << 60
+        data = np.full((4, 4), sentinel, dtype=np.int64)
+        data[1, 1] = valid
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=1.0, method='nearest',
+                       nodata=sentinel)
+        # Valid cell survives AND keeps the right value (float32-quantized).
+        assert out.values[1, 1] == np.float32(valid)
+        # Sentinel cells are NaN.
+        assert np.isnan(out.values[0, 0])
+
+    def test_int64_sentinel_via_fillvalue_attr(self):
+        # Same precision case but the sentinel arrives via _FillValue
+        # rather than the explicit kwarg.
+        sentinel = (1 << 60) + 1
+        valid = 1 << 60
+        data = np.full((4, 4), sentinel, dtype=np.int64)
+        data[1, 1] = valid
+        agg = create_test_raster(
+            data, attrs={'res': (1.0, 1.0), '_FillValue': sentinel}
+        )
+        out = resample(agg, scale_factor=1.0, method='nearest')
+        assert np.isfinite(out.values[1, 1])
+        assert np.isnan(out.values[0, 0])
+
+    def test_int32_sentinel_unaffected(self):
+        # int32 cannot trip the float-cast precision loss, but the new
+        # code path still needs to work end-to-end.
+        sentinel = np.int32(-2147483648)  # int32 min
+        data = np.array([
+            [sentinel, sentinel, 10, 10],
+            [sentinel, sentinel, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.int32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=int(sentinel))
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_uint16_sentinel(self):
+        # uint16 max as sentinel -- exercises an unsigned integer dtype.
+        sentinel = np.uint16(65535)
+        data = np.array([
+            [sentinel, sentinel, 10, 10],
+            [sentinel, sentinel, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.uint16)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=int(sentinel))
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_float_nan_sentinel_still_short_circuits(self):
+        # Pre-existing float-NaN behaviour: pixels already NaN stay NaN,
+        # no equality comparison is attempted (NaN != NaN).
+        data = np.array([[np.nan, np.nan, 5.0, 5.0],
+                         [np.nan, np.nan, 5.0, 5.0],
+                         [3.0, 3.0, 7.0, 7.0],
+                         [3.0, 3.0, 7.0, 7.0]], dtype=np.float32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=float('nan'))
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_float_finite_sentinel_unchanged(self):
+        # Sanity: the float path still routes through float comparison
+        # and masks the right cells.
+        data = np.array([[-1.0, -1.0, 5.0, 5.0],
+                         [-1.0, -1.0, 5.0, 5.0],
+                         [3.0, 3.0, 7.0, 7.0],
+                         [3.0, 3.0, 7.0, 7.0]], dtype=np.float64)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest', nodata=-1.0)
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_fractional_float_sentinel_on_int_input_raises(self):
+        # Silently truncating -9999.5 to -9999 on int input would mask
+        # cells the caller never asked to mask -- reject up front.
+        data = np.zeros((4, 4), dtype=np.int32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        with pytest.raises(ValueError, match="not representable"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=-9999.5)
