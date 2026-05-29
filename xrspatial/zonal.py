@@ -1843,6 +1843,7 @@ def apply(
     nodata: Optional[int] = 0,
     column: Optional[str] = None,
     rasterize_kw: Optional[dict] = None,
+    name: Optional[str] = None,
 ) -> xr.DataArray:
     """
     Apply a function to the `values` agg within zones in `zones` agg.
@@ -1882,6 +1883,11 @@ def apply(
     rasterize_kw : dict, optional
         Extra keyword arguments forwarded to ``rasterize()`` when
         *zones* is vector input.
+
+    name : str, optional
+        Output ``xr.DataArray.name`` property.  Defaults to ``None``,
+        which is the same across every backend (without it the dask
+        backends inherit an internal task name instead).
 
     Returns
     -------
@@ -1931,9 +1937,16 @@ def apply(
     )
     out = mapper(values)(zones.data, values.data, func, nodata)
 
-    return xr.DataArray(
+    result = xr.DataArray(
         out, dims=values.dims, coords=values.coords, attrs=values.attrs,
     )
+    # Assign .name after construction. When `out` is a dask array,
+    # xr.DataArray(..., name=None) inherits the dask graph's task name,
+    # so the result name would differ from the numpy/cupy backends and
+    # change between runs. Setting it here forces a deterministic name
+    # (None by default) across all four backends. See issue #2611.
+    result.name = name
+    return result
 
 
 def get_full_extent(crs):
