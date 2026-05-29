@@ -1315,10 +1315,11 @@ def resample(
     Raises
     ------
     ValueError
-        If neither or both of ``scale_factor`` and ``target_resolution``
-        are given; if either is a sequence whose length is not 2; if any
-        component is zero, negative, NaN, or infinite; or if ``method``
-        is not in :data:`ALL_METHODS`.
+        If ``agg`` has a zero-length spatial dimension; if neither or both
+        of ``scale_factor`` and ``target_resolution`` are given; if either
+        is a sequence whose length is not 2; if any component is zero,
+        negative, NaN, or infinite; or if ``method`` is not in
+        :data:`ALL_METHODS`.
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
 
