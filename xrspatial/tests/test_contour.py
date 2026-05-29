@@ -461,8 +461,10 @@ class TestInfHandling:
         surrounding ring without touching the inf quad's interpolation."""
         data = self._inf_peak(np.inf)
         agg = create_test_raster(data, backend='numpy')
-        # Level 0.5 crosses the 0/1 boundary; the four quads around the
-        # center are all-finite (1,1,inf,1 only on the four center quads).
+        # Level 0.5 crosses the outer 0/1 boundary.  The four quads that
+        # touch the inf cell have all corners >= 0.5 (1 and inf), so they
+        # are the all-above case (idx 15) and are skipped before any
+        # interpolation runs.
         result = contours(agg, levels=[0.5])
         assert len(result) >= 1
         for level, coords in result:
