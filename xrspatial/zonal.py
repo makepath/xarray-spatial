@@ -1930,6 +1930,8 @@ def apply(
         zones_backend = _classify_backend(zones)
         values_backend = _classify_backend(values)
         if zones_backend != values_backend:
+            # Wording mirrors validate_arrays() in utils.py so the two stay
+            # greppable together; the labels replace its "array 0"/"array N".
             raise ValueError(
                 "input arrays must share the same backend; got "
                 f"'{zones_backend}' (zones) and '{values_backend}' (values)"
