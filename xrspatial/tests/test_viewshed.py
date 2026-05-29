@@ -459,3 +459,63 @@ def test_viewshed_cpu_memory_guard_passes_with_max_distance():
         v = viewshed(raster, x=50.0, y=50.0, observer_elev=5,
                      max_distance=3.0)
     assert v.values[50, 50] == 180.0
+
+
+@pytest.mark.parametrize("backend", ["numpy", "cupy", "dask"])
+def test_viewshed_max_distance_anisotropic(backend):
+    """max_distance must not clip cells on anisotropic-resolution rasters.
+
+    Regression test: the windowed path sized its analysis window from the
+    coarser of ew_res / ns_res and used that single radius for both axes,
+    so cells within max_distance along the finer axis were dropped from
+    the window and returned INVISIBLE.
+    """
+    if backend == "cupy":
+        if not has_rtx():
+            pytest.skip("rtxpy not available")
+        import cupy as cp
+
+    # ew_res = 1 (x), ns_res = 10 (y): strongly anisotropic.
+    # Use a uniform nonzero elevation: flat enough that all in-range cells
+    # stay visible, but the RTX mesh builder needs positive max elevation.
+    ny, nx = 21, 21
+    terrain = np.full((ny, nx), 1.0)
+    xs = np.arange(nx, dtype=float) * 1.0
+    ys = np.arange(ny, dtype=float) * 10.0
+
+    obs_x, obs_y = xs[10], ys[10]
+    obs_elev = 50
+
+    base = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    full = viewshed(base, x=obs_x, y=obs_y, observer_elev=obs_elev)
+    full_vals = full.values
+
+    # max_distance=8 reaches 8 columns east (ew_res=1) but only 0.8 rows.
+    arr = terrain.copy()
+    if backend == "cupy":
+        arr = cp.asarray(arr)
+    raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    if backend == "dask":
+        raster = xa.DataArray(
+            da.from_array(terrain.copy(), chunks=(7, 7)),
+            coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=obs_x, y=obs_y, observer_elev=obs_elev,
+                 max_distance=8.0)
+    if backend == "cupy":
+        result = v.data.get()
+    else:
+        # numpy and dask both resolve through .values
+        result = v.values
+
+    # Cells within max_distance along the finer (x) axis must be evaluated
+    # and match the full viewshed, not be clipped to INVISIBLE.
+    for c in (12, 15, 17):  # 2, 5, 7 units east — all < 8
+        dist = abs(xs[c] - obs_x)
+        assert dist < 8.0
+        assert result[10, c] > INVISIBLE, (
+            f"cell (10,{c}) at distance {dist} wrongly clipped")
+        np.testing.assert_allclose(result[10, c], full_vals[10, c], atol=0.03)
+
+    # Cells outside max_distance stay INVISIBLE.
+    assert result[10, 19] == INVISIBLE  # 9 units east, > 8

@@ -2077,13 +2077,17 @@ def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
     x_range = (x_coords[0], x_coords[-1])
     ew_res = (x_range[1] - x_range[0]) / (width - 1) if width > 1 else 1.0
     ns_res = (y_range[1] - y_range[0]) / (height - 1) if height > 1 else 1.0
-    cell_size = max(abs(ew_res), abs(ns_res))
-    radius_cells = int(np.ceil(max_distance / cell_size))
+    # Size the window per axis: rows are spaced by ns_res, columns by ew_res.
+    # Using a single radius from the coarser resolution under-sizes the
+    # window along the finer axis and clips cells that are within
+    # max_distance there.
+    radius_rows = int(np.ceil(max_distance / abs(ns_res)))
+    radius_cols = int(np.ceil(max_distance / abs(ew_res)))
 
-    r_lo = max(0, obs_r - radius_cells)
-    r_hi = min(height, obs_r + radius_cells + 1)
-    c_lo = max(0, obs_c - radius_cells)
-    c_hi = min(width, obs_c + radius_cells + 1)
+    r_lo = max(0, obs_r - radius_rows)
+    r_hi = min(height, obs_r + radius_rows + 1)
+    c_lo = max(0, obs_c - radius_cols)
+    c_hi = min(width, obs_c + radius_cols + 1)
 
     window = raster.isel(y=slice(r_lo, r_hi), x=slice(c_lo, c_hi))
 
