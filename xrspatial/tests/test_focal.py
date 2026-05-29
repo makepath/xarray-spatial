@@ -1146,3 +1146,85 @@ def test_hotspots_3d_dask():
     assert dask_result.shape == (3, 10, 12)
     np.testing.assert_array_equal(
         dask_result.data.compute(), numpy_result.data)
+
+
+# ---------------------------------------------------------------------------
+# API-consistency regressions (issue #2689)
+# ---------------------------------------------------------------------------
+
+_api_kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+
+
+def test_apply_raster_kwarg_deprecated():
+    agg = xr.DataArray(data_random)
+    with pytest.warns(DeprecationWarning, match="raster"):
+        deprecated = apply(raster=agg, kernel=_api_kernel)
+    current = apply(agg, _api_kernel)
+    np.testing.assert_array_equal(deprecated.data, current.data)
+
+
+def test_apply_raster_and_agg_conflict():
+    agg = xr.DataArray(data_random)
+    with pytest.raises(TypeError):
+        apply(agg, _api_kernel, raster=agg)
+
+
+def test_hotspots_raster_kwarg_deprecated():
+    agg = xr.DataArray(data_random * 100)
+    with pytest.warns(DeprecationWarning, match="raster"):
+        deprecated = hotspots(raster=agg, kernel=_api_kernel)
+    current = hotspots(agg, _api_kernel)
+    np.testing.assert_array_equal(deprecated.data, current.data)
+
+
+def test_hotspots_raster_and_agg_conflict():
+    agg = xr.DataArray(data_random * 100)
+    with pytest.raises(TypeError):
+        hotspots(agg, _api_kernel, raster=agg)
+
+
+def test_focal_stats_name():
+    agg = xr.DataArray(data_random)
+    result = focal_stats(agg, _api_kernel, stats_funcs=['mean', 'sum'])
+    assert result.name == 'focal_stats'
+    assert focal_stats(
+        agg, _api_kernel, stats_funcs=['mean'], name='custom').name == 'custom'
+
+
+def test_hotspots_name():
+    agg = xr.DataArray(data_random * 100)
+    assert hotspots(agg, _api_kernel).name == 'hotspots'
+    assert hotspots(agg, _api_kernel, name='custom').name == 'custom'
+
+
+def test_mean_excludes_default_not_shared():
+    # Regression: mutable default replaced by a None sentinel. Calling with
+    # an explicit excludes must not leak into the next default-args call.
+    agg = xr.DataArray(data_random)
+    mean(agg, excludes=[0.0])
+    again = mean(agg)
+    reference = mean(agg, excludes=[np.nan])
+    np.testing.assert_array_equal(again.data, reference.data)
+
+
+def test_focal_stats_default_stats_funcs():
+    agg = xr.DataArray(data_random)
+    result = focal_stats(agg, _api_kernel)
+    assert result.sizes['stats'] == 8
+
+
+@cuda_and_cupy_available
+def test_focal_stats_name_gpu():
+    import cupy
+    agg = xr.DataArray(cupy.asarray(data_random))
+    result = focal_stats(agg, _api_kernel, stats_funcs=['mean', 'sum'])
+    assert result.name == 'focal_stats'
+
+
+@cuda_and_cupy_available
+def test_hotspots_name_gpu():
+    import cupy
+    agg = xr.DataArray(cupy.asarray(data_random * 100))
+    assert hotspots(agg, _api_kernel).name == 'hotspots'
+    with pytest.warns(DeprecationWarning, match="raster"):
+        hotspots(raster=agg, kernel=_api_kernel)
