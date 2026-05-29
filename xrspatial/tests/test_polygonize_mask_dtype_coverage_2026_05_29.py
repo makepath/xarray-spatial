@@ -34,6 +34,7 @@ decorator.
 import numpy as np
 import pytest
 import xarray as xr
+from numpy.testing import assert_array_equal
 
 try:
     import dask.array as da
@@ -135,16 +136,21 @@ def test_integer_mask_matches_bool_mask(
 # Float masks.
 # ---------------------------------------------------------------------------
 
+_FLOAT_MASK_DTYPES = [np.float32, np.float64]
+
+
 @pytest.mark.parametrize("backend", _backend_params())
 @pytest.mark.parametrize("connectivity", [4, 8])
-def test_float_mask_on_integer_raster_matches_bool(backend, connectivity):
+@pytest.mark.parametrize("mask_dtype", _FLOAT_MASK_DTYPES)
+def test_float_mask_on_integer_raster_matches_bool(
+        mask_dtype, backend, connectivity):
     """A float mask works on an integer raster (no ``mask & nan_mask``)."""
     ref_vals, ref_polys = _bool_reference_same_backend(
         _IDATA, backend, connectivity)
     ref_sig = _result_signature(ref_vals, ref_polys)
 
     raster = _make_raster(_IDATA, backend)
-    mask = _make_raster(_MASK_PATTERN.astype(np.float64), backend)
+    mask = _make_raster(_MASK_PATTERN.astype(mask_dtype), backend)
     vals, polys = polygonize(raster, mask=mask, connectivity=connectivity)
 
     assert _result_signature(vals, polys) == ref_sig
@@ -156,7 +162,8 @@ def test_float_mask_on_integer_raster_matches_bool(backend, connectivity):
     raises=TypeError, strict=True)
 @pytest.mark.parametrize("backend", _backend_params())
 @pytest.mark.parametrize("connectivity", [4, 8])
-def test_float_mask_on_float_raster_2623(backend, connectivity):
+@pytest.mark.parametrize("mask_dtype", _FLOAT_MASK_DTYPES)
+def test_float_mask_on_float_raster_2623(mask_dtype, backend, connectivity):
     """A float mask on a float raster should polygonize, but currently
     crashes (#2623).  xfail-strict so this flips to a pass once the
     source casts the mask to bool before ``& nan_mask``."""
@@ -165,7 +172,7 @@ def test_float_mask_on_float_raster_2623(backend, connectivity):
     ref_sig = _result_signature(ref_vals, ref_polys)
 
     raster = _make_raster(_FDATA, backend)
-    mask = _make_raster(_MASK_PATTERN.astype(np.float64), backend)
+    mask = _make_raster(_MASK_PATTERN.astype(mask_dtype), backend)
     vals, polys = polygonize(raster, mask=mask, connectivity=connectivity)
 
     assert _result_signature(vals, polys) == ref_sig
@@ -186,3 +193,32 @@ def test_nonbool_mask_actually_excludes_pixels():
 
     vals_nomask, _ = polygonize(raster, connectivity=4)
     assert 3.0 in [float(v) for v in vals_nomask]
+
+
+@pytest.mark.parametrize("mask_dtype", [np.int32, np.int64])
+@pytest.mark.parametrize("connectivity", [4, 8])
+def test_integer_mask_exact_coords_numpy(mask_dtype, connectivity):
+    """Tighter numpy check: an integer mask reproduces the bool mask's
+    exact polygon coordinates, not just the vertex-count signature.
+
+    The signature comparison used elsewhere tolerates benign backend
+    ordering differences but could miss a mask that swapped which pixels
+    pass while keeping the same ring shape.  On a single backend (numpy)
+    the region order is deterministic, so assert the full coordinate
+    arrays match.
+    """
+    raster = xr.DataArray(_IDATA)
+    ref_vals, ref_polys = polygonize(
+        raster, mask=xr.DataArray(_MASK_PATTERN.astype(np.bool_)),
+        connectivity=connectivity)
+
+    vals, polys = polygonize(
+        raster, mask=xr.DataArray(_MASK_PATTERN.astype(mask_dtype)),
+        connectivity=connectivity)
+
+    assert [float(v) for v in vals] == [float(v) for v in ref_vals]
+    assert len(polys) == len(ref_polys)
+    for rings, ref_rings in zip(polys, ref_polys):
+        assert len(rings) == len(ref_rings)
+        for ring, ref_ring in zip(rings, ref_rings):
+            assert_array_equal(ring, ref_ring)
