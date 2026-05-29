@@ -5968,3 +5968,162 @@ class TestReprojectIntegerNodataRegression:
         # After the fix, every non-fill pixel must be the sentinel.
         unique = set(np.unique(result.values).tolist())
         assert unique == {100, -32768}
+
+
+# ---------------------------------------------------------------------------
+# transform_precision=0 forces the exact pyproj path (#2646)
+# ---------------------------------------------------------------------------
+
+class TestExactPrecisionEscapeHatch:
+    """transform_precision=0 must bypass the Numba/CUDA fast path entirely
+    and transform every pixel through pyproj, as the docstring promises.
+
+    The bug: the fast path was tried before checking transform_precision == 0,
+    so for CRS pairs the Numba path supports (WGS84/NAD83 <-> UTM, WGS84 <->
+    Web Mercator) the escape hatch did nothing.
+    """
+
+    # A 4326 <-> 3857 chunk; the Numba fast path supports this pair, so the
+    # pre-fix code never reached the pyproj branch for transform_precision=0.
+    _BOUNDS = (-1_000_000.0, -1_000_000.0, 1_000_000.0, 1_000_000.0)
+    _SHAPE = (37, 53)  # non-square, odd dims to catch axis/reshape mistakes
+
+    def _pyproj_exact_reference(self):
+        """Per-pixel source coords computed straight from pyproj.
+
+        Output bounds are in the target CRS (3857); the transform maps each
+        output pixel center back to the source CRS (4326), matching how
+        ``_transform_coords`` is invoked (target -> source).
+        """
+        transformer = pyproj.Transformer.from_crs(
+            'EPSG:3857', 'EPSG:4326', always_xy=True
+        )
+        height, width = self._SHAPE
+        left, bottom, right, top = self._BOUNDS
+        res_x = (right - left) / width
+        res_y = (top - bottom) / height
+        out_x = left + (np.arange(width, dtype=np.float64) + 0.5) * res_x
+        out_y = top - (np.arange(height, dtype=np.float64) + 0.5) * res_y
+        xx, yy = np.meshgrid(out_x, out_y)
+        sx, sy = transformer.transform(xx.ravel(), yy.ravel())
+        return (
+            np.asarray(sy, dtype=np.float64).reshape(self._SHAPE),
+            np.asarray(sx, dtype=np.float64).reshape(self._SHAPE),
+        )
+
+    def test_numba_fast_path_active_for_this_pair(self):
+        """Sanity check: the Numba fast path really does fire for 4326<->3857,
+        otherwise the regression below would pass vacuously."""
+        from xrspatial.reproject._projections import try_numba_transform
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:3857')
+        result = try_numba_transform(src, tgt, self._BOUNDS, self._SHAPE)
+        assert result is not None
+
+    def test_transform_coords_precision_zero_matches_pyproj(self):
+        from xrspatial.reproject import _transform_coords
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:3857')
+        transformer = pyproj.Transformer.from_crs(
+            tgt, src, always_xy=True
+        )
+        src_y, src_x = _transform_coords(
+            transformer, self._BOUNDS, self._SHAPE, 0,
+            src_crs=src, tgt_crs=tgt,
+        )
+        ref_y, ref_x = self._pyproj_exact_reference()
+        # Exact path: should match pyproj to floating-point precision.
+        np.testing.assert_allclose(src_x, ref_x, rtol=0, atol=1e-6)
+        np.testing.assert_allclose(src_y, ref_y, rtol=0, atol=1e-6)
+
+    def test_transform_coords_precision_zero_skips_numba(self, monkeypatch):
+        """transform_precision=0 must not call try_numba_transform."""
+        from xrspatial.reproject import _transform_coords
+        from xrspatial.reproject import _projections
+
+        calls = []
+
+        def _spy(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError(
+                "try_numba_transform called with transform_precision=0"
+            )
+
+        monkeypatch.setattr(_projections, 'try_numba_transform', _spy)
+
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:3857')
+        transformer = pyproj.Transformer.from_crs(tgt, src, always_xy=True)
+        # Must not raise: the Numba path is never entered.
+        _transform_coords(
+            transformer, self._BOUNDS, self._SHAPE, 0,
+            src_crs=src, tgt_crs=tgt,
+        )
+        assert calls == []
+
+    def test_reproject_chunk_numpy_precision_zero_skips_numba(self, monkeypatch):
+        """The numpy chunk worker honors the escape hatch too."""
+        from xrspatial.reproject import _reproject_chunk_numpy
+        from xrspatial.reproject import _projections
+
+        def _spy(*args, **kwargs):
+            raise AssertionError(
+                "try_numba_transform called with transform_precision=0"
+            )
+
+        monkeypatch.setattr(_projections, 'try_numba_transform', _spy)
+
+        src_wkt = pyproj.CRS('EPSG:4326').to_wkt()
+        tgt_wkt = pyproj.CRS('EPSG:3857').to_wkt()
+        source_data = np.arange(32 * 32, dtype=np.float64).reshape(32, 32)
+        # Must not raise: with transform_precision=0 the worker takes the
+        # pyproj branch instead of the Numba fast path.
+        out = _reproject_chunk_numpy(
+            source_data,
+            (-2_000_000.0, -2_000_000.0, 2_000_000.0, 2_000_000.0),
+            (32, 32), True,
+            src_wkt, tgt_wkt,
+            self._BOUNDS, self._SHAPE,
+            'nearest', np.nan, 0,
+        )
+        assert out.shape == self._SHAPE
+
+    def test_reproject_end_to_end_precision_zero_skips_numba(self, monkeypatch):
+        """reproject() with transform_precision=0 routes through pyproj and
+        still produces a sensible result."""
+        from xrspatial.reproject import reproject
+        from xrspatial.reproject import _projections
+
+        def _spy(*args, **kwargs):
+            raise AssertionError(
+                "try_numba_transform called with transform_precision=0"
+            )
+
+        monkeypatch.setattr(_projections, 'try_numba_transform', _spy)
+
+        raster = _gradient_raster(
+            h=32, w=32, x_range=(-10, 10), y_range=(-10, 10)
+        )
+        result = reproject(raster, 'EPSG:3857', transform_precision=0)
+        assert result.shape[0] > 0
+        assert result.shape[1] > 0
+
+    def test_reproject_precision_zero_matches_default_for_smooth_pair(self):
+        """For a smooth, well-behaved pair the exact path and the default
+        approximate path should agree closely on overlapping pixels."""
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(
+            h=48, w=48, x_range=(-8, 8), y_range=(-8, 8)
+        )
+        exact = reproject(
+            raster, 'EPSG:3857', resolution=200000.0, transform_precision=0
+        )
+        approx = reproject(
+            raster, 'EPSG:3857', resolution=200000.0
+        )
+        assert exact.shape == approx.shape
+        a = exact.values
+        b = approx.values
+        both = np.isfinite(a) & np.isfinite(b)
+        assert both.any()
+        np.testing.assert_allclose(a[both], b[both], rtol=0, atol=1e-3)
