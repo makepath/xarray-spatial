@@ -1456,19 +1456,18 @@ def resample(
     if has_nodata:
         new_attrs['_FillValue'] = float('nan')
 
-    # Refresh `transform` if the input had one. The rasterio 6-tuple is
-    # (res_x, 0.0, left, 0.0, -res_y, top). `top` is the upper edge of
-    # the first row, which is `y_edge_start` when y is descending and
-    # `y_edge_end` when y is ascending. `left` is the lower edge of the
-    # first column, which is `x_edge_start` when x is ascending and
-    # `x_edge_end` when x is descending.
+    # Refresh `transform` if the input had one. The rasterio 6-tuple
+    # `(a, b, c, d, e, f)` maps `(col, row) -> (x, y)` for the first
+    # array pixel at `(col=0, row=0)`, so the scale signs and the
+    # origin corner have to follow the actual array layout rather
+    # than assuming a north-up grid. `px` / `py` from `_new_coords`
+    # are already signed (positive when the coord ascends along the
+    # axis, negative when it descends), and `*_edge_start` is the
+    # leading edge of the first row / column on the side of
+    # `vals[0]` -- exactly what rasterio wants for `c` and `f`.
     if 'transform' in agg.attrs:
-        out_res_x = abs(px)
-        out_res_y = abs(py)
-        top = y_edge_start if y_vals[0] > y_vals[-1] else y_edge_end
-        left = x_edge_start if x_vals[0] < x_vals[-1] else x_edge_end
         new_attrs['transform'] = (
-            out_res_x, 0.0, left, 0.0, -out_res_y, top,
+            px, 0.0, x_edge_start, 0.0, py, y_edge_start,
         )
 
     # Resample replaces sentinel pixels with NaN regardless of input

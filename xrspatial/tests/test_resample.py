@@ -151,6 +151,57 @@ class TestMetadataPropagation:
             2.0, 0.0, 100.0, 0.0, -2.0, 200.0,
         )
 
+    @staticmethod
+    def _raster_with_orientation(x_asc, y_asc):
+        """4x4 raster with the chosen coord orientation and a matching
+        rasterio transform for `(col=0, row=0) -> leading-edge corner
+        of pixel [0, 0]` (the geographic "upper-left" only when both
+        coords are in the conventional north-up direction). Issue
+        #2571.
+        """
+        res = 1.0
+        x_step = res if x_asc else -res
+        y_step = res if y_asc else -res
+        # Pick first-pixel center so the leading edge sits on a round
+        # number; the actual value doesn't matter for the round-trip.
+        x0_center = 0.5 if x_asc else 3.5
+        y0_center = 0.5 if y_asc else 3.5
+        x = np.array([x0_center + i * x_step for i in range(4)])
+        y = np.array([y0_center + i * y_step for i in range(4)])
+        left = x0_center - x_step / 2
+        top = y0_center - y_step / 2
+        transform = (x_step, 0.0, left, 0.0, y_step, top)
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        return xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'transform': transform, 'res': (res, res)},
+        )
+
+    @pytest.mark.parametrize('x_asc', [True, False])
+    @pytest.mark.parametrize('y_asc', [True, False])
+    def test_transform_matches_coord_orientation(self, x_asc, y_asc):
+        """The refreshed transform must round-trip against the output
+        coords for every coord orientation (issue #2571)."""
+        raster = self._raster_with_orientation(x_asc, y_asc)
+        out = resample(raster, scale_factor=0.5)
+
+        a, b, c, d, e, f = out.attrs['transform']
+        # Off-diagonals are always zero for an axis-aligned grid.
+        assert b == 0.0
+        assert d == 0.0
+        # Scale signs follow the coord direction.
+        assert (a > 0) == x_asc
+        assert (e > 0) == y_asc
+        # transform * (col + 0.5, row + 0.5) -> pixel-center coord.
+        out_x = out[out.dims[-1]].values
+        out_y = out[out.dims[-2]].values
+        for col, expected_x in enumerate(out_x):
+            assert pytest.approx(c + a * (col + 0.5)) == expected_x
+        for row, expected_y in enumerate(out_y):
+            assert pytest.approx(f + e * (row + 0.5)) == expected_y
+
     def test_transform_absent_stays_absent(self):
         # grid_4x4 fixture has no transform attr.
         data = np.arange(16, dtype=np.float32).reshape(4, 4)
