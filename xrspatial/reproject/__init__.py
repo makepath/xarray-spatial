@@ -272,8 +272,11 @@ def _transform_coords(transformer, chunk_bounds, chunk_shape,
     -------
     src_y, src_x : ndarray (height, width)
     """
-    # Try Numba fast path for common projections
-    if src_crs is not None and tgt_crs is not None:
+    # Try Numba fast path for common projections.
+    # transform_precision == 0 is the documented escape hatch for exact
+    # per-pixel pyproj transforms, so skip the approximate fast path then.
+    if (transform_precision != 0
+            and src_crs is not None and tgt_crs is not None):
         try:
             from ._projections import try_numba_transform
             result = try_numba_transform(
@@ -348,15 +351,17 @@ def _reproject_chunk_numpy(
     src_crs = _crs_from_wkt(src_wkt)
     tgt_crs = _crs_from_wkt(tgt_wkt)
 
-    # Try Numba fast path first (avoids creating pyproj Transformer)
+    # Try Numba fast path first (avoids creating pyproj Transformer).
+    # transform_precision == 0 forces the exact pyproj path, so skip Numba.
     numba_result = None
-    try:
-        from ._projections import try_numba_transform
-        numba_result = try_numba_transform(
-            src_crs, tgt_crs, chunk_bounds_tuple, chunk_shape,
-        )
-    except (ImportError, ModuleNotFoundError):
-        pass
+    if transform_precision != 0:
+        try:
+            from ._projections import try_numba_transform
+            numba_result = try_numba_transform(
+                src_crs, tgt_crs, chunk_bounds_tuple, chunk_shape,
+            )
+        except (ImportError, ModuleNotFoundError):
+            pass
 
     if numba_result is not None:
         src_y, src_x = numba_result
@@ -504,9 +509,11 @@ def _reproject_chunk_cupy(
     else:
         _empty_shape = chunk_shape
 
-    # Try CUDA transform first (keeps coordinates on-device)
+    # Try CUDA transform first (keeps coordinates on-device).
+    # transform_precision == 0 forces the exact pyproj path, so skip CUDA.
     cuda_result = None
-    if src_crs is not None and tgt_crs is not None:
+    if (transform_precision != 0
+            and src_crs is not None and tgt_crs is not None):
         try:
             from ._projections_cuda import try_cuda_transform
             cuda_result = try_cuda_transform(
@@ -1724,14 +1731,17 @@ def _reproject_dask_cupy(
             )
             chunk_shape = (rchunk, cchunk)
 
-            # CUDA coordinate transform (reuses cached CRS objects)
-            try:
-                from ._projections_cuda import try_cuda_transform
-                cuda_coords = try_cuda_transform(
-                    src_crs, tgt_crs, cb, chunk_shape,
-                )
-            except (ImportError, ModuleNotFoundError):
-                cuda_coords = None
+            # CUDA coordinate transform (reuses cached CRS objects).
+            # precision == 0 forces the exact pyproj path, so skip CUDA.
+            cuda_coords = None
+            if precision != 0:
+                try:
+                    from ._projections_cuda import try_cuda_transform
+                    cuda_coords = try_cuda_transform(
+                        src_crs, tgt_crs, cb, chunk_shape,
+                    )
+                except (ImportError, ModuleNotFoundError):
+                    cuda_coords = None
 
             if cuda_coords is not None:
                 src_y, src_x = cuda_coords

@@ -1411,15 +1411,26 @@ def resample(
     Raises
     ------
     ValueError
-        If neither or both of ``scale_factor`` and ``target_resolution``
-        are given; if either is a sequence whose length is not 2; if any
-        component is zero, negative, NaN, or infinite; if ``method``
-        is not in :data:`ALL_METHODS`; or if the spatial coordinates of
-        ``agg`` are not strictly monotonic and evenly spaced (``resample``
-        only supports regular monotonic rasters).
+        If ``agg`` has a zero-length spatial dimension; if neither or both
+        of ``scale_factor`` and ``target_resolution`` are given; if either
+        is a sequence whose length is not 2; if any component is zero,
+        negative, NaN, or infinite; if ``method`` is not in
+        :data:`ALL_METHODS`; or if the spatial coordinates of ``agg`` are
+        not strictly monotonic and evenly spaced (``resample`` only
+        supports regular monotonic rasters).
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
     _validate_monotonic_regular_coords(agg)
+
+    # Reject empty rasters up front. A zero-length spatial axis would
+    # otherwise reach the output-coordinate rebuild and surface as an
+    # opaque IndexError (vals[0] on an empty coord array) rather than a
+    # clear, parameter-named error.
+    if agg.shape[-2] == 0 or agg.shape[-1] == 0:
+        raise ValueError(
+            f"resample(): `agg` must have non-empty spatial dimensions, "
+            f"got shape {tuple(agg.shape)}"
+        )
 
     if method not in ALL_METHODS:
         raise ValueError(
