@@ -1563,13 +1563,29 @@ def _hi_reduce(partials_list):
     return hi_lookup
 
 
+@delayed
+def _hi_lookup_as_object_array(hi_lookup):
+    """Wrap the HI lookup dict in a 0-d numpy object array.
+
+    `map_blocks` only threads dask-array positional args through the graph
+    lazily.  Wrapping the dict in a 0-d object array lets us hand the
+    delayed lookup to every paint chunk without computing it up front.
+    """
+    arr = np.empty((), dtype=object)
+    arr[()] = hi_lookup
+    return arr
+
+
 def _hi_dask_numpy(zones_data, values_data, nodata):
     """Dask+numpy backend for hypsometric integral.
 
     Single graph evaluation: each block computes its local (zone -> stats)
-    dict, then a streaming reduce merges them into a lookup table, then
+    dict, a streaming reduce merges them into a lookup table, and
     map_blocks paints the result.  No up-front `_unique_finite_zones`
     compute and no O(n_blocks * n_zones) scheduler-side stack.
+
+    The lookup table stays lazy (a 0-d dask object array) so the whole
+    pipeline is lazy: nothing runs until the caller computes the output.
     """
     zones_blocks = zones_data.to_delayed().ravel()
     values_blocks = values_data.to_delayed().ravel()
@@ -1579,13 +1595,14 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
         for zb, vb in zip(zones_blocks, values_blocks)
     ]
 
-    hi_lookup = dask.compute(_hi_reduce(partials))[0]
+    hi_lookup_delayed = _hi_lookup_as_object_array(_hi_reduce(partials))
+    hi_lookup_arr = da.from_delayed(
+        hi_lookup_delayed, shape=(), dtype=object, meta=np.array((), dtype=object),
+    )
 
-    if not hi_lookup:
-        return da.full(values_data.shape, np.nan, dtype=np.float64,
-                       chunks=values_data.chunks)
-
-    def _paint(zones_chunk, values_chunk, hi_map):
+    def _paint(zones_chunk, values_chunk, hi_map_arr):
+        # hi_map_arr is the 0-d object array carrying the lookup dict.
+        hi_map = hi_map_arr[()]
         out = np.full(zones_chunk.shape, np.nan, dtype=np.float64)
         for z, hi_val in hi_map.items():
             mask = (zones_chunk == z) & np.isfinite(values_chunk)
@@ -1593,7 +1610,7 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
         return out
 
     return da.map_blocks(
-        _paint, zones_data, values_data, hi_map=hi_lookup,
+        _paint, zones_data, values_data, hi_lookup_arr,
         dtype=np.float64, meta=np.array(()),
     )
 
