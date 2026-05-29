@@ -367,6 +367,17 @@ def test_conflicting_ordering_and_method_raises():
                         ordering='shreve', method='strahler')
 
 
+def test_capitalized_ordering_with_method_not_conflict():
+    """Case differences alone do not count as a conflict."""
+    fd_da, fa_da = _confluence_inputs()
+    # ordering='Strahler' is the default value in different case; passing
+    # method='shreve' alongside it should not be treated as a conflict.
+    result = stream_order_d8(fd_da, fa_da, threshold=1,
+                             ordering='Strahler', method='shreve')
+    reference = stream_order_d8(fd_da, fa_da, threshold=1, ordering='shreve')
+    np.testing.assert_array_equal(result.data, reference.data)
+
+
 # ====================================================================
 # Cross-backend tests
 # ====================================================================

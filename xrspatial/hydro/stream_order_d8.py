@@ -1559,7 +1559,7 @@ def stream_order_d8(flow_dir: xr.DataArray,
                     threshold: float = 100,
                     ordering: str = 'strahler',
                     name: str = 'stream_order',
-                    method: str = None) -> xr.DataArray:
+                    method: str | None = None) -> xr.DataArray:
     """Compute stream order from D8 flow direction and accumulation grids.
 
     Parameters
@@ -1603,7 +1603,13 @@ def stream_order_d8(flow_dir: xr.DataArray,
     _validate_raster(flow_dir, func_name='stream_order', name='flow_dir')
     _validate_raster(flow_accum, func_name='stream_order', name='flow_accum')
 
-    if method is not None and method != ordering and ordering != 'strahler':
+    # `method` is an alias for `ordering` (parity with the dinf/mfd
+    # variants).  Compare case-insensitively, and only treat them as
+    # conflicting when the caller set `ordering` to a non-default value
+    # that differs from `method`.
+    if (method is not None
+            and ordering.lower() != 'strahler'
+            and method.lower() != ordering.lower()):
         raise ValueError(
             f"Pass either 'ordering' or 'method', not both with different "
             f"values (got ordering={ordering!r}, method={method!r})")
