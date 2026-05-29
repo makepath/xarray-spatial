@@ -1557,6 +1557,33 @@ def test_apply_nodata_none():
     np.testing.assert_array_equal(result.values, expected)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_apply_name_consistent_across_backends(backend):
+    # Regression for #2611: apply() left .name unset, so numpy/cupy returned
+    # None while the dask backends inherited an internal task name.
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip('cupy not available')
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
+
+    zones_data = np.array([[1, 1, 0],
+                           [0, 2, 2],
+                           [3, 3, 3]], dtype=np.int32)
+    values_data = np.array([[10.0, 20.0, 30.0],
+                            [40.0, 50.0, 60.0],
+                            [70.0, 80.0, 90.0]])
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
+
+    # default name is None on every backend
+    result = apply(zones, values, lambda x: x * 2, nodata=0)
+    assert result.name is None
+
+    # explicit name is honored on every backend
+    named = apply(zones, values, lambda x: x * 2, nodata=0, name='doubled')
+    assert named.name == 'doubled'
+
+
 def test_apply_backward_compat():
     """Same scenario as original test, but with new return semantics."""
     zones_val = np.zeros((3, 3), dtype=np.int32)
