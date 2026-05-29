@@ -664,6 +664,57 @@ class TestDaskParity:
 
 
 # ---------------------------------------------------------------------------
+# Interp dask seam parity on large downsample ratios (issue #2610)
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestInterpDaskDownsampleSeam:
+    """Interp dask path must match eager numpy when the downsample ratio is
+    large enough that an output pixel's block-centered source coordinate
+    lands beyond its own input chunk. The fixed depth=1 overlap for
+    nearest/bilinear was too small for that case (#2610): the source row /
+    column was clamped to the block edge, corrupting whole seam rows.
+
+    Random data is essential here: a smooth gradient hides the bug because
+    the clamped neighbour value is close to the correct one. The chunk
+    sizes deliberately do NOT divide the input evenly so output windows
+    straddle chunk seams.
+    """
+
+    @pytest.mark.parametrize('method', ['nearest', 'bilinear', 'cubic'])
+    @pytest.mark.parametrize('sf', [0.33, 0.2, 0.1])
+    @pytest.mark.parametrize('chunks', [(11, 13), (7, 7), (17, 9)])
+    def test_large_downsample_seam_parity(self, method, sf, chunks):
+        rng = np.random.RandomState(2610)
+        data = rng.rand(50, 50).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=chunks)
+        np_out = resample(np_agg, scale_factor=sf, method=method)
+        dk_out = resample(dk_agg, scale_factor=sf, method=method)
+        # nearest/bilinear are exact in eager-vs-chunked space once the
+        # overlap covers the stencil; allow only float32 round-off.
+        np.testing.assert_allclose(dk_out.values, np_out.values,
+                                   atol=1e-5, equal_nan=True)
+
+    def test_asymmetric_large_downsample_seam_parity(self):
+        # Different ratio per axis so depth_y and depth_x diverge.
+        rng = np.random.RandomState(26101)
+        data = rng.rand(48, 60).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(13, 11))
+        np_out = resample(np_agg, scale_factor=(0.2, 0.4), method='nearest')
+        dk_out = resample(dk_agg, scale_factor=(0.2, 0.4), method='nearest')
+        np.testing.assert_allclose(dk_out.values, np_out.values,
+                                   atol=1e-5, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
 # Aggregate dask boundary contamination (issue #1469)
 # ---------------------------------------------------------------------------
 
