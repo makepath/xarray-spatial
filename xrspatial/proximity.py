@@ -24,13 +24,10 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from xrspatial.pathfinding import _available_memory_bytes
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args, get_dataarray_resolution, has_cuda_and_cupy,
-    is_cupy_array, is_dask_cupy, ngjit,
-)
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.pathfinding import _available_memory_bytes
+from xrspatial.utils import (_validate_raster, cuda_args, get_dataarray_resolution,
+                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
 
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1
@@ -288,7 +285,7 @@ def _vectorized_calc_direction(x1, x2, y1, y2):
     dy = y2 - y1
     d = np.arctan2(-dy, dx) * 57.29578
     result = np.where(d < 0, 90.0 - d,
-             np.where(d > 90.0, 360.0 - d + 90.0, 90.0 - d))
+                      np.where(d > 90.0, 360.0 - d + 90.0, 90.0 - d))
     result[(x1 == x2) & (y1 == y2)] = 0.0
     return result.astype(np.float32)
 
@@ -1269,9 +1266,9 @@ def _process(
             was_dask_cupy = has_cuda_and_cupy() and is_dask_cupy(raster)
             if was_dask_cupy:
                 import cupy as cp
+
                 # Unbounded: convert to dask+numpy for KDTree/line-sweep
                 # (KDTree is CPU-only; O(N log T) beats brute-force O(NT))
-                original_chunks = raster.data.chunks
                 raster = raster.copy(
                     data=raster.data.map_blocks(
                         lambda x: x.get(), dtype=raster.dtype,
@@ -1344,7 +1341,7 @@ def proximity(
     raster: xr.DataArray,
     x: str = "x",
     y: str = "y",
-    target_values: list = [],
+    target_values: list = None,
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
 ) -> xr.DataArray:
@@ -1460,6 +1457,9 @@ def proximity(
           * x        (x) int64 0 1 2 3 4
     """
 
+    if target_values is None:
+        target_values = []
+
     _validate_raster(raster, func_name='proximity', name='raster')
 
     proximity_img = _process(
@@ -1487,7 +1487,7 @@ def allocation(
     raster: xr.DataArray,
     x: str = "x",
     y: str = "y",
-    target_values: list = [],
+    target_values: list = None,
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
 ):
@@ -1600,6 +1600,9 @@ def allocation(
           * x        (x) int64 0 1 2 3 4
     """
 
+    if target_values is None:
+        target_values = []
+
     _validate_raster(raster, func_name='allocation', name='raster')
 
     allocation_img = _process(
@@ -1627,7 +1630,7 @@ def direction(
     raster: xr.DataArray,
     x: str = "x",
     y: str = "y",
-    target_values: list = [],
+    target_values: list = None,
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
 ):
@@ -1745,6 +1748,9 @@ def direction(
           * y        (y) int64 4 3 2 1 0
           * x        (x) int64 0 1 2 3 4
     """
+
+    if target_values is None:
+        target_values = []
 
     _validate_raster(raster, func_name='direction', name='raster')
 

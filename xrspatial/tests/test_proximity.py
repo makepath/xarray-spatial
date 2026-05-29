@@ -961,3 +961,26 @@ def test_no_scipy_dask_unbounded_memory_guard():
                 proximity(raster, x='lon', y='lat')
     finally:
         prox_mod.cKDTree = original_ckdtree
+
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_target_values_none_default_matches_empty_list(func):
+    # target_values default switched from [] to a None sentinel; passing
+    # None (the default) must behave exactly like passing an empty list.
+    data = np.asarray([[0., 0., 0., 0., 0.],
+                       [0., 0., 0., 1., 0.],
+                       [0., 0., 0., 0., 0.],
+                       [0., 0., 2., 0., 0.],
+                       [0., 0., 0., 0., 0.]])
+    n, m = data.shape
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['y'] = np.arange(n)[::-1]
+    raster['x'] = np.arange(m)
+
+    default_result = func(raster)
+    explicit_result = func(raster, target_values=[])
+
+    np.testing.assert_array_equal(
+        np.nan_to_num(default_result.data),
+        np.nan_to_num(explicit_result.data),
+    )
