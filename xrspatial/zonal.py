@@ -223,11 +223,23 @@ def _nanreduce_preserve_allnan(blocks, func):
     return result
 
 
+def _count_reduce(blocks):
+    """Sum per-block counts. An empty zone (NaN in every block) totals 0.
+
+    Unlike the other reducers, count does not preserve all-NaN as NaN: an
+    empty zone has zero valid cells, so its count is 0, not undefined.
+    """
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        return np.nansum(blocks, axis=0)
+
+
 _DASK_STATS = dict(
     max=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nanmax),
     min=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nanmin),
     sum=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nansum),
-    count=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nansum),
+    count=_count_reduce,
     sum_squares=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nansum),
 )
 
@@ -319,6 +331,13 @@ def _sort_and_stride(zones, values, unique_zones):
     return sorted_indices, values_by_zones, zone_breaks
 
 
+def _empty_zone_value(stat_name: str) -> float:
+    # 'count' is a cardinality: an empty zone has zero valid cells, so its
+    # count is 0. Every other built-in stat (and any custom callable) is
+    # undefined over no values, so it stays NaN.
+    return 0.0 if stat_name == 'count' else np.nan
+
+
 def _calc_stats(
     values_by_zones: np.array,
     zone_breaks: np.array,
@@ -326,9 +345,14 @@ def _calc_stats(
     zone_ids: np.array,
     func: Callable,
     nodata_values: Union[int, float] = None,
+    empty_zone_value: float = np.nan,
 ):
+    # An "empty" zone exists in the zones raster but has no valid values
+    # (all NaN, or all equal to nodata_values). Most stats leave NaN there
+    # (empty_zone_value defaults to NaN), but count passes 0 because the
+    # count of no values is a cardinality of zero, not undefined.
     start = 0
-    results = np.full(unique_zones.shape, np.nan)
+    results = np.full(unique_zones.shape, empty_zone_value, dtype=np.float64)
     for i in range(len(unique_zones)):
         end = zone_breaks[i]
         if unique_zones[i] in zone_ids:
@@ -505,7 +529,8 @@ def _stats_numpy(
             func = stats_funcs.get(stats)
             stats_dict[stats] = _calc_stats(
                 values_by_zones, zone_breaks,
-                unique_zones, zone_ids, func, nodata_values
+                unique_zones, zone_ids, func, nodata_values,
+                empty_zone_value=_empty_zone_value(stats),
             )
             stats_dict[stats] = stats_dict[stats][selected_indexes]
         result = pd.DataFrame(stats_dict)
@@ -519,7 +544,8 @@ def _stats_numpy(
             func = stats_funcs.get(stats)
             stats_results = _calc_stats(
                 values_by_zones, zone_breaks,
-                unique_zones, zone_ids, func, nodata_values
+                unique_zones, zone_ids, func, nodata_values,
+                empty_zone_value=_empty_zone_value(stats),
             )
             for zone in zone_ids:
                 iz = zone_ids_map[zone]  # position of zone in unique_zones
@@ -604,7 +630,8 @@ def _stats_cupy(
 
         # extract zone_values, then filter per-zone for non-finite values
         # and the nodata sentinel. If the zone has no valid values left,
-        # emit NaN for every stat instead of dropping the zone.
+        # emit the empty-zone value for every stat instead of dropping the
+        # zone: 0 for count (a cardinality), NaN for everything else.
         zone_values = values_by_zone[unique_index[i]:unique_index[i]+unique_counts[i]]
         zone_mask = cupy.isfinite(zone_values)
         if nodata_values is not None:
@@ -613,7 +640,7 @@ def _stats_cupy(
 
         if zone_values.size == 0:
             for stats in stats_funcs:
-                stats_dict[stats].append(float('nan'))
+                stats_dict[stats].append(_empty_zone_value(stats))
             continue
 
         # apply stats on the zone data
@@ -740,6 +767,17 @@ def stats(
     rasterize_kw : dict, optional
         Extra keyword arguments forwarded to ``rasterize()`` when
         *zones* is vector input (e.g. ``{'all_touched': True}``).
+
+    Notes
+    -----
+    Empty zones. A zone that exists in ``zones`` but has no valid values
+    (every cell is NaN, or every cell equals ``nodata_values``) still
+    appears as a row in the output. For such a zone, ``count`` is ``0``
+    because the number of valid cells is zero. Every other statistic
+    (``mean``, ``min``, ``max``, ``sum``, ``std``, ``var``, ``majority``,
+    and any custom callable) is ``NaN``, since those values are undefined
+    over an empty set. This holds across the numpy, cupy, and dask
+    backends.
 
     Returns
     -------

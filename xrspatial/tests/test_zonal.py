@@ -626,9 +626,9 @@ def test_stats_all_nan_zone_preserved(backend):
         'min': [1.0, 3.0, 9.0, np.nan],
         'max': [5.0, 7.0, 10.0, np.nan],
         'mean': [(1.0 + 2.0 + 5.0) / 3, (3.0 + 4.0 + 7.0) / 3, 9.5, np.nan],
-        # numpy's _calc_stats leaves an all-NaN zone at NaN for every stat,
-        # including count (the func is only called when len(zone_values) > 0).
-        'count': [3, 3, 2, np.nan],
+        # An empty zone (zone 5, all NaN) reports count == 0 because the
+        # number of valid cells is zero. Other stats stay NaN (issue #2644).
+        'count': [3, 3, 2, 0],
     }
     check_results(backend, df_result, expected_result)
 
@@ -800,9 +800,10 @@ def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_s
 def test_stats_all_nan_zone(backend):
     """Zone where every value is NaN should not crash.
 
-    All backends now agree: the empty zone stays in the output with NaN
-    stats. The cupy path used to drop the zone (issue #2562) — that is
-    now fixed and the per-backend branching is gone.
+    All backends agree: the empty zone stays in the output. Its count is
+    0 (zero valid cells) while every other stat is NaN (issue #2644). The
+    cupy path used to drop the zone entirely (issue #2562); that is fixed
+    and the per-backend branching is gone.
     """
     if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
@@ -826,7 +827,7 @@ def test_stats_all_nan_zone(backend):
         'max':   [np.nan, 7.0],
         'min':   [np.nan, 5.0],
         'sum':   [np.nan, 12.0],
-        'count': [np.nan, 2],
+        'count': [0, 2],
     }
     check_results(backend, df_result, expected)
 
@@ -897,9 +898,11 @@ def test_stats_negative_zone_ids(backend):
 @pytest.mark.filterwarnings("ignore:Degrees of freedom:RuntimeWarning")
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_stats_nodata_wipes_zone(backend):
-    """When nodata_values filters out every finite value in a zone, stats are NaN.
+    """When nodata_values filters out every finite value in a zone, the zone
+    is empty: count is 0 and the other stats are NaN.
 
-    All backends now agree after the issue #2562 fix.
+    All backends agree after the issue #2562 fix. The empty-zone count is 0
+    rather than NaN per issue #2644.
     """
     if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
@@ -923,7 +926,7 @@ def test_stats_nodata_wipes_zone(backend):
         'max':   [np.nan, 7.0],
         'min':   [np.nan, 3.0],
         'sum':   [np.nan, 10.0],
-        'count': [np.nan, 2],
+        'count': [0, 2],
     }
     check_results(backend, df_result, expected)
 
