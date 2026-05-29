@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.utils import has_cuda_and_cupy
+
 try:
     import pyproj
     HAS_PYPROJ = True
@@ -19,9 +21,13 @@ except ImportError:
 
 try:
     import cupy as cp
-    HAS_CUPY = True
 except ImportError:
-    HAS_CUPY = False
+    cp = None
+
+# Gate GPU tests on a real CUDA runtime probe, not just that ``cupy`` imports.
+# An import-only check leaves tests erroring with ``cudaErrorInsufficientDriver``
+# on hosts where ``cupy`` is installed but the driver is missing or too old.
+HAS_CUPY = has_cuda_and_cupy()
 
 pytestmark = pytest.mark.skipif(
     not HAS_PYPROJ, reason="pyproj required for reproject tests"

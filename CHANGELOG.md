@@ -21,6 +21,14 @@
 
 #### Fixed
 
+- Reproject test suite now gates GPU tests on
+  `xrspatial.utils.has_cuda_and_cupy()` instead of an import-only
+  `try: import cupy` check. On hosts where `cupy` imports cleanly but
+  the CUDA driver is missing or too old, the GPU tests now skip with a
+  clear reason instead of erroring at allocation time with
+  `cudaErrorInsufficientDriver`. Affects `test_reproject.py` and
+  `test_reproject_coverage_2026_05_27.py`. (#2564)
+
 - `rasterize` now validates the `resolution=` argument shape and element
   type before unpacking. A scalar number or a length-2 sequence of
   numbers is accepted; anything else (length-0, length-1, length-3+
