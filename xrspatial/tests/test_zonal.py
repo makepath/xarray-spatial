@@ -765,7 +765,7 @@ def test_stats_cupy_zone_is_column_not_index():
     # "zone" stays a column on both backends, and neither sets it as index.
     assert 'zone' in df_cp.columns
     assert df_cp.index.name is None
-    assert df_cp.index.name == df_np.index.name
+    assert df_cp.index.equals(df_np.index)
     assert list(df_cp.columns) == list(df_np.columns)
 
 
