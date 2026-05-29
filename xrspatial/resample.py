@@ -1259,6 +1259,27 @@ def _apply_nodata_mask(agg, nodata):
     return agg.where(mask)
 
 
+def _refresh_nodata_attrs(src_attrs, dst_attrs):
+    """Refresh nodata sentinels in *dst_attrs* to NaN.
+
+    Resample replaces sentinel pixels with NaN regardless of input
+    dtype. If the input declared a sentinel via ``_FillValue``,
+    ``nodatavals``, or the rasterio-style ``nodata`` attr, refresh each
+    one to NaN so the metadata matches the actual data. Keys absent on
+    the input stay absent. ``_resolve_nodata`` reads ``nodata`` as a
+    fallback, so a stale finite value there would silently mismatch the
+    masked data on any downstream consumer that trusts
+    ``attrs['nodata']``.
+    """
+    if '_FillValue' in src_attrs:
+        dst_attrs['_FillValue'] = float('nan')
+    if 'nodatavals' in src_attrs:
+        old = src_attrs['nodatavals']
+        dst_attrs['nodatavals'] = tuple(float('nan') for _ in old)
+    if 'nodata' in src_attrs:
+        dst_attrs['nodata'] = float('nan')
+
+
 @supports_dataset
 def resample(
     agg: xr.DataArray,
@@ -1391,6 +1412,10 @@ def resample(
         # When nodata was applied, advertise NaN as the new sentinel.
         if has_nodata:
             out.attrs['_FillValue'] = float('nan')
+            # Refresh `nodata` / `nodatavals` too so masked-to-NaN output
+            # never advertises a stale finite sentinel (the non-identity
+            # path does the same below).
+            _refresh_nodata_attrs(agg.attrs, out.attrs)
         return out
 
     # -- 3D: dispatch per band ----------------------------------------------
@@ -1422,6 +1447,7 @@ def resample(
         new_attrs.update(bands[0].attrs)  # res from per-band resample
         if has_nodata:
             new_attrs['_FillValue'] = float('nan')
+            _refresh_nodata_attrs(agg.attrs, new_attrs)
         result.attrs = new_attrs
         # Preserve the leading-dim coordinate if it was on the input.
         if leading_dim in agg.coords:
@@ -1491,21 +1517,7 @@ def resample(
             px, 0.0, x_edge_start, 0.0, py, y_edge_start,
         )
 
-    # Resample replaces sentinel pixels with NaN regardless of input
-    # dtype. If the input declared a sentinel via `_FillValue`,
-    # `nodatavals`, or the rasterio-style `nodata` attr, refresh each
-    # one to NaN so the metadata matches the actual data. Leave the
-    # keys absent when the input did not have them. `_resolve_nodata`
-    # reads `nodata` as a fallback, so we must refresh it too -- a
-    # stale finite value here would silently mismatch the masked data
-    # on any downstream consumer that trusts `attrs['nodata']`.
-    if '_FillValue' in agg.attrs:
-        new_attrs['_FillValue'] = float('nan')
-    if 'nodatavals' in agg.attrs:
-        old = agg.attrs['nodatavals']
-        new_attrs['nodatavals'] = tuple(float('nan') for _ in old)
-    if 'nodata' in agg.attrs:
-        new_attrs['nodata'] = float('nan')
+    _refresh_nodata_attrs(agg.attrs, new_attrs)
 
     # Carry across scalar (zero-dim) non-dim coords like rioxarray's
     # `spatial_ref` or a squeezed `time` / `band` selector. The
