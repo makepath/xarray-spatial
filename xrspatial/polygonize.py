@@ -776,12 +776,20 @@ def _detect_raster_transform(raster: xr.DataArray):
     2. ``raster.rio.transform()`` (rioxarray, if installed). Returns an
        ``affine.Affine``; iterating it yields the rasterio-ordered 6
        coefficients ``(a, b, c, d, e, f)``.
-    3. ``None``.
+    3. The raster's own x/y coordinate values (the xarray /
+       xrspatial standard georeferencing convention -- the same one
+       ``get_dataarray_resolution`` / ``calc_res`` read).  This is the
+       common case: a raster loaded with georeferenced coords and a
+       ``crs`` attr but no separate ``transform`` attr would otherwise
+       emit pixel-space geometries while ``return_type='geopandas'``
+       attached a CRS, the exact mismatch #2536 set out to prevent.
+    4. ``None``.
 
     A raster carrying ``attrs['_xrspatial_no_georef']=True`` (the
     xrspatial.geotiff "no georeference" marker) is treated as having
-    no transform even if ``rio.transform()`` is present, because that
-    marker explicitly opts out of georeferencing.
+    no transform even if ``rio.transform()`` or georeferenced coords
+    are present, because that marker explicitly opts out of
+    georeferencing.
     """
     # Honour the xrspatial.geotiff "no georeference" marker if set.
     if raster.attrs.get('_xrspatial_no_georef'):
@@ -805,16 +813,71 @@ def _detect_raster_transform(raster: xr.DataArray):
             # _transform_points does not need.
             t = tuple(float(v) for v in tuple(rio_transform)[:6])
             # rioxarray returns the identity affine when no transform
-            # is available, which would silently shift outputs by (0,0)
-            # and look identical to "no transform". Treat the identity
-            # the same as None so callers get an unambiguous answer.
-            if t == (1.0, 0.0, 0.0, 0.0, 1.0, 0.0):
-                return None
-            return t
+            # is available (e.g. coords whose dims it does not recognise
+            # as spatial).  Treat the identity as "rio has nothing" and
+            # fall through to the coords-based detection below rather than
+            # returning the meaningless identity.
+            if t != (1.0, 0.0, 0.0, 0.0, 1.0, 0.0):
+                return t
     except Exception:
         pass
 
-    return None
+    # Fall back to the raster's own x/y coordinate values.  polygonize
+    # emits pixel-CORNER integer indices (_follow walks grid corners),
+    # and the attrs['transform'] path above maps corner index -> world,
+    # so a coords-derived transform must put the origin at the corner of
+    # the first pixel: origin = first_center - 0.5 * spacing.
+    return _transform_from_coords(raster)
+
+
+def _coord_spacing(values):
+    """Return the uniform step of a 1-D coordinate array, or None.
+
+    Requires at least two points and even spacing (within a small
+    relative tolerance).  Returns None on irregular spacing so the
+    caller falls back to pixel space rather than emitting a wrong
+    affine from, say, the first two coordinates.
+    """
+    if values.ndim != 1 or values.shape[0] < 2:
+        return None
+    diffs = np.diff(values.astype(np.float64))
+    step = diffs[0]
+    if step == 0:
+        return None
+    # numpy.isclose-style tolerance against the first step.
+    if not np.all(np.abs(diffs - step) <= (1e-8 + 1e-5 * abs(step))):
+        return None
+    return float(step)
+
+
+def _transform_from_coords(raster: xr.DataArray):
+    """Derive a rasterio-ordered transform from the raster's x/y coords.
+
+    Uses the raster's actual x/y dim names (``dims[-1]`` for x,
+    ``dims[-2]`` for y), matching ``get_dataarray_resolution``.  The
+    coords must be 1-D, length >= 2 and evenly spaced; otherwise this
+    returns None.
+    """
+    if raster.ndim < 2:
+        return None
+    ydim = raster.dims[-2]
+    xdim = raster.dims[-1]
+    if xdim not in raster.coords or ydim not in raster.coords:
+        return None
+
+    xc = np.asarray(raster.coords[xdim].values)
+    yc = np.asarray(raster.coords[ydim].values)
+
+    dx = _coord_spacing(xc)
+    dy = _coord_spacing(yc)
+    if dx is None or dy is None:
+        return None
+
+    # Coords are pixel centres; the transform maps pixel-corner index 0
+    # to the corner of the first cell.
+    origin_x = float(xc[0]) - 0.5 * dx
+    origin_y = float(yc[0]) - 0.5 * dy
+    return (dx, 0.0, origin_x, 0.0, dy, origin_y)
 
 
 def _to_geopandas(
@@ -2235,14 +2298,16 @@ def polygonize(
     When ``transform`` is not supplied explicitly, the raster's affine
     transform is auto-detected in this order: ``raster.attrs['transform']``
     (xrspatial.geotiff convention, a rasterio-ordered 6-tuple), then
-    ``raster.rio.transform()`` (if rioxarray is installed).  An explicit
-    ``transform=`` argument always overrides the auto-detected value.
-    Auto-detection is skipped when the raster carries
-    ``attrs['_xrspatial_no_georef']=True``.  This applies to all return
-    types -- the geometries themselves are transformed, so the
-    coordinates emitted in the "numpy", "awkward", "spatialpandas" and
-    "geojson" outputs are also in CRS coordinate space, not pixel
-    space, when the raster carries a transform.
+    ``raster.rio.transform()`` (if rioxarray is installed), then the
+    raster's own x/y coordinate values (the xarray / xrspatial standard
+    georeferencing convention; used when the coords are 1-D, length >= 2
+    and evenly spaced).  An explicit ``transform=`` argument always
+    overrides the auto-detected value.  Auto-detection is skipped when
+    the raster carries ``attrs['_xrspatial_no_georef']=True``.  This
+    applies to all return types -- the geometries themselves are
+    transformed, so the coordinates emitted in the "numpy", "awkward",
+    "spatialpandas" and "geojson" outputs are also in CRS coordinate
+    space, not pixel space, when the raster carries a transform.
     """
     _validate_raster(raster, func_name='polygonize', name='raster', ndim=2)
     if raster.shape[0] < 1 or raster.shape[1] < 1:
