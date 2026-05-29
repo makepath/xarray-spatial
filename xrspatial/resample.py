@@ -1233,15 +1233,18 @@ def _resolve_nodata(agg, nodata):
     # Integer inputs: an out-of-range sentinel wraps on cast (e.g. 999
     # becomes 231 for uint8), masking the wrong cells. Require the value
     # to round-trip exactly into agg.dtype before trusting the cast.
-    cast = np.asarray(nodata).astype(agg.dtype).item()
-    if cast != int(nodata):
-        info = np.iinfo(agg.dtype)
+    info = np.iinfo(agg.dtype)
+    nd_int = int(nodata)
+    # A sentinel beyond the dtype range either wraps (numpy fixed-width
+    # cast) or overflows the C-long conversion for very large Python
+    # ints. Range-check up front so both surface the same ValueError
+    # instead of a raw OverflowError.
+    if nd_int < info.min or nd_int > info.max:
         raise ValueError(
             f"nodata={nodata!r} is out of range for integer dtype "
-            f"{agg.dtype} (valid range [{info.min}, {info.max}]); "
-            f"it would wrap to {cast} and mask the wrong cells."
+            f"{agg.dtype} (valid range [{info.min}, {info.max}])."
         )
-    return cast
+    return np.asarray(nd_int).astype(agg.dtype).item()
 
 
 def _apply_nodata_mask(agg, nodata):

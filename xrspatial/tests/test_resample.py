@@ -1630,6 +1630,15 @@ class TestNodataOutOfRange:
         with pytest.raises(ValueError, match="out of range"):
             resample(agg, scale_factor=0.5, method='nearest', nodata=200)
 
+    def test_sentinel_beyond_int64_raises_valueerror(self):
+        # A Python int past the C-long range would raise OverflowError on
+        # the numpy cast; the range check must turn it into the same
+        # ValueError as any other out-of-range sentinel.
+        data = np.zeros((4, 4), dtype=np.int64)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        with pytest.raises(ValueError, match="out of range"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=2 ** 70)
+
     def test_out_of_range_sentinel_via_fillvalue_attr_raises(self):
         # Same defect when the sentinel arrives through _FillValue rather
         # than the explicit kwarg.
