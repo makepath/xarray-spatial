@@ -147,3 +147,39 @@ def test_boundary_invalid():
     agg = create_test_raster(data, attrs={'res': (1, 1)})
     with pytest.raises(ValueError, match="boundary must be one of"):
         slope(agg, boundary='invalid')
+
+
+@dask_array_available
+def test_dask_numpy_lazy_dtype_matches_computed():
+    # The lazy dask dtype must match both the computed dtype and the
+    # numpy backend (all float32). Regression for the planar dask meta
+    # defaulting to float64 while chunks return float32.
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(3, 4))
+    np_result = slope(numpy_agg)
+    da_result = slope(dask_agg)
+    assert np_result.dtype == np.float32
+    assert da_result.dtype == np.float32
+    assert da_result.data.compute().dtype == np.float32
+
+
+@cuda_and_cupy_available
+def test_cupy_lazy_dtype_matches_computed():
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1, 1)})
+    assert slope(numpy_agg).dtype == np.float32
+    assert slope(cupy_agg).dtype == np.float32
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_dask_cupy_lazy_dtype_matches_computed():
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1, 1)}, chunks=(3, 4))
+    da_result = slope(dask_cupy_agg)
+    assert da_result.dtype == np.float32
+    assert da_result.data.compute().dtype == np.float32
