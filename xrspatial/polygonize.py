@@ -1485,6 +1485,52 @@ def _point_in_ring(px, py, ring):
     return inside
 
 
+@ngjit
+def _ring_interior_point(ring):
+    """Return a point strictly inside a closed axis-aligned ring.
+
+    A ring vertex cannot be used to test containment in an exterior:
+    when a hole touches its enclosing exterior at a single pinch vertex
+    (which happens after the dask cross-chunk merge traces a notch as a
+    separate ring), every shared vertex lies *on* the exterior boundary,
+    so a vertex-based ``_point_in_ring`` test reports False and the hole
+    is silently dropped (#2606).  Instead, walk each unit edge, step a
+    tiny epsilon inward along the orientation-aware normal, and return
+    the first candidate that lands inside the ring.  This works for the
+    non-convex (L-shaped) notch rings the merge can produce, not just
+    convex ones.
+    """
+    eps = 1e-6
+    n = len(ring) - 1
+    sign = 1.0 if _signed_ring_area(ring) > 0 else -1.0
+    for k in range(n):
+        x1, y1 = ring[k, 0], ring[k, 1]
+        x2, y2 = ring[k + 1, 0], ring[k + 1, 1]
+        mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        dx, dy = x2 - x1, y2 - y1
+        # Left normal of travel direction; interior is on the left for a
+        # CCW ring, on the right for a CW (hole) ring -- ``sign`` flips it.
+        nx, ny = -dy, dx
+        length = np.sqrt(nx * nx + ny * ny)
+        if length == 0.0:
+            continue
+        nx = nx / length * sign
+        ny = ny / length * sign
+        cx = mx + nx * eps
+        cy = my + ny * eps
+        if _point_in_ring(cx, cy, ring):
+            return cx, cy
+    # Fallback: centroid of the unique vertices.  Rings reaching here are
+    # always closed with at least three unique vertices, so n >= 3 and the
+    # divide below is safe.
+    sx = 0.0
+    sy = 0.0
+    for k in range(n):
+        sx += ring[k, 0]
+        sy += ring[k, 1]
+    return sx / n, sy / n
+
+
 def _group_rings_into_polygons(rings):
     """Classify rings as exteriors/holes and assign holes to exteriors.
 
@@ -1501,7 +1547,10 @@ def _group_rings_into_polygons(rings):
 
     result = [[ext] for ext in exteriors]
     for hole in holes:
-        px, py = hole[0, 0], hole[0, 1]
+        # Use an interior point of the hole, not a vertex: a hole that
+        # touches its exterior at a pinch vertex shares that vertex with
+        # the exterior boundary, where _point_in_ring is False (#2606).
+        px, py = _ring_interior_point(hole)
         for i, ext in enumerate(exteriors):
             if _point_in_ring(px, py, ext):
                 result[i].append(hole)
