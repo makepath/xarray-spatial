@@ -2816,12 +2816,14 @@ def _check_uniform_axis(axis_name, coords, expected_step):
     than three points cannot be non-uniform in a way this check would
     catch, so they pass trivially.
 
-    The comparison is on ``abs(diff)`` so the validation does not care
-    whether the axis is ascending or descending -- ascending-y ``like``
-    inputs are supported by the orientation flip in ``rasterize``, and
-    gating on the sign here would block that.  ``np.allclose`` is used
-    (rather than strict equality) because affine-transform-derived
-    coords drift by a few ulps in practice.
+    The comparison uses the *signed* ``np.diff`` against the signed
+    first interval so the validation does not care whether the axis
+    is ascending or descending -- the sign of the first interval
+    carries the direction.  This also rejects zig-zag /
+    duplicate-coord patterns like ``[0.5, 1.5, 0.5, 1.5]`` whose
+    ``abs(diff)`` is uniform but whose signed diffs alternate.
+    ``np.allclose`` is used (rather than strict equality) because
+    affine-transform-derived coords drift by a few ulps in practice.
     """
     if coords.size < 3:
         return
@@ -2845,16 +2847,23 @@ def _check_uniform_axis(axis_name, coords, expected_step):
             "xarray's ``interp`` or ``reindex``) before passing it."
         )
 
-    diffs = np.abs(np.diff(coords))
-    if not np.allclose(diffs, expected_step, rtol=1e-5, atol=1e-8):
-        max_dev = float(np.max(np.abs(diffs - expected_step)))
+    # Compare signed diffs, not magnitudes.  Comparing only
+    # ``abs(diff)`` against ``abs(expected_step)`` accepts zig-zag
+    # patterns like ``[0.5, 1.5, 0.5, 1.5]`` whose magnitudes are
+    # uniform but whose coords are non-monotonic with duplicate
+    # values -- which then poisons ``.sel`` and any other coord-aware
+    # lookup on the output.
+    signed_step = float(coords[1] - coords[0])
+    signed_diffs = np.diff(coords)
+    if not np.allclose(signed_diffs, signed_step, rtol=1e-5, atol=1e-8):
+        max_dev = float(np.max(np.abs(signed_diffs - signed_step)))
         raise ValueError(
             "'like' DataArray has non-uniform spacing along the "
-            f"{axis_name!r} axis (expected step {expected_step}, "
+            f"{axis_name!r} axis (expected step {signed_step}, "
             f"largest deviation {max_dev}). rasterize() requires a "
-            "regular grid; resample 'like' to a uniform grid (e.g. "
-            "with xarray's ``interp`` or ``reindex``) before passing "
-            "it."
+            "regular, strictly monotonic grid; resample 'like' to a "
+            "uniform grid (e.g. with xarray's ``interp`` or "
+            "``reindex``) before passing it."
         )
 
 
@@ -2874,6 +2883,7 @@ class _LikeGrid(NamedTuple):
     extra_coords: dict
     attrs: dict
     y_ascending: bool
+    x_descending: bool
 
 
 def _extract_grid_from_like(like):
@@ -2913,11 +2923,12 @@ def _extract_grid_from_like(like):
     # pixel lives.  Validate uniform spacing here so the rasterizer never
     # produces a DataArray whose coords disagree with its data layout.
     #
-    # Compare ``abs(diff)`` against the first interval so the check stays
-    # agnostic to axis direction -- ascending or descending y both pass as
-    # long as the spacing is uniform.  Use ``np.allclose`` rather than
-    # strict equality because affine-transform-derived coords drift by a
-    # few ulps.
+    # Compare *signed* diffs against the signed first interval so the
+    # check accepts ascending and descending axes (the sign of the
+    # first interval carries the direction) but rejects zig-zag /
+    # duplicate-coord patterns whose abs(diff) happens to be uniform.
+    # Use ``np.allclose`` rather than strict equality because affine-
+    # transform-derived coords drift by a few ulps.
     _check_uniform_axis('x', x, px)
     _check_uniform_axis('y', y, py)
 
@@ -2926,16 +2937,19 @@ def _extract_grid_from_like(like):
     ymin = float(np.min(y)) - py / 2
     ymax = float(np.max(y)) + py / 2
 
-    # Detect y-axis orientation.  The rasterizer always burns with row 0
-    # at ymax (standard image convention), so if the template's y is
-    # ascending (low-to-high), the burned rows have to be flipped before
-    # we hand back the coords or downstream coord-aware ops line up
-    # against the wrong rows.  Only the first and last samples are
+    # Detect axis orientation.  The rasterizer always burns with row 0
+    # at ymax and column 0 at xmin (standard image convention).  If the
+    # template's y is ascending (low-to-high) or its x is descending
+    # (high-to-low), the burned array has to be flipped along that axis
+    # before we hand back the coords, or downstream coord-aware ops line
+    # up against the wrong cells.  Only the first and last samples are
     # inspected; the ``_check_uniform_axis`` call above has already
-    # rejected non-monotonic or duplicate-valued y coords, so this is
-    # safe.  The x-axis is assumed ascending; descending-x templates
-    # would hit the same bug class and are not supported here.
+    # rejected non-monotonic or duplicate-valued coords on both axes,
+    # so this is safe.  Single-row / single-column templates have no
+    # direction to detect, so the ``> 1`` guard short-circuits to
+    # ``False`` (no flip) for those.
     y_ascending = height > 1 and float(y[-1]) > float(y[0])
+    x_descending = width > 1 and float(x[-1]) < float(x[0])
 
     # Carry through any non-dim coords (e.g. rioxarray's ``spatial_ref``
     # CRS coord).  The y/x dim coords are returned separately because the
@@ -2955,6 +2969,7 @@ def _extract_grid_from_like(like):
         extra_coords=extra_coords,
         attrs=dict(like.attrs),
         y_ascending=y_ascending,
+        x_descending=x_descending,
     )
 
 
@@ -3002,10 +3017,14 @@ def rasterize(
         ``(shapely.geometry, numeric_value)`` pair.
     width : int, optional
         Number of columns in the output raster.  Required unless
-        ``resolution`` or ``like`` is given.
+        ``resolution`` or ``like`` is given.  Must be passed together
+        with ``height``: a partial override (only one of the two) is
+        rejected with ``ValueError`` rather than silently filling the
+        missing dimension from ``like`` or ``resolution``.
     height : int, optional
         Number of rows in the output raster.  Required unless
-        ``resolution`` or ``like`` is given.
+        ``resolution`` or ``like`` is given.  Must be passed together
+        with ``width`` (see above).
     bounds : tuple of (xmin, ymin, xmax, ymax), optional
         Geographic extent of the output raster.  Inferred from the
         geometries (or ``like``) if omitted.
@@ -3048,7 +3067,9 @@ def rasterize(
         A single float uses the same resolution for both axes.
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
-        from this array (any can still be overridden explicitly).
+        from this array.  Bounds and dtype can be overridden one at a
+        time; width and height must be overridden together (passing
+        only one raises ``ValueError``).
         Must have uniformly spaced ``x`` and ``y`` dim coords -- the
         rasterizer only writes to a regular grid, so a non-uniform
         ``like`` is rejected with ``ValueError`` rather than silently
@@ -3148,12 +3169,30 @@ def rasterize(
         raise TypeError(
             f"merge must be a string or callable, got {type(merge).__name__}")
 
+    # Reject partial width/height before any geometry or template work.
+    # Passing only one of the two has no well-defined meaning here.
+    # When ``like`` is given, the bounds also come from the template, so
+    # deriving the missing dimension from aspect ratio would make the x
+    # and y pixel resolutions diverge and the output coords would no
+    # longer match ``like``.  When ``like`` is not given, there's
+    # nothing to derive from at all.  Either way, the old code silently
+    # fell through to the ``resolution`` or ``like`` branch and
+    # discarded the explicit dimension without warning.
+    if (width is None) != (height is None):
+        missing = 'height' if width is not None else 'width'
+        given = 'width' if width is not None else 'height'
+        raise ValueError(
+            f"{given} was provided but {missing} was not. Pass both "
+            f"width and height together, or omit both and supply "
+            f"resolution or like to size the output.")
+
     # Extract defaults from template raster
     like_width = like_height = like_bounds = like_dtype = None
     like_x_coord = like_y_coord = None
     like_extra_coords = {}
     like_attrs = None
     like_y_ascending = False
+    like_x_descending = False
     bounds_explicit = bounds is not None
     if like is not None:
         grid = _extract_grid_from_like(like)
@@ -3166,6 +3205,7 @@ def rasterize(
         like_extra_coords = grid.extra_coords
         like_attrs = grid.attrs
         like_y_ascending = grid.y_ascending
+        like_x_descending = grid.x_descending
 
     # Parse input geometries
     geom_list, props_array, inferred_bounds = _parse_input(
@@ -3209,10 +3249,46 @@ def rasterize(
     if width is not None and height is not None:
         final_width, final_height = int(width), int(height)
     elif resolution is not None:
-        if isinstance(resolution, (int, float)):
+        # Validate shape and element type up front so bad inputs surface a
+        # single clean ValueError naming the offending value, instead of
+        # leaking IndexError (length-1 sequences would crash at
+        # resolution[1]), KeyError (dicts), or a raw float() conversion
+        # error (strings iterate character-by-character into
+        # resolution[0]/[1]).  A 3+-element sequence was previously
+        # silently truncated to the first two elements -- reject it here
+        # too.  numpy scalars (np.float32, np.int64, ...) and 1-D numpy
+        # arrays of size 2 are accepted alongside Python int/float and
+        # list/tuple, since geospatial pipelines routinely produce them.
+        is_scalar = (
+            isinstance(resolution, (int, float, np.number))
+            and not isinstance(resolution, (bool, np.bool_))
+        )
+        is_sequence = isinstance(resolution, (tuple, list, np.ndarray))
+        if not (is_scalar or is_sequence):
+            raise ValueError(
+                f"resolution must be a number or a length-2 sequence of "
+                f"numbers (x_res, y_res), got {resolution!r}")
+        if is_scalar:
             x_res = y_res = float(resolution)
         else:
-            x_res, y_res = float(resolution[0]), float(resolution[1])
+            # numpy arrays expose .ndim; require 1-D for the sequence form
+            # so e.g. a (2, 2) array does not slip past the length-2 check.
+            if isinstance(resolution, np.ndarray) and resolution.ndim != 1:
+                raise ValueError(
+                    f"resolution array must be 1-D with length 2 "
+                    f"(x_res, y_res), got shape {resolution.shape}: "
+                    f"{resolution!r}")
+            if len(resolution) != 2:
+                raise ValueError(
+                    f"resolution sequence must have length 2 (x_res, y_res), "
+                    f"got length {len(resolution)}: {resolution!r}")
+            try:
+                x_res = float(resolution[0])
+                y_res = float(resolution[1])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"resolution sequence elements must be numbers, "
+                    f"got {resolution!r}")
         # Reject non-finite or non-positive resolution before dimension math.
         # Without this, inf/-1 quietly produce a 1x1 raster, 0 raises an
         # opaque ZeroDivisionError, and nan raises an int-conversion error.
@@ -3340,14 +3416,17 @@ def rasterize(
     if reuse_like_coords:
         x_coords = like_x_coord
         y_coords = like_y_coord
-        # The rasterizer always burns with row 0 = ymax (top-down image
-        # convention).  If the template's y axis is ascending, the rows
-        # have to be flipped along axis 0 before assigning the template's
-        # coords so world-y selection still lines up with the geometry.
-        # Works for numpy, cupy, dask+numpy, and dask+cupy alike -- they
-        # all expose the same slicing semantics on axis 0.
+        # The rasterizer always burns with row 0 = ymax and column 0 =
+        # xmin (top-down image convention).  If the template's y axis is
+        # ascending or its x axis is descending, the burned array has to
+        # be flipped along that axis before assigning the template's
+        # coords, so world-coord selection still lines up with the
+        # geometry.  Works for numpy, cupy, dask+numpy, and dask+cupy
+        # alike -- they all expose the same slicing semantics.
         if like_y_ascending:
             out = out[::-1, :]
+        if like_x_descending:
+            out = out[:, ::-1]
     else:
         px = (xmax - xmin) / final_width
         py = (ymax - ymin) / final_height

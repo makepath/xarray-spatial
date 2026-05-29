@@ -155,6 +155,48 @@ def _check_resample_gpu_memory(out_h, out_w):
         )
 
 
+# -- Input-validation helpers ------------------------------------------------
+
+def _validate_resample_scalar_or_pair(value, param_name):
+    """Validate a scalar-or-2-tuple resolution / scale parameter.
+
+    Accepts either a real scalar or a length-2 tuple/list of scalars.
+    Each component must be finite (not NaN, not inf) and strictly
+    positive. Raises ``ValueError`` with a message naming the parameter
+    and the offending value.
+    """
+    is_pair = isinstance(value, (tuple, list))
+    if is_pair:
+        if len(value) != 2:
+            raise ValueError(
+                f"{param_name} must have length 2, got length {len(value)}"
+            )
+        components = value
+    else:
+        components = (value,)
+
+    for i, comp in enumerate(components):
+        # Suffix points at the bad slot when the input was a pair, so
+        # `(0.0, 1.0)` reports "got 0.0 at index 0 of (0.0, 1.0)"
+        # instead of dumping the whole tuple.
+        where = f"{comp!r} at index {i} of {value!r}" if is_pair else f"{value!r}"
+        try:
+            f = float(comp)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{param_name} must be a finite positive number "
+                f"(or length-2 sequence of them), got {where}"
+            ) from None
+        if not np.isfinite(f):
+            raise ValueError(
+                f"{param_name} must be finite and > 0, got {where}"
+            )
+        if f <= 0:
+            raise ValueError(
+                f"{param_name} must be > 0, got {where}"
+            )
+
+
 # -- Output-geometry helpers -------------------------------------------------
 
 def _output_shape(in_h, in_w, scale_y, scale_x):
@@ -1134,8 +1176,12 @@ def _resolve_nodata(agg, nodata):
     ``nodata`` in ``agg.attrs``. Returns ``None`` when no sentinel was
     found (the caller skips the masking step).
 
-    NaN sentinels are returned as NaN so the caller can branch on
-    ``np.isnan`` rather than ``==`` (which never matches NaN).
+    For floating-point inputs the sentinel is returned as a Python
+    ``float`` so the caller can branch on ``np.isnan`` rather than
+    ``==`` (which never matches NaN). For integer / bool inputs the
+    sentinel is cast to the input dtype so the comparison happens in
+    integer space -- routing it through ``float`` would lose precision
+    for int64 values above 2**53.
     """
     if nodata is None:
         for key in ('_FillValue', 'nodata'):
@@ -1145,10 +1191,25 @@ def _resolve_nodata(agg, nodata):
                 break
     if nodata is None:
         return None
-    nd = float(nodata)
-    if np.isinf(nd):
-        raise ValueError(f"nodata must be finite or NaN, got {nodata!r}")
-    return nd
+    if np.issubdtype(agg.dtype, np.floating):
+        nd = float(nodata)
+        if np.isinf(nd):
+            raise ValueError(f"nodata must be finite or NaN, got {nodata!r}")
+        return nd
+    # Integer / bool input: keep the sentinel in the input's native
+    # dtype so the equality test in _apply_nodata_mask compares
+    # integer-to-integer. A NaN sentinel can never match an integer
+    # value, so signal a no-op mask by returning NaN unchanged.
+    if isinstance(nodata, float) and np.isnan(nodata):
+        return float('nan')
+    # Reject fractional float sentinels for integer inputs -- silently
+    # truncating to int would mask cells the caller never asked to mask.
+    if isinstance(nodata, float) and not nodata.is_integer():
+        raise ValueError(
+            f"nodata={nodata!r} is not representable in integer dtype "
+            f"{agg.dtype}; pass an integer sentinel instead."
+        )
+    return np.asarray(nodata).astype(agg.dtype).item()
 
 
 def _apply_nodata_mask(agg, nodata):
@@ -1159,13 +1220,22 @@ def _apply_nodata_mask(agg, nodata):
     """
     if nodata is None:
         return agg
-    # Promote to float so NaN can be stored. xr.where keeps the backend.
-    # Integer / bool inputs become float32 (consistent with _output_dtype).
-    if not np.issubdtype(agg.dtype, np.floating):
+    is_float_input = np.issubdtype(agg.dtype, np.floating)
+    # For floating-point input a NaN sentinel needs no replacement
+    # (NaN is already the output convention). For integer input a NaN
+    # sentinel can never match any cell, so the mask is a no-op; still
+    # promote to float so downstream NaN handling has somewhere to
+    # write its sentinels.
+    if is_float_input and isinstance(nodata, float) and np.isnan(nodata):
+        return agg
+    # Compare in the input dtype FIRST so integer comparisons keep
+    # full precision (float64 cannot represent int64 values above
+    # 2**53 without rounding). Then promote to float so NaN can be
+    # stored in the masked output.
+    mask = agg != nodata
+    if not is_float_input:
         agg = agg.astype(np.float32)
-    if np.isnan(nodata):
-        return agg  # already-NaN sentinels need no replacement
-    return agg.where(agg != nodata)
+    return agg.where(mask)
 
 
 @supports_dataset
@@ -1220,6 +1290,14 @@ def resample(
         Output dtype matches the input float dtype (float32 or float64);
         integer inputs return float32 since NaN-sentinel resampling
         requires a float type.
+
+    Raises
+    ------
+    ValueError
+        If neither or both of ``scale_factor`` and ``target_resolution``
+        are given; if either is a sequence whose length is not 2; if any
+        component is zero, negative, NaN, or infinite; or if ``method``
+        is not in :data:`ALL_METHODS`.
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
 
@@ -1233,6 +1311,18 @@ def resample(
         raise ValueError(
             "Exactly one of scale_factor or target_resolution must be given"
         )
+
+    # Validate shape, finiteness, and positivity of whichever input was
+    # supplied. Fails fast with a parameter-named message before any
+    # geometry math runs, so overlong/short tuples, zero, and NaN/inf
+    # do not surface later as IndexError / ZeroDivisionError / opaque
+    # numpy conversion errors.
+    if target_resolution is not None:
+        _validate_resample_scalar_or_pair(
+            target_resolution, 'target_resolution'
+        )
+    else:
+        _validate_resample_scalar_or_pair(scale_factor, 'scale_factor')
 
     if target_resolution is not None:
         if agg.shape[-2] < 2 or agg.shape[-1] < 2:
@@ -1251,6 +1341,11 @@ def resample(
     else:
         scale_y = scale_x = float(scale_factor)
 
+    # Defence-in-depth: the public inputs were already validated above
+    # by ``_validate_resample_scalar_or_pair``, so on the scale_factor
+    # path this branch is unreachable. It still fires on the
+    # target_resolution path if ``calc_res(agg)`` returns zero from a
+    # degenerate coord array.
     if scale_y <= 0 or scale_x <= 0:
         raise ValueError(
             f"Scale factors must be positive, got ({scale_y}, {scale_x})"
@@ -1361,19 +1456,18 @@ def resample(
     if has_nodata:
         new_attrs['_FillValue'] = float('nan')
 
-    # Refresh `transform` if the input had one. The rasterio 6-tuple is
-    # (res_x, 0.0, left, 0.0, -res_y, top). `top` is the upper edge of
-    # the first row, which is `y_edge_start` when y is descending and
-    # `y_edge_end` when y is ascending. `left` is the lower edge of the
-    # first column, which is `x_edge_start` when x is ascending and
-    # `x_edge_end` when x is descending.
+    # Refresh `transform` if the input had one. The rasterio 6-tuple
+    # `(a, b, c, d, e, f)` maps `(col, row) -> (x, y)` for the first
+    # array pixel at `(col=0, row=0)`, so the scale signs and the
+    # origin corner have to follow the actual array layout rather
+    # than assuming a north-up grid. `px` / `py` from `_new_coords`
+    # are already signed (positive when the coord ascends along the
+    # axis, negative when it descends), and `*_edge_start` is the
+    # leading edge of the first row / column on the side of
+    # `vals[0]` -- exactly what rasterio wants for `c` and `f`.
     if 'transform' in agg.attrs:
-        out_res_x = abs(px)
-        out_res_y = abs(py)
-        top = y_edge_start if y_vals[0] > y_vals[-1] else y_edge_end
-        left = x_edge_start if x_vals[0] < x_vals[-1] else x_edge_end
         new_attrs['transform'] = (
-            out_res_x, 0.0, left, 0.0, -out_res_y, top,
+            px, 0.0, x_edge_start, 0.0, py, y_edge_start,
         )
 
     # Resample replaces sentinel pixels with NaN regardless of input

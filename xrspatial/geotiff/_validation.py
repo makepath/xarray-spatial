@@ -1471,14 +1471,20 @@ def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
     handing downstream callers trustworthy-looking spatial metadata
     fabricated from inconsistent inputs.
 
-    The check rejects three structurally bad combinations:
+    The check rejects two structurally bad combinations:
 
     1. ``ModelTypeGeoKey = projected`` with ``GeographicTypeGeoKey``
        populated but ``ProjectedCSTypeGeoKey`` absent.
     2. ``ModelTypeGeoKey = geographic`` with ``ProjectedCSTypeGeoKey``
        populated (the geographic model may not stash a projected code).
-    3. Both ``ProjectedCSTypeGeoKey`` and ``GeographicTypeGeoKey``
-       populated with different non-user-defined EPSG codes.
+
+    A file that populates *both* ``ProjectedCSTypeGeoKey`` and
+    ``GeographicTypeGeoKey`` with different EPSG codes is **not**
+    rejected: that is the normal shape of a projected GeoTIFF, where
+    ``GeographicTypeGeoKey`` names the base geographic CRS the
+    projection is built on and the pixel coordinates live in the
+    projected CRS. The reader already takes the projected code first
+    (see ``extract_geo_info``), so this case resolves correctly.
 
     ``32767`` (user-defined) is treated as "no resolved code" because
     the actual CRS is defined by sibling keys (``GeogGeodeticDatumGeoKey``
@@ -1495,7 +1501,6 @@ def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
 
     Context keys consumed:
 
-    * ``allow_inconsistent_geokeys`` -- caller opt-out kwarg.
     * ``model_type`` -- value of ``ModelTypeGeoKey`` (0 if absent).
     * ``projected_cs_type`` -- value of ``ProjectedCSTypeGeoKey`` (None
       if absent).
@@ -1506,8 +1511,6 @@ def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
     a no-op, so callers that did not (or could not) parse a GeoKey
     directory at all still pass through unchanged.
     """
-    if context.get('allow_inconsistent_geokeys'):
-        return
     proj_cs = context.get('projected_cs_type')
     geog = context.get('geographic_type')
     model_type = context.get('model_type')
@@ -1550,9 +1553,8 @@ def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
             f"resolved ProjectedCSTypeGeoKey. A projected model must "
             f"declare the projected CRS code in ProjectedCSTypeGeoKey; "
             f"the geographic key on its own cannot identify the "
-            f"projection. Pass allow_inconsistent_geokeys=True to keep "
-            f"the legacy behaviour of treating the geographic code as "
-            f"the file's CRS. See issue #2417."
+            f"projection. Fix the source's GeoKey directory so the "
+            f"projected CRS code is present. See issue #2417."
         )
 
     # Case 2: ModelType = geographic but ProjectedCSTypeGeoKey set.
@@ -1562,21 +1564,9 @@ def _check_read_inconsistent_geokeys(context: Mapping[str, Any]) -> None:
             f"but populates ProjectedCSTypeGeoKey={proj_cs_i!r}. The "
             f"geographic model may not carry a projected CRS code; the "
             f"legacy reader would publish EPSG {proj_cs_i!r} verbatim "
-            f"in attrs['crs'] from contradictory inputs. Pass "
-            f"allow_inconsistent_geokeys=True to keep the legacy "
-            f"behaviour. See issue #2417."
-        )
-
-    # Case 3: both type keys resolved to different EPSG codes.
-    if proj_resolved and geog_resolved and proj_cs_i != geog_i:
-        raise InconsistentGeoKeysError(
-            f"GeoTIFF source populates both ProjectedCSTypeGeoKey="
-            f"{proj_cs_i!r} and GeographicTypeGeoKey={geog_i!r} with "
-            f"different EPSG codes. The legacy reader took the "
-            f"projected code first and silently dropped the geographic "
-            f"one. Pass allow_inconsistent_geokeys=True to keep that "
-            f"behaviour, or fix the source's GeoKey directory. See "
-            f"issue #2417."
+            f"in attrs['crs'] from contradictory inputs. Fix the "
+            f"source's GeoKey directory so ModelTypeGeoKey matches the "
+            f"CRS it declares. See issue #2417."
         )
 
 

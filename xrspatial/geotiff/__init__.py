@@ -462,7 +462,6 @@ def open_geotiff(source: str | BinaryIO, *,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  allow_rotated: bool = False,
                  allow_unparseable_crs: bool = False,
-                 allow_inconsistent_geokeys: bool = False,
                  allow_invalid_nodata: bool = False,
                  stable_only: bool = False,
                  allow_experimental_codecs: bool = False,
@@ -670,18 +669,6 @@ def open_geotiff(source: str | BinaryIO, *,
         behaviour where the citation field passes through unchanged.
         Matches the same kwarg on ``to_geotiff`` / ``write_geotiff_gpu``
         so a value the reader accepted can survive a round-trip.
-    allow_inconsistent_geokeys : bool, default False
-        [advanced] Read-side opt-in for GeoTIFF sources whose GeoKey
-        directory is internally contradictory: ``ModelTypeGeoKey``
-        disagrees with the type-specific keys actually populated, or
-        ``ProjectedCSTypeGeoKey`` and ``GeographicTypeGeoKey`` resolve
-        to different EPSG codes. The legacy reader took the projected
-        code first and silently fabricated an
-        ``attrs['crs']`` / ``attrs['crs_wkt']`` from contradictory
-        inputs. When ``False`` (the default), the read
-        raises ``InconsistentGeoKeysError``. Set to ``True`` to keep
-        the legacy permissive behaviour for files known to carry
-        quirky-but-trusted GeoKey layouts.
     allow_invalid_nodata : bool, default False
         [advanced] Read-side opt-in for integer-dtype sources whose
         ``GDAL_NODATA`` tag is non-finite (``"NaN"``, ``"Inf"``,
@@ -865,8 +852,6 @@ def open_geotiff(source: str | BinaryIO, *,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
                         allow_unparseable_crs=allow_unparseable_crs,
-                        allow_inconsistent_geokeys=(
-                            allow_inconsistent_geokeys),
                         allow_invalid_nodata=allow_invalid_nodata,
                         stable_only=stable_only,
                         allow_experimental_codecs=allow_experimental_codecs,
@@ -891,8 +876,6 @@ def open_geotiff(source: str | BinaryIO, *,
                                 max_pixels=max_pixels,
                                 allow_rotated=allow_rotated,
                                 allow_unparseable_crs=allow_unparseable_crs,
-                                allow_inconsistent_geokeys=(
-                                    allow_inconsistent_geokeys),
                                 allow_invalid_nodata=allow_invalid_nodata,
                                 stable_only=stable_only,
                                 allow_experimental_codecs=(
@@ -910,8 +893,6 @@ def open_geotiff(source: str | BinaryIO, *,
                                  max_pixels=max_pixels, name=name,
                                  allow_rotated=allow_rotated,
                                  allow_unparseable_crs=allow_unparseable_crs,
-                                 allow_inconsistent_geokeys=(
-                                     allow_inconsistent_geokeys),
                                  allow_invalid_nodata=allow_invalid_nodata,
                                  stable_only=stable_only,
                                  allow_experimental_codecs=(
@@ -970,7 +951,6 @@ def open_geotiff(source: str | BinaryIO, *,
         name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
-        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
 
