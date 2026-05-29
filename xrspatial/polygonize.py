@@ -2166,9 +2166,39 @@ def _merge_from_separated(all_interior, boundary_polys, transform,
     return column, polygon_points
 
 
+# Number of chunks polygonized per dask.compute call.  Caps how many
+# per-chunk results (interior + boundary polygons) are materialized at
+# once, bounding peak memory while still letting dask schedule the batch
+# in parallel.  See _polygonize_dask for the memory/parallelism tradeoff.
+_DASK_CHUNK_BATCH_SIZE = 32
+
+
 def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
-                     atol=_DEFAULT_ATOL, rtol=_DEFAULT_RTOL):
-    """Dask backend for polygonize: per-chunk polygonize + edge merge."""
+                     atol=_DEFAULT_ATOL, rtol=_DEFAULT_RTOL,
+                     batch_size=_DASK_CHUNK_BATCH_SIZE):
+    """Dask backend for polygonize: per-chunk polygonize + edge merge.
+
+    Chunks are polygonized in batches via :func:`dask.compute`.  Each
+    batch holds up to ``batch_size`` ``dask.delayed`` tasks computed in a
+    single call, so dask schedules them in parallel instead of running
+    one chunk at a time.
+
+    Memory / parallelism tradeoff: a single ``dask.compute`` over every
+    chunk would maximize parallelism but materialize all per-chunk
+    results at once, so peak memory grows with the total polygon count.
+    Computing one chunk at a time bounds memory but throws away
+    parallelism.  A fixed ``batch_size`` splits the difference: peak
+    memory is bounded by ``batch_size`` chunks' worth of polygons, and
+    dask still runs each batch concurrently.  Increase ``batch_size`` to
+    trade memory for more parallelism, decrease it to cap memory harder.
+    A fixed batch also bounds memory independently of the chunk-grid
+    shape, unlike a per-row batch whose size scales with the number of
+    column chunks.
+
+    Tasks are built and their results consumed in row-major ``(iy, ix)``
+    order so polygons map back to the right block; the downstream
+    boundary-merge stage depends on that ordering.
+    """
     # Ensure mask chunks match raster chunks.
     if mask_data is not None and mask_data.chunks != dask_data.chunks:
         mask_data = mask_data.rechunk(dask_data.chunks)
@@ -2182,31 +2212,31 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
     ny_total = int(sum(row_chunks))
     nx_total = int(sum(col_chunks))
 
-    # Process chunks one row at a time: build the delayed tasks for a whole
-    # row of chunks and hand them to a single dask.compute() call so the
-    # scheduler can run the chunks in that row concurrently.  Computing per
-    # row (instead of per chunk) recovers parallelism while keeping peak
-    # driver memory bounded by one row of chunk results rather than the full
-    # raster -- interior polygons (fully inside a chunk, no merging needed)
-    # still go straight to the output list, and only boundary polygons
-    # accumulate across rows for the cross-chunk merge.
-    all_interior = []
-    boundary_polys = []
-
+    # Build one delayed task per chunk in row-major order.  Interior
+    # polygons (fully inside a chunk, no merging needed) go straight to
+    # the output list; only boundary polygons accumulate for the merge.
+    tasks = []
     for iy in range(len(row_chunks)):
-        row_tasks = []
         for ix in range(len(col_chunks)):
             block = dask_data.blocks[iy, ix]
             mask_block = (mask_data.blocks[iy, ix]
                           if mask_data is not None else None)
-            row_tasks.append(
-                dask.delayed(_polygonize_chunk)(
-                    block, mask_block, connectivity_8,
-                    int(row_offsets[iy]), int(col_offsets[ix]),
-                    ny_total, nx_total,
-                    atol, rtol,
-                ))
-        for interior, boundary in dask.compute(*row_tasks):
+            tasks.append(dask.delayed(_polygonize_chunk)(
+                block, mask_block, connectivity_8,
+                int(row_offsets[iy]), int(col_offsets[ix]),
+                ny_total, nx_total,
+                atol, rtol,
+            ))
+
+    all_interior = []
+    boundary_polys = []
+
+    # Compute in bounded batches, consuming results in task order so the
+    # accumulated lists keep the same row-major ordering as the serial
+    # per-chunk loop.
+    for start in range(0, len(tasks), batch_size):
+        results = dask.compute(*tasks[start:start + batch_size])
+        for interior, boundary in results:
             all_interior.extend(interior)
             boundary_polys.extend(boundary)
 
