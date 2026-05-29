@@ -67,8 +67,8 @@ from ._header import parse_all_ifds, parse_header, select_overview_ifd
 #     preserved without churn.
 from ._layout import (_FULL_IMAGE_BUDGET_HEADER_SLACK, MAX_PIXELS_DEFAULT,  # noqa: F401
                       PixelSafetyLimitError, _check_dimensions, _check_source_dimensions,
-                      _compute_full_image_byte_budget, _gb_hint, _has_sparse,
-                      _ifd_required_extent, _sparse_fill_value)
+                      _compute_full_image_byte_budget, _gb_hint, _has_sparse, _ifd_required_extent,
+                      _sparse_fill_value)
 # The data-source layer (local mmap, HTTP with SSRF defences and DNS-rebind
 # pinning, fsspec cloud, BytesIO) lives in ``_sources``. It is imported back
 # here so that:
