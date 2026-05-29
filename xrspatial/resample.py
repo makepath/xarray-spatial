@@ -212,6 +212,8 @@ def _validate_monotonic_regular_coords(agg):
 
     Only 1-D coords that actually exist on the spatial dims are checked;
     an input without spatial coords is left to the existing code paths.
+    For 3-D inputs ``resample`` recurses per band, so this runs once per
+    band on identical coords -- a cheap, harmless repeat.
     """
     for dim in agg.dims[-2:]:
         if dim not in agg.coords:
@@ -227,9 +229,11 @@ def _validate_monotonic_regular_coords(agg):
                 f"resample only supports regular monotonic rasters"
             )
         # Allow floating-point jitter but reject genuinely uneven spacing
-        # (e.g. [0, 1, 4]). Compare every step to the mean step.
+        # (e.g. [0, 1, 4]). Compare every step to the mean step. The
+        # tolerance scales with the step size via ``rtol`` so it tracks
+        # the coordinate magnitude.
         step = diffs.mean()
-        if not np.allclose(diffs, step, rtol=1e-5, atol=abs(step) * 1e-5):
+        if not np.allclose(diffs, step, rtol=1e-5, atol=0.0):
             raise ValueError(
                 f"resample(): `agg` coordinate {dim!r} must be evenly "
                 f"spaced; resample only supports regular monotonic "
