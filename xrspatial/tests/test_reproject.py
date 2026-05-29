@@ -2917,7 +2917,7 @@ def _egm2008_available():
 
 
 class TestVerticalShift:
-    """End-to-end coverage for src_vertical_crs / tgt_vertical_crs."""
+    """End-to-end coverage for source_vertical_crs / target_vertical_crs."""
 
     def _ny_raster(self, h=8, w=8, value=100.0, nodata=np.nan):
         # Small raster centred on New York. EGM96 undulation there is ~-33 m.
@@ -2936,7 +2936,7 @@ class TestVerticalShift:
         raster = self._ny_raster(value=100.0)
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         # Reference undulation at the centre.
         cy = float(result.coords['y'].values[result.shape[0] // 2])
@@ -2958,7 +2958,7 @@ class TestVerticalShift:
         raster = self._ny_raster(value=100.0)
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='ellipsoidal', tgt_vertical_crs='EGM96',
+            source_vertical_crs='ellipsoidal', target_vertical_crs='EGM96',
         )
         cy = float(result.coords['y'].values[result.shape[0] // 2])
         cx = float(result.coords['x'].values[result.shape[1] // 2])
@@ -2977,7 +2977,7 @@ class TestVerticalShift:
         raster = self._ny_raster(value=100.0)
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='EGM2008',
+            source_vertical_crs='EGM96', target_vertical_crs='EGM2008',
         )
         diffs = result.values - 100.0
         # EGM96 vs EGM2008 differ by under 2 m globally.
@@ -2990,7 +2990,7 @@ class TestVerticalShift:
         baseline = reproject(raster, 'EPSG:4326')
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='EGM96',
+            source_vertical_crs='EGM96', target_vertical_crs='EGM96',
         )
         np.testing.assert_array_equal(result.values, baseline.values)
 
@@ -3001,8 +3001,8 @@ class TestVerticalShift:
         baseline = reproject(raster, 'EPSG:4326')
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96',
-            tgt_vertical_crs=None,
+            source_vertical_crs='EGM96',
+            target_vertical_crs=None,
         )
         np.testing.assert_array_equal(result.values, baseline.values)
 
@@ -3022,7 +3022,7 @@ class TestVerticalShift:
         )
         result = reproject(
             raster, 'EPSG:32633',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         vals = result.values
         finite = vals[np.isfinite(vals)]
@@ -3051,7 +3051,7 @@ class TestVerticalShift:
         # x=y=0 maps to the pole, which often returns inf longitude.
         result = reproject(
             raster, 'EPSG:3413',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         # Must produce some finite output where the source had finite values.
         assert np.isfinite(result.values).any()
@@ -3076,7 +3076,7 @@ class TestVerticalShift:
             raster = self._ny_raster(value=10.0)
             result = reproject(
                 raster, 'EPSG:4326',
-                src_vertical_crs='EGM96', tgt_vertical_crs=tgt,
+                source_vertical_crs='EGM96', target_vertical_crs=tgt,
             )
             assert result.attrs.get('vertical_crs') == expected_epsg, (
                 f"vertical_crs for tgt={tgt!r} should be EPSG {expected_epsg}, "
@@ -3090,13 +3090,47 @@ class TestVerticalShift:
         write ``attrs['vertical_crs'] = None``."""
         from xrspatial.reproject import reproject
         raster = self._ny_raster(value=10.0)
-        with pytest.raises(ValueError, match="tgt_vertical_crs"):
+        with pytest.raises(ValueError, match="target_vertical_crs"):
             reproject(raster, 'EPSG:4326',
-                      src_vertical_crs='EGM96', tgt_vertical_crs='NAVD88')
-        with pytest.raises(ValueError, match="src_vertical_crs"):
+                      source_vertical_crs='EGM96', target_vertical_crs='NAVD88')
+        with pytest.raises(ValueError, match="source_vertical_crs"):
             reproject(raster, 'EPSG:4326',
-                      src_vertical_crs='egm96',  # case-sensitive
-                      tgt_vertical_crs='ellipsoidal')
+                      source_vertical_crs='egm96',  # case-sensitive
+                      target_vertical_crs='ellipsoidal')
+
+    def test_deprecated_vertical_kwargs_still_work(self):
+        """Old src_/tgt_vertical_crs names map to the new ones with a warning.
+
+        Renamed to source_/target_vertical_crs for consistency with the
+        source_crs/target_crs spelling (#2613). The old names stay working
+        through a deprecation shim.
+        """
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        new = reproject(raster, 'EPSG:4326',
+                        source_vertical_crs='EGM96',
+                        target_vertical_crs='ellipsoidal')
+        with pytest.warns(DeprecationWarning, match="src_vertical_crs"):
+            old_src = reproject(raster, 'EPSG:4326',
+                                src_vertical_crs='EGM96',
+                                target_vertical_crs='ellipsoidal')
+        with pytest.warns(DeprecationWarning, match="tgt_vertical_crs"):
+            old_tgt = reproject(raster, 'EPSG:4326',
+                                source_vertical_crs='EGM96',
+                                tgt_vertical_crs='ellipsoidal')
+        np.testing.assert_array_equal(old_src.values, new.values)
+        np.testing.assert_array_equal(old_tgt.values, new.values)
+
+    def test_deprecated_and_new_vertical_kwarg_conflict(self):
+        """Passing both the old and new spelling for one side is an error."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        with pytest.warns(DeprecationWarning):
+            with pytest.raises(TypeError, match="not both"):
+                reproject(raster, 'EPSG:4326',
+                          source_vertical_crs='EGM96',
+                          src_vertical_crs='EGM96',
+                          target_vertical_crs='ellipsoidal')
 
     def test_dask_backend_matches_numpy(self):
         """Dask-backed input must apply the vertical shift correctly (#2025).
@@ -3121,11 +3155,11 @@ class TestVerticalShift:
             coords=ds.coords, attrs=ds.attrs,
         )
         out_np = reproject(ds, 'EPSG:4326',
-                           src_vertical_crs='EGM96',
-                           tgt_vertical_crs='ellipsoidal')
+                           source_vertical_crs='EGM96',
+                           target_vertical_crs='ellipsoidal')
         out_da = reproject(ds_d, 'EPSG:4326',
-                           src_vertical_crs='EGM96',
-                           tgt_vertical_crs='ellipsoidal')
+                           source_vertical_crs='EGM96',
+                           target_vertical_crs='ellipsoidal')
         # Output is still dask-backed so the graph stays lazy.
         assert isinstance(out_da.data, da.Array)
         np.testing.assert_allclose(
@@ -3151,8 +3185,8 @@ class TestVerticalShift:
             attrs={'crs': 'EPSG:4326'},
         )
         result = reproject(raster, 'EPSG:4326',
-                           src_vertical_crs='EGM96',
-                           tgt_vertical_crs='ellipsoidal')
+                           source_vertical_crs='EGM96',
+                           target_vertical_crs='ellipsoidal')
         assert result.shape == (48, 48, 3)
 
         # Same N applied to every band -> inter-band differences are
@@ -3169,8 +3203,8 @@ class TestVerticalShift:
             attrs={'crs': 'EPSG:4326'},
         )
         out_2d = reproject(raster_2d, 'EPSG:4326',
-                           src_vertical_crs='EGM96',
-                           tgt_vertical_crs='ellipsoidal')
+                           source_vertical_crs='EGM96',
+                           target_vertical_crs='ellipsoidal')
         np.testing.assert_allclose(
             result.values[:, :, 0], out_2d.values, rtol=0, atol=1e-9,
         )
@@ -3201,14 +3235,14 @@ class TestVerticalShift:
 
         base_np = reproject(ds_np, 'EPSG:4326')
         shifted_np = reproject(ds_np, 'EPSG:4326',
-                               src_vertical_crs='EGM96',
-                               tgt_vertical_crs='ellipsoidal')
+                               source_vertical_crs='EGM96',
+                               target_vertical_crs='ellipsoidal')
         delta_np = shifted_np.values - base_np.values
 
         base_cu = reproject(ds_cu, 'EPSG:4326')
         shifted_cu = reproject(ds_cu, 'EPSG:4326',
-                               src_vertical_crs='EGM96',
-                               tgt_vertical_crs='ellipsoidal')
+                               source_vertical_crs='EGM96',
+                               target_vertical_crs='ellipsoidal')
         assert isinstance(shifted_cu.data, cp.ndarray)
         delta_cu = (cp.asnumpy(shifted_cu.data)
                     - cp.asnumpy(base_cu.data))
@@ -3256,7 +3290,7 @@ class TestVerticalShiftIntegerDtype:
         raster = self._ny_raster_int(np.int16, 100, -32768)
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         assert result.dtype == np.float32, (
             f"expected float32 output for int16 input, got {result.dtype}"
@@ -3281,7 +3315,7 @@ class TestVerticalShiftIntegerDtype:
         raster = self._ny_raster_int(np.uint8, 100, 0)
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         assert result.dtype == np.float32
         assert np.isnan(result.attrs['nodata'])
@@ -3311,7 +3345,7 @@ class TestVerticalShiftIntegerDtype:
         baseline = reproject(raster, 'EPSG:4326')
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         assert result.dtype == baseline.dtype, (
             f"vertical shift changed dtype from {baseline.dtype} to {result.dtype}"
@@ -3329,7 +3363,7 @@ class TestVerticalShiftIntegerDtype:
         )
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         assert result.dtype == np.float64
 
@@ -3347,7 +3381,7 @@ class TestVerticalShiftIntegerDtype:
         )
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         assert result.dtype == np.float32
         # The nodata cell must have propagated as NaN, not as -32768 + N.
@@ -3380,7 +3414,7 @@ class TestVerticalShiftIntegerDtype:
         )
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         assert np.isnan(result.attrs['_FillValue'])
         assert np.isnan(result.attrs['nodatavals'][0])
@@ -3399,7 +3433,7 @@ class TestVerticalShiftIntegerDtype:
         )
         result = reproject(
             raster, 'EPSG:4326',
-            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+            source_vertical_crs='EGM96', target_vertical_crs='ellipsoidal',
         )
         # The dask graph must advertise float32 so downstream consumers
         # don't get a dtype lie.
