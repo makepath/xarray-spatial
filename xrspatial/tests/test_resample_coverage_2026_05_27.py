@@ -10,8 +10,8 @@ Adds tests for gaps the deep-sweep test-coverage audit surfaced:
   input that could expose divide-by-zero in weight-aware kernels).
 - Cat 5 MEDIUM: non-default dim names (lat/lon) propagate through
   resample without being renamed to y/x.
-- Cat 3 MEDIUM: empty raster behavior pin (currently raises
-  IndexError -- documents the contract).
+- Cat 3 MEDIUM: empty raster behavior pin (raises a clear ValueError
+  before reaching coordinate indexing).
 
 Source untouched -- this is a test-only coverage closure.
 """
@@ -352,9 +352,9 @@ class TestNonDefaultDimNames:
 # ---------------------------------------------------------------------------
 
 class TestEmptyRasterRejected:
-    """Resample on a zero-area raster currently raises IndexError when
-    rebuilding output coords (vals[0] index access). Pin this so any
-    future ValueError-raises-with-clear-message change is visible."""
+    """Resample on a zero-area raster raises a clear ValueError up front,
+    before reaching the output-coordinate rebuild that would otherwise
+    surface an opaque IndexError (vals[0] on an empty coord array)."""
 
     def test_zero_rows_raises(self):
         data = np.zeros((0, 4), dtype=np.float32)
@@ -363,11 +363,7 @@ class TestEmptyRasterRejected:
             coords={'y': np.zeros(0), 'x': np.arange(4, dtype=np.float64)},
             attrs={'res': (1.0, 1.0)},
         )
-        # Current behaviour: IndexError when building output coords.
-        # If a future PR converts this to a friendlier ValueError, update
-        # this pin -- the goal is that the contract is *covered*, not
-        # that the current error type is preserved forever.
-        with pytest.raises((IndexError, ValueError)):
+        with pytest.raises(ValueError, match='non-empty spatial'):
             resample(agg, scale_factor=0.5, method='nearest')
 
     def test_zero_cols_raises(self):
@@ -377,7 +373,7 @@ class TestEmptyRasterRejected:
             coords={'y': np.arange(4, dtype=np.float64), 'x': np.zeros(0)},
             attrs={'res': (1.0, 1.0)},
         )
-        with pytest.raises((IndexError, ValueError)):
+        with pytest.raises(ValueError, match='non-empty spatial'):
             resample(agg, scale_factor=0.5, method='nearest')
 
 
