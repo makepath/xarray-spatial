@@ -355,7 +355,7 @@ def test_degenerate_shape(shape):
     """Single-pixel and single-row/column input.
 
     Every cell is a pit (code 0) and a stream (flow_accum >= threshold),
-    so HAND is defined at the input shape with no crash.
+    so each cell drains to itself and HAND is 0 at the input shape.
     """
     fd = np.zeros(shape, dtype=np.float64)
     fa = np.full(shape, 200.0, dtype=np.float64)
@@ -363,3 +363,4 @@ def test_degenerate_shape(shape):
     fd_r, fa_r, el_r = _make_hand_rasters(fd, fa, el)
     result = hand(fd_r, fa_r, el_r, threshold=100)
     assert result.shape == shape
+    np.testing.assert_allclose(result.data, 0.0)
