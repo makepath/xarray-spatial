@@ -462,26 +462,32 @@ def test_viewshed_cpu_memory_guard_passes_with_max_distance():
 
 
 @pytest.mark.parametrize("backend", ["numpy", "cupy", "dask"])
-def test_viewshed_max_distance_anisotropic(backend):
+@pytest.mark.parametrize("fine_axis", ["x", "y"])
+def test_viewshed_max_distance_anisotropic(backend, fine_axis):
     """max_distance must not clip cells on anisotropic-resolution rasters.
 
     Regression test: the windowed path sized its analysis window from the
     coarser of ew_res / ns_res and used that single radius for both axes,
     so cells within max_distance along the finer axis were dropped from
-    the window and returned INVISIBLE.
+    the window and returned INVISIBLE.  Both anisotropy orientations are
+    checked so a mix-up between radius_rows / radius_cols is caught.
     """
     if backend == "cupy":
         if not has_rtx():
             pytest.skip("rtxpy not available")
         import cupy as cp
 
-    # ew_res = 1 (x), ns_res = 10 (y): strongly anisotropic.
+    # Strongly anisotropic: one axis spaced by 1, the other by 10.
     # Use a uniform nonzero elevation: flat enough that all in-range cells
     # stay visible, but the RTX mesh builder needs positive max elevation.
     ny, nx = 21, 21
     terrain = np.full((ny, nx), 1.0)
-    xs = np.arange(nx, dtype=float) * 1.0
-    ys = np.arange(ny, dtype=float) * 10.0
+    if fine_axis == "x":
+        xs = np.arange(nx, dtype=float) * 1.0    # fine
+        ys = np.arange(ny, dtype=float) * 10.0   # coarse
+    else:
+        xs = np.arange(nx, dtype=float) * 10.0   # coarse
+        ys = np.arange(ny, dtype=float) * 1.0    # fine
 
     obs_x, obs_y = xs[10], ys[10]
     obs_elev = 50
@@ -490,7 +496,8 @@ def test_viewshed_max_distance_anisotropic(backend):
     full = viewshed(base, x=obs_x, y=obs_y, observer_elev=obs_elev)
     full_vals = full.values
 
-    # max_distance=8 reaches 8 columns east (ew_res=1) but only 0.8 rows.
+    # max_distance=8 reaches 8 cells along the fine axis but < 1 along the
+    # coarse axis, so the buggy single-radius window clipped the fine axis.
     arr = terrain.copy()
     if backend == "cupy":
         arr = cp.asarray(arr)
@@ -508,14 +515,18 @@ def test_viewshed_max_distance_anisotropic(backend):
         # numpy and dask both resolve through .values
         result = v.values
 
-    # Cells within max_distance along the finer (x) axis must be evaluated
-    # and match the full viewshed, not be clipped to INVISIBLE.
-    for c in (12, 15, 17):  # 2, 5, 7 units east — all < 8
-        dist = abs(xs[c] - obs_x)
-        assert dist < 8.0
-        assert result[10, c] > INVISIBLE, (
-            f"cell (10,{c}) at distance {dist} wrongly clipped")
-        np.testing.assert_allclose(result[10, c], full_vals[10, c], atol=0.03)
+    # Cells within max_distance along the fine axis must be evaluated and
+    # match the full viewshed, not be clipped to INVISIBLE.  obs is at
+    # index 10 on both axes; step along the fine axis from the observer.
+    for offset in (2, 5, 7):  # all < 8 cells along the fine axis
+        if fine_axis == "x":
+            rc = (10, 10 + offset)
+        else:
+            rc = (10 + offset, 10)
+        assert result[rc] > INVISIBLE, (
+            f"cell {rc} ({offset} fine-axis cells away) wrongly clipped")
+        np.testing.assert_allclose(result[rc], full_vals[rc], atol=0.03)
 
-    # Cells outside max_distance stay INVISIBLE.
-    assert result[10, 19] == INVISIBLE  # 9 units east, > 8
+    # A cell 9 fine-axis cells away (> max_distance) stays INVISIBLE.
+    far = (10, 19) if fine_axis == "x" else (19, 10)
+    assert result[far] == INVISIBLE
