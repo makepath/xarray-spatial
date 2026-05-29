@@ -813,6 +813,134 @@ def test_crosstab_cupy_with_cat_ids_filter():
 
 
 # ---------------------------------------------------------------------------
+# Cat 1 -- 3D crosstab backend coverage (cupy / dask+cupy), issue #2619
+#
+# crosstab() accepts a 3D categorical `values` array (category dim picked by
+# `layer=`).  The cupy / dask+cupy backends move the data to host memory and
+# delegate to _crosstab_numpy.  The 3D GPU paths run but were untested: the
+# existing 3D crosstab tests only parametrize numpy / dask+numpy.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def crosstab_3d_input():
+    """2D zones + 3D categorical values (y, x, cat) for 3D crosstab tests."""
+    zones = np.array(
+        [[1, 1, 2, 2, 3, 3],
+         [1, 1, 2, 2, 3, 3],
+         [1, 1, 2, 2, 3, 3]],
+        dtype=np.float64,
+    )
+    # 3 rows x 6 cols x 2 categories; the two category layers differ so a
+    # backend that mishandles the category axis would diverge from numpy.
+    cat0 = np.ones((3, 6), dtype=np.float64)
+    cat1 = np.full((3, 6), 2.0, dtype=np.float64)
+    values = np.stack([cat0, cat1], axis=-1)  # shape (3, 6, 2)
+    return zones, values
+
+
+def _build_3d_values(values_np, backend):
+    """Wrap a (y, x, cat) numpy array as a DataArray for the given backend."""
+    import cupy as cp
+    if backend == 'numpy':
+        data = values_np
+    elif backend == 'cupy':
+        data = cp.asarray(values_np)
+    elif backend == 'dask+cupy':
+        data = da.from_array(cp.asarray(values_np), chunks=(3, 3, 2))
+    else:
+        raise ValueError(backend)
+    agg = xr.DataArray(data, dims=['y', 'x', 'cat'])
+    agg['cat'] = ['a', 'b']
+    return agg
+
+
+def _build_2d_zones(zones_np, backend):
+    import cupy as cp
+    if backend == 'numpy':
+        data = zones_np
+    elif backend == 'cupy':
+        data = cp.asarray(zones_np)
+    elif backend == 'dask+cupy':
+        data = da.from_array(cp.asarray(zones_np), chunks=(3, 3))
+    else:
+        raise ValueError(backend)
+    return xr.DataArray(data, dims=['y', 'x'])
+
+
+@cuda_and_cupy_available
+def test_crosstab_3d_count_cupy_matches_numpy(crosstab_3d_input):
+    """3D crosstab(agg='count') on cupy matches numpy (issue #2619).
+
+    Exercises the 3D branch of _crosstab_cupy: a 3D cupy values array is
+    moved to host with cupy.asnumpy and the category coordinate flows
+    through _find_cats / _crosstab_numpy.
+    """
+    zones_np, values_np = crosstab_3d_input
+
+    zones_n = _build_2d_zones(zones_np, 'numpy')
+    values_n = _build_3d_values(values_np, 'numpy')
+    df_np = crosstab(zones_n, values_n, layer=-1, agg='count')
+
+    zones_c = _build_2d_zones(zones_np, 'cupy')
+    values_c = _build_3d_values(values_np, 'cupy')
+    df_cp = _to_pandas(crosstab(zones_c, values_c, layer=-1, agg='count'))
+
+    assert list(df_cp.columns) == list(df_np.columns)
+    pd.testing.assert_frame_equal(
+        df_cp.reset_index(drop=True), df_np.reset_index(drop=True),
+        check_dtype=False,
+    )
+
+
+@cuda_and_cupy_available
+@dask_required
+def test_crosstab_3d_count_dask_cupy_matches_numpy(crosstab_3d_input):
+    """3D crosstab(agg='count') on dask+cupy matches numpy (issue #2619).
+
+    Exercises the 3D branch of _crosstab_dask_cupy: per-block .get() to
+    host, then the dask+numpy 3D crosstab.  Only agg='count' is supported
+    for 3D dask-backed input.
+    """
+    zones_np, values_np = crosstab_3d_input
+
+    zones_n = _build_2d_zones(zones_np, 'numpy')
+    values_n = _build_3d_values(values_np, 'numpy')
+    df_np = crosstab(zones_n, values_n, layer=-1, agg='count')
+
+    zones_dc = _build_2d_zones(zones_np, 'dask+cupy')
+    values_dc = _build_3d_values(values_np, 'dask+cupy')
+    df_dc = _to_pandas(crosstab(zones_dc, values_dc, layer=-1, agg='count'))
+
+    assert list(df_dc.columns) == list(df_np.columns)
+    pd.testing.assert_frame_equal(
+        df_dc.reset_index(drop=True), df_np.reset_index(drop=True),
+        check_dtype=False,
+    )
+
+
+@cuda_and_cupy_available
+def test_crosstab_3d_nodata_cupy_matches_numpy(crosstab_3d_input):
+    """3D crosstab with nodata_values on cupy matches numpy (issue #2619)."""
+    zones_np, values_np = crosstab_3d_input
+
+    zones_n = _build_2d_zones(zones_np, 'numpy')
+    values_n = _build_3d_values(values_np, 'numpy')
+    # nodata_values=2 drops every cell in the second category layer.
+    df_np = crosstab(zones_n, values_n, layer=-1, agg='count', nodata_values=2)
+
+    zones_c = _build_2d_zones(zones_np, 'cupy')
+    values_c = _build_3d_values(values_np, 'cupy')
+    df_cp = _to_pandas(
+        crosstab(zones_c, values_c, layer=-1, agg='count', nodata_values=2)
+    )
+
+    pd.testing.assert_frame_equal(
+        df_cp.reset_index(drop=True), df_np.reset_index(drop=True),
+        check_dtype=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Cat 5 MEDIUM -- regions coords / attrs propagation
 # ---------------------------------------------------------------------------
 
