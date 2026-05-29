@@ -5,6 +5,8 @@ then fall back to pyproj for codes/formats not in the built-in table.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from xrspatial.reproject._lite_crs import CRS as LiteCRS
@@ -135,24 +137,61 @@ def _detect_nodata(raster, nodata=None, dtype=None):
     is rejected.
 
     Integer dtypes can't carry NaN. When *dtype* is integer the
-    resolved nodata is checked against the dtype: a NaN coming from
-    upstream (or the absent-upstream default) is swapped for a
-    dtype-appropriate sentinel via :func:`_default_integer_nodata`
-    (signed -> ``dtype.min``, unsigned -> ``dtype.max``). Without that
-    swap, the worker's cast-back step silently turned every
-    out-of-bounds pixel into ``0`` while ``attrs['nodata']`` still
-    advertised NaN (#2185).
+    resolved nodata is checked against the dtype:
+
+    * NaN (from upstream or the absent-upstream default) is swapped
+      for a dtype-appropriate sentinel via
+      :func:`_default_integer_nodata` (signed -> ``dtype.min``,
+      unsigned -> ``dtype.max``). Without that swap, the worker's
+      cast-back step silently turned every out-of-bounds pixel into
+      ``0`` while ``attrs['nodata']`` still advertised NaN (#2185).
+    * A finite value that does not fit the dtype range is rejected
+      when the caller passed it explicitly (raises ``ValueError``),
+      or swapped for the dtype default with a ``UserWarning`` when it
+      came in via attrs/rioxarray. Without that guard, the worker's
+      cast-back step wraps the sentinel (e.g. ``-9999`` into
+      ``uint8`` becomes ``0``) while ``attrs['nodata']`` still
+      advertises the original value (#2572).
     """
     nd = _detect_nodata_raw(raster, nodata)
 
-    # For integer outputs, swap any resolved NaN for a sentinel that
-    # actually fits the dtype. Finite values (including the
-    # user-supplied ones) pass through untouched so explicit nodata
-    # always wins.
-    if dtype is not None and np.isnan(nd):
+    if dtype is not None:
         dt = np.dtype(dtype)
         if np.issubdtype(dt, np.integer):
-            return _default_integer_nodata(dt)
+            if np.isnan(nd):
+                # Swap NaN for a dtype-appropriate sentinel.
+                return _default_integer_nodata(dt)
+
+            info = np.iinfo(dt)
+            if not (info.min <= nd <= info.max):
+                # Finite but out of range. Explicit arg = hard error;
+                # implicit (attrs/rioxarray) = swap with warning so
+                # legacy files (e.g. uint16 + nodata=-9999) still load.
+                if nodata is not None:
+                    raise ValueError(
+                        f"nodata={nodata!r} cannot be represented in "
+                        f"dtype {dt}: valid range is "
+                        f"[{info.min}, {info.max}]. The worker's cast "
+                        f"step would silently wrap the sentinel (e.g. "
+                        f"-9999 into uint8 becomes 0), so out-of-range "
+                        f"output pixels would be indistinguishable "
+                        f"from valid data. Pass a representable nodata "
+                        f"or use a wider dtype."
+                    )
+                fallback = _default_integer_nodata(dt)
+                # stacklevel=3 surfaces the warning at the public
+                # reproject() call (user -> reproject -> _detect_nodata
+                # -> warn) so the user sees the location they can act on.
+                warnings.warn(
+                    f"Raster attrs declare nodata={nd!r}, which is "
+                    f"outside the {dt} range "
+                    f"[{info.min}, {info.max}]. Using {fallback!r} "
+                    f"instead so the worker's cast-back step does not "
+                    f"silently wrap the sentinel (#2572).",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return fallback
 
     return nd
 

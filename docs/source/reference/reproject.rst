@@ -26,9 +26,11 @@ The available options are:
 - ``"auto"`` (default): clamp geographic source bounds inward by
   0.01 deg from +/-180 longitude and +/-90 latitude, and fall back to
   the 2nd/98th percentile of a dense interior grid when the projected
-  extent is more than 50x the source extent. Matches the historical
-  behaviour. Emits a ``UserWarning`` when the clamp or percentile
-  fallback actually alters the bounds.
+  extent shows a real singularity blow-up. Blow-up detection is
+  unit-agnostic: it compares the max absolute projected coordinate
+  to the median and also flags non-finite raw edge projections.
+  Emits a ``UserWarning`` when the clamp or percentile fallback
+  actually alters the bounds.
 - ``"raw"``: use the true projected extent of the source corners and
   edges. No clamp, no percentile. Pass this when downstream tooling
   needs the exact projection of the input footprint and you are willing
