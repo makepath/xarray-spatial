@@ -21,6 +21,15 @@
 
 #### Fixed
 
+- `zonal.trim()` with the default `values=(np.nan,)` (or any NaN
+  sentinel) now trims a NaN-framed raster on the numpy and cupy
+  backends, matching the existing dask behaviour. The numba kernel
+  `_trim` matched sentinels with `e == val` and `NaN == NaN` is False,
+  so NaN borders were silently ignored on those backends. NaN matching
+  is now handled in a numpy bounds helper that mirrors the dask
+  reduction. Behaviour for finite sentinels (zero, integer zone ids,
+  etc.) is unchanged. (#2559)
+
 - `reproject` now rejects an explicit `nodata=` value that does not
   fit the source/output integer dtype range. Previously the worker's
   cast-back step silently wrapped the sentinel (e.g. `-9999` in a
