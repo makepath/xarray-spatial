@@ -1414,6 +1414,21 @@ def crosstab(
     # (e.g., xarray Datasets via to_array().sel())
     if values.ndim == 2:
         validate_arrays(zones, values)
+    else:
+        # 3D values: validate_arrays() requires equal shapes, so it cannot be
+        # used here (zones is 2D, values is 3D). Check backend compatibility up
+        # front instead, otherwise a mixed-backend call (e.g. numpy zones with
+        # dask values) fails deep inside the dask/numba machinery with an
+        # opaque error like "'NoneType' object is not subscriptable".
+        zones_backend = _classify_backend(zones)
+        values_backend = _classify_backend(values)
+        if zones_backend != values_backend:
+            raise ValueError(
+                "`zones` and `values` must share the same backend; got "
+                "'{}' (zones) and '{}' (values)".format(
+                    zones_backend, values_backend
+                )
+            )
 
     agg_2d = ["percentage", "count"]
     agg_3d_numpy = _DEFAULT_STATS.keys()
