@@ -4108,6 +4108,225 @@ class TestCupyReprojectParity:
         assert np.isfinite(in_vals).any()
 
 
+class TestDegenerateShapeReproject:
+    """Single-row, single-column, and constant-value rasters (#2618).
+
+    A strip raster has one spatial axis of size 1, which hits the
+    ``size < 2`` early-return in ``_validate_regular_axis`` and runs the
+    resampling kernel on a degenerate axis. A constant-value raster has
+    zero gradient, exercising the all-equal interpolation path. All four
+    backends return correct output today; these tests lock that in.
+    """
+
+    @staticmethod
+    def _strip(values, n, axis, use_dask=False, use_cupy=False, chunks=None):
+        """Build a 1xN (axis='row') or Nx1 (axis='col') strip raster.
+
+        The degenerate axis spans a single coordinate; the long axis is a
+        regular ramp so the projection has a real extent to work with.
+        """
+        arr = np.asarray(values, dtype=np.float64)
+        if axis == 'row':
+            data = arr.reshape(1, n)
+            y = np.array([0.0])
+            x = np.linspace(-5, 5, n)
+        else:
+            data = arr.reshape(n, 1)
+            y = np.linspace(5, -5, n)
+            x = np.array([0.0])
+        if use_cupy:
+            data = cp.asarray(data)
+        if use_dask:
+            block = chunks if chunks is not None else data.shape
+            data = da.from_array(data, chunks=block)
+        return xr.DataArray(
+            data, dims=['y', 'x'], coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+    @staticmethod
+    def _to_host(result):
+        arr = result.data
+        if hasattr(arr, 'compute'):
+            arr = arr.compute()
+        if hasattr(arr, 'get'):
+            arr = arr.get()
+        return np.asarray(arr)
+
+    # -- single-row (1xN) strip --------------------------------------------
+
+    def test_single_row_strip_numpy(self):
+        from xrspatial.reproject import reproject
+        raster = self._strip(np.arange(8), 8, 'row')
+        out = reproject(raster, 'EPSG:3857')
+        vals = self._to_host(out)
+        assert out.ndim == 2
+        assert np.isfinite(vals).any()
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_single_row_strip_dask_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_raster = self._strip(np.arange(8), 8, 'row')
+        da_raster = self._strip(np.arange(8), 8, 'row',
+                                use_dask=True, chunks=(1, 4))
+        np_vals = self._to_host(reproject(np_raster, 'EPSG:3857'))
+        da_vals = self._to_host(reproject(da_raster, 'EPSG:3857'))
+        assert np_vals.shape == da_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(da_vals))
+        finite = np.isfinite(np_vals)
+        if finite.any():
+            np.testing.assert_allclose(
+                np_vals[finite], da_vals[finite], rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+    def test_single_row_strip_cupy_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_raster = self._strip(np.arange(8), 8, 'row')
+        cp_raster = self._strip(np.arange(8), 8, 'row', use_cupy=True)
+        np_vals = self._to_host(reproject(np_raster, 'EPSG:3857'))
+        cp_vals = self._to_host(reproject(cp_raster, 'EPSG:3857'))
+        assert np_vals.shape == cp_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(cp_vals))
+        finite = np.isfinite(np_vals)
+        if finite.any():
+            np.testing.assert_allclose(
+                np_vals[finite], cp_vals[finite], rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask and cupy required")
+    def test_single_row_strip_dask_cupy_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_raster = self._strip(np.arange(8), 8, 'row')
+        dc_raster = self._strip(np.arange(8), 8, 'row',
+                                use_dask=True, use_cupy=True, chunks=(1, 4))
+        np_vals = self._to_host(reproject(np_raster, 'EPSG:3857'))
+        dc_vals = self._to_host(reproject(dc_raster, 'EPSG:3857'))
+        assert np_vals.shape == dc_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(dc_vals))
+        finite = np.isfinite(np_vals)
+        if finite.any():
+            np.testing.assert_allclose(
+                np_vals[finite], dc_vals[finite], rtol=1e-5, atol=1e-5)
+
+    # -- single-column (Nx1) strip -----------------------------------------
+
+    def test_single_col_strip_numpy(self):
+        from xrspatial.reproject import reproject
+        raster = self._strip(np.arange(8), 8, 'col')
+        out = reproject(raster, 'EPSG:3857')
+        vals = self._to_host(out)
+        assert out.ndim == 2
+        assert np.isfinite(vals).any()
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_single_col_strip_dask_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_raster = self._strip(np.arange(8), 8, 'col')
+        da_raster = self._strip(np.arange(8), 8, 'col',
+                                use_dask=True, chunks=(4, 1))
+        np_vals = self._to_host(reproject(np_raster, 'EPSG:3857'))
+        da_vals = self._to_host(reproject(da_raster, 'EPSG:3857'))
+        assert np_vals.shape == da_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(da_vals))
+        finite = np.isfinite(np_vals)
+        if finite.any():
+            np.testing.assert_allclose(
+                np_vals[finite], da_vals[finite], rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+    def test_single_col_strip_cupy_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_raster = self._strip(np.arange(8), 8, 'col')
+        cp_raster = self._strip(np.arange(8), 8, 'col', use_cupy=True)
+        np_vals = self._to_host(reproject(np_raster, 'EPSG:3857'))
+        cp_vals = self._to_host(reproject(cp_raster, 'EPSG:3857'))
+        assert np_vals.shape == cp_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(cp_vals))
+        finite = np.isfinite(np_vals)
+        if finite.any():
+            np.testing.assert_allclose(
+                np_vals[finite], cp_vals[finite], rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask and cupy required")
+    def test_single_col_strip_dask_cupy_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_raster = self._strip(np.arange(8), 8, 'col')
+        dc_raster = self._strip(np.arange(8), 8, 'col',
+                                use_dask=True, use_cupy=True, chunks=(4, 1))
+        np_vals = self._to_host(reproject(np_raster, 'EPSG:3857'))
+        dc_vals = self._to_host(reproject(dc_raster, 'EPSG:3857'))
+        assert np_vals.shape == dc_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(dc_vals))
+        finite = np.isfinite(np_vals)
+        if finite.any():
+            np.testing.assert_allclose(
+                np_vals[finite], dc_vals[finite], rtol=1e-5, atol=1e-5)
+
+    # -- constant-value (zero-gradient) raster -----------------------------
+
+    def _constant(self, fill=7.0, use_dask=False, use_cupy=False,
+                  chunks=(8, 8)):
+        data = np.full((16, 16), fill, dtype=np.float64)
+        y = np.linspace(5, -5, 16)
+        x = np.linspace(-5, 5, 16)
+        if use_cupy:
+            data = cp.asarray(data)
+        if use_dask:
+            data = da.from_array(data, chunks=chunks)
+        return xr.DataArray(
+            data, dims=['y', 'x'], coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+    def test_constant_raster_numpy_preserves_value(self):
+        from xrspatial.reproject import reproject
+        out = reproject(self._constant(fill=7.0), 'EPSG:3857',
+                        resampling='bilinear')
+        vals = self._to_host(out)
+        finite = vals[np.isfinite(vals)]
+        assert finite.size > 0
+        # Zero gradient: every interpolated pixel must equal the fill value.
+        np.testing.assert_allclose(finite, 7.0, rtol=0, atol=1e-9)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_constant_raster_dask_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_vals = self._to_host(reproject(self._constant(), 'EPSG:3857'))
+        da_vals = self._to_host(
+            reproject(self._constant(use_dask=True), 'EPSG:3857'))
+        assert np_vals.shape == da_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(da_vals))
+        finite = np.isfinite(np_vals)
+        np.testing.assert_allclose(
+            np_vals[finite], da_vals[finite], rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+    def test_constant_raster_cupy_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_vals = self._to_host(reproject(self._constant(), 'EPSG:3857'))
+        cp_vals = self._to_host(
+            reproject(self._constant(use_cupy=True), 'EPSG:3857'))
+        assert np_vals.shape == cp_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(cp_vals))
+        finite = np.isfinite(np_vals)
+        np.testing.assert_allclose(
+            np_vals[finite], cp_vals[finite], rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask and cupy required")
+    def test_constant_raster_dask_cupy_matches_numpy(self):
+        from xrspatial.reproject import reproject
+        np_vals = self._to_host(reproject(self._constant(), 'EPSG:3857'))
+        dc_vals = self._to_host(reproject(
+            self._constant(use_dask=True, use_cupy=True), 'EPSG:3857'))
+        assert np_vals.shape == dc_vals.shape
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(dc_vals))
+        finite = np.isfinite(np_vals)
+        np.testing.assert_allclose(
+            np_vals[finite], dc_vals[finite], rtol=1e-5, atol=1e-5)
+
+
 class TestCoordsPreservation:
     """Non-spatial coords pass through reproject() and merge()."""
 
