@@ -1322,6 +1322,16 @@ def resample(
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
 
+    # Reject empty rasters up front. A zero-length spatial axis would
+    # otherwise reach the output-coordinate rebuild and surface as an
+    # opaque IndexError (vals[0] on an empty coord array) rather than a
+    # clear, parameter-named error.
+    if agg.shape[-2] == 0 or agg.shape[-1] == 0:
+        raise ValueError(
+            f"resample(): `agg` must have non-empty spatial dimensions, "
+            f"got shape {tuple(agg.shape)}"
+        )
+
     if method not in ALL_METHODS:
         raise ValueError(
             f"method must be one of {sorted(ALL_METHODS)}, got {method!r}"
