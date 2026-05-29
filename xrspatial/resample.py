@@ -1023,6 +1023,24 @@ def _min_chunksize_for_scale(scale):
     return int(1.0 / scale) + 1
 
 
+def _downsample_radius(scale):
+    """Extra interp overlap (input pixels) needed for a downsample on one axis.
+
+    Block-centered mapping sends output pixel ``o`` to input coordinate
+    ``(o + 0.5) * (in/out) - 0.5``. When ``scale < 1`` (downsampling), the
+    source coordinate of an output pixel near a chunk seam can sit up to
+    about ``(in/out)/2`` input pixels beyond the chunk ``_output_chunks``
+    assigned it to. Returning ``ceil((1/scale)/2) + 1`` covers that
+    displacement (the ``+1`` absorbs the half-pixel coordinate offset and
+    the cumulative-rounding mismatch between ``_output_chunks`` and the
+    per-pixel mapping). Upsampling needs none, so return 0 for ``scale >= 1``.
+    """
+    import math
+    if scale >= 1.0:
+        return 0
+    return int(math.ceil((1.0 / scale) / 2.0)) + 1
+
+
 def _ensure_min_chunksize(data, min_size):
     """Rechunk *data* so every chunk is at least *min_size* pixels wide."""
     import math
@@ -1054,6 +1072,16 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
         order = INTERP_METHODS[method]
         depth = _INTERP_DEPTH[method]
 
+        # When downsampling, an output pixel's block-centered source
+        # coordinate can land ~(in/out)/2 input pixels past the chunk
+        # _output_chunks assigned it to. _INTERP_DEPTH only covers the
+        # kernel stencil, not that displacement, so add the per-axis
+        # downsample radius. Without it the overlapped block is missing the
+        # true source row/column and map_coordinates clamps to the block
+        # edge, corrupting whole chunk-seam rows (issue #2610).
+        depth_y_base = depth + _downsample_radius(scale_y)
+        depth_x_base = depth + _downsample_radius(scale_x)
+
         # Clamp depth per axis so it never exceeds the array's total size on
         # that axis. dask.overlap rejects ``depth > sum(chunks)``, which would
         # otherwise blow up for inputs smaller than the cubic prefilter depth
@@ -1062,8 +1090,8 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
         # keeping the full depth wherever the axis is large enough.
         global_in_h = int(sum(data.chunks[0]))
         global_in_w = int(sum(data.chunks[1]))
-        depth_y = min(depth, max(0, global_in_h - 1))
-        depth_x = min(depth, max(0, global_in_w - 1))
+        depth_y = min(depth_y_base, max(0, global_in_h - 1))
+        depth_x = min(depth_x_base, max(0, global_in_w - 1))
 
         min_size = max(2 * max(depth_y, depth_x) + 1,
                        _min_chunksize_for_scale(scale_y),
@@ -1150,11 +1178,16 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
         order = INTERP_METHODS[method]
         depth = _INTERP_DEPTH[method]
 
+        # Add the per-axis downsample radius before clamping (see
+        # _run_dask_numpy and _downsample_radius for the rationale; #2610).
+        depth_y_base = depth + _downsample_radius(scale_y)
+        depth_x_base = depth + _downsample_radius(scale_x)
+
         # Clamp depth per axis (see _run_dask_numpy for rationale).
         global_in_h = int(sum(data.chunks[0]))
         global_in_w = int(sum(data.chunks[1]))
-        depth_y = min(depth, max(0, global_in_h - 1))
-        depth_x = min(depth, max(0, global_in_w - 1))
+        depth_y = min(depth_y_base, max(0, global_in_h - 1))
+        depth_x = min(depth_x_base, max(0, global_in_w - 1))
 
         min_size = max(2 * max(depth_y, depth_x) + 1,
                        _min_chunksize_for_scale(scale_y),
