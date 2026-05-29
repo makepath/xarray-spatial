@@ -2798,6 +2798,9 @@ def crop(
     Notes
     -----
         - This operation will change the output size of the raster.
+        - ``zones`` and ``values`` must have the same shape and backend;
+          otherwise a ``ValueError`` is raised (consistent with
+          :func:`stats` and :func:`crosstab`).
         - If none of the requested ``zone_ids`` are present in ``zones``, the
           returned DataArray has shape ``(0, 0)``. This behaviour is the same
           across all backends (numpy, cupy, dask+numpy, dask+cupy).
