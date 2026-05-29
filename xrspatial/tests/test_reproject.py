@@ -2177,6 +2177,51 @@ class TestDaskGraphOptimization:
         assert fp[0] < fp[2]
         assert fp[1] < fp[3]
 
+    def test_finite_pair_bbox_joint_mask(self):
+        """_finite_pair_bbox keeps x/y from the same point only (#2643).
+
+        Independent finite-filtering of tx and ty would build a bbox from
+        coordinates that never belonged to the same transformed point. Here
+        the only point finite in both coordinates is (5.0, 6.0), so the bbox
+        must be that single point -- not the (1, 2, 5, 6) box that
+        independent filtering produces.
+        """
+        from xrspatial.reproject import _finite_pair_bbox
+        tx = [1.0, np.nan, 5.0]
+        ty = [np.nan, 2.0, 6.0]
+        bbox = _finite_pair_bbox(tx, ty)
+        assert bbox == (5.0, 6.0, 5.0, 6.0)
+        # Independent filtering would have leaked x=1.0 (from a NaN-y point)
+        # and y=2.0 (from a NaN-x point) into the box.
+        assert bbox[0] != 1.0
+        assert bbox[1] != 2.0
+
+    def test_finite_pair_bbox_all_nan(self):
+        """_finite_pair_bbox returns None when no pair is finite (#2643)."""
+        from xrspatial.reproject import _finite_pair_bbox
+        assert _finite_pair_bbox([np.nan, np.nan], [np.nan, 1.0]) is None
+        assert _finite_pair_bbox([np.inf], [1.0]) is None
+
+    def test_footprint_chunk_skip_with_unpaired_nan(self):
+        """Chunk-skipping must use the joint-filtered footprint (#2643).
+
+        When independent filtering would widen the footprint with mismatched
+        coordinates, a chunk that only overlaps the spurious region must
+        still be skipped under joint filtering.
+        """
+        from xrspatial.reproject import _bounds_overlap, _finite_pair_bbox
+        # Real footprint is the point (5, 6). Independent filtering would
+        # report (1, 2, 5, 6), which overlaps a chunk sitting at (1..3, 2..4).
+        tx = [1.0, np.nan, 5.0]
+        ty = [np.nan, 2.0, 6.0]
+        fp = _finite_pair_bbox(tx, ty)
+        chunk = (1.0, 2.0, 3.0, 4.0)
+        # Joint footprint does not overlap the chunk -> chunk is skipped.
+        assert not _bounds_overlap(chunk, fp)
+        # The spurious independent-filter footprint would have overlapped.
+        spurious = (1.0, 2.0, 5.0, 6.0)
+        assert _bounds_overlap(chunk, spurious)
+
     def test_bounds_overlap(self):
         """_bounds_overlap should correctly detect overlap."""
         from xrspatial.reproject import _bounds_overlap

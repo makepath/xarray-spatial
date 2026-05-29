@@ -1853,6 +1853,25 @@ def _reproject_dask_cupy(
     return result
 
 
+def _finite_pair_bbox(tx, ty):
+    """Bounding box of (tx, ty) pairs where both coordinates are finite.
+
+    The x and y coordinates must be filtered together: a transform can
+    send some probe points to NaN/inf, and dropping finite x and finite
+    y independently would mix coordinates from different points into one
+    box. Returns ``(left, bottom, right, top)`` or ``None`` when no pair
+    is finite in both coordinates.
+    """
+    tx = np.asarray(tx, dtype=np.float64)
+    ty = np.asarray(ty, dtype=np.float64)
+    mask = np.isfinite(tx) & np.isfinite(ty)
+    if not mask.any():
+        return None
+    tx = tx[mask]
+    ty = ty[mask]
+    return (float(tx.min()), float(ty.min()), float(tx.max()), float(ty.max()))
+
+
 def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
     """Compute approximate bounding box of source raster in target CRS."""
     try:
@@ -1879,11 +1898,7 @@ def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
         result = transform_points(src_crs, tgt_crs, xs, ys)
         if result is not None:
             tx, ty = result
-            tx = [v for v in tx if np.isfinite(v)]
-            ty = [v for v in ty if np.isfinite(v)]
-            if not tx or not ty:
-                return None
-            return (min(tx), min(ty), max(tx), max(ty))
+            return _finite_pair_bbox(tx, ty)
     except (ImportError, ModuleNotFoundError):
         pass
 
@@ -1892,11 +1907,7 @@ def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
         pyproj = _require_pyproj()
         transformer = pyproj.Transformer.from_crs(src_crs, tgt_crs, always_xy=True)
         tx, ty = transformer.transform(xs.tolist(), ys.tolist())
-        tx = [v for v in tx if np.isfinite(v)]
-        ty = [v for v in ty if np.isfinite(v)]
-        if not tx or not ty:
-            return None
-        return (min(tx), min(ty), max(tx), max(ty))
+        return _finite_pair_bbox(tx, ty)
     except Exception:
         return None
 
