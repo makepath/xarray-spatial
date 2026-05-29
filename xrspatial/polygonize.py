@@ -776,12 +776,20 @@ def _detect_raster_transform(raster: xr.DataArray):
     2. ``raster.rio.transform()`` (rioxarray, if installed). Returns an
        ``affine.Affine``; iterating it yields the rasterio-ordered 6
        coefficients ``(a, b, c, d, e, f)``.
-    3. ``None``.
+    3. The raster's own x/y coordinate values (the xarray /
+       xrspatial standard georeferencing convention -- the same one
+       ``get_dataarray_resolution`` / ``calc_res`` read).  This is the
+       common case: a raster loaded with georeferenced coords and a
+       ``crs`` attr but no separate ``transform`` attr would otherwise
+       emit pixel-space geometries while ``return_type='geopandas'``
+       attached a CRS, the exact mismatch #2536 set out to prevent.
+    4. ``None``.
 
     A raster carrying ``attrs['_xrspatial_no_georef']=True`` (the
     xrspatial.geotiff "no georeference" marker) is treated as having
-    no transform even if ``rio.transform()`` is present, because that
-    marker explicitly opts out of georeferencing.
+    no transform even if ``rio.transform()`` or georeferenced coords
+    are present, because that marker explicitly opts out of
+    georeferencing.
     """
     # Honour the xrspatial.geotiff "no georeference" marker if set.
     if raster.attrs.get('_xrspatial_no_georef'):
@@ -805,16 +813,71 @@ def _detect_raster_transform(raster: xr.DataArray):
             # _transform_points does not need.
             t = tuple(float(v) for v in tuple(rio_transform)[:6])
             # rioxarray returns the identity affine when no transform
-            # is available, which would silently shift outputs by (0,0)
-            # and look identical to "no transform". Treat the identity
-            # the same as None so callers get an unambiguous answer.
-            if t == (1.0, 0.0, 0.0, 0.0, 1.0, 0.0):
-                return None
-            return t
+            # is available (e.g. coords whose dims it does not recognise
+            # as spatial).  Treat the identity as "rio has nothing" and
+            # fall through to the coords-based detection below rather than
+            # returning the meaningless identity.
+            if t != (1.0, 0.0, 0.0, 0.0, 1.0, 0.0):
+                return t
     except Exception:
         pass
 
-    return None
+    # Fall back to the raster's own x/y coordinate values.  polygonize
+    # emits pixel-CORNER integer indices (_follow walks grid corners),
+    # and the attrs['transform'] path above maps corner index -> world,
+    # so a coords-derived transform must put the origin at the corner of
+    # the first pixel: origin = first_center - 0.5 * spacing.
+    return _transform_from_coords(raster)
+
+
+def _coord_spacing(values):
+    """Return the uniform step of a 1-D coordinate array, or None.
+
+    Requires at least two points and even spacing (within a small
+    relative tolerance).  Returns None on irregular spacing so the
+    caller falls back to pixel space rather than emitting a wrong
+    affine from, say, the first two coordinates.
+    """
+    if values.ndim != 1 or values.shape[0] < 2:
+        return None
+    diffs = np.diff(values.astype(np.float64))
+    step = diffs[0]
+    if step == 0:
+        return None
+    # numpy.isclose-style tolerance against the first step.
+    if not np.all(np.abs(diffs - step) <= (1e-8 + 1e-5 * abs(step))):
+        return None
+    return float(step)
+
+
+def _transform_from_coords(raster: xr.DataArray):
+    """Derive a rasterio-ordered transform from the raster's x/y coords.
+
+    Uses the raster's actual x/y dim names (``dims[-1]`` for x,
+    ``dims[-2]`` for y), matching ``get_dataarray_resolution``.  The
+    coords must be 1-D, length >= 2 and evenly spaced; otherwise this
+    returns None.
+    """
+    if raster.ndim < 2:
+        return None
+    ydim = raster.dims[-2]
+    xdim = raster.dims[-1]
+    if xdim not in raster.coords or ydim not in raster.coords:
+        return None
+
+    xc = np.asarray(raster.coords[xdim].values)
+    yc = np.asarray(raster.coords[ydim].values)
+
+    dx = _coord_spacing(xc)
+    dy = _coord_spacing(yc)
+    if dx is None or dy is None:
+        return None
+
+    # Coords are pixel centres; the transform maps pixel-corner index 0
+    # to the corner of the first cell.
+    origin_x = float(xc[0]) - 0.5 * dx
+    origin_y = float(yc[0]) - 0.5 * dy
+    return (dx, 0.0, origin_x, 0.0, dy, origin_y)
 
 
 def _to_geopandas(
@@ -1422,6 +1485,52 @@ def _point_in_ring(px, py, ring):
     return inside
 
 
+@ngjit
+def _ring_interior_point(ring):
+    """Return a point strictly inside a closed axis-aligned ring.
+
+    A ring vertex cannot be used to test containment in an exterior:
+    when a hole touches its enclosing exterior at a single pinch vertex
+    (which happens after the dask cross-chunk merge traces a notch as a
+    separate ring), every shared vertex lies *on* the exterior boundary,
+    so a vertex-based ``_point_in_ring`` test reports False and the hole
+    is silently dropped (#2606).  Instead, walk each unit edge, step a
+    tiny epsilon inward along the orientation-aware normal, and return
+    the first candidate that lands inside the ring.  This works for the
+    non-convex (L-shaped) notch rings the merge can produce, not just
+    convex ones.
+    """
+    eps = 1e-6
+    n = len(ring) - 1
+    sign = 1.0 if _signed_ring_area(ring) > 0 else -1.0
+    for k in range(n):
+        x1, y1 = ring[k, 0], ring[k, 1]
+        x2, y2 = ring[k + 1, 0], ring[k + 1, 1]
+        mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        dx, dy = x2 - x1, y2 - y1
+        # Left normal of travel direction; interior is on the left for a
+        # CCW ring, on the right for a CW (hole) ring -- ``sign`` flips it.
+        nx, ny = -dy, dx
+        length = np.sqrt(nx * nx + ny * ny)
+        if length == 0.0:
+            continue
+        nx = nx / length * sign
+        ny = ny / length * sign
+        cx = mx + nx * eps
+        cy = my + ny * eps
+        if _point_in_ring(cx, cy, ring):
+            return cx, cy
+    # Fallback: centroid of the unique vertices.  Rings reaching here are
+    # always closed with at least three unique vertices, so n >= 3 and the
+    # divide below is safe.
+    sx = 0.0
+    sy = 0.0
+    for k in range(n):
+        sx += ring[k, 0]
+        sy += ring[k, 1]
+    return sx / n, sy / n
+
+
 def _group_rings_into_polygons(rings):
     """Classify rings as exteriors/holes and assign holes to exteriors.
 
@@ -1438,7 +1547,10 @@ def _group_rings_into_polygons(rings):
 
     result = [[ext] for ext in exteriors]
     for hole in holes:
-        px, py = hole[0, 0], hole[0, 1]
+        # Use an interior point of the hole, not a vertex: a hole that
+        # touches its exterior at a pinch vertex shares that vertex with
+        # the exterior boundary, where _point_in_ring is False (#2606).
+        px, py = _ring_interior_point(hole)
         for i, ext in enumerate(exteriors):
             if _point_in_ring(px, py, ext):
                 result[i].append(hole)
@@ -2070,26 +2182,31 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
     ny_total = int(sum(row_chunks))
     nx_total = int(sum(col_chunks))
 
-    # Process chunks incrementally: compute one at a time so only boundary
-    # polygons accumulate in memory.  Interior polygons (fully inside a
-    # chunk, no merging needed) go straight to the output list.  This keeps
-    # peak memory proportional to boundary_polygon_count rather than
-    # total_polygon_count * n_chunks.
+    # Process chunks one row at a time: build the delayed tasks for a whole
+    # row of chunks and hand them to a single dask.compute() call so the
+    # scheduler can run the chunks in that row concurrently.  Computing per
+    # row (instead of per chunk) recovers parallelism while keeping peak
+    # driver memory bounded by one row of chunk results rather than the full
+    # raster -- interior polygons (fully inside a chunk, no merging needed)
+    # still go straight to the output list, and only boundary polygons
+    # accumulate across rows for the cross-chunk merge.
     all_interior = []
     boundary_polys = []
 
     for iy in range(len(row_chunks)):
+        row_tasks = []
         for ix in range(len(col_chunks)):
             block = dask_data.blocks[iy, ix]
             mask_block = (mask_data.blocks[iy, ix]
                           if mask_data is not None else None)
-            interior, boundary = dask.compute(
+            row_tasks.append(
                 dask.delayed(_polygonize_chunk)(
                     block, mask_block, connectivity_8,
                     int(row_offsets[iy]), int(col_offsets[ix]),
                     ny_total, nx_total,
                     atol, rtol,
-                ))[0]
+                ))
+        for interior, boundary in dask.compute(*row_tasks):
             all_interior.extend(interior)
             boundary_polys.extend(boundary)
 
@@ -2230,14 +2347,16 @@ def polygonize(
     When ``transform`` is not supplied explicitly, the raster's affine
     transform is auto-detected in this order: ``raster.attrs['transform']``
     (xrspatial.geotiff convention, a rasterio-ordered 6-tuple), then
-    ``raster.rio.transform()`` (if rioxarray is installed).  An explicit
-    ``transform=`` argument always overrides the auto-detected value.
-    Auto-detection is skipped when the raster carries
-    ``attrs['_xrspatial_no_georef']=True``.  This applies to all return
-    types -- the geometries themselves are transformed, so the
-    coordinates emitted in the "numpy", "awkward", "spatialpandas" and
-    "geojson" outputs are also in CRS coordinate space, not pixel
-    space, when the raster carries a transform.
+    ``raster.rio.transform()`` (if rioxarray is installed), then the
+    raster's own x/y coordinate values (the xarray / xrspatial standard
+    georeferencing convention; used when the coords are 1-D, length >= 2
+    and evenly spaced).  An explicit ``transform=`` argument always
+    overrides the auto-detected value.  Auto-detection is skipped when
+    the raster carries ``attrs['_xrspatial_no_georef']=True``.  This
+    applies to all return types -- the geometries themselves are
+    transformed, so the coordinates emitted in the "numpy", "awkward",
+    "spatialpandas" and "geojson" outputs are also in CRS coordinate
+    space, not pixel space, when the raster carries a transform.
     """
     _validate_raster(raster, func_name='polygonize', name='raster', ndim=2)
     if raster.shape[0] < 1 or raster.shape[1] < 1:
