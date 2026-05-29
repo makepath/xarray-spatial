@@ -6478,3 +6478,87 @@ class TestReprojectIntegerNodataRegression:
         # After the fix, every non-fill pixel must be the sentinel.
         unique = set(np.unique(result.values).tolist())
         assert unique == {100, -32768}
+
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
+class TestNonWgsDatumNumbaFastPath:
+    """The numba fast path must not corrupt coordinates for non-WGS84
+    datums (GH #2651).
+
+    The projection kernels run in WGS84. The old datum-shift wrapper
+    applied a degree-based Helmert shift to the kernel output, which is
+    wrong whenever the source is a projected CRS (the output is
+    easting/northing in metres) and ignored a non-WGS84 target datum
+    entirely. The fix disables the numba fast path for any non-WGS84
+    datum so pyproj handles those transforms.
+    """
+
+    def test_fast_path_disabled_for_projected_non_wgs_source(self):
+        # OSGB36 / British National Grid (Airy datum), projected.
+        from xrspatial.reproject._projections import try_numba_transform
+        src = pyproj.CRS('EPSG:27700')
+        tgt = pyproj.CRS('EPSG:4326')
+        # Output chunk in WGS84 lon/lat over Great Britain.
+        result = try_numba_transform(src, tgt, (-2.0, 51.0, -1.0, 52.0), (4, 4))
+        assert result is None
+
+    def test_fast_path_disabled_for_geographic_non_wgs_source(self):
+        # NAD27 geographic (Clarke 1866 datum).
+        from xrspatial.reproject._projections import try_numba_transform
+        src = pyproj.CRS('EPSG:4267')
+        tgt = pyproj.CRS('EPSG:3857')
+        result = try_numba_transform(
+            src, tgt, (-8000000.0, 4000000.0, -7900000.0, 4100000.0), (4, 4),
+        )
+        assert result is None
+
+    def test_fast_path_disabled_for_non_wgs_target(self):
+        from xrspatial.reproject._projections import try_numba_transform
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:27700')
+        result = try_numba_transform(src, tgt, (400000.0, 200000.0, 410000.0, 210000.0), (4, 4))
+        assert result is None
+
+    def test_wgs_fast_path_still_active(self):
+        # WGS84 UTM <-> WGS84 geographic must keep using the fast path.
+        from xrspatial.reproject._projections import try_numba_transform
+        src = pyproj.CRS('EPSG:32617')
+        tgt = pyproj.CRS('EPSG:4326')
+        result = try_numba_transform(src, tgt, (-84.0, 40.0, -83.0, 41.0), (4, 4))
+        assert result is not None
+
+    def test_source_coords_match_pyproj_for_osgb36(self):
+        # End-to-end through _transform_coords: with the fast path
+        # disabled, the per-pixel source coordinates must match pyproj.
+        # Before the fix, the numba path returned easting ~5 where
+        # pyproj returns ~408701 metres -- a corrupt grid.
+        from xrspatial.reproject import _transform_coords
+        src = pyproj.CRS('EPSG:27700')
+        tgt = pyproj.CRS('EPSG:4326')
+        chunk_bounds = (-2.0, 51.0, -1.0, 52.0)
+        chunk_shape = (8, 8)
+
+        transformer = pyproj.Transformer.from_crs(tgt, src, always_xy=True)
+        src_y, src_x = _transform_coords(
+            transformer, chunk_bounds, chunk_shape, 0,
+            src_crs=src, tgt_crs=tgt,
+        )
+
+        # Reference: transform every output-pixel centre with pyproj.
+        h, w = chunk_shape
+        left, bottom, right, top = chunk_bounds
+        res_x = (right - left) / w
+        res_y = (top - bottom) / h
+        out_x = left + (np.arange(w) + 0.5) * res_x
+        out_y = top - (np.arange(h) + 0.5) * res_y
+        gx, gy = np.meshgrid(out_x, out_y)
+        ref_x, ref_y = transformer.transform(gx.ravel(), gy.ravel())
+        ref_x = np.asarray(ref_x).reshape(h, w)
+        ref_y = np.asarray(ref_y).reshape(h, w)
+
+        # Eastings/northings are ~4e5 metres; require mm-level agreement.
+        np.testing.assert_allclose(src_x, ref_x, atol=1e-3)
+        np.testing.assert_allclose(src_y, ref_y, atol=1e-3)
+        # Guard against the old corruption: coords must be metres, not degrees.
+        assert np.all(np.abs(src_x) > 1000.0)
+        assert np.all(np.abs(src_y) > 1000.0)
