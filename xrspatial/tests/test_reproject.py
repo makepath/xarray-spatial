@@ -1527,6 +1527,129 @@ def test_reproject_uint8_cubic_no_overflow():
 
 
 # ---------------------------------------------------------------------------
+# Per-band nodata (#2647)
+# ---------------------------------------------------------------------------
+
+def _make_per_band_nodata_raster():
+    """3-band raster with a distinct source sentinel baked into each band.
+
+    Band b is filled with the valid value ``10*(b+1)`` and a 2x2 corner
+    block of band b's own nodata sentinel. The ``nodatavals`` attr declares
+    the per-band sentinels in band order: ``(-9999, 255, 0)``.
+    """
+    ny, nx = 16, 16
+    sentinels = (-9999.0, 255.0, 0.0)
+    valids = (10.0, 20.0, 30.0)
+    bands = []
+    for sentinel, valid in zip(sentinels, valids):
+        plane = np.full((ny, nx), valid, dtype=np.float64)
+        plane[:2, :2] = sentinel  # corner block of this band's nodata
+        bands.append(plane)
+    data = np.stack(bands, axis=0)  # (band, y, x)
+    raster = xr.DataArray(
+        data, dims=['band', 'y', 'x'],
+        coords={'band': [1, 2, 3],
+                'y': np.linspace(55, 45, ny),
+                'x': np.linspace(-5, 5, nx)},
+        attrs={'crs': 'EPSG:4326', 'nodatavals': sentinels},
+    )
+    return raster, sentinels, valids
+
+
+def _assert_each_band_masked(result, sentinels, valids):
+    """Every band's own sentinel must be gone; its valid value must survive."""
+    arr = result.transpose('band', 'y', 'x').values
+    for b, (sentinel, valid) in enumerate(zip(sentinels, valids)):
+        band = arr[b]
+        finite = band[np.isfinite(band)]
+        # The raw source sentinel for this band must not leak through as a
+        # resampled "valid" sample. (-9999 is the resolved output sentinel
+        # used for masked pixels, so it is expected and excluded here.)
+        if sentinel != -9999.0:
+            assert not np.any(finite == sentinel), (
+                f"band {b}: source sentinel {sentinel} leaked into output"
+            )
+        # The band's valid fill value must still be present somewhere.
+        assert np.any(np.isclose(finite, valid)), (
+            f"band {b}: valid value {valid} did not survive reprojection"
+        )
+
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
+class TestPerBandNodata:
+    """Multi-band rasters with distinct per-band nodata sentinels (#2647).
+
+    Before the fix, ``_detect_nodata_raw`` read only ``nodatavals[0]`` and
+    the worker masked every band with that single value, so bands 1+ leaked
+    their invalid pixels into the output as valid data.
+    """
+
+    def _reproject(self, *args, **kwargs):
+        from xrspatial.reproject import reproject
+        return reproject(*args, **kwargs)
+
+    def test_detect_band_nodata_helper(self):
+        from xrspatial.reproject._crs_utils import _detect_band_nodata
+        raster, sentinels, _ = _make_per_band_nodata_raster()
+        # Canonical layout is (y, x, band); the public path transposes
+        # before calling, but the helper only reads attrs + band count.
+        assert _detect_band_nodata(raster, None, 3) == sentinels
+        # Explicit nodata arg overrides per-band detection.
+        assert _detect_band_nodata(raster, 0.0, 3) is None
+        # Single-band rasters never get a per-band tuple.
+        assert _detect_band_nodata(raster, None, 1) is None
+
+    def test_detect_band_nodata_uniform_returns_none(self):
+        from xrspatial.reproject._crs_utils import _detect_band_nodata
+        raster = xr.DataArray(
+            np.zeros((3, 4, 4)), dims=['band', 'y', 'x'],
+            attrs={'nodatavals': (0.0, 0.0, 0.0)},
+        )
+        assert _detect_band_nodata(raster, None, 3) is None
+
+    def test_numpy_per_band_masking(self):
+        raster, sentinels, valids = _make_per_band_nodata_raster()
+        r = self._reproject(raster, 'EPSG:32633', resampling='nearest')
+        assert r.ndim == 3
+        _assert_each_band_masked(r, sentinels, valids)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_numpy_per_band_masking(self):
+        raster, sentinels, valids = _make_per_band_nodata_raster()
+        raster.data = da.from_array(raster.values, chunks=(3, 8, 8))
+        r = self._reproject(raster, 'EPSG:32633', resampling='nearest')
+        r = r.compute() if hasattr(r.data, 'compute') else r
+        _assert_each_band_masked(r, sentinels, valids)
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+    def test_cupy_per_band_masking(self):
+        raster, sentinels, valids = _make_per_band_nodata_raster()
+        raster.data = cp.asarray(raster.values)
+        r = self._reproject(raster, 'EPSG:32633', resampling='nearest')
+        host = r.transpose('band', 'y', 'x')
+        host = xr.DataArray(host.data.get(), dims=host.dims, coords=host.coords)
+        _assert_each_band_masked(host, sentinels, valids)
+
+    @pytest.mark.skipif(not HAS_CUPY or not HAS_DASK,
+                        reason="cupy and dask required")
+    def test_dask_cupy_per_band_masking(self):
+        raster, sentinels, valids = _make_per_band_nodata_raster()
+        raster.data = da.from_array(cp.asarray(raster.values), chunks=(3, 8, 8))
+        r = self._reproject(raster, 'EPSG:32633', resampling='nearest')
+        computed = r.compute()
+        host = computed.transpose('band', 'y', 'x')
+        host = xr.DataArray(host.data.get(), dims=host.dims, coords=host.coords)
+        _assert_each_band_masked(host, sentinels, valids)
+
+    def test_output_nodatavals_band_count_preserved(self):
+        raster, sentinels, _ = _make_per_band_nodata_raster()
+        r = self._reproject(raster, 'EPSG:32633', resampling='nearest')
+        assert 'nodatavals' in r.attrs
+        # Output uses one resolved sentinel; the tuple keeps the band count.
+        assert len(r.attrs['nodatavals']) == len(sentinels)
+
+
+# ---------------------------------------------------------------------------
 # Edge case tests
 # ---------------------------------------------------------------------------
 
