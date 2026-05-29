@@ -467,8 +467,9 @@ def _geo_info_to_window(geo_info, height, width, bbox):
     if not geo_info.has_georef:
         raise ValueError(
             "open_geotiff: bbox= requires a georeferenced source, "
-            "but this file has no GeoTIFF tags. Pass window= instead "
-            "for pixel-space windowing.")
+            "but this source has no georeferencing (no GeoTIFF tags or "
+            "VRT GeoTransform). Pass window= instead for pixel-space "
+            "windowing.")
 
     from ._attrs import _extent_to_window
     pixel_window = _extent_to_window(

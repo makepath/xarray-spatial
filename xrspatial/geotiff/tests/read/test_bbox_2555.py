@@ -126,7 +126,7 @@ class TestBboxValidation:
         path = str(tmp_path / 'plain_2555.tif')
         with open(path, 'wb') as f:
             f.write(data)
-        with pytest.raises(ValueError, match="has no GeoTIFF tags"):
+        with pytest.raises(ValueError, match="no georeferencing"):
             open_geotiff(path, bbox=(-1.0, -1.0, 1.0, 1.0))
 
     def test_bbox_rejects_nan(self, georef_raster_2555):

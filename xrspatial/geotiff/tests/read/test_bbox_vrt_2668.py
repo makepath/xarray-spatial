@@ -156,7 +156,7 @@ class TestVrtBboxValidation:
                 '  </VRTRasterBand>\n'
                 '</VRTDataset>\n'
             )
-        with pytest.raises(ValueError, match="has no GeoTIFF tags"):
+        with pytest.raises(ValueError, match="no georeferencing"):
             open_geotiff(vrt, bbox=(-1.0, -1.0, 1.0, 1.0))
 
     def test_bbox_rejects_rotated_affine(self, tmp_path):
