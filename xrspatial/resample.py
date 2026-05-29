@@ -1411,10 +1411,12 @@ def resample(
         out.name = name
         # When nodata was applied, advertise NaN as the new sentinel.
         if has_nodata:
+            # Always advertise NaN via `_FillValue` -- this also covers the
+            # explicit `nodata=` case where the input carried no nodata
+            # attrs. Then refresh `nodata` / `nodatavals` for inputs that
+            # did declare them, so masked-to-NaN output never advertises a
+            # stale finite sentinel (the non-identity path does the same).
             out.attrs['_FillValue'] = float('nan')
-            # Refresh `nodata` / `nodatavals` too so masked-to-NaN output
-            # never advertises a stale finite sentinel (the non-identity
-            # path does the same below).
             _refresh_nodata_attrs(agg.attrs, out.attrs)
         return out
 
