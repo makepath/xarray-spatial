@@ -296,6 +296,13 @@ def _ranges_close(range_a, range_b, atol, rtol):
     """Return True if any value pair across two ``(min, max)`` ranges
     compares close under ``_values_close``.
 
+    This is now the *fallback* close-value test for the cross-chunk
+    merge: integer rasters (where it reduces to strict equality) and the
+    defensive case of a float polygon with no recorded boundary cells.
+    Float polygons that carry boundary cells use the direction-aware
+    ``_cells_close_directed`` instead, so the symmetric range check here
+    no longer drives float merging (#2666).
+
     Each per-polygon value range from ``_polygonize_chunk`` describes
     the actual span of pixel values that fall inside a region (after
     the within-chunk tolerance-chain CCL has run).  Two chunk polygons
@@ -322,6 +329,48 @@ def _ranges_close(range_a, range_b, atol, rtol):
     # case explicitly so the union-find still fires.
     if a_min <= b_max and b_min <= a_max:
         return True
+    return False
+
+
+def _cells_close_directed(cells_a, cells_b, atol, rtol, connectivity_8):
+    """Direction-aware close-value test between two chunk-boundary polygons.
+
+    ``cells_a`` / ``cells_b`` map ``(global_col, global_row) -> value`` for
+    the pixels each polygon places on an internal chunk edge.  Return True
+    if any pixel in ``cells_a`` is grid-adjacent to any pixel in ``cells_b``
+    (orthogonally for 4-conn, plus diagonally for 8-conn) AND the pair
+    compares close under the *same orientation* numpy CCL uses.
+
+    numpy's ``_calculate_regions`` walks pixels in raster-scan order and
+    tests ``_is_close(reference=current, value=earlier_neighbour)`` where
+    ``current`` is the higher-``ij`` pixel (East / North / the SE/NE
+    diagonal partner).  Because ``rtol`` scales by ``abs(reference)``, the
+    test is asymmetric, so the cross-chunk merge must pick the higher-``ij``
+    pixel as the reference to match numpy byte for byte (#2666).
+
+    ``ij = col + row * nx`` increases with row first, then column, so the
+    higher-``ij`` pixel of an adjacent pair is the one with the greater row,
+    or the greater column when rows are equal.
+    """
+    if not cells_a or not cells_b:
+        return False
+    for (ca, ra), va in cells_a.items():
+        for (cb, rb), vb in cells_b.items():
+            dcol = cb - ca
+            drow = rb - ra
+            adjacent = (
+                (abs(dcol) == 1 and drow == 0) or
+                (abs(drow) == 1 and dcol == 0) or
+                (connectivity_8 and abs(dcol) == 1 and abs(drow) == 1))
+            if not adjacent:
+                continue
+            # Higher-ij pixel is the reference (greater row, then col).
+            if (rb, cb) > (ra, ca):
+                reference, value = vb, va
+            else:
+                reference, value = va, vb
+            if _values_close(reference, value, atol, rtol):
+                return True
     return False
 
 
@@ -363,14 +412,17 @@ def _group_boundary_polygons(boundary_polys,
 
     Parameters
     ----------
-    boundary_polys : list of (val, rings, (val_min, val_max))
+    boundary_polys : list of (val, rings, (val_min, val_max), cells)
         Per-chunk boundary polygons collected from ``_polygonize_chunk``.
+        ``cells`` maps ``(global_col, global_row) -> value`` for the
+        polygon's pixels on internal chunk edges (empty for integer
+        rasters, which use strict equality).
     atol, rtol : float
-        Float tolerance forwarded to ``_ranges_close``.
+        Float tolerance forwarded to the close-value test.
 
     Returns
     -------
-    list of list of (val, rings, (val_min, val_max))
+    list of list of (val, rings, (val_min, val_max), cells)
         One sub-list per connected group.  Each sub-list holds all
         chunk polygons that should be merged with edge cancellation and
         assigned a single representative DN value downstream.
@@ -462,9 +514,21 @@ def _group_boundary_polygons(boundary_polys,
                 pi, pj = poly_indices[i], poly_indices[j]
                 if find(pi) == find(pj):
                     continue
-                range_i = boundary_polys[pi][2]
-                range_j = boundary_polys[pj][2]
-                if _ranges_close(range_i, range_j, atol, rtol):
+                # Float polygons carry per-cell boundary values; use the
+                # direction-aware test so the merge matches numpy CCL's
+                # scan-order ``_is_close`` orientation exactly (#2666).
+                # Integer polygons have no cell maps and fall back to the
+                # range check, which reduces to strict equality for them.
+                cells_i = boundary_polys[pi][3]
+                cells_j = boundary_polys[pj][3]
+                if cells_i and cells_j:
+                    close = _cells_close_directed(
+                        cells_i, cells_j, atol, rtol, connectivity_8)
+                else:
+                    range_i = boundary_polys[pi][2]
+                    range_j = boundary_polys[pj][2]
+                    close = _ranges_close(range_i, range_j, atol, rtol)
+                if close:
                     union(pi, pj)
 
     groups = {}
@@ -1137,14 +1201,16 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
     needs merge with neighbours).  Raster-edge boundaries are NOT counted
     as inter-chunk boundaries.
 
-    Boundary polygons carry a ``(value, rings, (val_min, val_max))``
-    triple instead of just ``(value, rings)`` so the cross-chunk merge
-    can do tolerance-based union over the full value range present in
-    each polygon (#2583).  Within a chunk, ``_polygonize_numpy`` already
-    merged tolerance-close pixels into one region, so a polygon may
-    span values from ``val_min`` to ``val_max``; the cross-chunk merge
-    needs the extremes to reconstruct numpy CCL semantics across the
-    chunk boundary.
+    Boundary polygons carry a
+    ``(value, rings, (val_min, val_max), cells)`` tuple instead of just
+    ``(value, rings)``.  The ``(val_min, val_max)`` range supports the
+    #2583 tolerance-chain union; ``cells`` maps
+    ``(global_col, global_row) -> value`` for the polygon's pixels on
+    internal chunk edges and lets the cross-chunk merge apply numpy
+    CCL's direction-aware ``_is_close`` orientation at the exact pixel
+    pair straddling each boundary (#2666).  Integer rasters use strict
+    equality, so their ``cells`` map is empty and the merge falls back
+    to the range check.
     """
     block = _to_numpy(block)
     if mask_block is not None:
@@ -1162,15 +1228,20 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
     # polygons may span a tolerance-chain cluster, so the full
     # per-region min/max scan is still needed there.
     if np.issubdtype(block.dtype, np.floating):
-        val_ranges = _compute_region_value_ranges(
-            block, mask_block, connectivity_8, atol, rtol, column)
+        val_ranges, boundary_cells = _compute_region_value_ranges(
+            block, mask_block, connectivity_8, atol, rtol, column,
+            row_offset=row_offset, col_offset=col_offset,
+            ny_total=ny_total, nx_total=nx_total)
     else:
         val_ranges = [(c, c) for c in column]
+        boundary_cells = [{} for _ in column]
 
     interior = []  # (value, [ring, ...])
-    boundary = []  # (value, [ring, ...], (val_min, val_max))
+    # (value, [ring, ...], (val_min, val_max), {(col, row): value})
+    boundary = []
 
-    for val, rings, val_range in zip(column, polygon_points, val_ranges):
+    for val, rings, val_range, cells in zip(
+            column, polygon_points, val_ranges, boundary_cells):
         offset_rings = []
         for ring in rings:
             ring = ring.copy()
@@ -1194,7 +1265,7 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
             on_boundary |= np.any(ys == row_offset + ny)
 
         if on_boundary:
-            boundary.append((val, offset_rings, val_range))
+            boundary.append((val, offset_rings, val_range, cells))
         else:
             interior.append((val, offset_rings))
 
@@ -1202,17 +1273,32 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
 
 
 def _compute_region_value_ranges(block, mask_block, connectivity_8,
-                                 atol, rtol, column):
-    """Return ``(val_min, val_max)`` for each region in raster-scan order.
+                                 atol, rtol, column,
+                                 row_offset=0, col_offset=0,
+                                 ny_total=None, nx_total=None):
+    """Return per-region value ranges and internal-boundary cell values.
 
     ``column`` is the polygon-order value list from ``_polygonize_numpy``;
-    the returned list is parallel to it.  Re-runs the same
+    the returned lists are parallel to it.  Re-runs the same
     ``_calculate_regions`` pass used inside ``_polygonize_numpy`` (so
     region IDs match exactly), then groups pixel values by region.
 
-    Used by ``_polygonize_chunk`` (#2583) to carry the actual value
-    extent of each chunk-boundary polygon into the cross-chunk merge
-    where numpy CCL parity needs both endpoints.
+    Returns ``(val_ranges, boundary_cells)`` where:
+
+    * ``val_ranges[i]`` is the ``(val_min, val_max)`` span of region ``i``
+      (used by #2583 to carry the value extent into the cross-chunk merge).
+    * ``boundary_cells[i]`` is a ``{(global_col, global_row): value}`` dict
+      of the region's pixels that lie on an *internal* chunk edge (an edge
+      shared with a neighbour chunk, not a raster edge).  The cross-chunk
+      merge (#2666) uses these per-cell values to replicate numpy CCL's
+      direction-aware ``_is_close`` orientation at the actual pixel pair
+      straddling each chunk boundary, instead of a symmetric range check.
+
+    ``row_offset`` / ``col_offset`` / ``ny_total`` / ``nx_total`` describe
+    where this chunk sits in the global raster so internal edges can be
+    distinguished from raster edges.  When ``ny_total`` / ``nx_total`` are
+    left ``None`` (single-chunk callers) the boundary-cell maps come back
+    empty.
     """
     ny, nx = block.shape
     values_flat = block.ravel()
@@ -1245,13 +1331,21 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
     regions = _calculate_regions(
         values_flat, mask_flat, connectivity_8, nx_eff, ny, atol, rtol)
 
+    # Which chunk edges are internal (shared with a neighbour chunk)?
+    track_cells = ny_total is not None and nx_total is not None
+    left_internal = track_cells and col_offset > 0
+    right_internal = track_cells and col_offset + nx < nx_total
+    bottom_internal = track_cells and row_offset > 0
+    top_internal = track_cells and row_offset + ny < ny_total
+
     # Aggregate min/max value per region in raster-scan order so the
     # output is parallel to the polygon column from _scan.
     n_regions = len(column)
     if n_regions == 0:
-        return []
+        return [], []
     val_min = [None] * n_regions
     val_max = [None] * n_regions
+    boundary_cells = [None] * n_regions
     for ij in range(len(regions)):
         r = regions[ij]
         if r == 0:
@@ -1266,7 +1360,26 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
             val_min[idx] = v
         if val_max[idx] is None or v > val_max[idx]:
             val_max[idx] = v
+
+        if track_cells:
+            local_col = ij % nx_eff
+            local_row = ij // nx_eff
+            # nx==1 padded a dummy column; skip it (only local_col 0 is real).
+            if nx == 1 and local_col != 0:
+                continue
+            on_internal = (
+                (left_internal and local_col == 0) or
+                (right_internal and local_col == nx - 1) or
+                (bottom_internal and local_row == 0) or
+                (top_internal and local_row == ny - 1))
+            if on_internal:
+                cells = boundary_cells[idx]
+                if cells is None:
+                    cells = {}
+                    boundary_cells[idx] = cells
+                cells[(local_col + col_offset, local_row + row_offset)] = v
     out = []
+    cells_out = []
     for i in range(n_regions):
         if val_min[i] is None:
             # Fall back to the polygon's representative value if no
@@ -1274,7 +1387,8 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
             out.append((column[i], column[i]))
         else:
             out.append((val_min[i], val_max[i]))
-    return out
+        cells_out.append(boundary_cells[i] if boundary_cells[i] else {})
+    return out, cells_out
 
 
 def _add_or_cancel_edge(edge_set, x1, y1, x2, y2):
