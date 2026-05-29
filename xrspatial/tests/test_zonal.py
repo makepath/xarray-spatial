@@ -1351,6 +1351,35 @@ def test_crosstab_3d_count(backend, data_zones, data_values_3d, result_crosstab_
     assert_input_data_unmodified(data_values_3d, copied_data_values_3d)
 
 
+@pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
+def test_crosstab_3d_mixed_backend_raises():
+    # 3D crosstab() must reject mismatched backends up front with a clear
+    # error, instead of crashing deep inside dask/numba (e.g. with
+    # "'NoneType' object is not subscriptable"). See issue #2640.
+    zones_data = np.array([[0, 0, 1, 1], [2, 2, 3, 3]], dtype=float)
+    values_data = np.ones(2 * 4 * 2).reshape(2, 4, 2)
+
+    numpy_zones = xr.DataArray(zones_data, dims=['lat', 'lon'])
+    dask_values = xr.DataArray(
+        da.from_array(values_data, chunks=(2, 2, 1)),
+        dims=['lat', 'lon', 'race'],
+    )
+    dask_values['race'] = ['c1', 'c2']
+
+    # numpy zones + dask 3D values
+    with pytest.raises(ValueError, match="same backend"):
+        crosstab(zones=numpy_zones, values=dask_values, agg='count', layer=-1)
+
+    # dask zones + numpy 3D values (reverse direction)
+    dask_zones = xr.DataArray(
+        da.from_array(zones_data, chunks=(2, 2)), dims=['lat', 'lon']
+    )
+    numpy_values = xr.DataArray(values_data, dims=['lat', 'lon', 'race'])
+    numpy_values['race'] = ['c1', 'c2']
+    with pytest.raises(ValueError, match="same backend"):
+        crosstab(zones=dask_zones, values=numpy_values, agg='count', layer=-1)
+
+
 @pytest.mark.parametrize("backend", ['numpy'])
 def test_crosstab_3d_agg_method(backend, data_zones, data_values_3d, result_crosstab_3d):
     # copy input data to verify they're unchanged after running the function
