@@ -1821,6 +1821,95 @@ class TestCudaCubicNanFallback:
                                    rtol=1e-10)
 
 
+@pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+class TestCupyPyprojFallbackParity:
+    """The cupy backend must match numpy even when no CUDA coordinate
+    kernel exists for the CRS pair (#2620).
+
+    For a projected->projected reprojection such as EPSG:32633 ->
+    EPSG:3857 (neither side is geographic WGS84/NAD83), both backends
+    fall back to pyproj for coordinates. The cupy resampler previously
+    used cupyx.scipy.ndimage.map_coordinates, which bled the cval=0.0
+    constant into the half-pixel boundary band and used a B-spline for
+    cubic instead of the Catmull-Rom kernel the numpy path uses, so the
+    two backends produced different numbers.
+    """
+
+    def _make_utm_source(self):
+        ny, nx = 64, 64
+        y = np.linspace(5610000.0, 5600000.0, ny)  # descending (north-up)
+        x = np.linspace(500000.0, 510000.0, nx)
+        data = (
+            np.add.outer(np.sin(np.linspace(0, 4, ny)),
+                         np.cos(np.linspace(0, 4, nx))) * 100 + 500
+        ).astype(np.float64)
+        return y, x, data
+
+    def test_resample_cupy_native_renormalizes_boundary_band(self):
+        """The native kernel must renormalize in the half-pixel border
+        band rather than bleed a zero, matching numpy bilinear."""
+        from xrspatial.reproject._interpolate import (
+            _resample_cupy_native,
+            _resample_numpy,
+        )
+        src = np.arange(1, 26, dtype=np.float64).reshape(5, 5)
+        # r=4.6 sits in the (sh-1, sh) border band; r=-0.4 in (-1, 0).
+        rows = np.array([[4.6, -0.4]], dtype=np.float64)
+        cols = np.array([[2.0, 2.0]], dtype=np.float64)
+        cpu = _resample_numpy(src, rows, cols,
+                              resampling='bilinear', nodata=np.nan)
+        gpu = cp.asnumpy(_resample_cupy_native(
+            cp.asarray(src), rows, cols,
+            resampling='bilinear', nodata=np.nan))
+        # numpy returns the renormalized edge value (23.0, 3.0), not 0.0.
+        np.testing.assert_allclose(gpu, cpu, rtol=1e-12)
+        assert not np.any(gpu == 0.0)
+
+    @pytest.mark.parametrize('resampling', ['nearest', 'bilinear', 'cubic'])
+    def test_projected_to_projected_numpy_cupy_match(self, resampling):
+        from xrspatial.reproject import reproject
+        y, x, data = self._make_utm_source()
+        attrs = {'crs': 'EPSG:32633'}
+        da_np = xr.DataArray(data, dims=('y', 'x'),
+                             coords={'y': y, 'x': x}, attrs=attrs)
+        da_cp = xr.DataArray(cp.asarray(data), dims=('y', 'x'),
+                             coords={'y': y, 'x': x}, attrs=attrs)
+        out_np = np.asarray(
+            reproject(da_np, 'EPSG:3857', resampling=resampling).data)
+        out_cp = cp.asnumpy(
+            reproject(da_cp, 'EPSG:3857', resampling=resampling).data)
+        assert out_np.shape == out_cp.shape
+        # Same finite/nodata pattern (edge band no longer diverges).
+        np.testing.assert_array_equal(
+            np.isfinite(out_np), np.isfinite(out_cp))
+        finite = np.isfinite(out_np) & np.isfinite(out_cp)
+        np.testing.assert_allclose(out_np[finite], out_cp[finite],
+                                   rtol=1e-6, atol=1e-6)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_projected_to_projected_dask_cupy_match(self):
+        from xrspatial.reproject import reproject
+        y, x, data = self._make_utm_source()
+        attrs = {'crs': 'EPSG:32633'}
+        ref = np.asarray(
+            reproject(
+                xr.DataArray(data, dims=('y', 'x'),
+                             coords={'y': y, 'x': x}, attrs=attrs),
+                'EPSG:3857', resampling='cubic').data)
+        dc = xr.DataArray(
+            da.from_array(cp.asarray(data), chunks=(32, 32)),
+            dims=('y', 'x'), coords={'y': y, 'x': x}, attrs=attrs)
+        out = reproject(dc, 'EPSG:3857', resampling='cubic').data
+        if hasattr(out, 'compute'):
+            out = out.compute()
+        out = cp.asnumpy(out) if isinstance(out, cp.ndarray) else np.asarray(out)
+        assert ref.shape == out.shape
+        np.testing.assert_array_equal(np.isfinite(ref), np.isfinite(out))
+        finite = np.isfinite(ref) & np.isfinite(out)
+        np.testing.assert_allclose(ref[finite], out[finite],
+                                   rtol=1e-6, atol=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Dask graph optimization tests
 # ---------------------------------------------------------------------------
