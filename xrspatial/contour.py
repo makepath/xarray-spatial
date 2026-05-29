@@ -550,7 +550,7 @@ def _to_geopandas(results, crs=None):
         # to attach a CRS. Build the frame with an explicit empty geometry
         # column so the CRS still propagates on an empty result.
         return gpd.GeoDataFrame(
-            {'level': [], 'geometry': gpd.GeoSeries([], crs=crs)}, crs=crs
+            {'level': [], 'geometry': gpd.GeoSeries([])}, crs=crs
         )
 
     gdf = gpd.GeoDataFrame(records, crs=crs)
