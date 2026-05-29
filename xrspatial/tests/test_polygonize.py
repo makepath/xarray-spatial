@@ -1456,8 +1456,16 @@ class TestPolygonizeTransformPropagation:
         assert all_ys.max() <= 3.0 + 1e-6
 
     def test_no_transform_info_yields_pixel_coords(self):
-        """A raster with no transform info keeps pixel-space coords."""
-        raster = self._raster()  # no attrs
+        """A raster with no transform info keeps pixel-space coords.
+
+        Build a coordless raster here rather than using ``_raster()``:
+        that helper sets integer-index coords (``np.arange(3)``), and
+        since #2607 those coords are themselves a transform source
+        (resolving to a -0.5 pixel-corner origin), so they would no
+        longer exercise the "genuinely no transform info" path.
+        """
+        data = np.array([[1, 1, 2], [1, 1, 2], [2, 2, 2]], dtype=np.int32)
+        raster = xr.DataArray(data, dims=('y', 'x'))  # no coords, no attrs
         _, polys = polygonize(raster, return_type='numpy')
         all_xs = np.concatenate([p[0][:, 0] for p in polys])
         all_ys = np.concatenate([p[0][:, 1] for p in polys])

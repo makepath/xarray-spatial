@@ -2298,11 +2298,11 @@ def polygonize(
     georeferencing convention; used when the coords are 1-D, length >= 2
     and evenly spaced).  An explicit ``transform=`` argument always
     overrides the auto-detected value.  Auto-detection is skipped when
-    the raster carries ``attrs['_xrspatial_no_georef']=True``.  This applies to all return
-    types -- the geometries themselves are transformed, so the
-    coordinates emitted in the "numpy", "awkward", "spatialpandas" and
-    "geojson" outputs are also in CRS coordinate space, not pixel
-    space, when the raster carries a transform.
+    the raster carries ``attrs['_xrspatial_no_georef']=True``.  This
+    applies to all return types -- the geometries themselves are
+    transformed, so the coordinates emitted in the "numpy", "awkward",
+    "spatialpandas" and "geojson" outputs are also in CRS coordinate
+    space, not pixel space, when the raster carries a transform.
     """
     _validate_raster(raster, func_name='polygonize', name='raster', ndim=2)
     if raster.shape[0] < 1 or raster.shape[1] < 1:
