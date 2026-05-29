@@ -1,3 +1,4 @@
+import inspect
 from unittest.mock import patch
 
 try:
@@ -961,3 +962,10 @@ def test_no_scipy_dask_unbounded_memory_guard():
                 proximity(raster, x='lon', y='lat')
     finally:
         prox_mod.cKDTree = original_ckdtree
+
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_return_annotation_consistency(func):
+    # proximity, allocation, and direction share a signature and return
+    # type; their return annotations should match.
+    assert inspect.signature(func).return_annotation is xr.DataArray
