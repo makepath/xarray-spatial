@@ -108,6 +108,10 @@ from the main checkout, you have breached this contract.
 3. If a new module was created, add a new `.rst` file and include it in the
    appropriate `toctree`.
 
+**Do NOT edit `CHANGELOG.md`.** Multiple rockout agents run in parallel and
+every one of them touching `CHANGELOG.md` produces merge conflicts. Leave the
+changelog alone -- it is updated separately at release time.
+
 ## Step 6 -- Create a User Guide Notebook
 
 **Skip this step** if the change is a pure bug fix with no new user-facing API.
@@ -367,6 +371,8 @@ The rockout run is only complete when:
   before every commit.
 - Commit progress after each major step with a clear commit message referencing
   the issue number (e.g. `Add flood velocity function (#42)`).
+- Never modify `CHANGELOG.md` during a rockout run. Parallel agents all editing
+  it cause merge conflicts; the changelog is maintained separately at release time.
 - Run `/humanizer` on any text destined for GitHub (issue body, PR description,
   commit messages) to remove AI writing artifacts.
 - If any step is not applicable (e.g. no docs update needed for a typo fix),
