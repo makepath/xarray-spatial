@@ -13,7 +13,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 import numpy as np
 import xarray as xr
 
-from .utils import ArrayTypeFunctionMapping, ngjit
+from .utils import ArrayTypeFunctionMapping, _validate_raster, ngjit
 
 try:
     import dask
@@ -602,8 +602,7 @@ def contours(
     >>> # Each entry is (level_value, Nx2_coordinate_array)
     >>> level, coords = lines[0]
     """
-    if agg.ndim != 2:
-        raise ValueError("Input raster must be 2D")
+    _validate_raster(agg, func_name='contours', name='agg', ndim=2)
     if agg.shape[0] < 2 or agg.shape[1] < 2:
         raise ValueError(
             "Input raster must have at least 2 rows and 2 columns"
