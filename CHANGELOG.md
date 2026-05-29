@@ -21,6 +21,14 @@
 
 #### Fixed
 
+- `zonal.stats` on the cupy backend now agrees with the numpy and dask
+  backends on two edge cases. A zone whose values are all NaN (or all
+  equal to `nodata_values`) is preserved in the output with NaN stats
+  instead of being dropped. When `zone_ids` contains IDs that do not
+  appear in the zones raster, the missing IDs are filtered out so the
+  zone column and stats columns stay aligned (previously the cupy path
+  could silently desynchronize the rows). (#2562)
+
 - Reproject test suite now gates GPU tests on
   `xrspatial.utils.has_cuda_and_cupy()` instead of an import-only
   `try: import cupy` check. On hosts where `cupy` imports cleanly but
