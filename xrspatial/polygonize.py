@@ -2193,7 +2193,10 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
     trade memory for more parallelism, decrease it to cap memory harder.
     A fixed batch also bounds memory independently of the chunk-grid
     shape, unlike a per-row batch whose size scales with the number of
-    column chunks.
+    column chunks.  ``batch_size`` is not exposed through the public
+    :func:`polygonize` API; the default comes from the module-level
+    ``_DASK_CHUNK_BATCH_SIZE`` constant, so tuning it means editing that
+    constant.
 
     Tasks are built and their results consumed in row-major ``(iy, ix)``
     order so polygons map back to the right block; the downstream
