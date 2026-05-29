@@ -25,16 +25,25 @@ import xarray as xr
 from numpy.testing import assert_allclose
 
 try:
+    import cupy
+except ImportError:
+    cupy = None
+
+try:
     import dask.array as da
 except ImportError:
     da = None
 
 from ..polygonize import polygonize
-from .general_checks import dask_array_available
+from .general_checks import cuda_and_cupy_available, dask_array_available
 
 
 def _to_dask(arr, chunks):
     return xr.DataArray(da.from_array(arr, chunks=chunks))
+
+
+def _to_dask_cupy(arr, chunks):
+    return xr.DataArray(da.from_array(cupy.asarray(arr), chunks=chunks))
 
 
 def _all_chunkings(shape):
@@ -143,6 +152,30 @@ class TestDefaultToleranceUnaffected:
         assert len(v_dk) == len(v_np) == 3
         assert_allclose(sorted(v_dk), sorted(v_np))
         assert any(abs(v - 1.000009) < 1e-12 for v in v_dk)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestReproDaskCuPy:
+    """The repro and its reverse must also match numpy on dask+cupy,
+    which shares the cross-chunk merge path with dask+numpy.
+    """
+
+    def test_forward_dask_cupy(self):
+        v_np, _ = polygonize(
+            xr.DataArray(_REPRO_FORWARD), atol=0.0, rtol=0.1)
+        v_dc, _ = polygonize(
+            _to_dask_cupy(_REPRO_FORWARD, chunks=(1, 1)), atol=0.0, rtol=0.1)
+        assert len(v_dc) == len(v_np) == 1
+        assert_allclose(sorted(v_dc), sorted(v_np))
+
+    def test_reverse_dask_cupy(self):
+        v_np, _ = polygonize(
+            xr.DataArray(_REPRO_REVERSE), atol=0.0, rtol=0.1)
+        v_dc, _ = polygonize(
+            _to_dask_cupy(_REPRO_REVERSE, chunks=(1, 1)), atol=0.0, rtol=0.1)
+        assert len(v_dc) == len(v_np) == 2
+        assert_allclose(sorted(v_dc), sorted(v_np))
 
 
 @dask_array_available

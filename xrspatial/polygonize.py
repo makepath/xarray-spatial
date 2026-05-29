@@ -296,6 +296,13 @@ def _ranges_close(range_a, range_b, atol, rtol):
     """Return True if any value pair across two ``(min, max)`` ranges
     compares close under ``_values_close``.
 
+    This is now the *fallback* close-value test for the cross-chunk
+    merge: integer rasters (where it reduces to strict equality) and the
+    defensive case of a float polygon with no recorded boundary cells.
+    Float polygons that carry boundary cells use the direction-aware
+    ``_cells_close_directed`` instead, so the symmetric range check here
+    no longer drives float merging (#2666).
+
     Each per-polygon value range from ``_polygonize_chunk`` describes
     the actual span of pixel values that fall inside a region (after
     the within-chunk tolerance-chain CCL has run).  Two chunk polygons
