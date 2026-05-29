@@ -132,7 +132,11 @@ def test_one_compute_per_chunk_row(monkeypatch):
     import sys
     # The package re-exports ``polygonize`` (the function) as
     # ``xrspatial.polygonize``, shadowing the submodule, so reach the
-    # module object through sys.modules to patch its ``dask`` reference.
+    # module object through sys.modules.  ``_polygonize_dask`` calls
+    # ``dask.compute`` via its module-level ``import dask``, so
+    # ``poly_mod.dask`` is the real dask module; patching ``compute`` on
+    # it is the only seam to count the calls.  monkeypatch restores it at
+    # teardown, so the global patch does not leak to other tests.
     poly_mod = sys.modules["xrspatial.polygonize"]
     calls = {"count": 0, "sizes": []}
     real_compute = poly_mod.dask.compute
