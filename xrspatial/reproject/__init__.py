@@ -1815,10 +1815,7 @@ def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
         result = transform_points(src_crs, tgt_crs, xs, ys)
         if result is not None:
             tx, ty = result
-            bbox = _finite_pair_bbox(tx, ty)
-            if bbox is None:
-                return None
-            return bbox
+            return _finite_pair_bbox(tx, ty)
     except (ImportError, ModuleNotFoundError):
         pass
 
@@ -1827,10 +1824,7 @@ def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
         pyproj = _require_pyproj()
         transformer = pyproj.Transformer.from_crs(src_crs, tgt_crs, always_xy=True)
         tx, ty = transformer.transform(xs.tolist(), ys.tolist())
-        bbox = _finite_pair_bbox(tx, ty)
-        if bbox is None:
-            return None
-        return bbox
+        return _finite_pair_bbox(tx, ty)
     except Exception:
         return None
 
