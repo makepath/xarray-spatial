@@ -148,8 +148,16 @@ class InconsistentGeoKeysError(GeoTIFFAmbiguousMetadataError):
 
     Raised when a GeoTIFF source ships a GeoKey directory whose
     ``ModelTypeGeoKey`` does not agree with the type-specific keys
-    actually populated, or whose ``ProjectedCSTypeGeoKey`` and
-    ``GeographicTypeGeoKey`` resolve to different EPSG codes.
+    actually populated: ``ModelTypeGeoKey = projected`` with only
+    ``GeographicTypeGeoKey`` set, or ``ModelTypeGeoKey = geographic``
+    with ``ProjectedCSTypeGeoKey`` set.
+
+    A file that populates both ``ProjectedCSTypeGeoKey`` and
+    ``GeographicTypeGeoKey`` with different EPSG codes is not an error:
+    that is the normal projected GeoTIFF shape, where the geographic
+    key names the base geographic CRS and the coordinates live in the
+    projected CRS. The reader takes the projected code first, so it
+    resolves correctly.
 
     The legacy reader took ``ProjectedCSTypeGeoKey`` first, then fell
     back to ``GeographicTypeGeoKey``, without ever cross-checking
@@ -161,10 +169,6 @@ class InconsistentGeoKeysError(GeoTIFFAmbiguousMetadataError):
     geospatial metadata is the failure mode the rest of the
     ambiguous-metadata family already rejects; this check extends the
     same contract to the GeoKey shape itself.
-
-    Pass ``allow_inconsistent_geokeys=True`` on the public read entry
-    points to keep the legacy permissive behaviour for files known to
-    carry quirky-but-trusted GeoKey layouts.
     """
 
 

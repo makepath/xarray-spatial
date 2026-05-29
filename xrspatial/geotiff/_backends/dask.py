@@ -35,7 +35,6 @@ def read_geotiff_dask(source: str, *,
                       missing_sources: str = _MISSING_SOURCES_SENTINEL,
                       allow_rotated: bool = False,
                       allow_unparseable_crs: bool = False,
-                      allow_inconsistent_geokeys: bool = False,
                       allow_invalid_nodata: bool = False,
                       stable_only: bool = False,
                       allow_experimental_codecs: bool = False,
@@ -121,14 +120,6 @@ def read_geotiff_dask(source: str, *,
         instead of carrying the unrecognised payload through
         ``attrs['crs_wkt']``. See ``open_geotiff`` for the full
         description.
-    allow_inconsistent_geokeys : bool, default False
-        [advanced] Read-side opt-in for sources whose GeoKey directory
-        is internally contradictory (``ModelTypeGeoKey`` disagrees
-        with the populated type-specific keys, or
-        ``ProjectedCSTypeGeoKey`` and ``GeographicTypeGeoKey`` resolve
-        to different EPSG codes). The default raises
-        ``InconsistentGeoKeysError``. See ``open_geotiff`` for the
-        full description.
     allow_invalid_nodata : bool, default False
         [advanced] Read-side opt-in for integer-dtype sources whose
         ``GDAL_NODATA`` tag is non-finite or fractional. Default raises
@@ -223,7 +214,6 @@ def read_geotiff_dask(source: str, *,
             chunks=chunks, max_pixels=max_pixels,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
-            allow_inconsistent_geokeys=allow_inconsistent_geokeys,
             allow_invalid_nodata=allow_invalid_nodata,
             stable_only=stable_only,
             allow_experimental_codecs=allow_experimental_codecs,
@@ -505,7 +495,6 @@ def read_geotiff_dask(source: str, *,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
-        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
     if isinstance(chunks, int):
