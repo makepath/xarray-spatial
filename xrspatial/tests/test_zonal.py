@@ -2554,3 +2554,30 @@ def test_stats_return_type_invalid_rejected_for_dataset_2558(
     ds = xr.Dataset({'v': values})
     with pytest.raises(ValueError, match="return_type"):
         stats(zones=zones, values=ds, return_type='bogus')
+
+
+def test_strides_int64_no_overflow_2612():
+    """`_strides` must accumulate counts in int64, not int32.
+
+    The counter runs up to the flattened pixel count. In an int32 array
+    inside the numba kernel, a count above 2**31-1 wraps silently to a
+    negative value, corrupting the slice bounds that `_calc_stats` and
+    crosstab derive from it. See issue #2612.
+    """
+    from xrspatial.zonal import _strides
+
+    flatten_zones = np.array([0, 0, 0, 1, 1, 2], dtype=np.int64)
+    unique_zones = np.array([0, 1, 2], dtype=np.int64)
+
+    strides = _strides(flatten_zones, unique_zones)
+
+    # The result dtype is the load-bearing guarantee: int64 cannot wrap
+    # at realistic raster sizes (~2.1 billion pixels) the way int32 does.
+    assert strides.dtype == np.int64
+
+    # Cumulative boundaries stay non-negative and non-decreasing, and the
+    # final stride equals the number of finite elements.
+    expected = np.array([3, 5, 6], dtype=np.int64)
+    np.testing.assert_array_equal(strides, expected)
+    assert np.all(strides >= 0)
+    assert np.all(np.diff(strides) >= 0)

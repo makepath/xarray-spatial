@@ -284,7 +284,7 @@ def _parallel_variance(block_counts, block_sums, block_m2s):
 def _strides(flatten_zones, unique_zones):
     num_elements = flatten_zones.shape[0]
     num_zones = len(unique_zones)
-    strides = np.zeros(len(unique_zones), dtype=np.int32)
+    strides = np.zeros(len(unique_zones), dtype=np.int64)
 
     count = 0
     for i in range(num_zones):
