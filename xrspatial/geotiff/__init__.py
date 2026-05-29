@@ -390,6 +390,48 @@ def _bbox_to_window(source, bbox, *, overview_level=None,
     axis-aligned grid; the caller can pass ``allow_rotated=True`` to
     drop the rotation upstream and then re-call with ``bbox=``.
     """
+    geo_info, height, width, _dtype, _nbands = _read_geo_info(
+        source, overview_level=overview_level,
+        allow_rotated=allow_rotated,
+        allow_invalid_nodata=allow_invalid_nodata)
+    return _geo_info_to_window(geo_info, height, width, bbox)
+
+
+def _vrt_bbox_to_window(source, bbox):
+    """Resolve a geographic ``bbox`` to a pixel ``window`` for a VRT.
+
+    The TIFF-only :func:`_bbox_to_window` cannot read a ``.vrt`` source:
+    its ``_read_geo_info`` call parses a TIFF header and chokes on the
+    VRT's XML. This variant parses the VRT XML instead and reuses the
+    same synthesised ``GeoInfo`` the VRT read path builds, so the
+    bbox-to-window math (and the georef / rotated-affine rejection) lands
+    on the same code as the TIFF path via :func:`_geo_info_to_window`.
+
+    Only the VRT XML is read here (a header-only, O(1)-memory parse); no
+    source tiles are decoded. The bbox is resolved purely from the VRT's
+    GeoTransform, so CRS parseability does not matter at this stage.
+    """
+    import os as _os
+
+    from ._backends.vrt import _vrt_to_synthetic_geo_info
+    from ._vrt import _read_vrt_xml
+    from ._vrt import parse_vrt as _parse_vrt
+    xml_str = _read_vrt_xml(source)
+    vrt_dir = _os.path.dirname(_os.path.abspath(source))
+    parsed = _parse_vrt(xml_str, vrt_dir)
+    geo_info = _vrt_to_synthetic_geo_info(parsed)
+    return _geo_info_to_window(geo_info, parsed.height, parsed.width, bbox)
+
+
+def _geo_info_to_window(geo_info, height, width, bbox):
+    """Resolve a validated ``bbox`` against a ``GeoInfo`` to a pixel window.
+
+    Shared by the TIFF (:func:`_bbox_to_window`) and VRT
+    (:func:`_vrt_bbox_to_window`) bbox resolvers so both paths run the
+    same bbox validation, rotated-affine / no-georef rejection, and
+    extent clamping. ``geo_info`` carries the axis-aligned transform;
+    ``height`` / ``width`` are the source's pixel dimensions.
+    """
     if (not isinstance(bbox, (tuple, list)) or len(bbox) != 4):
         raise ValueError(
             "open_geotiff: bbox must be a 4-tuple "
@@ -409,11 +451,6 @@ def _bbox_to_window(source, bbox, *, overview_level=None,
             f"(x_min={x_min}, y_min={y_min}, x_max={x_max}, "
             f"y_max={y_max}). Expected x_min < x_max and y_min < y_max.")
 
-    geo_info, height, width, _dtype, _nbands = _read_geo_info(
-        source, overview_level=overview_level,
-        allow_rotated=allow_rotated,
-        allow_invalid_nodata=allow_invalid_nodata)
-
     # ``allow_rotated=True`` clears a rotated affine and stashes the
     # original 6-tuple on ``transform.rotated_affine`` while setting
     # ``has_georef=False`` (the dropped-rotation marker). Check
@@ -430,8 +467,9 @@ def _bbox_to_window(source, bbox, *, overview_level=None,
     if not geo_info.has_georef:
         raise ValueError(
             "open_geotiff: bbox= requires a georeferenced source, "
-            "but this file has no GeoTIFF tags. Pass window= instead "
-            "for pixel-space windowing.")
+            "but this source has no georeferencing (no GeoTIFF tags or "
+            "VRT GeoTransform). Pass window= instead for pixel-space "
+            "windowing.")
 
     pixel_window = _extent_to_window(
         geo_info.transform, height, width,
@@ -791,24 +829,31 @@ def open_geotiff(source: str | BinaryIO, *,
         max_cloud_bytes=max_cloud_bytes,
     )
 
+    missing_sources_passed = (
+        missing_sources is not _MISSING_SOURCES_SENTINEL)
+    _is_vrt_source = (
+        isinstance(source, str) and source.lower().endswith('.vrt'))
+
     # Resolve ``bbox=`` to a pixel ``window=`` via a header-only
     # metadata read. Done at the dispatcher so every backend
     # (eager / dask / GPU / VRT) sees a uniform pixel window without
-    # learning a new kwarg.
+    # learning a new kwarg. VRT sources route through the VRT XML parser
+    # (``_vrt_bbox_to_window``); the TIFF resolver's ``_read_geo_info``
+    # would otherwise try to read the VRT's XML as a TIFF header and
+    # fail. Both resolvers share the same bbox validation and extent math
+    # via ``_geo_info_to_window``.
     if bbox is not None:
         if window is not None:
             raise ValueError(
                 "open_geotiff: window= and bbox= are mutually exclusive; "
                 "pass one or the other.")
-        window = _bbox_to_window(
-            source, bbox, overview_level=overview_level,
-            allow_rotated=allow_rotated,
-            allow_invalid_nodata=allow_invalid_nodata)
-
-    missing_sources_passed = (
-        missing_sources is not _MISSING_SOURCES_SENTINEL)
-    _is_vrt_source = (
-        isinstance(source, str) and source.lower().endswith('.vrt'))
+        if _is_vrt_source:
+            window = _vrt_bbox_to_window(source, bbox)
+        else:
+            window = _bbox_to_window(
+                source, bbox, overview_level=overview_level,
+                allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata)
 
     # VRT files (string paths only -- VRT XML references other files on disk)
     if _is_vrt_source:

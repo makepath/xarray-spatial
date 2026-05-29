@@ -248,3 +248,26 @@ Pathfinding
    * - ``multi_stop_search``
      - Fully materialized
      - Iterative A*
+
+
+Vector conversion
+=================
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Function
+     - Laziness
+     - Notes
+   * - ``polygonize``
+     - Fully materialized
+     - Polygonizes each chunk, then merges polygons across chunk edges
+
+``polygonize`` runs per chunk and stitches the results, so it never holds the
+whole raster in memory at once.  Chunks are polygonized in batches: each batch
+is one ``dask.compute`` call, so dask schedules the batch in parallel instead
+of computing one chunk at a time.  Peak memory is bounded by one batch worth of
+per-chunk polygons plus the boundary polygons that accumulate for the merge.
+Larger inputs with many small chunks parallelize well; rasters whose chunks each
+produce many polygons use more memory per batch.

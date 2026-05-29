@@ -1539,6 +1539,90 @@ class TestNodata:
 
 
 # ---------------------------------------------------------------------------
+# Identity fast path nodata metadata (issue #2662)
+# ---------------------------------------------------------------------------
+
+class TestIdentityNodataMetadata:
+    """The identity fast path (scale_factor=1.0) masks sentinels to NaN
+    but used to refresh only `_FillValue`, leaving `nodata` and
+    `nodatavals` advertising the stale finite sentinel. Every nodata
+    attr the input declared must read NaN on the output, matching the
+    non-identity path."""
+
+    _data = np.array([[-9999, -9999, 10, 10],
+                      [-9999, -9999, 10, 10],
+                      [20, 20, 30, 30],
+                      [20, 20, 30, 30]], dtype=np.float32)
+
+    # The bug is in backend-independent attr handling; the nodata mask
+    # itself routes through xarray's `.where`. cupy backends are exercised
+    # by the cross-backend nodata coverage elsewhere, so this regression
+    # checks numpy and dask+numpy (mirroring the rest of TestNodata, which
+    # does not parametrize cupy for the masking path).
+    @pytest.mark.parametrize('backend', ['numpy', 'dask+numpy'])
+    def test_identity_refreshes_all_nodata_attrs(self, backend):
+        if not _backend_available(backend):
+            pytest.skip(f"backend {backend} unavailable")
+
+        agg = create_test_raster(
+            self._data.copy(), backend=backend, chunks=(2, 2),
+            attrs={'res': (1.0, 1.0), 'nodata': -9999,
+                   'nodatavals': (-9999,)},
+        )
+        out = resample(agg, scale_factor=1.0)
+        out_np = _to_numpy(out)
+
+        # Masked pixel is NaN ...
+        assert np.isnan(out_np[0, 0])
+        # ... and no attr still advertises the finite sentinel.
+        assert np.isnan(out.attrs['_FillValue'])
+        assert np.isnan(out.attrs['nodata'])
+        assert len(out.attrs['nodatavals']) == 1
+        assert np.isnan(out.attrs['nodatavals'][0])
+
+    def test_identity_matches_non_identity_attrs(self):
+        # The identity path and a real downsample must agree on which
+        # nodata attrs end up as NaN.
+        attrs = {'res': (1.0, 1.0), 'nodata': -9999, 'nodatavals': (-9999,),
+                 '_FillValue': -9999}
+        agg = create_test_raster(self._data.copy(), attrs=dict(attrs))
+        identity = resample(agg, scale_factor=1.0)
+        agg2 = create_test_raster(self._data.copy(), attrs=dict(attrs))
+        downsample = resample(agg2, scale_factor=0.5, method='nearest')
+        for key in ('_FillValue', 'nodata', 'nodatavals'):
+            id_val = identity.attrs[key]
+            ds_val = downsample.attrs[key]
+            if key == 'nodatavals':
+                assert np.isnan(id_val[0]) and np.isnan(ds_val[0])
+            else:
+                assert np.isnan(id_val) and np.isnan(ds_val)
+
+    def test_identity_absent_attrs_stay_absent(self):
+        # Without nodata attrs (and no explicit param) nothing is masked,
+        # so no nodata attr should appear on the output.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=1.0)
+        assert 'nodata' not in out.attrs
+        assert 'nodatavals' not in out.attrs
+        assert '_FillValue' not in out.attrs
+
+    def test_identity_3d_refreshes_nodata_attrs(self):
+        # The 3D dispatch path shares the same gap.
+        band = self._data.copy()
+        data = np.stack([band, band + 100], axis=0)
+        agg = create_test_raster(
+            data, dims=['band', 'y', 'x'],
+            attrs={'res': (1.0, 1.0), 'nodata': -9999,
+                   'nodatavals': (-9999,)},
+        )
+        out = resample(agg, scale_factor=1.0)
+        assert np.isnan(out.attrs['nodata'])
+        assert np.isnan(out.attrs['nodatavals'][0])
+        assert np.isnan(out.attrs['_FillValue'])
+
+
+# ---------------------------------------------------------------------------
 # Integer nodata precision (issue #2570)
 # ---------------------------------------------------------------------------
 

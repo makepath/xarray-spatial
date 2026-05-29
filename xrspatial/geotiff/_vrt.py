@@ -1189,6 +1189,8 @@ def read_vrt(vrt_path: str, *, window=None,
              missing_sources: str = 'raise',
              parsed: VRTDataset | None = None,
              mask_nodata: bool = True,
+             allow_rotated: bool = False,
+             allow_invalid_nodata: bool = False,
              allow_experimental_codecs: bool = False,
              allow_internal_only_jpeg: bool = False,
              ) -> tuple[np.ndarray, VRTDataset]:
@@ -1252,6 +1254,15 @@ def read_vrt(vrt_path: str, *, window=None,
         so the literal sentinel value survives to the public backend
         layer, which can then honor a caller's ``mask_nodata=False``
         opt-out symmetrically for float and integer source dtypes.
+    allow_rotated : bool, default False
+        [internal-only] Forwarded to the per-source ``read_to_array``
+        call so a rotated source TIFF can be decoded when the caller
+        opted in at the public ``read_vrt`` boundary.
+    allow_invalid_nodata : bool, default False
+        [internal-only] Forwarded to the per-source ``read_to_array``
+        call so a source TIFF with a non-finite / fractional integer
+        ``GDAL_NODATA`` value can be decoded when the caller opted in at
+        the public ``read_vrt`` boundary.
 
     Returns
     -------
@@ -1580,6 +1591,8 @@ def read_vrt(vrt_path: str, *, window=None,
                     window=(read_r0, read_c0, read_r1, read_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
                     max_pixels=max_pixels,
+                    allow_rotated=allow_rotated,
+                    allow_invalid_nodata=allow_invalid_nodata,
                     allow_experimental_codecs=allow_experimental_codecs,
                     allow_internal_only_jpeg=allow_internal_only_jpeg,
                 )
