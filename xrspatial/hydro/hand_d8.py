@@ -23,17 +23,10 @@ try:
 except ImportError:
     da = None
 
+from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset
 from xrspatial.hydro.watershed_d8 import _code_to_offset_py
-from xrspatial.hydro._boundary_store import BoundaryStore
-from xrspatial.utils import (
-    _validate_raster,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-
+from xrspatial.utils import _validate_raster, has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit
 
 # =====================================================================
 # Memory guards
@@ -257,8 +250,8 @@ def _hand_cupy(fd_data, fa_data, elev_data, threshold):
 
 @ngjit
 def _hand_tile_kernel(flow_dir, flow_accum, elevation, h, w, threshold,
-                       exit_top, exit_bottom, exit_left, exit_right,
-                       exit_tl, exit_tr, exit_bl, exit_br):
+                      exit_top, exit_bottom, exit_left, exit_right,
+                      exit_tl, exit_tr, exit_bl, exit_br):
     """HAND tile kernel with exit-label seeds for drain_elev."""
     in_degree = np.zeros((h, w), dtype=np.int32)
     valid = np.zeros((h, w), dtype=np.int8)
@@ -459,7 +452,7 @@ def _preprocess_tiles(flow_dir_da, chunks_y, chunks_x):
 
 
 def _compute_exit_labels(iy, ix, boundaries, flow_bdry,
-                          chunks_y, chunks_x, n_tile_y, n_tile_x):
+                         chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Same exit-label pattern as watershed/flow_length downstream:
     look up drain_elev at the destination cell in the adjacent tile."""
     tile_h = chunks_y[iy]
@@ -626,8 +619,8 @@ def _compute_exit_labels(iy, ix, boundaries, flow_bdry,
 
 
 def _process_tile_hand(iy, ix, flow_dir_da, flow_accum_da, elev_da,
-                        boundaries, flow_bdry, threshold,
-                        chunks_y, chunks_x, n_tile_y, n_tile_x):
+                       boundaries, flow_bdry, threshold,
+                       chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run HAND tile kernel; update boundary drain_elev values."""
     fd_chunk = np.asarray(
         flow_dir_da.blocks[iy, ix].compute(), dtype=np.float64)
@@ -675,8 +668,8 @@ def _process_tile_hand(iy, ix, flow_dir_da, flow_accum_da, elev_da,
 
 @ngjit
 def _hand_drain_elev_tile(flow_dir, flow_accum, elevation, h, w, threshold,
-                            exit_top, exit_bottom, exit_left, exit_right,
-                            exit_tl, exit_tr, exit_bl, exit_br):
+                          exit_top, exit_bottom, exit_left, exit_right,
+                          exit_tl, exit_tr, exit_bl, exit_br):
     """Compute drain_elev for a tile (used for boundary propagation)."""
     in_degree = np.zeros((h, w), dtype=np.int32)
     valid = np.zeros((h, w), dtype=np.int8)
@@ -936,10 +929,10 @@ def _hand_dask_cupy(flow_dir_da, flow_accum_da, elev_da, threshold):
 # =====================================================================
 
 def hand_d8(flow_dir: xr.DataArray,
-         flow_accum: xr.DataArray,
-         elevation: xr.DataArray,
-         threshold: float = 100,
-         name: str = 'hand') -> xr.DataArray:
+            flow_accum: xr.DataArray,
+            elevation: xr.DataArray,
+            threshold: float = 100,
+            name: str = 'hand') -> xr.DataArray:
     """Compute Height Above Nearest Drainage (HAND).
 
     For each cell, follows the D8 flow direction downstream to the
