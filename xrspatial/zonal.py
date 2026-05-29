@@ -2879,6 +2879,9 @@ def crop(
     Notes
     -----
         - This operation will change the output size of the raster.
+        - ``zones`` and ``values`` must have the same shape and backend;
+          otherwise a ``ValueError`` is raised (consistent with
+          :func:`stats` and :func:`crosstab`).
         - If none of the requested ``zone_ids`` are present in ``zones``, the
           returned DataArray has shape ``(0, 0)``. This behaviour is the same
           across all backends (numpy, cupy, dask+numpy, dask+cupy).
@@ -3003,6 +3006,11 @@ def crop(
 
     _validate_raster(zones, func_name='crop', name='zones', ndim=2)
     _validate_raster(values, func_name='crop', name='values', ndim=2)
+
+    # Guard against mismatched shapes / backends, consistent with stats()
+    # and crosstab().  Without this, a zones/values shape mismatch silently
+    # produces a nonsense crop instead of raising (GH #2638).
+    validate_arrays(zones, values)
 
     data = zones.data
     if has_dask_array() and isinstance(data, da.Array):
