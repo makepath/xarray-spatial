@@ -1457,7 +1457,9 @@ def _ring_interior_point(ring):
         cy = my + ny * eps
         if _point_in_ring(cx, cy, ring):
             return cx, cy
-    # Fallback: centroid of the unique vertices.
+    # Fallback: centroid of the unique vertices.  Rings reaching here are
+    # always closed with at least three unique vertices, so n >= 3 and the
+    # divide below is safe.
     sx = 0.0
     sy = 0.0
     for k in range(n):
