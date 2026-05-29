@@ -1,12 +1,14 @@
-"""Regression tests for the row-batched dask compute path in polygonize.
+"""Regression tests for the batched dask compute path in polygonize.
 
 Issue #2608: `_polygonize_dask` used to call `dask.compute()` once per
 chunk inside a nested Python loop, which serialized chunk processing.
-It now issues one `dask.compute()` per row of chunks so the scheduler can
-run a row's chunks concurrently while peak driver memory stays bounded by
-a single row of chunk results.  These tests pin both the output parity
-(against numpy) and the per-row compute structure so the batching can't
-silently regress to per-chunk (slow) or per-raster (memory-heavy).
+Issue #2664 batched the per-chunk tasks into bounded `dask.compute()`
+calls so the scheduler can run a batch's chunks concurrently while peak
+driver memory stays bounded by ``batch_size`` chunk results (independent
+of the chunk-grid shape, unlike the earlier per-row batching).  These
+tests pin both the output parity (against numpy) and the batched compute
+structure so it can't silently regress to per-chunk (slow) or per-raster
+(memory-heavy).
 """
 import numpy as np
 import pytest
@@ -115,11 +117,15 @@ def test_dask_with_mask_row_batched_matches_numpy():
 
 
 @dask_array_available
-def test_one_compute_per_chunk_row(monkeypatch):
-    """`_polygonize_dask` should call dask.compute once per chunk row.
+def test_compute_batches_chunks(monkeypatch):
+    """`_polygonize_dask` should batch chunks per dask.compute call.
 
-    A 4x3 chunk grid (4 rows, 3 cols) must produce exactly 4 compute
-    calls -- one per row -- not 12 (per chunk) and not 1 (per raster).
+    A 4x3 chunk grid is 12 chunks total.  With ``batch_size=5`` that is
+    ceil(12 / 5) = 3 compute calls (sizes 5, 5, 2) -- not 12 (per chunk,
+    serial) and not 1 (per raster, memory-heavy).  This pins the bounded
+    batching from #2664, which superseded the per-row batching of #2608
+    so peak memory is bounded by ``batch_size`` rather than by the number
+    of column chunks.
     """
     shape = (40, 30)
     rng = np.random.default_rng(5)
@@ -128,6 +134,7 @@ def test_one_compute_per_chunk_row(monkeypatch):
     n_rows = len(dask_data.chunks[0])
     n_cols = len(dask_data.chunks[1])
     assert (n_rows, n_cols) == (4, 3)
+    n_chunks = n_rows * n_cols
 
     import sys
     # The package re-exports ``polygonize`` (the function) as
@@ -148,9 +155,12 @@ def test_one_compute_per_chunk_row(monkeypatch):
 
     monkeypatch.setattr(poly_mod.dask, "compute", counting_compute)
 
-    _polygonize_dask(dask_data, None, False, None)
+    batch_size = 5
+    _polygonize_dask(dask_data, None, False, None, batch_size=batch_size)
 
-    # One compute per row of chunks.
-    assert calls["count"] == n_rows
-    # Each compute batches all chunks in that row.
-    assert all(size == n_cols for size in calls["sizes"])
+    # ceil(n_chunks / batch_size) compute calls.
+    expected_calls = -(-n_chunks // batch_size)
+    assert calls["count"] == expected_calls
+    # Each call batches up to batch_size chunks; total chunks add up.
+    assert all(size <= batch_size for size in calls["sizes"])
+    assert sum(calls["sizes"]) == n_chunks
