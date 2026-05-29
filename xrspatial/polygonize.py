@@ -2070,26 +2070,31 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform,
     ny_total = int(sum(row_chunks))
     nx_total = int(sum(col_chunks))
 
-    # Process chunks incrementally: compute one at a time so only boundary
-    # polygons accumulate in memory.  Interior polygons (fully inside a
-    # chunk, no merging needed) go straight to the output list.  This keeps
-    # peak memory proportional to boundary_polygon_count rather than
-    # total_polygon_count * n_chunks.
+    # Process chunks one row at a time: build the delayed tasks for a whole
+    # row of chunks and hand them to a single dask.compute() call so the
+    # scheduler can run the chunks in that row concurrently.  Computing per
+    # row (instead of per chunk) recovers parallelism while keeping peak
+    # driver memory bounded by one row of chunk results rather than the full
+    # raster -- interior polygons (fully inside a chunk, no merging needed)
+    # still go straight to the output list, and only boundary polygons
+    # accumulate across rows for the cross-chunk merge.
     all_interior = []
     boundary_polys = []
 
     for iy in range(len(row_chunks)):
+        row_tasks = []
         for ix in range(len(col_chunks)):
             block = dask_data.blocks[iy, ix]
             mask_block = (mask_data.blocks[iy, ix]
                           if mask_data is not None else None)
-            interior, boundary = dask.compute(
+            row_tasks.append(
                 dask.delayed(_polygonize_chunk)(
                     block, mask_block, connectivity_8,
                     int(row_offsets[iy]), int(col_offsets[ix]),
                     ny_total, nx_total,
                     atol, rtol,
-                ))[0]
+                ))
+        for interior, boundary in dask.compute(*row_tasks):
             all_interior.extend(interior)
             boundary_polys.extend(boundary)
 
