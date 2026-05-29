@@ -740,6 +740,35 @@ def test_stats_cupy_matches_numpy_row_for_row():
         )
 
 
+def test_stats_cupy_zone_is_column_not_index():
+    # Regression test for issue #2641: the cupy stats path used to call
+    # stats_df.set_index("zone") without assigning the result, a no-op that
+    # discarded its return value. The numpy and dask backends return "zone"
+    # as a plain column with a default RangeIndex, so the cupy path must too.
+    if not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    zones_data = np.array([[1, 1, 2, 2],
+                           [3, 3, 2, 2]], dtype=np.float64)
+    values_data = np.array([[1.0, 2.0, 3.0, 4.0],
+                            [5.0, 6.0, 7.0, 8.0]])
+
+    zones_np = create_test_raster(zones_data, 'numpy')
+    values_np = create_test_raster(values_data, 'numpy')
+    zones_cp = create_test_raster(zones_data, 'cupy')
+    values_cp = create_test_raster(values_data, 'cupy')
+
+    stats_funcs = ['min', 'max', 'sum', 'count']
+    df_np = stats(zones=zones_np, values=values_np, stats_funcs=stats_funcs)
+    df_cp = stats(zones=zones_cp, values=values_cp, stats_funcs=stats_funcs)
+
+    # "zone" stays a column on both backends, and neither sets it as index.
+    assert 'zone' in df_cp.columns
+    assert df_cp.index.name is None
+    assert df_cp.index.name == df_np.index.name
+    assert list(df_cp.columns) == list(df_np.columns)
+
+
 @pytest.mark.parametrize("stats_funcs, expected_cols", [
     (['min', 'max'], ['zone', 'min', 'max']),
     (['mean'], ['zone', 'mean']),

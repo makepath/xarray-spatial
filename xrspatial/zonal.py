@@ -628,7 +628,6 @@ def _stats_cupy(
             stats_dict[stats].append(cupy.float_(result))
 
     stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index("zone")
     return stats_df
 
 
