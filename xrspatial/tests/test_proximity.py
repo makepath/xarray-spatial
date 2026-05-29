@@ -961,3 +961,40 @@ def test_no_scipy_dask_unbounded_memory_guard():
                 proximity(raster, x='lon', y='lat')
     finally:
         prox_mod.cKDTree = original_ckdtree
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_great_circle_dask_bounded_matches_numpy(func):
+    """Bounded GREAT_CIRCLE on a dask raster must match the numpy result.
+
+    Regression test: the map_overlap padding used the raw degree cellsize
+    while max_distance is in metres for GREAT_CIRCLE, producing an overlap
+    depth of hundreds of thousands of pixels and raising ValueError on
+    valid input. numpy and cupy backends handled the same call fine.
+    """
+    height, width = 16, 24
+    rng = np.random.RandomState(7)
+    data = (rng.rand(height, width) < 0.06).astype(np.float64)
+    _lon = np.linspace(-20, 20, width)
+    _lat = np.linspace(20, -20, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+
+    # bounded, smaller than the corner-to-corner great-circle distance
+    max_dist = 1.5e6
+    numpy_result = func(raster, x='lon', y='lat',
+                        max_distance=max_dist,
+                        distance_metric='GREAT_CIRCLE')
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(data, chunks=(8, 12))
+    dask_result = func(dask_raster, x='lon', y='lat',
+                       max_distance=max_dist,
+                       distance_metric='GREAT_CIRCLE')
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
