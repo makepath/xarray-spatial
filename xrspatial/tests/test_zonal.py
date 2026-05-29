@@ -2077,6 +2077,19 @@ def test_crop_missing_zone_ids_raises():
         crop(raster, raster)
 
 
+def test_crop_mismatched_shapes_raises():
+    """Regression test for #2638: crop() must raise when zones and values
+    have incompatible shapes instead of silently returning a nonsense crop."""
+    zones = create_test_arr(np.array([[1, 1, 2],
+                                      [1, 1, 2],
+                                      [3, 3, 3]], dtype=np.int64))
+    values = create_test_arr(np.array([[10, 20],
+                                       [30, 40]], dtype=np.int64))
+
+    with pytest.raises(ValueError, match="equal shapes"):
+        crop(zones, values, zone_ids=(1,))
+
+
 # ---------------------------------------------------------------------------
 # Regression tests for #2561: crop() must return the same shape across all
 # backends when the requested zone_ids are absent (previously the dask path

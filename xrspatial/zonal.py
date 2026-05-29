@@ -2923,6 +2923,11 @@ def crop(
     _validate_raster(zones, func_name='crop', name='zones', ndim=2)
     _validate_raster(values, func_name='crop', name='values', ndim=2)
 
+    # Guard against mismatched shapes / backends, consistent with stats()
+    # and crosstab().  Without this, a zones/values shape mismatch silently
+    # produces a nonsense crop instead of raising (GH #2638).
+    validate_arrays(zones, values)
+
     data = zones.data
     if has_dask_array() and isinstance(data, da.Array):
         top, bottom, left, right, found = _crop_bounds_dask(data, zone_ids)
