@@ -471,7 +471,6 @@ def _geo_info_to_window(geo_info, height, width, bbox):
             "VRT GeoTransform). Pass window= instead for pixel-space "
             "windowing.")
 
-    from ._attrs import _extent_to_window
     pixel_window = _extent_to_window(
         geo_info.transform, height, width,
         y_min, y_max, x_min, x_max)

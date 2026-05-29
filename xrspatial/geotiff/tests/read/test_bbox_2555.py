@@ -16,6 +16,8 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
+from .._helpers.markers import requires_gpu
+
 
 @pytest.fixture
 def georef_raster_2555(tmp_path):
@@ -202,6 +204,51 @@ class TestBboxOverviewLevel:
         assert sub_base.shape[1] >= sub_ov.shape[1] >= sub_ov2.shape[1]
         # All slices must be non-empty.
         assert sub_ov2.shape[0] > 0 and sub_ov2.shape[1] > 0
+
+
+class TestBboxBackendParity:
+    """``bbox=`` resolves to a pixel window at the dispatcher and is
+    forwarded to every backend. The eager-numpy path is covered above;
+    these cells assert the GPU, dask+numpy, and dask+gpu paths consume
+    the bbox-derived window and return pixels identical to the eager
+    read. Without them a regression in the bbox->window->backend
+    forwarding on any non-eager path ships undetected.
+    """
+
+    _BB = (-122.4, 37.4, -122.1, 37.7)
+
+    @staticmethod
+    def _materialise(da):
+        raw = da.data
+        if hasattr(raw, "compute"):
+            raw = raw.compute()
+        if hasattr(raw, "get"):
+            raw = raw.get()
+        return np.asarray(raw)
+
+    @requires_gpu
+    def test_bbox_gpu_matches_eager(self, georef_raster_2555):
+        eager = open_geotiff(georef_raster_2555, bbox=self._BB)
+        gpu = open_geotiff(georef_raster_2555, bbox=self._BB, gpu=True)
+        assert gpu.shape == eager.shape
+        np.testing.assert_array_equal(
+            self._materialise(gpu), eager.values)
+
+    def test_bbox_dask_matches_eager(self, georef_raster_2555):
+        eager = open_geotiff(georef_raster_2555, bbox=self._BB)
+        dask = open_geotiff(georef_raster_2555, bbox=self._BB, chunks=16)
+        assert dask.shape == eager.shape
+        np.testing.assert_array_equal(
+            self._materialise(dask), eager.values)
+
+    @requires_gpu
+    def test_bbox_dask_gpu_matches_eager(self, georef_raster_2555):
+        eager = open_geotiff(georef_raster_2555, bbox=self._BB)
+        dask_gpu = open_geotiff(
+            georef_raster_2555, bbox=self._BB, gpu=True, chunks=16)
+        assert dask_gpu.shape == eager.shape
+        np.testing.assert_array_equal(
+            self._materialise(dask_gpu), eager.values)
 
 
 class TestSafetyHintMentionsBbox:
