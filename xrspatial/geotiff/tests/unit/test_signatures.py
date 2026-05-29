@@ -412,10 +412,6 @@ _CANONICAL_ORDER = (
     "missing_sources",
     "allow_rotated",
     "allow_unparseable_crs",
-    # GeoKey-shape fail-closed opt-out. Sits alongside the other
-    # ambiguous-metadata opt-outs so the canonical order keeps the
-    # typed-error gates grouped.
-    "allow_inconsistent_geokeys",
     # Integer-nodata fail-closed opt-out. Sits alongside the other
     # ambiguous-metadata opt-outs so the canonical order keeps the
     # typed-error gates grouped.

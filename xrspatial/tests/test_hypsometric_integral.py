@@ -227,6 +227,101 @@ def test_hypsometric_integral_accessor(backend, hi_zones, hi_values):
     np.testing.assert_allclose(out[z1_mask], 0.5, rtol=1e-10)
 
 
+# --- laziness (issue #2563) --------------------------------------------------
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_hypsometric_integral_dask_returns_lazy(monkeypatch):
+    """The dask backend must return a lazy graph — no eager compute on call."""
+    import dask
+    from xrspatial.zonal import hypsometric_integral
+
+    zones = create_test_raster(
+        np.array([[1, 1, 2], [2, 2, 1]], dtype=np.float64),
+        backend='dask+numpy', chunks=(2, 2),
+    )
+    values = create_test_raster(
+        np.array([[10.0, 20, 5], [30, 40, 15]]),
+        backend='dask+numpy', chunks=(2, 2),
+    )
+
+    calls = {'n': 0}
+    orig_compute = dask.compute
+
+    def counting_compute(*args, **kwargs):
+        calls['n'] += 1
+        return orig_compute(*args, **kwargs)
+
+    monkeypatch.setattr(dask, "compute", counting_compute)
+
+    result = hypsometric_integral(zones, values, nodata=None)
+
+    assert isinstance(result.data, da.Array), \
+        f"expected dask.Array, got {type(result.data).__name__}"
+    assert calls['n'] == 0, \
+        f"hypsometric_integral fired dask.compute {calls['n']} times during construction"
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_hypsometric_integral_dask_matches_numpy():
+    """Eager `.compute()` of the dask result must match the numpy backend exactly."""
+    from xrspatial.zonal import hypsometric_integral
+
+    zones_arr = np.array([
+        [0, 1, 1, 1],
+        [0, 1, 1, 2],
+        [0, 2, 2, 2],
+        [0, 2, 2, 0],
+    ], dtype=np.float64)
+    values_arr = np.array([
+        [999., 10., 20., 30.],
+        [999., 40., 50., 100.],
+        [999., 60., 70., 80.],
+        [999., 90., 95., 999.],
+    ], dtype=np.float64)
+
+    zones_np = create_test_raster(zones_arr, backend='numpy')
+    values_np = create_test_raster(values_arr, backend='numpy')
+    zones_d = create_test_raster(zones_arr, backend='dask+numpy', chunks=(2, 2))
+    values_d = create_test_raster(values_arr, backend='dask+numpy', chunks=(2, 2))
+
+    out_np = hypsometric_integral(zones_np, values_np).values
+    out_dask = hypsometric_integral(zones_d, values_d).compute().values
+
+    np.testing.assert_array_equal(out_np, out_dask)
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_hypsometric_integral_dask_empty_lookup_is_lazy(monkeypatch):
+    """When every zone is nodata, the result is still a lazy dask array of NaN."""
+    import dask
+    from xrspatial.zonal import hypsometric_integral
+
+    zones = create_test_raster(
+        np.array([[0, 0], [0, 0]], dtype=np.float64),
+        backend='dask+numpy', chunks=(2, 2),
+    )
+    values = create_test_raster(
+        np.array([[10.0, 20.0], [30.0, 40.0]]),
+        backend='dask+numpy', chunks=(2, 2),
+    )
+
+    calls = {'n': 0}
+    orig_compute = dask.compute
+
+    def counting_compute(*args, **kwargs):
+        calls['n'] += 1
+        return orig_compute(*args, **kwargs)
+
+    monkeypatch.setattr(dask, "compute", counting_compute)
+
+    result = hypsometric_integral(zones, values, nodata=0)
+
+    assert isinstance(result.data, da.Array)
+    assert calls['n'] == 0
+    out = result.compute().values
+    assert np.all(np.isnan(out))
+
+
 def test_hypsometric_integral_list_of_pairs_zones():
     """Vector zones via list of (geometry, value) pairs."""
     from shapely.geometry import box
