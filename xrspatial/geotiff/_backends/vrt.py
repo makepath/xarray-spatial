@@ -776,6 +776,11 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
     set) whose shape and dtype match the ``shape=`` / ``dtype=`` kwargs
     of the surrounding ``dask.array.from_delayed`` is the contract; a
     mismatch would silently produce a wrong-shape dask array.
+
+    ``allow_rotated`` / ``allow_invalid_nodata`` are forwarded to the
+    internal reader so the per-source GeoTIFF read in each task honors
+    the opt-ins the caller set on the public ``read_vrt`` boundary,
+    matching the eager path.
     """
     from .._vrt import _apply_integer_sentinel_mask
     from .._vrt import read_vrt as _read_vrt_internal
