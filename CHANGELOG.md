@@ -31,6 +31,15 @@
   matching `rasterio.transform.from_origin(west, north, x_res, y_res)`.
   When the bounds already divide evenly the new values equal the
   originals so existing callers see no change. (#2573)
+- `reproject` no longer crashes when the source raster is an integer
+  dtype and a vertical-datum shift is requested
+  (`src_vertical_crs` / `tgt_vertical_crs`). The shift path now
+  promotes integer inputs to `float32` (or to `float64` when the
+  source is already `float64`) before applying the geoid offset, and
+  refreshes `attrs['nodata']`, `attrs['_FillValue']`, and
+  `attrs['nodatavals']` to NaN so the sentinel matches the new dtype.
+  Integer nodata pixels propagate as NaN in the promoted output.
+  Affects the numpy, cupy, and dask+numpy backends. (#2565)
 - `zonal.trim()` with the default `values=(np.nan,)` (or any NaN
   sentinel) now trims a NaN-framed raster on the numpy and cupy
   backends, matching the existing dask behaviour. The numba kernel

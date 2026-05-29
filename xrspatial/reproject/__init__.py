@@ -972,7 +972,7 @@ def reproject(
     # Vertical datum transformation (if requested)
     if src_vertical_crs is not None and tgt_vertical_crs is not None:
         if src_vertical_crs != tgt_vertical_crs:
-            result_data = _apply_vertical_shift(
+            result_data, nd = _apply_vertical_shift(
                 result_data, y_coords, x_coords,
                 src_vertical_crs, tgt_vertical_crs, nd,
                 tgt_crs_wkt=tgt_wkt,
@@ -1066,6 +1066,22 @@ def reproject(
     return result
 
 
+def _promoted_vertical_dtype(src_dtype):
+    """Return the float dtype to use when applying a geoid shift.
+
+    The geoid offset is fractional metres, so any integer input has to
+    be promoted before we can add it. Returns ``None`` when the input
+    is already a float dtype (including ``float64``) -- we leave its
+    precision alone. Returns ``np.float32`` for any non-float input;
+    that gives ~0.1 mm resolution in metres at altitudes up to ~10 km,
+    which is well below the accuracy of the geoid grids themselves.
+    """
+    src_dtype = np.dtype(src_dtype)
+    if np.issubdtype(src_dtype, np.floating):
+        return None
+    return np.float32
+
+
 def _apply_vertical_shift(data, y_coords, x_coords,
                           src_vcrs, tgt_vcrs, nodata,
                           tgt_crs_wkt=None):
@@ -1090,6 +1106,16 @@ def _apply_vertical_shift(data, y_coords, x_coords,
       each chunk's slab is materialised, shifted, and returned in place.
     - For 3-D ``(y, x, band)`` results, the shift is applied per band
       because the geoid undulation depends only on horizontal position.
+
+    Returns
+    -------
+    (shifted, out_nodata) : tuple
+        ``shifted`` is the height-shifted array, possibly promoted to a
+        float dtype if the input was integer (see
+        ``_promoted_vertical_dtype``). ``out_nodata`` is the nodata
+        sentinel that matches the returned dtype -- ``NaN`` whenever a
+        promotion happened so the caller can rely on NaN semantics in
+        the float output.
     """
     # Direction (sign convention) is the same regardless of backend.
     geoid_models = []
@@ -1104,10 +1130,24 @@ def _apply_vertical_shift(data, y_coords, x_coords,
         geoid_models.extend([src_vcrs, tgt_vcrs])
         signs.extend([1.0, -1.0])  # H1 + N1 - N2
     else:
-        return data
+        return data, nodata
 
     x_arr = np.asarray(x_coords, dtype=np.float64)
     y_arr = np.asarray(y_coords, dtype=np.float64)
+
+    # Decide the output dtype once, here, so every backend agrees and
+    # the caller can update attrs['nodata'] etc. with the post-shift
+    # sentinel.
+    promoted = _promoted_vertical_dtype(data.dtype)
+    if promoted is None:
+        out_dtype = np.dtype(data.dtype)
+        out_nodata = nodata
+    else:
+        out_dtype = np.dtype(promoted)
+        # NaN is the natural sentinel in a float output. The numpy path
+        # below replaces any cells that matched the input integer
+        # ``nodata`` with NaN before applying the shift.
+        out_nodata = float('nan')
 
     # Dask backend: wrap the per-block computation. Each block sees its
     # own row slab of x/y coords, so we route through map_blocks and
@@ -1119,10 +1159,12 @@ def _apply_vertical_shift(data, y_coords, x_coords,
         is_dask = False
 
     if is_dask:
-        return _apply_vertical_shift_dask(
+        shifted = _apply_vertical_shift_dask(
             data, y_arr, x_arr,
             geoid_models, signs, nodata, tgt_crs_wkt,
+            out_dtype=out_dtype,
         )
+        return shifted, out_nodata
 
     # CuPy backend: round-trip via host. The geoid lookup is small
     # relative to the reprojection itself, and the CPU JIT path is
@@ -1138,22 +1180,33 @@ def _apply_vertical_shift(data, y_coords, x_coords,
         shifted = _apply_vertical_shift_numpy(
             host, y_arr, x_arr,
             geoid_models, signs, nodata, tgt_crs_wkt,
+            out_dtype=out_dtype,
         )
-        return cp.asarray(shifted)
+        return cp.asarray(shifted), out_nodata
 
-    return _apply_vertical_shift_numpy(
+    shifted = _apply_vertical_shift_numpy(
         np.asarray(data), y_arr, x_arr,
         geoid_models, signs, nodata, tgt_crs_wkt,
+        out_dtype=out_dtype,
     )
+    return shifted, out_nodata
 
 
 def _apply_vertical_shift_numpy(data, y_arr, x_arr,
-                                geoid_models, signs, nodata, tgt_crs_wkt):
+                                geoid_models, signs, nodata, tgt_crs_wkt,
+                                out_dtype=None):
     """Apply geoid shift on a numpy array.
 
     Handles both 2-D ``(H, W)`` and 3-D ``(H, W, B)`` shapes by looping
     over band slices; the geoid undulation depends only on horizontal
     position, so each band sees the same N(y, x) correction.
+
+    If ``out_dtype`` is given and differs from ``data.dtype`` (the
+    integer-DEM case), the input is cast to that float dtype before
+    the shift and the integer ``nodata`` sentinel is replaced with
+    NaN in the promoted output. When ``out_dtype`` is ``None`` (or
+    matches the input), the behaviour is in-place on a copy of the
+    input -- same as before this signature was added.
     """
     from ._vertical import _load_geoid, _interp_geoid_2d
 
@@ -1182,8 +1235,25 @@ def _apply_vertical_shift_numpy(data, y_arr, x_arr,
 
     # Process in row strips to bound memory in the numpy path; dask chunks
     # are usually smaller than one strip so this loop runs once per block.
-    result = data.copy()
-    is_nan_nodata = np.isnan(nodata) if isinstance(nodata, float) else False
+    # If the caller asked for dtype promotion (integer DEM -> float),
+    # build ``result`` in the new dtype and rewrite the input nodata
+    # sentinel to NaN so the rest of the loop can treat NaN as the
+    # missing-value marker uniformly.
+    promoted = (
+        out_dtype is not None and np.dtype(out_dtype) != np.dtype(data.dtype)
+    )
+    if promoted:
+        result = data.astype(out_dtype, copy=True)
+        # Map the source nodata (e.g. -32768 for int16) onto NaN before
+        # shifting so downstream consumers can use NaN semantics.
+        if isinstance(nodata, float) and np.isnan(nodata):
+            pass  # already NaN
+        else:
+            result[data == nodata] = np.nan
+        is_nan_nodata = True
+    else:
+        result = data.copy()
+        is_nan_nodata = np.isnan(nodata) if isinstance(nodata, float) else False
     strip = 128
 
     for r0 in range(0, out_h, strip):
@@ -1236,14 +1306,23 @@ def _apply_vertical_shift_numpy(data, y_arr, x_arr,
 
 
 def _apply_vertical_shift_dask(data, y_arr, x_arr,
-                               geoid_models, signs, nodata, tgt_crs_wkt):
+                               geoid_models, signs, nodata, tgt_crs_wkt,
+                               out_dtype=None):
     """Dask-backed geoid shift via ``map_blocks``.
 
     Each block receives only its row/column slab of the input. The block
     function recomputes per-block y/x slices from ``block_info`` and
     delegates to the numpy path so all backends share one implementation.
+
+    ``out_dtype`` is the (possibly promoted) dtype that
+    ``_apply_vertical_shift`` has decided for the whole array, and is
+    forwarded into every per-block call so the chunks return the same
+    promoted dtype the dask graph metadata advertises.
     """
     import dask.array as da
+
+    if out_dtype is None:
+        out_dtype = data.dtype
 
     # Note: blocks reaching this path are assumed to be numpy-backed.
     # dask-of-cupy is intentionally unreached today because
@@ -1258,12 +1337,13 @@ def _apply_vertical_shift_dask(data, y_arr, x_arr,
         return _apply_vertical_shift_numpy(
             block, y_slab, x_slab,
             geoid_models, signs, nodata, tgt_crs_wkt,
+            out_dtype=out_dtype,
         )
 
     # ``meta`` hardcodes a numpy template to match the assumption above
     # that incoming chunks are numpy-backed. Revisit if dask-of-cupy is
     # ever plumbed through.
-    return da.map_blocks(_block, data, dtype=data.dtype, meta=np.array((), dtype=data.dtype))
+    return da.map_blocks(_block, data, dtype=out_dtype, meta=np.array((), dtype=out_dtype))
 
 
 def _reproject_inmemory_numpy(
