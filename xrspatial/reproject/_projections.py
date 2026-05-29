@@ -2134,6 +2134,8 @@ def transform_points(src_crs, tgt_crs, xs, ys):
     # shift magnitude. The per-pixel data path (try_numba_transform)
     # applies the Helmert shift, so bounds computed without it would
     # disagree with the reprojected data. Bail to pyproj for these.
+    # Conservatively bails on same-datum pairs too (where the shift
+    # cancels); those are rare and correctness wins over the fast path.
     if (_get_datum_params(src_crs) is not None
             or _get_datum_params(tgt_crs) is not None):
         return None
