@@ -16,7 +16,12 @@ import xarray as xr
 
 from xrspatial.utils import _validate_raster
 
-from ._crs_utils import _detect_nodata, _detect_source_crs, _resolve_crs
+from ._crs_utils import (
+    _detect_band_nodata,
+    _detect_nodata,
+    _detect_source_crs,
+    _resolve_crs,
+)
 from ._grid import (
     _chunk_bounds,
     _compute_chunk_layout,
@@ -300,6 +305,7 @@ def _reproject_chunk_numpy(
     chunk_bounds_tuple, chunk_shape,
     resampling, nodata, transform_precision,
     source_x_desc=False,
+    band_nodata=None,
 ):
     """Reproject a single output chunk (numpy backend).
 
@@ -412,8 +418,12 @@ def _reproject_chunk_numpy(
         bands = []
         for b in range(n_bands):
             band_data = window[:, :, b].astype(np.float64)
-            if not np.isnan(nodata):
-                band_data[band_data == nodata] = np.nan
+            # Mask this band with its own source sentinel when the raster
+            # declares per-band nodata; otherwise fall back to the single
+            # resolved sentinel (#2647).
+            src_nd = band_nodata[b] if band_nodata is not None else nodata
+            if not np.isnan(src_nd):
+                band_data[band_data == src_nd] = np.nan
             band_result = _resample_numpy(band_data, local_row, local_col,
                                           resampling=resampling, nodata=nodata)
             if np.issubdtype(orig_dtype, np.integer):
@@ -446,6 +456,7 @@ def _reproject_chunk_cupy(
     chunk_bounds_tuple, chunk_shape,
     resampling, nodata, transform_precision,
     source_x_desc=False,
+    band_nodata=None,
 ):
     """CuPy variant of ``_reproject_chunk_numpy``.
 
@@ -586,20 +597,23 @@ def _reproject_chunk_cupy(
         bands = []
         for b in range(n_bands):
             band_data = window[:, :, b].astype(cp.float64)
+            # Mask this band with its own source sentinel when the raster
+            # declares per-band nodata; otherwise fall back to the single
+            # resolved sentinel (#2647). We pre-convert to NaN here (rather
+            # than letting the native kernel do it from `nodata`) so each
+            # band can use a different source sentinel while the resample
+            # still fills out-of-bounds pixels with the resolved `nodata`.
+            src_nd = band_nodata[b] if band_nodata is not None else nodata
+            if not np.isnan(src_nd):
+                band_data = cp.where(
+                    band_data == src_nd, cp.nan, band_data,
+                )
             if _use_native_cuda:
-                # Native CUDA kernels do the nodata->NaN conversion
-                # internally; matching the 2-D path above.
                 band_result = _resample_cupy_native(
                     band_data, local_row, local_col,
                     resampling=resampling, nodata=nodata,
                 )
             else:
-                # CPU coords path needs explicit conversion before
-                # cupyx.scipy.ndimage.map_coordinates.
-                if not np.isnan(nodata):
-                    band_data = cp.where(
-                        band_data == nodata, cp.nan, band_data,
-                    )
                 band_result = _resample_cupy(
                     band_data, local_row, local_col,
                     resampling=resampling, nodata=nodata,
@@ -855,6 +869,16 @@ def reproject(
     # would contradict the array contents (#2185).
     nd = _detect_nodata(raster, nodata, dtype=raster.dtype)
 
+    # Multi-band rasters can declare a distinct source sentinel per band
+    # via the rasterio `nodatavals` tuple. `nd` is the single resolved
+    # output sentinel; `band_nd` carries the raw per-band source sentinels
+    # so each band is masked with its own value before resampling (#2647).
+    # `None` means one scalar covers every band -- the workers use `nd`.
+    # The raster is in canonical (y, x, band) layout here, so the band
+    # axis is trailing.
+    _n_bands = raster.shape[2] if raster.ndim == 3 else None
+    band_nd = _detect_band_nodata(raster, nodata, _n_bands)
+
     # Source geometry
     src_bounds = _source_bounds(raster)
     _ydim, _xdim = _find_spatial_dims(raster)
@@ -933,6 +957,7 @@ def reproject(
             chunk_size or 2048,
             _parse_max_memory(max_memory),
             x_desc=x_desc,
+            band_nodata=band_nd,
         )
     elif is_dask and is_cupy:
         result_data = _reproject_dask_cupy(
@@ -942,6 +967,7 @@ def reproject(
             resampling, nd, transform_precision,
             chunk_size,
             x_desc=x_desc,
+            band_nodata=band_nd,
         )
     elif is_dask:
         result_data = _reproject_dask(
@@ -951,6 +977,7 @@ def reproject(
             resampling, nd, transform_precision,
             chunk_size, False,
             x_desc=x_desc,
+            band_nodata=band_nd,
         )
     elif is_cupy:
         result_data = _reproject_inmemory_cupy(
@@ -959,6 +986,7 @@ def reproject(
             out_bounds, out_shape,
             resampling, nd, transform_precision,
             x_desc=x_desc,
+            band_nodata=band_nd,
         )
     else:
         result_data = _reproject_inmemory_numpy(
@@ -967,6 +995,7 @@ def reproject(
             out_bounds, out_shape,
             resampling, nd, transform_precision,
             x_desc=x_desc,
+            band_nodata=band_nd,
         )
 
     # Vertical datum transformation (if requested)
@@ -1352,6 +1381,7 @@ def _reproject_inmemory_numpy(
     out_bounds, out_shape,
     resampling, nodata, precision,
     x_desc=False,
+    band_nodata=None,
 ):
     """Single-chunk numpy reproject."""
     return _reproject_chunk_numpy(
@@ -1361,6 +1391,7 @@ def _reproject_inmemory_numpy(
         out_bounds, out_shape,
         resampling, nodata, precision,
         source_x_desc=x_desc,
+        band_nodata=band_nodata,
     )
 
 
@@ -1370,6 +1401,7 @@ def _reproject_inmemory_cupy(
     out_bounds, out_shape,
     resampling, nodata, precision,
     x_desc=False,
+    band_nodata=None,
 ):
     """Single-chunk cupy reproject."""
     return _reproject_chunk_cupy(
@@ -1379,6 +1411,7 @@ def _reproject_inmemory_cupy(
         out_bounds, out_shape,
         resampling, nodata, precision,
         source_x_desc=x_desc,
+        band_nodata=band_nodata,
     )
 
 
@@ -1397,7 +1430,8 @@ def _parse_max_memory(max_memory):
 
 def _process_tile_batch(batch, source_data, src_bounds, src_shape, y_desc,
                         src_wkt, tgt_wkt, resampling, nodata, precision,
-                        max_memory_bytes, tile_mem, x_desc=False):
+                        max_memory_bytes, tile_mem, x_desc=False,
+                        band_nodata=None):
     """Process a batch of tiles within a single worker.
 
     Uses ThreadPoolExecutor for intra-worker parallelism (Numba
@@ -1416,6 +1450,7 @@ def _process_tile_batch(batch, source_data, src_bounds, src_shape, y_desc,
             cb, (rchunk, cchunk),
             resampling, nodata, precision,
             source_x_desc=x_desc,
+            band_nodata=band_nodata,
         )
 
     results = []
@@ -1448,6 +1483,7 @@ def _reproject_streaming(
     resampling, nodata, precision,
     tile_size, max_memory_bytes,
     x_desc=False,
+    band_nodata=None,
 ):
     """Streaming reproject for datasets too large for dask's graph.
 
@@ -1513,6 +1549,7 @@ def _reproject_streaming(
             resampling=resampling, nodata=nodata, precision=precision,
             max_memory_bytes=max_memory_bytes, tile_mem=tile_mem,
             x_desc=x_desc,
+            band_nodata=band_nodata,
         )
 
         # Compute all partitions and assemble result
@@ -1531,6 +1568,7 @@ def _reproject_streaming(
         resampling, nodata, precision,
         max_memory_bytes, tile_mem,
         x_desc=x_desc,
+        band_nodata=band_nodata,
     )
     for ro, co, tile in batch_results:
         result[ro:ro + tile.shape[0], co:co + tile.shape[1]] = tile
@@ -1545,6 +1583,7 @@ def _reproject_dask_cupy(
     resampling, nodata, precision,
     chunk_size,
     x_desc=False,
+    band_nodata=None,
 ):
     """Dask+CuPy backend: process output chunks on GPU.
 
@@ -1589,6 +1628,7 @@ def _reproject_dask_cupy(
             resampling, nodata, precision,
             chunk_size or 2048, True,  # is_cupy=True
             x_desc=x_desc,
+            band_nodata=band_nodata,
         )
 
     # Memory check: if the full output doesn't fit in GPU memory,
@@ -1614,6 +1654,7 @@ def _reproject_dask_cupy(
             resampling, nodata, precision,
             chunk_size or 2048, True,  # is_cupy=True
             x_desc=x_desc,
+            band_nodata=band_nodata,
         )
 
     # Match the dask+numpy and chunked dask+cupy paths: integer sources
@@ -1831,6 +1872,7 @@ def _reproject_block_adapter(
     resampling, nodata, precision,
     is_cupy, src_footprint_tgt, n_bands=None,
     x_desc=False,
+    band_nodata=None,
 ):
     """``map_blocks`` adapter for reprojection.
 
@@ -1870,6 +1912,7 @@ def _reproject_block_adapter(
         cb, chunk_shape,
         resampling, nodata, precision,
         source_x_desc=x_desc,
+        band_nodata=band_nodata,
     )
 
 
@@ -1880,6 +1923,7 @@ def _reproject_dask(
     resampling, nodata, precision,
     chunk_size, is_cupy,
     x_desc=False,
+    band_nodata=None,
 ):
     """Dask+NumPy backend: ``map_blocks`` over a template array.
 
@@ -1935,6 +1979,7 @@ def _reproject_dask(
         src_footprint_tgt=src_footprint_tgt,
         n_bands=n_bands,
         x_desc=x_desc,
+        band_nodata=band_nodata,
     )
 
     # Pick the template dtype to match the eager path: integer sources

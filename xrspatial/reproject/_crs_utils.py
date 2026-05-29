@@ -239,3 +239,55 @@ def _detect_nodata_raw(raster, nodata):
             return float(first)
 
     return float('nan')
+
+
+def _detect_band_nodata(raster, nodata, n_bands):
+    """Resolve a per-band source nodata sentinel for a multi-band raster.
+
+    Returns a tuple of length *n_bands* holding the raw source sentinel
+    for each band, or ``None`` when a single scalar covers every band
+    (single-band rasters, an explicit ``nodata`` arg, or a ``nodatavals``
+    tuple whose entries are all identical). Callers fall back to the
+    scalar resolved by :func:`_detect_nodata` when this returns ``None``.
+
+    The values are the raw sentinels present in the *source* data (so the
+    worker can mask ``band == sentinel`` before resampling); they are not
+    dtype-swapped the way the output sentinel from :func:`_detect_nodata`
+    is. ``None`` entries in ``nodatavals`` (a band with no declared
+    sentinel) become NaN so that band is left unmasked.
+    """
+    if n_bands is None or n_bands < 2:
+        return None
+    # An explicit arg means the caller wants one sentinel for all bands.
+    if nodata is not None:
+        return None
+
+    nv = raster.attrs.get('nodatavals')
+    if nv is None:
+        return None
+    # A bare scalar applies uniformly -- no per-band handling needed.
+    try:
+        len(nv)
+    except TypeError:
+        return None
+
+    per_band = tuple(
+        float(v) if v is not None else float('nan')
+        for v in nv
+    )
+    # Only one declared sentinel -> rasterio broadcasts it to all bands.
+    if len(per_band) == 1:
+        return None
+    # Length must line up with the band count; otherwise we can't safely
+    # map entries to bands, so defer to the scalar path.
+    if len(per_band) != n_bands:
+        return None
+    # All identical -> the scalar path already handles it correctly.
+    first = per_band[0]
+    if all(
+        (np.isnan(v) and np.isnan(first)) or v == first
+        for v in per_band
+    ):
+        return None
+
+    return per_band
