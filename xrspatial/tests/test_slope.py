@@ -213,5 +213,6 @@ def test_degenerate_shape_geodesic(shape):
         coords={'lat': lat, 'lon': lon},
     )
     result = slope(raster, method='geodesic')
+    general_output_checks(raster, result)
     assert result.shape == shape
     assert np.all(np.isnan(result.data))
