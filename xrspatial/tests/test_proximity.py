@@ -961,3 +961,180 @@ def test_no_scipy_dask_unbounded_memory_guard():
                 proximity(raster, x='lon', y='lat')
     finally:
         prox_mod.cKDTree = original_ckdtree
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps closed for issue #2692 (test-only; no source change).
+#
+# All behaviour below was verified correct and cross-backend consistent on a
+# CUDA host before these tests were committed. Nothing here pins a bug.
+# ---------------------------------------------------------------------------
+
+def _backend_raster(data, backend):
+    """Build a lat/lon DataArray on the requested backend.
+
+    Mirrors the ``test_raster`` fixture: 1D lat/lon coords, then the data
+    buffer swapped to cupy and/or dask as requested. Degenerate (length-1)
+    axes get a single coordinate so meshgrid math stays well defined.
+    """
+    height, width = data.shape
+    _lon = np.linspace(-20, 20, width) if width > 1 else np.array([0.0])
+    _lat = np.linspace(20, -20, height) if height > 1 else np.array([0.0])
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        chunks = (max(height // 2, 1), max(width // 2, 1))
+        raster.data = da.from_array(raster.data, chunks=chunks)
+    return raster
+
+
+# --- Cat 3: degenerate raster shapes (1x1, Nx1, 1xN) ----------------------
+
+# (shape data, expected proximity, expected allocation, expected direction)
+_DEGENERATE_CASES = {
+    "1x1": (
+        np.array([[1.0]]),
+        np.array([[0.0]], dtype=np.float32),
+        np.array([[1.0]], dtype=np.float32),
+        np.array([[0.0]], dtype=np.float32),
+    ),
+    "Nx1": (
+        np.array([[0.0], [1.0], [0.0], [0.0]]),
+        np.array([[13.333333], [0.0], [13.333333], [26.666666]],
+                 dtype=np.float32),
+        np.array([[1.0], [1.0], [1.0], [1.0]], dtype=np.float32),
+        np.array([[360.0], [0.0], [180.0], [180.0]], dtype=np.float32),
+    ),
+    "1xN": (
+        np.array([[0.0, 1.0, 0.0, 0.0]]),
+        np.array([[13.333333, 0.0, 13.333333, 26.666666]], dtype=np.float32),
+        np.array([[1.0, 1.0, 1.0, 1.0]], dtype=np.float32),
+        np.array([[90.0, 0.0, 270.0, 270.0]], dtype=np.float32),
+    ),
+}
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("shape_name", list(_DEGENERATE_CASES))
+def test_proximity_degenerate_shapes(backend, shape_name):
+    data, expected, _, _ = _DEGENERATE_CASES[shape_name]
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    raster = _backend_raster(data, backend)
+    result = proximity(raster, x='lon', y='lat')
+    general_output_checks(raster, result, expected, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("shape_name", list(_DEGENERATE_CASES))
+def test_allocation_degenerate_shapes(backend, shape_name):
+    data, _, expected, _ = _DEGENERATE_CASES[shape_name]
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    raster = _backend_raster(data, backend)
+    result = allocation(raster, x='lon', y='lat')
+    general_output_checks(raster, result, expected, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("shape_name", list(_DEGENERATE_CASES))
+def test_direction_degenerate_shapes(backend, shape_name):
+    data, _, _, expected = _DEGENERATE_CASES[shape_name]
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    raster = _backend_raster(data, backend)
+    result = direction(raster, x='lon', y='lat')
+    general_output_checks(raster, result, expected)
+
+
+# --- Cat 1/4: non-default metrics on allocation / direction ----------------
+# proximity exercises MANHATTAN and GREAT_CIRCLE cross-backend; allocation and
+# direction only ever ran EUCLIDEAN across backends. Pin both metrics on all
+# four backends against the numpy baseline.
+
+@pytest.fixture
+def _metric_raster_data():
+    return np.asarray([[0., 0., 0., 0., 0., 2.],
+                       [0., 0., 1., 0., 0., 0.],
+                       [0., np.inf, 3., 0., 0., 0.],
+                       [4., 0., 0., 0., np.nan, 0.]])
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("metric", ['MANHATTAN', 'GREAT_CIRCLE'])
+def test_allocation_metric_backends(backend, metric, _metric_raster_data):
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    numpy_raster = _backend_raster(_metric_raster_data, 'numpy')
+    expected = allocation(
+        numpy_raster, x='lon', y='lat', distance_metric=metric).data
+
+    raster = _backend_raster(_metric_raster_data, backend)
+    result = allocation(raster, x='lon', y='lat', distance_metric=metric)
+    general_output_checks(raster, result, expected, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("metric", ['MANHATTAN', 'GREAT_CIRCLE'])
+def test_direction_metric_backends(backend, metric, _metric_raster_data):
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    numpy_raster = _backend_raster(_metric_raster_data, 'numpy')
+    expected = direction(
+        numpy_raster, x='lon', y='lat', distance_metric=metric).data
+
+    raster = _backend_raster(_metric_raster_data, backend)
+    result = direction(raster, x='lon', y='lat', distance_metric=metric)
+    general_output_checks(raster, result, expected)
+
+
+# --- Cat 5: attrs preservation with realistic res / crs --------------------
+# The shared test_raster fixture carries no attrs, so the attrs check in
+# general_output_checks is vacuous. proximity also reads attrs['res'] for the
+# bounded-dask padding (get_dataarray_resolution), so a res attr that matches
+# the coordinate spacing must round-trip and still produce correct results.
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_proximity_preserves_attrs(backend, func):
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    data = np.zeros((8, 8), dtype=np.float64)
+    data[1, 1] = 1.0
+    data[6, 6] = 2.0
+    raster = _backend_raster(data, backend)
+    raster.attrs = {'res': (40.0 / 7, 40.0 / 7), 'crs': 'EPSG:5070',
+                    'units': 'm'}
+
+    result = func(raster, x='lon', y='lat')
+    assert result.attrs == raster.attrs
+    assert result.dims == raster.dims
+    np.testing.assert_allclose(result['lon'].data, raster['lon'].data)
+    np.testing.assert_allclose(result['lat'].data, raster['lat'].data)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_res_attr_drives_bounded_dask_padding():
+    """Bounded dask reads attrs['res'] for chunk padding; with a res attr that
+    matches the coordinate spacing the result must equal the numpy baseline."""
+    data = np.zeros((8, 8), dtype=np.float64)
+    data[1, 1] = 1.0
+    data[6, 6] = 2.0
+    res = 40.0 / 7  # coords run -20..20 over 8 cells
+
+    numpy_raster = _backend_raster(data, 'numpy')
+    numpy_raster.attrs = {'res': (res, res)}
+    expected = proximity(
+        numpy_raster, x='lon', y='lat', max_distance=20.0).data
+
+    dask_raster = _backend_raster(data, 'dask+numpy')
+    dask_raster.attrs = {'res': (res, res)}
+    result = proximity(dask_raster, x='lon', y='lat', max_distance=20.0)
+
+    assert isinstance(result.data, da.Array)
+    np.testing.assert_allclose(
+        result.values, expected, equal_nan=True, rtol=1e-5)
