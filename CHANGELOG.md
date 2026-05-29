@@ -21,6 +21,15 @@
 
 #### Fixed
 
+- `reproject` now rejects an explicit `nodata=` value that does not
+  fit the source/output integer dtype range. Previously the worker's
+  cast-back step silently wrapped the sentinel (e.g. `-9999` in a
+  `uint8` array landed at `0`), so out-of-bounds output pixels were
+  the same as valid zero pixels while `attrs['nodata']` still
+  advertised `-9999`. Explicit out-of-range values now raise
+  `ValueError`; attrs-derived out-of-range values (legacy files
+  such as `uint16 + nodata=-9999`) emit a `UserWarning` and fall
+  back to the dtype-appropriate sentinel. (#2572)
 - `zonal.stats` on the cupy backend now agrees with the numpy and dask
   backends on two edge cases. A zone whose values are all NaN (or all
   equal to `nodata_values`) is preserved in the output with NaN stats
