@@ -147,3 +147,25 @@ def test_boundary_invalid():
     agg = create_test_raster(data, attrs={'res': (1, 1)})
     with pytest.raises(ValueError, match="boundary must be one of"):
         slope(agg, boundary='invalid')
+
+
+def test_name_annotation_matches_terrain_family():
+    # slope's `name` annotation should match aspect/curvature/northness/
+    # eastness, all of which use Optional[str] (None is a valid name).
+    import typing
+
+    from xrspatial import curvature
+    from xrspatial.aspect import aspect, eastness, northness
+
+    slope_func = getattr(slope, '__wrapped__', slope)
+    expected = typing.get_type_hints(slope_func)['name']
+    for func in (aspect, curvature, northness, eastness):
+        unwrapped = getattr(func, '__wrapped__', func)
+        assert typing.get_type_hints(unwrapped)['name'] == expected
+
+
+def test_name_none_accepted():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = create_test_raster(data, attrs={'res': (1, 1)})
+    result = slope(agg, name=None)
+    assert result.name is None

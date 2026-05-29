@@ -3,7 +3,7 @@ from __future__ import annotations
 # std lib
 from functools import partial
 from math import atan
-from typing import Union
+from typing import Optional, Union
 
 # 3rd-party
 try:
@@ -312,7 +312,7 @@ def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='na
 
 @supports_dataset
 def slope(agg: xr.DataArray,
-          name: str = 'slope',
+          name: Optional[str] = 'slope',
           method: str = 'planar',
           z_unit: str = 'meter',
           boundary: str = 'nan') -> xr.DataArray:
