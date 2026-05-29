@@ -2,165 +2,49 @@
 -----------
 
 
-### Unreleased
+### Version 0.10.1 - 2026-05-29
 
-#### Added
+#### New features
+- accessor: backend-aware .xrs.open_geotiff on DataArray and Dataset (#2598)
+- geotiff: add bbox= to open_geotiff for geographic-space windowed reads (#2556)
 
-- `da.xrs.open_geotiff(source, *, auto_reproject=False, **kwargs)`
-  DataArray accessor that mirrors the existing Dataset method, plus
-  backend-aware enhancements on both accessors. The accessor infers
-  the caller's backend (numpy / cupy / dask+numpy / dask+cupy) and
-  passes matching `gpu=` / `chunks=` to `open_geotiff` so the
-  returned DataArray matches the caller. Caller-supplied `gpu=` /
-  `chunks=` always override the inference. On CRS mismatch between
-  the caller and the file, the accessor raises a clear `ValueError`
-  by default (replacing the previous silently-wrong window) and
-  with `auto_reproject=True` it projects the caller's bbox into the
-  file's CRS for the windowed read and reprojects the result back
-  to the caller's CRS via `xrspatial.reproject.reproject`. (#2557)
-
-#### Fixed
-
-- `rasterize(..., resolution=R)` now honors the requested cell size
-  exactly when the bounds don't divide evenly. Previously width and
-  height were computed via `ceil(extent / resolution)` but output coords
-  were rebuilt over the original bounds, so the actual cell size shrank
-  to fit (e.g. `bounds=(0,0,1,1), resolution=0.3` gave a 4x4 raster with
-  cell size 0.25 instead of 0.3). The grid now anchors at `(xmin, ymax)`
-  and extends right / down by `width * x_res` / `height * y_res`,
-  matching `rasterio.transform.from_origin(west, north, x_res, y_res)`.
-  When the bounds already divide evenly the new values equal the
-  originals so existing callers see no change. (#2573)
-- `reproject` no longer crashes when the source raster is an integer
-  dtype and a vertical-datum shift is requested
-  (`src_vertical_crs` / `tgt_vertical_crs`). The shift path now
-  promotes integer inputs to `float32` (or to `float64` when the
-  source is already `float64`) before applying the geoid offset, and
-  refreshes `attrs['nodata']`, `attrs['_FillValue']`, and
-  `attrs['nodatavals']` to NaN so the sentinel matches the new dtype.
-  Integer nodata pixels propagate as NaN in the promoted output.
-  Affects the numpy, cupy, and dask+numpy backends. (#2565)
-- `zonal.trim()` with the default `values=(np.nan,)` (or any NaN
-  sentinel) now trims a NaN-framed raster on the numpy and cupy
-  backends, matching the existing dask behaviour. The numba kernel
-  `_trim` matched sentinels with `e == val` and `NaN == NaN` is False,
-  so NaN borders were silently ignored on those backends. NaN matching
-  is now handled in a numpy bounds helper that mirrors the dask
-  reduction. Behaviour for finite sentinels (zero, integer zone ids,
-  etc.) is unchanged. (#2559)
-
-- `reproject` now rejects an explicit `nodata=` value that does not
-  fit the source/output integer dtype range. Previously the worker's
-  cast-back step silently wrapped the sentinel (e.g. `-9999` in a
-  `uint8` array landed at `0`), so out-of-bounds output pixels were
-  the same as valid zero pixels while `attrs['nodata']` still
-  advertised `-9999`. Explicit out-of-range values now raise
-  `ValueError`; attrs-derived out-of-range values (legacy files
-  such as `uint16 + nodata=-9999`) emit a `UserWarning` and fall
-  back to the dtype-appropriate sentinel. (#2572)
-- `zonal.stats` on the cupy backend now agrees with the numpy and dask
-  backends on two edge cases. A zone whose values are all NaN (or all
-  equal to `nodata_values`) is preserved in the output with NaN stats
-  instead of being dropped. When `zone_ids` contains IDs that do not
-  appear in the zones raster, the missing IDs are filtered out so the
-  zone column and stats columns stay aligned (previously the cupy path
-  could silently desynchronize the rows). (#2562)
-
-- Reproject test suite now gates GPU tests on
-  `xrspatial.utils.has_cuda_and_cupy()` instead of an import-only
-  `try: import cupy` check. On hosts where `cupy` imports cleanly but
-  the CUDA driver is missing or too old, the GPU tests now skip with a
-  clear reason instead of erroring at allocation time with
-  `cudaErrorInsufficientDriver`. Affects `test_reproject.py` and
-  `test_reproject_coverage_2026_05_27.py`. (#2564)
-
-- `rasterize` now validates the `resolution=` argument shape and element
-  type before unpacking. A scalar number or a length-2 sequence of
-  numbers is accepted; anything else (length-0, length-1, length-3+
-  sequences, strings, dicts, non-numeric elements) raises a clean
-  `ValueError` naming the offending input. Previously a 3-tuple was
-  silently truncated to its first two elements, a 1-tuple crashed with
-  `IndexError`, strings leaked a raw `float()` conversion error, and
-  dicts raised `KeyError: 0`. (#2576)
-- `open_geotiff` no longer rejects a projected GeoTIFF that also carries
-  its base geographic CRS. A file declaring both `ProjectedCSTypeGeoKey`
-  (e.g. UTM 32633) and `GeographicTypeGeoKey` (e.g. WGS84 4326) is the
-  normal projected shape: the geographic key names the base geographic
-  CRS and the coordinates live in the projected CRS. The reader already
-  resolves the projected code first, so it now reads cleanly and stamps
-  the projected EPSG on `attrs['crs']`. The `allow_inconsistent_geokeys`
-  read kwarg is removed; the two genuine `ModelTypeGeoKey` contradictions
-  (a projected model with only `GeographicTypeGeoKey`, or a geographic
-  model carrying `ProjectedCSTypeGeoKey`) still raise
-  `InconsistentGeoKeysError`. (#2602)
-
-- `polygonize` now rejects non-finite values for `simplify_tolerance`
-  (`nan`, `+inf`, `-inf`) with a clear `ValueError`. Previously `nan`
-  silently disabled simplification (because `nan > 0` is False) and
-  `+inf` collapsed every polygon to empty output. Matches the existing
-  `atol` / `rtol` validation contract: finite and non-negative. (#2575)
-
-- `reproject(..., bounds_policy="auto")` no longer crops valid edge data
-  on ordinary geographic-to-projected reprojections. The old blow-up
-  heuristic compared source span (e.g. degrees for EPSG:4326) against
-  target span (e.g. metres for EPSG:3857) and tripped on almost any
-  geographic-to-projected pair. The new heuristic is unit-agnostic:
-  it compares the max absolute projected coordinate to the median
-  and also checks the non-finite fraction of raw edge samples in the
-  target CRS. Benign reprojections stay untouched; real singularities
-  (Mercator at the poles, polar-stereographic on the opposite pole)
-  still trigger the percentile fallback. (#2582)
-- `zonal_stats` now validates `return_type` at entry. Previously any
-  string other than `'pandas.DataFrame'` or `'xarray.DataArray'` fell
-  through to an internal branch that returned a raw `numpy.ndarray`,
-  hiding typos. Allowed values are now enforced and a clear
-  `ValueError` is raised otherwise. `return_type='xarray.DataArray'`
-  on dask-backed input also raises instead of silently returning
-  the wrong shape. (#2558)
-- `rasterize(like=...)` no longer silently mislabels output when the
-  template's x axis is descending. Previously the burned array was
-  written ascending-x (column 0 = xmin) but `reuse_like_coords`
-  assigned the descending x-coord unchanged, so a polygon at world
-  x=0.5 landed under coord x=3.5. The array is now flipped along
-  axis 1 so `result.sel(x=...)` agrees with the geometry's world
-  coordinates, mirroring the existing ascending-y flip on axis 0.
-  Works for numpy, cupy, dask+numpy, and dask+cupy. (#2568)
-- `polygonize` on dask-backed float rasters now matches the numpy
-  reference for both polygon count and DN values across every chunking
-  pattern. The cross-chunk merge previously bucketed chunk-boundary
-  polygons by a single representative float value, which broke
-  transitive value chains (`1.0 -> 1.000009 -> 1.000018` returned 2
-  polygons instead of the numpy reference's 1) and silently rewrote DN
-  values on disconnected near-equal regions (`[1.0, 9.0, 1.000009]`
-  reported DN `1.0` for the third region instead of `1.000009`). The
-  merge now runs a spatial-topology + value-closeness union-find over
-  chunk-boundary polygons: two polygons land in the same group only
-  when their pixel value ranges overlap within `atol`/`rtol` AND they
-  are spatially adjacent (sharing a unit edge for 4-connectivity, or
-  any vertex for 8-connectivity). Disconnected close-valued regions
-  keep their own DN values, and transitive value chains merge
-  correctly across chunk boundaries. (#2583)
-
-- `crosstab(cat_ids=[...])` no longer overcounts when `cat_ids` skips a
-  category that is present in the values raster. The 2D helper now
-  advances its cumulative cursor for every unique category instead of
-  only the selected ones, so each selected category's count starts from
-  the correct offset. All four backends (numpy, dask+numpy, cupy,
-  dask+cupy) share the helper and are fixed together. (#2560)
-- `polygonize` now auto-detects the raster's affine transform from
-  `attrs['transform']` (xrspatial.geotiff convention) or
-  `rio.transform()` (rioxarray) when the caller did not pass an
-  explicit `transform=` argument. The auto-detected transform is
-  applied inside `_scan`, so it covers every `return_type` option
-  (`numpy`, `awkward`, `geopandas`, `spatialpandas`, `geojson`).
-  Previously `polygonize(return_type='geopandas')` auto-detected
-  `attrs['crs']` and stamped it on the `GeoDataFrame` while leaving
-  the geometries in pixel space, so the CRS attribute claimed
-  projected space but the coordinates did not match. Callers who
-  relied on the pre-fix behaviour and expected pixel-space geometries
-  from a rasterio-loaded raster should pass
-  `transform=np.array([1, 0, 0, 0, 1, 0])` explicitly, or strip the
-  transform attr before calling polygonize. (#2536)
+#### Bug fixes and improvements
+- rasterize: honor resolution= exactly when bounds don't divide evenly (#2597)
+- reproject: fix vertical-datum shift crash on integer DEMs (#2596)
+- resample: clamp dask interp overlap depth per axis (#2547) (#2599)
+- zonal: fix trim() with NaN sentinel on numpy and cupy backends (#2559) (#2594)
+- reproject: reject explicit out-of-range nodata for integer dtypes (#2591)
+- zonal: fix cupy backend dropping all-NaN zones and desyncing zone_ids (#2562) (#2589)
+- resample: refresh transform to match actual coord orientation (#2571) (#2587)
+- rasterize: validate resolution= shape and element type (#2576) (#2586)
+- resample: preserve integer precision in nodata mask comparison (#2570) (#2592)
+- zonal: keep hypsometric_integral dask path fully lazy (#2563) (#2593)
+- geotiff: accept projected GeoTIFFs that carry a base geographic CRS (#2603)
+- polygonize: reject non-finite simplify_tolerance (#2575) (#2584)
+- reproject: unit-aware bounds_policy="auto" blow-up detection (#2600)
+- zonal: validate return_type at entry to stats() (#2558) (#2578)
+- resample: validate target_resolution and scale_factor up front (#2574) (#2590)
+- rasterize: support descending-x in like= templates (#2568) (#2595)
+- rasterize: reject zig-zag duplicate-coord patterns in _check_uniform_axis (#2585)
+- polygonize: fix dask chunk-dependent merging and DN corruption (#2601)
+- zonal: make crop() return (0, 0) on all backends when no zone matches (#2580)
+- rasterize: reject partial width/height overrides instead of silent ignore (#2579)
+- zonal: fix crosstab cat_ids overcount when earlier categories are filtered out (#2560) (#2577)
+- resample: preserve scalar non-dim coords and refresh stale nodata attr (#2542) (#2549)
+- zonal: fix hypsometric_integral dask+cupy backend (#2525) (#2529)
+- geotiff: include GB allocation estimate in max_pixels error message (#2554)
+- zonal: raise on 'majority' in zonal_stats dask path instead of silent drop (#2528) (#2531)
+- reproject: fix half-pixel offset in geoid and datum-shift grid lookups (#2508) (#2516)
+- rasterize: reject NaN fill against integer dtype (#2504) (#2512)
+- geotiff: reject distinct per-band nodatavals on write (#2514) (#2519)
+- zonal: guard unbounded allocation in stats(return_type='xarray.DataArray') (#2523) (#2533)
+- zonal: rechunk apply 3D dask output along stacked axis (#2526) (#2532)
+- rasterize: hoist poly_props/poly_global cupy.asarray above all_touched (#2506) (#2510)
+- polygonize: auto-detect attrs['transform'] for output georeferencing (#2536) (#2541)
+- geotiff: reconcile COG write stability across registry, contract, and docstring (#2520)
+- zonal: rename crop(zones_ids=) to crop(zone_ids=) with deprecation shim (#2521) (#2527)
+- reproject: preserve integer dtype in dask+cupy fast path (#2505) (#2509)
+- geotiff: scope max_pixels to the chunk when chunks= is supplied (#2501) (#2502)
 
 
 ### Version 0.10.0 - 2026-05-27
