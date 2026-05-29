@@ -1,5 +1,5 @@
 module,last_inspected,oom_verdict,bottleneck,high_count,issue,notes
-aspect,2026-03-31T18:00:00Z,SAFE,compute-bound,0,1122,northness/eastness now use da.cos/sin on dask arrays.
+aspect,2026-05-29,SAFE,compute-bound,1,2688,"dask+cupy geodesic densified full lat/lon on one GPU at graph build (OOM at scale); fixed via per-block map_blocks cupy conversion. planar/numpy/dask SAFE; geodesic GPU kernel ~184 regs, mitigated by 16x16 blocks."
 balanced_allocation,2026-04-16T12:00:00Z,WILL OOM,memory-bound,8,1114,"Re-audit 2026-04-16 after PR 1203 float32 fix. 8 HIGH found (friction.compute L339, argmin.compute in iter loop L182, double all_nan recompute L206, stacked cost_surfaces allocation). Covered by existing documented limitation on #1114. Not refiled."
 bilateral,2026-03-31T18:00:00Z,SAFE,compute-bound,0,,
 bump,2026-04-16T12:00:00Z,SAFE,compute-bound,0,1206,Re-audit 2026-04-16: fix verified SAFE. No HIGH findings. MEDIUM: CuPy backend runs CPU kernel then transfers to GPU (documented limitation).
