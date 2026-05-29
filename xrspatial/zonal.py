@@ -35,9 +35,9 @@ except ImportError:
         ndarray = False
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args,
-                             has_cuda_and_cupy, has_dask_array, is_cupy_array, is_dask_cupy, ngjit,
-                             validate_arrays)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _classify_backend, _validate_raster,
+                             cuda_args, has_cuda_and_cupy, has_dask_array, is_cupy_array,
+                             is_dask_cupy, ngjit, validate_arrays)
 
 TOTAL_COUNT = '_total_count'
 
@@ -1921,6 +1921,19 @@ def apply(
     # align chunks for 2D values
     if values.ndim == 2:
         validate_arrays(zones, values)
+    else:
+        # 3D values: validate_arrays can't be used because it requires equal
+        # full shapes (a 2D zones never equals a 3D values). Check backend
+        # compatibility directly so mixed dask/numpy inputs fail here with a
+        # clear error instead of crashing in the dask backend with an
+        # AttributeError or silently returning eager numpy output.
+        zones_backend = _classify_backend(zones)
+        values_backend = _classify_backend(values)
+        if zones_backend != values_backend:
+            raise ValueError(
+                "input arrays must share the same backend; got "
+                f"'{zones_backend}' (zones) and '{values_backend}' (values)"
+            )
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_apply_numpy,
