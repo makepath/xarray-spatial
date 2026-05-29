@@ -2566,6 +2566,9 @@ def test_strides_int64_no_overflow_2612():
     """
     from xrspatial.zonal import _strides
 
+    # A real >2**31-element input would need ~17 GB to allocate, so the
+    # dtype assertion below stands in for the actual overflow case; a
+    # small input is enough to lock in the int64 contract and correctness.
     flatten_zones = np.array([0, 0, 0, 1, 1, 2], dtype=np.int64)
     unique_zones = np.array([0, 1, 2], dtype=np.int64)
 
