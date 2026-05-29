@@ -67,7 +67,6 @@ def read_geotiff_gpu(source: str, *,
                      missing_sources: str = _MISSING_SOURCES_SENTINEL,
                      allow_rotated: bool = False,
                      allow_unparseable_crs: bool = False,
-                     allow_inconsistent_geokeys: bool = False,
                      allow_invalid_nodata: bool = False,
                      stable_only: bool = False,
                      allow_experimental_codecs: bool = False,
@@ -201,12 +200,6 @@ def read_geotiff_gpu(source: str, *,
         cannot resolve and do not parse as WKT. ``False`` (the default)
         raises ``UnparseableCRSError``; ``True`` keeps the legacy
         permissive behaviour. See ``open_geotiff`` for the full
-        description.
-    allow_inconsistent_geokeys : bool, default False
-        [experimental] Read-side opt-in for sources whose GeoKey
-        directory is internally contradictory. ``False`` (the default)
-        raises ``InconsistentGeoKeysError``; ``True`` restores the
-        legacy silent acceptance. See ``open_geotiff`` for the full
         description.
     allow_invalid_nodata : bool, default False
         [experimental] Read-side opt-in for integer-dtype sources whose
@@ -346,7 +339,6 @@ def read_geotiff_gpu(source: str, *,
             name=name, max_pixels=max_pixels,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
-            allow_inconsistent_geokeys=allow_inconsistent_geokeys,
             allow_invalid_nodata=allow_invalid_nodata,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
@@ -399,7 +391,6 @@ def read_geotiff_gpu(source: str, *,
             overview_level=overview_level, band=band, name=name,
             max_pixels=max_pixels, allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
-            allow_inconsistent_geokeys=allow_inconsistent_geokeys,
             allow_invalid_nodata=allow_invalid_nodata,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
@@ -634,7 +625,6 @@ def read_geotiff_gpu(source: str, *,
                 name=name,
                 allow_rotated=allow_rotated,
                 allow_unparseable_crs=allow_unparseable_crs,
-                allow_inconsistent_geokeys=allow_inconsistent_geokeys,
             )
             # ``chunks`` was previously honoured only on the tiled path,
             # so stripped TIFFs returned an unchunked DataArray even when
@@ -1037,7 +1027,6 @@ def read_geotiff_gpu(source: str, *,
             name=name,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
-            allow_inconsistent_geokeys=allow_inconsistent_geokeys,
         )
 
         # ``chunks=`` is handled at function entry via
@@ -1062,7 +1051,6 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
                                     band, name, max_pixels,
                                     allow_rotated: bool = False,
                                     allow_unparseable_crs: bool = False,
-                                    allow_inconsistent_geokeys: bool = False,
                                     allow_invalid_nodata: bool = False,
                                     allow_experimental_codecs: bool = False,
                                     allow_internal_only_jpeg: bool = False,
@@ -1148,7 +1136,6 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
         name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
-        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
 
@@ -1295,7 +1282,6 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                               window, band, name, max_pixels,
                               allow_rotated: bool = False,
                               allow_unparseable_crs: bool = False,
-                              allow_inconsistent_geokeys: bool = False,
                               allow_invalid_nodata: bool = False,
                               allow_experimental_codecs: bool = False,
                               allow_internal_only_jpeg: bool = False,
@@ -1406,8 +1392,6 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                     name=name, max_pixels=max_pixels,
                     allow_rotated=allow_rotated,
                     allow_unparseable_crs=allow_unparseable_crs,
-                    allow_inconsistent_geokeys=(
-                        allow_inconsistent_geokeys),
                     allow_invalid_nodata=allow_invalid_nodata,
                     mask_nodata=mask_nodata,
                 )
@@ -1423,7 +1407,6 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
         max_pixels=max_pixels, name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
-        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
         allow_invalid_nodata=allow_invalid_nodata,
         allow_experimental_codecs=allow_experimental_codecs,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
@@ -1452,7 +1435,6 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
                                   max_pixels,
                                   allow_rotated: bool = False,
                                   allow_unparseable_crs: bool = False,
-                                  allow_inconsistent_geokeys: bool = False,
                                   allow_invalid_nodata: bool = False,
                                   mask_nodata: bool = True):
     """Build a Dask+CuPy graph that decodes each chunk disk->GPU.
@@ -1690,7 +1672,6 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         window=window,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
-        allow_inconsistent_geokeys=allow_inconsistent_geokeys,
     )
 
     if name is None:

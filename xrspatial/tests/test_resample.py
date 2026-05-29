@@ -61,7 +61,7 @@ class TestResampleAPI:
             resample(grid_4x4, scale_factor=0.5, target_resolution=2.0)
 
     def test_negative_scale(self, grid_4x4):
-        with pytest.raises(ValueError, match="positive"):
+        with pytest.raises(ValueError, match="scale_factor must be > 0"):
             resample(grid_4x4, scale_factor=-1.0)
 
     def test_aggregate_upsample_rejected(self, grid_4x4):
@@ -1434,3 +1434,105 @@ class TestNodata:
         # Without override the attr would say -999 (no match) and -1 would
         # leak through; with override the top-left output pixel is NaN.
         assert np.isnan(out.values[0, 0])
+
+
+# ---------------------------------------------------------------------------
+# Integer nodata precision (issue #2570)
+# ---------------------------------------------------------------------------
+
+class TestNodataIntegerPrecision:
+    """Regression coverage for #2570 -- nodata equality lost precision
+    when the sentinel was routed through float() before comparison."""
+
+    def test_int64_sentinel_above_2pow53_preserves_distinct_values(self):
+        # float(2**60 + 1) == float(2**60); the old code masked the
+        # valid 2**60 cell because the rounded sentinel collided with it.
+        sentinel = (1 << 60) + 1
+        valid = 1 << 60
+        data = np.full((4, 4), sentinel, dtype=np.int64)
+        data[1, 1] = valid
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=1.0, method='nearest',
+                       nodata=sentinel)
+        # Valid cell survives AND keeps the right value (float32-quantized).
+        assert out.values[1, 1] == np.float32(valid)
+        # Sentinel cells are NaN.
+        assert np.isnan(out.values[0, 0])
+
+    def test_int64_sentinel_via_fillvalue_attr(self):
+        # Same precision case but the sentinel arrives via _FillValue
+        # rather than the explicit kwarg.
+        sentinel = (1 << 60) + 1
+        valid = 1 << 60
+        data = np.full((4, 4), sentinel, dtype=np.int64)
+        data[1, 1] = valid
+        agg = create_test_raster(
+            data, attrs={'res': (1.0, 1.0), '_FillValue': sentinel}
+        )
+        out = resample(agg, scale_factor=1.0, method='nearest')
+        assert np.isfinite(out.values[1, 1])
+        assert np.isnan(out.values[0, 0])
+
+    def test_int32_sentinel_unaffected(self):
+        # int32 cannot trip the float-cast precision loss, but the new
+        # code path still needs to work end-to-end.
+        sentinel = np.int32(-2147483648)  # int32 min
+        data = np.array([
+            [sentinel, sentinel, 10, 10],
+            [sentinel, sentinel, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.int32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=int(sentinel))
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_uint16_sentinel(self):
+        # uint16 max as sentinel -- exercises an unsigned integer dtype.
+        sentinel = np.uint16(65535)
+        data = np.array([
+            [sentinel, sentinel, 10, 10],
+            [sentinel, sentinel, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.uint16)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=int(sentinel))
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_float_nan_sentinel_still_short_circuits(self):
+        # Pre-existing float-NaN behaviour: pixels already NaN stay NaN,
+        # no equality comparison is attempted (NaN != NaN).
+        data = np.array([[np.nan, np.nan, 5.0, 5.0],
+                         [np.nan, np.nan, 5.0, 5.0],
+                         [3.0, 3.0, 7.0, 7.0],
+                         [3.0, 3.0, 7.0, 7.0]], dtype=np.float32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=float('nan'))
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_float_finite_sentinel_unchanged(self):
+        # Sanity: the float path still routes through float comparison
+        # and masks the right cells.
+        data = np.array([[-1.0, -1.0, 5.0, 5.0],
+                         [-1.0, -1.0, 5.0, 5.0],
+                         [3.0, 3.0, 7.0, 7.0],
+                         [3.0, 3.0, 7.0, 7.0]], dtype=np.float64)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest', nodata=-1.0)
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_fractional_float_sentinel_on_int_input_raises(self):
+        # Silently truncating -9999.5 to -9999 on int input would mask
+        # cells the caller never asked to mask -- reject up front.
+        data = np.zeros((4, 4), dtype=np.int32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        with pytest.raises(ValueError, match="not representable"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=-9999.5)

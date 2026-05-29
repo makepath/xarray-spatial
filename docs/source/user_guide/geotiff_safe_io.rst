@@ -225,10 +225,12 @@ the ambiguous-metadata family at once.
    * - :class:`~xrspatial.geotiff.InconsistentGeoKeysError`
      - The source's GeoKey directory is internally contradictory:
        ``ModelTypeGeoKey`` disagrees with the type-specific keys
-       actually populated, or ``ProjectedCSTypeGeoKey`` and
-       ``GeographicTypeGeoKey`` resolve to different EPSG codes.
-     - ``allow_inconsistent_geokeys=True`` to keep the legacy silent
-       acceptance for known-quirky historical files.
+       actually populated (a projected model with only
+       ``GeographicTypeGeoKey``, or a geographic model carrying
+       ``ProjectedCSTypeGeoKey``). A projected file that also names its
+       base geographic CRS is the normal shape and reads without error.
+     - No opt-in. Fix the source's GeoKey directory so the model type
+       matches the CRS codes it declares.
    * - :class:`~xrspatial.geotiff.ConflictingNodataError`
      - ``attrs['nodata']`` and ``attrs['nodatavals']`` disagree on
        write.

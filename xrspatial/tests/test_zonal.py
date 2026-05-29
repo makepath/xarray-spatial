@@ -1951,6 +1951,99 @@ def test_crop_missing_zone_ids_raises():
 
 
 # ---------------------------------------------------------------------------
+# Regression tests for #2561: crop() must return the same shape across all
+# backends when the requested zone_ids are absent (previously the dask path
+# returned the full input raster while numpy/cupy returned an empty (0, 0)).
+# ---------------------------------------------------------------------------
+
+_CROP_ARR_2561 = np.array([[0, 4, 0, 3],
+                           [0, 4, 4, 3],
+                           [0, 1, 1, 3],
+                           [0, 1, 1, 3],
+                           [0, 0, 0, 0]], dtype=np.int64)
+
+
+def _crop_backends_2561():
+    backends = ['numpy']
+    if has_dask_array():
+        backends.append('dask+numpy')
+    if has_cuda_and_cupy():
+        backends.append('cupy')
+        if has_dask_array():
+            backends.append('dask+cupy')
+    return backends
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_absent_zone_ids_returns_empty_2561(backend):
+    """All backends must return shape (0, 0) when no requested zone exists."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # zone_id 99 is not present anywhere in the raster.
+    result = crop(zones, values, zone_ids=(99,))
+
+    # Output array type must match input type.
+    assert isinstance(result.data, type(zones.data))
+    assert result.shape == (0, 0)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_partial_zone_ids_2561(backend):
+    """Mix of present and absent zone_ids crops to the present ones only."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # Only zone_id 1 is actually present here. 77 and 88 are absent.
+    result_partial = crop(zones, values, zone_ids=(77, 1, 88))
+    result_present_only = crop(zones, values, zone_ids=(1,))
+
+    # Pin the expected bounding box of zone_id=1 in _CROP_ARR_2561
+    # (rows 2-3, cols 1-2) so a regression cannot pass by drifting
+    # both code paths in the same direction.
+    assert result_partial.shape == (2, 2)
+    assert result_partial.shape == result_present_only.shape
+
+    if backend.startswith('dask'):
+        partial_np = result_partial.data.compute()
+        present_np = result_present_only.data.compute()
+    else:
+        partial_np = result_partial.data
+        present_np = result_present_only.data
+
+    if 'cupy' in backend:
+        partial_np = partial_np.get()
+        present_np = present_np.get()
+
+    np.testing.assert_array_equal(partial_np, present_np)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_happy_path_matches_numpy_2561(backend):
+    """All backends agree on the standard crop result."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    result = crop(zones, values, zone_ids=(1, 3))
+    assert result.shape == (4, 3)
+
+    expected = np.array([[4, 0, 3],
+                         [4, 4, 3],
+                         [1, 1, 3],
+                         [1, 1, 3]], dtype=np.int64)
+
+    if backend.startswith('dask'):
+        result_np = result.data.compute()
+    else:
+        result_np = result.data
+
+    if 'cupy' in backend:
+        result_np = result_np.get()
+
+    np.testing.assert_array_equal(result_np, expected)
+
+
+# ---------------------------------------------------------------------------
 # Regression tests for #2528: dask backend must not silently drop 'majority'
 # from the requested stats list.
 # ---------------------------------------------------------------------------
@@ -2238,3 +2331,99 @@ class TestVectorZones:
         result = stats(zones_raster, values, stats_funcs=['count'])
         assert isinstance(result, pd.DataFrame)
         assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# stats(return_type=...) validation -- issue #2558
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def small_zones_values_2558():
+    zones = xr.DataArray(np.array([[0, 0, 1, 1],
+                                   [0, 0, 1, 1]], dtype=np.int32))
+    values = xr.DataArray(np.array([[1.0, 2.0, 3.0, 4.0],
+                                    [5.0, 6.0, 7.0, 8.0]], dtype=np.float64))
+    return zones, values
+
+
+def test_stats_return_type_default_is_dataframe_2558(small_zones_values_2558):
+    """Default return_type should still produce a pandas.DataFrame."""
+    zones, values = small_zones_values_2558
+    result = stats(zones=zones, values=values)
+    assert isinstance(result, pd.DataFrame)
+    assert 'zone' in result.columns
+
+
+def test_stats_return_type_pandas_dataframe_2558(small_zones_values_2558):
+    """Explicit 'pandas.DataFrame' should produce a pandas.DataFrame."""
+    zones, values = small_zones_values_2558
+    result = stats(zones=zones, values=values, return_type='pandas.DataFrame')
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_stats_return_type_xarray_dataarray_2558(small_zones_values_2558):
+    """Explicit 'xarray.DataArray' should produce an xarray.DataArray."""
+    zones, values = small_zones_values_2558
+    result = stats(zones=zones, values=values, return_type='xarray.DataArray')
+    assert isinstance(result, xr.DataArray)
+    assert result.dims[0] == 'stats'
+    assert result.shape[1:] == values.shape
+
+
+@pytest.mark.parametrize("bad", ['bogus', 'numpy.ndarray', '', 'DataFrame',
+                                 'xarray.dataarray'])
+def test_stats_return_type_invalid_raises_2558(small_zones_values_2558, bad):
+    """Unknown return_type values should raise ValueError, not silently
+    return a numpy.ndarray (regression for issue #2558)."""
+    zones, values = small_zones_values_2558
+    with pytest.raises(ValueError, match="return_type"):
+        stats(zones=zones, values=values, return_type=bad)
+
+
+def test_stats_return_type_invalid_message_lists_allowed_2558(
+        small_zones_values_2558):
+    """The ValueError message should enumerate the allowed values."""
+    zones, values = small_zones_values_2558
+    with pytest.raises(ValueError) as excinfo:
+        stats(zones=zones, values=values, return_type='bogus')
+    msg = str(excinfo.value)
+    assert 'pandas.DataFrame' in msg
+    assert 'xarray.DataArray' in msg
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_stats_return_type_dataarray_rejected_for_dask_2558():
+    """'xarray.DataArray' is documented as numpy-only; dask input should
+    raise ValueError instead of silently doing the wrong thing."""
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0],
+                           [5.0, 6.0, 7.0, 8.0]], dtype=np.float64)
+    zones = xr.DataArray(da.from_array(zones_arr, chunks=(2, 2)))
+    values = xr.DataArray(da.from_array(values_arr, chunks=(2, 2)))
+    with pytest.raises(ValueError, match="xarray.DataArray"):
+        stats(zones=zones, values=values, return_type='xarray.DataArray')
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="Requires CUDA and CuPy")
+def test_stats_return_type_dataarray_rejected_for_cupy_2558():
+    """'xarray.DataArray' is documented as numpy-only; cupy input should
+    raise ValueError instead of crashing inside the xr.DataArray wrapper."""
+    import cupy
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0],
+                           [5.0, 6.0, 7.0, 8.0]], dtype=np.float64)
+    zones = xr.DataArray(cupy.asarray(zones_arr))
+    values = xr.DataArray(cupy.asarray(values_arr))
+    with pytest.raises(ValueError, match="xarray.DataArray"):
+        stats(zones=zones, values=values, return_type='xarray.DataArray')
+
+
+def test_stats_return_type_invalid_rejected_for_dataset_2558(
+        small_zones_values_2558):
+    """Invalid return_type on Dataset input should raise ValueError
+    (the entry-point validator runs before the Dataset branch)."""
+    zones, values = small_zones_values_2558
+    ds = xr.Dataset({'v': values})
+    with pytest.raises(ValueError, match="return_type"):
+        stats(zones=zones, values=ds, return_type='bogus')

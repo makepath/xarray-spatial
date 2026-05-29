@@ -61,6 +61,28 @@ def _gradient_raster(h=64, w=64, crs='EPSG:4326',
     return _make_raster(data, crs=crs, x_range=x_range, y_range=y_range)
 
 
+def _pyproj_geoid_probe_is_usable(probe, zero_tol=1.0):
+    """Return True if a pyproj vertical-transform probe value indicates the
+    geoid grid is actually installed and usable for a cross-check.
+
+    pyproj has two failure modes when the EGM96 grid is missing and PROJ
+    network access is disabled:
+
+    - it silently returns the input ellipsoidal height unchanged (so the
+      probe comes back as ~0.0 at a well-known sample point where the
+      true geoid undulation is tens of metres), or
+    - it returns a non-finite sentinel (``-inf``, ``+inf``, ``nan``).
+
+    Treat both as "grid unavailable" so the caller skips the cross-check
+    instead of asserting against the local lookup.
+    """
+    if not np.isfinite(probe):
+        return False
+    if abs(probe) < zero_tol:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # CRS utils
 # ---------------------------------------------------------------------------
@@ -4253,6 +4275,42 @@ class TestGeoidHeightBehaviour:
         assert np.isfinite(out.values).all()
 
 
+class TestPyprojGeoidProbeUsable:
+    """Coverage for ``_pyproj_geoid_probe_is_usable`` (#2567).
+
+    The helper guards pyproj-based geoid cross-checks against runners
+    where the EGM96 grid is not installed. Both the no-op fallback (~0)
+    and the non-finite fallback (-inf / +inf / nan) must be classified
+    as "grid unavailable" so the test skips instead of asserting.
+    """
+
+    def test_typical_finite_probe_is_usable(self):
+        # ~-32.8 m at New York when the grid is actually installed.
+        assert _pyproj_geoid_probe_is_usable(-32.8)
+
+    def test_near_zero_probe_is_not_usable(self):
+        # No-op fallback at a point with real undulation.
+        assert not _pyproj_geoid_probe_is_usable(0.0)
+        assert not _pyproj_geoid_probe_is_usable(0.5)
+        assert not _pyproj_geoid_probe_is_usable(-0.5)
+
+    def test_negative_inf_probe_is_not_usable(self):
+        # Regression for the original bug: -inf used to slip past the
+        # near-zero guard and fire the assert in the pyproj cross-check.
+        assert not _pyproj_geoid_probe_is_usable(float('-inf'))
+
+    def test_positive_inf_probe_is_not_usable(self):
+        assert not _pyproj_geoid_probe_is_usable(float('inf'))
+
+    def test_nan_probe_is_not_usable(self):
+        assert not _pyproj_geoid_probe_is_usable(float('nan'))
+
+    def test_zero_tol_is_configurable(self):
+        # A real lookup that happens to be 0.5 m should still count as
+        # usable when the caller picks a tighter tolerance.
+        assert _pyproj_geoid_probe_is_usable(0.5, zero_tol=0.1)
+
+
 class TestGeoidPixelCenterIndexing:
     """Regression coverage for the half-pixel offset bug (#2508).
 
@@ -4300,16 +4358,18 @@ class TestGeoidPixelCenterIndexing:
             src_crs, tgt_crs, always_xy=True,
         )
 
-        # pyproj silently falls back to a no-op transform when the EGM96
-        # grid is not installed locally and PROJ network access is
-        # disabled (typical CI). Probe at New York: a real lookup gives
-        # ~-32.8 m, the no-grid fallback gives 0. Skip in the fallback
-        # case -- there's nothing to cross-check against.
+        # pyproj falls back when the EGM96 grid is not installed locally
+        # and PROJ network access is disabled (typical CI). The fallback
+        # is either a no-op transform (~0 at New York, where the real
+        # geoid undulation is tens of metres) or a non-finite sentinel
+        # (-inf / +inf / nan). Probe at New York and skip in either case
+        # -- there's nothing to cross-check against.
         _, _, h_probe = transformer.transform(-74.0, 40.7, 0.0)
-        if abs(h_probe) < 1.0:
+        if not _pyproj_geoid_probe_is_usable(h_probe):
             pytest.skip(
                 "pyproj EGM96 grid unavailable on this runner "
-                "(transform returned ~0 at New York); cannot cross-check"
+                f"(probe at New York returned {h_probe!r}); "
+                "cannot cross-check"
             )
 
         sample_points = [
@@ -5199,6 +5259,131 @@ class TestBoundsPolicy:
             f"expected one merge summary warning, got "
             f"{[str(m.message) for m in matched]}"
         )
+
+    # -- Issue #2582: unit-aware blow-up heuristic --------------------
+
+    def test_auto_does_not_crop_benign_geographic_to_mercator(self):
+        """Regression for #2582.
+
+        Reprojecting a small EPSG:4326 bbox to EPSG:3857 under
+        bounds_policy='auto' must match bounds_policy='raw' to a
+        small tolerance. The old span-ratio heuristic compared
+        degrees to metres and always tripped on geographic-to-
+        projected pairs, silently trimming tens of km per side.
+        """
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(64, 64).astype(np.float32)
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(10, -10, 64),
+                    'x': np.linspace(-10, 10, 64)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            auto_r = reproject(r, 'EPSG:3857', bounds_policy='auto')
+            raw_r = reproject(r, 'EPSG:3857', bounds_policy='raw')
+
+        # Spans should match within one output pixel of res.
+        ax = auto_r.coords['x'].values
+        rx = raw_r.coords['x'].values
+        ay = auto_r.coords['y'].values
+        ry = raw_r.coords['y'].values
+
+        res_x = (rx.max() - rx.min()) / max(1, len(rx) - 1)
+        res_y = (ry.max() - ry.min()) / max(1, len(ry) - 1)
+
+        # No more than one pixel of crop on each side (was ~106 km / ~70 km).
+        assert abs((ax.max() - ax.min()) - (rx.max() - rx.min())) < 2 * res_x
+        assert abs((ay.max() - ay.min()) - (ry.max() - ry.min())) < 2 * res_y
+
+    def test_auto_silent_on_benign_geographic_to_mercator(self):
+        """No bounds_policy warning fires for a benign 4326->3857 case (#2582)."""
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(32, 32).astype(np.float32)
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(10, -10, 32),
+                    'x': np.linspace(-10, 10, 32)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            reproject(r, 'EPSG:3857', bounds_policy='auto')
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+        ]
+        assert not matched, (
+            f"unexpected bounds_policy warning(s) on benign 4326->3857 "
+            f"input: {[str(m.message) for m in matched]}"
+        )
+
+    def test_auto_still_trips_polar_stereographic_blowup(self):
+        """Pathological 4326->polar-stereo case must still trip auto (#2582).
+
+        A global EPSG:4326 raster projected to EPSG:3413 (NSIDC north
+        polar stereographic) produces finite-but-astronomical
+        coordinates near the south pole. The new unit-agnostic
+        heuristic must still catch this and apply the percentile
+        fallback.
+        """
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._crs_utils import _resolve_crs
+
+        src_crs = _resolve_crs('EPSG:4326')
+        tgt_crs = _resolve_crs('EPSG:3413')
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            grid = _compute_output_grid(
+                (-180.0, -90.0, 180.0, 90.0), (100, 200),
+                src_crs, tgt_crs, bounds_policy='auto',
+            )
+        # The auto bounds should be reasonable Earth-scale (well under
+        # 1e10 m), not the 1e23-scale raw projection.
+        left, bottom, right, top = grid['bounds']
+        assert abs(left) < 1e10 and abs(right) < 1e10
+        assert abs(bottom) < 1e10 and abs(top) < 1e10
+        # And the warning must fire.
+        matched = [
+            wi for wi in w
+            if issubclass(wi.category, UserWarning)
+            and 'bounds_policy' in str(wi.message)
+            and ('blow-up' in str(wi.message) or 'percentile' in str(wi.message))
+        ]
+        assert matched, (
+            "expected a blow-up/percentile warning under auto for "
+            "global 4326 -> polar stereographic"
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_auto_does_not_crop_benign_geographic_dask(self):
+        """Dask-backed input also gets the unit-aware fix (#2582)."""
+        from xrspatial.reproject import reproject
+
+        data = np.random.RandomState(0).rand(64, 64).astype(np.float32)
+        r = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(10, -10, 64),
+                    'x': np.linspace(-10, 10, 64)},
+            attrs={'crs': 'EPSG:4326'},
+        ).chunk({'y': 32, 'x': 32})
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            auto_r = reproject(r, 'EPSG:3857', bounds_policy='auto')
+            raw_r = reproject(r, 'EPSG:3857', bounds_policy='raw')
+        ax = auto_r.coords['x'].values
+        rx = raw_r.coords['x'].values
+        res_x = (rx.max() - rx.min()) / max(1, len(rx) - 1)
+        assert abs((ax.max() - ax.min()) - (rx.max() - rx.min())) < 2 * res_x
 
 
 # ---------------------------------------------------------------------------

@@ -112,6 +112,39 @@ def _validate_grid_params(*, resolution, bounds, width, height,
             )
 
 
+def _edge_samples(left, bottom, right, top, n_edge):
+    """Build edge-sample x/y arrays for a 2D bounding box.
+
+    Produces ``4 * n_edge`` (x, y) pairs by sampling the four edges
+    of the bbox at ``n_edge`` evenly spaced points each.
+
+    Parameters
+    ----------
+    left, bottom, right, top : float
+        Bounding box in source CRS.
+    n_edge : int
+        Sample count per edge.
+
+    Returns
+    -------
+    xs, ys : ndarray
+        1-D coordinate arrays of length ``4 * n_edge``.
+    """
+    xs = np.concatenate([
+        np.linspace(left, right, n_edge),   # top edge
+        np.linspace(left, right, n_edge),   # bottom edge
+        np.full(n_edge, left),               # left edge
+        np.full(n_edge, right),              # right edge
+    ])
+    ys = np.concatenate([
+        np.full(n_edge, top),
+        np.full(n_edge, bottom),
+        np.linspace(bottom, top, n_edge),
+        np.linspace(bottom, top, n_edge),
+    ])
+    return xs, ys
+
+
 def _transform_boundary(source_crs, target_crs, xs, ys):
     """Transform coordinate arrays, preferring Numba fast path over pyproj.
 
@@ -212,18 +245,9 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         # don't underestimate the output bounding box.
         n_edge = 101
         n_interior = 21
-        edge_xs = np.concatenate([
-            np.linspace(src_left, src_right, n_edge),   # top edge
-            np.linspace(src_left, src_right, n_edge),   # bottom edge
-            np.full(n_edge, src_left),                   # left edge
-            np.full(n_edge, src_right),                  # right edge
-        ])
-        edge_ys = np.concatenate([
-            np.full(n_edge, src_top),
-            np.full(n_edge, src_bottom),
-            np.linspace(src_bottom, src_top, n_edge),
-            np.linspace(src_bottom, src_top, n_edge),
-        ])
+        edge_xs, edge_ys = _edge_samples(
+            src_left, src_bottom, src_right, src_top, n_edge,
+        )
         # Interior grid catches cases where the projected extent
         # bulges beyond the edges (e.g. Mercator near the poles).
         ix = np.linspace(src_left, src_right, n_interior)
@@ -252,17 +276,53 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         # interior grid instead of just boundary points.
         raw_bounds = (float(tx.min()), float(ty.min()),
                       float(tx.max()), float(ty.max()))
-        src_w_crs = src_right - src_left
-        src_h_crs = src_top - src_bottom
-        out_w_crs = raw_bounds[2] - raw_bounds[0]
-        out_h_crs = raw_bounds[3] - raw_bounds[1]
 
-        # Heuristic: if output span is > 50x source span in either axis,
-        # boundary points likely wrapped around a singularity. Fall back
-        # to a dense interior grid to get a tighter bounding box.
-        ratio_x = out_w_crs / (abs(src_w_crs) + 1e-30)
-        ratio_y = out_h_crs / (abs(src_h_crs) + 1e-30)
-        auto_blowup = (ratio_x > 50 or ratio_y > 50)
+        # Unit-agnostic blow-up detection. Comparing source span (in
+        # source CRS units) to output span (in target CRS units) is a
+        # unit mismatch when geographic source projects to a metric
+        # target, so the previous span-ratio heuristic tripped on
+        # ordinary EPSG:4326 -> EPSG:3857/UTM cases. Two unit-agnostic
+        # signals replace it:
+        #
+        # 1. Magnitude ratio: max absolute projected coordinate vs
+        #    median. Benign reprojections stay near 1x. Polar-
+        #    stereographic on the opposite pole projects to ~1e23,
+        #    giving a ratio of ~1e16 (well above the threshold).
+        # 2. Non-finite fraction of *unclamped* raw edge samples.
+        #    Catches Mercator at the poles, where the clamp branch
+        #    above pulls the source bounds in by 0.01 deg and hides
+        #    the inf result that would otherwise reveal the
+        #    singularity. After clamp the magnitude ratio for global
+        #    Mercator drops to ~5, so the non-finite signal is what
+        #    actually trips that case.
+        abs_coords = np.concatenate([np.abs(tx), np.abs(ty)])
+        median_abs = float(np.median(abs_coords))
+        max_abs = float(abs_coords.max())
+        nonfinite_frac = 0.0
+        if bounds_policy == "auto" and source_crs.is_geographic:
+            raw_edge_xs, raw_edge_ys = _edge_samples(
+                src_left_raw, src_bottom_raw,
+                src_right_raw, src_top_raw, n_edge,
+            )
+            rtx, rty = _transform_boundary(
+                source_crs, target_crs, raw_edge_xs, raw_edge_ys,
+            )
+            rtx = np.asarray(rtx)
+            rty = np.asarray(rty)
+            nonfinite_frac = float(
+                (~(np.isfinite(rtx) & np.isfinite(rty))).mean()
+            )
+        # 10x magnitude threshold leaves headroom above the typical
+        # benign ratio (~1-3) while still tripping the astronomically
+        # large polar-stereographic blow-up.
+        magnitude_blowup = (
+            median_abs > 0 and max_abs / median_abs > 10.0
+        )
+        # 5% non-finite frac: benign cases yield 0%, edge cases that
+        # genuinely touch a singularity yield 15% or more (the global
+        # 4326 -> 3857 probe yields ~25%). The 5% floor tolerates
+        # one or two stray inf points from numerical noise.
+        auto_blowup = magnitude_blowup or nonfinite_frac > 0.05
         use_percentile = (
             bounds_policy == "percentile"
             or (bounds_policy == "auto" and auto_blowup)

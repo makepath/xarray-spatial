@@ -709,9 +709,18 @@ def stats(
         and thus excluded from calculation.
 
     return_type: str, default='pandas.DataFrame'
-        Format of returned data. If `zones` and `values` numpy backed xarray DataArray,
-        allowed values are 'pandas.DataFrame', and 'xarray.DataArray'.
-        Otherwise, only 'pandas.DataFrame' is supported.
+        Format of returned data. Must be one of:
+
+        - ``'pandas.DataFrame'``: one row per zone, one column per statistic
+          (plus a ``zone`` column). For dask-backed inputs the result is a
+          ``dask.dataframe.DataFrame``. This is the only value supported
+          for cupy, dask, and Dataset inputs.
+        - ``'xarray.DataArray'``: a DataArray whose first dimension is
+          ``'stats'`` and whose remaining dims match ``values``. Cells
+          outside the requested zones are filled with NaN. Only supported
+          for numpy-backed DataArray inputs.
+
+        Any other value raises ``ValueError``.
 
     column : str, optional
         Column name in the GeoDataFrame that contains zone IDs.
@@ -819,6 +828,17 @@ def stats(
         >>> # Columns: zone, 2020_mean, 2020_max, ..., 2021_mean, 2021_max, ...
     """
 
+    # Validate return_type up front. The internal _stats_numpy path silently
+    # returns its raw ndarray buffer for anything that is not
+    # 'pandas.DataFrame', so an unrecognised value (typo, stale name) used to
+    # leak that undocumented intermediate to the caller.
+    _allowed_return_types = ('pandas.DataFrame', 'xarray.DataArray')
+    if return_type not in _allowed_return_types:
+        raise ValueError(
+            f"return_type={return_type!r} is not supported. "
+            f"Allowed values: {list(_allowed_return_types)!r}."
+        )
+
     zones = _maybe_rasterize_zones(zones, values, column=column,
                                    rasterize_kw=rasterize_kw)
 
@@ -849,6 +869,20 @@ def stats(
     validate_arrays(zones, values)
 
     is_dask_values = has_dask_array() and isinstance(values.data, da.Array)
+    is_cupy_values = is_cupy_array(values.data)
+
+    # Only the pure-numpy backend computes the (n_stats, *shape) buffer
+    # that the xarray.DataArray return type needs. The cupy and dask
+    # backends produce a DataFrame instead, so wrapping that in
+    # xr.DataArray downstream would crash or silently misalign. Reject
+    # 'xarray.DataArray' for non-numpy backends with a clear message
+    # instead of letting it fail deep in the dispatch.
+    if return_type == 'xarray.DataArray' and (is_dask_values or is_cupy_values):
+        backend = 'dask-backed' if is_dask_values else 'cupy-backed'
+        raise ValueError(
+            f"return_type='xarray.DataArray' is not supported for "
+            f"{backend} input. Use 'pandas.DataFrame' instead."
+        )
 
     # Resolve the default stats_funcs based on backend. The dask path cannot
     # compute 'majority' block-by-block, so its default list omits it.  Using
@@ -1529,13 +1563,29 @@ def _hi_reduce(partials_list):
     return hi_lookup
 
 
+@delayed
+def _hi_lookup_as_object_array(hi_lookup):
+    """Wrap the HI lookup dict in a 0-d numpy object array.
+
+    `map_blocks` only threads dask-array positional args through the graph
+    lazily.  Wrapping the dict in a 0-d object array lets us hand the
+    delayed lookup to every paint chunk without computing it up front.
+    """
+    arr = np.empty((), dtype=object)
+    arr[()] = hi_lookup
+    return arr
+
+
 def _hi_dask_numpy(zones_data, values_data, nodata):
     """Dask+numpy backend for hypsometric integral.
 
     Single graph evaluation: each block computes its local (zone -> stats)
-    dict, then a streaming reduce merges them into a lookup table, then
+    dict, a streaming reduce merges them into a lookup table, and
     map_blocks paints the result.  No up-front `_unique_finite_zones`
     compute and no O(n_blocks * n_zones) scheduler-side stack.
+
+    The lookup table stays lazy (a 0-d dask object array) so the whole
+    pipeline is lazy: nothing runs until the caller computes the output.
     """
     zones_blocks = zones_data.to_delayed().ravel()
     values_blocks = values_data.to_delayed().ravel()
@@ -1545,13 +1595,14 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
         for zb, vb in zip(zones_blocks, values_blocks)
     ]
 
-    hi_lookup = dask.compute(_hi_reduce(partials))[0]
+    hi_lookup_delayed = _hi_lookup_as_object_array(_hi_reduce(partials))
+    hi_lookup_arr = da.from_delayed(
+        hi_lookup_delayed, shape=(), dtype=object, meta=np.array((), dtype=object),
+    )
 
-    if not hi_lookup:
-        return da.full(values_data.shape, np.nan, dtype=np.float64,
-                       chunks=values_data.chunks)
-
-    def _paint(zones_chunk, values_chunk, hi_map):
+    def _paint(zones_chunk, values_chunk, hi_map_arr):
+        # hi_map_arr is the 0-d object array carrying the lookup dict.
+        hi_map = hi_map_arr[()]
         out = np.full(zones_chunk.shape, np.nan, dtype=np.float64)
         for z, hi_val in hi_map.items():
             mask = (zones_chunk == z) & np.isfinite(values_chunk)
@@ -1559,7 +1610,7 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
         return out
 
     return da.map_blocks(
-        _paint, zones_data, values_data, hi_map=hi_lookup,
+        _paint, zones_data, values_data, hi_lookup_arr,
         dtype=np.float64, meta=np.array(()),
     )
 
@@ -2500,16 +2551,25 @@ def trim(
 
 @ngjit
 def _crop(data, values):
+    """Scan-based crop bounds.
+
+    Returns
+    -------
+    top, bottom, left, right, found : ints
+        ``found`` is 1 if any cell in *data* matches one of *values*, else 0.
+        When ``found == 0`` the bounds are meaningless and the caller must
+        treat the result as an empty crop.
+    """
 
     rows, cols = data.shape
 
-    top = -1
-    bottom = -1
-    left = -1
-    right = -1
+    top = 0
+    bottom = 0
+    left = 0
+    right = 0
+    found = 0
 
     # find empty top rows
-    top = 0
     scan_complete = False
     for y in range(rows):
 
@@ -2523,6 +2583,7 @@ def _crop(data, values):
             for v in values:
                 if v == val:
                     scan_complete = True
+                    found = 1
                     break
                 else:
                     continue
@@ -2530,8 +2591,10 @@ def _crop(data, values):
             if scan_complete:
                 break
 
+    if found == 0:
+        return 0, 0, 0, 0, 0
+
     # find empty bottom rows
-    bottom = 0
     scan_complete = False
     for y in range(rows - 1, -1, -1):
 
@@ -2553,7 +2616,6 @@ def _crop(data, values):
                 break
 
     # find empty left cols
-    left = 0
     scan_complete = False
     for x in range(cols):
 
@@ -2575,7 +2637,6 @@ def _crop(data, values):
                 break
 
     # find empty right cols
-    right = 0
     scan_complete = False
     for x in range(cols - 1, -1, -1):
         if scan_complete:
@@ -2593,11 +2654,20 @@ def _crop(data, values):
             if scan_complete:
                 break
 
-    return top, bottom, left, right
+    return top, bottom, left, right, found
 
 
 def _crop_bounds_dask(data, target_values):
-    """Find crop bounds using lazy dask reductions (O(rows+cols) memory)."""
+    """Find crop bounds using lazy dask reductions (O(rows+cols) memory).
+
+    Returns
+    -------
+    top, bottom, left, right, found : ints
+        ``found`` is 1 if any cell in *data* matches one of *target_values*,
+        else 0. When ``found == 0`` the bounds are meaningless and the caller
+        must treat the result as an empty crop. Matches the contract of
+        :func:`_crop`.
+    """
     matched = da.zeros_like(data, dtype=bool)
     for v in target_values:
         matched = matched | (data == v)
@@ -2616,10 +2686,10 @@ def _crop_bounds_dask(data, target_values):
     match_cols = np.where(np.asarray(col_mask))[0]
 
     if len(match_rows) == 0 or len(match_cols) == 0:
-        return 0, data.shape[0] - 1, 0, data.shape[1] - 1
+        return 0, 0, 0, 0, 0
 
     return (int(match_rows[0]), int(match_rows[-1]),
-            int(match_cols[0]), int(match_cols[-1]))
+            int(match_cols[0]), int(match_cols[-1]), 1)
 
 
 def crop(
@@ -2670,6 +2740,9 @@ def crop(
     Notes
     -----
         - This operation will change the output size of the raster.
+        - If none of the requested ``zone_ids`` are present in ``zones``, the
+          returned DataArray has shape ``(0, 0)``. This behaviour is the same
+          across all backends (numpy, cupy, dask+numpy, dask+cupy).
 
     Examples
     --------
@@ -2794,12 +2867,18 @@ def crop(
 
     data = zones.data
     if has_dask_array() and isinstance(data, da.Array):
-        top, bottom, left, right = _crop_bounds_dask(data, zone_ids)
+        top, bottom, left, right, found = _crop_bounds_dask(data, zone_ids)
     else:
         if is_cupy_array(data):
             data = data.get()
-        top, bottom, left, right = _crop(data, np.asarray(zone_ids))
+        top, bottom, left, right, found = _crop(data, np.asarray(zone_ids))
 
-    arr = values[top: bottom + 1, left: right + 1]
+    if not found:
+        # No requested zone exists in `zones`; return an empty (0, 0) slice
+        # so all backends agree (see GH #2561). Slicing with `0:0` preserves
+        # the underlying array type (numpy/cupy/dask) and the dim names.
+        arr = values[0:0, 0:0]
+    else:
+        arr = values[top: bottom + 1, left: right + 1]
     arr.name = name
     return arr
