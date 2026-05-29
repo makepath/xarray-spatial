@@ -17,10 +17,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.resample import resample
-from xrspatial.tests.general_checks import (
-    cuda_and_cupy_available,
-    dask_array_available,
-)
+from xrspatial.utils import has_cuda_and_cupy, has_dask_array
 
 
 def _backend_raster(data, *, y, x, backend):
@@ -44,11 +41,11 @@ def _backend_raster(data, *, y, x, backend):
 # regardless of data backend, so we drive every available backend to prove
 # the guard fires before any backend dispatch happens.
 BACKENDS = ['numpy']
-if dask_array_available():
+if has_dask_array():
     BACKENDS.append('dask+numpy')
-if cuda_and_cupy_available():
+if has_cuda_and_cupy():
     BACKENDS.append('cupy')
-    if dask_array_available():
+    if has_dask_array():
         BACKENDS.append('dask+cupy')
 
 
