@@ -70,6 +70,10 @@ class TestCuPyAggregateNonIntegerFactor:
         data = np.random.RandomState(26151).rand(10, 10).astype(np.float32)
         data[2, 3] = np.nan
         data[7, 8] = np.nan
+        # Same premise guard as the no-NaN test: keep this on the
+        # non-integer-factor host fallback, not the GPU reshape path.
+        out_h = max(1, round(10 * 0.3))
+        assert 10 / out_h != int(10 / out_h)
         np_agg = create_test_raster(data, backend='numpy',
                                     attrs={'res': (1.0, 1.0)})
         cp_agg = create_test_raster(data, backend='cupy',
