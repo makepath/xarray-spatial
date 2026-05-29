@@ -113,6 +113,8 @@ def _resolve_raster_alias(agg, raster, func_name):
             f"{func_name}(): the 'raster' argument is deprecated and will be "
             f"removed in a future release; use 'agg' instead.",
             DeprecationWarning,
+            # stacklevel=3 points the warning at the caller:
+            # caller -> public func (apply/hotspots) -> this helper.
             stacklevel=3,
         )
         return raster
