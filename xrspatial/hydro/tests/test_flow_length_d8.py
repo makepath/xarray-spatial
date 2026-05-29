@@ -368,3 +368,22 @@ class TestFlowLengthDaskCuPy:
         np.testing.assert_allclose(
             result_np.data, result_dc.data.compute().get(),
             equal_nan=True, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Degenerate-shape tests (issue #2713)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("direction", ['downstream', 'upstream'])
+@pytest.mark.parametrize("shape", [(1, 1), (1, 4), (4, 1)])
+def test_degenerate_shape(shape, direction):
+    """Single-pixel and single-row/column input.
+
+    Every cell is a pit (code 0) with no downstream/upstream neighbour,
+    so flow length is finite (zero-length) at the input shape.
+    """
+    flow_dir = np.zeros(shape, dtype=np.float64)
+    raster = _make_flow_dir_raster(flow_dir)
+    result = flow_length(raster, direction=direction)
+    assert result.shape == shape
+    assert not np.isnan(result.data).any()
