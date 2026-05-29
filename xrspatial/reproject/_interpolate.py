@@ -786,10 +786,19 @@ def _resample_cupy_native(source_window, src_row_coords, src_col_coords,
 
 def _resample_cupy(source_window, src_row_coords, src_col_coords,
                    resampling='bilinear', nodata=np.nan):
-    """CuPy equivalent of ``_resample_numpy``.
+    """Resample a CuPy source window via ``cupyx.scipy.ndimage.map_coordinates``.
 
     Control grid is on CPU (pyproj is CPU-only); coordinates are
     transferred to GPU for interpolation.
+
+    Note: this is NOT numerically equivalent to ``_resample_numpy``. Its
+    cubic path is a prefiltered B-spline (not Catmull-Rom) and its
+    ``mode='constant'`` boundary handling bleeds ``cval`` into the
+    half-pixel border band instead of renormalizing. The reproject
+    pipeline therefore routes the cupy backend through
+    ``_resample_cupy_native`` (which matches the numpy kernels exactly);
+    this function is retained only for the ``TestCuPyResampler*`` clipping
+    unit tests. See GH #2620.
     """
     import cupy as cp
     from cupyx.scipy.ndimage import map_coordinates
