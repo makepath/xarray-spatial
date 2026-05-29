@@ -590,6 +590,156 @@ def test_majority_with_ties(backend):
     check_results(backend, df_result, expected_result)
 
 
+# Regression tests for issue #2562: cupy backend used to drop all-NaN zones
+# and could desync the zone/stats alignment when zone_ids contained IDs that
+# don't appear in the raster.
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Degrees of freedom <= 0 for slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in.*:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_stats_all_nan_zone_preserved(backend):
+    # Zone 5 exists in the zones raster but every value at zone 5 is NaN.
+    # The numpy path returns zone 5 with NaN stats; the cupy path used to
+    # drop the row entirely. After the fix both backends should agree.
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    zones_data = np.array([[1, 1, 2, 2],
+                           [1, 5, 2, 5],
+                           [3, 3, 5, 5]], dtype=np.float64)
+    values_data = np.array([[1.0, 2.0, 3.0, 4.0],
+                            [5.0, np.nan, 7.0, np.nan],
+                            [9.0, 10.0, np.nan, np.nan]])
+
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
+
+    df_result = stats(
+        zones=zones, values=values, stats_funcs=['min', 'max', 'mean', 'count']
+    )
+
+    assert list(df_result.columns) == ['zone', 'min', 'max', 'mean', 'count']
+    expected_result = {
+        'zone': [1, 2, 3, 5],
+        'min': [1.0, 3.0, 9.0, np.nan],
+        'max': [5.0, 7.0, 10.0, np.nan],
+        'mean': [(1.0 + 2.0 + 5.0) / 3, (3.0 + 4.0 + 7.0) / 3, 9.5, np.nan],
+        # numpy's _calc_stats leaves an all-NaN zone at NaN for every stat,
+        # including count (the func is only called when len(zone_values) > 0).
+        'count': [3, 3, 2, np.nan],
+    }
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_stats_zone_ids_missing_from_raster(backend):
+    # zone_ids contains 999 which does not appear in the zones raster.
+    # The numpy path drops missing IDs so the result lists only zone 1.
+    # The cupy path used to keep 999 in the zone column while indexing
+    # into a found-only counts/index list, which desynced the rows.
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    zones_data = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2],
+                           [3, 3, 3, 3]], dtype=np.float64)
+    values_data = np.array([[10.0, 20.0, 1.0, 2.0],
+                            [30.0, 40.0, 3.0, 4.0],
+                            [100.0, 100.0, 100.0, 100.0]])
+
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
+
+    df_result = stats(
+        zones=zones, values=values, zone_ids=[1, 999],
+        stats_funcs=['min', 'max', 'sum', 'count']
+    )
+
+    assert list(df_result.columns) == ['zone', 'min', 'max', 'sum', 'count']
+    expected_result = {
+        'zone': [1],
+        'min': [10.0],
+        'max': [40.0],
+        'sum': [100.0],
+        'count': [4],
+    }
+    check_results(backend, df_result, expected_result)
+
+    # Also verify that zone_ids passed in reverse order (or with duplicates)
+    # produces the same numpy-style ordering: np.unique sorts ascending and
+    # dedupes, so [3, 1, 1] becomes [1, 3]. This pins the cupy path's
+    # np.unique normalization that matches the numpy backend.
+    df_result_reversed = stats(
+        zones=zones, values=values, zone_ids=[3, 1, 1],
+        stats_funcs=['min', 'max', 'sum', 'count'],
+    )
+    expected_reversed = {
+        'zone': [1, 3],
+        'min': [10.0, 100.0],
+        'max': [40.0, 100.0],
+        'sum': [100.0, 400.0],
+        'count': [4, 4],
+    }
+    check_results(backend, df_result_reversed, expected_reversed)
+
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Degrees of freedom <= 0 for slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in.*:RuntimeWarning")
+def test_stats_cupy_matches_numpy_row_for_row():
+    # Cross-backend parity check. Run numpy and cupy with the same inputs
+    # (all-NaN zone + zone_ids containing a missing ID) and assert the
+    # resulting DataFrames match row-for-row.
+    if not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    zones_data = np.array([[1, 1, 2, 2, 5],
+                           [1, 5, 2, 5, 5],
+                           [3, 3, 5, 5, 4]], dtype=np.float64)
+    values_data = np.array([[1.0, 2.0, 3.0, 4.0, np.nan],
+                            [5.0, np.nan, 7.0, np.nan, np.nan],
+                            [9.0, 10.0, np.nan, np.nan, 42.0]])
+
+    zones_np = create_test_raster(zones_data, 'numpy')
+    values_np = create_test_raster(values_data, 'numpy')
+    zones_cp = create_test_raster(zones_data, 'cupy')
+    values_cp = create_test_raster(values_data, 'cupy')
+
+    stats_funcs = ['min', 'max', 'mean', 'sum', 'count']
+
+    df_np = stats(zones=zones_np, values=values_np, stats_funcs=stats_funcs)
+    df_cp = stats(zones=zones_cp, values=values_cp, stats_funcs=stats_funcs)
+
+    assert list(df_np.columns) == list(df_cp.columns)
+    assert (df_np['zone'].to_numpy() == df_cp['zone'].to_numpy()).all()
+    for col in df_np.columns[1:]:
+        np.testing.assert_allclose(
+            df_np[col].to_numpy(), df_cp[col].to_numpy(),
+            rtol=1e-05, atol=1e-07, equal_nan=True,
+        )
+
+    # And again with zone_ids requesting a zone that doesn't exist.
+    df_np2 = stats(
+        zones=zones_np, values=values_np, zone_ids=[1, 5, 999],
+        stats_funcs=stats_funcs,
+    )
+    df_cp2 = stats(
+        zones=zones_cp, values=values_cp, zone_ids=[1, 5, 999],
+        stats_funcs=stats_funcs,
+    )
+    assert (df_np2['zone'].to_numpy() == df_cp2['zone'].to_numpy()).all()
+    for col in df_np2.columns[1:]:
+        np.testing.assert_allclose(
+            df_np2[col].to_numpy(), df_cp2[col].to_numpy(),
+            rtol=1e-05, atol=1e-07, equal_nan=True,
+        )
+
+
 @pytest.mark.parametrize("stats_funcs, expected_cols", [
     (['min', 'max'], ['zone', 'min', 'max']),
     (['mean'], ['zone', 'mean']),
@@ -650,9 +800,9 @@ def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_s
 def test_stats_all_nan_zone(backend):
     """Zone where every value is NaN should not crash.
 
-    Backend quirks: numpy keeps the empty zone with all-NaN stats; the dask
-    path uses nansum for count/sum so those become 0; cupy drops the empty
-    zone from the result entirely.
+    All backends now agree: the empty zone stays in the output with NaN
+    stats. The cupy path used to drop the zone (issue #2562) — that is
+    now fixed and the per-backend branching is gone.
     """
     if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
@@ -670,26 +820,14 @@ def test_stats_all_nan_zone(backend):
     funcs = ['mean', 'max', 'min', 'sum', 'count']
     df_result = stats(zones=zones, values=values, stats_funcs=funcs)
 
-    if 'cupy' in backend and 'dask' not in backend:
-        # cupy drops zones with no valid values
-        expected = {
-            'zone':  [2],
-            'mean':  [6.0],
-            'max':   [7.0],
-            'min':   [5.0],
-            'sum':   [12.0],
-            'count': [2],
-        }
-    else:
-        # numpy and dask both return NaN for all-NaN zones
-        expected = {
-            'zone':  [1, 2],
-            'mean':  [np.nan, 6.0],
-            'max':   [np.nan, 7.0],
-            'min':   [np.nan, 5.0],
-            'sum':   [np.nan, 12.0],
-            'count': [np.nan, 2],
-        }
+    expected = {
+        'zone':  [1, 2],
+        'mean':  [np.nan, 6.0],
+        'max':   [np.nan, 7.0],
+        'min':   [np.nan, 5.0],
+        'sum':   [np.nan, 12.0],
+        'count': [np.nan, 2],
+    }
     check_results(backend, df_result, expected)
 
 
@@ -761,7 +899,7 @@ def test_stats_negative_zone_ids(backend):
 def test_stats_nodata_wipes_zone(backend):
     """When nodata_values filters out every finite value in a zone, stats are NaN.
 
-    Same per-backend quirks as test_stats_all_nan_zone.
+    All backends now agree after the issue #2562 fix.
     """
     if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
@@ -779,25 +917,14 @@ def test_stats_nodata_wipes_zone(backend):
     funcs = ['mean', 'max', 'min', 'sum', 'count']
     df_result = stats(zones=zones, values=values, stats_funcs=funcs, nodata_values=5)
 
-    if 'cupy' in backend and 'dask' not in backend:
-        expected = {
-            'zone':  [2],
-            'mean':  [5.0],
-            'max':   [7.0],
-            'min':   [3.0],
-            'sum':   [10.0],
-            'count': [2],
-        }
-    else:
-        # numpy and dask both return NaN for zones with no valid values
-        expected = {
-            'zone':  [1, 2],
-            'mean':  [np.nan, 5.0],
-            'max':   [np.nan, 7.0],
-            'min':   [np.nan, 3.0],
-            'sum':   [np.nan, 10.0],
-            'count': [np.nan, 2],
-        }
+    expected = {
+        'zone':  [1, 2],
+        'mean':  [np.nan, 5.0],
+        'max':   [np.nan, 7.0],
+        'min':   [np.nan, 3.0],
+        'sum':   [np.nan, 10.0],
+        'count': [np.nan, 2],
+    }
     check_results(backend, df_result, expected)
 
 
@@ -1951,6 +2078,99 @@ def test_crop_missing_zone_ids_raises():
 
 
 # ---------------------------------------------------------------------------
+# Regression tests for #2561: crop() must return the same shape across all
+# backends when the requested zone_ids are absent (previously the dask path
+# returned the full input raster while numpy/cupy returned an empty (0, 0)).
+# ---------------------------------------------------------------------------
+
+_CROP_ARR_2561 = np.array([[0, 4, 0, 3],
+                           [0, 4, 4, 3],
+                           [0, 1, 1, 3],
+                           [0, 1, 1, 3],
+                           [0, 0, 0, 0]], dtype=np.int64)
+
+
+def _crop_backends_2561():
+    backends = ['numpy']
+    if has_dask_array():
+        backends.append('dask+numpy')
+    if has_cuda_and_cupy():
+        backends.append('cupy')
+        if has_dask_array():
+            backends.append('dask+cupy')
+    return backends
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_absent_zone_ids_returns_empty_2561(backend):
+    """All backends must return shape (0, 0) when no requested zone exists."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # zone_id 99 is not present anywhere in the raster.
+    result = crop(zones, values, zone_ids=(99,))
+
+    # Output array type must match input type.
+    assert isinstance(result.data, type(zones.data))
+    assert result.shape == (0, 0)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_partial_zone_ids_2561(backend):
+    """Mix of present and absent zone_ids crops to the present ones only."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    # Only zone_id 1 is actually present here. 77 and 88 are absent.
+    result_partial = crop(zones, values, zone_ids=(77, 1, 88))
+    result_present_only = crop(zones, values, zone_ids=(1,))
+
+    # Pin the expected bounding box of zone_id=1 in _CROP_ARR_2561
+    # (rows 2-3, cols 1-2) so a regression cannot pass by drifting
+    # both code paths in the same direction.
+    assert result_partial.shape == (2, 2)
+    assert result_partial.shape == result_present_only.shape
+
+    if backend.startswith('dask'):
+        partial_np = result_partial.data.compute()
+        present_np = result_present_only.data.compute()
+    else:
+        partial_np = result_partial.data
+        present_np = result_present_only.data
+
+    if 'cupy' in backend:
+        partial_np = partial_np.get()
+        present_np = present_np.get()
+
+    np.testing.assert_array_equal(partial_np, present_np)
+
+
+@pytest.mark.parametrize("backend", _crop_backends_2561())
+def test_crop_happy_path_matches_numpy_2561(backend):
+    """All backends agree on the standard crop result."""
+    zones = create_test_raster(_CROP_ARR_2561, backend=backend)
+    values = create_test_raster(_CROP_ARR_2561, backend=backend)
+
+    result = crop(zones, values, zone_ids=(1, 3))
+    assert result.shape == (4, 3)
+
+    expected = np.array([[4, 0, 3],
+                         [4, 4, 3],
+                         [1, 1, 3],
+                         [1, 1, 3]], dtype=np.int64)
+
+    if backend.startswith('dask'):
+        result_np = result.data.compute()
+    else:
+        result_np = result.data
+
+    if 'cupy' in backend:
+        result_np = result_np.get()
+
+    np.testing.assert_array_equal(result_np, expected)
+
+
+# ---------------------------------------------------------------------------
 # Regression tests for #2528: dask backend must not silently drop 'majority'
 # from the requested stats list.
 # ---------------------------------------------------------------------------
@@ -2238,3 +2458,99 @@ class TestVectorZones:
         result = stats(zones_raster, values, stats_funcs=['count'])
         assert isinstance(result, pd.DataFrame)
         assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# stats(return_type=...) validation -- issue #2558
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def small_zones_values_2558():
+    zones = xr.DataArray(np.array([[0, 0, 1, 1],
+                                   [0, 0, 1, 1]], dtype=np.int32))
+    values = xr.DataArray(np.array([[1.0, 2.0, 3.0, 4.0],
+                                    [5.0, 6.0, 7.0, 8.0]], dtype=np.float64))
+    return zones, values
+
+
+def test_stats_return_type_default_is_dataframe_2558(small_zones_values_2558):
+    """Default return_type should still produce a pandas.DataFrame."""
+    zones, values = small_zones_values_2558
+    result = stats(zones=zones, values=values)
+    assert isinstance(result, pd.DataFrame)
+    assert 'zone' in result.columns
+
+
+def test_stats_return_type_pandas_dataframe_2558(small_zones_values_2558):
+    """Explicit 'pandas.DataFrame' should produce a pandas.DataFrame."""
+    zones, values = small_zones_values_2558
+    result = stats(zones=zones, values=values, return_type='pandas.DataFrame')
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_stats_return_type_xarray_dataarray_2558(small_zones_values_2558):
+    """Explicit 'xarray.DataArray' should produce an xarray.DataArray."""
+    zones, values = small_zones_values_2558
+    result = stats(zones=zones, values=values, return_type='xarray.DataArray')
+    assert isinstance(result, xr.DataArray)
+    assert result.dims[0] == 'stats'
+    assert result.shape[1:] == values.shape
+
+
+@pytest.mark.parametrize("bad", ['bogus', 'numpy.ndarray', '', 'DataFrame',
+                                 'xarray.dataarray'])
+def test_stats_return_type_invalid_raises_2558(small_zones_values_2558, bad):
+    """Unknown return_type values should raise ValueError, not silently
+    return a numpy.ndarray (regression for issue #2558)."""
+    zones, values = small_zones_values_2558
+    with pytest.raises(ValueError, match="return_type"):
+        stats(zones=zones, values=values, return_type=bad)
+
+
+def test_stats_return_type_invalid_message_lists_allowed_2558(
+        small_zones_values_2558):
+    """The ValueError message should enumerate the allowed values."""
+    zones, values = small_zones_values_2558
+    with pytest.raises(ValueError) as excinfo:
+        stats(zones=zones, values=values, return_type='bogus')
+    msg = str(excinfo.value)
+    assert 'pandas.DataFrame' in msg
+    assert 'xarray.DataArray' in msg
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_stats_return_type_dataarray_rejected_for_dask_2558():
+    """'xarray.DataArray' is documented as numpy-only; dask input should
+    raise ValueError instead of silently doing the wrong thing."""
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0],
+                           [5.0, 6.0, 7.0, 8.0]], dtype=np.float64)
+    zones = xr.DataArray(da.from_array(zones_arr, chunks=(2, 2)))
+    values = xr.DataArray(da.from_array(values_arr, chunks=(2, 2)))
+    with pytest.raises(ValueError, match="xarray.DataArray"):
+        stats(zones=zones, values=values, return_type='xarray.DataArray')
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="Requires CUDA and CuPy")
+def test_stats_return_type_dataarray_rejected_for_cupy_2558():
+    """'xarray.DataArray' is documented as numpy-only; cupy input should
+    raise ValueError instead of crashing inside the xr.DataArray wrapper."""
+    import cupy
+    zones_arr = np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.int32)
+    values_arr = np.array([[1.0, 2.0, 3.0, 4.0],
+                           [5.0, 6.0, 7.0, 8.0]], dtype=np.float64)
+    zones = xr.DataArray(cupy.asarray(zones_arr))
+    values = xr.DataArray(cupy.asarray(values_arr))
+    with pytest.raises(ValueError, match="xarray.DataArray"):
+        stats(zones=zones, values=values, return_type='xarray.DataArray')
+
+
+def test_stats_return_type_invalid_rejected_for_dataset_2558(
+        small_zones_values_2558):
+    """Invalid return_type on Dataset input should raise ValueError
+    (the entry-point validator runs before the Dataset branch)."""
+    zones, values = small_zones_values_2558
+    ds = xr.Dataset({'v': values})
+    with pytest.raises(ValueError, match="return_type"):
+        stats(zones=zones, values=ds, return_type='bogus')
