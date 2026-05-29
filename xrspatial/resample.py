@@ -199,6 +199,48 @@ def _validate_resample_scalar_or_pair(value, param_name):
             )
 
 
+def _validate_monotonic_regular_coords(agg):
+    """Reject inputs whose spatial coords are not regular and monotonic.
+
+    ``resample`` assumes a regular, monotonic grid: ``calc_res`` derives
+    the input resolution from the full coordinate extent while the output
+    coordinates are rebuilt from first/last neighbour spacing. On an
+    irregular or non-monotonic grid those two views of "resolution"
+    disagree and the function silently produces inconsistent output
+    geometry (wrong width, coords spilling past the input range). Fail
+    fast here instead.
+
+    Only 1-D coords that actually exist on the spatial dims are checked;
+    an input without spatial coords is left to the existing code paths.
+    For 3-D inputs ``resample`` recurses per band, so this runs once per
+    band on identical coords -- a cheap, harmless repeat.
+    """
+    for dim in agg.dims[-2:]:
+        if dim not in agg.coords:
+            continue
+        vals = np.asarray(agg[dim].values, dtype=np.float64)
+        if vals.ndim != 1 or vals.size < 2:
+            continue
+        diffs = np.diff(vals)
+        if not (np.all(diffs > 0) or np.all(diffs < 0)):
+            raise ValueError(
+                f"resample(): `agg` coordinate {dim!r} must be strictly "
+                f"monotonic (consistently increasing or decreasing); "
+                f"resample only supports regular monotonic rasters"
+            )
+        # Allow floating-point jitter but reject genuinely uneven spacing
+        # (e.g. [0, 1, 4]). Compare every step to the mean step. The
+        # tolerance scales with the step size via ``rtol`` so it tracks
+        # the coordinate magnitude.
+        step = diffs.mean()
+        if not np.allclose(diffs, step, rtol=1e-5, atol=0.0):
+            raise ValueError(
+                f"resample(): `agg` coordinate {dim!r} must be evenly "
+                f"spaced; resample only supports regular monotonic "
+                f"rasters, not irregular grids"
+            )
+
+
 # -- Output-geometry helpers -------------------------------------------------
 
 def _output_shape(in_h, in_w, scale_y, scale_x):
@@ -1371,10 +1413,13 @@ def resample(
     ValueError
         If neither or both of ``scale_factor`` and ``target_resolution``
         are given; if either is a sequence whose length is not 2; if any
-        component is zero, negative, NaN, or infinite; or if ``method``
-        is not in :data:`ALL_METHODS`.
+        component is zero, negative, NaN, or infinite; if ``method``
+        is not in :data:`ALL_METHODS`; or if the spatial coordinates of
+        ``agg`` are not strictly monotonic and evenly spaced (``resample``
+        only supports regular monotonic rasters).
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
+    _validate_monotonic_regular_coords(agg)
 
     if method not in ALL_METHODS:
         raise ValueError(
