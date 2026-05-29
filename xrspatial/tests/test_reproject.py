@@ -494,6 +494,104 @@ class TestGrid:
 
 
 # ---------------------------------------------------------------------------
+# Datum-shift bounds estimation (GH #2649)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj required")
+class TestDatumShiftBounds:
+    """Output bounds estimation must account for datum shifts.
+
+    The Numba fast path ``transform_points`` runs its projection kernels
+    in WGS84 and does not apply a datum shift. The per-pixel data path
+    (``try_numba_transform``) does apply a Helmert shift for the same CRS
+    pairs, so bounds estimated without the shift disagree with the
+    reprojected data. For NAD27 (EPSG:4267) the shift is tens to over a
+    hundred metres in CONUS -- many pixels on a high-resolution raster.
+    The fix bails datum-shift pairs to pyproj. See GH #2649.
+    """
+
+    # CONUS sample points where the NAD27 shift is largest.
+    XS = np.array([-105.0, -95.0, -120.0, -80.0])
+    YS = np.array([35.0, 45.0, 40.0, 30.0])
+
+    def test_transform_points_bails_for_nad27(self):
+        from xrspatial.reproject._projections import transform_points
+        src = pyproj.CRS.from_epsg(4267)  # NAD27
+        tgt = pyproj.CRS.from_epsg(3857)  # Web Mercator
+        assert transform_points(src, tgt, self.XS, self.YS) is None
+        # And the reverse direction.
+        assert transform_points(tgt, src, self.XS, self.YS) is None
+
+    def test_transform_points_keeps_fast_path_no_shift(self):
+        # WGS84 and NAD83 need no shift, so the fast path must stay.
+        from xrspatial.reproject._projections import transform_points
+        for epsg in (4326, 4269):
+            src = pyproj.CRS.from_epsg(epsg)
+            tgt = pyproj.CRS.from_epsg(3857)
+            fast = transform_points(src, tgt, self.XS, self.YS)
+            assert fast is not None
+            ref = pyproj.Transformer.from_crs(
+                src, tgt, always_xy=True).transform(self.XS, self.YS)
+            np.testing.assert_allclose(fast[0], ref[0], atol=1e-3)
+            np.testing.assert_allclose(fast[1], ref[1], atol=1e-3)
+
+    def test_boundary_matches_pyproj_for_nad27(self):
+        # _transform_boundary must agree with pyproj once the fast path
+        # bails. Before the fix it was off by ~45 m in x.
+        from xrspatial.reproject._grid import _transform_boundary
+        src = pyproj.CRS.from_epsg(4267)
+        tgt = pyproj.CRS.from_epsg(3857)
+        tx, ty = _transform_boundary(src, tgt, self.XS, self.YS)
+        ref_x, ref_y = pyproj.Transformer.from_crs(
+            src, tgt, always_xy=True).transform(self.XS, self.YS)
+        np.testing.assert_allclose(np.asarray(tx), ref_x, atol=1e-6)
+        np.testing.assert_allclose(np.asarray(ty), ref_y, atol=1e-6)
+
+    def test_output_grid_bounds_correct_high_res_nad27(self):
+        # End-to-end: a high-resolution NAD27 raster reprojected to Web
+        # Mercator. The computed grid bounds must match the datum-shifted
+        # corner transform, not the unshifted one. At 1 m resolution the
+        # ~45 m shift error would be ~45 pixels.
+        from xrspatial.reproject._grid import _compute_output_grid
+        src = pyproj.CRS.from_epsg(4267)
+        tgt = pyproj.CRS.from_epsg(3857)
+        # ~1 arcsec cells near 40N -> sub-30 m pixels (high resolution).
+        source_bounds = (-105.0, 39.9, -104.9, 40.0)
+        grid = _compute_output_grid(
+            source_bounds=source_bounds,
+            source_shape=(360, 360),
+            source_crs=src,
+            target_crs=tgt,
+        )
+        left, bottom, right, top = grid['bounds']
+
+        # Reference bounds from pyproj corner transform (datum-shifted).
+        cx = np.array([source_bounds[0], source_bounds[2],
+                       source_bounds[0], source_bounds[2]])
+        cy = np.array([source_bounds[1], source_bounds[1],
+                       source_bounds[3], source_bounds[3]])
+        rx, ry = pyproj.Transformer.from_crs(
+            src, tgt, always_xy=True).transform(cx, cy)
+        # Bounds enclose the projected corners up to grid snapping
+        # (bounds are rounded to an integer number of cells, so each
+        # edge can move by up to one resolution). One cell here is
+        # ~35 m, well under the ~45 m datum error this guards against.
+        res = max(grid['res_x'], grid['res_y'])
+        assert left <= rx.min() + res
+        assert right >= rx.max() - res
+        assert bottom <= ry.min() + res
+        assert top >= ry.max() - res
+        # Guard against regression to the unshifted bounds: each edge
+        # must be closer to the datum-shifted corner than to the
+        # unshifted one. The shift (~45 m) exceeds the snapping (~35 m).
+        unshifted_x, _ = pyproj.Transformer.from_crs(
+            pyproj.CRS.from_epsg(4326), tgt, always_xy=True
+        ).transform(cx, cy)
+        assert abs(left - rx.min()) < abs(left - unshifted_x.min())
+        assert abs(right - rx.max()) < abs(right - unshifted_x.max())
+
+
+# ---------------------------------------------------------------------------
 # Merge strategies
 # ---------------------------------------------------------------------------
 

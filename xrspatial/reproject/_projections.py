@@ -2110,8 +2110,12 @@ def transform_points(src_crs, tgt_crs, xs, ys):
     -----
     Intentional omissions (fall back to pyproj for these):
 
-    * No datum-shift wrapping -- metre-level error is sub-pixel for the
-      boundary-estimation use case this function targets.
+    * No datum-shift wrapping. CRS pairs that need a datum shift (e.g.
+      NAD27 / EPSG:4267, OSGB36, ED50) are detected via
+      ``_get_datum_params`` and bailed to pyproj, which applies the
+      shift. Skipping the shift here would put the output bounds off by
+      the shift magnitude -- tens to over a hundred metres for NAD27 in
+      CONUS, which is many pixels on a high-resolution raster.
     * Sinusoidal and Generic Transverse Mercator are not covered here;
       those projections are dispatched via ``to_dict()['proj']`` which
       requires a full pyproj CRS.
@@ -2119,6 +2123,17 @@ def transform_points(src_crs, tgt_crs, xs, ys):
     src_epsg = _get_epsg(src_crs)
     tgt_epsg = _get_epsg(tgt_crs)
     if src_epsg is None and tgt_epsg is None:
+        return None
+
+    # If either side needs a datum shift, the Numba kernels here run in
+    # WGS84 and would skip it, putting the estimated bounds off by the
+    # shift magnitude. The per-pixel data path (try_numba_transform)
+    # applies the Helmert shift, so bounds computed without it would
+    # disagree with the reprojected data. Bail to pyproj for these.
+    # Conservatively bails on same-datum pairs too (where the shift
+    # cancels); those are rare and correctness wins over the fast path.
+    if (_get_datum_params(src_crs) is not None
+            or _get_datum_params(tgt_crs) is not None):
         return None
 
     src_is_geo = _is_supported_geographic(src_epsg)
