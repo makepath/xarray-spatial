@@ -3249,10 +3249,46 @@ def rasterize(
     if width is not None and height is not None:
         final_width, final_height = int(width), int(height)
     elif resolution is not None:
-        if isinstance(resolution, (int, float)):
+        # Validate shape and element type up front so bad inputs surface a
+        # single clean ValueError naming the offending value, instead of
+        # leaking IndexError (length-1 sequences would crash at
+        # resolution[1]), KeyError (dicts), or a raw float() conversion
+        # error (strings iterate character-by-character into
+        # resolution[0]/[1]).  A 3+-element sequence was previously
+        # silently truncated to the first two elements -- reject it here
+        # too.  numpy scalars (np.float32, np.int64, ...) and 1-D numpy
+        # arrays of size 2 are accepted alongside Python int/float and
+        # list/tuple, since geospatial pipelines routinely produce them.
+        is_scalar = (
+            isinstance(resolution, (int, float, np.number))
+            and not isinstance(resolution, (bool, np.bool_))
+        )
+        is_sequence = isinstance(resolution, (tuple, list, np.ndarray))
+        if not (is_scalar or is_sequence):
+            raise ValueError(
+                f"resolution must be a number or a length-2 sequence of "
+                f"numbers (x_res, y_res), got {resolution!r}")
+        if is_scalar:
             x_res = y_res = float(resolution)
         else:
-            x_res, y_res = float(resolution[0]), float(resolution[1])
+            # numpy arrays expose .ndim; require 1-D for the sequence form
+            # so e.g. a (2, 2) array does not slip past the length-2 check.
+            if isinstance(resolution, np.ndarray) and resolution.ndim != 1:
+                raise ValueError(
+                    f"resolution array must be 1-D with length 2 "
+                    f"(x_res, y_res), got shape {resolution.shape}: "
+                    f"{resolution!r}")
+            if len(resolution) != 2:
+                raise ValueError(
+                    f"resolution sequence must have length 2 (x_res, y_res), "
+                    f"got length {len(resolution)}: {resolution!r}")
+            try:
+                x_res = float(resolution[0])
+                y_res = float(resolution[1])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"resolution sequence elements must be numbers, "
+                    f"got {resolution!r}")
         # Reject non-finite or non-positive resolution before dimension math.
         # Without this, inf/-1 quietly produce a 1x1 raster, 0 raises an
         # opaque ZeroDivisionError, and nan raises an int-conversion error.
