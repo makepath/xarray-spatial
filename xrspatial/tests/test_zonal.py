@@ -1546,6 +1546,34 @@ def test_apply_dask_3d_axis2_rechunked_2526():
     )
 
 
+@pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
+def test_apply_3d_mixed_backend_raises():
+    """Regression for #2639: 3D apply() with mixed dask/numpy zones and
+    values must fail early with a clear backend error, not crash with an
+    AttributeError or silently return eager numpy output.
+    """
+    zones_data = np.array([[1, 0],
+                           [0, 2]], dtype=np.int32)
+    values_data = np.ones((2, 2, 3)) * 5.0
+
+    # numpy zones + dask values: dask backend would hit zones.chunks
+    zones_np = xr.DataArray(zones_data, dims=['y', 'x'])
+    values_dask = xr.DataArray(
+        da.from_array(values_data, chunks=(2, 2, 3)),
+        dims=['y', 'x', 'band'],
+    )
+    with pytest.raises(ValueError, match="same backend"):
+        apply(zones_np, values_dask, lambda x: x + 10, nodata=0)
+
+    # dask zones + numpy values: numpy backend would silently go eager
+    zones_dask = xr.DataArray(
+        da.from_array(zones_data, chunks=(2, 2)), dims=['y', 'x'],
+    )
+    values_np = xr.DataArray(values_data, dims=['y', 'x', 'band'])
+    with pytest.raises(ValueError, match="same backend"):
+        apply(zones_dask, values_np, lambda x: x + 10, nodata=0)
+
+
 def test_apply_nodata_none():
     zones_data = np.array([[0, 1], [2, 3]], dtype=np.int32)
     values_data = np.array([[1.0, 2.0], [3.0, 4.0]])
