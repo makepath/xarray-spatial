@@ -72,13 +72,6 @@ class TestSingleColumnRaster:
     def test_nx1_downsample(self, backend, method):
         if not _backend_available(backend):
             pytest.skip(f"backend {backend} unavailable")
-        if method == 'cubic' and backend.startswith('dask'):
-            # The dask path uses a depth-16 cubic-prefilter overlap, which
-            # ensure_minimum_chunksize cannot accommodate for a width-1
-            # array. The eager numpy and cupy backends handle Nx1 cubic
-            # fine; the dask limitation is documented in the audit notes
-            # and tracked as a separate issue rather than a sweep fix.
-            pytest.skip("dask cubic depth>chunk-width; tracked in #2547")
         data = np.array([[1.0], [2.0], [3.0], [4.0]], dtype=np.float32)
         agg = create_test_raster(
             data, backend=backend, dims=['y', 'x'],
@@ -386,3 +379,54 @@ class TestEmptyRasterRejected:
         )
         with pytest.raises((IndexError, ValueError)):
             resample(agg, scale_factor=0.5, method='nearest')
+
+
+# ---------------------------------------------------------------------------
+# Issue #2547 -- dask cubic on arrays smaller than the prefilter depth
+# ---------------------------------------------------------------------------
+
+class TestDaskCubicSmallInput:
+    """Inputs smaller than the cubic prefilter depth used to crash the dask
+    path with ``ValueError: The overlapping depth 16 is larger than your
+    array N``. The fix clamps overlap depth per axis to the array size, so
+    every shape below should run end-to-end and match the eager numpy
+    reference within float32 tolerance."""
+
+    # Once depth is clamped to ``axis_total - 1``, ``_ensure_min_chunksize``
+    # always collapses the clamped axis to a single chunk (its min_size is
+    # ``2 * (axis_total - 1) + 1 > axis_total``). A user-supplied multi-chunk
+    # layout on a small axis therefore folds into one chunk anyway, so the
+    # parametrization below only varies shape, not user chunking.
+    @pytest.mark.parametrize('backend', ['dask+numpy', 'dask+cupy'])
+    @pytest.mark.parametrize(
+        'shape,chunks',
+        [
+            ((8, 1), (2, 1)),    # Nx1 column, smaller than depth on rows
+            ((1, 8), (1, 2)),    # 1xN row, smaller than depth on cols
+            ((4, 4), (4, 4)),    # tiny single-chunk array
+            ((8, 8), (4, 4)),    # both axes smaller than depth=16
+        ],
+    )
+    def test_cubic_small_input(self, backend, shape, chunks):
+        if not _backend_available(backend):
+            pytest.skip(f"backend {backend} unavailable")
+        h, w = shape
+        data = np.arange(h * w, dtype=np.float32).reshape(h, w) + 1.0
+        agg = create_test_raster(
+            data, backend=backend, dims=['y', 'x'],
+            attrs={'res': (1.0, 1.0)}, chunks=chunks,
+        )
+        out = resample(agg, scale_factor=0.5, method='cubic')
+        out_np = _to_numpy(out)
+
+        ref = create_test_raster(
+            data, backend='numpy', dims=['y', 'x'],
+            attrs={'res': (1.0, 1.0)},
+        )
+        ref_np = _to_numpy(resample(ref, scale_factor=0.5, method='cubic'))
+
+        assert out_np.shape == ref_np.shape
+        assert np.all(np.isfinite(out_np))
+        # Boundary IIR transient differs once depth is clamped below 16,
+        # so allow a loose tolerance for the small-input case.
+        np.testing.assert_allclose(out_np, ref_np, rtol=1e-3, atol=1e-3)
