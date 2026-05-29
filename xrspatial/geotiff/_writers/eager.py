@@ -1432,7 +1432,14 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
 
     # Every tile is written. Promote the staging dir to its final name in
     # one atomic rename so the VRT only ever references a complete tile set.
+    # A pre-existing *empty* ``tiles_dir`` passes the leftover-state guard
+    # above (the old code reused it via ``makedirs(exist_ok=True)``), but
+    # ``os.replace`` onto an existing directory raises on Windows even when
+    # the target is empty. Drop the empty target first so the rename has a
+    # clear slot on every platform.
     try:
+        if os.path.isdir(tiles_dir):
+            os.rmdir(tiles_dir)  # only succeeds if empty; guard ensured that
         os.replace(staging_dir, tiles_dir)
     except BaseException:
         _cleanup_staging()

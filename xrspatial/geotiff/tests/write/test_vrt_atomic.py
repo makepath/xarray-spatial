@@ -103,6 +103,26 @@ def test_failed_tiled_write_leaves_no_poisoned_output_and_retry_succeeds(
         np.asarray(result.data).squeeze(), da.values, decimal=5)
 
 
+def test_preexisting_empty_tiles_dir_is_reused(tmp_path):
+    """An empty ``*_tiles`` directory left over from a prior aborted run
+    passes the non-empty leftover-state guard, so the write must promote
+    the staging dir into that slot rather than raising."""
+    da = _make_da()
+    vrt_path = str(tmp_path / 'atomic_2669_empty.vrt')
+    tiles_dir = _tiles_dir_for(vrt_path)
+    os.makedirs(tiles_dir)  # empty, pre-existing
+
+    to_geotiff(da, vrt_path, tiled=True, tile_size=16, compression='none')
+
+    assert os.path.isfile(vrt_path)
+    assert os.path.isdir(tiles_dir)
+    tiles = [f for f in os.listdir(tiles_dir) if f.endswith('.tif')]
+    assert len(tiles) == 4
+    result = open_geotiff(vrt_path)
+    np.testing.assert_array_almost_equal(
+        np.asarray(result.data).squeeze(), da.values, decimal=5)
+
+
 def test_dask_failed_tiled_write_cleans_up(tmp_path, monkeypatch):
     """Same atomicity guarantee on the dask streaming path."""
     pytest.importorskip("dask.array")
