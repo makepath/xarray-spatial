@@ -3139,6 +3139,191 @@ class TestVerticalShift:
         )
 
 
+class TestVerticalShiftIntegerDtype:
+    """Vertical shift must work on integer DEMs by promoting to float (#2565).
+
+    Real-world DEM products (SRTM, ASTER GDEM, Copernicus DEM) ship as
+    int16, so the vertical-shift path used to crash with
+    ``UFuncTypeError`` when callers asked for a geoid -> ellipsoidal
+    transform. The fix promotes the array to a float dtype before the
+    shift and rewrites the integer nodata sentinel to NaN.
+    """
+
+    def _ny_raster_int(self, dtype, value, nodata, h=8, w=8):
+        # Same NY footprint as TestVerticalShift._ny_raster so the
+        # reference geoid undulation is known to be ~-33 m there.
+        y = np.linspace(41.1, 40.3, h)
+        x = np.linspace(-74.4, -73.6, w)
+        data = np.full((h, w), value, dtype=dtype)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': nodata},
+        )
+
+    def test_int16_promotes_to_float32(self):
+        """int16 DEM with EGM96 -> ellipsoidal shift returns float32."""
+        from xrspatial.reproject import reproject, geoid_height
+        raster = self._ny_raster_int(np.int16, 100, -32768)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        assert result.dtype == np.float32, (
+            f"expected float32 output for int16 input, got {result.dtype}"
+        )
+        # Nodata sentinel should follow the dtype promotion.
+        assert np.isnan(result.attrs['nodata']), (
+            f"expected NaN nodata after promotion, got {result.attrs['nodata']!r}"
+        )
+        # Numerical check against the known reference undulation.
+        cy = float(result.coords['y'].values[result.shape[0] // 2])
+        cx = float(result.coords['x'].values[result.shape[1] // 2])
+        N = geoid_height(cx, cy, model='EGM96')
+        cval = float(result.values[result.shape[0] // 2, result.shape[1] // 2])
+        # Allow loose tolerance for float32 plus interpolation noise.
+        assert abs(cval - (100.0 + N)) < 1.0, (
+            f"shifted value {cval} not within 1 m of expected {100.0 + N}"
+        )
+
+    def test_uint8_promotes_to_float32(self):
+        """uint8 raster also promotes to float32 (covers small unsigned ints)."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster_int(np.uint8, 100, 0)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        assert result.dtype == np.float32
+        assert np.isnan(result.attrs['nodata'])
+        # Geoid undulation in NY is ~-33 m, so 100 + N is ~67. Sanity
+        # check that the shift actually happened and stays in a sane band.
+        finite = result.values[np.isfinite(result.values)]
+        assert finite.size > 0
+        assert np.all(finite < 100.0)  # ellipsoidal height < orthometric here
+        assert np.all(finite > 50.0)
+
+    def test_float32_no_vertical_promotion(self):
+        """float32 input is not further promoted by the vertical shift.
+
+        ``reproject()`` itself upcasts float32 to float64 in its resample
+        path; the vertical-shift code must not stack a second promotion
+        on top of that. Compare the dtype of the shifted output to the
+        dtype of a plain reproject of the same raster.
+        """
+        from xrspatial.reproject import reproject
+        y = np.linspace(41.1, 40.3, 8)
+        x = np.linspace(-74.4, -73.6, 8)
+        data = np.full((8, 8), 100.0, dtype=np.float32)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'], coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.float32('nan')},
+        )
+        baseline = reproject(raster, 'EPSG:4326')
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        assert result.dtype == baseline.dtype, (
+            f"vertical shift changed dtype from {baseline.dtype} to {result.dtype}"
+        )
+
+    def test_float64_stays_float64(self):
+        """float64 input keeps its precision through the shift."""
+        from xrspatial.reproject import reproject
+        y = np.linspace(41.1, 40.3, 8)
+        x = np.linspace(-74.4, -73.6, 8)
+        data = np.full((8, 8), 100.0, dtype=np.float64)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'], coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        assert result.dtype == np.float64
+
+    def test_int16_nodata_becomes_nan(self):
+        """Integer nodata pixels must map to NaN in the promoted output."""
+        from xrspatial.reproject import reproject
+        # Put a nodata pixel right in the middle of an otherwise valid raster.
+        y = np.linspace(41.1, 40.3, 8)
+        x = np.linspace(-74.4, -73.6, 8)
+        data = np.full((8, 8), 100, dtype=np.int16)
+        data[4, 4] = -32768  # mark one cell as nodata
+        raster = xr.DataArray(
+            data, dims=['y', 'x'], coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        assert result.dtype == np.float32
+        # The nodata cell must have propagated as NaN, not as -32768 + N.
+        assert np.isnan(result.values[4, 4]), (
+            f"expected NaN at nodata cell, got {result.values[4, 4]}"
+        )
+        # Surrounding cells should still carry a finite shifted value.
+        finite = np.isfinite(result.values)
+        assert finite.sum() >= 50  # most cells finite
+
+    def test_int16_fillvalue_attr_promoted(self):
+        """attrs['_FillValue'] and attrs['nodatavals'] follow the dtype.
+
+        ``reproject()`` carries both keys forward when the source had
+        them. After dtype promotion the values used to keep the original
+        integer sentinel, which contradicts the now-float array contents.
+        """
+        from xrspatial.reproject import reproject
+        y = np.linspace(41.1, 40.3, 8)
+        x = np.linspace(-74.4, -73.6, 8)
+        data = np.full((8, 8), 100, dtype=np.int16)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'], coords={'y': y, 'x': x},
+            attrs={
+                'crs': 'EPSG:4326',
+                'nodata': -32768,
+                '_FillValue': -32768,
+                'nodatavals': (-32768,),
+            },
+        )
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        assert np.isnan(result.attrs['_FillValue'])
+        assert np.isnan(result.attrs['nodatavals'][0])
+
+    def test_int16_dask_promotes_to_float32(self):
+        """Dask-backed int16 input must also promote correctly."""
+        import dask.array as da
+        from xrspatial.reproject import reproject
+        host = np.full((48, 48), 100, dtype=np.int16)
+        y = np.linspace(41.1, 40.3, 48)
+        x = np.linspace(-74.4, -73.6, 48)
+        raster = xr.DataArray(
+            da.from_array(host, chunks=(16, 16)), dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        # The dask graph must advertise float32 so downstream consumers
+        # don't get a dtype lie.
+        assert result.dtype == np.float32
+        assert np.isnan(result.attrs['nodata'])
+        vals = result.values
+        finite = vals[np.isfinite(vals)]
+        assert finite.size > 0
+        # NY undulation is ~-33 m, so 100 + N should sit around 67 m.
+        assert np.all(finite < 100.0)
+        assert np.all(finite > 50.0)
+
+
 class TestMetadataPreservation:
     """reproject() and merge() must carry input attrs forward."""
 
