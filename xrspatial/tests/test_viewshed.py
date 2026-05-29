@@ -476,7 +476,9 @@ def _dask_cupy_raster(arr_np, xs, ys, chunks, attrs=None):
 
 @pytest.mark.skipif(not has_cuda_and_cupy(), reason="requires CUDA and cupy")
 @pytest.mark.skipif(not has_rtx(), reason="rtxpy not available")
-def test_viewshed_dask_cupy_flat():
+@pytest.mark.parametrize("observer_elev", [5, 2])
+@pytest.mark.parametrize("target_elev", [0, 1])
+def test_viewshed_dask_cupy_flat(observer_elev, target_elev):
     """dask+cupy on flat terrain should match the analytical angle formula.
 
     Exercises the dask+cupy dispatch path in ``_viewshed_dask`` (Tier B),
@@ -487,7 +489,6 @@ def test_viewshed_dask_cupy_flat():
     arr = np.full((ny, nx), 1.3)
     xs = np.arange(nx) * 0.5
     ys = np.arange(ny) * 1.5
-    observer_elev, target_elev = 5, 0
 
     raster = _dask_cupy_raster(arr, xs, ys, chunks=(3, 2))
     v = viewshed(raster, x=x, y=y,
@@ -621,7 +622,7 @@ def test_viewshed_nan_input_supported_positions(nan_pos):
 
 
 @pytest.mark.xfail(reason="viewshed crashes on NaN at this position "
-                          "(ValueError: node not found) — see issue #2693",
+                          "(ValueError: node not found), see issue #2693",
                    strict=True)
 def test_viewshed_nan_input_crashing_position():
     """Regression guard for the incomplete NaN handling in the CPU sweep.
