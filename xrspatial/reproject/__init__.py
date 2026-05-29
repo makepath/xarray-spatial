@@ -25,7 +25,6 @@ from ._grid import (
     _validate_grid_params,
 )
 from ._interpolate import (
-    _resample_cupy,
     _resample_cupy_native,
     _resample_numpy,
     _validate_resampling,
@@ -586,24 +585,19 @@ def _reproject_chunk_cupy(
         bands = []
         for b in range(n_bands):
             band_data = window[:, :, b].astype(cp.float64)
-            if _use_native_cuda:
-                # Native CUDA kernels do the nodata->NaN conversion
-                # internally; matching the 2-D path above.
-                band_result = _resample_cupy_native(
-                    band_data, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
-            else:
-                # CPU coords path needs explicit conversion before
-                # cupyx.scipy.ndimage.map_coordinates.
-                if not np.isnan(nodata):
-                    band_data = cp.where(
-                        band_data == nodata, cp.nan, band_data,
-                    )
-                band_result = _resample_cupy(
-                    band_data, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
+            # Always resample through the native CUDA kernels so the cupy
+            # backend matches numpy exactly. They accept CPU coordinate
+            # arrays (transferring them to the GPU) and do the
+            # nodata->NaN conversion internally, so they serve both the
+            # on-device coordinate path and the pyproj fallback. Using
+            # cupyx.scipy.ndimage.map_coordinates here instead would
+            # diverge from numpy: it bleeds the cval=0.0 constant into the
+            # half-pixel boundary band rather than renormalizing, and its
+            # order=3 path is a B-spline rather than Catmull-Rom (#2620).
+            band_result = _resample_cupy_native(
+                band_data, local_row, local_col,
+                resampling=resampling, nodata=nodata,
+            )
             if np.issubdtype(orig_dtype, np.integer):
                 info = np.iinfo(orig_dtype)
                 band_result = cp.clip(
@@ -614,18 +608,14 @@ def _reproject_chunk_cupy(
 
     window = window.astype(cp.float64)
 
-    if _use_native_cuda:
-        # Coordinates are already CuPy arrays -- use native CUDA kernels
-        # (nodata->NaN conversion is handled inside _resample_cupy_native)
-        result = _resample_cupy_native(window, local_row, local_col,
-                                       resampling=resampling, nodata=nodata)
-    else:
-        # CPU coordinates -- convert sentinel nodata to NaN before map_coordinates
-        if not np.isnan(nodata):
-            window[window == nodata] = cp.nan
-
-        result = _resample_cupy(window, local_row, local_col,
-                                resampling=resampling, nodata=nodata)
+    # Always resample through the native CUDA kernels for numpy parity.
+    # local_row/local_col may be CuPy (on-device transform) or numpy
+    # (pyproj fallback); _resample_cupy_native handles both and does the
+    # nodata->NaN conversion internally. The previous
+    # cupyx.scipy.ndimage.map_coordinates fallback diverged from numpy at
+    # chunk edges and for cubic resampling (#2620).
+    result = _resample_cupy_native(window, local_row, local_col,
+                                   resampling=resampling, nodata=nodata)
 
     # Clamp and cast back for integer source dtypes (parity with numpy path)
     if np.issubdtype(orig_dtype, np.integer):
@@ -1742,16 +1732,15 @@ def _reproject_dask_cupy(
             local_row = src_row_px - r_min_clip
             local_col = src_col_px - c_min_clip
 
-            if cuda_coords is not None:
-                chunk_data = _resample_cupy_native(
-                    window, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
-            else:
-                chunk_data = _resample_cupy(
-                    window, local_row, local_col,
-                    resampling=resampling, nodata=nodata,
-                )
+            # Always use the native CUDA kernels (numpy parity). The
+            # cupyx.scipy.ndimage.map_coordinates fallback diverged from
+            # numpy at chunk edges and for cubic resampling (#2620).
+            # local_row/local_col may be numpy here (pyproj fallback);
+            # _resample_cupy_native transfers them to the GPU.
+            chunk_data = _resample_cupy_native(
+                window, local_row, local_col,
+                resampling=resampling, nodata=nodata,
+            )
 
             # Clamp + cast back for integer source dtypes so this fast
             # path returns the same dtype as the other backends (#2505).
