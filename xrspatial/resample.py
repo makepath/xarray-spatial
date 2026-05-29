@@ -1230,7 +1230,18 @@ def _resolve_nodata(agg, nodata):
             f"nodata={nodata!r} is not representable in integer dtype "
             f"{agg.dtype}; pass an integer sentinel instead."
         )
-    return np.asarray(nodata).astype(agg.dtype).item()
+    # Integer inputs: an out-of-range sentinel wraps on cast (e.g. 999
+    # becomes 231 for uint8), masking the wrong cells. Require the value
+    # to round-trip exactly into agg.dtype before trusting the cast.
+    cast = np.asarray(nodata).astype(agg.dtype).item()
+    if cast != int(nodata):
+        info = np.iinfo(agg.dtype)
+        raise ValueError(
+            f"nodata={nodata!r} is out of range for integer dtype "
+            f"{agg.dtype} (valid range [{info.min}, {info.max}]); "
+            f"it would wrap to {cast} and mask the wrong cells."
+        )
+    return cast
 
 
 def _apply_nodata_mask(agg, nodata):
@@ -1317,8 +1328,10 @@ def resample(
     ValueError
         If neither or both of ``scale_factor`` and ``target_resolution``
         are given; if either is a sequence whose length is not 2; if any
-        component is zero, negative, NaN, or infinite; or if ``method``
-        is not in :data:`ALL_METHODS`.
+        component is zero, negative, NaN, or infinite; if ``method``
+        is not in :data:`ALL_METHODS`; or if ``nodata`` does not
+        round-trip exactly into an integer ``agg.dtype`` (a fractional
+        or out-of-range sentinel that would wrap on the cast).
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
 
