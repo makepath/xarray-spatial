@@ -146,14 +146,15 @@ def test_boundary_invalid():
 
 
 @dask_array_available
-def test_dask_numpy_advertised_dtype_matches_computed():
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_dask_numpy_advertised_dtype_matches_computed(boundary):
     # planar dask map_overlap must advertise float32, matching the realized
     # data and the numpy/cupy backends (issue #2682).
     data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
     numpy_agg = create_test_raster(data, backend='numpy')
     dask_agg = create_test_raster(data, backend='dask+numpy')
-    np_result = aspect(numpy_agg)
-    da_result = aspect(dask_agg)
+    np_result = aspect(numpy_agg, boundary=boundary)
+    da_result = aspect(dask_agg, boundary=boundary)
     assert np_result.dtype == np.float32
     assert da_result.dtype == np.float32
     assert da_result.data.compute().dtype == np.float32
