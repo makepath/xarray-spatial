@@ -810,6 +810,37 @@ def test_hotspot_gpu(data_hotspots):
 
 
 @dask_array_available
+@cuda_and_cupy_available
+def test_hotspots_dask_cupy():
+    import cupy
+
+    # Use a larger array so chunk interiors are meaningful
+    rng = np.random.default_rng(42)
+    data = rng.random((20, 24)).astype(np.float64) * 1000
+    kernel = np.array([[0., 1., 0.], [1., 1., 1.], [0., 1., 0.]])
+
+    # cupy reference (classification runs on the GPU)
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_hotspots = hotspots(cupy_agg, kernel)
+
+    # dask + cupy case
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy', chunks=(10, 12))
+    dask_cupy_hotspots = hotspots(dask_cupy_agg, kernel)
+    general_output_checks(dask_cupy_agg, dask_cupy_hotspots, verify_attrs=False)
+
+    # the result must stay a cupy-backed dask array end to end
+    assert isinstance(dask_cupy_hotspots.data, da.Array)
+    assert isinstance(dask_cupy_hotspots.data._meta, cupy.ndarray)
+
+    # Compare interior (boundary='nan' causes edge differences between
+    # cupy single-GPU bounds-clamping and dask map_overlap NaN-padding)
+    pad = kernel.shape[0] // 2
+    np.testing.assert_array_equal(
+        cupy_hotspots.data[pad:-pad, pad:-pad].get(),
+        dask_cupy_hotspots.data[pad:-pad, pad:-pad].compute().get())
+
+
+@dask_array_available
 def test_convolution_2d_boundary_modes():
     data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
     kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)

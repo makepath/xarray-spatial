@@ -1307,12 +1307,16 @@ def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
     pad_h = norm_kernel.shape[0] // 2
     pad_w = norm_kernel.shape[1] // 2
 
-    # Pass 2: fuse convolution + z-score + classification
-    # Convolution on GPU, classification on CPU (branching-heavy)
+    # Pass 2: fuse convolution + z-score + classification, all on the GPU.
+    # Reuse the _run_gpu_hotspots kernel (same as the single-GPU path) so
+    # each chunk stays on the device -- no host round trip per chunk.
     def _chunk_fn(chunk):
         convolved = _convolve_2d_cupy(chunk, norm_kernel)
         z = (convolved - global_mean) / global_std
-        return cupy.asarray(_calc_hotspots_numpy(cupy.asnumpy(z)))
+        out = cupy.zeros_like(z, dtype=cupy.int8)
+        griddim, blockdim = cuda_args(z.shape)
+        _run_gpu_hotspots[griddim, blockdim](z, out)
+        return out
 
     out = data.map_overlap(
         _chunk_fn,
