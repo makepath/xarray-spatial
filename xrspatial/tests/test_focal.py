@@ -31,6 +31,20 @@ def test_mean_transfer_function_cpu():
     general_output_checks(numpy_agg, numpy_mean)
 
 
+def test_mean_default_excludes_does_not_leak():
+    # excludes defaults to None and is resolved to [np.nan] inside the body,
+    # so the default must not be a shared mutable object across calls.
+    numpy_agg = xr.DataArray(data_random)
+
+    first = mean(numpy_agg)
+    second = mean(numpy_agg)
+
+    # default None resolves to the same behaviour as an explicit [np.nan]
+    explicit = mean(numpy_agg, excludes=[np.nan])
+    np.testing.assert_array_equal(first.data, explicit.data)
+    np.testing.assert_array_equal(first.data, second.data)
+
+
 @dask_array_available
 def test_mean_transfer_function_dask_cpu():
     # numpy case

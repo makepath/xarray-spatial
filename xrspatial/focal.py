@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-
 import copy
+import math
 from functools import partial
 from math import isnan
-import math
 
 import numba as nb
 import numpy as np
 import pandas as pd
 import xarray as xr
-
 from numba import cuda, prange
 from xarray import DataArray
-
 
 try:
     import dask.array as da
@@ -27,14 +24,12 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from xrspatial.convolution import (
-    convolve_2d, custom_kernel, _convolve_2d_numpy, _convolve_2d_cupy,
-    _available_memory_bytes,
-)
-from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
-                             _validate_boundary, _validate_raster, _validate_scalar,
-                             cuda_args, ngjit, not_implemented_func)
+from xrspatial.convolution import (_available_memory_bytes, _convolve_2d_cupy, _convolve_2d_numpy,
+                                   convolve_2d, custom_kernel)
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
+                             _validate_boundary, _validate_raster, _validate_scalar, cuda_args,
+                             ngjit)
 
 
 def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name):
@@ -240,7 +235,7 @@ def _mean(data, excludes, boundary='nan'):
 
 
 @supports_dataset
-def mean(agg, passes=1, excludes=[np.nan], name='mean', boundary='nan'):
+def mean(agg, passes=1, excludes=None, name='mean', boundary='nan'):
     """
     Returns Mean filtered array using a 3x3 window.
     Default behaviour to 'mean' is to exclude NaNs from calculations.
@@ -339,6 +334,9 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean', boundary='nan'):
                [0.47928995, 0.47928995, 0.47928995, 0.47928995, 0.47928995]])
         Dimensions without coordinates: dim_0, dim_1
     """
+
+    if excludes is None:
+        excludes = [np.nan]
 
     _validate_raster(agg, func_name='mean', name='agg', ndim=(2, 3))
     _validate_scalar(passes, func_name='mean', name='passes', dtype=int, min_val=1)
