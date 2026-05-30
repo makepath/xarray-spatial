@@ -1130,6 +1130,12 @@ def focal_stats(agg,
         dask_cupy_func=partial(_focal_stats_dask_cupy, boundary=boundary),
     )
     result = mapper(agg)(agg, kernel, stats_funcs)
+    # Pin the result name so it is identical across all four backends.
+    # The numpy / dask+numpy paths route through ``apply`` and inherit its
+    # default ``'focal_apply'`` name; the cupy path leaves it None and the
+    # dask+cupy path otherwise leaks the internal dask graph token
+    # (``_trim-...``). Set it explicitly to keep metadata consistent.
+    result.name = 'focal_apply'
     return result
 
 
@@ -1419,6 +1425,7 @@ def hotspots(raster, kernel, boundary='nan'):
     attrs['unit'] = '%'
 
     return DataArray(out,
+                     name='hotspots',
                      coords=raster.coords,
                      dims=raster.dims,
                      attrs=attrs)
