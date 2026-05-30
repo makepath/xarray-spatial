@@ -990,6 +990,78 @@ def test_hotspots_boundary_numpy_equals_dask(boundary, size, chunks):
         np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
 
 
+# --- cupy honours boundary (issue-2730) ---
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_mean_boundary_numpy_equals_cupy_2730(boundary):
+    """The cupy mean() must honour boundary, matching the numpy result.
+
+    Regression for #2730: the cupy backend ignored boundary and always
+    behaved as 'nan' (edge clamping).
+    """
+    import cupy
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
+    cupy_agg = xr.DataArray(cupy.asarray(data), dims=['y', 'x'])
+    np_result = mean(numpy_agg, boundary=boundary)
+    cp_result = mean(cupy_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, cp_result.data.get(), equal_nan=True, rtol=1e-4)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_apply_boundary_numpy_equals_cupy_2730(boundary):
+    """The cupy apply() must honour boundary, matching the numpy result."""
+    import cupy
+    from xrspatial.focal import _focal_mean_cuda
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+    np_result = apply(numpy_agg, kernel, boundary=boundary)
+    cp_result = apply(cupy_agg, kernel, _focal_mean_cuda, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, cp_result.data.get(), equal_nan=True, rtol=1e-4)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_focal_stats_boundary_numpy_equals_cupy_2730(boundary):
+    """The cupy focal_stats() must honour boundary, matching numpy."""
+    import cupy
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    stats = ['mean', 'sum', 'min', 'max', 'range', 'std', 'var']
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+    np_result = focal_stats(numpy_agg, kernel, stats_funcs=stats, boundary=boundary)
+    cp_result = focal_stats(cupy_agg, kernel, stats_funcs=stats, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, cp_result.data.get(), equal_nan=True, rtol=1e-4)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
+def test_focal_stats_cupy_boundary_preserves_coords_2730(boundary):
+    """Non-nan boundary on the cupy focal_stats path keeps coords/attrs."""
+    import cupy
+    data = np.random.default_rng(7).random((5, 6)).astype(np.float64)
+    coords = {'y': np.arange(5) * 2.0, 'x': np.arange(6) * 3.0}
+    cupy_agg = xr.DataArray(
+        cupy.asarray(data), dims=['y', 'x'], coords=coords, attrs={'unit': 'm'})
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    result = focal_stats(cupy_agg, kernel, stats_funcs=['mean', 'max'],
+                         boundary=boundary)
+    assert result.shape == (2, 5, 6)
+    np.testing.assert_array_equal(result['y'].data, coords['y'])
+    np.testing.assert_array_equal(result['x'].data, coords['x'])
+    assert list(result['stats'].data) == ['mean', 'max']
+    assert result.attrs['unit'] == 'm'
+
+
 @dask_array_available
 @pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
 def test_convolution_2d_boundary_no_nan(boundary):
