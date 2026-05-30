@@ -133,6 +133,65 @@ class TestNaNHandling:
 
 
 # ---------------------------------------------------------------------------
+# Inf handling
+# ---------------------------------------------------------------------------
+
+class TestInfHandling:
+
+    def test_pos_inf_center(self):
+        """A quad touching +inf must not produce NaN coordinates."""
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 1., 1., 1., 0.],
+            [0., 1., np.inf, 1., 0.],
+            [0., 1., 1., 1., 0.],
+            [0., 0., 0., 0., 0.],
+        ], dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.5])
+        for level, coords in result:
+            assert np.isfinite(coords).all(), \
+                f"Non-finite coordinates found at level {level}"
+
+    def test_neg_inf_center(self):
+        """A quad touching -inf must not produce NaN coordinates."""
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 1., 1., 1., 0.],
+            [0., 1., -np.inf, 1., 0.],
+            [0., 1., 1., 1., 0.],
+            [0., 0., 0., 0., 0.],
+        ], dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.5])
+        for level, coords in result:
+            assert np.isfinite(coords).all(), \
+                f"Non-finite coordinates found at level {level}"
+
+    def test_mixed_inf(self):
+        """Multiple infinities of opposite signs must not produce NaN."""
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., np.inf, 1., -np.inf, 0.],
+            [0., 1., 1., 1., 0.],
+            [0., -np.inf, 1., np.inf, 0.],
+            [0., 0., 0., 0., 0.],
+        ], dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[0.5])
+        for level, coords in result:
+            assert np.isfinite(coords).all(), \
+                f"Non-finite coordinates found at level {level}"
+
+    def test_all_inf_quad(self):
+        """A 2x2 raster with all corners infinite produces no contours."""
+        data = np.full((2, 2), np.inf, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.0])
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 
