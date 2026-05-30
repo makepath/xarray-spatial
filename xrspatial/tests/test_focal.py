@@ -810,6 +810,34 @@ def test_hotspot_gpu(data_hotspots):
 
 
 @dask_array_available
+@cuda_and_cupy_available
+def test_hotspots_dask_cupy():
+    # The dask+cupy backend (_hotspots_dask_cupy) is registered in the
+    # dispatch table but was previously exercised by no test. Verify it
+    # runs and matches the numpy reference on the chunk interior.
+    rng = np.random.default_rng(42)
+    data = rng.standard_normal((12, 14)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+
+    # numpy reference
+    numpy_agg = create_test_raster(data)
+    numpy_hotspots = hotspots(numpy_agg, kernel)
+
+    # dask + cupy case
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy', chunks=(6, 7))
+    dask_cupy_hotspots = hotspots(dask_cupy_agg, kernel)
+    general_output_checks(dask_cupy_agg, dask_cupy_hotspots, verify_attrs=False)
+    assert dask_cupy_hotspots.attrs['unit'] == '%'
+
+    # Compare interior (boundary='nan' causes edge differences between the
+    # single-GPU bounds-clamping convolution and dask map_overlap NaN-padding)
+    pad = kernel.shape[0] // 2
+    np.testing.assert_array_equal(
+        dask_cupy_hotspots.data[pad:-pad, pad:-pad].compute().get(),
+        numpy_hotspots.data[pad:-pad, pad:-pad])
+
+
+@dask_array_available
 def test_convolution_2d_boundary_modes():
     data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
     kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
