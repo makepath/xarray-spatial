@@ -24,6 +24,14 @@ from xrspatial.utils import _validate_raster
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.geodesic import (
+    INV_2R,
+    WGS84_A2,
+    WGS84_B2,
+    _check_geodesic_memory,
+    _cpu_geodesic_aspect,
+    _run_gpu_geodesic_aspect,
+)
 
 
 def _geodesic_cuda_dims(shape):
@@ -35,14 +43,6 @@ def _geodesic_cuda_dims(shape):
     )
     return bpg, tpb
 
-from xrspatial.geodesic import (
-    INV_2R,
-    WGS84_A2,
-    WGS84_B2,
-    _check_geodesic_memory,
-    _cpu_geodesic_aspect,
-    _run_gpu_geodesic_aspect,
-)
 
 # 3rd-party
 try:
@@ -216,7 +216,8 @@ def _run_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
         zf_arr = cupy.array([z_factor], dtype=cupy.float64)
         inv_2r_arr = cupy.array([INV_2R], dtype=cupy.float64)
         griddim, blockdim = _geodesic_cuda_dims((H, W))
-        _run_gpu_geodesic_aspect[griddim, blockdim](stacked, a2_arr, b2_arr, zf_arr, inv_2r_arr, out)
+        _run_gpu_geodesic_aspect[griddim, blockdim](
+            stacked, a2_arr, b2_arr, zf_arr, inv_2r_arr, out)
         return out[1:-1, 1:-1]
 
     lat_2d_gpu = cupy.asarray(lat_2d, dtype=cupy.float64)
@@ -260,7 +261,8 @@ def _dask_geodesic_aspect_chunk_cupy(stacked_chunk, a2, b2, z_factor):
     inv_2r_arr = cupy.array([INV_2R], dtype=cupy.float64)
 
     griddim, blockdim = _geodesic_cuda_dims((H, W))
-    _run_gpu_geodesic_aspect[griddim, blockdim](stacked_chunk, a2_arr, b2_arr, zf_arr, inv_2r_arr, result_2d)
+    _run_gpu_geodesic_aspect[griddim, blockdim](
+        stacked_chunk, a2_arr, b2_arr, zf_arr, inv_2r_arr, result_2d)
 
     out = cupy.zeros_like(stacked_chunk, dtype=cupy.float32)
     out[0] = result_2d
