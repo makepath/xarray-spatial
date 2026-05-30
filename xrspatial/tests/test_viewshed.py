@@ -459,3 +459,73 @@ def test_viewshed_cpu_memory_guard_passes_with_max_distance():
         v = viewshed(raster, x=50.0, y=50.0, observer_elev=5,
                      max_distance=3.0)
     assert v.values[50, 50] == 180.0
+
+
+def _make_raster(backend):
+    """Build a small viewshed input raster for the given backend."""
+    arr = np.array([
+        [0, 0, 1, 0, 0],
+        [1, 3, 0, 0, 0],
+        [10, 2, 5, 2, -1],
+        [11, 1, 2, 9, 0]], dtype=np.float64)
+    xs = np.linspace(1, 5, 5)
+    ys = np.linspace(1, 4, 4)
+    attrs = {'res': (1.0, 1.0), 'crs': 'EPSG:4326'}
+
+    if backend == "numpy":
+        data = arr
+    elif backend == "dask+numpy":
+        data = da.from_array(arr, chunks=(2, 3))
+    elif backend == "cupy":
+        import cupy as cp
+        data = cp.asarray(arr)
+    elif backend == "dask+cupy":
+        import cupy as cp
+        data = da.from_array(cp.asarray(arr), chunks=(2, 3))
+    else:
+        raise ValueError(backend)
+
+    return xa.DataArray(data, dims=['y', 'x'],
+                        coords={'y': ys, 'x': xs},
+                        attrs=attrs, name='elevation')
+
+
+_METADATA_BACKENDS = [
+    "numpy",
+    "dask+numpy",
+    pytest.param("cupy", marks=pytest.mark.skipif(
+        not has_rtx(), reason="requires rtxpy for the GPU viewshed path")),
+    pytest.param("dask+cupy", marks=pytest.mark.skipif(
+        not has_rtx(), reason="requires rtxpy for the GPU viewshed path")),
+]
+
+
+@pytest.mark.parametrize("backend", _METADATA_BACKENDS)
+@pytest.mark.parametrize("max_distance", [None, 3.0])
+def test_viewshed_output_name_and_dtype_consistent(backend, max_distance):
+    """Output .name and dtype must not depend on the backend (#2743).
+
+    The default name is 'viewshed' on every backend, and the output dtype
+    is float64 everywhere (the GPU path internally works in float32).
+    """
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=1,
+                      max_distance=max_distance)
+
+    assert result.name == "viewshed"
+    assert result.dtype == np.float64
+    assert result.dims == raster.dims
+    # attrs/coords still pass through
+    assert result.attrs == raster.attrs
+    np.testing.assert_allclose(result.coords['x'].data,
+                               raster.coords['x'].data)
+    np.testing.assert_allclose(result.coords['y'].data,
+                               raster.coords['y'].data)
+
+
+@pytest.mark.parametrize("backend", _METADATA_BACKENDS)
+def test_viewshed_custom_name(backend):
+    """A user-supplied name is honoured on every backend."""
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=1, name="my_vs")
+    assert result.name == "my_vs"
