@@ -227,11 +227,19 @@ def _mean_numpy_boundary(data, excludes, boundary='nan'):
     return result[1:-1, 1:-1]
 
 
+def _mean_cupy_boundary(data, excludes, boundary='nan'):
+    if boundary == 'nan':
+        return _mean_cupy(data, excludes)
+    padded = _pad_array(data, 1, boundary)
+    result = _mean_cupy(padded, excludes)
+    return result[1:-1, 1:-1]
+
+
 def _mean(data, excludes, boundary='nan'):
     agg = xr.DataArray(data)
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_mean_numpy_boundary, boundary=boundary),
-        cupy_func=_mean_cupy,
+        cupy_func=partial(_mean_cupy_boundary, boundary=boundary),
         dask_func=partial(_mean_dask_numpy, boundary=boundary),
         dask_cupy_func=partial(_mean_dask_cupy, boundary=boundary),
     )
@@ -474,6 +482,20 @@ def _apply_cupy(data, kernel, func):
     return _focal_stats_func_cupy(data.astype(cupy.float32), kernel, func)
 
 
+def _apply_cupy_boundary(data, kernel, func, boundary='nan'):
+    if boundary == 'nan':
+        return _apply_cupy(data, kernel, func)
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    padded = _pad_array(data, (pad_h, pad_w), boundary)
+    result = _apply_cupy(padded, kernel, func)
+    r0 = pad_h if pad_h else None
+    r1 = -pad_h if pad_h else None
+    c0 = pad_w if pad_w else None
+    c1 = -pad_w if pad_w else None
+    return result[r0:r1, c0:c1]
+
+
 def _apply_dask_cupy(data, kernel, func, boundary='nan'):
     data = data.astype(cupy.float32)
     pad_h = kernel.shape[0] // 2
@@ -617,7 +639,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
     # the function func must be a @ngjit
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_apply_numpy_boundary, boundary=boundary),
-        cupy_func=_apply_cupy,
+        cupy_func=partial(_apply_cupy_boundary, boundary=boundary),
         dask_func=partial(_apply_dask_numpy, boundary=boundary),
         dask_cupy_func=partial(_apply_dask_cupy, boundary=boundary),
     )
@@ -991,6 +1013,29 @@ def _focal_stats_cupy(agg, kernel, stats_funcs):
     return stats
 
 
+def _focal_stats_cupy_boundary(agg, kernel, stats_funcs, boundary='nan'):
+    if boundary == 'nan':
+        return _focal_stats_cupy(agg, kernel, stats_funcs)
+
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    padded_data = _pad_array(agg.data, (pad_h, pad_w), boundary)
+    padded_agg = xr.DataArray(padded_data, dims=agg.dims)
+    padded_stats = _focal_stats_cupy(padded_agg, kernel, stats_funcs)
+
+    r0 = pad_h if pad_h else None
+    r1 = -pad_h if pad_h else None
+    c0 = pad_w if pad_w else None
+    c1 = -pad_w if pad_w else None
+    trimmed = padded_stats.data[:, r0:r1, c0:c1]
+    return xr.DataArray(
+        trimmed,
+        dims=padded_stats.dims,
+        coords={'stats': padded_stats.coords['stats'], **dict(agg.coords)},
+        attrs=agg.attrs,
+    )
+
+
 def _focal_stats_dask_cupy(agg, kernel, stats_funcs, boundary='nan'):
     _stats_cuda_mapper = dict(
         mean=_focal_mean_cuda, sum=_focal_sum_cuda,
@@ -1125,7 +1170,7 @@ def focal_stats(agg,
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
-        cupy_func=_focal_stats_cupy,
+        cupy_func=partial(_focal_stats_cupy_boundary, boundary=boundary),
         dask_func=partial(_focal_stats_cpu, boundary=boundary),
         dask_cupy_func=partial(_focal_stats_dask_cupy, boundary=boundary),
     )
