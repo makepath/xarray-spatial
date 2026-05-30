@@ -1560,8 +1560,12 @@ def _viewshed_cpu(
         viewpoint_target = target_elev
 
     # int getgrdhead(FILE * fd, struct Cell_head *cellhd)
-    ew_res = (x_range[1] - x_range[0]) / (width - 1)
-    ns_res = (y_range[1] - y_range[0]) / (height - 1)
+    # Guard degenerate axes: a single row/column has no resolution along
+    # that axis.  Fall back to unit resolution, matching _viewshed_windowed
+    # and _viewshed_dask, so the division does not produce NaN that would
+    # silently poison every distance/gradient calculation.
+    ew_res = (x_range[1] - x_range[0]) / (width - 1) if width > 1 else 1.0
+    ns_res = (y_range[1] - y_range[0]) / (height - 1) if height > 1 else 1.0
 
     # create the visibility grid of the sizes specified in the header
     visibility_grid = np.empty(shape=raster.shape, dtype=np.float64)

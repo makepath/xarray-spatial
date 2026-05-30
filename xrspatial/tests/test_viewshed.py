@@ -459,3 +459,51 @@ def test_viewshed_cpu_memory_guard_passes_with_max_distance():
         v = viewshed(raster, x=50.0, y=50.0, observer_elev=5,
                      max_distance=3.0)
     assert v.values[50, 50] == 180.0
+
+
+@pytest.mark.parametrize("shape", [(1, 5), (5, 1)])
+def test_viewshed_single_row_or_column(shape):
+    """A 1xN or Nx1 raster must not divide by zero when computing the
+    grid resolution.  Regression test: _viewshed_cpu used to compute
+    ew_res/ns_res as range/(dim-1), which is 0/0 = NaN for a degenerate
+    axis, silently marking every non-observer cell INVISIBLE on flat
+    terrain where they should all be visible."""
+    ny, nx = shape
+    terrain = np.zeros((ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    raster = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    obs_x = float(xs[nx // 2])
+    obs_y = float(ys[ny // 2])
+    v = viewshed(raster, x=obs_x, y=obs_y, observer_elev=5)
+
+    # Observer cell is 180; on flat terrain with an elevated observer
+    # every other cell is visible (no NaN poisoning the geometry).
+    assert v.values[ny // 2, nx // 2] == 180.0
+    assert (v.values > INVISIBLE).all()
+    assert not np.isnan(v.values).any()
+
+
+@pytest.mark.parametrize("shape", [(1, 7), (7, 1)])
+def test_viewshed_single_row_or_column_max_distance(shape):
+    """The max_distance window path routes a degenerate window back
+    through _viewshed_cpu, so it must be guarded too."""
+    ny, nx = shape
+    terrain = np.zeros((ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    raster = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    obs_x = float(xs[nx // 2])
+    obs_y = float(ys[ny // 2])
+    v = viewshed(raster, x=obs_x, y=obs_y, observer_elev=5,
+                 max_distance=2.0)
+
+    assert v.values[ny // 2, nx // 2] == 180.0
+    # A cell two steps along the populated axis is within max_distance and
+    # visible on flat terrain.
+    if nx > 1:
+        assert v.values[0, nx // 2 + 2] > INVISIBLE
+    else:
+        assert v.values[ny // 2 + 2, 0] > INVISIBLE
