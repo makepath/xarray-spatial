@@ -1,7 +1,13 @@
 import numpy as np
 import pytest
 
-from xrspatial import aspect
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
+from xrspatial import aspect, eastness, northness
+from xrspatial.utils import has_dask_array
 from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
                                             assert_nan_edges_effect,
                                             assert_numpy_equals_cupy,
@@ -143,3 +149,76 @@ def test_boundary_invalid():
     agg = create_test_raster(data)
     with pytest.raises(ValueError, match="boundary must be one of"):
         aspect(agg, boundary='invalid')
+
+
+# ---- Degenerate raster shapes (1x1, Nx1, 1xN) ----
+#
+# A 3x3 kernel has no interior cell when a dimension is smaller than 3,
+# so the correct planar result is all-NaN with the input shape preserved.
+# These guard against a regression that would crash or reshape on the
+# kernel-boundary path. See issue #2742.
+
+_DEGENERATE_SHAPES = [(1, 1), (1, 5), (5, 1), (3, 1), (1, 3)]
+
+
+def _to_numpy(result_agg):
+    data = result_agg.data
+    if has_dask_array() and isinstance(data, da.Array):
+        data = data.compute()
+    if hasattr(data, 'get'):  # cupy
+        data = data.get()
+    return data
+
+
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+@pytest.mark.parametrize("shape", _DEGENERATE_SHAPES)
+def test_degenerate_shape_numpy(func, shape):
+    data = np.ones(shape, dtype=np.float32)
+    if shape[0] > 1:
+        data[0, :] = 2.0
+    agg = create_test_raster(data, backend='numpy')
+    result = func(agg)
+    assert result.shape == shape
+    assert np.all(np.isnan(result.data))
+
+
+@dask_array_available
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+@pytest.mark.parametrize("shape", _DEGENERATE_SHAPES)
+def test_degenerate_shape_dask_numpy(func, shape):
+    data = np.ones(shape, dtype=np.float32)
+    if shape[0] > 1:
+        data[0, :] = 2.0
+    chunks = (min(2, shape[0]), min(2, shape[1]))
+    agg = create_test_raster(data, backend='dask+numpy', chunks=chunks)
+    result = func(agg)
+    assert result.shape == shape
+    assert np.all(np.isnan(_to_numpy(result)))
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+@pytest.mark.parametrize("shape", _DEGENERATE_SHAPES)
+def test_degenerate_shape_cupy(func, shape):
+    data = np.ones(shape, dtype=np.float32)
+    if shape[0] > 1:
+        data[0, :] = 2.0
+    agg = create_test_raster(data, backend='cupy')
+    result = func(agg)
+    assert result.shape == shape
+    assert np.all(np.isnan(_to_numpy(result)))
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("func", [aspect, northness, eastness])
+@pytest.mark.parametrize("shape", _DEGENERATE_SHAPES)
+def test_degenerate_shape_dask_cupy(func, shape):
+    data = np.ones(shape, dtype=np.float32)
+    if shape[0] > 1:
+        data[0, :] = 2.0
+    chunks = (min(2, shape[0]), min(2, shape[1]))
+    agg = create_test_raster(data, backend='dask+cupy', chunks=chunks)
+    result = func(agg)
+    assert result.shape == shape
+    assert np.all(np.isnan(_to_numpy(result)))

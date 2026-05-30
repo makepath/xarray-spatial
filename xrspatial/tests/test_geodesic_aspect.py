@@ -294,3 +294,85 @@ class TestGeodesicAspectDaskCupy:
         np.testing.assert_allclose(
             a_np.values, a_dc.data.compute().get(), rtol=1e-5, equal_nan=True
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests — boundary modes
+#
+# The geodesic backends pad the elevation AND the lat/lon coordinate grids
+# (the _run_*_geodesic functions in xrspatial/aspect.py) when boundary is
+# not 'nan'. Only 'nan' was exercised before; these cover the non-default
+# modes and check cross-backend parity. See issue #2742.
+# ---------------------------------------------------------------------------
+
+_NONNAN_BOUNDARY_MODES = ['nearest', 'reflect', 'wrap']
+
+
+class TestGeodesicAspectBoundary:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_nonnan_modes_fill_edges(self, boundary):
+        """Non-nan modes leave no NaN edge for a fully-defined surface."""
+        elev = _east_tilted_surface(H=6, W=8, grade=100.0)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='geodesic', boundary=boundary)
+        assert result.shape == elev.shape
+        assert not np.any(np.isnan(result.values))
+
+    def test_nan_mode_keeps_nan_edges(self):
+        """Default 'nan' boundary still leaves the outer ring NaN."""
+        elev = _east_tilted_surface(H=6, W=8, grade=100.0)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='geodesic', boundary='nan')
+        assert np.all(np.isnan(result.values[0, :]))
+        assert np.all(np.isnan(result.values[-1, :]))
+        assert np.all(np.isnan(result.values[:, 0]))
+        assert np.all(np.isnan(result.values[:, -1]))
+
+
+@dask_array_available
+class TestGeodesicAspectBoundaryDask:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_numpy_equals_dask(self, boundary):
+        elev = _east_tilted_surface(H=8, W=10, grade=100.0)
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
+        r_da = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0,
+                                backend='dask+numpy', chunks=(4, 5))
+        a_np = aspect(r_np, method='geodesic', boundary=boundary)
+        a_da = aspect(r_da, method='geodesic', boundary=boundary)
+        np.testing.assert_allclose(
+            a_np.values, a_da.data.compute(), rtol=1e-5, equal_nan=True
+        )
+
+
+@cuda_and_cupy_available
+class TestGeodesicAspectBoundaryCupy:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_numpy_equals_cupy(self, boundary):
+        elev = _east_tilted_surface(H=8, W=10, grade=100.0)
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
+        r_cu = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='cupy')
+        a_np = aspect(r_np, method='geodesic', boundary=boundary)
+        a_cu = aspect(r_cu, method='geodesic', boundary=boundary)
+        np.testing.assert_allclose(
+            a_np.values, a_cu.data.get(), rtol=1e-5, equal_nan=True
+        )
+
+
+@dask_array_available
+@cuda_and_cupy_available
+class TestGeodesicAspectBoundaryDaskCupy:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_numpy_equals_dask_cupy(self, boundary):
+        elev = _east_tilted_surface(H=8, W=10, grade=100.0)
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
+        r_dc = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0,
+                                backend='dask+cupy', chunks=(4, 5))
+        a_np = aspect(r_np, method='geodesic', boundary=boundary)
+        a_dc = aspect(r_dc, method='geodesic', boundary=boundary)
+        np.testing.assert_allclose(
+            a_np.values, a_dc.data.compute().get(), rtol=1e-5, equal_nan=True
+        )
