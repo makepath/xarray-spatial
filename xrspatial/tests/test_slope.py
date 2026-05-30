@@ -186,6 +186,28 @@ def test_dask_cupy_lazy_dtype_matches_computed():
     assert da_result.data.compute().dtype == np.float32
 
 
+def test_name_annotation_matches_terrain_family():
+    # slope's `name` annotation should match aspect/curvature/northness/
+    # eastness, all of which use Optional[str] (None is a valid name).
+    import typing
+
+    from xrspatial import curvature
+    from xrspatial.aspect import aspect, eastness, northness
+
+    slope_func = getattr(slope, '__wrapped__', slope)
+    expected = typing.get_type_hints(slope_func)['name']
+    for func in (aspect, curvature, northness, eastness):
+        unwrapped = getattr(func, '__wrapped__', func)
+        assert typing.get_type_hints(unwrapped)['name'] == expected
+
+
+def test_name_none_accepted():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = create_test_raster(data, attrs={'res': (1, 1)})
+    result = slope(agg, name=None)
+    assert result.name is None
+
+
 # Degenerate shapes: a dimension too small for the 3x3 kernel to have an
 # interior. The planar CPU kernel loops over range(1, rows-1) (empty when
 # rows<=2), so the output keeps the input shape and comes back all-NaN. Pin

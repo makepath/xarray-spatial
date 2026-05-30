@@ -8,8 +8,8 @@ import numpy as np
 import xarray
 
 from .gpu_rtx import has_rtx
-from .utils import (_validate_raster, has_cuda_and_cupy, has_dask_array,
-                    is_cupy_array, is_cupy_backed, is_dask_cupy, ngjit)
+from .utils import (_validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array,
+                    is_cupy_backed, is_dask_cupy, ngjit)
 
 E_ROW_ID = 0
 E_COL_ID = 1
@@ -1406,9 +1406,9 @@ def _viewshed_cpu_sweep(raster, vp_row, vp_col, vp_elev, vp_target, ew_res,
                 status_node[TN_ANG_0] -= 2 * PI
 
             # insert sn into the status structure
-            id = _pop(idle)
+            node_id = _pop(idle)
             root = _insert_into_tree(status_values, status_struct, root,
-                                     id, status_node)
+                                     node_id, status_node)
 
     # sweep the event_list
 
@@ -1471,9 +1471,9 @@ def _viewshed_cpu_sweep(raster, vp_row, vp_col, vp_elev, vp_target, ew_res,
                     status_node[TN_ANG_1] += 2 * PI
                     status_node[TN_ANG_2] += 2 * PI
 
-            id = _pop(idle)
+            node_id = _pop(idle)
             root = _insert_into_tree(status_values, status_struct, root,
-                                     id, status_node)
+                                     node_id, status_node)
 
         elif etype == EXITING_EVENT:
             # delete node out of status structure
@@ -2010,8 +2010,8 @@ def _extract_elevations(rows, cols, dask_data, cache, y_offsets, x_offsets):
 
 
 def _viewshed_distance_sweep(dask_data, H, W, obs_r, obs_c,
-                              obs_elev, target_elev, ew_res, ns_res,
-                              chunks_y, chunks_x, max_distance):
+                             obs_elev, target_elev, ew_res, ns_res,
+                             chunks_y, chunks_x, max_distance):
     """Out-of-core horizon-profile distance sweep viewshed."""
     # Maximum Chebyshev distance in cells
     max_d_cells = max(obs_r, H - 1 - obs_r, obs_c, W - 1 - obs_c)
