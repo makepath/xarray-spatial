@@ -1797,16 +1797,6 @@ def _is_wgs84_compatible_ellipsoid(crs):
 
 
 @njit(nogil=True, cache=True, parallel=True)
-def _apply_datum_shift_inv(lon_arr, lat_arr, dx, dy, dz, rx, ry, rz, ds,
-                           a_src, f_src, a_tgt, f_tgt):
-    """Batch inverse 7-param Helmert: WGS84 -> source datum."""
-    for i in prange(lon_arr.shape[0]):
-        lon_arr[i], lat_arr[i] = _helmert7_inv(
-            lon_arr[i], lat_arr[i], dx, dy, dz, rx, ry, rz, ds,
-            a_src, f_src, a_tgt, f_tgt)
-
-
-@njit(nogil=True, cache=True, parallel=True)
 def _apply_datum_shift_fwd(lon_arr, lat_arr, dx, dy, dz, rx, ry, rz, ds,
                            a_src, f_src, a_tgt, f_tgt):
     """Batch forward 7-param Helmert: source datum -> WGS84."""
@@ -1822,18 +1812,24 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     Returns (src_y, src_x) arrays if a fast path exists, or None to
     fall back to pyproj.
 
-    For non-WGS84 datums with known Helmert parameters, the projection
-    kernel runs in WGS84 and a geocentric 3-parameter datum shift is
-    applied as a post-processing step.
+    The projection kernels assume WGS84 on both sides. When either CRS
+    uses a non-WGS84 datum (e.g. OSGB36, NAD27, DHDN), there is no
+    proven equivalent datum-shift pipeline here, so we return None and
+    let pyproj handle the transform. See GH #2651.
     """
     src_epsg = _get_epsg(src_crs)
     tgt_epsg = _get_epsg(tgt_crs)
     if src_epsg is None and tgt_epsg is None:
         return None
 
-    # Check if source or target needs a datum shift
-    src_datum = _get_datum_params(src_crs)
-    tgt_datum = _get_datum_params(tgt_crs)
+    # The kernels below run in WGS84. A non-WGS84 datum on either side
+    # needs a datum shift that we cannot apply correctly here: the
+    # post-projection shift would treat projected easting/northing as
+    # lon/lat degrees, and the target-side datum is not handled at all.
+    # Fall back to pyproj rather than return corrupted coordinates.
+    if (_get_datum_params(src_crs) is not None
+            or _get_datum_params(tgt_crs) is not None):
+        return None
 
     height, width = chunk_shape
     left, bottom, right, top = chunk_bounds
@@ -2114,8 +2110,12 @@ def transform_points(src_crs, tgt_crs, xs, ys):
     -----
     Intentional omissions (fall back to pyproj for these):
 
-    * No datum-shift wrapping -- metre-level error is sub-pixel for the
-      boundary-estimation use case this function targets.
+    * No datum-shift wrapping. CRS pairs that need a datum shift (e.g.
+      NAD27 / EPSG:4267, OSGB36, ED50) are detected via
+      ``_get_datum_params`` and bailed to pyproj, which applies the
+      shift. Skipping the shift here would put the output bounds off by
+      the shift magnitude -- tens to over a hundred metres for NAD27 in
+      CONUS, which is many pixels on a high-resolution raster.
     * Sinusoidal and Generic Transverse Mercator are not covered here;
       those projections are dispatched via ``to_dict()['proj']`` which
       requires a full pyproj CRS.
@@ -2123,6 +2123,17 @@ def transform_points(src_crs, tgt_crs, xs, ys):
     src_epsg = _get_epsg(src_crs)
     tgt_epsg = _get_epsg(tgt_crs)
     if src_epsg is None and tgt_epsg is None:
+        return None
+
+    # If either side needs a datum shift, the Numba kernels here run in
+    # WGS84 and would skip it, putting the estimated bounds off by the
+    # shift magnitude. The per-pixel data path (try_numba_transform)
+    # applies the Helmert shift, so bounds computed without it would
+    # disagree with the reprojected data. Bail to pyproj for these.
+    # Conservatively bails on same-datum pairs too (where the shift
+    # cancels); those are rare and correctness wins over the fast path.
+    if (_get_datum_params(src_crs) is not None
+            or _get_datum_params(tgt_crs) is not None):
         return None
 
     src_is_geo = _is_supported_geographic(src_epsg)
@@ -2297,66 +2308,3 @@ def transform_points(src_crs, tgt_crs, xs, ys):
     return None
 
 
-# Wrap try_numba_transform with datum shift support
-_try_numba_transform_inner = try_numba_transform
-
-
-def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
-    """Numba JIT coordinate transform with optional datum shift.
-
-    Wraps the projection-only transform.  If the source CRS uses a
-    non-WGS84 datum with known Helmert parameters (e.g. NAD27), the
-    returned geographic coordinates are shifted from WGS84 to the
-    source datum via a geocentric 3-parameter Helmert transform.
-    """
-    result = _try_numba_transform_inner(src_crs, tgt_crs, chunk_bounds, chunk_shape)
-    if result is None:
-        return None
-
-    # The projection kernels assume WGS84 on both sides.  Apply
-    # datum shifts where needed.
-    src_datum = _get_datum_params(src_crs)
-    if src_datum is not None:
-        src_y, src_x = result
-        flat_lon = src_x.ravel()
-        flat_lat = src_y.ravel()
-
-        # Try grid-based shift first (sub-meter accuracy)
-        try:
-            d = src_crs.to_dict()
-        except Exception:
-            d = {}
-        datum_key = d.get('datum', d.get('ellps', ''))
-
-        grid_applied = False
-        try:
-            from ._datum_grids import find_grid_for_point, get_grid
-            from ._datum_grids import apply_grid_shift_inverse
-
-            # Use center of the output chunk to select the grid
-            center_lon = float(np.mean(flat_lon[:min(100, len(flat_lon))]))
-            center_lat = float(np.mean(flat_lat[:min(100, len(flat_lat))]))
-            grid_key = find_grid_for_point(center_lon, center_lat, datum_key)
-            if grid_key is not None:
-                grid = get_grid(grid_key)
-                if grid is not None:
-                    dlat, dlon, g_left, g_top, g_rx, g_ry, g_h, g_w = grid
-                    apply_grid_shift_inverse(
-                        flat_lon, flat_lat, dlat, dlon,
-                        g_left, g_top, g_rx, g_ry, g_h, g_w,
-                    )
-                    grid_applied = True
-        except Exception:
-            pass
-
-        if not grid_applied:
-            # Fall back to 7-parameter Helmert
-            dx, dy, dz, rx, ry, rz, ds, a_src, f_src = src_datum
-            _apply_datum_shift_inv(
-                flat_lon, flat_lat, dx, dy, dz, rx, ry, rz, ds,
-                a_src, f_src, _WGS84_A, _WGS84_F,
-            )
-
-        return flat_lat.reshape(src_y.shape), flat_lon.reshape(src_x.shape)
-
-    return result

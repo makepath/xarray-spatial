@@ -199,6 +199,48 @@ def _validate_resample_scalar_or_pair(value, param_name):
             )
 
 
+def _validate_monotonic_regular_coords(agg):
+    """Reject inputs whose spatial coords are not regular and monotonic.
+
+    ``resample`` assumes a regular, monotonic grid: ``calc_res`` derives
+    the input resolution from the full coordinate extent while the output
+    coordinates are rebuilt from first/last neighbour spacing. On an
+    irregular or non-monotonic grid those two views of "resolution"
+    disagree and the function silently produces inconsistent output
+    geometry (wrong width, coords spilling past the input range). Fail
+    fast here instead.
+
+    Only 1-D coords that actually exist on the spatial dims are checked;
+    an input without spatial coords is left to the existing code paths.
+    For 3-D inputs ``resample`` recurses per band, so this runs once per
+    band on identical coords -- a cheap, harmless repeat.
+    """
+    for dim in agg.dims[-2:]:
+        if dim not in agg.coords:
+            continue
+        vals = np.asarray(agg[dim].values, dtype=np.float64)
+        if vals.ndim != 1 or vals.size < 2:
+            continue
+        diffs = np.diff(vals)
+        if not (np.all(diffs > 0) or np.all(diffs < 0)):
+            raise ValueError(
+                f"resample(): `agg` coordinate {dim!r} must be strictly "
+                f"monotonic (consistently increasing or decreasing); "
+                f"resample only supports regular monotonic rasters"
+            )
+        # Allow floating-point jitter but reject genuinely uneven spacing
+        # (e.g. [0, 1, 4]). Compare every step to the mean step. The
+        # tolerance scales with the step size via ``rtol`` so it tracks
+        # the coordinate magnitude.
+        step = diffs.mean()
+        if not np.allclose(diffs, step, rtol=1e-5, atol=0.0):
+            raise ValueError(
+                f"resample(): `agg` coordinate {dim!r} must be evenly "
+                f"spaced; resample only supports regular monotonic "
+                f"rasters, not irregular grids"
+            )
+
+
 # -- Output-geometry helpers -------------------------------------------------
 
 def _output_shape(in_h, in_w, scale_y, scale_x):
@@ -1306,6 +1348,27 @@ def _apply_nodata_mask(agg, nodata):
     return agg.where(mask)
 
 
+def _refresh_nodata_attrs(src_attrs, dst_attrs):
+    """Refresh nodata sentinels in *dst_attrs* to NaN.
+
+    Resample replaces sentinel pixels with NaN regardless of input
+    dtype. If the input declared a sentinel via ``_FillValue``,
+    ``nodatavals``, or the rasterio-style ``nodata`` attr, refresh each
+    one to NaN so the metadata matches the actual data. Keys absent on
+    the input stay absent. ``_resolve_nodata`` reads ``nodata`` as a
+    fallback, so a stale finite value there would silently mismatch the
+    masked data on any downstream consumer that trusts
+    ``attrs['nodata']``.
+    """
+    if '_FillValue' in src_attrs:
+        dst_attrs['_FillValue'] = float('nan')
+    if 'nodatavals' in src_attrs:
+        old = src_attrs['nodatavals']
+        dst_attrs['nodatavals'] = tuple(float('nan') for _ in old)
+    if 'nodata' in src_attrs:
+        dst_attrs['nodata'] = float('nan')
+
+
 @supports_dataset
 def resample(
     agg: xr.DataArray,
@@ -1362,14 +1425,28 @@ def resample(
     Raises
     ------
     ValueError
-        If neither or both of ``scale_factor`` and ``target_resolution``
-        are given; if either is a sequence whose length is not 2; if any
-        component is zero, negative, NaN, or infinite; if ``method``
-        is not in :data:`ALL_METHODS`; or if ``nodata`` does not
+        If ``agg`` has a zero-length spatial dimension; if neither or both
+        of ``scale_factor`` and ``target_resolution`` are given; if either
+        is a sequence whose length is not 2; if any component is zero,
+        negative, NaN, or infinite; if ``method`` is not in
+        :data:`ALL_METHODS`; if the spatial coordinates of ``agg`` are
+        not strictly monotonic and evenly spaced (``resample`` only
+        supports regular monotonic rasters); or if ``nodata`` does not
         round-trip exactly into an integer ``agg.dtype`` (a fractional
         or out-of-range sentinel that would wrap on the cast).
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
+    _validate_monotonic_regular_coords(agg)
+
+    # Reject empty rasters up front. A zero-length spatial axis would
+    # otherwise reach the output-coordinate rebuild and surface as an
+    # opaque IndexError (vals[0] on an empty coord array) rather than a
+    # clear, parameter-named error.
+    if agg.shape[-2] == 0 or agg.shape[-1] == 0:
+        raise ValueError(
+            f"resample(): `agg` must have non-empty spatial dimensions, "
+            f"got shape {tuple(agg.shape)}"
+        )
 
     if method not in ALL_METHODS:
         raise ValueError(
@@ -1439,7 +1516,13 @@ def resample(
         out.name = name
         # When nodata was applied, advertise NaN as the new sentinel.
         if has_nodata:
+            # Always advertise NaN via `_FillValue` -- this also covers the
+            # explicit `nodata=` case where the input carried no nodata
+            # attrs. Then refresh `nodata` / `nodatavals` for inputs that
+            # did declare them, so masked-to-NaN output never advertises a
+            # stale finite sentinel (the non-identity path does the same).
             out.attrs['_FillValue'] = float('nan')
+            _refresh_nodata_attrs(agg.attrs, out.attrs)
         return out
 
     # -- 3D: dispatch per band ----------------------------------------------
@@ -1471,6 +1554,7 @@ def resample(
         new_attrs.update(bands[0].attrs)  # res from per-band resample
         if has_nodata:
             new_attrs['_FillValue'] = float('nan')
+            _refresh_nodata_attrs(agg.attrs, new_attrs)
         result.attrs = new_attrs
         # Preserve the leading-dim coordinate if it was on the input.
         if leading_dim in agg.coords:
@@ -1540,21 +1624,7 @@ def resample(
             px, 0.0, x_edge_start, 0.0, py, y_edge_start,
         )
 
-    # Resample replaces sentinel pixels with NaN regardless of input
-    # dtype. If the input declared a sentinel via `_FillValue`,
-    # `nodatavals`, or the rasterio-style `nodata` attr, refresh each
-    # one to NaN so the metadata matches the actual data. Leave the
-    # keys absent when the input did not have them. `_resolve_nodata`
-    # reads `nodata` as a fallback, so we must refresh it too -- a
-    # stale finite value here would silently mismatch the masked data
-    # on any downstream consumer that trusts `attrs['nodata']`.
-    if '_FillValue' in agg.attrs:
-        new_attrs['_FillValue'] = float('nan')
-    if 'nodatavals' in agg.attrs:
-        old = agg.attrs['nodatavals']
-        new_attrs['nodatavals'] = tuple(float('nan') for _ in old)
-    if 'nodata' in agg.attrs:
-        new_attrs['nodata'] = float('nan')
+    _refresh_nodata_attrs(agg.attrs, new_attrs)
 
     # Carry across scalar (zero-dim) non-dim coords like rioxarray's
     # `spatial_ref` or a squeezed `time` / `band` selector. The

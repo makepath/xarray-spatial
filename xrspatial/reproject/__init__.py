@@ -272,8 +272,11 @@ def _transform_coords(transformer, chunk_bounds, chunk_shape,
     -------
     src_y, src_x : ndarray (height, width)
     """
-    # Try Numba fast path for common projections
-    if src_crs is not None and tgt_crs is not None:
+    # Try Numba fast path for common projections.
+    # transform_precision == 0 is the documented escape hatch for exact
+    # per-pixel pyproj transforms, so skip the approximate fast path then.
+    if (transform_precision != 0
+            and src_crs is not None and tgt_crs is not None):
         try:
             from ._projections import try_numba_transform
             result = try_numba_transform(
@@ -348,15 +351,17 @@ def _reproject_chunk_numpy(
     src_crs = _crs_from_wkt(src_wkt)
     tgt_crs = _crs_from_wkt(tgt_wkt)
 
-    # Try Numba fast path first (avoids creating pyproj Transformer)
+    # Try Numba fast path first (avoids creating pyproj Transformer).
+    # transform_precision == 0 forces the exact pyproj path, so skip Numba.
     numba_result = None
-    try:
-        from ._projections import try_numba_transform
-        numba_result = try_numba_transform(
-            src_crs, tgt_crs, chunk_bounds_tuple, chunk_shape,
-        )
-    except (ImportError, ModuleNotFoundError):
-        pass
+    if transform_precision != 0:
+        try:
+            from ._projections import try_numba_transform
+            numba_result = try_numba_transform(
+                src_crs, tgt_crs, chunk_bounds_tuple, chunk_shape,
+            )
+        except (ImportError, ModuleNotFoundError):
+            pass
 
     if numba_result is not None:
         src_y, src_x = numba_result
@@ -504,9 +509,11 @@ def _reproject_chunk_cupy(
     else:
         _empty_shape = chunk_shape
 
-    # Try CUDA transform first (keeps coordinates on-device)
+    # Try CUDA transform first (keeps coordinates on-device).
+    # transform_precision == 0 forces the exact pyproj path, so skip CUDA.
     cuda_result = None
-    if src_crs is not None and tgt_crs is not None:
+    if (transform_precision != 0
+            and src_crs is not None and tgt_crs is not None):
         try:
             from ._projections_cuda import try_cuda_transform
             cuda_result = try_cuda_transform(
@@ -1724,14 +1731,17 @@ def _reproject_dask_cupy(
             )
             chunk_shape = (rchunk, cchunk)
 
-            # CUDA coordinate transform (reuses cached CRS objects)
-            try:
-                from ._projections_cuda import try_cuda_transform
-                cuda_coords = try_cuda_transform(
-                    src_crs, tgt_crs, cb, chunk_shape,
-                )
-            except (ImportError, ModuleNotFoundError):
-                cuda_coords = None
+            # CUDA coordinate transform (reuses cached CRS objects).
+            # precision == 0 forces the exact pyproj path, so skip CUDA.
+            cuda_coords = None
+            if precision != 0:
+                try:
+                    from ._projections_cuda import try_cuda_transform
+                    cuda_coords = try_cuda_transform(
+                        src_crs, tgt_crs, cb, chunk_shape,
+                    )
+                except (ImportError, ModuleNotFoundError):
+                    cuda_coords = None
 
             if cuda_coords is not None:
                 src_y, src_x = cuda_coords
@@ -1853,6 +1863,25 @@ def _reproject_dask_cupy(
     return result
 
 
+def _finite_pair_bbox(tx, ty):
+    """Bounding box of (tx, ty) pairs where both coordinates are finite.
+
+    The x and y coordinates must be filtered together: a transform can
+    send some probe points to NaN/inf, and dropping finite x and finite
+    y independently would mix coordinates from different points into one
+    box. Returns ``(left, bottom, right, top)`` or ``None`` when no pair
+    is finite in both coordinates.
+    """
+    tx = np.asarray(tx, dtype=np.float64)
+    ty = np.asarray(ty, dtype=np.float64)
+    mask = np.isfinite(tx) & np.isfinite(ty)
+    if not mask.any():
+        return None
+    tx = tx[mask]
+    ty = ty[mask]
+    return (float(tx.min()), float(ty.min()), float(tx.max()), float(ty.max()))
+
+
 def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
     """Compute approximate bounding box of source raster in target CRS."""
     try:
@@ -1879,11 +1908,7 @@ def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
         result = transform_points(src_crs, tgt_crs, xs, ys)
         if result is not None:
             tx, ty = result
-            tx = [v for v in tx if np.isfinite(v)]
-            ty = [v for v in ty if np.isfinite(v)]
-            if not tx or not ty:
-                return None
-            return (min(tx), min(ty), max(tx), max(ty))
+            return _finite_pair_bbox(tx, ty)
     except (ImportError, ModuleNotFoundError):
         pass
 
@@ -1892,11 +1917,7 @@ def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
         pyproj = _require_pyproj()
         transformer = pyproj.Transformer.from_crs(src_crs, tgt_crs, always_xy=True)
         tx, ty = transformer.transform(xs.tolist(), ys.tolist())
-        tx = [v for v in tx if np.isfinite(v)]
-        ty = [v for v in ty if np.isfinite(v)]
-        if not tx or not ty:
-            return None
-        return (min(tx), min(ty), max(tx), max(ty))
+        return _finite_pair_bbox(tx, ty)
     except Exception:
         return None
 

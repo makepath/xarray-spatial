@@ -541,6 +541,8 @@ def read_vrt(source: str, *,
         source, window=window, band=band, max_pixels=max_pixels,
         missing_sources=missing_sources, parsed=_parsed_vrt,
         mask_nodata=mask_nodata,
+        allow_rotated=allow_rotated,
+        allow_invalid_nodata=allow_invalid_nodata,
         allow_experimental_codecs=allow_experimental_codecs,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
     )
@@ -752,6 +754,8 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
                     band, max_pixels, missing_sources,
                     declared_dtype, gpu, parsed_vrt,
                     mask_nodata: bool = True,
+                    allow_rotated: bool = False,
+                    allow_invalid_nodata: bool = False,
                     allow_experimental_codecs: bool = False,
                     allow_internal_only_jpeg: bool = False):
     """Decode a single chunk window from a VRT.
@@ -772,6 +776,11 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
     set) whose shape and dtype match the ``shape=`` / ``dtype=`` kwargs
     of the surrounding ``dask.array.from_delayed`` is the contract; a
     mismatch would silently produce a wrong-shape dask array.
+
+    ``allow_rotated`` / ``allow_invalid_nodata`` are forwarded to the
+    internal reader so the per-source GeoTIFF read in each task honors
+    the opt-ins the caller set on the public ``read_vrt`` boundary,
+    matching the eager path.
     """
     from .._vrt import _apply_integer_sentinel_mask
     from .._vrt import read_vrt as _read_vrt_internal
@@ -785,6 +794,8 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
         source, window=(r0, c0, r1, c1), band=band,
         max_pixels=max_pixels, missing_sources=missing_sources,
         parsed=parsed_vrt, mask_nodata=mask_nodata,
+        allow_rotated=allow_rotated,
+        allow_invalid_nodata=allow_invalid_nodata,
         allow_experimental_codecs=allow_experimental_codecs,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
     )
@@ -1062,6 +1073,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                 gpu=gpu,
                 parsed_vrt=parsed_vrt_key,
                 mask_nodata=mask_nodata,
+                allow_rotated=allow_rotated,
+                allow_invalid_nodata=allow_invalid_nodata,
                 allow_experimental_codecs=allow_experimental_codecs,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
             )

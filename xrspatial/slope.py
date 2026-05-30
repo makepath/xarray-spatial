@@ -3,7 +3,7 @@ from __future__ import annotations
 # std lib
 from functools import partial
 from math import atan
-from typing import Union
+from typing import Optional, Union
 
 # 3rd-party
 try:
@@ -22,18 +22,12 @@ import xarray as xr
 from numba import cuda
 
 # local modules
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import VALID_BOUNDARY_MODES
-from xrspatial.utils import Z_UNITS
-from xrspatial.utils import _boundary_to_dask
-from xrspatial.utils import _extract_latlon_coords
-from xrspatial.utils import _pad_array
-from xrspatial.utils import _validate_boundary
-from xrspatial.utils import _validate_raster
-from xrspatial.utils import cuda_args
-from xrspatial.utils import get_dataarray_resolution
-from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memory,
+                                _cpu_geodesic_slope, _run_gpu_geodesic_slope)
+from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
+                             _extract_latlon_coords, _pad_array, _validate_boundary,
+                             _validate_raster, cuda_args, get_dataarray_resolution, ngjit)
 
 
 def _geodesic_cuda_dims(shape):
@@ -44,15 +38,6 @@ def _geodesic_cuda_dims(shape):
         (shape[1] + tpb[1] - 1) // tpb[1],
     )
     return bpg, tpb
-
-from xrspatial.geodesic import (
-    INV_2R,
-    WGS84_A2,
-    WGS84_B2,
-    _check_geodesic_memory,
-    _cpu_geodesic_slope,
-    _run_gpu_geodesic_slope,
-)
 
 
 # =====================================================================
@@ -257,7 +242,9 @@ def _dask_geodesic_slope_chunk_cupy(stacked_chunk, a2, b2, z_factor):
     inv_2r_arr = cupy.array([INV_2R], dtype=cupy.float64)
 
     griddim, blockdim = _geodesic_cuda_dims((H, W))
-    _run_gpu_geodesic_slope[griddim, blockdim](stacked_chunk, a2_arr, b2_arr, zf_arr, inv_2r_arr, result_2d)
+    _run_gpu_geodesic_slope[griddim, blockdim](
+        stacked_chunk, a2_arr, b2_arr, zf_arr, inv_2r_arr, result_2d
+    )
 
     out = cupy.zeros_like(stacked_chunk, dtype=cupy.float32)
     out[0] = result_2d
@@ -312,7 +299,7 @@ def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='na
 
 @supports_dataset
 def slope(agg: xr.DataArray,
-          name: str = 'slope',
+          name: Optional[str] = 'slope',
           method: str = 'planar',
           z_unit: str = 'meter',
           boundary: str = 'nan') -> xr.DataArray:
