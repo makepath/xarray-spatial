@@ -288,6 +288,8 @@ def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='n
 
 
 def _to_cupy_f64(block):
+    # Only reached from the dask+cupy path, so `cupy` is the real module here,
+    # never the import-time fallback class.
     return cupy.asarray(block, dtype=cupy.float64)
 
 
