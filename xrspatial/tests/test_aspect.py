@@ -151,6 +151,32 @@ def test_boundary_invalid():
         aspect(agg, boundary='invalid')
 
 
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_dask_numpy_advertised_dtype_matches_computed(boundary):
+    # planar dask map_overlap must advertise float32, matching the realized
+    # data and the numpy/cupy backends (issue #2682).
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy')
+    np_result = aspect(numpy_agg, boundary=boundary)
+    da_result = aspect(dask_agg, boundary=boundary)
+    assert np_result.dtype == np.float32
+    assert da_result.dtype == np.float32
+    assert da_result.data.compute().dtype == np.float32
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_dask_cupy_advertised_dtype_matches_computed():
+    import cupy
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy')
+    da_result = aspect(dask_cupy_agg)
+    assert da_result.dtype == cupy.float32
+    assert da_result.data.compute().dtype == cupy.float32
+
+
 # ---- Degenerate raster shapes (1x1, Nx1, 1xN) ----
 #
 # A 3x3 kernel has no interior cell when a dimension is smaller than 3,
