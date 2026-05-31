@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import xarray as xr
 
 from xrspatial import slope
 from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
@@ -147,3 +148,129 @@ def test_boundary_invalid():
     agg = create_test_raster(data, attrs={'res': (1, 1)})
     with pytest.raises(ValueError, match="boundary must be one of"):
         slope(agg, boundary='invalid')
+
+
+@dask_array_available
+def test_dask_numpy_lazy_dtype_matches_computed():
+    # The lazy dask dtype must match both the computed dtype and the
+    # numpy backend (all float32). Regression for the planar dask meta
+    # defaulting to float64 while chunks return float32.
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(3, 4))
+    np_result = slope(numpy_agg)
+    da_result = slope(dask_agg)
+    assert np_result.dtype == np.float32
+    assert da_result.dtype == np.float32
+    assert da_result.data.compute().dtype == np.float32
+
+
+@cuda_and_cupy_available
+def test_cupy_lazy_dtype_matches_computed():
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1, 1)})
+    assert slope(numpy_agg).dtype == np.float32
+    assert slope(cupy_agg).dtype == np.float32
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_dask_cupy_lazy_dtype_matches_computed():
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1, 1)}, chunks=(3, 4))
+    da_result = slope(dask_cupy_agg)
+    assert da_result.dtype == np.float32
+    assert da_result.data.compute().dtype == np.float32
+
+
+def test_name_annotation_matches_terrain_family():
+    # slope's `name` annotation should match aspect/curvature/northness/
+    # eastness, all of which use Optional[str] (None is a valid name).
+    import typing
+
+    from xrspatial import curvature
+    from xrspatial.aspect import aspect, eastness, northness
+
+    slope_func = getattr(slope, '__wrapped__', slope)
+    expected = typing.get_type_hints(slope_func)['name']
+    for func in (aspect, curvature, northness, eastness):
+        unwrapped = getattr(func, '__wrapped__', func)
+        assert typing.get_type_hints(unwrapped)['name'] == expected
+
+
+def test_name_none_accepted():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = create_test_raster(data, attrs={'res': (1, 1)})
+    result = slope(agg, name=None)
+    assert result.name is None
+
+
+# Degenerate shapes: a dimension too small for the 3x3 kernel to have an
+# interior. The planar CPU kernel loops over range(1, rows-1) (empty when
+# rows<=2), so the output keeps the input shape and comes back all-NaN. Pin
+# this behaviour so a future kernel-bound change can't silently start raising
+# or returning the wrong shape on these inputs.
+DEGENERATE_SHAPES = [(1, 1), (1, 5), (5, 1)]
+
+
+def _degenerate_data(shape):
+    return np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
+
+
+@pytest.mark.parametrize("shape", DEGENERATE_SHAPES)
+def test_degenerate_shape_numpy(shape):
+    agg = create_test_raster(_degenerate_data(shape), backend='numpy',
+                             attrs={'res': (1, 1)})
+    result = slope(agg)
+    general_output_checks(agg, result)
+    assert result.shape == shape
+    assert np.all(np.isnan(result.data))
+
+
+@dask_array_available
+@pytest.mark.parametrize("shape", DEGENERATE_SHAPES)
+def test_degenerate_shape_dask_numpy(shape):
+    data = _degenerate_data(shape)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=shape)
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, slope, nan_edges=False)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("shape", DEGENERATE_SHAPES)
+def test_degenerate_shape_cupy(shape):
+    data = _degenerate_data(shape)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1, 1)})
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, slope, nan_edges=False)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("shape", DEGENERATE_SHAPES)
+def test_degenerate_shape_dask_cupy(shape):
+    data = _degenerate_data(shape)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1, 1)}, chunks=shape)
+    assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, slope, nan_edges=False)
+
+
+@pytest.mark.parametrize("shape", DEGENERATE_SHAPES)
+def test_degenerate_shape_geodesic(shape):
+    H, W = shape
+    lat = np.linspace(40.0, 41.0, H)
+    lon = np.linspace(10.0, 11.0, W)
+    raster = xr.DataArray(
+        _degenerate_data(shape),
+        dims=['lat', 'lon'],
+        coords={'lat': lat, 'lon': lon},
+    )
+    result = slope(raster, method='geodesic')
+    general_output_checks(raster, result)
+    assert result.shape == shape
+    assert np.all(np.isnan(result.data))

@@ -8,12 +8,15 @@
 # The algorithm is embarrassingly parallel across quads and across contour
 # levels, making it well suited to Dask chunking and GPU execution.
 
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import xarray as xr
 
 from .utils import ArrayTypeFunctionMapping, ngjit
+
+if TYPE_CHECKING:
+    import geopandas as gpd
 
 try:
     import dask
