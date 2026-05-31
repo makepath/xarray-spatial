@@ -133,65 +133,6 @@ class TestNaNHandling:
 
 
 # ---------------------------------------------------------------------------
-# Inf handling
-# ---------------------------------------------------------------------------
-
-class TestInfHandling:
-
-    def test_pos_inf_center(self):
-        """A quad touching +inf must not produce NaN coordinates."""
-        data = np.array([
-            [0., 0., 0., 0., 0.],
-            [0., 1., 1., 1., 0.],
-            [0., 1., np.inf, 1., 0.],
-            [0., 1., 1., 1., 0.],
-            [0., 0., 0., 0., 0.],
-        ], dtype=np.float64)
-        agg = create_test_raster(data, backend='numpy')
-        result = contours(agg, levels=[1.5])
-        for level, coords in result:
-            assert np.isfinite(coords).all(), \
-                f"Non-finite coordinates found at level {level}"
-
-    def test_neg_inf_center(self):
-        """A quad touching -inf must not produce NaN coordinates."""
-        data = np.array([
-            [0., 0., 0., 0., 0.],
-            [0., 1., 1., 1., 0.],
-            [0., 1., -np.inf, 1., 0.],
-            [0., 1., 1., 1., 0.],
-            [0., 0., 0., 0., 0.],
-        ], dtype=np.float64)
-        agg = create_test_raster(data, backend='numpy')
-        result = contours(agg, levels=[1.5])
-        for level, coords in result:
-            assert np.isfinite(coords).all(), \
-                f"Non-finite coordinates found at level {level}"
-
-    def test_mixed_inf(self):
-        """Multiple infinities of opposite signs must not produce NaN."""
-        data = np.array([
-            [0., 0., 0., 0., 0.],
-            [0., np.inf, 1., -np.inf, 0.],
-            [0., 1., 1., 1., 0.],
-            [0., -np.inf, 1., np.inf, 0.],
-            [0., 0., 0., 0., 0.],
-        ], dtype=np.float64)
-        agg = create_test_raster(data, backend='numpy')
-        result = contours(agg, levels=[0.5])
-        for level, coords in result:
-            assert np.isfinite(coords).all(), \
-                f"Non-finite coordinates found at level {level}"
-
-    def test_all_inf_quad(self):
-        """A 2x2 raster with all corners infinite produces no contours."""
-        data = np.full((2, 2), np.inf, dtype=np.float64)
-        agg = create_test_raster(data, backend='numpy')
-        result = contours(agg, levels=[1.0])
-        assert result == []
-
-
-# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 
@@ -597,18 +538,11 @@ class TestInfHandling:
             assert np.isfinite(coords).all(), (
                 "level 0.5 ring should not include the inf quad")
 
-    @pytest.mark.xfail(
-        reason="contours() emits NaN coordinates near an inf corner; "
-               "see https://github.com/xarray-contrib/xarray-spatial/"
-               "issues/2704",
-        strict=True,
-    )
     def test_inf_corner_no_nan_coords(self):
         """A finite level near a +inf cell must not leak NaN coordinates.
 
-        The NaN-skip guard in the kernel uses ``x != x`` which does not
-        catch infinity, so the inf quad is interpolated and produces NaN.
-        Tracked as a source bug in #2704.
+        Regression for #2704: the NaN-skip guard in the kernel used ``x != x``
+        which does not catch infinity; fixed by using ``np.isfinite``.
         """
         data = self._inf_peak(np.inf)
         agg = create_test_raster(data, backend='numpy')
@@ -617,20 +551,39 @@ class TestInfHandling:
             assert np.isfinite(coords).all(), (
                 f"non-finite coordinate in contour at level {level}: {coords}")
 
-    @pytest.mark.xfail(
-        reason="contours() emits NaN coordinates near a -inf corner; "
-               "see https://github.com/xarray-contrib/xarray-spatial/"
-               "issues/2704",
-        strict=True,
-    )
     def test_neg_inf_corner_no_nan_coords(self):
-        """Same NaN leak for a -inf corner. Tracked in #2704."""
+        """A finite level near a -inf cell must not leak NaN coordinates.
+
+        Regression for #2704: same fix as test_inf_corner_no_nan_coords.
+        """
         data = self._inf_peak(-np.inf)
         agg = create_test_raster(data, backend='numpy')
         result = contours(agg, levels=[0.5])
         for level, coords in result:
             assert np.isfinite(coords).all(), (
                 f"non-finite coordinate in contour at level {level}: {coords}")
+
+    def test_mixed_inf(self):
+        """Multiple infinities of opposite signs must not produce NaN."""
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., np.inf, 1., -np.inf, 0.],
+            [0., 1., 1., 1., 0.],
+            [0., -np.inf, 1., np.inf, 0.],
+            [0., 0., 0., 0., 0.],
+        ], dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[0.5])
+        for level, coords in result:
+            assert np.isfinite(coords).all(), \
+                f"Non-finite coordinates found at level {level}"
+
+    def test_all_inf_quad(self):
+        """A 2x2 raster with all corners infinite produces no contours."""
+        data = np.full((2, 2), np.inf, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.0])
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
