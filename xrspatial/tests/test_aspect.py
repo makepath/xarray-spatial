@@ -204,6 +204,7 @@ def test_degenerate_shape_numpy(func, shape):
         data[0, :] = 2.0
     agg = create_test_raster(data, backend='numpy')
     result = func(agg)
+    general_output_checks(agg, result)
     assert result.shape == shape
     assert np.all(np.isnan(result.data))
 

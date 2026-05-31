@@ -163,6 +163,17 @@ class TestGeodesicAspectEdgeCases:
         assert np.all(directional >= 0.0)
         assert np.all(directional < 360.0)
 
+    @pytest.mark.parametrize("shape", [(1, 1), (1, 5), (5, 1)])
+    def test_degenerate_shape(self, shape):
+        """A dimension below 3 leaves no interior cell, so the geodesic
+        result keeps the input shape and comes back all-NaN. See #2742."""
+        H, W = shape
+        elev = np.arange(H * W, dtype=np.float64).reshape(shape)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='geodesic')
+        assert result.shape == shape
+        assert np.all(np.isnan(result.values))
+
 
 # ---------------------------------------------------------------------------
 # Tests — z_unit
