@@ -169,7 +169,7 @@ def _run_dask_numpy(data: da.Array, boundary: str = 'nan') -> da.Array:
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array((), dtype=np.float32))
     return out
 
 
@@ -179,7 +179,7 @@ def _run_dask_cupy(data: da.Array, boundary: str = 'nan') -> da.Array:
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array((), dtype=cupy.float32))
     return out
 
 
