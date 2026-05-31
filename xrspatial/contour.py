@@ -548,6 +548,14 @@ def _to_geopandas(results, crs=None):
             geom = LineString(coords[:, ::-1])
             records.append({'level': level, 'geometry': geom})
 
+    if not records:
+        # An empty records list has no geometry column, so geopandas refuses
+        # to attach a CRS. Build the frame with an explicit empty geometry
+        # column so the CRS still propagates on an empty result.
+        return gpd.GeoDataFrame(
+            {'level': [], 'geometry': gpd.GeoSeries([])}, crs=crs
+        )
+
     gdf = gpd.GeoDataFrame(records, crs=crs)
     return gdf
 
@@ -628,7 +636,9 @@ def contours(
             vmax = float(np.nanmax(agg.values))
 
         if np.isnan(vmin) or np.isnan(vmax):
-            return [] if return_type == "numpy" else _to_geopandas([], None)
+            if return_type == "numpy":
+                return []
+            return _to_geopandas([], crs=agg.attrs.get('crs', None))
 
         # Exclude exact min/max to avoid tracing along the boundary.
         levels = np.linspace(vmin, vmax, n_levels + 2)[1:-1]
