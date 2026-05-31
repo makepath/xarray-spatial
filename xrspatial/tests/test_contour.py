@@ -180,6 +180,19 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="at least 2"):
             contours(agg, levels=[0.5])
 
+    def test_complex_dtype_rejected(self):
+        """Complex input raises instead of silently dropping the imaginary part."""
+        data = np.ones((3, 3), dtype=np.complex128)
+        agg = xr.DataArray(data, dims=['y', 'x'])
+        with pytest.raises(ValueError, match="real numeric"):
+            contours(agg, levels=[0.5])
+
+    def test_non_dataarray_rejected(self):
+        """A plain ndarray raises a clear TypeError, not a late dispatch error."""
+        data = np.ones((3, 3), dtype=np.float64)
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            contours(data, levels=[0.5])
+
 
 # ---------------------------------------------------------------------------
 # Segment stitching
