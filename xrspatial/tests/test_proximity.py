@@ -1,3 +1,4 @@
+from textwrap import dedent as textwrap_dedent
 from unittest.mock import patch
 
 try:
@@ -716,6 +717,116 @@ def test_proximity_dask_kdtree_global_uses_cache():
     np.testing.assert_allclose(
         dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase-0 streaming count pass: row-batched compute (gh-2724)
+# ---------------------------------------------------------------------------
+
+def test_stream_target_counts_no_compute_in_inner_loop():
+    """_stream_target_counts must not call .compute() inside the inner loop.
+
+    Structural guard for gh-2724: the per-chunk count pass batches one
+    dask.compute() per chunk-row, not one blocking .compute() per chunk.
+    """
+    import ast
+    import inspect
+    from xrspatial.proximity import _stream_target_counts
+
+    src = inspect.getsource(_stream_target_counts)
+    tree = ast.parse(textwrap_dedent(src))
+
+    # Find .compute() attribute calls and the for-loops enclosing them.
+    compute_calls = []
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.for_depth = 0
+
+        def visit_For(self, node):
+            self.for_depth += 1
+            self.generic_visit(node)
+            self.for_depth -= 1
+
+        def visit_Call(self, node):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "compute":
+                compute_calls.append(self.for_depth)
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+
+    assert compute_calls, "expected a compute() call in the count pass"
+    # da.compute(...) is issued at the outer (row) loop level => for_depth == 1.
+    # A regression to per-chunk .compute() would sit in the inner loop => 2.
+    assert max(compute_calls) <= 1, (
+        "compute() is called inside the inner chunk loop; the count pass "
+        "should batch one da.compute() per chunk-row (gh-2724)."
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_stream_target_counts_matches_sequential_baseline():
+    """Row-batched count pass matches a sequential per-chunk baseline.
+
+    Verifies target_counts, total_targets, and the coords/values caches are
+    byte-identical to the pre-gh-2724 sequential implementation.
+    """
+    from xrspatial.proximity import _stream_target_counts, _target_mask
+
+    height, width = 24, 30
+    rng = np.random.RandomState(7)
+    data = rng.choice([0.0, 1.0, 2.0], size=(height, width),
+                      p=[0.3, 0.4, 0.3])
+    _lon = np.linspace(0, 29, width)
+    _lat = np.linspace(23, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(6, 10))
+
+    target_values = np.asarray([])
+    chunks_y, chunks_x = raster.data.chunks
+
+    counts, total, coords_cache, values_cache = _stream_target_counts(
+        raster, target_values, _lat, _lon, chunks_y, chunks_x,
+    )
+
+    # Sequential reference (the pre-fix behaviour).
+    n_tile_y, n_tile_x = len(chunks_y), len(chunks_x)
+    y_off = np.concatenate([[0], np.cumsum(chunks_y)])
+    x_off = np.concatenate([[0], np.cumsum(chunks_x)])
+    ref_counts = np.zeros((n_tile_y, n_tile_x), dtype=np.int64)
+    for iy in range(n_tile_y):
+        for ix in range(n_tile_x):
+            cd = raster.data.blocks[iy, ix].compute()
+            mask = _target_mask(cd, target_values)
+            rows, cols = np.where(mask)
+            ref_counts[iy, ix] = len(rows)
+
+    np.testing.assert_array_equal(counts, ref_counts)
+    assert total == int(ref_counts.sum())
+    # Cache holds the same target coords/values it would have under the
+    # sequential pass (full raster easily fits the 25% budget here).
+    for iy in range(n_tile_y):
+        for ix in range(n_tile_x):
+            cd = raster.data.blocks[iy, ix].compute()
+            mask = _target_mask(cd, target_values)
+            rows, cols = np.where(mask)
+            if len(rows) == 0:
+                assert (iy, ix) not in coords_cache
+                continue
+            assert (iy, ix) in coords_cache
+            expected_coords = np.column_stack([
+                _lat[y_off[iy] + rows],
+                _lon[x_off[ix] + cols],
+            ])
+            np.testing.assert_array_equal(coords_cache[(iy, ix)],
+                                          expected_coords)
+            np.testing.assert_array_equal(
+                values_cache[(iy, ix)],
+                cd[rows, cols].astype(np.float32),
+            )
 
 
 # ---------------------------------------------------------------------------
