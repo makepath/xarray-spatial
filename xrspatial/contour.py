@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import xarray as xr
 
-from .utils import ArrayTypeFunctionMapping, ngjit
+from .utils import ArrayTypeFunctionMapping, _validate_raster, ngjit
 
 if TYPE_CHECKING:
     import geopandas as gpd
@@ -548,6 +548,14 @@ def _to_geopandas(results, crs=None):
             geom = LineString(coords[:, ::-1])
             records.append({'level': level, 'geometry': geom})
 
+    if not records:
+        # An empty records list has no geometry column, so geopandas refuses
+        # to attach a CRS. Build the frame with an explicit empty geometry
+        # column so the CRS still propagates on an empty result.
+        return gpd.GeoDataFrame(
+            {'level': [], 'geometry': gpd.GeoSeries([])}, crs=crs
+        )
+
     gdf = gpd.GeoDataFrame(records, crs=crs)
     return gdf
 
@@ -605,8 +613,7 @@ def contours(
     >>> # Each entry is (level_value, Nx2_coordinate_array)
     >>> level, coords = lines[0]
     """
-    if agg.ndim != 2:
-        raise ValueError("Input raster must be 2D")
+    _validate_raster(agg, func_name='contours', name='agg', ndim=2)
     if agg.shape[0] < 2 or agg.shape[1] < 2:
         raise ValueError(
             "Input raster must have at least 2 rows and 2 columns"
@@ -628,7 +635,9 @@ def contours(
             vmax = float(np.nanmax(agg.values))
 
         if np.isnan(vmin) or np.isnan(vmax):
-            return [] if return_type == "numpy" else _to_geopandas([], None)
+            if return_type == "numpy":
+                return []
+            return _to_geopandas([], crs=agg.attrs.get('crs', None))
 
         # Exclude exact min/max to avoid tracing along the boundary.
         levels = np.linspace(vmin, vmax, n_levels + 2)[1:-1]
