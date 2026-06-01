@@ -169,7 +169,7 @@ def _run_dask_numpy(data: da.Array, boundary: str = 'nan') -> da.Array:
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array((), dtype=np.float32))
     return out
 
 
@@ -179,7 +179,7 @@ def _run_dask_cupy(data: da.Array, boundary: str = 'nan') -> da.Array:
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array((), dtype=cupy.float32))
     return out
 
 
@@ -287,11 +287,21 @@ def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='n
     return out[0]
 
 
+def _to_cupy_f64(block):
+    # Only reached from the dask+cupy path, so `cupy` is the real module here,
+    # never the import-time fallback class.
+    return cupy.asarray(block, dtype=cupy.float64)
+
+
 def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
-    lat_dask = da.from_array(cupy.asarray(lat_2d, dtype=cupy.float64),
-                             chunks=data.chunksize)
-    lon_dask = da.from_array(cupy.asarray(lon_2d, dtype=cupy.float64),
-                             chunks=data.chunksize)
+    # Keep lat/lon as dask-of-numpy on the (zero-stride) broadcast views, then
+    # convert each block to cupy lazily. Converting up front with
+    # cupy.asarray(lat_2d) would densify the full (H, W) grid onto a single GPU
+    # at graph-construction time and OOM on large rasters.
+    lat_dask = da.from_array(lat_2d, chunks=data.chunksize).map_blocks(
+        _to_cupy_f64, dtype=np.float64)
+    lon_dask = da.from_array(lon_2d, chunks=data.chunksize).map_blocks(
+        _to_cupy_f64, dtype=np.float64)
     stacked = da.stack([
         data.astype(cupy.float64),
         lat_dask,
