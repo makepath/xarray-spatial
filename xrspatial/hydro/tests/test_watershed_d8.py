@@ -165,6 +165,23 @@ def test_basins_backward_compat():
     np.testing.assert_allclose(old_result.data, new_result.data, equal_nan=True)
 
 
+def test_basins_d8_emits_deprecation_warning():
+    """basins_d8 wrapper warns and still returns the basin result."""
+    from xrspatial.hydro.basin_d8 import basin_d8
+    from xrspatial.hydro.watershed_d8 import basins_d8
+
+    flow_dir = np.array([
+        [2.0,  4.0,  8.0],
+        [1.0,  0.0, 16.0],
+        [128.0, 64.0, 32.0],
+    ], dtype=np.float64)
+    fd_da = create_test_raster(flow_dir)
+    with pytest.warns(DeprecationWarning, match="basins_d8 is deprecated"):
+        old_result = basins_d8(fd_da)
+    new_result = basin_d8(fd_da)
+    np.testing.assert_allclose(old_result.data, new_result.data, equal_nan=True)
+
+
 # ====================================================================
 # Cross-backend tests
 # ====================================================================

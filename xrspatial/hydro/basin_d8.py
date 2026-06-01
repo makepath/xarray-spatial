@@ -26,16 +26,9 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -387,6 +380,7 @@ def _basins_dask_iterative(flow_dir_da):
 def _basins_dask_cupy(flow_dir_da):
     """Dask+CuPy basins: native GPU via watershed infrastructure."""
     import cupy as cp
+
     from xrspatial.hydro.watershed_d8 import _watershed_dask_cupy
 
     chunks_y = flow_dir_da.chunks[0]
@@ -404,7 +398,7 @@ def _basins_dask_cupy(flow_dir_da):
             else np.asarray(flow_dir_block)
         chunk_np = np.asarray(chunk_np, dtype=np.float64)
         pp = _basins_init_labels(chunk_np, h, w, total_h, total_w,
-                                  row_off, col_off)
+                                 row_off, col_off)
         return cp.asarray(np.where(pp >= 0, pp, np.nan))
 
     pour_points_da = da.map_blocks(
@@ -420,7 +414,7 @@ def _basins_dask_cupy(flow_dir_da):
 
 @supports_dataset
 def basin_d8(flow_dir: xr.DataArray,
-          name: str = 'basin') -> xr.DataArray:
+             name: str = 'basin') -> xr.DataArray:
     """Delineate drainage basins: every cell labeled with its outlet ID.
 
     Automatically identifies all outlets (pits and edge-exit cells)
