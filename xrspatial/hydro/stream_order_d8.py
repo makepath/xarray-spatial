@@ -36,18 +36,11 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
-
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -1284,7 +1277,7 @@ def _stream_order_dask_shreve(flow_dir_da, accum_da, threshold):
 
 
 def _stream_order_tile_cupy(flow_dir_data, stream_mask_data, method,
-                             seeds):
+                            seeds):
     """GPU seeded stream order for a single tile.
 
     Uses GPU frontier peeling with seeds injected after initialisation.
@@ -1369,8 +1362,8 @@ def _make_stream_mask_np(ac_chunk, fd_chunk, threshold):
 
 
 def _process_strahler_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
-                                  bdry_max, bdry_cnt, flow_bdry, mask_bdry,
-                                  chunks_y, chunks_x, n_tile_y, n_tile_x):
+                                bdry_max, bdry_cnt, flow_bdry, mask_bdry,
+                                chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run seeded GPU Strahler on one tile; update boundary stores."""
     import cupy as cp
 
@@ -1411,8 +1404,8 @@ def _process_strahler_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
 
 
 def _process_shreve_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
-                                boundaries, flow_bdry, mask_bdry,
-                                chunks_y, chunks_x, n_tile_y, n_tile_x):
+                              boundaries, flow_bdry, mask_bdry,
+                              chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run seeded GPU Shreve on one tile; update boundaries."""
     import cupy as cp
 

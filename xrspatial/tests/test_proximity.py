@@ -1,3 +1,4 @@
+import inspect
 from textwrap import dedent as textwrap_dedent
 from unittest.mock import patch
 
@@ -278,6 +279,23 @@ def test_max_distance_direction(test_raster, result_max_distance_direction):
     max_distance, expected_result = result_max_distance_direction
     max_distance_direction = direction(test_raster, x='lon', y='lat', max_distance=max_distance)
     general_output_checks(test_raster, max_distance_direction, expected_result, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("max_distance", [10, np.inf])
+def test_output_metadata_consistent_across_backends(
+    test_raster, func, max_distance
+):
+    # Regression: the declared (pre-compute) output dtype must be float32 and
+    # .name must be None on every backend.  The bounded dask path previously
+    # declared float64 meta, and dask backends leaked an internal op name
+    # (e.g. "_trim-<hash>") into .name.
+    result = func(test_raster, x='lon', y='lat', max_distance=max_distance)
+    assert result.dtype == np.float32
+    assert result.name is None
+    assert result.dims == test_raster.dims
+    assert result.attrs == test_raster.attrs
 
 
 def test_proximity_distance_against_qgis(raster, qgis_proximity_distance_target_values):
@@ -1075,25 +1093,46 @@ def test_no_scipy_dask_unbounded_memory_guard():
 
 
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
-def test_target_values_none_default_matches_empty_list(func):
-    # target_values default switched from [] to a None sentinel; passing
-    # None (the default) must behave exactly like passing an empty list.
-    data = np.asarray([[0., 0., 0., 0., 0.],
-                       [0., 0., 0., 1., 0.],
-                       [0., 0., 0., 0., 0.],
-                       [0., 0., 2., 0., 0.],
-                       [0., 0., 0., 0., 0.]])
-    n, m = data.shape
-    raster = xr.DataArray(data, dims=['y', 'x'])
-    raster['y'] = np.arange(n)[::-1]
-    raster['x'] = np.arange(m)
+def test_return_annotation_consistency(func):
+    # proximity, allocation, and direction share a signature and return
+    # type; their return annotations should match.
+    assert inspect.signature(func).return_annotation is xr.DataArray
 
-    default_result = func(raster)
-    explicit_result = func(raster, target_values=[])
 
-    np.testing.assert_array_equal(
-        np.nan_to_num(default_result.data),
-        np.nan_to_num(explicit_result.data),
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_great_circle_dask_bounded_matches_numpy(func):
+    """Bounded GREAT_CIRCLE on a dask raster must match the numpy result.
+
+    Regression test: the map_overlap padding used the raw degree cellsize
+    while max_distance is in metres for GREAT_CIRCLE, producing an overlap
+    depth of hundreds of thousands of pixels and raising ValueError on
+    valid input. numpy and cupy backends handled the same call fine.
+    """
+    height, width = 16, 24
+    rng = np.random.RandomState(7)
+    data = (rng.rand(height, width) < 0.06).astype(np.float64)
+    _lon = np.linspace(-20, 20, width)
+    _lat = np.linspace(20, -20, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+
+    # bounded, smaller than the corner-to-corner great-circle distance
+    max_dist = 1.5e6
+    numpy_result = func(raster, x='lon', y='lat',
+                        max_distance=max_dist,
+                        distance_metric='GREAT_CIRCLE')
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(data, chunks=(8, 12))
+    dask_result = func(dask_raster, x='lon', y='lat',
+                       max_distance=max_dist,
+                       distance_metric='GREAT_CIRCLE')
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
     )
 
 
@@ -1272,3 +1311,26 @@ def test_proximity_res_attr_drives_bounded_dask_padding():
     assert isinstance(result.data, da.Array)
     np.testing.assert_allclose(
         result.values, expected, equal_nan=True, rtol=1e-5)
+
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_target_values_none_default_matches_empty_list(func):
+    # target_values default switched from [] to a None sentinel; passing
+    # None (the default) must behave exactly like passing an empty list.
+    data = np.asarray([[0., 0., 0., 0., 0.],
+                       [0., 0., 0., 1., 0.],
+                       [0., 0., 0., 0., 0.],
+                       [0., 0., 2., 0., 0.],
+                       [0., 0., 0., 0., 0.]])
+    n, m = data.shape
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['y'] = np.arange(n)[::-1]
+    raster['x'] = np.arange(m)
+
+    default_result = func(raster)
+    explicit_result = func(raster, target_values=[])
+
+    np.testing.assert_array_equal(
+        np.nan_to_num(default_result.data),
+        np.nan_to_num(explicit_result.data),
+    )
