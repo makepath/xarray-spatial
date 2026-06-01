@@ -1517,7 +1517,7 @@ def allocation(
     target_values: list = [],
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
-):
+) -> xr.DataArray:
     """
     Calculates, for all pixels in the input raster, the nearest source
     based on a set of target values and a distance metric.
@@ -1659,7 +1659,7 @@ def direction(
     target_values: list = [],
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
-):
+) -> xr.DataArray:
     """
     Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the direction to
