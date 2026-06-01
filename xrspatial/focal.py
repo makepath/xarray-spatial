@@ -1121,6 +1121,28 @@ def _focal_stats_cpu(agg, kernel, stats_funcs, boundary='nan'):
     return stats
 
 
+_VALID_STATS_FUNCS = ('mean', 'max', 'min', 'range', 'std', 'var',
+                      'sum', 'variety')
+
+
+def _validate_stats_funcs(stats_funcs):
+    """Normalise and validate the ``stats_funcs`` argument of focal_stats.
+
+    A bare string is wrapped into a one-element list so it is not iterated
+    character by character. Unknown names raise a ValueError listing the
+    valid options.
+    """
+    if isinstance(stats_funcs, str):
+        stats_funcs = [stats_funcs]
+    unknown = [s for s in stats_funcs if s not in _VALID_STATS_FUNCS]
+    if unknown:
+        raise ValueError(
+            f"Invalid stats_funcs {unknown}, "
+            f"must be one of {list(_VALID_STATS_FUNCS)}"
+        )
+    return stats_funcs
+
+
 def focal_stats(agg,
                 kernel,
                 stats_funcs=None,
@@ -1193,8 +1215,9 @@ def focal_stats(agg,
         Dimensions without coordinates: dim_0, dim_1
     """
     if stats_funcs is None:
-        stats_funcs = ['mean', 'max', 'min', 'range', 'std', 'var',
-                       'sum', 'variety']
+        stats_funcs = list(_VALID_STATS_FUNCS)
+    else:
+        stats_funcs = _validate_stats_funcs(stats_funcs)
 
     _validate_raster(agg, func_name='focal_stats', name='agg', ndim=(2, 3))
 
