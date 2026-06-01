@@ -32,16 +32,9 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
-from xrspatial.utils import (
-    _validate_raster,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
+from xrspatial.utils import _validate_raster, has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit
 
 # =====================================================================
 # Memory guards
@@ -138,6 +131,12 @@ def _flow_path_cpu(flow_dir, start_points, H, W):
     out = np.empty((H, W), dtype=np.float64)
     out[:] = np.nan
 
+    # A valid path visits each cell at most once, so it can take at most
+    # H*W steps.  A cyclic flow_dir grid (e.g. two cells pointing at each
+    # other) would otherwise loop forever, and numba nopython loops can't
+    # be interrupted by a signal.  Cap the walk to break out of cycles.
+    max_steps = H * W
+
     for r in range(H):
         for c in range(W):
             v = start_points[r, c]
@@ -145,7 +144,7 @@ def _flow_path_cpu(flow_dir, start_points, H, W):
                 continue
             label = v
             cr, cc = r, c
-            while True:
+            for _ in range(max_steps):
                 out[cr, cc] = label
                 code = flow_dir[cr, cc]
                 if code != code:  # NaN
@@ -171,7 +170,8 @@ def _flow_path_cupy(flow_dir_data, start_points_data):
     import cupy as cp
 
     fd_np = flow_dir_data.get() if hasattr(flow_dir_data, 'get') else np.asarray(flow_dir_data)
-    sp_np = start_points_data.get() if hasattr(start_points_data, 'get') else np.asarray(start_points_data)
+    sp_np = (start_points_data.get() if hasattr(start_points_data, 'get')
+             else np.asarray(start_points_data))
     fd_np = fd_np.astype(np.float64)
     sp_np = sp_np.astype(np.float64)
     H, W = fd_np.shape
@@ -336,9 +336,14 @@ def _flow_path_dask(flow_dir_data, start_points_data):
     _buf_labels = np.empty(_init_cap, dtype=np.float64)
     _buf_len = 0
 
+    # A valid path visits each cell at most once (at most H*W steps).
+    # Cap the walk so a cyclic flow_dir grid can't loop forever and grow
+    # the path buffers without bound.
+    max_steps = H * W
+
     for r, c, label in points:
         cr, cc = r, c
-        while True:
+        for _ in range(max_steps):
             # Grow buffers if needed (doubling strategy)
             if _buf_len >= len(_buf_rows):
                 new_cap = len(_buf_rows) * 2
@@ -434,8 +439,8 @@ def _flow_path_dask_cupy(flow_dir_data, start_points_data):
 
 @supports_dataset
 def flow_path_d8(flow_dir: xr.DataArray,
-              start_points: xr.DataArray,
-              name: str = 'flow_path') -> xr.DataArray:
+                 start_points: xr.DataArray,
+                 name: str = 'flow_path') -> xr.DataArray:
     """Trace downstream flow paths from start points through a D8 grid.
 
     Parameters

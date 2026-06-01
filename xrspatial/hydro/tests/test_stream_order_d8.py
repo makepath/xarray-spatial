@@ -3,6 +3,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.hydro import stream_order
+from xrspatial.hydro.stream_order_d8 import stream_order_d8
 from xrspatial.tests.general_checks import (
     create_test_raster,
     cuda_and_cupy_available,
@@ -314,6 +315,67 @@ def test_invalid_method():
     fa_da = create_test_raster(flow_accum)
     with pytest.raises(ValueError, match="ordering must be"):
         stream_order(fd_da, fa_da, ordering='horton')
+
+
+# ====================================================================
+# `method` alias (parity with stream_order_dinf / stream_order_mfd)
+# ====================================================================
+
+def _confluence_inputs():
+    flow_dir = np.array([
+        [2.0, 0.0, 8.0],
+        [0.0, 4.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ], dtype=np.float64)
+    flow_accum = np.array([
+        [1.0, 1.0, 1.0],
+        [1.0, 3.0, 1.0],
+        [1.0, 4.0, 1.0],
+    ], dtype=np.float64)
+    return create_test_raster(flow_dir), create_test_raster(flow_accum)
+
+
+def test_method_alias_matches_ordering():
+    """`method` is accepted as an alias for `ordering`."""
+    fd_da, fa_da = _confluence_inputs()
+    by_ordering = stream_order_d8(fd_da, fa_da, threshold=1,
+                                  ordering='shreve')
+    by_method = stream_order_d8(fd_da, fa_da, threshold=1, method='shreve')
+    np.testing.assert_array_equal(by_ordering.data, by_method.data)
+
+
+def test_method_takes_precedence_over_default_ordering():
+    """`method` wins when `ordering` is left at its default."""
+    fd_da, fa_da = _confluence_inputs()
+    result = stream_order_d8(fd_da, fa_da, threshold=1, method='shreve')
+    reference = stream_order_d8(fd_da, fa_da, threshold=1, ordering='shreve')
+    np.testing.assert_array_equal(result.data, reference.data)
+
+
+def test_method_invalid_value_raises():
+    """An invalid `method` value reports the bad value."""
+    fd_da, fa_da = _confluence_inputs()
+    with pytest.raises(ValueError, match="ordering must be"):
+        stream_order_d8(fd_da, fa_da, threshold=1, method='horton')
+
+
+def test_conflicting_ordering_and_method_raises():
+    """Passing both with different values raises ValueError."""
+    fd_da, fa_da = _confluence_inputs()
+    with pytest.raises(ValueError, match="not both"):
+        stream_order_d8(fd_da, fa_da, threshold=1,
+                        ordering='shreve', method='strahler')
+
+
+def test_capitalized_ordering_with_method_not_conflict():
+    """Case differences alone do not count as a conflict."""
+    fd_da, fa_da = _confluence_inputs()
+    # ordering='Strahler' is the default value in different case; passing
+    # method='shreve' alongside it should not be treated as a conflict.
+    result = stream_order_d8(fd_da, fa_da, threshold=1,
+                             ordering='Strahler', method='shreve')
+    reference = stream_order_d8(fd_da, fa_da, threshold=1, ordering='shreve')
+    np.testing.assert_array_equal(result.data, reference.data)
 
 
 # ====================================================================

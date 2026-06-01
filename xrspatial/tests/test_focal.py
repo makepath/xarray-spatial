@@ -31,6 +31,20 @@ def test_mean_transfer_function_cpu():
     general_output_checks(numpy_agg, numpy_mean)
 
 
+def test_mean_default_excludes_does_not_leak():
+    # excludes defaults to None and is resolved to [np.nan] inside the body,
+    # so the default must not be a shared mutable object across calls.
+    numpy_agg = xr.DataArray(data_random)
+
+    first = mean(numpy_agg)
+    second = mean(numpy_agg)
+
+    # default None resolves to the same behaviour as an explicit [np.nan]
+    explicit = mean(numpy_agg, excludes=[np.nan])
+    np.testing.assert_array_equal(first.data, explicit.data)
+    np.testing.assert_array_equal(first.data, second.data)
+
+
 @dask_array_available
 def test_mean_transfer_function_dask_cpu():
     # numpy case
@@ -812,6 +826,37 @@ def test_hotspot_gpu(data_hotspots):
 @dask_array_available
 @cuda_and_cupy_available
 def test_hotspots_dask_cupy():
+    import cupy
+
+    # Use a larger array so chunk interiors are meaningful
+    rng = np.random.default_rng(42)
+    data = rng.random((20, 24)).astype(np.float64) * 1000
+    kernel = np.array([[0., 1., 0.], [1., 1., 1.], [0., 1., 0.]])
+
+    # cupy reference (classification runs on the GPU)
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_hotspots = hotspots(cupy_agg, kernel)
+
+    # dask + cupy case
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy', chunks=(10, 12))
+    dask_cupy_hotspots = hotspots(dask_cupy_agg, kernel)
+    general_output_checks(dask_cupy_agg, dask_cupy_hotspots, verify_attrs=False)
+
+    # the result must stay a cupy-backed dask array end to end
+    assert isinstance(dask_cupy_hotspots.data, da.Array)
+    assert isinstance(dask_cupy_hotspots.data._meta, cupy.ndarray)
+
+    # Compare interior (boundary='nan' causes edge differences between
+    # cupy single-GPU bounds-clamping and dask map_overlap NaN-padding)
+    pad = kernel.shape[0] // 2
+    np.testing.assert_array_equal(
+        cupy_hotspots.data[pad:-pad, pad:-pad].get(),
+        dask_cupy_hotspots.data[pad:-pad, pad:-pad].compute().get())
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_hotspots_dask_cupy_matches_numpy():
     # The dask+cupy backend (_hotspots_dask_cupy) is registered in the
     # dispatch table but was previously exercised by no test. Verify it
     # runs and matches the numpy reference on the chunk interior.
@@ -985,6 +1030,78 @@ def test_hotspots_boundary_numpy_equals_dask(boundary, size, chunks):
     da_result = hotspots(dask_agg, kernel, boundary=boundary)
     np.testing.assert_allclose(
         np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+# --- cupy honours boundary (issue-2730) ---
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_mean_boundary_numpy_equals_cupy_2730(boundary):
+    """The cupy mean() must honour boundary, matching the numpy result.
+
+    Regression for #2730: the cupy backend ignored boundary and always
+    behaved as 'nan' (edge clamping).
+    """
+    import cupy
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
+    cupy_agg = xr.DataArray(cupy.asarray(data), dims=['y', 'x'])
+    np_result = mean(numpy_agg, boundary=boundary)
+    cp_result = mean(cupy_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, cp_result.data.get(), equal_nan=True, rtol=1e-4)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_apply_boundary_numpy_equals_cupy_2730(boundary):
+    """The cupy apply() must honour boundary, matching the numpy result."""
+    import cupy
+    from xrspatial.focal import _focal_mean_cuda
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+    np_result = apply(numpy_agg, kernel, boundary=boundary)
+    cp_result = apply(cupy_agg, kernel, _focal_mean_cuda, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, cp_result.data.get(), equal_nan=True, rtol=1e-4)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_focal_stats_boundary_numpy_equals_cupy_2730(boundary):
+    """The cupy focal_stats() must honour boundary, matching numpy."""
+    import cupy
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    stats = ['mean', 'sum', 'min', 'max', 'range', 'std', 'var']
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+    np_result = focal_stats(numpy_agg, kernel, stats_funcs=stats, boundary=boundary)
+    cp_result = focal_stats(cupy_agg, kernel, stats_funcs=stats, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, cp_result.data.get(), equal_nan=True, rtol=1e-4)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
+def test_focal_stats_cupy_boundary_preserves_coords_2730(boundary):
+    """Non-nan boundary on the cupy focal_stats path keeps coords/attrs."""
+    import cupy
+    data = np.random.default_rng(7).random((5, 6)).astype(np.float64)
+    coords = {'y': np.arange(5) * 2.0, 'x': np.arange(6) * 3.0}
+    cupy_agg = xr.DataArray(
+        cupy.asarray(data), dims=['y', 'x'], coords=coords, attrs={'unit': 'm'})
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    result = focal_stats(cupy_agg, kernel, stats_funcs=['mean', 'max'],
+                         boundary=boundary)
+    assert result.shape == (2, 5, 6)
+    np.testing.assert_array_equal(result['y'].data, coords['y'])
+    np.testing.assert_array_equal(result['x'].data, coords['x'])
+    assert list(result['stats'].data) == ['mean', 'max']
+    assert result.attrs['unit'] == 'm'
 
 
 @dask_array_available
@@ -1174,3 +1291,124 @@ def test_hotspots_3d_dask():
     assert dask_result.shape == (3, 10, 12)
     np.testing.assert_array_equal(
         dask_result.data.compute(), numpy_result.data)
+
+
+# --- result .name consistency across backends (metadata sweep) ----------
+#
+# Regression: the dask paths of focal_stats and hotspots constructed the
+# output DataArray without an explicit name=, so xarray adopted the
+# internal dask graph token (e.g. '_trim-<hash>') as the public .name.
+# This made .name differ across the four backends (numpy/cupy gave one
+# value, dask paths leaked a non-deterministic token).
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_focal_stats_name_consistent_across_backends(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = (np.arange(16).reshape(4, 4) + 0.5).astype(np.float64)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
+    result = focal_stats(agg, kernel, stats_funcs=['mean', 'max'])
+    assert result.name == 'focal_stats'
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_hotspots_name_consistent_across_backends(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = (np.arange(16).reshape(4, 4) + 0.5).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
+    result = hotspots(agg, kernel)
+    assert result.name == 'hotspots'
+
+
+# ---------------------------------------------------------------------------
+# API-consistency regressions (issue #2689)
+# ---------------------------------------------------------------------------
+
+_api_kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+
+
+def test_apply_raster_kwarg_deprecated():
+    agg = xr.DataArray(data_random)
+    with pytest.warns(DeprecationWarning, match="raster"):
+        deprecated = apply(raster=agg, kernel=_api_kernel)
+    current = apply(agg, _api_kernel)
+    np.testing.assert_array_equal(deprecated.data, current.data)
+
+
+def test_apply_raster_and_agg_conflict():
+    agg = xr.DataArray(data_random)
+    with pytest.raises(TypeError):
+        apply(agg, _api_kernel, raster=agg)
+
+
+def test_hotspots_raster_kwarg_deprecated():
+    agg = xr.DataArray(data_random * 100)
+    with pytest.warns(DeprecationWarning, match="raster"):
+        deprecated = hotspots(raster=agg, kernel=_api_kernel)
+    current = hotspots(agg, _api_kernel)
+    np.testing.assert_array_equal(deprecated.data, current.data)
+
+
+def test_hotspots_raster_and_agg_conflict():
+    agg = xr.DataArray(data_random * 100)
+    with pytest.raises(TypeError):
+        hotspots(agg, _api_kernel, raster=agg)
+
+
+def test_focal_stats_name():
+    agg = xr.DataArray(data_random)
+    result = focal_stats(agg, _api_kernel, stats_funcs=['mean', 'sum'])
+    assert result.name == 'focal_stats'
+    assert focal_stats(
+        agg, _api_kernel, stats_funcs=['mean'], name='custom').name == 'custom'
+
+
+def test_hotspots_name():
+    agg = xr.DataArray(data_random * 100)
+    assert hotspots(agg, _api_kernel).name == 'hotspots'
+    assert hotspots(agg, _api_kernel, name='custom').name == 'custom'
+
+
+def test_mean_excludes_default_not_shared():
+    # Regression: mutable default replaced by a None sentinel. Calling with
+    # an explicit excludes must not leak into the next default-args call.
+    agg = xr.DataArray(data_random)
+    mean(agg, excludes=[0.0])
+    again = mean(agg)
+    reference = mean(agg, excludes=[np.nan])
+    np.testing.assert_array_equal(again.data, reference.data)
+
+
+def test_focal_stats_default_stats_funcs():
+    agg = xr.DataArray(data_random)
+    result = focal_stats(agg, _api_kernel)
+    assert result.sizes['stats'] == 8
+
+
+@cuda_and_cupy_available
+def test_focal_stats_name_gpu():
+    import cupy
+    agg = xr.DataArray(cupy.asarray(data_random))
+    result = focal_stats(agg, _api_kernel, stats_funcs=['mean', 'sum'])
+    assert result.name == 'focal_stats'
+
+
+@cuda_and_cupy_available
+def test_hotspots_name_gpu():
+    import cupy
+    agg = xr.DataArray(cupy.asarray(data_random * 100))
+    assert hotspots(agg, _api_kernel).name == 'hotspots'
+    with pytest.warns(DeprecationWarning, match="raster"):
+        hotspots(raster=agg, kernel=_api_kernel)

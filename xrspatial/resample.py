@@ -1305,7 +1305,21 @@ def _resolve_nodata(agg, nodata):
             f"nodata={nodata!r} is not representable in integer dtype "
             f"{agg.dtype}; pass an integer sentinel instead."
         )
-    return np.asarray(nodata).astype(agg.dtype).item()
+    # Integer inputs: an out-of-range sentinel wraps on cast (e.g. 999
+    # becomes 231 for uint8), masking the wrong cells. Require the value
+    # to round-trip exactly into agg.dtype before trusting the cast.
+    info = np.iinfo(agg.dtype)
+    nd_int = int(nodata)
+    # A sentinel beyond the dtype range either wraps (numpy fixed-width
+    # cast) or overflows the C-long conversion for very large Python
+    # ints. Range-check up front so both surface the same ValueError
+    # instead of a raw OverflowError.
+    if nd_int < info.min or nd_int > info.max:
+        raise ValueError(
+            f"nodata={nodata!r} is out of range for integer dtype "
+            f"{agg.dtype} (valid range [{info.min}, {info.max}])."
+        )
+    return np.asarray(nd_int).astype(agg.dtype).item()
 
 
 def _apply_nodata_mask(agg, nodata):
@@ -1411,15 +1425,28 @@ def resample(
     Raises
     ------
     ValueError
-        If neither or both of ``scale_factor`` and ``target_resolution``
-        are given; if either is a sequence whose length is not 2; if any
-        component is zero, negative, NaN, or infinite; if ``method``
-        is not in :data:`ALL_METHODS`; or if the spatial coordinates of
-        ``agg`` are not strictly monotonic and evenly spaced (``resample``
-        only supports regular monotonic rasters).
+        If ``agg`` has a zero-length spatial dimension; if neither or both
+        of ``scale_factor`` and ``target_resolution`` are given; if either
+        is a sequence whose length is not 2; if any component is zero,
+        negative, NaN, or infinite; if ``method`` is not in
+        :data:`ALL_METHODS`; if the spatial coordinates of ``agg`` are
+        not strictly monotonic and evenly spaced (``resample`` only
+        supports regular monotonic rasters); or if ``nodata`` does not
+        round-trip exactly into an integer ``agg.dtype`` (a fractional
+        or out-of-range sentinel that would wrap on the cast).
     """
     _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
     _validate_monotonic_regular_coords(agg)
+
+    # Reject empty rasters up front. A zero-length spatial axis would
+    # otherwise reach the output-coordinate rebuild and surface as an
+    # opaque IndexError (vals[0] on an empty coord array) rather than a
+    # clear, parameter-named error.
+    if agg.shape[-2] == 0 or agg.shape[-1] == 0:
+        raise ValueError(
+            f"resample(): `agg` must have non-empty spatial dimensions, "
+            f"got shape {tuple(agg.shape)}"
+        )
 
     if method not in ALL_METHODS:
         raise ValueError(

@@ -163,6 +163,17 @@ class TestGeodesicAspectEdgeCases:
         assert np.all(directional >= 0.0)
         assert np.all(directional < 360.0)
 
+    @pytest.mark.parametrize("shape", [(1, 1), (1, 5), (5, 1)])
+    def test_degenerate_shape(self, shape):
+        """A dimension below 3 leaves no interior cell, so the geodesic
+        result keeps the input shape and comes back all-NaN. See #2742."""
+        H, W = shape
+        elev = np.arange(H * W, dtype=np.float64).reshape(shape)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='geodesic')
+        assert result.shape == shape
+        assert np.all(np.isnan(result.values))
+
 
 # ---------------------------------------------------------------------------
 # Tests — z_unit
@@ -291,6 +302,123 @@ class TestGeodesicAspectDaskCupy:
                                 backend='dask+cupy', chunks=(4, 5))
         a_np = aspect(r_np, method='geodesic')
         a_dc = aspect(r_dc, method='geodesic')
+        np.testing.assert_allclose(
+            a_np.values, a_dc.data.compute().get(), rtol=1e-5, equal_nan=True
+        )
+
+    def test_latlon_not_materialized_on_gpu_at_graph_build(self):
+        """The dask+cupy geodesic path must keep lat/lon chunked.
+
+        Building the graph (no compute) for a large raster must not densify
+        the full (H, W) lat/lon grids onto the GPU. Converting the broadcast
+        views with ``cupy.asarray`` up front would allocate ~2*H*W*8 bytes of
+        GPU memory at graph-construction time and OOM on large rasters.
+        """
+        import cupy
+
+        H = W = 2048
+        elev = cupy.zeros((H, W), dtype=cupy.float64)
+        lat = np.linspace(40.0, 41.0, H)
+        lon = np.linspace(10.0, 11.0, W)
+        raster = xr.DataArray(
+            da.from_array(elev, chunks=(256, 256)),
+            dims=['lat', 'lon'],
+            coords={'lat': lat, 'lon': lon},
+        )
+
+        pool = cupy.get_default_memory_pool()
+        pool.free_all_blocks()
+        before = pool.used_bytes()
+        out = aspect(raster, method='geodesic')   # graph construction only
+        out.data.__dask_graph__()
+        delta = pool.used_bytes() - before
+
+        # A single full lat or lon grid is H*W*8 bytes. If either were
+        # densified eagerly the delta would be at least that large.
+        one_full_grid = H * W * 8
+        assert delta < one_full_grid, (
+            f"graph construction allocated {delta} GPU bytes; expected well "
+            f"under one full lat/lon grid ({one_full_grid} bytes)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tests — boundary modes
+#
+# The geodesic backends pad the elevation AND the lat/lon coordinate grids
+# (the _run_*_geodesic functions in xrspatial/aspect.py) when boundary is
+# not 'nan'. Only 'nan' was exercised before; these cover the non-default
+# modes and check cross-backend parity. See issue #2742.
+# ---------------------------------------------------------------------------
+
+_NONNAN_BOUNDARY_MODES = ['nearest', 'reflect', 'wrap']
+
+
+class TestGeodesicAspectBoundary:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_nonnan_modes_fill_edges(self, boundary):
+        """Non-nan modes leave no NaN edge for a fully-defined surface."""
+        elev = _east_tilted_surface(H=6, W=8, grade=100.0)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='geodesic', boundary=boundary)
+        assert result.shape == elev.shape
+        assert not np.any(np.isnan(result.values))
+
+    def test_nan_mode_keeps_nan_edges(self):
+        """Default 'nan' boundary still leaves the outer ring NaN."""
+        elev = _east_tilted_surface(H=6, W=8, grade=100.0)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='geodesic', boundary='nan')
+        assert np.all(np.isnan(result.values[0, :]))
+        assert np.all(np.isnan(result.values[-1, :]))
+        assert np.all(np.isnan(result.values[:, 0]))
+        assert np.all(np.isnan(result.values[:, -1]))
+
+
+@dask_array_available
+class TestGeodesicAspectBoundaryDask:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_numpy_equals_dask(self, boundary):
+        elev = _east_tilted_surface(H=8, W=10, grade=100.0)
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
+        r_da = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0,
+                                backend='dask+numpy', chunks=(4, 5))
+        a_np = aspect(r_np, method='geodesic', boundary=boundary)
+        a_da = aspect(r_da, method='geodesic', boundary=boundary)
+        np.testing.assert_allclose(
+            a_np.values, a_da.data.compute(), rtol=1e-5, equal_nan=True
+        )
+
+
+@cuda_and_cupy_available
+class TestGeodesicAspectBoundaryCupy:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_numpy_equals_cupy(self, boundary):
+        elev = _east_tilted_surface(H=8, W=10, grade=100.0)
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
+        r_cu = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='cupy')
+        a_np = aspect(r_np, method='geodesic', boundary=boundary)
+        a_cu = aspect(r_cu, method='geodesic', boundary=boundary)
+        np.testing.assert_allclose(
+            a_np.values, a_cu.data.get(), rtol=1e-5, equal_nan=True
+        )
+
+
+@dask_array_available
+@cuda_and_cupy_available
+class TestGeodesicAspectBoundaryDaskCupy:
+
+    @pytest.mark.parametrize("boundary", _NONNAN_BOUNDARY_MODES)
+    def test_numpy_equals_dask_cupy(self, boundary):
+        elev = _east_tilted_surface(H=8, W=10, grade=100.0)
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
+        r_dc = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0,
+                                backend='dask+cupy', chunks=(4, 5))
+        a_np = aspect(r_np, method='geodesic', boundary=boundary)
+        a_dc = aspect(r_dc, method='geodesic', boundary=boundary)
         np.testing.assert_allclose(
             a_np.values, a_dc.data.compute().get(), rtol=1e-5, equal_nan=True
         )

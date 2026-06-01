@@ -5,6 +5,7 @@ import xarray as xa
 
 from xrspatial import viewshed
 from xrspatial.tests.general_checks import general_output_checks
+from xrspatial.utils import has_cuda_and_cupy
 from xrspatial.viewshed import INVISIBLE
 
 from ..gpu_rtx import has_rtx
@@ -459,3 +460,370 @@ def test_viewshed_cpu_memory_guard_passes_with_max_distance():
         v = viewshed(raster, x=50.0, y=50.0, observer_elev=5,
                      max_distance=3.0)
     assert v.values[50, 50] == 180.0
+
+
+@pytest.mark.parametrize("shape", [(1, 5), (5, 1)])
+def test_viewshed_single_row_or_column(shape):
+    """A 1xN or Nx1 raster must not divide by zero when computing the
+    grid resolution.  Regression test: _viewshed_cpu used to compute
+    ew_res/ns_res as range/(dim-1), which is 0/0 = NaN for a degenerate
+    axis, silently marking every non-observer cell INVISIBLE on flat
+    terrain where they should all be visible."""
+    ny, nx = shape
+    terrain = np.zeros((ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    raster = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    obs_x = float(xs[nx // 2])
+    obs_y = float(ys[ny // 2])
+    v = viewshed(raster, x=obs_x, y=obs_y, observer_elev=5)
+
+    # Observer cell is 180; on flat terrain with an elevated observer
+    # every other cell is visible (no NaN poisoning the geometry).
+    assert v.values[ny // 2, nx // 2] == 180.0
+    assert (v.values > INVISIBLE).all()
+    assert not np.isnan(v.values).any()
+
+
+@pytest.mark.parametrize("shape", [(1, 7), (7, 1)])
+def test_viewshed_single_row_or_column_max_distance(shape):
+    """The max_distance window path routes a degenerate window back
+    through _viewshed_cpu, so it must be guarded too."""
+    ny, nx = shape
+    terrain = np.zeros((ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    raster = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    obs_x = float(xs[nx // 2])
+    obs_y = float(ys[ny // 2])
+    v = viewshed(raster, x=obs_x, y=obs_y, observer_elev=5,
+                 max_distance=2.0)
+
+    assert v.values[ny // 2, nx // 2] == 180.0
+    # A cell two steps along the populated axis is within max_distance and
+    # visible on flat terrain.
+    if nx > 1:
+        assert v.values[0, nx // 2 + 2] > INVISIBLE
+    else:
+        assert v.values[ny // 2 + 2, 0] > INVISIBLE
+
+
+def _make_raster(backend):
+    """Build a small viewshed input raster for the given backend."""
+    arr = np.array([
+        [0, 0, 1, 0, 0],
+        [1, 3, 0, 0, 0],
+        [10, 2, 5, 2, -1],
+        [11, 1, 2, 9, 0]], dtype=np.float64)
+    xs = np.linspace(1, 5, 5)
+    ys = np.linspace(1, 4, 4)
+    attrs = {'res': (1.0, 1.0), 'crs': 'EPSG:4326'}
+
+    if backend == "numpy":
+        data = arr
+    elif backend == "dask+numpy":
+        data = da.from_array(arr, chunks=(2, 3))
+    elif backend == "cupy":
+        import cupy as cp
+        data = cp.asarray(arr)
+    elif backend == "dask+cupy":
+        import cupy as cp
+        data = da.from_array(cp.asarray(arr), chunks=(2, 3))
+    else:
+        raise ValueError(backend)
+
+    return xa.DataArray(data, dims=['y', 'x'],
+                        coords={'y': ys, 'x': xs},
+                        attrs=attrs, name='elevation')
+
+
+_METADATA_BACKENDS = [
+    "numpy",
+    "dask+numpy",
+    pytest.param("cupy", marks=pytest.mark.skipif(
+        not has_rtx(), reason="requires rtxpy for the GPU viewshed path")),
+    pytest.param("dask+cupy", marks=pytest.mark.skipif(
+        not has_rtx(), reason="requires rtxpy for the GPU viewshed path")),
+]
+
+
+@pytest.mark.parametrize("backend", _METADATA_BACKENDS)
+@pytest.mark.parametrize("max_distance", [None, 3.0])
+def test_viewshed_output_name_and_dtype_consistent(backend, max_distance):
+    """Output .name and dtype must not depend on the backend (#2743).
+
+    The default name is 'viewshed' on every backend, and the output dtype
+    is float64 everywhere (the GPU path internally works in float32).
+    """
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=1,
+                      max_distance=max_distance)
+
+    assert result.name == "viewshed"
+    assert result.dtype == np.float64
+    assert result.dims == raster.dims
+    # attrs/coords still pass through
+    assert result.attrs == raster.attrs
+    np.testing.assert_allclose(result.coords['x'].data,
+                               raster.coords['x'].data)
+    np.testing.assert_allclose(result.coords['y'].data,
+                               raster.coords['y'].data)
+
+
+@pytest.mark.parametrize("backend", _METADATA_BACKENDS)
+def test_viewshed_custom_name(backend):
+    """A user-supplied name is honoured on every backend."""
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=1, name="my_vs")
+    assert result.name == "my_vs"
+
+
+# -------------------------------------------------------------------
+# dask+cupy backend tests
+# -------------------------------------------------------------------
+
+def _dask_cupy_raster(arr_np, xs, ys, chunks, attrs=None):
+    """Build a dask-of-cupy DataArray for the requested terrain."""
+    import cupy as cp
+    data = da.from_array(cp.asarray(arr_np), chunks=chunks)
+    return xa.DataArray(data, coords=dict(x=xs, y=ys), dims=["y", "x"],
+                        attrs=attrs or {})
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="requires CUDA and cupy")
+@pytest.mark.skipif(not has_rtx(), reason="rtxpy not available")
+@pytest.mark.parametrize("observer_elev", [5, 2])
+@pytest.mark.parametrize("target_elev", [0, 1])
+def test_viewshed_dask_cupy_flat(observer_elev, target_elev):
+    """dask+cupy on flat terrain should match the analytical angle formula.
+
+    Exercises the dask+cupy dispatch path in ``_viewshed_dask`` (Tier B),
+    which was previously never invoked by any test.
+    """
+    x, y = 0.0, 0.0
+    ny, nx = 5, 4
+    arr = np.full((ny, nx), 1.3)
+    xs = np.arange(nx) * 0.5
+    ys = np.arange(ny) * 1.5
+
+    raster = _dask_cupy_raster(arr, xs, ys, chunks=(3, 2))
+    v = viewshed(raster, x=x, y=y,
+                 observer_elev=observer_elev, target_elev=target_elev)
+
+    result = v.data.compute()
+    if hasattr(result, "get"):
+        result = result.get()
+
+    xs2, ys2 = np.meshgrid(xs, ys)
+    d_vert = observer_elev - target_elev
+    d_horz = np.sqrt((xs2 - x) ** 2 + (ys2 - y) ** 2)
+    angle = np.rad2deg(np.arctan2(d_horz, d_vert))
+    # Don't compare the value under the observer.
+    angle[0, 0] = result[0, 0]
+    # GPU ray tracing introduces small angular errors on visible cells.
+    mask = result < 90
+    np.testing.assert_allclose(result[mask], angle[mask], atol=0.03)
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="requires CUDA and cupy")
+@pytest.mark.skipif(not has_rtx(), reason="rtxpy not available")
+def test_viewshed_dask_cupy_max_distance():
+    """dask+cupy with max_distance windows the raster and runs on GPU."""
+    ny, nx = 20, 20
+    # Flat but non-zero: the RTX mesh builder rejects an all-zero raster
+    # (no positive elevation to scale by, see issue #1378).
+    arr = np.full((ny, nx), 1.3)
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+
+    raster = _dask_cupy_raster(arr, xs, ys, chunks=(10, 10))
+    v = viewshed(raster, x=10.0, y=10.0, observer_elev=5, max_distance=5.0)
+
+    result = v.data.compute()
+    if hasattr(result, "get"):
+        result = result.get()
+
+    assert result[10, 10] == 180.0          # observer cell
+    assert result[0, 0] == INVISIBLE        # far outside the radius
+    assert result[19, 19] == INVISIBLE
+    assert result[10, 12] > INVISIBLE       # 2 cells away, flat, observer up
+
+
+# -------------------------------------------------------------------
+# Metadata preservation across backends
+# -------------------------------------------------------------------
+
+def _backend_raster(arr_np, xs, ys, backend, chunks, attrs):
+    if backend == "numpy":
+        data = arr_np
+    elif backend == "cupy":
+        import cupy as cp
+        data = cp.asarray(arr_np)
+    elif backend == "dask+numpy":
+        data = da.from_array(arr_np, chunks=chunks)
+    elif backend == "dask+cupy":
+        import cupy as cp
+        data = da.from_array(cp.asarray(arr_np), chunks=chunks)
+    else:
+        raise ValueError(backend)
+    return xa.DataArray(data, coords=dict(x=xs, y=ys), dims=["y", "x"],
+                        attrs=attrs)
+
+
+@pytest.mark.parametrize("backend",
+                         ["numpy", "cupy", "dask+numpy", "dask+cupy"])
+@pytest.mark.parametrize("max_distance", [None, 2.0])
+def test_viewshed_metadata_preserved(backend, max_distance):
+    """attrs, coords, and dims survive every backend (and max_distance).
+
+    viewshed reads the x/y coordinates to compute cell resolution, so a
+    metadata regression would corrupt the result.  The numpy ``test_viewshed``
+    asserts this via ``general_output_checks``; the cupy / dask / dask+cupy
+    and max_distance paths previously had no such assertion.
+    """
+    if "cupy" in backend and not has_cuda_and_cupy():
+        pytest.skip("requires CUDA and cupy")
+    if "cupy" in backend and not has_rtx():
+        pytest.skip("rtxpy not available")
+
+    np.random.seed(7)
+    ny, nx = 10, 8
+    arr = np.random.uniform(0, 3, (ny, nx)).astype(np.float64)
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    attrs = {"res": (1.0, 1.0), "crs": "EPSG:5070"}
+
+    raster = _backend_raster(arr, xs, ys, backend, chunks=(5, 4), attrs=attrs)
+    v = viewshed(raster, x=4.0, y=5.0, observer_elev=10,
+                 max_distance=max_distance)
+
+    # attrs / dims / coords preserved regardless of backend.
+    assert v.attrs == raster.attrs
+    assert v.dims == raster.dims
+    assert v.shape == raster.shape
+    np.testing.assert_allclose(v.x.values, raster.x.values)
+    np.testing.assert_allclose(v.y.values, raster.y.values)
+
+    # Array-type preservation: dask+cupy currently materialises to a
+    # numpy-backed dask array (the dask backend computes on CPU and
+    # rewraps), so only assert exact type parity for the other backends.
+    if backend != "dask+cupy":
+        general_output_checks(raster, v)
+
+
+# -------------------------------------------------------------------
+# NaN / nodata input
+# -------------------------------------------------------------------
+
+@pytest.mark.parametrize("nan_pos", [(1, 1), (0, 0), (4, 4)])
+def test_viewshed_nan_input_supported_positions(nan_pos):
+    """A single NaN cell at these positions runs without error.
+
+    The CPU sweep falls back to the centre elevation when bilinear
+    neighbours are NaN, so these cases complete.  See the companion
+    xfail test for the positions that still crash (issue #2693).
+    """
+    arr = np.full((5, 5), 2.0)
+    arr[nan_pos] = np.nan
+    xs = np.arange(5.0)
+    ys = np.arange(5.0)
+    raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+
+    # Observer cell is always 180.
+    assert v.values[2, 2] == 180.0
+    # The NaN cell itself must not be reported as a valid visibility angle.
+    assert v.values[nan_pos] == INVISIBLE or np.isnan(v.values[nan_pos])
+
+
+@pytest.mark.xfail(reason="viewshed crashes on NaN at this position "
+                          "(ValueError: node not found), see issue #2693",
+                   strict=True)
+def test_viewshed_nan_input_crashing_position():
+    """Regression guard for the incomplete NaN handling in the CPU sweep.
+
+    A NaN on the observer's row to the right raises
+    ``ValueError: node not found`` from ``_delete_from_tree``.  This test
+    documents the bug; remove the xfail once issue #2693 is fixed.
+    """
+    arr = np.full((5, 5), 2.0)
+    arr[2, 4] = np.nan
+    xs = np.arange(5.0)
+    ys = np.arange(5.0)
+    raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "cupy", "dask"])
+@pytest.mark.parametrize("fine_axis", ["x", "y"])
+def test_viewshed_max_distance_anisotropic(backend, fine_axis):
+    """max_distance must not clip cells on anisotropic-resolution rasters.
+
+    Regression test: the windowed path sized its analysis window from the
+    coarser of ew_res / ns_res and used that single radius for both axes,
+    so cells within max_distance along the finer axis were dropped from
+    the window and returned INVISIBLE.  Both anisotropy orientations are
+    checked so a mix-up between radius_rows / radius_cols is caught.
+    """
+    if backend == "cupy":
+        if not has_rtx():
+            pytest.skip("rtxpy not available")
+        import cupy as cp
+
+    # Strongly anisotropic: one axis spaced by 1, the other by 10.
+    # Use a uniform nonzero elevation: flat enough that all in-range cells
+    # stay visible, but the RTX mesh builder needs positive max elevation.
+    ny, nx = 21, 21
+    terrain = np.full((ny, nx), 1.0)
+    if fine_axis == "x":
+        xs = np.arange(nx, dtype=float) * 1.0    # fine
+        ys = np.arange(ny, dtype=float) * 10.0   # coarse
+    else:
+        xs = np.arange(nx, dtype=float) * 10.0   # coarse
+        ys = np.arange(ny, dtype=float) * 1.0    # fine
+
+    obs_x, obs_y = xs[10], ys[10]
+    obs_elev = 50
+
+    base = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    full = viewshed(base, x=obs_x, y=obs_y, observer_elev=obs_elev)
+    full_vals = full.values
+
+    # max_distance=8 reaches 8 cells along the fine axis but < 1 along the
+    # coarse axis, so the buggy single-radius window clipped the fine axis.
+    arr = terrain.copy()
+    if backend == "cupy":
+        arr = cp.asarray(arr)
+    raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    if backend == "dask":
+        raster = xa.DataArray(
+            da.from_array(terrain.copy(), chunks=(7, 7)),
+            coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=obs_x, y=obs_y, observer_elev=obs_elev,
+                 max_distance=8.0)
+    if backend == "cupy":
+        result = v.data.get()
+    else:
+        # numpy and dask both resolve through .values
+        result = v.values
+
+    # Cells within max_distance along the fine axis must be evaluated and
+    # match the full viewshed, not be clipped to INVISIBLE.  obs is at
+    # index 10 on both axes; step along the fine axis from the observer.
+    for offset in (2, 5, 7):  # all < 8 cells along the fine axis
+        if fine_axis == "x":
+            rc = (10, 10 + offset)
+        else:
+            rc = (10 + offset, 10)
+        assert result[rc] > INVISIBLE, (
+            f"cell {rc} ({offset} fine-axis cells away) wrongly clipped")
+        np.testing.assert_allclose(result[rc], full_vals[rc], atol=0.03)
+
+    # A cell 9 fine-axis cells away (> max_distance) stays INVISIBLE.
+    far = (10, 19) if fine_axis == "x" else (19, 10)
+    assert result[far] == INVISIBLE

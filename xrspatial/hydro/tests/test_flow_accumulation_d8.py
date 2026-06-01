@@ -427,3 +427,22 @@ class TestMemoryGuard:
         ):
             with pytest.raises(MemoryError, match="dask"):
                 flow_accumulation(agg)
+
+
+# ---------------------------------------------------------------------------
+# Degenerate-shape tests (issue #2713)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("shape", [(1, 1), (1, 4), (4, 1)])
+def test_degenerate_shape(shape):
+    """Single-pixel and single-row/column input.
+
+    Every cell is a pit (code 0) that drains only itself, so each cell
+    accumulates exactly 1 at the input shape.
+    """
+    flow_dir = np.zeros(shape, dtype=np.float64)
+    agg = create_test_raster(flow_dir)
+    result = flow_accumulation(agg)
+    assert result.shape == shape
+    assert not np.isnan(result.data).any()
+    np.testing.assert_array_equal(result.data, 1.0)
