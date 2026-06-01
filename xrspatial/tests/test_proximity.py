@@ -1311,3 +1311,26 @@ def test_proximity_res_attr_drives_bounded_dask_padding():
     assert isinstance(result.data, da.Array)
     np.testing.assert_allclose(
         result.values, expected, equal_nan=True, rtol=1e-5)
+
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_target_values_none_default_matches_empty_list(func):
+    # target_values default switched from [] to a None sentinel; passing
+    # None (the default) must behave exactly like passing an empty list.
+    data = np.asarray([[0., 0., 0., 0., 0.],
+                       [0., 0., 0., 1., 0.],
+                       [0., 0., 0., 0., 0.],
+                       [0., 0., 2., 0., 0.],
+                       [0., 0., 0., 0., 0.]])
+    n, m = data.shape
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['y'] = np.arange(n)[::-1]
+    raster['x'] = np.arange(m)
+
+    default_result = func(raster)
+    explicit_result = func(raster, target_values=[])
+
+    np.testing.assert_array_equal(
+        np.nan_to_num(default_result.data),
+        np.nan_to_num(explicit_result.data),
+    )
