@@ -391,3 +391,21 @@ def test_valid_output_codes():
         if np.isnan(v):
             continue
         assert v in VALID_CODES, f"Invalid code: {v}"
+
+
+# ---------------------------------------------------------------------------
+# Degenerate-shape tests (issue #2713)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("shape", [(1, 1), (1, 4), (4, 1)])
+def test_degenerate_shape(shape):
+    """Single-pixel and single-row/column input.
+
+    Every cell sits on the kernel boundary, so flow_direction returns
+    all NaN at the input shape.
+    """
+    data = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
+    agg = create_test_raster(data)
+    result = flow_direction(agg)
+    assert result.shape == shape
+    assert np.isnan(result.data).all()

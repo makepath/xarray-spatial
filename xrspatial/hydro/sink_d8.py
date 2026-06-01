@@ -21,16 +21,9 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -464,7 +457,7 @@ def _run_dask_cupy(data):
 
 @supports_dataset
 def sink_d8(flow_dir: xr.DataArray,
-         name: str = 'sink') -> xr.DataArray:
+            name: str = 'sink') -> xr.DataArray:
     """Identify and label depression cells in a D8 flow direction grid.
 
     Finds cells with direction code 0 (pit/flat with no downhill

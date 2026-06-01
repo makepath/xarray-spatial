@@ -34,19 +34,12 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
 from xrspatial.hydro.stream_order_d8 import _preprocess_stream_tiles, _to_numpy_f64
-
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -238,7 +231,7 @@ def _stream_link_cpu(flow_dir, stream_mask, height, width):
 
 @cuda.jit
 def _stream_link_init_gpu(flow_dir, stream_mask, in_degree, orig_indeg,
-                           state, link_id, H, W):
+                          state, link_id, H, W):
     """Initialise GPU arrays for stream link computation."""
     i, j = cuda.grid(2)
     if i >= H or j >= W:
@@ -298,7 +291,7 @@ def _stream_link_save_indeg(in_degree, orig_indeg, stream_mask, H, W):
 
 @cuda.jit
 def _stream_link_find_ready(in_degree, orig_indeg, state, link_id,
-                             changed, H, W):
+                            changed, H, W):
     """Finalize previous frontier, mark new frontier cells."""
     i, j = cuda.grid(2)
     if i >= H or j >= W:
@@ -317,7 +310,7 @@ def _stream_link_find_ready(in_degree, orig_indeg, state, link_id,
 
 @cuda.jit
 def _stream_link_pull(flow_dir, stream_mask, in_degree, orig_indeg,
-                       state, link_id, H, W):
+                      state, link_id, H, W):
     """Active cells pull link_id from frontier neighbours."""
     i, j = cuda.grid(2)
     if i >= H or j >= W:
@@ -423,7 +416,7 @@ def _stream_link_cupy(flow_dir_data, stream_mask_data):
 
 @cuda.jit
 def _stream_link_find_ready_tile(in_degree, orig_indeg, state, link_id,
-                                  changed, H, W, row_off, col_off, total_w):
+                                 changed, H, W, row_off, col_off, total_w):
     """Tile-aware find_ready: uses global coordinates for link IDs."""
     i, j = cuda.grid(2)
     if i >= H or j >= W:
@@ -442,11 +435,11 @@ def _stream_link_find_ready_tile(in_degree, orig_indeg, state, link_id,
 
 
 def _stream_link_tile_cupy(flow_dir_data, stream_mask_data,
-                            seed_id_top, seed_id_bottom,
-                            seed_id_left, seed_id_right,
-                            seed_ext_top, seed_ext_bottom,
-                            seed_ext_left, seed_ext_right,
-                            row_offset, col_offset, total_width):
+                           seed_id_top, seed_id_bottom,
+                           seed_id_left, seed_id_right,
+                           seed_ext_top, seed_ext_bottom,
+                           seed_ext_left, seed_ext_right,
+                           row_offset, col_offset, total_width):
     """GPU seeded stream link for a single tile.
 
     Uses GPU frontier peeling with tile-aware global ID assignment.
@@ -521,11 +514,11 @@ def _stream_link_tile_cupy(flow_dir_data, stream_mask_data,
 
 @ngjit
 def _stream_link_tile_kernel(flow_dir, stream_mask, h, w,
-                              seed_id_top, seed_id_bottom,
-                              seed_id_left, seed_id_right,
-                              seed_ext_top, seed_ext_bottom,
-                              seed_ext_left, seed_ext_right,
-                              row_offset, col_offset, total_width):
+                             seed_id_top, seed_id_bottom,
+                             seed_id_left, seed_id_right,
+                             seed_ext_top, seed_ext_bottom,
+                             seed_ext_left, seed_ext_right,
+                             row_offset, col_offset, total_width):
     """Seeded BFS link assignment for a single tile.
 
     Parameters
@@ -951,9 +944,9 @@ def _stream_link_dask(flow_dir_da, accum_da, threshold):
 
 
 def _process_link_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
-                             boundaries, indeg_bdry, flow_bdry, mask_bdry,
-                             chunks_y, chunks_x, n_tile_y, n_tile_x,
-                             row_offsets, col_offsets, total_width):
+                            boundaries, indeg_bdry, flow_bdry, mask_bdry,
+                            chunks_y, chunks_x, n_tile_y, n_tile_x,
+                            row_offsets, col_offsets, total_width):
     """Run seeded GPU stream link on one tile; update boundary stores."""
     import cupy as cp
 
@@ -1074,9 +1067,9 @@ def _stream_link_dask_cupy(flow_dir_da, accum_da, threshold):
 
 @supports_dataset
 def stream_link_d8(flow_dir: xr.DataArray,
-                flow_accum: xr.DataArray,
-                threshold: float = 100,
-                name: str = 'stream_link') -> xr.DataArray:
+                   flow_accum: xr.DataArray,
+                   threshold: float = 100,
+                   name: str = 'stream_link') -> xr.DataArray:
     """Assign unique IDs to stream link segments.
 
     Each contiguous stream segment between junctions, headwaters, and

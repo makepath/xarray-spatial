@@ -24,13 +24,10 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from xrspatial.pathfinding import _available_memory_bytes
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args, get_dataarray_resolution, has_cuda_and_cupy,
-    is_cupy_array, is_dask_cupy, ngjit,
-)
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.pathfinding import _available_memory_bytes
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1
@@ -288,7 +285,7 @@ def _vectorized_calc_direction(x1, x2, y1, y2):
     dy = y2 - y1
     d = np.arctan2(-dy, dx) * 57.29578
     result = np.where(d < 0, 90.0 - d,
-             np.where(d > 90.0, 360.0 - d + 90.0, 90.0 - d))
+                      np.where(d > 90.0, 360.0 - d + 90.0, 90.0 - d))
     result[(x1 == x2) & (y1 == y2)] = 0.0
     return result.astype(np.float32)
 
@@ -426,16 +423,25 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
                        max_distance, distance_metric, process_mode):
     """Dask+CuPy bounded proximity via map_overlap with per-chunk GPU kernel.
 
-    Each chunk (plus overlap padding of ``max_distance / cellsize`` pixels)
-    is processed on GPU independently.  Only valid for finite max_distance
+    Each chunk (plus an overlap padding of ``max_distance`` converted to
+    pixels using the active distance metric) is processed on GPU
+    independently.  Only valid for finite max_distance
     where the padding guarantees all relevant targets are visible within
     each overlapped chunk.
     """
     import cupy as cp
 
-    cellsize_x, cellsize_y = get_dataarray_resolution(raster)
-    pad_y = int(max_distance / abs(cellsize_y) + 0.5)
-    pad_x = int(max_distance / abs(cellsize_x) + 0.5)
+    # Overlap depth in pixels, measured with the active distance_metric so
+    # that GREAT_CIRCLE (max_distance in metres) does not divide by a degree
+    # cellsize. See _process_dask for the same conversion.
+    dist_per_row = _distance(
+        x_coords[0], x_coords[0],
+        y_coords[0], y_coords[1], distance_metric)
+    dist_per_col = _distance(
+        x_coords[0], x_coords[1],
+        y_coords[0], y_coords[0], distance_metric)
+    pad_y = int(max_distance / dist_per_row + 0.5)
+    pad_x = int(max_distance / dist_per_col + 0.5)
 
     # Build 2D coordinate grids as dask+cupy arrays matching raster chunks.
     # Each chunk is small (chunk_h x chunk_w x 8 bytes); the full grid is
@@ -686,8 +692,15 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
     np.cumsum(chunks_x, out=x_offsets[1:])
 
     for iy in range(n_tile_y):
+        # Compute one chunk-row at a time so the scheduler can read the
+        # row's chunks in parallel instead of one blocking .compute() per
+        # chunk. Peak driver memory stays bounded to a single row of
+        # chunks, preserving the streaming guarantee from gh-879.
+        row_chunks = da.compute(
+            *(raster.data.blocks[iy, ix] for ix in range(n_tile_x))
+        )
         for ix in range(n_tile_x):
-            chunk_data = raster.data.blocks[iy, ix].compute()
+            chunk_data = row_chunks[ix]
             mask = _target_mask(chunk_data, target_values)
             rows, cols = np.where(mask)
             n = len(rows)
@@ -1230,17 +1243,26 @@ def _process(
             ys = ys.rechunk({0: height, 1: width})
             pad_y = pad_x = 0
         else:
-            cellsize_x, cellsize_y = get_dataarray_resolution(raster)
-            # calculate padding for each chunk
-            pad_y = int(max_distance / cellsize_y + 0.5)
-            pad_x = int(max_distance / cellsize_x + 0.5)
+            # Convert max_distance to a per-chunk overlap depth in pixels.
+            # max_distance is expressed in the same unit as the chosen
+            # distance_metric, so the pixel pitch must be measured with that
+            # same metric. Using the raw degree cellsize for GREAT_CIRCLE
+            # (where max_distance is in metres) yields a meaningless depth.
+            dist_per_row = _distance(
+                x_coords[0], x_coords[0],
+                y_coords[0], y_coords[1], distance_metric)
+            dist_per_col = _distance(
+                x_coords[0], x_coords[1],
+                y_coords[0], y_coords[0], distance_metric)
+            pad_y = int(max_distance / dist_per_row + 0.5)
+            pad_x = int(max_distance / dist_per_col + 0.5)
 
         out = da.map_overlap(
             _process_numpy,
             raster.data, xs, ys,
             depth=(pad_y, pad_x),
             boundary=np.nan,
-            meta=np.array(()),
+            meta=np.array((), dtype=np.float32),
         )
         return out
 
@@ -1269,9 +1291,9 @@ def _process(
             was_dask_cupy = has_cuda_and_cupy() and is_dask_cupy(raster)
             if was_dask_cupy:
                 import cupy as cp
+
                 # Unbounded: convert to dask+numpy for KDTree/line-sweep
                 # (KDTree is CPU-only; O(N log T) beats brute-force O(NT))
-                original_chunks = raster.data.chunks
                 raster = raster.copy(
                     data=raster.data.map_blocks(
                         lambda x: x.get(), dtype=raster.dtype,
@@ -1344,7 +1366,7 @@ def proximity(
     raster: xr.DataArray,
     x: str = "x",
     y: str = "y",
-    target_values: list = [],
+    target_values: list = None,
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
 ) -> xr.DataArray:
@@ -1460,6 +1482,9 @@ def proximity(
           * x        (x) int64 0 1 2 3 4
     """
 
+    if target_values is None:
+        target_values = []
+
     _validate_raster(raster, func_name='proximity', name='raster')
 
     proximity_img = _process(
@@ -1476,8 +1501,10 @@ def proximity(
         proximity_img,
         coords=raster.coords,
         dims=raster.dims,
-        attrs=raster.attrs
+        attrs=raster.attrs,
     )
+    # Drop any internal dask op name so all backends agree on .name=None.
+    result.name = None
 
     return result
 
@@ -1487,10 +1514,10 @@ def allocation(
     raster: xr.DataArray,
     x: str = "x",
     y: str = "y",
-    target_values: list = [],
+    target_values: list = None,
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
-):
+) -> xr.DataArray:
     """
     Calculates, for all pixels in the input raster, the nearest source
     based on a set of target values and a distance metric.
@@ -1600,6 +1627,9 @@ def allocation(
           * x        (x) int64 0 1 2 3 4
     """
 
+    if target_values is None:
+        target_values = []
+
     _validate_raster(raster, func_name='allocation', name='raster')
 
     allocation_img = _process(
@@ -1619,6 +1649,8 @@ def allocation(
         dims=raster.dims,
         attrs=raster.attrs,
     )
+    # Drop any internal dask op name so all backends agree on .name=None.
+    result.name = None
     return result
 
 
@@ -1627,10 +1659,10 @@ def direction(
     raster: xr.DataArray,
     x: str = "x",
     y: str = "y",
-    target_values: list = [],
+    target_values: list = None,
     max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
-):
+) -> xr.DataArray:
     """
     Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the direction to
@@ -1746,6 +1778,9 @@ def direction(
           * x        (x) int64 0 1 2 3 4
     """
 
+    if target_values is None:
+        target_values = []
+
     _validate_raster(raster, func_name='direction', name='raster')
 
     direction_img = _process(
@@ -1762,6 +1797,8 @@ def direction(
         direction_img,
         coords=raster.coords,
         dims=raster.dims,
-        attrs=raster.attrs
+        attrs=raster.attrs,
     )
+    # Drop any internal dask op name so all backends agree on .name=None.
+    result.name = None
     return result
