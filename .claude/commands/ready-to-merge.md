@@ -37,6 +37,12 @@ not require `reviewDecision == APPROVED`.
 From the Step 1 JSON, a PR passes this gate when its `reviews` array is
 non-empty. A PR with zero reviews is excluded with reason `not reviewed`.
 
+If a PR's reviews are all `COMMENTED` with none `APPROVED`, it still passes the
+gate, but flag it in the Step 6 report as `(no approving review)`. A rockout PR
+carries a `COMMENTED` review posted by automation, so "reviewed" here can mean
+"a bot looked", not "a human approved". Surfacing that lets the reader decide
+whether an independent approval is needed before merging.
+
 ## Step 3 -- Merge-conflict gate
 
 GitHub computes `mergeable` lazily, so the Step 1 list often reports
@@ -59,26 +65,32 @@ itself disqualify a PR -- note it but let the PR through this gate.
 
 ## Step 4 -- CI gate, with the Read the Docs exception
 
-Pull the check rollup for each candidate:
+Pull the check rollup for each candidate as JSON so you read a stable `bucket`
+field instead of parsing the human-readable table:
 
 ```bash
-gh pr checks <number>
+gh pr checks <number> --json name,state,bucket
 ```
 
-Classify the PR:
+Each check has a `bucket` of `pass`, `fail`, `pending`, or `skipping`. The
+`--json` form exits 0 even when checks fail, so read its output directly.
+Classify the PR from the buckets:
 
-- **Any check still pending** (state `pending`) -- the PR is not ready *yet*.
-  Exclude it with reason `CI still running` rather than treating it as a failure.
-- **A check failed** (state `fail`) -- look at the check name:
+- **Any check has bucket `pending`** -- the PR is not ready *yet*. Exclude it
+  with reason `CI still running` rather than treating it as a failure.
+- **A check has bucket `fail`** -- look at the check `name`:
   - The Read the Docs check is named `docs/readthedocs.org:xarray-spatial`. A
     failure on this check alone is tolerated (RTD rate-limit flakiness). It does
-    not disqualify the PR.
+    not disqualify the PR. This name is the only RTD assumption in the command;
+    if the RTD project slug ever changes, a real RTD failure would start
+    disqualifying PRs (a stricter failure mode, never a silent pass), so update
+    the name here if that happens.
   - Any other failing check disqualifies the PR. Exclude it with reason
     `CI failure: <check name>`.
-- **All checks pass** (or the only failure is the RTD check) -- passes this gate.
+- **Every check is bucket `pass` or `skipping`** (or the only `fail` is the RTD
+  check) -- passes this gate.
 
-States `skipping` and `neutral` count as non-blocking. Only `fail` on a
-non-RTD check, or a still-`pending` check, holds a PR back.
+Only a `fail` bucket on a non-RTD check, or a `pending` bucket, holds a PR back.
 
 ## Step 5 -- Blockers-addressed gate (review re-run)
 
@@ -117,9 +129,10 @@ to the PR:
 - [#2738 Add dask+cupy test coverage ...](https://github.com/xarray-contrib/xarray-spatial/pull/2738)
 ```
 
-If a ready PR has a tolerated RTD failure or outstanding advisory
-suggestions/nits, append a short parenthetical so the human is not surprised
-(e.g. `(RTD build failing -- ignored)` or `(2 advisory nits)`).
+If a ready PR has a tolerated RTD failure, no approving review, or outstanding
+advisory suggestions/nits, append a short parenthetical so the human is not
+surprised (e.g. `(RTD build failing -- ignored)`, `(no approving review)`, or
+`(2 advisory nits)`).
 
 **Excluded** -- a markdown list of every other open PR with the specific reason
 it did not qualify, so the gap to ready is obvious:
