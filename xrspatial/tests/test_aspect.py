@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import xarray as xr
 
 try:
     import dask.array as da
@@ -249,3 +250,137 @@ def test_degenerate_shape_dask_cupy(func, shape):
     result = func(agg)
     assert result.shape == shape
     assert np.all(np.isnan(_to_numpy(result)))
+
+
+# ---- Independent analytic oracle for planar aspect ----
+#
+# The other planar tests only prove the four backends agree with each
+# other. They all share the same _cpu/_gpu kernels, so a defect common to
+# every backend (like the missing-cellsize bug in #2760) passes anyway.
+# The QGIS fixture is a real external reference but uses square cells, so
+# it never checks rectangular cells or that cell size is read from the
+# coordinates.
+#
+# These tests build a surface with a known constant gradient and compare
+# aspect() against the closed-form Horn value computed from the real cell
+# sizes, not against another backend. The raster carries no 'res' attr, so
+# resolution must come from the x/y coordinate spacing.
+
+_RADIAN = 180 / np.pi
+
+
+def _aspect_oracle(gx, gy):
+    """Closed-form compass aspect for a plane z = gx*X + gy*Y (X east, Y
+    south-by-row). The cell-size-correct Horn gradients of such a plane are
+    exactly gx and gy, independent of cell size, so the oracle only needs
+    the gradients."""
+    if gx == 0 and gy == 0:
+        return -1.0
+    a = np.arctan2(gy, -gx) * _RADIAN
+    if a < 0:
+        return 90.0 - a
+    elif a > 90.0:
+        return 360.0 - a + 90.0
+    else:
+        return 90.0 - a
+
+
+def _gradient_plane(gx, gy, cellsize_x, cellsize_y, n=7):
+    """A DataArray of z = gx*X + gy*Y on a grid with the given cell sizes.
+
+    Coordinates encode the resolution; no 'res' attr is set so cell size
+    must be recovered from the coordinate spacing.
+    """
+    xs = np.arange(n) * cellsize_x
+    ys = np.arange(n) * cellsize_y
+    z = gx * xs[None, :] + gy * ys[:, None]
+    return xr.DataArray(
+        z.astype(np.float64), dims=['y', 'x'], coords={'y': ys, 'x': xs},
+        name='gradient_plane')
+
+
+def _to_backend(agg, backend, chunks=(3, 3)):
+    data = agg.data
+    if 'cupy' in backend:
+        import cupy
+        data = cupy.asarray(data)
+    if 'dask' in backend:
+        data = da.from_array(data, chunks=chunks)
+    return xr.DataArray(data, dims=agg.dims, coords=agg.coords,
+                        attrs=agg.attrs, name=agg.name)
+
+
+_ORACLE_BACKENDS = ['numpy']
+if has_dask_array():
+    _ORACLE_BACKENDS.append('dask+numpy')
+
+
+def _aspect_interior(agg):
+    """Compute aspect and return the realized numpy interior (drop the
+    NaN edge ring)."""
+    result = aspect(agg, method='planar')
+    return _to_numpy(result)[1:-1, 1:-1]
+
+
+# Square cells: aspect is correct today, so this oracle must pass
+# unconditionally on every backend.
+@pytest.mark.parametrize("backend", _ORACLE_BACKENDS)
+@pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0), (-1.0, 0.0)])
+@pytest.mark.parametrize("cellsize", [1.0, 0.5, 10.0])
+def test_planar_aspect_oracle_square(backend, gx, gy, cellsize):
+    agg = _to_backend(_gradient_plane(gx, gy, cellsize, cellsize), backend)
+    interior = _aspect_interior(agg)
+    expected = _aspect_oracle(gx, gy)
+    np.testing.assert_allclose(interior, expected, rtol=1e-4, atol=1e-3)
+
+
+# Rectangular cells (xres != yres). aspect() ignores cell size today
+# (#2760), so the East/North gradient ratio is wrong and these fail until
+# that fix lands. xfail(strict=False) flips to XPASS automatically once
+# #2760 merges, signalling the marker can be removed.
+@pytest.mark.xfail(
+    reason="planar aspect ignores cellsize_x/cellsize_y; pending #2760",
+    strict=False,
+)
+@pytest.mark.parametrize("backend", _ORACLE_BACKENDS)
+@pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0)])
+@pytest.mark.parametrize("cellsize_x,cellsize_y", [(10.0, 1.0), (1.0, 4.0)])
+def test_planar_aspect_oracle_rectangular(
+        backend, gx, gy, cellsize_x, cellsize_y):
+    agg = _to_backend(_gradient_plane(gx, gy, cellsize_x, cellsize_y), backend)
+    interior = _aspect_interior(agg)
+    expected = _aspect_oracle(gx, gy)
+    np.testing.assert_allclose(interior, expected, rtol=1e-4, atol=1e-3)
+
+
+# Cupy and dask+cupy oracle (separate functions so the cuda/cupy skip
+# marker applies). Same assertion target as the numpy/dask versions.
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ['cupy', 'dask+cupy'])
+@pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0), (-1.0, 0.0)])
+@pytest.mark.parametrize("cellsize", [1.0, 0.5, 10.0])
+def test_planar_aspect_oracle_square_cupy(backend, gx, gy, cellsize):
+    if backend == 'dask+cupy' and not has_dask_array():
+        pytest.skip("Requires dask.Array")
+    agg = _to_backend(_gradient_plane(gx, gy, cellsize, cellsize), backend)
+    interior = _aspect_interior(agg)
+    expected = _aspect_oracle(gx, gy)
+    np.testing.assert_allclose(interior, expected, rtol=1e-4, atol=1e-3)
+
+
+@cuda_and_cupy_available
+@pytest.mark.xfail(
+    reason="planar aspect ignores cellsize_x/cellsize_y; pending #2760",
+    strict=False,
+)
+@pytest.mark.parametrize("backend", ['cupy', 'dask+cupy'])
+@pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0)])
+@pytest.mark.parametrize("cellsize_x,cellsize_y", [(10.0, 1.0), (1.0, 4.0)])
+def test_planar_aspect_oracle_rectangular_cupy(
+        backend, gx, gy, cellsize_x, cellsize_y):
+    if backend == 'dask+cupy' and not has_dask_array():
+        pytest.skip("Requires dask.Array")
+    agg = _to_backend(_gradient_plane(gx, gy, cellsize_x, cellsize_y), backend)
+    interior = _aspect_interior(agg)
+    expected = _aspect_oracle(gx, gy)
+    np.testing.assert_allclose(interior, expected, rtol=1e-4, atol=1e-3)
