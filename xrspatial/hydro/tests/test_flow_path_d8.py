@@ -398,3 +398,83 @@ def test_numpy_equals_dask_cupy():
 
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+# -------------------------------------------------------------------
+# Cyclic flow_dir grids must terminate (issue #2714)
+# -------------------------------------------------------------------
+
+def test_two_cycle_terminates_numpy():
+    """A 2-cell cycle must not hang; the path walk is capped at H*W steps."""
+    # (0,0) flows East to (0,1); (0,1) flows West back to (0,0).
+    fd = np.array([[1.0, 16.0]])
+    sp = np.full((1, 2), np.nan)
+    sp[0, 0] = 5.0
+
+    fd_da, sp_da = _make_fd_and_sp(fd, sp)
+    result = flow_path(fd_da, sp_da)
+
+    # Both cells are visited and carry the start label; the run completes.
+    assert result.data[0, 0] == 5.0
+    assert result.data[0, 1] == 5.0
+
+
+def test_self_loop_terminates_numpy():
+    """A cell pointing back into the cycle via a longer loop terminates."""
+    # 3-cell horizontal cycle: E, E, then W-W back around is not possible in
+    # one row, so build a square loop:
+    #   (0,0) E -> (0,1) S -> (1,1) W -> (1,0) N -> (0,0)
+    fd = np.array([
+        [1.0, 4.0],
+        [64.0, 16.0],
+    ])
+    sp = np.full((2, 2), np.nan)
+    sp[0, 0] = 7.0
+
+    fd_da, sp_da = _make_fd_and_sp(fd, sp)
+    result = flow_path(fd_da, sp_da)
+
+    # Every cell on the loop is labeled and the call returns.
+    assert result.data[0, 0] == 7.0
+    assert result.data[0, 1] == 7.0
+    assert result.data[1, 1] == 7.0
+    assert result.data[1, 0] == 7.0
+
+
+@dask_array_available
+def test_two_cycle_terminates_dask():
+    """The dask path must also terminate on a cyclic grid."""
+    fd = np.array([
+        [1.0, 4.0],
+        [64.0, 16.0],
+    ])
+    sp = np.full((2, 2), np.nan)
+    sp[0, 0] = 3.0
+
+    fd_da, sp_da = _make_fd_and_sp(fd, sp, backend='dask', chunks=(1, 1))
+    result = flow_path(fd_da, sp_da)
+
+    out = result.data.compute()
+    assert out[0, 0] == 3.0
+    assert out[0, 1] == 3.0
+    assert out[1, 1] == 3.0
+    assert out[1, 0] == 3.0
+
+
+def test_acyclic_path_unchanged():
+    """The cycle cap does not alter normal acyclic path tracing."""
+    # All flow east; last column is a pit.
+    fd = np.array([
+        [1.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+    ])
+    sp = np.full((2, 3), np.nan)
+    sp[0, 0] = 9.0
+
+    fd_da, sp_da = _make_fd_and_sp(fd, sp)
+    result = flow_path(fd_da, sp_da)
+
+    assert result.data[0, 0] == 9.0
+    assert result.data[0, 1] == 9.0
+    assert result.data[0, 2] == 9.0
+    assert np.isnan(result.data[1, 0])

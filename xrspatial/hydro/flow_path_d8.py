@@ -138,6 +138,12 @@ def _flow_path_cpu(flow_dir, start_points, H, W):
     out = np.empty((H, W), dtype=np.float64)
     out[:] = np.nan
 
+    # A valid path visits each cell at most once, so it can take at most
+    # H*W steps.  A cyclic flow_dir grid (e.g. two cells pointing at each
+    # other) would otherwise loop forever, and numba nopython loops can't
+    # be interrupted by a signal.  Cap the walk to break out of cycles.
+    max_steps = H * W
+
     for r in range(H):
         for c in range(W):
             v = start_points[r, c]
@@ -145,7 +151,7 @@ def _flow_path_cpu(flow_dir, start_points, H, W):
                 continue
             label = v
             cr, cc = r, c
-            while True:
+            for _ in range(max_steps):
                 out[cr, cc] = label
                 code = flow_dir[cr, cc]
                 if code != code:  # NaN
@@ -336,9 +342,14 @@ def _flow_path_dask(flow_dir_data, start_points_data):
     _buf_labels = np.empty(_init_cap, dtype=np.float64)
     _buf_len = 0
 
+    # A valid path visits each cell at most once (at most H*W steps).
+    # Cap the walk so a cyclic flow_dir grid can't loop forever and grow
+    # the path buffers without bound.
+    max_steps = H * W
+
     for r, c, label in points:
         cr, cc = r, c
-        while True:
+        for _ in range(max_steps):
             # Grow buffers if needed (doubling strategy)
             if _buf_len >= len(_buf_rows):
                 new_cap = len(_buf_rows) * 2
