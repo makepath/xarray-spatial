@@ -169,12 +169,14 @@ def great_circle_distance(
     y2: float
         y-coordinate (latitude) between -90 and 90 of the second point.
     radius: float, default=6378137
-        Radius of sphere (earth).
+        Radius of sphere (earth), in meters. The default is the WGS84
+        equatorial radius, so the returned distance is in meters.
 
     Returns
     -------
     distance : float
-        Great-Circle distance between two points.
+        Great-Circle distance between two points, in the same unit as
+        ``radius`` (meters by default).
 
     References
     ----------
@@ -1419,8 +1421,8 @@ def proximity(
         For example, if input raster is in lat-lon and distances between points
         within the raster is calculated using Euclidean distance metric,
         `max_distance` should also be provided in lat-lon unit.
-        If using Great Circle distance metric, and thus all distances is in km,
-        `max_distance` should also be provided in kilometer unit.
+        If using Great Circle distance metric, and thus all distances is in
+        meters, `max_distance` should also be provided in meters.
 
         When scaling with Dask, whether the function scales well depends on
         the `max_distance` value. If `max_distance` is infinite by default,
@@ -1566,8 +1568,8 @@ def allocation(
         For example, if input raster is in lat-lon and distances between points
         within the raster is calculated using Euclidean distance metric,
         `max_distance` should also be provided in lat-lon unit.
-        If using Great Circle distance metric, and thus all distances is in km,
-        `max_distance` should also be provided in kilometer unit.
+        If using Great Circle distance metric, and thus all distances is in
+        meters, `max_distance` should also be provided in meters.
 
         When scaling with Dask, whether the function scales well depends on
         the `max_distance` value. If `max_distance` is infinite by default,
@@ -1715,8 +1717,8 @@ def direction(
         For example, if input raster is in lat-lon and distances between points
         within the raster is calculated using Euclidean distance metric,
         `max_distance` should also be provided in lat-lon unit.
-        If using Great Circle distance metric, and thus all distances is in km,
-        `max_distance` should also be provided in kilometer unit.
+        If using Great Circle distance metric, and thus all distances is in
+        meters, `max_distance` should also be provided in meters.
 
         When scaling with Dask, whether the function scales well depends on
         the `max_distance` value. If `max_distance` is infinite by default,
