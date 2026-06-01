@@ -178,3 +178,96 @@ def test_validate_arrays_mixed_eager_numpy_and_cupy_rejected():
     b = xr.DataArray(cupy.zeros((6, 6)))
     with pytest.raises(ValueError, match="numpy.*cupy"):
         validate_arrays(a, b)
+
+
+# ---------------------------------------------------------------------------
+# calc_res irregular-spacing warning (issue #2766)
+# ---------------------------------------------------------------------------
+
+
+def _grid(x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    return xr.DataArray(
+        np.zeros((y.size, x.size)),
+        dims=("y", "x"),
+        coords={"y": y, "x": x},
+    )
+
+
+def test_calc_res_regular_grid_no_warning():
+    raster = _grid([0, 1, 2, 3, 4], [0, 1, 2])
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        xres, yres = utils.calc_res(raster)
+    assert (xres, yres) == (1.0, 1.0)
+    assert len(w) == 0
+
+
+def test_calc_res_irregular_x_warns():
+    raster = _grid([0, 1, 2, 4, 8], [0, 1, 2])
+    with pytest.warns(UserWarning, match="'x' coordinate is not evenly spaced"):
+        xres, yres = utils.calc_res(raster)
+    # averaged span: (8 - 0) / (5 - 1) == 2.0
+    assert xres == 2.0
+    assert yres == 1.0
+
+
+def test_calc_res_irregular_y_warns():
+    raster = _grid([0, 1, 2], [0, 1, 3, 7])
+    with pytest.warns(UserWarning, match="'y' coordinate is not evenly spaced"):
+        utils.calc_res(raster)
+
+
+def test_calc_res_descending_axis_no_warning():
+    # north-up rasters have a descending y axis: regular but negative steps
+    raster = _grid([0, 1, 2, 3], [3, 2, 1, 0])
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        xres, yres = utils.calc_res(raster)
+    assert (xres, yres) == (1.0, 1.0)
+    assert len(w) == 0
+
+
+def test_calc_res_no_coords_no_warning():
+    raster = xr.DataArray(np.zeros((3, 5)))
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        xres, yres = utils.calc_res(raster)
+    assert (xres, yres) == (1.0, 1.0)
+    assert len(w) == 0
+
+
+def test_calc_res_float_regular_grid_no_warning():
+    # floating-point regular spacing must not trip the relative tolerance
+    x = np.linspace(-74.93, -74.9275, 10)
+    y = np.linspace(5.0, 5.0025, 10)
+    raster = _grid(x, y)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        utils.calc_res(raster)
+    assert len(w) == 0
+
+
+def test_get_dataarray_resolution_irregular_with_res_attr_no_warning():
+    # attrs['res'] is honored before calc_res, so no averaging warning fires
+    raster = _grid([0, 1, 2, 4, 8], [0, 1, 2])
+    raster.attrs["res"] = (1.0, 1.0)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        cx, cy = utils.get_dataarray_resolution(raster)
+    assert (cx, cy) == (1.0, 1.0)
+    assert len(w) == 0
+
+
+def test_slope_irregular_coords_warns():
+    # the user-facing symptom: planar slope averages cell size silently
+    from xrspatial import slope
+
+    x = [0, 1, 2, 4, 8]
+    data = np.tile(np.asarray(x, dtype=float), (4, 1))
+    raster = xr.DataArray(
+        data, dims=("y", "x"), coords={"y": [0, 1, 2, 3], "x": x}
+    )
+    with pytest.warns(UserWarning, match="'x' coordinate is not evenly spaced"):
+        slope(raster)
