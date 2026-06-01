@@ -736,6 +736,47 @@ def test_variety_single_cell():
     assert result.sel(stats='variety').values.item() == 1.0
 
 
+def _all_unique_window(n):
+    """(n x n) raster of all-distinct values with an (n x n) all-ones kernel.
+
+    The center pixel's window is the whole raster, so its variety equals n*n.
+    """
+    data = np.arange(n * n, dtype=np.float64).reshape(n, n)
+    kernel = np.ones((n, n))
+    return data, kernel
+
+
+@pytest.mark.parametrize("n", [7, 9])
+def test_variety_large_kernel_numpy(n):
+    """Variety must not cap below the true distinct count for large kernels."""
+    data, kernel = _all_unique_window(n)
+    agg = create_test_raster(data)
+    result = focal_stats(agg, kernel, stats_funcs=['variety'])
+    vals = result.sel(stats='variety').values
+    center = n // 2
+    assert vals[center, center] == float(n * n)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("n", [7, 9])
+def test_variety_gpu_large_kernel_parity(n):
+    """GPU variety must match numpy for kernels larger than 5x5 (#2775).
+
+    The old CUDA kernel capped unique counts at 25, so a 7x7 all-unique
+    window returned 25 on GPU vs 49 on CPU. The center pixel's window covers
+    the whole raster, so its variety equals n*n (49 for 7x7, 81 for 9x9).
+    """
+    data, kernel = _all_unique_window(n)
+    np_agg = create_test_raster(data)
+    cupy_agg = create_test_raster(data, backend='cupy')
+    np_result = focal_stats(np_agg, kernel, stats_funcs=['variety'])
+    cupy_result = focal_stats(cupy_agg, kernel, stats_funcs=['variety'])
+    center = n // 2
+    assert cupy_result.sel(stats='variety').data.get()[center, center] == float(n * n)
+    np.testing.assert_allclose(
+        np_result.values, cupy_result.data.get(), equal_nan=True)
+
+
 @pytest.fixture
 def data_hotspots():
     data = np.asarray([
