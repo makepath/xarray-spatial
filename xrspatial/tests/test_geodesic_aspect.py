@@ -275,6 +275,23 @@ class TestGeodesicAspectMemoryGuard:
         computed = result.compute()
         assert computed.shape == (200, 200)
 
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_dask_cupy_chunked_skips_full_raster_guard(self, monkeypatch):
+        """dask+cupy goes through the same chunked map_overlap path, so the
+        full-raster guard must not reject it either (issue #2763)."""
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        raster = _make_geo_raster(
+            elev, 40.0, 41.0, 10.0, 11.0,
+            backend='dask+cupy', chunks=(40, 40),
+        )
+        result = aspect(raster, method='geodesic')
+        computed = result.compute()
+        assert computed.shape == (200, 200)
+
 
 # ---------------------------------------------------------------------------
 # Tests — cross-backend consistency
