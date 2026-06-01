@@ -300,9 +300,9 @@ def test_output_metadata_consistent_across_backends(
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
-@pytest.mark.parametrize("max_distance", [-1, -0.5, -np.inf])
-def test_negative_max_distance_raises(test_raster, func, max_distance):
-    # A negative max_distance is meaningless and used to produce
+@pytest.mark.parametrize("max_distance", [-1, -0.5, -np.inf, np.nan])
+def test_invalid_max_distance_raises(test_raster, func, max_distance):
+    # A negative or NaN max_distance is meaningless and used to produce
     # backend-dependent output (numpy squared it, the CUDA path compared
     # against it directly).  It must raise on every backend instead.
     with pytest.raises(ValueError, match="max_distance"):
