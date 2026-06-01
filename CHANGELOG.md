@@ -2,6 +2,60 @@
 -----------
 
 
+### Version 0.10.2 - 2026-06-01
+
+#### New contributors
+- @Melissari1997 made their first contribution in #2749
+
+#### Bug fixes and improvements
+- contours: handle infinite NaN coords (#2749)
+- contours: validate input raster, reject complex dtype (#2711)
+- contours: keep CRS on empty geopandas result (#2708)
+- focal: pin result .name across backends in focal_stats and hotspots (#2735)
+- focal: honour boundary on the cupy backend (#2736)
+- focal: keep hotspots dask+cupy classification on the GPU (#2739)
+- focal: align signatures across mean/apply/focal_stats/hotspots (#2699)
+- aspect: keep lat/lon chunked in dask+cupy geodesic path (#2707)
+- aspect: planar dask backends report float32 dtype matching computed data (#2741)
+- slope: planar dask backends declare float32 meta dtype (#2694)
+- slope: widen name type hint to Optional[str] for terrain-family parity (#2687)
+- viewshed: consistent output name and dtype across backends (#2747)
+- viewshed: guard degenerate-axis resolution in the CPU sweep (#2745)
+- viewshed: size max_distance window per axis on anisotropic rasters (#2702)
+- proximity: consistent output dtype and .name across allocation and direction backends (#2728)
+- proximity: fix bounded GREAT_CIRCLE crash on dask backends (#2722)
+- proximity: batch per-chunk-row compute in KDTree count pass (#2726)
+- hydro: cap flow_path downstream walk to break cycles (#2718)
+- hydro: stream_order_d8 accepts method alias; basins_d8 emits DeprecationWarning (#2716)
+- resample: reject out-of-range integer nodata sentinels (#2671)
+- resample: reject empty rasters with a clear ValueError (#2665)
+- resample: reject irregular/non-monotonic spatial coordinates (#2667)
+- resample: refresh nodata/nodatavals on identity fast path (#2670)
+- resample: fix dask nearest/bilinear chunk-seam values on downsampling (#2627)
+- reproject: make transform_precision=0 force exact pyproj transforms (#2654)
+- reproject: account for datum shifts in output bounds estimation (#2655)
+- reproject: disable numba fast path for non-WGS84 datums (#2657)
+- reproject: filter footprint coordinate pairs by joint finite mask (#2652)
+- reproject: fix per-band nodata masking for multi-band inputs (#2658)
+- reproject: fix cupy backend divergence from numpy on pyproj-fallback CRS pairs (#2629)
+- reproject: rename vertical CRS kwargs to source_/target_vertical_crs (#2626)
+- zonal: raise clear ValueError for empty Dataset in stats() (#2642)
+- zonal: count returns 0 for empty zones, other stats stay NaN (#2656)
+- zonal: validate backend compatibility on the crosstab 3D path (#2653)
+- zonal: validate backend compatibility for 3D apply() inputs (#2648)
+- zonal: make apply() output .name deterministic across backends (#2622)
+- zonal: fix int32 overflow in _strides() that corrupts stats/crosstab on huge rasters (#2617)
+- crop: validate zones/values shapes match instead of returning nonsense (#2645)
+- geotiff: forward allow_rotated/allow_invalid_nodata to VRT per-source reads (#2676)
+- geotiff: make open_geotiff bbox= work for .vrt sources (#2674)
+- geotiff: make VRT tiled writes atomic to avoid poisoned partial output (#2678)
+- polygonize: batch dask per-chunk compute instead of serial loop (#2673)
+- polygonize: batch dask compute per chunk row to recover parallelism (#2632)
+- polygonize: make dask float output chunk-invariant for rtol (#2675)
+- polygonize: keep diagonal-notch hole in dask 8-conn merge (#2633)
+- polygonize: derive transform from x/y coords so geopandas CRS matches geometry (#2630)
+
+
 ### Version 0.10.1 - 2026-05-29
 
 #### New features
