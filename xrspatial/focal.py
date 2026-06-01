@@ -1282,9 +1282,9 @@ def _hotspots_numpy(raster, kernel, boundary='nan'):
 
 
 def _hotspots_dask_numpy(raster, kernel, boundary='nan'):
-    data = raster.data
-    if not np.issubdtype(data.dtype, np.floating):
-        data = data.astype(np.float32)
+    # Match the numpy path: compute in float32 so the convolution and the
+    # float32 map_overlap meta agree regardless of input dtype.
+    data = raster.data.astype(np.float32)
 
     # Global statistics stay lazy: 0-d dask arrays that broadcast into the
     # z-score below. Nothing is computed during graph construction.
@@ -1319,9 +1319,9 @@ def _calc_hotspots_cupy(z):
 
 
 def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
-    data = raster.data
-    if not cupy.issubdtype(data.dtype, cupy.floating):
-        data = data.astype(cupy.float32)
+    # Match the numpy path: compute in float32 so the convolution and the
+    # float32 map_overlap meta agree regardless of input dtype.
+    data = raster.data.astype(cupy.float32)
 
     # Global statistics stay lazy: 0-d dask arrays that broadcast into the
     # z-score below. Nothing is computed during graph construction.
