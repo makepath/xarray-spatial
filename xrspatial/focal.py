@@ -1505,6 +1505,14 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
 
     _validate_boundary(boundary)
 
+    kernel = custom_kernel(kernel)
+    if kernel.sum() == 0:
+        raise ValueError(
+            "hotspots(): kernel sums to zero. The kernel is normalized by "
+            "its sum, so a zero-sum kernel divides by zero. Supply a kernel "
+            "with at least one non-zero cell."
+        )
+
     rows, cols = agg.shape[-2], agg.shape[-1]
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots')
 

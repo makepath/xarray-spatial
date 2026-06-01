@@ -776,6 +776,47 @@ def test_hotspots_zero_global_std():
         hotspots(agg, kernel)
 
 
+def test_hotspots_kernel_none_2771():
+    # Regression for #2771: hotspots skipped custom_kernel validation, so a
+    # None kernel raised AttributeError on kernel.shape instead of ValueError.
+    agg = create_test_raster(np.ones((10, 10), dtype=np.float32))
+    with pytest.raises(ValueError):
+        hotspots(agg, None)
+
+
+def test_hotspots_kernel_list_of_list_2771():
+    # Regression for #2771: a list-of-list kernel reached kernel.shape and
+    # raised AttributeError; it should be rejected as a non-ndarray.
+    agg = create_test_raster(np.ones((10, 10), dtype=np.float32))
+    with pytest.raises(ValueError):
+        hotspots(agg, [[1, 1, 1]])
+
+
+def test_hotspots_kernel_even_dim_2771():
+    # Regression for #2771: an even-dimensioned kernel silently succeeded
+    # before; custom_kernel now rejects it for improper shape.
+    agg = create_test_raster(np.ones((10, 10), dtype=np.float32))
+    with pytest.raises(ValueError):
+        hotspots(agg, np.ones((2, 2)))
+
+
+def test_hotspots_kernel_zero_sum_2771():
+    # Regression for #2771: hotspots normalizes by kernel.sum(); a zero-sum
+    # kernel divided by zero instead of raising a clear error.
+    agg = create_test_raster(np.ones((10, 10), dtype=np.float32))
+    kernel = np.zeros((3, 3))
+    with pytest.raises(ValueError, match=r"hotspots\(\): kernel sums to zero"):
+        hotspots(agg, kernel)
+
+
+def test_hotspots_valid_kernel_happy_path_2771(data_hotspots):
+    # Regression for #2771: the added validation must not reject valid kernels.
+    data, kernel, expected_result = data_hotspots
+    numpy_agg = create_test_raster(data)
+    numpy_hotspots = hotspots(numpy_agg, kernel)
+    general_output_checks(numpy_agg, numpy_hotspots, expected_result, verify_attrs=False)
+
+
 def test_hotspots_numpy(data_hotspots):
     data, kernel, expected_result = data_hotspots
     numpy_agg = create_test_raster(data)
