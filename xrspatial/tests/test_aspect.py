@@ -273,7 +273,13 @@ def _aspect_oracle(gx, gy):
     """Closed-form compass aspect for a plane z = gx*X + gy*Y (X east, Y
     south-by-row). The cell-size-correct Horn gradients of such a plane are
     exactly gx and gy, independent of cell size, so the oracle only needs
-    the gradients."""
+    the gradients.
+
+    The arctan2/compass conversion below is duplicated from aspect._cpu on
+    purpose: an oracle that called aspect() would not be independent. The
+    square-cell tests re-check this against the real function every run, so
+    drift is caught.
+    """
     if gx == 0 and gy == 0:
         return -1.0
     a = np.arctan2(gy, -gx) * _RADIAN
@@ -325,7 +331,7 @@ def _aspect_interior(agg):
 # Square cells: aspect is correct today, so this oracle must pass
 # unconditionally on every backend.
 @pytest.mark.parametrize("backend", _ORACLE_BACKENDS)
-@pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0), (-1.0, 0.0)])
+@pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0), (-1.0, 0.0), (0.0, 0.0)])
 @pytest.mark.parametrize("cellsize", [1.0, 0.5, 10.0])
 def test_planar_aspect_oracle_square(backend, gx, gy, cellsize):
     agg = _to_backend(_gradient_plane(gx, gy, cellsize, cellsize), backend)
