@@ -29,13 +29,11 @@ def test_great_circle_distance():
 
 
 def test_great_circle_distance_returns_meters():
-    # One degree of longitude at the equator spans the arc length
-    # radius * radians(1) = 6378137 * pi/180 ~= 111319.49 meters.
-    # In kilometers this would be ~111, so this pins down the unit and
-    # keeps the docstring's "meters" claim honest.
+    # One degree of longitude at the equator spans ~111319.49 meters
+    # (radius * radians(1) = 6378137 * pi/180). In kilometers this would
+    # be ~111, so this fixed literal pins the unit down and keeps the
+    # docstring's "meters" claim honest.
     dist = great_circle_distance(x1=0.0, x2=1.0, y1=0.0, y2=0.0)
-    expected_meters = 6378137 * np.radians(1.0)
-    assert dist == pytest.approx(expected_meters)
     assert dist == pytest.approx(111319.49, abs=1e-2)
 
 
