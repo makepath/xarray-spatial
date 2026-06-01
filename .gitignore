@@ -99,5 +99,7 @@ xrspatial-examples/
 *.zarr/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+.codex/worktrees/
+.codex/scheduled_tasks.lock
 docs/superpowers/
 *.aux.xml
