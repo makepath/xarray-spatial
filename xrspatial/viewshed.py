@@ -2,7 +2,7 @@ from collections import OrderedDict
 from math import atan, atan2, fabs
 from math import pi as PI
 from math import sqrt
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import xarray
@@ -1510,6 +1510,7 @@ def _viewshed_cpu(
     y: Union[int, float],
     observer_elev: float = OBS_ELEV,
     target_elev: float = TARGET_ELEV,
+    name: Optional[str] = 'viewshed',
 ) -> xarray.DataArray:
 
     height, width = raster.shape
@@ -1598,6 +1599,7 @@ def _viewshed_cpu(
         visibility_grid)
 
     visibility = xarray.DataArray(viewshed_img,
+                                  name=name,
                                   coords=raster.coords,
                                   attrs=raster.attrs,
                                   dims=raster.dims)
@@ -1609,7 +1611,8 @@ def viewshed(raster: xarray.DataArray,
              y: Union[int, float],
              observer_elev: float = OBS_ELEV,
              target_elev: float = TARGET_ELEV,
-             max_distance: float = None) -> xarray.DataArray:
+             max_distance: float = None,
+             name: Optional[str] = 'viewshed') -> xarray.DataArray:
     """
     Calculate viewshed of a raster (the visible cells in the raster)
     for the given viewpoint (observer) location.
@@ -1634,6 +1637,9 @@ def viewshed(raster: xarray.DataArray,
         evaluated. When set and the raster is dask-backed, only the
         chunks within the distance window are loaded — this is the most
         efficient way to run viewshed on very large dask rasters.
+    name : str, default='viewshed'
+        Name of the output DataArray. Set on every backend so the
+        result name does not depend on which backend ran.
 
     Returns
     -------
@@ -1709,26 +1715,28 @@ def viewshed(raster: xarray.DataArray,
     # --- max_distance: extract spatial window for any backend ---
     if max_distance is not None:
         return _viewshed_windowed(raster, x, y, observer_elev, target_elev,
-                                  max_distance)
+                                  max_distance, name)
 
     if isinstance(raster.data, np.ndarray):
-        return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
+        return _viewshed_cpu(raster, x, y, observer_elev, target_elev, name)
 
     elif has_cuda_and_cupy() and is_cupy_array(raster.data):
         if has_rtx():
             # Run on gpu
             from .gpu_rtx.viewshed import viewshed_gpu
-            return viewshed_gpu(raster, x, y, observer_elev, target_elev)
+            return viewshed_gpu(raster, x, y, observer_elev, target_elev, name)
         else:
             # Convert to numpy and run on cpu
             import cupy as cp
             raster.data = cp.asnumpy(raster.data)
-            return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
+            return _viewshed_cpu(raster, x, y, observer_elev, target_elev,
+                                 name)
 
     elif has_dask_array():
         import dask.array as da
         if isinstance(raster.data, da.Array):
-            return _viewshed_dask(raster, x, y, observer_elev, target_elev)
+            return _viewshed_dask(raster, x, y, observer_elev, target_elev,
+                                  name)
 
     raise TypeError(f"Unsupported raster array type: {type(raster.data)}")
 
@@ -2049,7 +2057,7 @@ def _viewshed_distance_sweep(dask_data, H, W, obs_r, obs_c,
 
 
 def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
-                       max_distance):
+                       max_distance, name='viewshed'):
     """Run viewshed on a spatial window around the observer.
 
     Works for any backend: numpy, cupy, dask+numpy, dask+cupy.  The window
@@ -2150,11 +2158,11 @@ def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
         full_vis = np.full((height, width), INVISIBLE, dtype=np.float64)
         full_vis[r_lo:r_hi, c_lo:c_hi] = local_vals
 
-    return xarray.DataArray(full_vis, coords=raster.coords,
+    return xarray.DataArray(full_vis, name=name, coords=raster.coords,
                             dims=raster.dims, attrs=raster.attrs)
 
 
-def _viewshed_dask(raster, x, y, observer_elev, target_elev):
+def _viewshed_dask(raster, x, y, observer_elev, target_elev, name='viewshed'):
     """Dask-backed viewshed (no max_distance — handled by caller).
 
     Two-tier strategy:
@@ -2206,8 +2214,10 @@ def _viewshed_dask(raster, x, y, observer_elev, target_elev):
                                    observer_elev, target_elev)
         result_np = result.data if isinstance(result.data, np.ndarray) \
             else result.data.get()
+        # GPU path returns float32; emit float64 to match the CPU backends
+        result_np = result_np.astype(np.float64, copy=False)
         vis_da = da.from_array(result_np, chunks=raster.data.chunks)
-        return xarray.DataArray(vis_da, coords=raster.coords,
+        return xarray.DataArray(vis_da, name=name, coords=raster.coords,
                                 dims=raster.dims, attrs=raster.attrs)
 
     # --- Tier C: out-of-core distance sweep (CPU only) ---
@@ -2245,5 +2255,5 @@ def _viewshed_dask(raster, x, y, observer_elev, target_elev):
     )
 
     vis_da = da.from_array(visibility, chunks=raster.data.chunks)
-    return xarray.DataArray(vis_da, coords=raster.coords,
+    return xarray.DataArray(vis_da, name=name, coords=raster.coords,
                             dims=raster.dims, attrs=raster.attrs)

@@ -28,17 +28,10 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.hydro._boundary_store import BoundaryStore
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -322,7 +315,7 @@ def _fill_cupy(dem_data):
 # =====================================================================
 
 def _build_constraint_ring(iy, ix, boundaries, chunks_y, chunks_x,
-                            n_tile_y, n_tile_x):
+                           n_tile_y, n_tile_x):
     """Build (h+2, w+2) constraint ring for tile (iy, ix).
 
     Grid boundaries use -1e308 (water escapes at DEM elevation).
@@ -378,7 +371,7 @@ def _build_constraint_ring(iy, ix, boundaries, chunks_y, chunks_x,
 
 
 def _process_fill_tile(iy, ix, dem_da, boundaries,
-                        chunks_y, chunks_x, n_tile_y, n_tile_x):
+                       chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run P-D on one tile; update boundaries in-place.
 
     Returns the maximum absolute boundary change (float).
@@ -388,8 +381,8 @@ def _process_fill_tile(iy, ix, dem_da, boundaries,
     h, w = chunk.shape
 
     ring = _build_constraint_ring(iy, ix, boundaries,
-                                   chunks_y, chunks_x,
-                                   n_tile_y, n_tile_x)
+                                  chunks_y, chunks_x,
+                                  n_tile_y, n_tile_x)
 
     result = _fill_tile_kernel(chunk, h, w, ring)
 
@@ -488,13 +481,13 @@ def _fill_dask_iterative(dem_da):
     boundaries = boundaries.snapshot()
 
     return _assemble_fill_result(dem_da, boundaries,
-                                  chunks_y, chunks_x,
-                                  n_tile_y, n_tile_x)
+                                 chunks_y, chunks_x,
+                                 n_tile_y, n_tile_x)
 
 
 def _assemble_fill_result(dem_da, boundaries,
-                           chunks_y, chunks_x,
-                           n_tile_y, n_tile_x):
+                          chunks_y, chunks_x,
+                          n_tile_y, n_tile_x):
     """Build lazy dask array by re-running tiles with converged constraints."""
 
     def _tile_fn(dem_block, block_info=None):
@@ -503,8 +496,8 @@ def _assemble_fill_result(dem_da, boundaries,
         iy, ix = block_info[0]['chunk-location']
         h, w = dem_block.shape
         ring = _build_constraint_ring(iy, ix, boundaries,
-                                       chunks_y, chunks_x,
-                                       n_tile_y, n_tile_x)
+                                      chunks_y, chunks_x,
+                                      n_tile_y, n_tile_x)
         return _fill_tile_kernel(
             np.asarray(dem_block, dtype=np.float64), h, w, ring)
 
@@ -536,8 +529,8 @@ def _fill_dask_cupy(dem_data):
 
 @supports_dataset
 def fill_d8(dem: xr.DataArray,
-         z_limit=None,
-         name: str = 'fill') -> xr.DataArray:
+            z_limit=None,
+            name: str = 'fill') -> xr.DataArray:
     """Fill depressions in a DEM using Planchon-Darboux iterative flooding.
 
     Raises each depression cell to the elevation of its pour point

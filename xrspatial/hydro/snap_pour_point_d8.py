@@ -34,16 +34,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.utils import _validate_raster, has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit
 
 # =====================================================================
 # Memory guards
@@ -203,8 +195,8 @@ def _snap_pour_point_cpu(flow_accum, pour_points, search_radius, H, W):
 
 @cuda.jit
 def _snap_pour_point_gpu(flow_accum, pp_rows, pp_cols,
-                          snap_rows, snap_cols, search_radius,
-                          n_pp, H, W):
+                         snap_rows, snap_cols, search_radius,
+                         n_pp, H, W):
     """Each thread handles one pour point: windowed max search on GPU."""
     k = cuda.grid(1)
     if k >= n_pp:
@@ -389,9 +381,12 @@ def _snap_pour_point_dask(flow_accum_data, pour_points_data, search_radius):
         snapped.append((best_r, best_c, label))
 
     # --- Phase 4: lazy output assembly via map_blocks --------------
-    snap_rows = np.array([s[0] for s in snapped], dtype=np.int64) if snapped else np.array([], dtype=np.int64)
-    snap_cols = np.array([s[1] for s in snapped], dtype=np.int64) if snapped else np.array([], dtype=np.int64)
-    snap_labels = np.array([s[2] for s in snapped], dtype=np.float64) if snapped else np.array([], dtype=np.float64)
+    snap_rows = (np.array([s[0] for s in snapped], dtype=np.int64)
+                 if snapped else np.array([], dtype=np.int64))
+    snap_cols = (np.array([s[1] for s in snapped], dtype=np.int64)
+                 if snapped else np.array([], dtype=np.int64))
+    snap_labels = (np.array([s[2] for s in snapped], dtype=np.float64)
+                   if snapped else np.array([], dtype=np.float64))
 
     _snap_rows = snap_rows
     _snap_cols = snap_cols
@@ -541,9 +536,9 @@ def _snap_pour_point_dask_cupy(flow_accum_data, pour_points_data, search_radius)
 
 @supports_dataset
 def snap_pour_point_d8(flow_accum: xr.DataArray,
-                    pour_points: xr.DataArray,
-                    search_radius: int = 5,
-                    name: str = 'snapped_pour_points') -> xr.DataArray:
+                       pour_points: xr.DataArray,
+                       search_radius: int = 5,
+                       name: str = 'snapped_pour_points') -> xr.DataArray:
     """Snap pour points to the highest-accumulation cell within a radius.
 
     Parameters
