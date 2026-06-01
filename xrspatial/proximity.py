@@ -27,7 +27,7 @@ except ImportError:
 from xrspatial.pathfinding import _available_memory_bytes
 from xrspatial.utils import (
     _validate_raster,
-    cuda_args, get_dataarray_resolution, has_cuda_and_cupy,
+    cuda_args, has_cuda_and_cupy,
     is_cupy_array, is_dask_cupy, ngjit,
 )
 from xrspatial.dataset_support import supports_dataset
@@ -426,16 +426,25 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
                        max_distance, distance_metric, process_mode):
     """Dask+CuPy bounded proximity via map_overlap with per-chunk GPU kernel.
 
-    Each chunk (plus overlap padding of ``max_distance / cellsize`` pixels)
-    is processed on GPU independently.  Only valid for finite max_distance
+    Each chunk (plus an overlap padding of ``max_distance`` converted to
+    pixels using the active distance metric) is processed on GPU
+    independently.  Only valid for finite max_distance
     where the padding guarantees all relevant targets are visible within
     each overlapped chunk.
     """
     import cupy as cp
 
-    cellsize_x, cellsize_y = get_dataarray_resolution(raster)
-    pad_y = int(max_distance / abs(cellsize_y) + 0.5)
-    pad_x = int(max_distance / abs(cellsize_x) + 0.5)
+    # Overlap depth in pixels, measured with the active distance_metric so
+    # that GREAT_CIRCLE (max_distance in metres) does not divide by a degree
+    # cellsize. See _process_dask for the same conversion.
+    dist_per_row = _distance(
+        x_coords[0], x_coords[0],
+        y_coords[0], y_coords[1], distance_metric)
+    dist_per_col = _distance(
+        x_coords[0], x_coords[1],
+        y_coords[0], y_coords[0], distance_metric)
+    pad_y = int(max_distance / dist_per_row + 0.5)
+    pad_x = int(max_distance / dist_per_col + 0.5)
 
     # Build 2D coordinate grids as dask+cupy arrays matching raster chunks.
     # Each chunk is small (chunk_h x chunk_w x 8 bytes); the full grid is
@@ -1237,10 +1246,19 @@ def _process(
             ys = ys.rechunk({0: height, 1: width})
             pad_y = pad_x = 0
         else:
-            cellsize_x, cellsize_y = get_dataarray_resolution(raster)
-            # calculate padding for each chunk
-            pad_y = int(max_distance / cellsize_y + 0.5)
-            pad_x = int(max_distance / cellsize_x + 0.5)
+            # Convert max_distance to a per-chunk overlap depth in pixels.
+            # max_distance is expressed in the same unit as the chosen
+            # distance_metric, so the pixel pitch must be measured with that
+            # same metric. Using the raw degree cellsize for GREAT_CIRCLE
+            # (where max_distance is in metres) yields a meaningless depth.
+            dist_per_row = _distance(
+                x_coords[0], x_coords[0],
+                y_coords[0], y_coords[1], distance_metric)
+            dist_per_col = _distance(
+                x_coords[0], x_coords[1],
+                y_coords[0], y_coords[0], distance_metric)
+            pad_y = int(max_distance / dist_per_row + 0.5)
+            pad_x = int(max_distance / dist_per_col + 0.5)
 
         out = da.map_overlap(
             _process_numpy,
