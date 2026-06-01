@@ -26,7 +26,7 @@ except ImportError:
         ndarray = False
 
 from xrspatial.convolution import (_available_memory_bytes, _convolve_2d_cupy, _convolve_2d_numpy,
-                                   convolve_2d, custom_kernel)
+                                   _promote_float, convolve_2d, custom_kernel)
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
                              _validate_boundary, _validate_raster, _validate_scalar, cuda_args,
@@ -460,8 +460,7 @@ def _calc_variety(array):
 
 @ngjit
 def _apply_numpy(data, kernel, func):
-    data = data.astype(np.float32)
-
+    # Caller must promote ``data`` to a float dtype (see ``_promote_float``).
     out = np.zeros_like(data)
     rows, cols = data.shape
     krows, kcols = kernel.shape
@@ -483,6 +482,7 @@ def _apply_numpy(data, kernel, func):
 
 
 def _apply_numpy_boundary(data, kernel, func, boundary='nan'):
+    data = data.astype(_promote_float(data.dtype))
     if boundary == 'nan':
         return _apply_numpy(data, kernel, func)
     pad_h = kernel.shape[0] // 2
@@ -497,7 +497,7 @@ def _apply_numpy_boundary(data, kernel, func, boundary='nan'):
 
 
 def _apply_dask_numpy(data, kernel, func, boundary='nan'):
-    data = data.astype(np.float32)
+    data = data.astype(_promote_float(data.dtype))
     _func = partial(_apply_numpy, kernel=kernel, func=func)
 
     pad_h = kernel.shape[0] // 2
@@ -511,7 +511,7 @@ def _apply_dask_numpy(data, kernel, func, boundary='nan'):
 
 
 def _apply_cupy(data, kernel, func):
-    return _focal_stats_func_cupy(data.astype(cupy.float32), kernel, func)
+    return _focal_stats_func_cupy(data.astype(_promote_float(data.dtype)), kernel, func)
 
 
 def _apply_cupy_boundary(data, kernel, func, boundary='nan'):
@@ -529,7 +529,7 @@ def _apply_cupy_boundary(data, kernel, func, boundary='nan'):
 
 
 def _apply_dask_cupy(data, kernel, func, boundary='nan'):
-    data = data.astype(cupy.float32)
+    data = data.astype(_promote_float(data.dtype))
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_focal_stats_func_cupy, kernel=kernel, func=func)
@@ -982,7 +982,7 @@ def _focal_sum_cuda(data, kernel, out):
 
 def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):
     kernel = cupy.asarray(kernel)
-    out = cupy.empty(data.shape, dtype='f4')
+    out = cupy.empty(data.shape, dtype=_promote_float(data.dtype))
     out[:, :] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
     func[griddim, blockdim](data, kernel, cupy.asarray(out))
@@ -1038,7 +1038,7 @@ def _focal_stats_cupy(agg, kernel, stats_funcs):
     )
     stats_aggs = []
     for stats in stats_funcs:
-        data = agg.data.astype(cupy.float32)
+        data = agg.data.astype(_promote_float(agg.data.dtype))
         stats_data = _stats_cupy_mapper[stats](data, kernel)
         stats_agg = xr.DataArray(
             stats_data,
@@ -1089,7 +1089,7 @@ def _focal_stats_dask_cupy(agg, kernel, stats_funcs, boundary='nan'):
     for stat_name in stats_funcs:
         cuda_kernel = _stats_cuda_mapper[stat_name]
         _func = partial(_focal_stats_func_cupy, kernel=kernel, func=cuda_kernel)
-        data = agg.data.astype(cupy.float32)
+        data = agg.data.astype(_promote_float(agg.data.dtype))
         stats_data = data.map_overlap(
             _func, depth=(pad_h, pad_w),
             boundary=dask_bnd, meta=cupy.array(()))
