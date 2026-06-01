@@ -291,6 +291,19 @@ def _vectorized_calc_direction(x1, x2, y1, y2):
 
 
 @ngjit
+def _is_target_value(v, target_values):
+    # A pixel is a target if it matches one of target_values, or (when no
+    # target_values are given) if it is non-zero and finite. NaN padding from
+    # dask's boundary=np.nan is excluded either way.
+    if len(target_values) == 0:
+        return v != 0 and np.isfinite(v)
+    for k in range(len(target_values)):
+        if v == target_values[k]:
+            return True
+    return False
+
+
+@ngjit
 def _process_numpy_bruteforce(
     img, xs, ys, target_values, max_distance, distance_metric, process_mode
 ):
@@ -304,21 +317,13 @@ def _process_numpy_bruteforce(
     ``xs`` and ``ys`` are the per-pixel 2D coordinate grids built by the caller.
     """
     height, width = img.shape
-    n_values = len(target_values)
 
-    # Collect target pixel rows/cols in flat arrays.
+    # Collect target pixel rows/cols in flat arrays (two passes: count, fill).
     n_targets = 0
     for line in range(height):
         for col in range(width):
-            v = img[line, col]
-            if n_values == 0:
-                if v != 0 and np.isfinite(v):
-                    n_targets += 1
-            else:
-                for k in range(n_values):
-                    if v == target_values[k]:
-                        n_targets += 1
-                        break
+            if _is_target_value(img[line, col], target_values):
+                n_targets += 1
 
     output = np.full((height, width), np.nan, dtype=np.float32)
     if n_targets == 0:
@@ -329,17 +334,7 @@ def _process_numpy_bruteforce(
     t = 0
     for line in range(height):
         for col in range(width):
-            v = img[line, col]
-            is_target = False
-            if n_values == 0:
-                if v != 0 and np.isfinite(v):
-                    is_target = True
-            else:
-                for k in range(n_values):
-                    if v == target_values[k]:
-                        is_target = True
-                        break
-            if is_target:
+            if _is_target_value(img[line, col], target_values):
                 target_rows[t] = line
                 target_cols[t] = col
                 t += 1
@@ -1485,7 +1480,10 @@ def proximity(
 
     The implementation for NumPy-backed is ported from GDAL, which uses
     a dynamic programming approach to identify nearest target of a pixel from
-    its surrounding neighborhood in a 3x3 window.
+    its surrounding neighborhood in a 3x3 window. That 3x3 line-sweep only
+    holds for the EUCLIDEAN and MANHATTAN metrics; for GREAT_CIRCLE the NumPy
+    backend uses an exact brute-force nearest-target search instead, because
+    great-circle distance is not locally monotonic across the raster.
     The implementation for Dask-backed uses `dask.map_overlap` to compute
     proximity chunk by chunk by expanding the chunk's borders to cover
     the `max_distance`.
