@@ -1397,6 +1397,39 @@ def test_focal_stats_default_stats_funcs():
     assert result.sizes['stats'] == 8
 
 
+def test_focal_stats_rejects_unknown_stats_func():
+    # Regression for #2770: an unknown name used to fall through as a raw
+    # KeyError. It must now raise a clear ValueError listing valid options.
+    agg = xr.DataArray(data_random)
+    with pytest.raises(ValueError, match=r"Invalid stats_funcs.*bogus"):
+        focal_stats(agg, _api_kernel, stats_funcs=['bogus'])
+
+
+def test_focal_stats_accepts_bare_string():
+    # Regression for #2770: a bare string used to be iterated character by
+    # character (e.g. 'mean' -> 'm','e','a','n') and fail. It must be treated
+    # as a single stat name.
+    agg = xr.DataArray(data_random)
+    result = focal_stats(agg, _api_kernel, stats_funcs='mean')
+    assert result.sizes['stats'] == 1
+    assert list(result.coords['stats'].values) == ['mean']
+
+
+def test_focal_stats_rejects_empty_stats_funcs():
+    # Regression for #2770: an empty list used to reach xr.concat and fail with
+    # an obscure error. It must raise a clear ValueError instead.
+    agg = xr.DataArray(data_random)
+    with pytest.raises(ValueError, match=r"stats_funcs must not be empty"):
+        focal_stats(agg, _api_kernel, stats_funcs=[])
+
+
+def test_focal_stats_valid_list_happy_path():
+    agg = xr.DataArray(data_random)
+    result = focal_stats(agg, _api_kernel, stats_funcs=['mean', 'sum'])
+    assert result.sizes['stats'] == 2
+    assert list(result.coords['stats'].values) == ['mean', 'sum']
+
+
 @cuda_and_cupy_available
 def test_focal_stats_name_gpu():
     import cupy
