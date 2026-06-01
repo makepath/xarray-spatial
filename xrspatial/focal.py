@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-
 import copy
+import math
 import warnings
 from functools import partial
 from math import isnan
-import math
 
 import numba as nb
 import numpy as np
 import pandas as pd
 import xarray as xr
-
 from numba import cuda, prange
 from xarray import DataArray
-
 
 try:
     import dask.array as da
@@ -28,14 +25,12 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from xrspatial.convolution import (
-    convolve_2d, custom_kernel, _convolve_2d_numpy, _convolve_2d_cupy,
-    _available_memory_bytes,
-)
-from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
-                             _validate_boundary, _validate_raster, _validate_scalar,
-                             cuda_args, ngjit, not_implemented_func)
+from xrspatial.convolution import (_available_memory_bytes, _convolve_2d_cupy, _convolve_2d_numpy,
+                                   convolve_2d, custom_kernel)
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
+                             _validate_boundary, _validate_raster, _validate_scalar, cuda_args,
+                             ngjit)
 
 
 def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name):
