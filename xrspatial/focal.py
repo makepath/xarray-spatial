@@ -929,11 +929,14 @@ def _focal_variety_cuda(data, kernel, out):
             if v != v:  # NaN check (NaN != NaN)
                 continue
 
-            # Scan earlier kernel cells (flattened index < k * kcols + h).
+            # Scan earlier kernel cells (flattened index < target).
+            target = k * kcols + h
             first = True
             for pk in range(krows):
+                if pk * kcols >= target:
+                    break
                 for ph in range(kcols):
-                    if pk * kcols + ph >= k * kcols + h:
+                    if pk * kcols + ph >= target:
                         break
                     if kernel[pk, ph] == 0:
                         continue
