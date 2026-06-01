@@ -11,6 +11,7 @@ from xrspatial.tests.general_checks import (
     dask_array_available,
     cuda_and_cupy_available,
 )
+from xrspatial.utils import has_dask_array
 
 
 # ---------------------------------------------------------------------------
@@ -1722,3 +1723,85 @@ class TestNodataIntegerPrecision:
         agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
         with pytest.raises(ValueError, match="not representable"):
             resample(agg, scale_factor=0.5, method='nearest', nodata=-9999.5)
+
+
+# ---------------------------------------------------------------------------
+# Out-of-range integer nodata sentinels (issue #2660)
+# ---------------------------------------------------------------------------
+
+backends = ['numpy']
+if has_dask_array():
+    backends.append('dask+numpy')
+
+
+class TestNodataOutOfRange:
+    """Regression coverage for #2660 -- an out-of-range integer sentinel
+    used to wrap silently on the dtype cast (e.g. 999 -> 231 for uint8),
+    masking the wrong cells. It must raise instead."""
+
+    @pytest.mark.parametrize('backend', backends)
+    def test_uint8_sentinel_above_max_raises(self, backend):
+        # 999 wraps to 231 on a uint8 cast; a real 231 pixel would then
+        # be masked. Reject the sentinel up front.
+        data = np.full((4, 4), 231, dtype=np.uint8)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)},
+                                 backend=backend)
+        with pytest.raises(ValueError, match="out of range"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=999)
+
+    @pytest.mark.parametrize('backend', backends)
+    def test_uint8_negative_sentinel_raises(self, backend):
+        # -1 is not representable in an unsigned dtype; it wraps to 255.
+        data = np.zeros((4, 4), dtype=np.uint8)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)},
+                                 backend=backend)
+        with pytest.raises(ValueError, match="out of range"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=-1)
+
+    def test_int8_sentinel_above_max_raises(self):
+        # 200 wraps to -56 on an int8 cast.
+        data = np.zeros((4, 4), dtype=np.int8)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        with pytest.raises(ValueError, match="out of range"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=200)
+
+    def test_sentinel_beyond_int64_raises_valueerror(self):
+        # A Python int past the C-long range would raise OverflowError on
+        # the numpy cast; the range check must turn it into the same
+        # ValueError as any other out-of-range sentinel.
+        data = np.zeros((4, 4), dtype=np.int64)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        with pytest.raises(ValueError, match="out of range"):
+            resample(agg, scale_factor=0.5, method='nearest', nodata=2 ** 70)
+
+    def test_out_of_range_sentinel_via_fillvalue_attr_raises(self):
+        # Same defect when the sentinel arrives through _FillValue rather
+        # than the explicit kwarg.
+        data = np.zeros((4, 4), dtype=np.uint8)
+        agg = create_test_raster(
+            data, attrs={'res': (1.0, 1.0), '_FillValue': 999}
+        )
+        with pytest.raises(ValueError, match="out of range"):
+            resample(agg, scale_factor=0.5, method='nearest')
+
+    @pytest.mark.parametrize('backend', backends)
+    def test_in_range_sentinel_at_dtype_limit_still_masks(self, backend):
+        # The boundary value (uint8 max) is representable and must still
+        # work -- the new check rejects only values that do not round-trip.
+        sentinel = 255
+        data = np.array([
+            [sentinel, sentinel, 10, 10],
+            [sentinel, sentinel, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.uint8)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)},
+                                 backend=backend)
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=sentinel)
+        # Output type matches input backend (numpy stays numpy, dask
+        # stays dask) and the resampled corners mask as expected.
+        assert isinstance(out.data, type(agg.data))
+        result = out.data.compute() if backend.startswith('dask') else out.data
+        assert np.isnan(result[0, 0])
+        assert np.isfinite(result[1, 1])

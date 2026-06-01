@@ -31,16 +31,10 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.hydro._boundary_store import BoundaryStore
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 
 def _to_numpy_f64(arr):
@@ -243,8 +237,6 @@ def _watershed_cpu(flow_dir, labels, state, h, w):
     return labels
 
 
-
-
 # =====================================================================
 # GPU kernels
 # =====================================================================
@@ -269,8 +261,6 @@ def _init_watershed_gpu(flow_dir, pour_points, labels, state, H, W):
     else:
         labels[i, j] = 0.0
         state[i, j] = 1  # active
-
-
 
 
 @cuda.jit
@@ -361,8 +351,6 @@ def _watershed_cupy(flow_dir_data, pour_points_data):
     # Unresolved (state=1) and invalid (state=0) → NaN
     labels = cp.where((state == 1) | (state == 0), cp.nan, labels)
     return labels
-
-
 
 
 # =====================================================================
@@ -829,11 +817,9 @@ def _assemble_watershed(flow_dir_da, pour_points_da,
     )
 
 
-
-
 def _watershed_tile_cupy(flow_dir_data, pour_points_data,
-                          exit_top, exit_bottom, exit_left, exit_right,
-                          exit_tl, exit_tr, exit_bl, exit_br):
+                         exit_top, exit_bottom, exit_left, exit_right,
+                         exit_tl, exit_tr, exit_bl, exit_br):
     """GPU seeded watershed for a single tile.
 
     Uses GPU label propagation with exit labels injected at boundary
@@ -878,7 +864,7 @@ def _watershed_tile_cupy(flow_dir_data, pour_points_data,
 
     # Corner exit labels
     for r, c, val in [(0, 0, exit_tl), (0, W - 1, exit_tr),
-                       (H - 1, 0, exit_bl), (H - 1, W - 1, exit_br)]:
+                      (H - 1, 0, exit_bl), (H - 1, W - 1, exit_br)]:
         if val == val and int(state[r, c]) == 1:
             labels[r, c] = val
             state[r, c] = 2
@@ -897,8 +883,8 @@ def _watershed_tile_cupy(flow_dir_data, pour_points_data,
 
 
 def _process_tile_watershed_cupy(iy, ix, flow_dir_da, pour_points_da,
-                                  boundaries, flow_bdry,
-                                  chunks_y, chunks_x, n_tile_y, n_tile_x):
+                                 boundaries, flow_bdry,
+                                 chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run seeded GPU watershed on one tile; update boundaries."""
     import cupy as cp
 
@@ -939,8 +925,8 @@ def _process_tile_watershed_cupy(iy, ix, flow_dir_da, pour_points_da,
 
 
 def _assemble_watershed_cupy(flow_dir_da, pour_points_da,
-                              boundaries, flow_bdry,
-                              chunks_y, chunks_x, n_tile_y, n_tile_x):
+                             boundaries, flow_bdry,
+                             chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Build lazy dask+cupy array using GPU watershed tile kernel."""
     import cupy as cp
 
@@ -1005,10 +991,8 @@ def _watershed_dask_cupy(flow_dir_da, pour_points_da):
     boundaries = boundaries.snapshot()
 
     return _assemble_watershed_cupy(flow_dir_da, pour_points_da,
-                                     boundaries, flow_bdry,
-                                     chunks_y, chunks_x, n_tile_y, n_tile_x)
-
-
+                                    boundaries, flow_bdry,
+                                    chunks_y, chunks_x, n_tile_y, n_tile_x)
 
 
 # =====================================================================
@@ -1017,8 +1001,8 @@ def _watershed_dask_cupy(flow_dir_da, pour_points_da):
 
 @supports_dataset
 def watershed_d8(flow_dir: xr.DataArray,
-              pour_points: xr.DataArray,
-              name: str = 'watershed') -> xr.DataArray:
+                 pour_points: xr.DataArray,
+                 name: str = 'watershed') -> xr.DataArray:
     """Label each cell with the pour point it drains to.
 
     Follows each cell downstream through the D8 flow direction grid
@@ -1092,5 +1076,11 @@ def watershed_d8(flow_dir: xr.DataArray,
 
 def basins_d8(flow_dir, name='basins'):
     """Backward-compatible wrapper; use :func:`basin` instead."""
+    import warnings
+    warnings.warn(
+        "basins_d8 is deprecated; use basin (basin_d8) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     from .basin_d8 import basin_d8
     return basin_d8(flow_dir, name=name)

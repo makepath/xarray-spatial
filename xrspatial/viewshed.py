@@ -8,8 +8,8 @@ import numpy as np
 import xarray
 
 from .gpu_rtx import has_rtx
-from .utils import (_validate_raster, has_cuda_and_cupy, has_dask_array,
-                    is_cupy_array, is_cupy_backed, is_dask_cupy, ngjit)
+from .utils import (_validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array,
+                    is_cupy_backed, is_dask_cupy, ngjit)
 
 E_ROW_ID = 0
 E_COL_ID = 1
@@ -1406,9 +1406,9 @@ def _viewshed_cpu_sweep(raster, vp_row, vp_col, vp_elev, vp_target, ew_res,
                 status_node[TN_ANG_0] -= 2 * PI
 
             # insert sn into the status structure
-            id = _pop(idle)
+            node_id = _pop(idle)
             root = _insert_into_tree(status_values, status_struct, root,
-                                     id, status_node)
+                                     node_id, status_node)
 
     # sweep the event_list
 
@@ -1471,9 +1471,9 @@ def _viewshed_cpu_sweep(raster, vp_row, vp_col, vp_elev, vp_target, ew_res,
                     status_node[TN_ANG_1] += 2 * PI
                     status_node[TN_ANG_2] += 2 * PI
 
-            id = _pop(idle)
+            node_id = _pop(idle)
             root = _insert_into_tree(status_values, status_struct, root,
-                                     id, status_node)
+                                     node_id, status_node)
 
         elif etype == EXITING_EVENT:
             # delete node out of status structure
@@ -2018,8 +2018,8 @@ def _extract_elevations(rows, cols, dask_data, cache, y_offsets, x_offsets):
 
 
 def _viewshed_distance_sweep(dask_data, H, W, obs_r, obs_c,
-                              obs_elev, target_elev, ew_res, ns_res,
-                              chunks_y, chunks_x, max_distance):
+                             obs_elev, target_elev, ew_res, ns_res,
+                             chunks_y, chunks_x, max_distance):
     """Out-of-core horizon-profile distance sweep viewshed."""
     # Maximum Chebyshev distance in cells
     max_d_cells = max(obs_r, H - 1 - obs_r, obs_c, W - 1 - obs_c)
@@ -2085,13 +2085,17 @@ def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
     x_range = (x_coords[0], x_coords[-1])
     ew_res = (x_range[1] - x_range[0]) / (width - 1) if width > 1 else 1.0
     ns_res = (y_range[1] - y_range[0]) / (height - 1) if height > 1 else 1.0
-    cell_size = max(abs(ew_res), abs(ns_res))
-    radius_cells = int(np.ceil(max_distance / cell_size))
+    # Size the window per axis: rows are spaced by ns_res, columns by ew_res.
+    # Using a single radius from the coarser resolution under-sizes the
+    # window along the finer axis and clips cells that are within
+    # max_distance there.
+    radius_rows = int(np.ceil(max_distance / abs(ns_res)))
+    radius_cols = int(np.ceil(max_distance / abs(ew_res)))
 
-    r_lo = max(0, obs_r - radius_cells)
-    r_hi = min(height, obs_r + radius_cells + 1)
-    c_lo = max(0, obs_c - radius_cells)
-    c_hi = min(width, obs_c + radius_cells + 1)
+    r_lo = max(0, obs_r - radius_rows)
+    r_hi = min(height, obs_r + radius_rows + 1)
+    c_lo = max(0, obs_c - radius_cols)
+    c_hi = min(width, obs_c + radius_cols + 1)
 
     window = raster.isel(y=slice(r_lo, r_hi), x=slice(c_lo, c_hi))
 
