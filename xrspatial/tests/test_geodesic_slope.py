@@ -296,7 +296,6 @@ class TestGeodesicSlopeDask:
 class TestGeodesicSlopeCupy:
 
     def test_numpy_equals_cupy(self):
-        import cupy
         elev = _east_tilted_surface(H=8, W=10, grade=100.0)
         r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
         r_cu = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='cupy')
