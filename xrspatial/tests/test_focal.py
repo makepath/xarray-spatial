@@ -618,6 +618,33 @@ def test_focal_stats_preserves_float64(backend):
     assert _compute_dtype(result) == np.float64
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_apply_keeps_float32(backend):
+    # The other side of the contract: a float32 input must not be promoted
+    # to float64. (On dask the lazy dtype is float64, but the computed
+    # result is float32 -- matching convolve_2d.)
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float32).reshape(4, 5)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+
+    if 'cupy' in backend:
+        from xrspatial.focal import _focal_mean_cuda
+        func = _focal_mean_cuda
+    else:
+        from xrspatial.focal import _calc_mean
+        func = _calc_mean
+
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+    result = apply(agg, kernel, func)
+
+    assert _compute_dtype(result) == np.float32
+
+
 # --- focal_stats NaN handling (issue-1092) --------------------------------
 
 @pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
