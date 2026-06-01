@@ -1287,23 +1287,86 @@ def _calc_hotspots_numpy(z_array):
     return out
 
 
+def _gistar_global_stats(global_mean, global_std, n):
+    """Validate and return the global terms of the Gi* statistic.
+
+    ``global_mean`` is the mean of the valid (non-NaN) raster cells,
+    ``global_std`` their population standard deviation, and ``n`` the
+    count of valid cells. Gi* needs ``n > 1`` (the variance term divides
+    by ``n - 1``) and a non-zero spread.
+    """
+    if n < 2:
+        raise ValueError(
+            "hotspots() needs at least 2 valid (non-NaN) cells to "
+            "compute the Getis-Ord Gi* statistic."
+        )
+    if global_std == 0:
+        raise ZeroDivisionError(
+            "Standard deviation of the input raster values is 0."
+        )
+    return global_mean, global_std, n
+
+
+def _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
+                   global_mean, global_std, n):
+    """Getis-Ord Gi* z-score from the per-cell convolution terms.
+
+    Gi* = (Sum_j w_ij x_j - Xbar * W_i)
+          / (S * sqrt((n * W2_i - W_i^2) / (n - 1)))
+
+    where ``weighted_sum`` is Sum_j w_ij x_j, ``weight_sum`` is W_i,
+    ``sq_weight_sum`` is W2_i, ``global_mean`` is Xbar, ``global_std`` is
+    the population std S, and ``n`` is the valid-cell count. Cells whose
+    neighborhood collapses to a single weight (variance term <= 0) get a
+    z-score of 0 (no significance).
+    """
+    # Accumulate in float64: n * W2 - W^2 is a difference of potentially
+    # large numbers and loses precision in float32 for big rasters / weights.
+    weight_sum = weight_sum.astype(np.float64)
+    sq_weight_sum = sq_weight_sum.astype(np.float64)
+    numerator = weighted_sum.astype(np.float64) - float(global_mean) * weight_sum
+    variance_term = (n * sq_weight_sum - weight_sum * weight_sum) / (n - 1)
+    # Guard against tiny negatives from float rounding and the degenerate
+    # single-cell neighborhood (variance_term == 0) before the sqrt.
+    variance_term = np.where(variance_term > 0, variance_term, np.nan)
+    denominator = float(global_std) * np.sqrt(variance_term)
+    z = numerator / denominator
+    return np.where(np.isfinite(z), z, 0.0).astype(np.float32)
+
+
+def _gistar_convolutions_numpy(data, kernel, boundary):
+    """Per-cell Gi* convolution terms for the numpy backend.
+
+    Returns the weighted value sum, the neighborhood weight sum, and the
+    squared-weight sum. NaN cells are excluded from every term via a
+    validity mask, so raster edges and interior NaNs are handled the same
+    way the Gi* definition expects.
+    """
+    valid = (~np.isnan(data)).astype(np.float32)
+    filled = np.where(valid > 0, data, np.float32(0.0))
+    weighted_sum = convolve_2d(filled, kernel, boundary)
+    weight_sum = convolve_2d(valid, kernel, boundary)
+    sq_weight_sum = convolve_2d(valid, kernel * kernel, boundary)
+    return weighted_sum, weight_sum, sq_weight_sum
+
+
 def _hotspots_numpy(raster, kernel, boundary='nan'):
     if not (issubclass(raster.data.dtype.type, np.integer) or
             issubclass(raster.data.dtype.type, np.floating)):
         raise ValueError("data type must be integer or float")
 
     data = raster.data.astype(np.float32)
-    # apply kernel to raster values
-    mean_array = convolve_2d(data, kernel / kernel.sum(), boundary)
 
-    # calculate z-scores
-    global_mean = np.nanmean(data)
-    global_std = np.nanstd(data)
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
-    z_array = (mean_array - global_mean) / global_std
+    valid = ~np.isnan(data)
+    n = int(valid.sum())
+    global_mean = np.float32(np.nanmean(data))
+    global_std = np.float32(np.nanstd(data))
+    _gistar_global_stats(global_mean, global_std, n)
+
+    weighted_sum, weight_sum, sq_weight_sum = _gistar_convolutions_numpy(
+        data, kernel, boundary)
+    z_array = _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
+                             global_mean, global_std, n)
 
     out = _calc_hotspots_numpy(z_array)
     return out
@@ -1314,31 +1377,31 @@ def _hotspots_dask_numpy(raster, kernel, boundary='nan'):
     if not np.issubdtype(data.dtype, np.floating):
         data = data.astype(np.float32)
 
-    # Pass 1: eagerly compute global statistics (two scalars).
-    # This reads all chunks once, produces 16 bytes, then frees all
+    # Pass 1: eagerly compute global Gi* terms (three scalars).
+    # This reads all chunks once, produces a few bytes, then frees all
     # intermediate state -- no barrier that would force materialization
     # of the full convolution output.
-    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
+    valid = ~da.isnan(data)
+    global_mean, global_std, n = da.compute(
+        da.nanmean(data), da.nanstd(data), valid.sum())
     global_mean = np.float32(global_mean)
     global_std = np.float32(global_std)
+    n = int(n)
+    _gistar_global_stats(global_mean, global_std, n)
 
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    kernel = kernel.astype(np.float32)
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
 
-    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
-    pad_h = norm_kernel.shape[0] // 2
-    pad_w = norm_kernel.shape[1] // 2
-
-    # Pass 2: fuse convolution + z-score + classification into one
-    # map_overlap call. Each chunk reads source + halo, produces int8
-    # output, and frees all intermediates immediately. No spill needed.
+    # Pass 2: fuse the three convolutions + Gi* z-score + classification
+    # into one map_overlap call. Each chunk reads source + halo, produces
+    # int8 output, and frees all intermediates immediately.
     _func = partial(
         _hotspots_chunk,
-        kernel=norm_kernel,
+        kernel=kernel,
         global_mean=global_mean,
         global_std=global_std,
+        n=n,
     )
     out = data.map_overlap(
         _func,
@@ -1349,10 +1412,15 @@ def _hotspots_dask_numpy(raster, kernel, boundary='nan'):
     return out
 
 
-def _hotspots_chunk(chunk, kernel, global_mean, global_std):
-    """Fused per-chunk: convolve -> z-score -> classify."""
-    convolved = _convolve_2d_numpy(chunk, kernel)
-    z = (convolved - global_mean) / global_std
+def _hotspots_chunk(chunk, kernel, global_mean, global_std, n):
+    """Fused per-chunk: convolve Gi* terms -> z-score -> classify."""
+    valid = (~np.isnan(chunk)).astype(np.float32)
+    filled = np.where(valid > 0, chunk, np.float32(0.0))
+    weighted_sum = _convolve_2d_numpy(filled, kernel)
+    weight_sum = _convolve_2d_numpy(valid, kernel)
+    sq_weight_sum = _convolve_2d_numpy(valid, kernel * kernel)
+    z = _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
+                       global_mean, global_std, n)
     return _calc_hotspots_numpy(z)
 
 
@@ -1361,26 +1429,32 @@ def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
     if not cupy.issubdtype(data.dtype, cupy.floating):
         data = data.astype(cupy.float32)
 
-    # Pass 1: global statistics (two scalars, eager)
-    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
+    # Pass 1: global Gi* terms (three scalars, eager)
+    valid_global = ~da.isnan(data)
+    global_mean, global_std, n = da.compute(
+        da.nanmean(data), da.nanstd(data), valid_global.sum())
     global_mean = np.float32(float(global_mean))
     global_std = np.float32(float(global_std))
+    n = int(n)
+    _gistar_global_stats(global_mean, global_std, n)
 
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    kernel = kernel.astype(np.float32)
+    sq_kernel = kernel * kernel
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
 
-    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
-    pad_h = norm_kernel.shape[0] // 2
-    pad_w = norm_kernel.shape[1] // 2
-
-    # Pass 2: fuse convolution + z-score + classification, all on the GPU.
-    # Reuse the _run_gpu_hotspots kernel (same as the single-GPU path) so
-    # each chunk stays on the device -- no host round trip per chunk.
+    # Pass 2: fuse the three convolutions + Gi* z-score + classification,
+    # all on the GPU. Reuse the _run_gpu_hotspots kernel (same as the
+    # single-GPU path) so each chunk stays on the device -- no host round
+    # trip per chunk.
     def _chunk_fn(chunk):
-        convolved = _convolve_2d_cupy(chunk, norm_kernel)
-        z = (convolved - global_mean) / global_std
+        valid = (~cupy.isnan(chunk)).astype(cupy.float32)
+        filled = cupy.where(valid > 0, chunk, cupy.float32(0.0))
+        weighted_sum = _convolve_2d_cupy(filled, kernel)
+        weight_sum = _convolve_2d_cupy(valid, kernel)
+        sq_weight_sum = _convolve_2d_cupy(valid, sq_kernel)
+        z = _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
+                           global_mean, global_std, n)
         out = cupy.zeros_like(z, dtype=cupy.int8)
         griddim, blockdim = cuda_args(z.shape)
         _run_gpu_hotspots[griddim, blockdim](z, out)
@@ -1440,17 +1514,20 @@ def _hotspots_cupy(raster, kernel, boundary='nan'):
 
     data = raster.data.astype(cupy.float32)
 
-    # apply kernel to raster values
-    mean_array = convolve_2d(data, kernel / kernel.sum(), boundary)
+    valid = ~cupy.isnan(data)
+    n = int(valid.sum())
+    global_mean = np.float32(float(cupy.nanmean(data)))
+    global_std = np.float32(float(cupy.nanstd(data)))
+    _gistar_global_stats(global_mean, global_std, n)
 
-    # calculate z-scores
-    global_mean = cupy.nanmean(data)
-    global_std = cupy.nanstd(data)
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
-    z_array = (mean_array - global_mean) / global_std
+    kernel = kernel.astype(np.float32)
+    filled = cupy.where(valid, data, cupy.float32(0.0))
+    weighted_sum = convolve_2d(filled, kernel, boundary)
+    weight_sum = convolve_2d(valid.astype(cupy.float32), kernel, boundary)
+    sq_weight_sum = convolve_2d(valid.astype(cupy.float32),
+                                kernel * kernel, boundary)
+    z_array = _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
+                             global_mean, global_std, n)
 
     out = cupy.zeros_like(z_array, dtype=cupy.int8)
     griddim, blockdim = cuda_args(z_array.shape)
@@ -1462,11 +1539,23 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
              raster=None):
     """
     Identify statistically significant hot spots and cold spots in an
-    input raster. To be a statistically significant hot spot, a feature
-    will have a high value and be surrounded by other features with
-    high values as well.
+    input raster using the Getis-Ord Gi* statistic. To be a
+    statistically significant hot spot, a feature will have a high value
+    and be surrounded by other features with high values as well.
     Neighborhood of a feature defined by the input kernel, which
     currently support a shape of circle, annulus, or custom kernel.
+
+    For each feature i the Gi* z-score is
+
+        Gi* = (sum_j w_ij x_j - Xbar * W_i)
+              / (S * sqrt((n * W2_i - W_i^2) / (n - 1)))
+
+    where w_ij are the kernel weights (the star variant includes feature
+    i itself), W_i = sum_j w_ij, W2_i = sum_j w_ij^2, Xbar and S are the
+    global mean and population standard deviation of the valid cells, and
+    n is the count of valid (non-NaN) cells. The z-score is then
+    classified into the confidence bands below. NaN cells are excluded
+    from both the neighborhood sums and the global statistics.
 
     The result should be a raster with the following 7 values:
         - 90 for 90% confidence high value cluster
@@ -1516,9 +1605,9 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
         ...    [0, 100, 1000, 0, 0, 0]])
         >>> from xrspatial.focal import hotspots
         >>> hotspots(xr.DataArray(data), kernel)
-        array([[  0,   0,  95,   0,   0,   0],
-               [  0,   0,   0,   0, -90,   0],
-               [  0,   0, -90,   0,   0,   0],
+        array([[  0,   0,  99,   0,   0,   0],
+               [  0,   0,   0,   0, -99,   0],
+               [  0,   0, -95,   0,   0,   0],
                [  0,   0,   0,   0,   0,   0]], dtype=int8)
         Dimensions without coordinates: dim_0, dim_1
     """
