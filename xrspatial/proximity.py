@@ -254,6 +254,56 @@ def _distance(x1, x2, y1, y2, metric):
     return np.float32(d)
 
 
+def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
+    """Overlap depth in pixels for the bounded dask map_overlap call.
+
+    ``max_distance`` is expressed in the same unit as the chosen
+    distance_metric, so the pixel pitch is measured with that same metric.
+    Using the raw degree cellsize for GREAT_CIRCLE (where max_distance is in
+    metres) would yield a meaningless depth.
+
+    The depth is sized from the *densest* (smallest positive) spacing along
+    each axis rather than only the first coordinate pair. On irregular
+    coordinates the first gap can be much larger than later gaps; sizing the
+    halo from the first gap alone leaves it too thin and chunks then miss
+    valid targets just past the boundary.
+
+    An axis with a single coordinate has no spacing and therefore contributes
+    no halo along that axis (depth 0), so (1, N) and (N, 1) rasters do not
+    crash on the missing second coordinate.
+
+    For GREAT_CIRCLE the east-west distance per degree of longitude shrinks
+    toward the poles, so the column spacing is measured at the highest-latitude
+    row (largest absolute y) to take the worst case. The north-south distance
+    does not depend on longitude, so the row spacing uses a fixed longitude.
+    """
+    def _min_step_distance(coords, x_ref, y_ref, along):
+        if len(coords) < 2:
+            return None
+        smallest = None
+        for i in range(len(coords) - 1):
+            if along == "row":
+                d = _distance(
+                    x_ref, x_ref, coords[i], coords[i + 1], distance_metric)
+            else:
+                d = _distance(
+                    coords[i], coords[i + 1], y_ref, y_ref, distance_metric)
+            if d > 0 and (smallest is None or d < smallest):
+                smallest = d
+        return smallest
+
+    # Worst-case latitude for east-west spacing: the row farthest from the
+    # equator, where a degree of longitude covers the least ground.
+    y_worst = max(y_coords, key=abs)
+
+    dist_per_row = _min_step_distance(y_coords, x_coords[0], None, "row")
+    dist_per_col = _min_step_distance(x_coords, None, y_worst, "col")
+
+    pad_y = 0 if dist_per_row is None else int(max_distance / dist_per_row + 0.5)
+    pad_x = 0 if dist_per_col is None else int(max_distance / dist_per_col + 0.5)
+    return pad_y, pad_x
+
+
 @ngjit
 def _calc_direction(x1, x2, y1, y2):
     # Calculate direction from (x1, y1) to a source cell (x2, y2).
@@ -433,17 +483,10 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
     """
     import cupy as cp
 
-    # Overlap depth in pixels, measured with the active distance_metric so
-    # that GREAT_CIRCLE (max_distance in metres) does not divide by a degree
-    # cellsize. See _process_dask for the same conversion.
-    dist_per_row = _distance(
-        x_coords[0], x_coords[0],
-        y_coords[0], y_coords[1], distance_metric)
-    dist_per_col = _distance(
-        x_coords[0], x_coords[1],
-        y_coords[0], y_coords[0], distance_metric)
-    pad_y = int(max_distance / dist_per_row + 0.5)
-    pad_x = int(max_distance / dist_per_col + 0.5)
+    # Overlap depth in pixels, sized from the densest coordinate spacing and
+    # measured with the active distance_metric. See _halo_depth.
+    pad_y, pad_x = _halo_depth(
+        x_coords, y_coords, max_distance, distance_metric)
 
     # Build 2D coordinate grids as dask+cupy arrays matching raster chunks.
     # Each chunk is small (chunk_h x chunk_w x 8 bytes); the full grid is
@@ -1245,19 +1288,8 @@ def _process(
             ys = ys.rechunk({0: height, 1: width})
             pad_y = pad_x = 0
         else:
-            # Convert max_distance to a per-chunk overlap depth in pixels.
-            # max_distance is expressed in the same unit as the chosen
-            # distance_metric, so the pixel pitch must be measured with that
-            # same metric. Using the raw degree cellsize for GREAT_CIRCLE
-            # (where max_distance is in metres) yields a meaningless depth.
-            dist_per_row = _distance(
-                x_coords[0], x_coords[0],
-                y_coords[0], y_coords[1], distance_metric)
-            dist_per_col = _distance(
-                x_coords[0], x_coords[1],
-                y_coords[0], y_coords[0], distance_metric)
-            pad_y = int(max_distance / dist_per_row + 0.5)
-            pad_x = int(max_distance / dist_per_col + 0.5)
+            pad_y, pad_x = _halo_depth(
+                x_coords, y_coords, max_distance, distance_metric)
 
         out = da.map_overlap(
             _process_numpy,

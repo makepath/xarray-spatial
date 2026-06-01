@@ -1322,6 +1322,70 @@ def test_proximity_res_attr_drives_bounded_dask_padding():
         result.values, expected, equal_nan=True, rtol=1e-5)
 
 
+# --- issue #2809: bounded-dask halo depth on irregular / degenerate coords --
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_bounded_dask_irregular_coords_matches_numpy(func):
+    """Bounded dask must match numpy when coords are irregularly spaced.
+
+    Regression for issue #2809 bug 1: the halo depth was taken from only the
+    first coordinate pair. With a large leading gap and dense spacing
+    afterwards, the overlap came out too thin and chunks dropped valid targets
+    just past their boundary, so in-range cells turned to NaN under dask.
+    """
+    # First gap is 100, every later gap is 1 -> first-pair spacing would size
+    # the halo at 0 pixels for max_distance=2.5, missing nearby targets.
+    coords = np.array([0, 100, 101, 102, 103, 104, 105, 106], dtype=float)
+    data = np.zeros((8, 8), dtype=np.float64)
+    data[3, 3] = 1.0
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = coords
+    raster['lat'] = coords
+
+    expected = func(raster, x='lon', y='lat', max_distance=2.5).data
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(data, chunks=(4, 2))
+    result = func(dask_raster, x='lon', y='lat', max_distance=2.5)
+
+    assert isinstance(result.data, da.Array)
+    np.testing.assert_allclose(
+        result.values, expected, equal_nan=True, rtol=1e-5)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("shape_name", ["1xN", "Nx1"])
+def test_bounded_dask_single_row_or_col_matches_numpy(func, shape_name):
+    """Bounded dask must not crash on 1xN / Nx1 rasters.
+
+    Regression for issue #2809 bug 2: the halo code indexed coords[1] along
+    both axes, so a single-row or single-column raster raised IndexError on
+    the bounded dask path while numpy handled it fine.
+    """
+    if shape_name == "1xN":
+        data = np.zeros((1, 6), dtype=np.float64)
+        data[0, 2] = 1.0
+        chunks = (1, 3)
+    else:
+        data = np.zeros((6, 1), dtype=np.float64)
+        data[2, 0] = 1.0
+        chunks = (3, 1)
+
+    raster = _backend_raster(data, 'numpy')
+    expected = func(raster, x='lon', y='lat', max_distance=2.5).data
+
+    dask_raster = _backend_raster(data, 'numpy')
+    dask_raster.data = da.from_array(data, chunks=chunks)
+    result = func(dask_raster, x='lon', y='lat', max_distance=2.5)
+
+    assert isinstance(result.data, da.Array)
+    np.testing.assert_allclose(
+        result.values, expected, equal_nan=True, rtol=1e-5)
+
+
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
 def test_target_values_none_default_matches_empty_list(func):
     # target_values default switched from [] to a None sentinel; passing
