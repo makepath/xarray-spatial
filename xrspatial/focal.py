@@ -1286,46 +1286,36 @@ def _hotspots_dask_numpy(raster, kernel, boundary='nan'):
     if not np.issubdtype(data.dtype, np.floating):
         data = data.astype(np.float32)
 
-    # Pass 1: eagerly compute global statistics (two scalars).
-    # This reads all chunks once, produces 16 bytes, then frees all
-    # intermediate state -- no barrier that would force materialization
-    # of the full convolution output.
-    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
-    global_mean = np.float32(global_mean)
-    global_std = np.float32(global_std)
-
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    # Global statistics stay lazy: 0-d dask arrays that broadcast into the
+    # z-score below. Nothing is computed during graph construction.
+    global_mean = da.nanmean(data).astype(np.float32)
+    global_std = da.nanstd(data).astype(np.float32)
 
     norm_kernel = (kernel / kernel.sum()).astype(np.float32)
     pad_h = norm_kernel.shape[0] // 2
     pad_w = norm_kernel.shape[1] // 2
 
-    # Pass 2: fuse convolution + z-score + classification into one
-    # map_overlap call. Each chunk reads source + halo, produces int8
-    # output, and frees all intermediates immediately. No spill needed.
-    _func = partial(
-        _hotspots_chunk,
-        kernel=norm_kernel,
-        global_mean=global_mean,
-        global_std=global_std,
-    )
-    out = data.map_overlap(
-        _func,
+    # Convolve each chunk (reading source + halo) and free the halo
+    # immediately.
+    convolved = data.map_overlap(
+        partial(_convolve_2d_numpy, kernel=norm_kernel),
         depth=(pad_h, pad_w),
         boundary=_boundary_to_dask(boundary),
-        meta=np.array((), dtype=np.int8),
+        meta=np.array((), dtype=np.float32),
     )
+
+    # z-score via broadcast of the lazy 0-d stats, then classify per block.
+    z_array = (convolved - global_mean) / global_std
+    out = z_array.map_blocks(_calc_hotspots_numpy, meta=np.array((), dtype=np.int8))
     return out
 
 
-def _hotspots_chunk(chunk, kernel, global_mean, global_std):
-    """Fused per-chunk: convolve -> z-score -> classify."""
-    convolved = _convolve_2d_numpy(chunk, kernel)
-    z = (convolved - global_mean) / global_std
-    return _calc_hotspots_numpy(z)
+def _calc_hotspots_cupy(z):
+    """Per-chunk GPU classification of a z-score array."""
+    out = cupy.zeros_like(z, dtype=cupy.int8)
+    griddim, blockdim = cuda_args(z.shape)
+    _run_gpu_hotspots[griddim, blockdim](z, out)
+    return out
 
 
 def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
@@ -1333,37 +1323,27 @@ def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
     if not cupy.issubdtype(data.dtype, cupy.floating):
         data = data.astype(cupy.float32)
 
-    # Pass 1: global statistics (two scalars, eager)
-    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
-    global_mean = np.float32(float(global_mean))
-    global_std = np.float32(float(global_std))
-
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    # Global statistics stay lazy: 0-d dask arrays that broadcast into the
+    # z-score below. Nothing is computed during graph construction.
+    global_mean = da.nanmean(data).astype(np.float32)
+    global_std = da.nanstd(data).astype(np.float32)
 
     norm_kernel = (kernel / kernel.sum()).astype(np.float32)
     pad_h = norm_kernel.shape[0] // 2
     pad_w = norm_kernel.shape[1] // 2
 
-    # Pass 2: fuse convolution + z-score + classification, all on the GPU.
-    # Reuse the _run_gpu_hotspots kernel (same as the single-GPU path) so
-    # each chunk stays on the device -- no host round trip per chunk.
-    def _chunk_fn(chunk):
-        convolved = _convolve_2d_cupy(chunk, norm_kernel)
-        z = (convolved - global_mean) / global_std
-        out = cupy.zeros_like(z, dtype=cupy.int8)
-        griddim, blockdim = cuda_args(z.shape)
-        _run_gpu_hotspots[griddim, blockdim](z, out)
-        return out
-
-    out = data.map_overlap(
-        _chunk_fn,
+    # Convolve each chunk on the GPU (source + halo), free the halo, then
+    # classify the broadcast z-score per block -- each chunk stays on the
+    # device, no host round trip.
+    convolved = data.map_overlap(
+        partial(_convolve_2d_cupy, kernel=norm_kernel),
         depth=(pad_h, pad_w),
         boundary=_boundary_to_dask(boundary, is_cupy=True),
-        meta=cupy.array((), dtype=cupy.int8),
+        meta=cupy.array((), dtype=cupy.float32),
     )
+
+    z_array = (convolved - global_mean) / global_std
+    out = z_array.map_blocks(_calc_hotspots_cupy, meta=cupy.array((), dtype=cupy.int8))
     return out
 
 
