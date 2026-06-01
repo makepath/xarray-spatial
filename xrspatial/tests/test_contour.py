@@ -180,6 +180,19 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="at least 2"):
             contours(agg, levels=[0.5])
 
+    def test_complex_dtype_rejected(self):
+        """Complex input raises instead of silently dropping the imaginary part."""
+        data = np.ones((3, 3), dtype=np.complex128)
+        agg = xr.DataArray(data, dims=['y', 'x'])
+        with pytest.raises(ValueError, match="real numeric"):
+            contours(agg, levels=[0.5])
+
+    def test_non_dataarray_rejected(self):
+        """A plain ndarray raises a clear TypeError, not a late dispatch error."""
+        data = np.ones((3, 3), dtype=np.float64)
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            contours(data, levels=[0.5])
+
 
 # ---------------------------------------------------------------------------
 # Segment stitching
@@ -324,6 +337,60 @@ class TestGeoDataFrame:
         assert 'level' in gdf.columns
         assert 'geometry' in gdf.columns
         assert len(gdf) > 0
+
+    def test_geopandas_propagates_crs(self):
+        """A populated geopandas result carries the input raster's CRS."""
+        pytest.importorskip("geopandas")
+        data = _make_peak()
+        agg = create_test_raster(data, backend='numpy')  # attrs include a crs
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert len(gdf) > 0
+        assert gdf.crs == agg.attrs['crs']
+
+    def test_geopandas_empty_result_keeps_crs(self):
+        """Levels with no crossings return an empty GeoDataFrame with the CRS.
+
+        Regression for #2700: gpd.GeoDataFrame(records, crs=crs) raised
+        ValueError when records was empty and crs was not None.
+        """
+        pytest.importorskip("geopandas")
+        import geopandas as gpd
+        data = np.ones((4, 4), dtype=np.float64)  # flat -> no crossings
+        agg = create_test_raster(data, backend='numpy')  # attrs include a crs
+        gdf = contours(agg, levels=[5.0], return_type="geopandas")
+        assert isinstance(gdf, gpd.GeoDataFrame)
+        assert len(gdf) == 0
+        assert 'level' in gdf.columns
+        assert 'geometry' in gdf.columns
+        assert gdf.crs == agg.attrs['crs']
+
+    def test_geopandas_all_nan_keeps_crs(self):
+        """All-NaN input with auto levels keeps the CRS on the empty frame.
+
+        Regression for #2700: the all-NaN early-return path dropped the CRS.
+        """
+        pytest.importorskip("geopandas")
+        import geopandas as gpd
+        data = np.full((4, 4), np.nan, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')  # attrs include a crs
+        gdf = contours(agg, return_type="geopandas")
+        assert isinstance(gdf, gpd.GeoDataFrame)
+        assert len(gdf) == 0
+        assert gdf.crs == agg.attrs['crs']
+
+    def test_geopandas_empty_result_no_crs(self):
+        """An empty result with no input CRS returns an empty frame, no crash."""
+        pytest.importorskip("geopandas")
+        import geopandas as gpd
+        data = np.ones((4, 4), dtype=np.float64)
+        agg = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(2, 0, 4), 'x': np.linspace(0, 2, 4)},
+        )
+        gdf = contours(agg, levels=[5.0], return_type="geopandas")
+        assert isinstance(gdf, gpd.GeoDataFrame)
+        assert len(gdf) == 0
+        assert gdf.crs is None
 
     def test_invalid_return_type(self):
         data = _make_peak()
@@ -471,18 +538,11 @@ class TestInfHandling:
             assert np.isfinite(coords).all(), (
                 "level 0.5 ring should not include the inf quad")
 
-    @pytest.mark.xfail(
-        reason="contours() emits NaN coordinates near an inf corner; "
-               "see https://github.com/xarray-contrib/xarray-spatial/"
-               "issues/2704",
-        strict=True,
-    )
     def test_inf_corner_no_nan_coords(self):
         """A finite level near a +inf cell must not leak NaN coordinates.
 
-        The NaN-skip guard in the kernel uses ``x != x`` which does not
-        catch infinity, so the inf quad is interpolated and produces NaN.
-        Tracked as a source bug in #2704.
+        Regression for #2704: the NaN-skip guard in the kernel used ``x != x``
+        which does not catch infinity; fixed by using ``np.isfinite``.
         """
         data = self._inf_peak(np.inf)
         agg = create_test_raster(data, backend='numpy')
@@ -491,20 +551,39 @@ class TestInfHandling:
             assert np.isfinite(coords).all(), (
                 f"non-finite coordinate in contour at level {level}: {coords}")
 
-    @pytest.mark.xfail(
-        reason="contours() emits NaN coordinates near a -inf corner; "
-               "see https://github.com/xarray-contrib/xarray-spatial/"
-               "issues/2704",
-        strict=True,
-    )
     def test_neg_inf_corner_no_nan_coords(self):
-        """Same NaN leak for a -inf corner. Tracked in #2704."""
+        """A finite level near a -inf cell must not leak NaN coordinates.
+
+        Regression for #2704: same fix as test_inf_corner_no_nan_coords.
+        """
         data = self._inf_peak(-np.inf)
         agg = create_test_raster(data, backend='numpy')
         result = contours(agg, levels=[0.5])
         for level, coords in result:
             assert np.isfinite(coords).all(), (
                 f"non-finite coordinate in contour at level {level}: {coords}")
+
+    def test_mixed_inf(self):
+        """Multiple infinities of opposite signs must not produce NaN."""
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., np.inf, 1., -np.inf, 0.],
+            [0., 1., 1., 1., 0.],
+            [0., -np.inf, 1., np.inf, 0.],
+            [0., 0., 0., 0., 0.],
+        ], dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[0.5])
+        for level, coords in result:
+            assert np.isfinite(coords).all(), \
+                f"Non-finite coordinates found at level {level}"
+
+    def test_all_inf_quad(self):
+        """A 2x2 raster with all corners infinite produces no contours."""
+        data = np.full((2, 2), np.inf, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.0])
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
