@@ -298,6 +298,26 @@ def test_output_metadata_consistent_across_backends(
     assert result.attrs == test_raster.attrs
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("max_distance", [-1, -0.5, -np.inf])
+def test_negative_max_distance_raises(test_raster, func, max_distance):
+    # A negative max_distance is meaningless and used to produce
+    # backend-dependent output (numpy squared it, the CUDA path compared
+    # against it directly).  It must raise on every backend instead.
+    with pytest.raises(ValueError, match="max_distance"):
+        func(test_raster, x='lon', y='lat', max_distance=max_distance)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_zero_max_distance_keeps_meaning(test_raster, func):
+    # Edge value: max_distance=0 is valid and means only target cells
+    # qualify.  It must not raise.
+    result = func(test_raster, x='lon', y='lat', max_distance=0)
+    general_output_checks(test_raster, result)
+
+
 def test_proximity_distance_against_qgis(raster, qgis_proximity_distance_target_values):
     target_values, qgis_result = qgis_proximity_distance_target_values
     input_raster = create_test_raster(raster)

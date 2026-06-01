@@ -1055,6 +1055,11 @@ def _process(
     if max_distance is None:
         max_distance = np.inf
 
+    if max_distance < 0:
+        raise ValueError(
+            "max_distance must be non-negative, got {0!r}.".format(max_distance)
+        )
+
     # Get 1D coordinate arrays (these are small, just the axis coordinates)
     x_coords = raster[x].data
     y_coords = raster[y].data
@@ -1414,7 +1419,8 @@ def proximity(
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
-        this value will be set to NaN.
+        this value will be set to NaN. Must be non-negative; a negative
+        value raises a ValueError.
         Should be given in the same distance unit as input.
         For example, if input raster is in lat-lon and distances between points
         within the raster is calculated using Euclidean distance metric,
@@ -1561,7 +1567,8 @@ def allocation(
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
-        this value will be set to NaN.
+        this value will be set to NaN. Must be non-negative; a negative
+        value raises a ValueError.
         Should be given in the same distance unit as input.
         For example, if input raster is in lat-lon and distances between points
         within the raster is calculated using Euclidean distance metric,
@@ -1710,7 +1717,8 @@ def direction(
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
-        this value will be set to NaN.
+        this value will be set to NaN. Must be non-negative; a negative
+        value raises a ValueError.
         Should be given in the same distance unit as input.
         For example, if input raster is in lat-lon and distances between points
         within the raster is calculated using Euclidean distance metric,
