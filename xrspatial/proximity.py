@@ -1439,6 +1439,7 @@ def proximity(
         The metric for calculating distance between 2 points.
         Valid distance metrics are:
         'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        An unrecognized value raises ValueError.
 
     Returns
     -------
@@ -1585,6 +1586,7 @@ def allocation(
     distance_metric : str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points. Valid
         distance metrics are: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        An unrecognized value raises ValueError.
 
     Returns
     -------
@@ -1735,6 +1737,7 @@ def direction(
         The metric for calculating distance between 2 points.
         Valid distance_metrics are:
         'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        An unrecognized value raises ValueError.
 
     Returns
     -------
