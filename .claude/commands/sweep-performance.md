@@ -289,11 +289,17 @@ If CUDA_AVAILABLE is false:
        "notes": "<single-line notes (replace any newlines with spaces), or empty>",
    }
 
+   def _oneline(v):
+       # merge=union is line-based: a newline inside a quoted field splits
+       # the record on parallel-agent merges. Force one physical line per
+       # record by collapsing embedded newlines to " | ".
+       return "" if v is None else str(v).replace("\r\n", " | ").replace("\r", " | ").replace("\n", " | ")
+
    with path.open("w", newline="") as f:
        w = csv.DictWriter(f, fieldnames=header, quoting=csv.QUOTE_MINIMAL)
        w.writeheader()
        for m in sorted(rows):
-           w.writerow(rows[m])
+           w.writerow({k: _oneline(v) for k, v in rows[m].items()})
    ```
 
    Use empty strings (not `null`) for missing values. Set `issue` to the

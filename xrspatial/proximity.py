@@ -683,8 +683,15 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
     np.cumsum(chunks_x, out=x_offsets[1:])
 
     for iy in range(n_tile_y):
+        # Compute one chunk-row at a time so the scheduler can read the
+        # row's chunks in parallel instead of one blocking .compute() per
+        # chunk. Peak driver memory stays bounded to a single row of
+        # chunks, preserving the streaming guarantee from gh-879.
+        row_chunks = da.compute(
+            *(raster.data.blocks[iy, ix] for ix in range(n_tile_x))
+        )
         for ix in range(n_tile_x):
-            chunk_data = raster.data.blocks[iy, ix].compute()
+            chunk_data = row_chunks[ix]
             mask = _target_mask(chunk_data, target_values)
             rows, cols = np.where(mask)
             n = len(rows)
