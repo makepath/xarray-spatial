@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # std lib
 from functools import partial
-from math import atan
+from math import atan, isnan, nan
 from typing import Optional, Union
 
 # 3rd-party
@@ -52,6 +52,8 @@ def _cpu(data, cellsize_x, cellsize_y):
     rows, cols = data.shape
     for y in range(1, rows - 1):
         for x in range(1, cols - 1):
+            if np.isnan(data[y, x]):
+                continue
             a = data[y + 1, x - 1]
             b = data[y + 1, x]
             c = data[y + 1, x + 1]
@@ -112,6 +114,8 @@ def _run_dask_cupy(data: da.Array,
 
 @cuda.jit(device=True)
 def _gpu(arr, cellsize_x, cellsize_y):
+    if isnan(arr[1, 1]):
+        return nan
     a = arr[2, 0]
     b = arr[2, 1]
     c = arr[2, 2]
