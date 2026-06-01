@@ -1265,6 +1265,45 @@ def test_hotspots_3d_dask():
         dask_result.data.compute(), numpy_result.data)
 
 
+# --- result .name consistency across backends (metadata sweep) ----------
+#
+# Regression: the dask paths of focal_stats and hotspots constructed the
+# output DataArray without an explicit name=, so xarray adopted the
+# internal dask graph token (e.g. '_trim-<hash>') as the public .name.
+# This made .name differ across the four backends (numpy/cupy gave one
+# value, dask paths leaked a non-deterministic token).
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_focal_stats_name_consistent_across_backends(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = (np.arange(16).reshape(4, 4) + 0.5).astype(np.float64)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
+    result = focal_stats(agg, kernel, stats_funcs=['mean', 'max'])
+    assert result.name == 'focal_stats'
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_hotspots_name_consistent_across_backends(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = (np.arange(16).reshape(4, 4) + 0.5).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
+    result = hotspots(agg, kernel)
+    assert result.name == 'hotspots'
+
+
 # ---------------------------------------------------------------------------
 # API-consistency regressions (issue #2689)
 # ---------------------------------------------------------------------------
