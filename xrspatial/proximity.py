@@ -269,28 +269,33 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     An axis with a single coordinate has no spacing and therefore contributes
     no halo along that axis (depth 0), so (1, N) and (N, 1) rasters do not
     crash on the missing second coordinate.
+
+    For GREAT_CIRCLE the east-west distance per degree of longitude shrinks
+    toward the poles, so the column spacing is measured at the highest-latitude
+    row (largest absolute y) to take the worst case. The north-south distance
+    does not depend on longitude, so the row spacing uses a fixed longitude.
     """
-    def _min_step_distance(coords, along):
+    def _min_step_distance(coords, x_ref, y_ref, along):
         if len(coords) < 2:
             return None
-        steps = []
+        smallest = None
         for i in range(len(coords) - 1):
             if along == "row":
                 d = _distance(
-                    coords[0], coords[0], coords[i], coords[i + 1],
-                    distance_metric)
+                    x_ref, x_ref, coords[i], coords[i + 1], distance_metric)
             else:
                 d = _distance(
-                    coords[i], coords[i + 1], coords[0], coords[0],
-                    distance_metric)
-            if d > 0:
-                steps.append(d)
-        if not steps:
-            return None
-        return min(steps)
+                    coords[i], coords[i + 1], y_ref, y_ref, distance_metric)
+            if d > 0 and (smallest is None or d < smallest):
+                smallest = d
+        return smallest
 
-    dist_per_row = _min_step_distance(y_coords, "row")
-    dist_per_col = _min_step_distance(x_coords, "col")
+    # Worst-case latitude for east-west spacing: the row farthest from the
+    # equator, where a degree of longitude covers the least ground.
+    y_worst = max(y_coords, key=abs)
+
+    dist_per_row = _min_step_distance(y_coords, x_coords[0], None, "row")
+    dist_per_col = _min_step_distance(x_coords, None, y_worst, "col")
 
     pad_y = 0 if dist_per_row is None else int(max_distance / dist_per_row + 0.5)
     pad_x = 0 if dist_per_col is None else int(max_distance / dist_per_col + 0.5)
