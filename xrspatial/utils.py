@@ -473,6 +473,8 @@ def _warn_if_irregular_spacing(raster, dim, res, axis_label):
     ``get_dataarray_resolution`` honors before it reaches `calc_res`).
     """
     coord = raster.coords.get(dim, None)
+    # A 2-point axis has a single step that always equals the averaged
+    # step, so it cannot be "irregular"; only check axes with >= 3 points.
     if coord is None or coord.ndim != 1 or coord.size < 3:
         return
 
