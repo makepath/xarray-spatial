@@ -20,19 +20,12 @@ try:
 except ImportError:
     da = None
 
+from xrspatial.dataset_support import supports_dataset
+from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset
 from xrspatial.hydro.watershed_d8 import _code_to_offset_py
-from xrspatial.hydro._boundary_store import BoundaryStore
-from xrspatial.utils import (
-    _validate_raster,
-    get_dataarray_resolution,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.utils import (_validate_raster, get_dataarray_resolution, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -314,8 +307,8 @@ def _flow_length_cupy(flow_dir_data, direction, cellsize_x, cellsize_y, diag):
 
 @ngjit
 def _flow_length_downstream_tile(flow_dir, h, w, cellsize_x, cellsize_y, diag,
-                                  exit_top, exit_bottom, exit_left, exit_right,
-                                  exit_tl, exit_tr, exit_bl, exit_br):
+                                 exit_top, exit_bottom, exit_left, exit_right,
+                                 exit_tl, exit_tr, exit_bl, exit_br):
     """Downstream flow length for a single tile with exit-label seeds.
 
     Boundary cells that flow out of the tile use exit values as the
@@ -489,8 +482,8 @@ def _flow_length_downstream_tile(flow_dir, h, w, cellsize_x, cellsize_y, diag,
 
 @ngjit
 def _flow_length_upstream_tile(flow_dir, h, w, cellsize_x, cellsize_y, diag,
-                                seed_top, seed_bottom, seed_left, seed_right,
-                                seed_tl, seed_tr, seed_bl, seed_br):
+                               seed_top, seed_bottom, seed_left, seed_right,
+                               seed_tl, seed_tr, seed_bl, seed_br):
     """Upstream flow length for a single tile with entry seeds.
 
     Boundary cells that receive flow from outside the tile get seeded
@@ -603,7 +596,7 @@ def _preprocess_tiles(flow_dir_da, chunks_y, chunks_x):
 
 
 def _compute_exit_labels_downstream(iy, ix, boundaries, flow_bdry,
-                                     chunks_y, chunks_x, n_tile_y, n_tile_x):
+                                    chunks_y, chunks_x, n_tile_y, n_tile_x):
     """For downstream: look up the flow_length of the cell each
     boundary cell flows TO in the adjacent tile."""
     tile_h = chunks_y[iy]
@@ -770,12 +763,10 @@ def _compute_exit_labels_downstream(iy, ix, boundaries, flow_bdry,
 
 
 def _compute_seeds_upstream(iy, ix, boundaries, flow_bdry,
-                             chunks_y, chunks_x, n_tile_y, n_tile_x,
-                             cellsize_x, cellsize_y, diag):
+                            chunks_y, chunks_x, n_tile_y, n_tile_x,
+                            cellsize_x, cellsize_y, diag):
     """For upstream: check which adjacent cells flow INTO this tile,
     and seed with max(existing, neighbor_upstream + step_dist)."""
-    from xrspatial.hydro.flow_accumulation_d8 import _compute_seeds as _compute_accum_seeds
-
     tile_h = chunks_y[iy]
     tile_w = chunks_x[ix]
 
@@ -922,8 +913,8 @@ def _compute_seeds_upstream(iy, ix, boundaries, flow_bdry,
 
 
 def _process_tile_downstream(iy, ix, flow_dir_da, boundaries, flow_bdry,
-                              chunks_y, chunks_x, n_tile_y, n_tile_x,
-                              cellsize_x, cellsize_y, diag):
+                             chunks_y, chunks_x, n_tile_y, n_tile_x,
+                             cellsize_x, cellsize_y, diag):
     """Process one tile for downstream flow length; update boundaries."""
     chunk = np.asarray(
         flow_dir_da.blocks[iy, ix].compute(), dtype=np.float64)
@@ -961,8 +952,8 @@ def _process_tile_downstream(iy, ix, flow_dir_da, boundaries, flow_bdry,
 
 
 def _process_tile_upstream(iy, ix, flow_dir_da, boundaries, flow_bdry,
-                            chunks_y, chunks_x, n_tile_y, n_tile_x,
-                            cellsize_x, cellsize_y, diag):
+                           chunks_y, chunks_x, n_tile_y, n_tile_x,
+                           cellsize_x, cellsize_y, diag):
     """Process one tile for upstream flow length; update boundaries."""
     chunk = np.asarray(
         flow_dir_da.blocks[iy, ix].compute(), dtype=np.float64)
@@ -1001,7 +992,7 @@ def _process_tile_upstream(iy, ix, flow_dir_da, boundaries, flow_bdry,
 
 
 def _flow_length_dask_iterative(flow_dir_da, direction,
-                                 cellsize_x, cellsize_y, diag):
+                                cellsize_x, cellsize_y, diag):
     """Iterative boundary-propagation for flow length on dask arrays."""
     chunks_y = flow_dir_da.chunks[0]
     chunks_x = flow_dir_da.chunks[1]
@@ -1087,7 +1078,7 @@ def _assemble_result(flow_dir_da, boundaries, flow_bdry,
 
 
 def _flow_length_dask_cupy(flow_dir_da, direction,
-                            cellsize_x, cellsize_y, diag):
+                           cellsize_x, cellsize_y, diag):
     """Dask+CuPy: convert to numpy, run CPU iterative path, convert back."""
     import cupy as cp
 
@@ -1109,8 +1100,8 @@ def _flow_length_dask_cupy(flow_dir_da, direction,
 
 @supports_dataset
 def flow_length_d8(flow_dir: xr.DataArray,
-                direction: str = 'downstream',
-                name: str = 'flow_length') -> xr.DataArray:
+                   direction: str = 'downstream',
+                   name: str = 'flow_length') -> xr.DataArray:
     """Compute D8 flow length from a flow direction grid.
 
     Parameters
