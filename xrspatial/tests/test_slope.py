@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -274,3 +276,42 @@ def test_degenerate_shape_geodesic(shape):
     general_output_checks(raster, result)
     assert result.shape == shape
     assert np.all(np.isnan(result.data))
+
+
+def _degree_coord_meter_elevation_raster():
+    # degree-like coords (lon/lat) with meter-scale elevation values
+    data = np.linspace(0, 999, 10 * 10, dtype=float).reshape(10, 10)
+    y = np.linspace(5.0, 5.0025, 10)
+    x = np.linspace(-74.93, -74.9275, 10)
+    return xr.DataArray(
+        data,
+        dims=('y', 'x'),
+        coords={'y': y, 'x': x},
+        attrs={'units': 'm'},
+    )
+
+
+def _projected_meter_raster():
+    # projected coords in meters (UTM-ish) with meter-scale elevation values
+    data = np.linspace(0, 999, 10 * 10, dtype=float).reshape(10, 10)
+    y = np.arange(10) * 30.0
+    x = 500_000.0 + np.arange(10) * 30.0
+    return xr.DataArray(
+        data,
+        dims=('y', 'x'),
+        coords={'y': y, 'x': x},
+        attrs={'units': 'm'},
+    )
+
+
+def test_planar_warns_on_degree_coords_meter_elevation():
+    raster = _degree_coord_meter_elevation_raster()
+    with pytest.warns(UserWarning, match="appears to have coordinates in degrees"):
+        slope(raster)  # method='planar' is the default
+
+
+def test_planar_no_warn_on_projected_meter_coords():
+    raster = _projected_meter_raster()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        slope(raster)  # must not raise: no unit-mismatch warning expected
