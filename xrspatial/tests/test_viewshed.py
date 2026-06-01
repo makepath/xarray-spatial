@@ -638,3 +638,74 @@ def test_viewshed_nan_input_crashing_position():
     raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
 
     viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "cupy", "dask"])
+@pytest.mark.parametrize("fine_axis", ["x", "y"])
+def test_viewshed_max_distance_anisotropic(backend, fine_axis):
+    """max_distance must not clip cells on anisotropic-resolution rasters.
+
+    Regression test: the windowed path sized its analysis window from the
+    coarser of ew_res / ns_res and used that single radius for both axes,
+    so cells within max_distance along the finer axis were dropped from
+    the window and returned INVISIBLE.  Both anisotropy orientations are
+    checked so a mix-up between radius_rows / radius_cols is caught.
+    """
+    if backend == "cupy":
+        if not has_rtx():
+            pytest.skip("rtxpy not available")
+        import cupy as cp
+
+    # Strongly anisotropic: one axis spaced by 1, the other by 10.
+    # Use a uniform nonzero elevation: flat enough that all in-range cells
+    # stay visible, but the RTX mesh builder needs positive max elevation.
+    ny, nx = 21, 21
+    terrain = np.full((ny, nx), 1.0)
+    if fine_axis == "x":
+        xs = np.arange(nx, dtype=float) * 1.0    # fine
+        ys = np.arange(ny, dtype=float) * 10.0   # coarse
+    else:
+        xs = np.arange(nx, dtype=float) * 10.0   # coarse
+        ys = np.arange(ny, dtype=float) * 1.0    # fine
+
+    obs_x, obs_y = xs[10], ys[10]
+    obs_elev = 50
+
+    base = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    full = viewshed(base, x=obs_x, y=obs_y, observer_elev=obs_elev)
+    full_vals = full.values
+
+    # max_distance=8 reaches 8 cells along the fine axis but < 1 along the
+    # coarse axis, so the buggy single-radius window clipped the fine axis.
+    arr = terrain.copy()
+    if backend == "cupy":
+        arr = cp.asarray(arr)
+    raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    if backend == "dask":
+        raster = xa.DataArray(
+            da.from_array(terrain.copy(), chunks=(7, 7)),
+            coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=obs_x, y=obs_y, observer_elev=obs_elev,
+                 max_distance=8.0)
+    if backend == "cupy":
+        result = v.data.get()
+    else:
+        # numpy and dask both resolve through .values
+        result = v.values
+
+    # Cells within max_distance along the fine axis must be evaluated and
+    # match the full viewshed, not be clipped to INVISIBLE.  obs is at
+    # index 10 on both axes; step along the fine axis from the observer.
+    for offset in (2, 5, 7):  # all < 8 cells along the fine axis
+        if fine_axis == "x":
+            rc = (10, 10 + offset)
+        else:
+            rc = (10 + offset, 10)
+        assert result[rc] > INVISIBLE, (
+            f"cell {rc} ({offset} fine-axis cells away) wrongly clipped")
+        np.testing.assert_allclose(result[rc], full_vals[rc], atol=0.03)
+
+    # A cell 9 fine-axis cells away (> max_distance) stays INVISIBLE.
+    far = (10, 19) if fine_axis == "x" else (19, 10)
+    assert result[far] == INVISIBLE
