@@ -30,17 +30,10 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
-
+from xrspatial.hydro._boundary_store import BoundaryStore
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -459,8 +452,8 @@ def _flow_accum_cupy(flow_dir_data):
 
 
 def _flow_accum_tile_cupy(flow_dir_data,
-                           seed_top, seed_bottom, seed_left, seed_right,
-                           seed_tl, seed_tr, seed_bl, seed_br):
+                          seed_top, seed_bottom, seed_left, seed_right,
+                          seed_tl, seed_tr, seed_bl, seed_br):
     """GPU seeded flow accumulation for a single tile.
 
     Same algorithm as ``_flow_accum_cupy`` but injects external seed
@@ -860,7 +853,7 @@ def _assemble_result(flow_dir_da, boundaries, flow_bdry,
 
 
 def _process_tile_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
-                        chunks_y, chunks_x, n_tile_y, n_tile_x):
+                       chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run seeded GPU flow accumulation on one tile; update boundaries."""
     import cupy as cp
 
@@ -899,7 +892,7 @@ def _process_tile_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
 
 
 def _assemble_result_cupy(flow_dir_da, boundaries, flow_bdry,
-                           chunks_y, chunks_x, n_tile_y, n_tile_x):
+                          chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Build a lazy dask+cupy array using GPU tile kernel."""
     import cupy as cp
 
@@ -941,16 +934,16 @@ def _flow_accum_dask_cupy(flow_dir_da):
         for iy in range(n_tile_y):
             for ix in range(n_tile_x):
                 c = _process_tile_cupy(iy, ix, flow_dir_da, boundaries,
-                                        flow_bdry, chunks_y, chunks_x,
-                                        n_tile_y, n_tile_x)
+                                       flow_bdry, chunks_y, chunks_x,
+                                       n_tile_y, n_tile_x)
                 if c > max_change:
                     max_change = c
 
         for iy in reversed(range(n_tile_y)):
             for ix in reversed(range(n_tile_x)):
                 c = _process_tile_cupy(iy, ix, flow_dir_da, boundaries,
-                                        flow_bdry, chunks_y, chunks_x,
-                                        n_tile_y, n_tile_x)
+                                       flow_bdry, chunks_y, chunks_x,
+                                       n_tile_y, n_tile_x)
                 if c > max_change:
                     max_change = c
 
@@ -960,7 +953,7 @@ def _flow_accum_dask_cupy(flow_dir_da):
     boundaries = boundaries.snapshot()
 
     return _assemble_result_cupy(flow_dir_da, boundaries, flow_bdry,
-                                  chunks_y, chunks_x, n_tile_y, n_tile_x)
+                                 chunks_y, chunks_x, n_tile_y, n_tile_x)
 
 
 # =====================================================================
@@ -969,7 +962,7 @@ def _flow_accum_dask_cupy(flow_dir_da):
 
 @supports_dataset
 def flow_accumulation_d8(flow_dir: xr.DataArray,
-                      name: str = 'flow_accumulation') -> xr.DataArray:
+                         name: str = 'flow_accumulation') -> xr.DataArray:
     """Compute flow accumulation from a D8 flow direction grid.
 
     Each cell drains to exactly one downstream neighbor based on
