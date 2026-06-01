@@ -1292,12 +1292,16 @@ def _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
     neighborhood collapses to a single weight (variance term <= 0) get a
     z-score of 0 (no significance).
     """
-    numerator = weighted_sum - global_mean * weight_sum
+    # Accumulate in float64: n * W2 - W^2 is a difference of potentially
+    # large numbers and loses precision in float32 for big rasters / weights.
+    weight_sum = weight_sum.astype(np.float64)
+    sq_weight_sum = sq_weight_sum.astype(np.float64)
+    numerator = weighted_sum.astype(np.float64) - float(global_mean) * weight_sum
     variance_term = (n * sq_weight_sum - weight_sum * weight_sum) / (n - 1)
     # Guard against tiny negatives from float rounding and the degenerate
     # single-cell neighborhood (variance_term == 0) before the sqrt.
     variance_term = np.where(variance_term > 0, variance_term, np.nan)
-    denominator = global_std * np.sqrt(variance_term)
+    denominator = float(global_std) * np.sqrt(variance_term)
     z = numerator / denominator
     return np.where(np.isfinite(z), z, 0.0).astype(np.float32)
 
