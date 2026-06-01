@@ -1046,9 +1046,13 @@ def _process(
             "({0}, {1})".format(y, x)
         )
 
-    distance_metric = DISTANCE_METRICS.get(distance_metric, None)
-    if distance_metric is None:
-        distance_metric = DISTANCE_METRICS["EUCLIDEAN"]
+    if distance_metric not in DISTANCE_METRICS:
+        valid = ", ".join(sorted(DISTANCE_METRICS))
+        raise ValueError(
+            "Invalid distance_metric {0!r}. "
+            "Valid options are: {1}.".format(distance_metric, valid)
+        )
+    distance_metric = DISTANCE_METRICS[distance_metric]
 
     target_values = np.asarray(target_values)
 

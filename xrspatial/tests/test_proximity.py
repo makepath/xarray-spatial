@@ -28,6 +28,40 @@ def test_great_circle_distance():
             assert e_info
 
 
+def _simple_raster():
+    data = np.asarray([[0., 0., 1.],
+                       [0., 0., 0.],
+                       [2., 0., 0.]])
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = np.linspace(-20, 20, 3)
+    raster['lat'] = np.linspace(20, -20, 3)
+    return raster
+
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_invalid_distance_metric_raises(func):
+    # A typoed / unsupported distance_metric must raise rather than
+    # silently falling back to EUCLIDEAN (issue #2807).
+    raster = _simple_raster()
+    with pytest.raises(ValueError) as e_info:
+        func(raster, x='lon', y='lat', distance_metric='euclidian')
+    msg = str(e_info.value)
+    assert 'euclidian' in msg
+    # the error should list the valid options
+    for metric in ('EUCLIDEAN', 'GREAT_CIRCLE', 'MANHATTAN'):
+        assert metric in msg
+
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize(
+    "metric", ['EUCLIDEAN', 'GREAT_CIRCLE', 'MANHATTAN'])
+def test_valid_distance_metric_runs(func, metric):
+    # All documented metrics must keep working unchanged (issue #2807).
+    raster = _simple_raster()
+    result = func(raster, x='lon', y='lat', distance_metric=metric)
+    assert result.shape == raster.shape
+
+
 @pytest.fixture
 def test_raster(backend):
     height, width = 4, 6
