@@ -273,6 +273,47 @@ class TestGeodesicSlopeMemoryGuard:
         assert result.shape == (8, 8)
 
 
+@dask_array_available
+class TestGeodesicSlopeMemoryGuardDask:
+    """The dask geodesic backend streams the raster chunk by chunk, so the
+    memory guard must size against the largest chunk, not the full raster.
+    A raster that would be rejected eagerly should be allowed once it is
+    chunked small enough to fit."""
+
+    def test_chunked_raster_allowed_when_eager_would_reject(self, monkeypatch):
+        # 1 MB available. The 200x200 raster needs ~2.2 MB eagerly (56 B/cell)
+        # and trips the eager guard, but 20x20 chunks need only ~25 KB each.
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        # eager numpy of the same size is rejected (sanity check the budget).
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        with pytest.raises(MemoryError, match="slope"):
+            slope(r_np, method='geodesic')
+        # same raster, chunked small — guard must let it through.
+        r_da = _make_geo_raster(
+            elev, 40.0, 41.0, 10.0, 11.0,
+            backend='dask+numpy', chunks=(20, 20),
+        )
+        result = slope(r_da, method='geodesic')
+        assert result.compute().shape == (200, 200)
+
+    def test_single_huge_chunk_still_rejected(self, monkeypatch):
+        # A dask array whose only chunk spans the whole raster has no memory
+        # advantage over eager, so the guard must still reject it.
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        r_da = _make_geo_raster(
+            elev, 40.0, 41.0, 10.0, 11.0,
+            backend='dask+numpy', chunks=(200, 200),
+        )
+        with pytest.raises(MemoryError, match="slope"):
+            slope(r_da, method='geodesic')
+
+
 # ---------------------------------------------------------------------------
 # Tests — cross-backend consistency
 # ---------------------------------------------------------------------------
