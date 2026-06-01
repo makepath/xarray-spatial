@@ -365,7 +365,8 @@ def aspect(agg: xr.DataArray,
     name : str, default='aspect'
         Name of ouput DataArray.
     method : str, default='planar'
-        ``'planar'`` uses the classic Horn algorithm with uniform cell size.
+        ``'planar'`` uses the classic Horn algorithm, scaling the gradients
+        by the x and y cell sizes so non-square cells are handled correctly.
         ``'geodesic'`` converts cells to Earth-Centered Earth-Fixed (ECEF)
         coordinates and fits a 3D plane, yielding accurate results for
         geographic (lat/lon) coordinate systems.
