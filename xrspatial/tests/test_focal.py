@@ -1415,6 +1415,14 @@ def test_focal_stats_accepts_bare_string():
     assert list(result.coords['stats'].values) == ['mean']
 
 
+def test_focal_stats_rejects_empty_stats_funcs():
+    # Regression for #2770: an empty list used to reach xr.concat and fail with
+    # an obscure error. It must raise a clear ValueError instead.
+    agg = xr.DataArray(data_random)
+    with pytest.raises(ValueError, match=r"stats_funcs must not be empty"):
+        focal_stats(agg, _api_kernel, stats_funcs=[])
+
+
 def test_focal_stats_valid_list_happy_path():
     agg = xr.DataArray(data_random)
     result = focal_stats(agg, _api_kernel, stats_funcs=['mean', 'sum'])

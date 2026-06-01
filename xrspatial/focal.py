@@ -1134,6 +1134,11 @@ def _validate_stats_funcs(stats_funcs):
     """
     if isinstance(stats_funcs, str):
         stats_funcs = [stats_funcs]
+    if len(stats_funcs) == 0:
+        raise ValueError(
+            f"stats_funcs must not be empty, "
+            f"choose from {list(_VALID_STATS_FUNCS)}"
+        )
     unknown = [s for s in stats_funcs if s not in _VALID_STATS_FUNCS]
     if unknown:
         raise ValueError(
