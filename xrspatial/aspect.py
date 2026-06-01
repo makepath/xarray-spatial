@@ -14,16 +14,12 @@ import numpy as np
 import xarray as xr
 from numba import cuda
 
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import Z_UNITS
-from xrspatial.utils import _boundary_to_dask
-from xrspatial.utils import _extract_latlon_coords
-from xrspatial.utils import _pad_array
-from xrspatial.utils import _validate_boundary
-from xrspatial.utils import _validate_raster
-from xrspatial.utils import cuda_args
-from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memory,
+                                _cpu_geodesic_aspect, _run_gpu_geodesic_aspect)
+from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
+                             _extract_latlon_coords, _pad_array, _validate_boundary,
+                             _validate_raster, cuda_args, ngjit)
 
 
 def _geodesic_cuda_dims(shape):
@@ -35,14 +31,6 @@ def _geodesic_cuda_dims(shape):
     )
     return bpg, tpb
 
-from xrspatial.geodesic import (
-    INV_2R,
-    WGS84_A2,
-    WGS84_B2,
-    _check_geodesic_memory,
-    _cpu_geodesic_aspect,
-    _run_gpu_geodesic_aspect,
-)
 
 # 3rd-party
 try:
@@ -169,7 +157,7 @@ def _run_dask_numpy(data: da.Array, boundary: str = 'nan') -> da.Array:
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array((), dtype=np.float32))
     return out
 
 
@@ -179,7 +167,7 @@ def _run_dask_cupy(data: da.Array, boundary: str = 'nan') -> da.Array:
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array((), dtype=cupy.float32))
     return out
 
 
@@ -216,7 +204,8 @@ def _run_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
         zf_arr = cupy.array([z_factor], dtype=cupy.float64)
         inv_2r_arr = cupy.array([INV_2R], dtype=cupy.float64)
         griddim, blockdim = _geodesic_cuda_dims((H, W))
-        _run_gpu_geodesic_aspect[griddim, blockdim](stacked, a2_arr, b2_arr, zf_arr, inv_2r_arr, out)
+        _run_gpu_geodesic_aspect[griddim, blockdim](
+            stacked, a2_arr, b2_arr, zf_arr, inv_2r_arr, out)
         return out[1:-1, 1:-1]
 
     lat_2d_gpu = cupy.asarray(lat_2d, dtype=cupy.float64)
@@ -260,7 +249,8 @@ def _dask_geodesic_aspect_chunk_cupy(stacked_chunk, a2, b2, z_factor):
     inv_2r_arr = cupy.array([INV_2R], dtype=cupy.float64)
 
     griddim, blockdim = _geodesic_cuda_dims((H, W))
-    _run_gpu_geodesic_aspect[griddim, blockdim](stacked_chunk, a2_arr, b2_arr, zf_arr, inv_2r_arr, result_2d)
+    _run_gpu_geodesic_aspect[griddim, blockdim](
+        stacked_chunk, a2_arr, b2_arr, zf_arr, inv_2r_arr, result_2d)
 
     out = cupy.zeros_like(stacked_chunk, dtype=cupy.float32)
     out[0] = result_2d
@@ -287,11 +277,21 @@ def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='n
     return out[0]
 
 
+def _to_cupy_f64(block):
+    # Only reached from the dask+cupy path, so `cupy` is the real module here,
+    # never the import-time fallback class.
+    return cupy.asarray(block, dtype=cupy.float64)
+
+
 def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
-    lat_dask = da.from_array(cupy.asarray(lat_2d, dtype=cupy.float64),
-                             chunks=data.chunksize)
-    lon_dask = da.from_array(cupy.asarray(lon_2d, dtype=cupy.float64),
-                             chunks=data.chunksize)
+    # Keep lat/lon as dask-of-numpy on the (zero-stride) broadcast views, then
+    # convert each block to cupy lazily. Converting up front with
+    # cupy.asarray(lat_2d) would densify the full (H, W) grid onto a single GPU
+    # at graph-construction time and OOM on large rasters.
+    lat_dask = da.from_array(lat_2d, chunks=data.chunksize).map_blocks(
+        _to_cupy_f64, dtype=np.float64)
+    lon_dask = da.from_array(lon_2d, chunks=data.chunksize).map_blocks(
+        _to_cupy_f64, dtype=np.float64)
     stacked = da.stack([
         data.astype(cupy.float64),
         lat_dask,
