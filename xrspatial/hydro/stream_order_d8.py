@@ -36,18 +36,11 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster,
-    cuda_args,
-    has_cuda_and_cupy,
-    is_cupy_array,
-    is_dask_cupy,
-    ngjit,
-)
-from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
-
+from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
+                             is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -1284,7 +1277,7 @@ def _stream_order_dask_shreve(flow_dir_da, accum_da, threshold):
 
 
 def _stream_order_tile_cupy(flow_dir_data, stream_mask_data, method,
-                             seeds):
+                            seeds):
     """GPU seeded stream order for a single tile.
 
     Uses GPU frontier peeling with seeds injected after initialisation.
@@ -1369,8 +1362,8 @@ def _make_stream_mask_np(ac_chunk, fd_chunk, threshold):
 
 
 def _process_strahler_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
-                                  bdry_max, bdry_cnt, flow_bdry, mask_bdry,
-                                  chunks_y, chunks_x, n_tile_y, n_tile_x):
+                                bdry_max, bdry_cnt, flow_bdry, mask_bdry,
+                                chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run seeded GPU Strahler on one tile; update boundary stores."""
     import cupy as cp
 
@@ -1411,8 +1404,8 @@ def _process_strahler_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
 
 
 def _process_shreve_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
-                                boundaries, flow_bdry, mask_bdry,
-                                chunks_y, chunks_x, n_tile_y, n_tile_x):
+                              boundaries, flow_bdry, mask_bdry,
+                              chunks_y, chunks_x, n_tile_y, n_tile_x):
     """Run seeded GPU Shreve on one tile; update boundaries."""
     import cupy as cp
 
@@ -1558,7 +1551,8 @@ def stream_order_d8(flow_dir: xr.DataArray,
                     flow_accum: xr.DataArray,
                     threshold: float = 100,
                     ordering: str = 'strahler',
-                    name: str = 'stream_order') -> xr.DataArray:
+                    name: str = 'stream_order',
+                    method: str | None = None) -> xr.DataArray:
     """Compute stream order from D8 flow direction and accumulation grids.
 
     Parameters
@@ -1577,6 +1571,12 @@ def stream_order_d8(flow_dir: xr.DataArray,
         ``'shreve'`` for Shreve cumulative magnitude.
     name : str, default 'stream_order'
         Name of output DataArray.
+    method : str, optional
+        Alias for ``ordering``, accepted for consistency with
+        ``stream_order_dinf`` and ``stream_order_mfd``, which name this
+        parameter ``method``.  If given, it takes precedence over
+        ``ordering``.  Passing both with conflicting values raises
+        ``ValueError``.
 
     Returns
     -------
@@ -1596,10 +1596,22 @@ def stream_order_d8(flow_dir: xr.DataArray,
     _validate_raster(flow_dir, func_name='stream_order', name='flow_dir')
     _validate_raster(flow_accum, func_name='stream_order', name='flow_accum')
 
-    method = ordering.lower()
+    # `method` is an alias for `ordering` (parity with the dinf/mfd
+    # variants).  Compare case-insensitively, and only treat them as
+    # conflicting when the caller set `ordering` to a non-default value
+    # that differs from `method`.
+    if (method is not None
+            and ordering.lower() != 'strahler'
+            and method.lower() != ordering.lower()):
+        raise ValueError(
+            f"Pass either 'ordering' or 'method', not both with different "
+            f"values (got ordering={ordering!r}, method={method!r})")
+    selected = method if method is not None else ordering
+
+    method = selected.lower()
     if method not in ('strahler', 'shreve'):
         raise ValueError(
-            f"ordering must be 'strahler' or 'shreve', got {ordering!r}")
+            f"ordering must be 'strahler' or 'shreve', got {selected!r}")
 
     fd_data = flow_dir.data
     fa_data = flow_accum.data

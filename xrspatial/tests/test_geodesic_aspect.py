@@ -294,3 +294,38 @@ class TestGeodesicAspectDaskCupy:
         np.testing.assert_allclose(
             a_np.values, a_dc.data.compute().get(), rtol=1e-5, equal_nan=True
         )
+
+    def test_latlon_not_materialized_on_gpu_at_graph_build(self):
+        """The dask+cupy geodesic path must keep lat/lon chunked.
+
+        Building the graph (no compute) for a large raster must not densify
+        the full (H, W) lat/lon grids onto the GPU. Converting the broadcast
+        views with ``cupy.asarray`` up front would allocate ~2*H*W*8 bytes of
+        GPU memory at graph-construction time and OOM on large rasters.
+        """
+        import cupy
+
+        H = W = 2048
+        elev = cupy.zeros((H, W), dtype=cupy.float64)
+        lat = np.linspace(40.0, 41.0, H)
+        lon = np.linspace(10.0, 11.0, W)
+        raster = xr.DataArray(
+            da.from_array(elev, chunks=(256, 256)),
+            dims=['lat', 'lon'],
+            coords={'lat': lat, 'lon': lon},
+        )
+
+        pool = cupy.get_default_memory_pool()
+        pool.free_all_blocks()
+        before = pool.used_bytes()
+        out = aspect(raster, method='geodesic')   # graph construction only
+        out.data.__dask_graph__()
+        delta = pool.used_bytes() - before
+
+        # A single full lat or lon grid is H*W*8 bytes. If either were
+        # densified eagerly the delta would be at least that large.
+        one_full_grid = H * W * 8
+        assert delta < one_full_grid, (
+            f"graph construction allocated {delta} GPU bytes; expected well "
+            f"under one full lat/lon grid ({one_full_grid} bytes)"
+        )

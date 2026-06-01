@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 import copy
+import warnings
 from functools import partial
 from math import isnan
 import math
@@ -92,6 +93,36 @@ def _apply_per_band(band_func, agg, *args, **kwargs):
         band = agg.isel({band_dim: i})
         slices.append(band_func(band, *args, **kwargs))
     return xr.concat(slices, dim=band_dim)
+
+
+def _resolve_raster_alias(agg, raster, func_name):
+    """Support the deprecated ``raster=`` keyword for the first argument.
+
+    The focal public functions standardised their first parameter on
+    ``agg`` to match the rest of the library.  ``apply`` and ``hotspots``
+    historically named it ``raster``; this shim keeps that keyword working
+    while emitting a ``DeprecationWarning``.
+    """
+    if raster is not None:
+        if agg is not None:
+            raise TypeError(
+                f"{func_name}() got both 'agg' and the deprecated 'raster' "
+                f"argument; pass the input as 'agg' only."
+            )
+        warnings.warn(
+            f"{func_name}(): the 'raster' argument is deprecated and will be "
+            f"removed in a future release; use 'agg' instead.",
+            DeprecationWarning,
+            # stacklevel=3 points the warning at the caller:
+            # caller -> public func (apply/hotspots) -> this helper.
+            stacklevel=3,
+        )
+        return raster
+    if agg is None:
+        raise TypeError(
+            f"{func_name}() missing required argument: 'agg'"
+        )
+    return agg
 
 
 # TODO: Make convolution more generic with numba first-class functions.
@@ -227,11 +258,19 @@ def _mean_numpy_boundary(data, excludes, boundary='nan'):
     return result[1:-1, 1:-1]
 
 
+def _mean_cupy_boundary(data, excludes, boundary='nan'):
+    if boundary == 'nan':
+        return _mean_cupy(data, excludes)
+    padded = _pad_array(data, 1, boundary)
+    result = _mean_cupy(padded, excludes)
+    return result[1:-1, 1:-1]
+
+
 def _mean(data, excludes, boundary='nan'):
     agg = xr.DataArray(data)
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_mean_numpy_boundary, boundary=boundary),
-        cupy_func=_mean_cupy,
+        cupy_func=partial(_mean_cupy_boundary, boundary=boundary),
         dask_func=partial(_mean_dask_numpy, boundary=boundary),
         dask_cupy_func=partial(_mean_dask_cupy, boundary=boundary),
     )
@@ -240,7 +279,7 @@ def _mean(data, excludes, boundary='nan'):
 
 
 @supports_dataset
-def mean(agg, passes=1, excludes=[np.nan], name='mean', boundary='nan'):
+def mean(agg, passes=1, excludes=None, name='mean', boundary='nan'):
     """
     Returns Mean filtered array using a 3x3 window.
     Default behaviour to 'mean' is to exclude NaNs from calculations.
@@ -253,6 +292,9 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean', boundary='nan'):
         data variable independently.
     passes : int, default=1
         Number of times to run mean.
+    excludes : list, default=[np.nan]
+        Values to exclude from the mean. A pixel whose value matches one
+        of these is left unchanged rather than averaged.
     name : str, default='mean'
         Output xr.DataArray.name property.
     boundary : str, default='nan'
@@ -339,6 +381,9 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean', boundary='nan'):
                [0.47928995, 0.47928995, 0.47928995, 0.47928995, 0.47928995]])
         Dimensions without coordinates: dim_0, dim_1
     """
+
+    if excludes is None:
+        excludes = [np.nan]
 
     _validate_raster(agg, func_name='mean', name='agg', ndim=(2, 3))
     _validate_scalar(passes, func_name='mean', name='passes', dtype=int, min_val=1)
@@ -474,6 +519,20 @@ def _apply_cupy(data, kernel, func):
     return _focal_stats_func_cupy(data.astype(cupy.float32), kernel, func)
 
 
+def _apply_cupy_boundary(data, kernel, func, boundary='nan'):
+    if boundary == 'nan':
+        return _apply_cupy(data, kernel, func)
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    padded = _pad_array(data, (pad_h, pad_w), boundary)
+    result = _apply_cupy(padded, kernel, func)
+    r0 = pad_h if pad_h else None
+    r1 = -pad_h if pad_h else None
+    c0 = pad_w if pad_w else None
+    c1 = -pad_w if pad_w else None
+    return result[r0:r1, c0:c1]
+
+
 def _apply_dask_cupy(data, kernel, func, boundary='nan'):
     data = data.astype(cupy.float32)
     pad_h = kernel.shape[0] // 2
@@ -486,13 +545,14 @@ def _apply_dask_cupy(data, kernel, func, boundary='nan'):
     return out
 
 
-def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
+def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
+          boundary='nan', *, raster=None):
     """
     Returns custom function applied array using a user-created window.
 
     Parameters
     ----------
-    raster : xarray.DataArray
+    agg : xarray.DataArray
         2D array of input values to be filtered. Can be a NumPy backed,
         CuPy backed, Dask with NumPy backed, or Dask with CuPy backed
         DataArray.
@@ -511,8 +571,11 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
 
     Returns
     -------
-    agg : xarray.DataArray of same type as `raster`
+    agg : xarray.DataArray of same type as `agg`
         2D aggregate array of filtered values.
+
+    .. deprecated::
+        The ``raster`` keyword argument is deprecated; use ``agg``.
 
     Examples
     --------
@@ -598,10 +661,12 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
            [2. , 2. , 2. , 1.5]])
     Dimensions without coordinates: y, x
     """
-    _validate_raster(raster, func_name='apply', name='raster', ndim=(2, 3))
+    agg = _resolve_raster_alias(agg, raster, 'apply')
 
-    if raster.ndim == 3:
-        return _apply_per_band(apply, raster, kernel=kernel, func=func,
+    _validate_raster(agg, func_name='apply', name='agg', ndim=(2, 3))
+
+    if agg.ndim == 3:
+        return _apply_per_band(apply, agg, kernel=kernel, func=func,
                                name=name, boundary=boundary)
 
     # Validate the kernel
@@ -609,24 +674,24 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
 
     _validate_boundary(boundary)
 
-    rows, cols = raster.shape[-2], raster.shape[-1]
+    rows, cols = agg.shape[-2], agg.shape[-1]
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='apply')
 
     # apply kernel to raster values
-    # if raster is a numpy or dask with numpy backed data array,
+    # if agg is a numpy or dask with numpy backed data array,
     # the function func must be a @ngjit
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_apply_numpy_boundary, boundary=boundary),
-        cupy_func=_apply_cupy,
+        cupy_func=partial(_apply_cupy_boundary, boundary=boundary),
         dask_func=partial(_apply_dask_numpy, boundary=boundary),
         dask_cupy_func=partial(_apply_dask_cupy, boundary=boundary),
     )
-    out = mapper(raster)(raster.data, kernel, func)
+    out = mapper(agg)(agg.data, kernel, func)
     result = DataArray(out,
                        name=name,
-                       coords=raster.coords,
-                       dims=raster.dims,
-                       attrs=raster.attrs)
+                       coords=agg.coords,
+                       dims=agg.dims,
+                       attrs=agg.attrs)
     return result
 
 
@@ -991,6 +1056,29 @@ def _focal_stats_cupy(agg, kernel, stats_funcs):
     return stats
 
 
+def _focal_stats_cupy_boundary(agg, kernel, stats_funcs, boundary='nan'):
+    if boundary == 'nan':
+        return _focal_stats_cupy(agg, kernel, stats_funcs)
+
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    padded_data = _pad_array(agg.data, (pad_h, pad_w), boundary)
+    padded_agg = xr.DataArray(padded_data, dims=agg.dims)
+    padded_stats = _focal_stats_cupy(padded_agg, kernel, stats_funcs)
+
+    r0 = pad_h if pad_h else None
+    r1 = -pad_h if pad_h else None
+    c0 = pad_w if pad_w else None
+    c1 = -pad_w if pad_w else None
+    trimmed = padded_stats.data[:, r0:r1, c0:c1]
+    return xr.DataArray(
+        trimmed,
+        dims=padded_stats.dims,
+        coords={'stats': padded_stats.coords['stats'], **dict(agg.coords)},
+        attrs=agg.attrs,
+    )
+
+
 def _focal_stats_dask_cupy(agg, kernel, stats_funcs, boundary='nan'):
     _stats_cuda_mapper = dict(
         mean=_focal_mean_cuda, sum=_focal_sum_cuda,
@@ -1040,10 +1128,8 @@ def _focal_stats_cpu(agg, kernel, stats_funcs, boundary='nan'):
 
 def focal_stats(agg,
                 kernel,
-                stats_funcs=[
-                    'mean', 'max', 'min', 'range', 'std', 'var',
-                    'sum', 'variety'
-                ],
+                stats_funcs=None,
+                name='focal_stats',
                 boundary='nan'):
     """
     Calculates statistics of the values within a specified focal neighborhood
@@ -1063,6 +1149,8 @@ def focal_stats(agg,
         Default set to ['mean', 'max', 'min', 'range', 'std', 'var',
         'sum', 'variety'].  ``'variety'`` counts the number of distinct
         non-NaN values in the neighbourhood (useful for categorical rasters).
+    name : str, default='focal_stats'
+        Output xr.DataArray.name property.
     boundary : str, default='nan'
         How to handle edges where the kernel extends beyond the raster.
         ``'nan'``     -- fill missing neighbours with NaN (default).
@@ -1096,7 +1184,7 @@ def focal_stats(agg,
         ])
         >>> from xrspatial.focal import focal_stats
         >>> focal_stats(xr.DataArray(data), kernel, stats_funcs=['min', 'sum'])
-        <xarray.DataArray 'focal_apply' (stats: 2, dim_0: 4, dim_1: 6)>
+        <xarray.DataArray 'focal_stats' (stats: 2, dim_0: 4, dim_1: 6)>
         array([[[0., 0., 0., 0., 0., 0.],
                 [0., 0., 0., 0., 0., 0.],
                 [1., 1., 0., 0., 1., 1.],
@@ -1109,11 +1197,16 @@ def focal_stats(agg,
           * stats    (stats) object 'min' 'sum'
         Dimensions without coordinates: dim_0, dim_1
     """
+    if stats_funcs is None:
+        stats_funcs = ['mean', 'max', 'min', 'range', 'std', 'var',
+                       'sum', 'variety']
+
     _validate_raster(agg, func_name='focal_stats', name='agg', ndim=(2, 3))
 
     if agg.ndim == 3:
         return _apply_per_band(focal_stats, agg, kernel=kernel,
-                               stats_funcs=stats_funcs, boundary=boundary)
+                               stats_funcs=stats_funcs, name=name,
+                               boundary=boundary)
 
     # Validate the kernel
     kernel = custom_kernel(kernel)
@@ -1125,17 +1218,12 @@ def focal_stats(agg,
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
-        cupy_func=_focal_stats_cupy,
+        cupy_func=partial(_focal_stats_cupy_boundary, boundary=boundary),
         dask_func=partial(_focal_stats_cpu, boundary=boundary),
         dask_cupy_func=partial(_focal_stats_dask_cupy, boundary=boundary),
     )
     result = mapper(agg)(agg, kernel, stats_funcs)
-    # Pin the result name so it is identical across all four backends.
-    # The numpy / dask+numpy paths route through ``apply`` and inherit its
-    # default ``'focal_apply'`` name; the cupy path leaves it None and the
-    # dask+cupy path otherwise leaks the internal dask graph token
-    # (``_trim-...``). Set it explicitly to keep metadata consistent.
-    result.name = 'focal_apply'
+    result.name = name
     return result
 
 
@@ -1264,12 +1352,16 @@ def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
     pad_h = norm_kernel.shape[0] // 2
     pad_w = norm_kernel.shape[1] // 2
 
-    # Pass 2: fuse convolution + z-score + classification
-    # Convolution on GPU, classification on CPU (branching-heavy)
+    # Pass 2: fuse convolution + z-score + classification, all on the GPU.
+    # Reuse the _run_gpu_hotspots kernel (same as the single-GPU path) so
+    # each chunk stays on the device -- no host round trip per chunk.
     def _chunk_fn(chunk):
         convolved = _convolve_2d_cupy(chunk, norm_kernel)
         z = (convolved - global_mean) / global_std
-        return cupy.asarray(_calc_hotspots_numpy(cupy.asnumpy(z)))
+        out = cupy.zeros_like(z, dtype=cupy.int8)
+        griddim, blockdim = cuda_args(z.shape)
+        _run_gpu_hotspots[griddim, blockdim](z, out)
+        return out
 
     out = data.map_overlap(
         _chunk_fn,
@@ -1343,7 +1435,8 @@ def _hotspots_cupy(raster, kernel, boundary='nan'):
     return out
 
 
-def hotspots(raster, kernel, boundary='nan'):
+def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
+             raster=None):
     """
     Identify statistically significant hot spots and cold spots in an
     input raster. To be a statistically significant hot spot, a feature
@@ -1363,11 +1456,13 @@ def hotspots(raster, kernel, boundary='nan'):
 
     Parameters
     ----------
-    raster : xarray.DataArray
-        2D Input raster image with `raster.shape` = (height, width).
+    agg : xarray.DataArray
+        2D Input raster image with `agg.shape` = (height, width).
         Can be a NumPy backed, CuPy backed, or Dask with NumPy backed DataArray
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
+    name : str, default='hotspots'
+        Output xr.DataArray.name property.
     boundary : str, default='nan'
         How to handle edges where the kernel extends beyond the raster.
         ``'nan'``     -- fill missing neighbours with NaN (default).
@@ -1377,8 +1472,11 @@ def hotspots(raster, kernel, boundary='nan'):
 
     Returns
     -------
-    hotspots_agg : xarray.DataArray of same type as `raster`
+    hotspots_agg : xarray.DataArray of same type as `agg`
         2D array of hotspots with values indicating confidence level.
+
+    .. deprecated::
+        The ``raster`` keyword argument is deprecated; use ``agg``.
 
     Examples
     --------
@@ -1402,15 +1500,17 @@ def hotspots(raster, kernel, boundary='nan'):
         Dimensions without coordinates: dim_0, dim_1
     """
 
-    _validate_raster(raster, func_name='hotspots', name='raster', ndim=(2, 3))
+    agg = _resolve_raster_alias(agg, raster, 'hotspots')
 
-    if raster.ndim == 3:
-        return _apply_per_band(hotspots, raster, kernel=kernel,
+    _validate_raster(agg, func_name='hotspots', name='agg', ndim=(2, 3))
+
+    if agg.ndim == 3:
+        return _apply_per_band(hotspots, agg, kernel=kernel, name=name,
                                boundary=boundary)
 
     _validate_boundary(boundary)
 
-    rows, cols = raster.shape[-2], raster.shape[-1]
+    rows, cols = agg.shape[-2], agg.shape[-1]
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots')
 
     mapper = ArrayTypeFunctionMapping(
@@ -1419,13 +1519,13 @@ def hotspots(raster, kernel, boundary='nan'):
         dask_func=partial(_hotspots_dask_numpy, boundary=boundary),
         dask_cupy_func=partial(_hotspots_dask_cupy, boundary=boundary),
     )
-    out = mapper(raster)(raster, kernel)
+    out = mapper(agg)(agg, kernel)
 
-    attrs = copy.deepcopy(raster.attrs)
+    attrs = copy.deepcopy(agg.attrs)
     attrs['unit'] = '%'
 
     return DataArray(out,
-                     name='hotspots',
-                     coords=raster.coords,
-                     dims=raster.dims,
+                     name=name,
+                     coords=agg.coords,
+                     dims=agg.dims,
                      attrs=attrs)

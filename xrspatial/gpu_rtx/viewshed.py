@@ -2,7 +2,7 @@
 # that the required dependent libraries are installed.
 
 import math
-from typing import Union
+from typing import Optional, Union
 
 import cupy
 import numba as nb
@@ -187,6 +187,7 @@ def _viewshed_rt(
     observer_elev: float,
     target_elev: float,
     scale: float,
+    name: Optional[str] = 'viewshed',
 ) -> xr.DataArray:
 
     H, W = raster.shape
@@ -257,9 +258,12 @@ def _viewshed_rt(
     else:
         visgrid = d_visgrid
 
+    # Emit float64 to match the CPU backends (the RT kernel works in float32)
+    visgrid = visgrid.astype(np.float64)
+
     view = xr.DataArray(
         visgrid,
-        name="viewshed",
+        name=name,
         coords=raster.coords,
         dims=raster.dims,
         attrs=raster.attrs)
@@ -273,6 +277,7 @@ def viewshed_gpu(
     y: Union[int, float],
     observer_elev: float,
     target_elev: float,
+    name: Optional[str] = 'viewshed',
 ) -> xr.DataArray:
     if not isinstance(raster.data, cupy.ndarray):
         raise TypeError("raster.data must be a cupy array")
@@ -283,4 +288,5 @@ def viewshed_gpu(
     optix = RTX()
     scale = create_triangulation(raster, optix)
 
-    return _viewshed_rt(raster, optix, x, y, observer_elev, target_elev, scale)
+    return _viewshed_rt(raster, optix, x, y, observer_elev, target_elev,
+                        scale, name)

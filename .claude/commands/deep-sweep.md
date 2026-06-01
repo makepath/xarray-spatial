@@ -119,11 +119,17 @@ with path.open() as f:
     reader = csv.DictReader(f)
     header = reader.fieldnames
     rows = [r for r in reader if r["module"] != "{module}"]
+def _oneline(v):
+    # merge=union is line-based: a newline inside a quoted field splits
+    # the record on parallel-agent merges. Force one physical line per
+    # record by collapsing embedded newlines to " | ".
+    return "" if v is None else str(v).replace("\r\n", " | ").replace("\r", " | ").replace("\n", " | ")
+
 with path.open("w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=header, quoting=csv.QUOTE_MINIMAL)
     w.writeheader()
     for r in rows:
-        w.writerow(r)
+        w.writerow({k: _oneline(v) for k, v in r.items()})
 ```
 
 This removes only the target module's row from each state file, leaving
