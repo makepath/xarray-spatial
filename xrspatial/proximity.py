@@ -342,6 +342,81 @@ def _vectorized_calc_direction(x1, x2, y1, y2):
     return result.astype(np.float32)
 
 
+@ngjit
+def _is_target_value(v, target_values):
+    # A pixel is a target if it matches one of target_values, or (when no
+    # target_values are given) if it is non-zero and finite. NaN padding from
+    # dask's boundary=np.nan is excluded either way.
+    if len(target_values) == 0:
+        return v != 0 and np.isfinite(v)
+    for k in range(len(target_values)):
+        if v == target_values[k]:
+            return True
+    return False
+
+
+@ngjit
+def _process_numpy_bruteforce(
+    img, xs, ys, target_values, max_distance, distance_metric, process_mode
+):
+    """Exact nearest-target proximity / allocation / direction on the CPU.
+
+    For every pixel, scan all target pixels and keep the closest one under the
+    chosen distance metric. This is the same brute-force search the CUDA kernel
+    runs (see ``_proximity_cuda_kernel``), so it stays correct for metrics like
+    GREAT_CIRCLE where the line-sweep's local-planarity assumption breaks.
+
+    ``xs`` and ``ys`` are the per-pixel 2D coordinate grids built by the caller.
+    """
+    height, width = img.shape
+
+    # Collect target pixel rows/cols in flat arrays (two passes: count, fill).
+    n_targets = 0
+    for line in range(height):
+        for col in range(width):
+            if _is_target_value(img[line, col], target_values):
+                n_targets += 1
+
+    output = np.full((height, width), np.nan, dtype=np.float32)
+    if n_targets == 0:
+        return output
+
+    target_rows = np.empty(n_targets, dtype=np.int64)
+    target_cols = np.empty(n_targets, dtype=np.int64)
+    t = 0
+    for line in range(height):
+        for col in range(width):
+            if _is_target_value(img[line, col], target_values):
+                target_rows[t] = line
+                target_cols[t] = col
+                t += 1
+
+    for line in prange(height):
+        for col in range(width):
+            px = xs[line, col]
+            py = ys[line, col]
+            best_dist = np.float32(np.inf)
+            best_idx = -1
+            for k in range(n_targets):
+                tx = xs[target_rows[k], target_cols[k]]
+                ty = ys[target_rows[k], target_cols[k]]
+                d = _distance(px, tx, py, ty, distance_metric)
+                if d < best_dist:
+                    best_dist = d
+                    best_idx = k
+            if best_idx >= 0 and best_dist <= max_distance:
+                if process_mode == PROXIMITY:
+                    output[line, col] = best_dist
+                elif process_mode == ALLOCATION:
+                    output[line, col] = img[
+                        target_rows[best_idx], target_cols[best_idx]]
+                else:
+                    output[line, col] = _calc_direction(
+                        px, xs[target_rows[best_idx], target_cols[best_idx]],
+                        py, ys[target_rows[best_idx], target_cols[best_idx]])
+    return output
+
+
 # =====================================================================
 # GPU (CuPy / CUDA) backend
 # =====================================================================
@@ -1116,7 +1191,7 @@ def _process(
     )
 
     @ngjit
-    def _process_numpy(img, x_coords, y_coords):
+    def _process_numpy_linesweep(img, x_coords, y_coords):
         height, width = img.shape
         pan_near_x = np.zeros(width, dtype=np.int64)
         pan_near_y = np.zeros(width, dtype=np.int64)
@@ -1276,6 +1351,22 @@ def _process(
         else:
             return output_img
 
+    def _process_numpy(img, x_coords, y_coords):
+        # The line-sweep propagates a single nearest-target candidate between
+        # adjacent pixels, which only holds for locally-monotonic metrics
+        # (EUCLIDEAN, MANHATTAN). GREAT_CIRCLE wraps in longitude and its
+        # meridians converge with latitude, so the true nearest target is not
+        # always reachable through the neighbour chain. Use an exact
+        # brute-force search there instead (matches the GPU kernel). The
+        # branch lives in plain Python rather than inside the numba kernel so
+        # the metric choice is never frozen into a cached closure compilation.
+        if distance_metric == GREAT_CIRCLE:
+            return _process_numpy_bruteforce(
+                img, x_coords, y_coords, target_values,
+                np.float32(max_distance), distance_metric, process_mode,
+            )
+        return _process_numpy_linesweep(img, x_coords, y_coords)
+
     def _process_dask(raster, xs, ys):
 
         if max_distance >= max_possible_distance:
@@ -1423,7 +1514,10 @@ def proximity(
 
     The implementation for NumPy-backed is ported from GDAL, which uses
     a dynamic programming approach to identify nearest target of a pixel from
-    its surrounding neighborhood in a 3x3 window.
+    its surrounding neighborhood in a 3x3 window. That 3x3 line-sweep only
+    holds for the EUCLIDEAN and MANHATTAN metrics; for GREAT_CIRCLE the NumPy
+    backend uses an exact brute-force nearest-target search instead, because
+    great-circle distance is not locally monotonic across the raster.
     The implementation for Dask-backed uses `dask.map_overlap` to compute
     proximity chunk by chunk by expanding the chunk's borders to cover
     the `max_distance`.

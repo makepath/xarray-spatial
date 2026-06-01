@@ -1407,3 +1407,119 @@ def test_target_values_none_default_matches_empty_list(func):
         np.nan_to_num(default_result.data),
         np.nan_to_num(explicit_result.data),
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #2812: GREAT_CIRCLE must match a brute-force nearest-target reference.
+#
+# The GDAL-style line-sweep propagates one nearest-target candidate between
+# adjacent pixels, which assumes the nearest-target field is locally
+# monotonic. That holds for EUCLIDEAN/MANHATTAN but not for GREAT_CIRCLE,
+# which wraps in longitude and converges at the poles. On wide-longitude
+# rasters the sweep latched onto a farther target and was off by ~1e6 metres.
+# ---------------------------------------------------------------------------
+
+def _brute_force_great_circle(data, lon, lat, process_mode):
+    """Exact nearest-target reference for GREAT_CIRCLE on a lat/lon raster.
+
+    process_mode is one of 'proximity', 'allocation', 'direction'. Mirrors the
+    semantics of the proximity functions: non-zero finite pixels are targets,
+    each output pixel reports the closest target under great-circle distance.
+    """
+    from xrspatial.proximity import _calc_direction
+
+    h, w = data.shape
+    mask = np.isfinite(data) & (data != 0)
+    tr, tc = np.where(mask)
+    out = np.full((h, w), np.nan, dtype=np.float32)
+    if len(tr) == 0:
+        return out
+    for i in range(h):
+        for j in range(w):
+            best = np.inf
+            best_k = -1
+            for k in range(len(tr)):
+                d = great_circle_distance(
+                    lon[j], lon[tc[k]], lat[i], lat[tr[k]])
+                if d < best:
+                    best = d
+                    best_k = k
+            if process_mode == 'proximity':
+                out[i, j] = best
+            elif process_mode == 'allocation':
+                out[i, j] = data[tr[best_k], tc[best_k]]
+            else:
+                out[i, j] = _calc_direction(
+                    lon[j], lon[tc[best_k]], lat[i], lat[tr[best_k]])
+    return out
+
+
+@pytest.fixture
+def _wide_longitude_raster_data():
+    # Wide longitude span at low latitude: the worst-case family found by a
+    # brute-force-vs-line-sweep sweep (off by ~5.9e6 m before the fix).
+    width, height = 11, 6
+    lon = np.linspace(-127.2, 173.3, width)
+    lat = np.linspace(21.2, 19.9, height)
+    data = np.zeros((height, width), dtype=np.float64)
+    data[2, 1] = 1.0
+    data[4, 0] = 2.0
+    data[5, 4] = 3.0
+    data[5, 6] = 4.0
+    return data, lon, lat
+
+
+def _wide_lon_raster(data, lon, lat, backend):
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = lon
+    raster['lat'] = lat
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(3, 6))
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize(
+    "func, mode",
+    [(proximity, 'proximity'),
+     (allocation, 'allocation'),
+     (direction, 'direction')],
+)
+def test_great_circle_matches_brute_force(
+        backend, func, mode, _wide_longitude_raster_data):
+    """GREAT_CIRCLE proximity/allocation/direction must match a brute-force
+    nearest-target reference on a wide-longitude raster (issue #2812)."""
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    data, lon, lat = _wide_longitude_raster_data
+    expected = _brute_force_great_circle(data, lon, lat, mode)
+
+    raster = _wide_lon_raster(data, lon, lat, backend)
+    result = func(raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE')
+    # rtol covers float32 rounding on million-metre distances; direction is
+    # in degrees so use a small absolute tolerance there.
+    if mode == 'direction':
+        general_output_checks(raster, result, expected, rtol=1e-4)
+    else:
+        general_output_checks(raster, result, expected, rtol=1e-5)
+
+
+def test_great_circle_numpy_off_by_more_than_a_metre_is_fixed(
+        _wide_longitude_raster_data):
+    """Direct numpy assertion that the old line-sweep error is gone.
+
+    Before the fix this raster was off from brute force by ~5.9e6 metres.
+    """
+    data, lon, lat = _wide_longitude_raster_data
+    expected = _brute_force_great_circle(data, lon, lat, 'proximity')
+
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = lon
+    raster['lat'] = lat
+    result = proximity(
+        raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE').data
+
+    assert np.nanmax(np.abs(result - expected)) < 1.0
