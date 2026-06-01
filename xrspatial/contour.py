@@ -66,8 +66,9 @@ def _marching_squares_kernel(data, level, seg_rows, seg_cols, seg_count):
             bl = data[r + 1, c]
             br = data[r + 1, c + 1]
 
-            # Skip quads with any NaN corner.
-            if tl != tl or tr != tr or bl != bl or br != br:
+            # Skip quads with any non-finite corner (NaN or +/-inf).
+            if not (np.isfinite(tl) and np.isfinite(tr) and
+                    np.isfinite(bl) and np.isfinite(br)):
                 continue
 
             # Build 4-bit case index.
