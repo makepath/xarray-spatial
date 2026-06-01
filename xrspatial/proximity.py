@@ -1265,7 +1265,7 @@ def _process(
             raster.data, xs, ys,
             depth=(pad_y, pad_x),
             boundary=np.nan,
-            meta=np.array(()),
+            meta=np.array((), dtype=np.float32),
         )
         return out
 
@@ -1501,8 +1501,10 @@ def proximity(
         proximity_img,
         coords=raster.coords,
         dims=raster.dims,
-        attrs=raster.attrs
+        attrs=raster.attrs,
     )
+    # Drop any internal dask op name so all backends agree on .name=None.
+    result.name = None
 
     return result
 
@@ -1644,6 +1646,8 @@ def allocation(
         dims=raster.dims,
         attrs=raster.attrs,
     )
+    # Drop any internal dask op name so all backends agree on .name=None.
+    result.name = None
     return result
 
 
@@ -1787,6 +1791,8 @@ def direction(
         direction_img,
         coords=raster.coords,
         dims=raster.dims,
-        attrs=raster.attrs
+        attrs=raster.attrs,
     )
+    # Drop any internal dask op name so all backends agree on .name=None.
+    result.name = None
     return result

@@ -280,6 +280,23 @@ def test_max_distance_direction(test_raster, result_max_distance_direction):
     general_output_checks(test_raster, max_distance_direction, expected_result, verify_dtype=True)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("max_distance", [10, np.inf])
+def test_output_metadata_consistent_across_backends(
+    test_raster, func, max_distance
+):
+    # Regression: the declared (pre-compute) output dtype must be float32 and
+    # .name must be None on every backend.  The bounded dask path previously
+    # declared float64 meta, and dask backends leaked an internal op name
+    # (e.g. "_trim-<hash>") into .name.
+    result = func(test_raster, x='lon', y='lat', max_distance=max_distance)
+    assert result.dtype == np.float32
+    assert result.name is None
+    assert result.dims == test_raster.dims
+    assert result.attrs == test_raster.attrs
+
+
 def test_proximity_distance_against_qgis(raster, qgis_proximity_distance_target_values):
     target_values, qgis_result = qgis_proximity_distance_target_values
     input_raster = create_test_raster(raster)
