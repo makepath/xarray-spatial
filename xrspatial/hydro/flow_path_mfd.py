@@ -29,6 +29,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _validate_matching_shape,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -429,6 +430,10 @@ def flow_path_mfd(flow_dir_mfd: xr.DataArray,
             f"flow_dir_mfd must have shape (8, H, W), got {data.shape}")
 
     _, H, W = data.shape
+
+    _validate_matching_shape(
+        start_points, (H, W), func_name='flow_path_mfd',
+        name='start_points', expected_name='flow_dir_mfd')
 
     if isinstance(data, np.ndarray):
         _check_memory(H, W)

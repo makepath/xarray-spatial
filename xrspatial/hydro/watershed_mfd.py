@@ -29,6 +29,7 @@ except ImportError:
 
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.utils import (
+    _validate_matching_shape,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -679,6 +680,10 @@ def watershed_mfd(flow_dir_mfd: xr.DataArray,
             f"flow_dir_mfd must have shape (8, H, W), got {data.shape}")
 
     _, H, W = data.shape
+
+    _validate_matching_shape(
+        pour_points, (H, W), func_name='watershed_mfd',
+        name='pour_points', expected_name='flow_dir_mfd')
 
     if isinstance(data, np.ndarray):
         _check_memory(H, W)
