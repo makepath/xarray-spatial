@@ -1463,6 +1463,50 @@ def test_target_values_none_default_matches_empty_list(func):
     )
 
 
+# --- Cat 4: dim-order validation error path -------------------------------
+# _process rejects a raster whose dims are not (y, x). The bounded-dask and
+# kdtree paths all index xs/ys assuming that order, so a swapped raster must
+# raise before any backend dispatch rather than silently transposing.
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_wrong_dim_order_raises(func):
+    data = np.zeros((4, 5), dtype=np.float64)
+    data[1, 1] = 1.0
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = np.arange(5, dtype=np.float64)
+    raster['lat'] = np.arange(4, dtype=np.float64)[::-1]
+
+    # raster.dims is (lat, lon); passing x='lat', y='lon' makes the expected
+    # order (lon, lat), which does not match -> ValueError.
+    with pytest.raises(ValueError, match="should be named as coordinates"):
+        func(raster, x='lat', y='lon')
+
+
+# --- Cat 2: all-NaN raster (no targets) across all four backends ----------
+# An all-NaN raster contains no finite, non-zero target pixels, so every
+# output cell must be NaN. The dask no-target path is pinned above with an
+# all-zero raster; this pins the all-NaN input (NaN is not finite, so it is
+# never treated as a target) on every backend, including eager numpy/cupy.
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_all_nan_raster_all_nan_output(backend, func):
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    data = np.full((6, 6), np.nan, dtype=np.float64)
+    raster = _backend_raster(data, backend)
+
+    result = func(raster, x='lon', y='lat')
+
+    out = result.data
+    if da is not None and isinstance(out, da.Array):
+        out = out.compute()
+    if hasattr(out, 'get'):
+        out = out.get()
+    assert np.all(np.isnan(out))
+    assert result.dtype == np.float32
+
+
 # ---------------------------------------------------------------------------
 # Issue #2812: GREAT_CIRCLE must match a brute-force nearest-target reference.
 #
