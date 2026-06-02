@@ -314,7 +314,10 @@ def _fit_halo_to_chunks(pad_y, pad_x, *arrays):
     a halo is too deep for the chunking, fold that whole axis into a single
     chunk and drop its depth to zero: every chunk then sees the full axis, so
     no target within ``max_distance`` is missed and the result still matches
-    the NumPy backend.
+    the NumPy backend. The fold deliberately trades chunking on that axis for
+    correctness; clamping the depth while keeping multiple chunks would
+    silently drop targets that fall in a non-adjacent chunk, so do not replace
+    it with a bare depth clamp.
 
     ``arrays`` are the dask arrays passed to the same ``map_overlap`` call
     (the raster and the coordinate grids); they all share the raster's
