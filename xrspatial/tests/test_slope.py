@@ -315,3 +315,48 @@ def test_planar_no_warn_on_projected_meter_coords():
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         slope(raster)  # must not raise: no unit-mismatch warning expected
+
+
+# A NoData (NaN) center cell must stay NaN in the slope output, even when all 8
+# of its neighbours are valid. The planar kernels read the center cell, so a
+# hole in the DEM can't masquerade as valid flat terrain. Regression for #2761.
+def _center_nan_data():
+    data = np.zeros((5, 5), dtype=np.float64)
+    data[2, 2] = np.nan
+    return data
+
+
+def test_center_nan_propagates_numpy():
+    agg = create_test_raster(_center_nan_data(), backend='numpy', attrs={'res': (1, 1)})
+    result = slope(agg)
+    general_output_checks(agg, result)
+    assert np.isnan(result.data[2, 2])
+
+
+@dask_array_available
+def test_center_nan_propagates_dask_numpy():
+    data = _center_nan_data()
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(3, 3))
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, slope, nan_edges=False)
+    assert np.isnan(slope(dask_agg).data.compute()[2, 2])
+
+
+@cuda_and_cupy_available
+def test_center_nan_propagates_cupy():
+    data = _center_nan_data()
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1, 1)})
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, slope, nan_edges=False)
+    assert np.isnan(slope(cupy_agg).data.get()[2, 2])
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_center_nan_propagates_dask_cupy():
+    data = _center_nan_data()
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1, 1)}, chunks=(3, 3))
+    assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, slope, nan_edges=False)

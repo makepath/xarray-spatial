@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # std lib
 from functools import partial
-from math import atan
+from math import atan, isnan, nan
 from typing import Optional, Union
 
 # 3rd-party
@@ -23,7 +23,7 @@ from numba import cuda
 
 # local modules
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memory,
+from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memory_backend_aware,
                                 _cpu_geodesic_slope, _run_gpu_geodesic_slope)
 from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
                              _extract_latlon_coords, _pad_array, _validate_boundary,
@@ -53,6 +53,8 @@ def _cpu(data, cellsize_x, cellsize_y):
     rows, cols = data.shape
     for y in range(1, rows - 1):
         for x in range(1, cols - 1):
+            if np.isnan(data[y, x]):
+                continue
             a = data[y + 1, x - 1]
             b = data[y + 1, x]
             c = data[y + 1, x + 1]
@@ -113,6 +115,8 @@ def _run_dask_cupy(data: da.Array,
 
 @cuda.jit(device=True)
 def _gpu(arr, cellsize_x, cellsize_y):
+    if isnan(arr[1, 1]):
+        return nan
     a = arr[2, 0]
     b = arr[2, 1]
     c = arr[2, 2]
@@ -272,11 +276,21 @@ def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='n
     return out[0]
 
 
+def _to_cupy_f64(block):
+    # Only reached from the dask+cupy path, so `cupy` is the real module here,
+    # never the import-time fallback class.
+    return cupy.asarray(block, dtype=cupy.float64)
+
+
 def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
-    lat_dask = da.from_array(cupy.asarray(lat_2d, dtype=cupy.float64),
-                             chunks=data.chunksize)
-    lon_dask = da.from_array(cupy.asarray(lon_2d, dtype=cupy.float64),
-                             chunks=data.chunksize)
+    # Keep lat/lon as dask-of-numpy on the (zero-stride) broadcast views, then
+    # convert each block to cupy lazily. Converting up front with
+    # cupy.asarray(lat_2d) would densify the full (H, W) grid onto a single GPU
+    # at graph-construction time and OOM on large rasters.
+    lat_dask = da.from_array(lat_2d, chunks=data.chunksize).map_blocks(
+        _to_cupy_f64, dtype=np.float64)
+    lon_dask = da.from_array(lon_2d, chunks=data.chunksize).map_blocks(
+        _to_cupy_f64, dtype=np.float64)
     stacked = da.stack([
         data.astype(cupy.float64),
         lat_dask,
@@ -403,8 +417,7 @@ def slope(agg: xr.DataArray,
             )
         z_factor = Z_UNITS[z_unit]
 
-        rows, cols = agg.shape[-2], agg.shape[-1]
-        _check_geodesic_memory(rows, cols, func_name='slope')
+        _check_geodesic_memory_backend_aware(agg, func_name='slope')
 
         lat_2d, lon_2d = _extract_latlon_coords(agg)
 
