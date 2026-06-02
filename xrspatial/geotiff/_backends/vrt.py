@@ -571,15 +571,15 @@ def read_vrt(source: str, *,
     _vrt_is_rotated = (
         gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)
     )
+    height, width = arr.shape[:2]
+    if window is not None:
+        r0 = max(0, window[0])
+        c0 = max(0, window[1])
+        coord_window = (r0, c0, r0 + height, c0 + width)
+    else:
+        coord_window = None
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
-        height, width = arr.shape[:2]
-        if window is not None:
-            r0 = max(0, window[0])
-            c0 = max(0, window[1])
-            coord_window = (r0, c0, r0 + height, c0 + width)
-        else:
-            coord_window = None
         # Rotated VRTs emit int64 pixel coords to match the eager
         # non-VRT rotated path. Without this gate
         # the VRT branch handed back float projected coords while
@@ -594,7 +594,18 @@ def read_vrt(source: str, *,
             has_georef=not _vrt_is_rotated,
         )
     else:
-        coords = {}
+        # No ``<GeoTransform>`` at all: synthesise integer pixel coords
+        # ``0..N-1`` so a no-georef VRT carries the same x/y arrays the
+        # non-VRT no-georef read path emits (see ``_coords.py``
+        # ``has_georef=False`` fallback). Previously this branch handed
+        # back an empty coord dict, so downstream code that assumes x/y
+        # exist broke on no-georef VRTs but worked on the equivalent
+        # plain GeoTIFF.
+        coords = _coords_from_pixel_geometry(
+            0.0, 0.0, 1.0, 1.0, height, width,
+            window=coord_window,
+            has_georef=False,
+        )
 
     # Select the per-band nodata sentinel. When a specific band is
     # selected, source its nodata from that band's ``<NoDataValue>``
@@ -1099,13 +1110,12 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # extent. Mirrors the eager branch in ``read_vrt`` so chunked and
     # eager reads share the same x/y arrays.
     gt = vrt.geo_transform
-    coords = {}
     _vrt_is_rotated = (
         gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)
     )
+    coord_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
-        coord_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)
         # Rotated VRTs emit int64 pixel coords to match the eager
         # non-VRT rotated path. Without this gate the
         # chunked VRT branch handed back float projected coords on a
@@ -1116,6 +1126,17 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
             is_point=vrt.raster_type == 'point',
             window=coord_window,
             has_georef=not _vrt_is_rotated,
+        )
+    else:
+        # No ``<GeoTransform>`` at all: synthesise integer pixel coords
+        # so the chunked no-georef VRT read carries the same x/y arrays
+        # the eager and non-VRT no-georef paths emit (see ``_coords.py``
+        # ``has_georef=False`` fallback). Previously this branch left
+        # ``coords = {}``, dropping x/y on no-georef VRTs.
+        coords = _coords_from_pixel_geometry(
+            0.0, 0.0, 1.0, 1.0, full_h, full_w,
+            window=coord_window,
+            has_georef=False,
         )
 
     # Surface the nodata sentinel for the selected band. The chunked

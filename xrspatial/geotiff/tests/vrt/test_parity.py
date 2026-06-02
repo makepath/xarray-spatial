@@ -743,6 +743,61 @@ def test_vrt_chunked_none_matches_dask(tmp_path):
     assert tiff_attrs == vrt_attrs
 
 
+def test_vrt_eager_none_synthesizes_pixel_coords(tmp_path):
+    """Issue #2818: a no-``<GeoTransform>`` VRT read eagerly must
+    synthesise integer x/y pixel coords, matching the non-VRT
+    no-georef read instead of dropping coords entirely."""
+    tiff, vrt = _make_none_pair(tmp_path, 'none_coords_2818')
+    ref = open_geotiff(tiff)
+    vrt_da = read_vrt(vrt)
+    assert ref.attrs['georef_status'] == GEOREF_STATUS_NONE
+    assert vrt_da.attrs['georef_status'] == GEOREF_STATUS_NONE
+    assert 'x' in vrt_da.coords and 'y' in vrt_da.coords
+    np.testing.assert_array_equal(
+        _coord_view(vrt_da, 'x'), _coord_view(ref, 'x'))
+    np.testing.assert_array_equal(
+        _coord_view(vrt_da, 'y'), _coord_view(ref, 'y'))
+    assert vrt_da.coords['x'].dtype == ref.coords['x'].dtype
+    assert vrt_da.coords['y'].dtype == ref.coords['y'].dtype
+
+
+def test_vrt_chunked_none_synthesizes_pixel_coords(tmp_path):
+    """Issue #2818: a no-``<GeoTransform>`` VRT read chunked must
+    synthesise the same integer x/y pixel coords as the non-VRT dask
+    no-georef read rather than dropping coords entirely."""
+    tiff, vrt = _make_none_pair(tmp_path, 'none_coords_chunked_2818')
+    ref = read_geotiff_dask(tiff, chunks=2)
+    vrt_da = read_vrt(vrt, chunks=2)
+    assert ref.attrs['georef_status'] == GEOREF_STATUS_NONE
+    assert vrt_da.attrs['georef_status'] == GEOREF_STATUS_NONE
+    assert 'x' in vrt_da.coords and 'y' in vrt_da.coords
+    np.testing.assert_array_equal(
+        _coord_view(vrt_da, 'x'), _coord_view(ref, 'x'))
+    np.testing.assert_array_equal(
+        _coord_view(vrt_da, 'y'), _coord_view(ref, 'y'))
+    assert vrt_da.coords['x'].dtype == ref.coords['x'].dtype
+    assert vrt_da.coords['y'].dtype == ref.coords['y'].dtype
+
+
+def test_vrt_none_windowed_synthesizes_offset_pixel_coords(tmp_path):
+    """Issue #2818: a windowed no-georef VRT read shifts the synthesised
+    integer coords to the window offset, matching the non-VRT windowed
+    read, on both the eager and chunked paths."""
+    tiff, vrt = _make_none_pair(tmp_path, 'none_coords_win_2818')
+    window = (1, 2, 4, 4)
+    ref = open_geotiff(tiff, window=window)
+    eager = read_vrt(vrt, window=window)
+    chunked = read_vrt(vrt, window=window, chunks=2)
+    for label, actual in (('eager', eager), ('chunked', chunked)):
+        assert 'x' in actual.coords and 'y' in actual.coords, label
+        np.testing.assert_array_equal(
+            _coord_view(actual, 'x'), _coord_view(ref, 'x'),
+            err_msg=label)
+        np.testing.assert_array_equal(
+            _coord_view(actual, 'y'), _coord_view(ref, 'y'),
+            err_msg=label)
+
+
 def test_vrt_chunked_rotated_dropped(tmp_path):
     _, vrt = _make_rotated_pair(tmp_path, 'rot_chunked_2180')
     attrs = dict(read_vrt(vrt, allow_rotated=True, chunks=2).attrs)
