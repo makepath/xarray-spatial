@@ -1180,10 +1180,15 @@ def _process(
     # matched target_values=[inf] and ran the search, while dask/cupy mask
     # non-finite pixels out and returned all-NaN for the same input. nan can
     # never match a pixel anyway (nan == nan is False). Fail fast instead of
-    # producing backend-dependent output (issue #2850).
-    if target_values.size and not np.isfinite(target_values).all():
+    # producing backend-dependent output (issue #2850). A non-numeric dtype
+    # (e.g. strings) can't index a raster either, so it gets the same error
+    # rather than a downstream TypeError from np.isfinite.
+    if target_values.size and (
+        target_values.dtype.kind not in "iuf"
+        or not np.isfinite(target_values).all()
+    ):
         raise ValueError(
-            "target_values must all be finite, got {0!r}.".format(
+            "target_values must all be finite numbers, got {0!r}.".format(
                 target_values.tolist()
             )
         )

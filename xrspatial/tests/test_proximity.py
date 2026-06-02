@@ -375,6 +375,15 @@ def test_non_finite_target_values_raises(test_raster, func, target_values):
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_non_numeric_target_values_raises(test_raster, func):
+    # A non-numeric target_values can't index a raster; it must raise a clear
+    # ValueError on every backend rather than a downstream TypeError (#2850).
+    with pytest.raises(ValueError, match="target_values"):
+        func(test_raster, x='lon', y='lat', target_values=['a', 'b'])
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
 def test_finite_target_values_run(test_raster, func):
     # The raster carries an inf and a nan pixel; the default (empty
     # target_values) path must keep ignoring them on every backend, and
