@@ -1718,6 +1718,7 @@ def viewshed(raster: xarray.DataArray,
     """
     _validate_raster(raster, func_name='viewshed', name='raster')
 
+    # --- max_distance: validate, then extract spatial window for any backend ---
     if max_distance is not None:
         try:
             is_bad = not np.isfinite(max_distance) or max_distance < 0
@@ -1727,9 +1728,6 @@ def viewshed(raster: xarray.DataArray,
             raise ValueError(
                 "max_distance must be a finite number >= 0, "
                 f"got {max_distance!r}")
-
-    # --- max_distance: extract spatial window for any backend ---
-    if max_distance is not None:
         return _viewshed_windowed(raster, x, y, observer_elev, target_elev,
                                   max_distance, name)
 
