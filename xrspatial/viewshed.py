@@ -1637,10 +1637,12 @@ def viewshed(raster: xarray.DataArray,
         when it is being analyzed for visibility.
     max_distance : float, optional
         Maximum analysis distance from the observer in surface units.
-        Cells beyond this distance are marked INVISIBLE without being
-        evaluated. When set and the raster is dask-backed, only the
-        chunks within the distance window are loaded — this is the most
-        efficient way to run viewshed on very large dask rasters.
+        Must be a finite number >= 0; a negative or non-finite value
+        raises ``ValueError``. Cells beyond this distance are marked
+        INVISIBLE without being evaluated. When set and the raster is
+        dask-backed, only the chunks within the distance window are
+        loaded — this is the most efficient way to run viewshed on very
+        large dask rasters.
     name : str, default='viewshed'
         Name of the output DataArray. Set on every backend so the
         result name does not depend on which backend ran.
@@ -1715,6 +1717,16 @@ def viewshed(raster: xarray.DataArray,
 
     """
     _validate_raster(raster, func_name='viewshed', name='raster')
+
+    if max_distance is not None:
+        try:
+            is_bad = not np.isfinite(max_distance) or max_distance < 0
+        except (TypeError, ValueError):
+            is_bad = True
+        if is_bad:
+            raise ValueError(
+                "max_distance must be a finite number >= 0, "
+                f"got {max_distance!r}")
 
     # --- max_distance: extract spatial window for any backend ---
     if max_distance is not None:

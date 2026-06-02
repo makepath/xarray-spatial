@@ -580,6 +580,31 @@ def test_viewshed_custom_name(backend):
     assert result.name == "my_vs"
 
 
+@pytest.mark.parametrize("bad", [-1.0, -0.5, float("nan"),
+                                 float("inf"), float("-inf")])
+def test_viewshed_invalid_max_distance_raises(bad):
+    """Negative or non-finite max_distance raises a clear ValueError (#2855).
+
+    Validation lives at the public entry point, before backend dispatch,
+    so a single numpy raster covers every backend. Previously these
+    values fell through to confusing internal errors (e.g. "zero-size
+    array to reduction operation minimum" or "cannot convert float NaN
+    to integer").
+    """
+    raster = _make_raster("numpy")
+    with pytest.raises(ValueError, match="max_distance must be a finite"):
+        viewshed(raster, x=3, y=2, observer_elev=1, max_distance=bad)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+@pytest.mark.parametrize("good", [0.0, 3.0])
+def test_viewshed_valid_max_distance_still_works(backend, good):
+    """Finite max_distance >= 0 passes validation and returns a result."""
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=1, max_distance=good)
+    assert result.shape == raster.shape
+
+
 # -------------------------------------------------------------------
 # dask+cupy backend tests
 # -------------------------------------------------------------------
