@@ -1756,12 +1756,85 @@ def _douglas_peucker(coords, tolerance):
 
 
 @ngjit
+def _heap_sift_down(heap_areas, heap_indices, heap_size, idx):
+    """Sift element at idx down to restore min-heap property.
+
+    Ties on area are broken by smallest index, matching the O(n^2)
+    linear scan which uses strict ``<`` and iterates in index order.
+    """
+    while True:
+        smallest = idx
+        left = 2 * idx + 1
+        right = 2 * idx + 2
+        if left < heap_size:
+            if (heap_areas[left] < heap_areas[smallest]
+                    or (heap_areas[left] == heap_areas[smallest]
+                        and heap_indices[left] < heap_indices[smallest])):
+                smallest = left
+        if right < heap_size:
+            if (heap_areas[right] < heap_areas[smallest]
+                    or (heap_areas[right] == heap_areas[smallest]
+                        and heap_indices[right] < heap_indices[smallest])):
+                smallest = right
+        if smallest == idx:
+            break
+        heap_areas[idx], heap_areas[smallest] = heap_areas[smallest], heap_areas[idx]
+        heap_indices[idx], heap_indices[smallest] = heap_indices[smallest], heap_indices[idx]
+        idx = smallest
+
+
+@ngjit
+def _heap_push(heap_areas, heap_indices, heap_size, area, idx):
+    """Push (area, idx) onto heap and sift up. Returns new heap size.
+
+    Ties on area are broken by smallest index.
+    """
+    heap_areas[heap_size] = area
+    heap_indices[heap_size] = idx
+    i = heap_size
+    while i > 0:
+        parent = (i - 1) // 2
+        if (heap_areas[i] < heap_areas[parent]
+                or (heap_areas[i] == heap_areas[parent]
+                    and heap_indices[i] < heap_indices[parent])):
+            heap_areas[i], heap_areas[parent] = heap_areas[parent], heap_areas[i]
+            heap_indices[i], heap_indices[parent] = heap_indices[parent], heap_indices[i]
+            i = parent
+        else:
+            break
+    return heap_size + 1
+
+
+@ngjit
+def _heap_pop(heap_areas, heap_indices, heap_size):
+    """Pop minimum from heap. Returns (area, idx, new_heap_size).
+
+    Returns (-1.0, -1, heap_size) if heap is empty.  -1.0 is safe
+    as a sentinel because triangle areas are always non-negative.
+    """
+    if heap_size == 0:
+        return -1.0, -1, heap_size
+    area = heap_areas[0]
+    idx = heap_indices[0]
+    heap_size -= 1
+    if heap_size > 0:
+        heap_areas[0] = heap_areas[heap_size]
+        heap_indices[0] = heap_indices[heap_size]
+        _heap_sift_down(heap_areas, heap_indices, heap_size, 0)
+    return area, idx, heap_size
+
+
+@ngjit
 def _visvalingam_whyatt(coords, tolerance):
     """Visvalingam-Whyatt area-based line simplification.
 
     Iteratively removes the vertex that forms the smallest triangle
     area with its neighbors, until no triangle area is below tolerance.
     Endpoints are always preserved.
+
+    Uses a binary min-heap keyed on triangle area for O(n log n) scaling
+    instead of the O(n^2) linear scan.  Lazy deletion via the ``removed``
+    flag handles stale heap entries.
 
     Parameters
     ----------
@@ -1786,7 +1859,6 @@ def _visvalingam_whyatt(coords, tolerance):
     for i in range(n):
         prev_idx[i] = i - 1
         next_idx[i] = i + 1
-    # Endpoints are never removed (sentinel values).
     prev_idx[0] = -1
     next_idx[n - 1] = -1
 
@@ -1799,23 +1871,36 @@ def _visvalingam_whyatt(coords, tolerance):
         areas[i] = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
 
     removed = np.zeros(n, dtype=np.bool_)
-    remaining = n
 
-    while remaining > 2:
-        # Find vertex with minimum area.
-        min_area = np.inf
+    # Build min-heap of (area, index) for interior vertices.
+    # Each interior vertex is pushed once initially (n-2 entries), and at
+    # most 2 new entries are pushed per removal (one per affected neighbor),
+    # for a total of at most (n-2) + 2*(n-2) = 3n-6 entries.  n * 3
+    # provides a small safety margin.
+    heap_areas = np.empty(n * 3, dtype=np.float64)
+    heap_indices = np.empty(n * 3, dtype=np.int64)
+    heap_size = 0
+    for i in range(1, n - 1):
+        heap_size = _heap_push(heap_areas, heap_indices, heap_size, areas[i], i)
+
+    while True:
+        # Pop minimum, skipping stale entries (lazy deletion).
+        min_area = -1.0
         min_idx = -1
-        for i in range(1, n - 1):
-            if not removed[i] and areas[i] < min_area:
-                min_area = areas[i]
-                min_idx = i
+        while heap_size > 0:
+            area, idx, heap_size = _heap_pop(heap_areas, heap_indices, heap_size)
+            if idx == -1:
+                break
+            if not removed[idx] and area == areas[idx]:
+                min_area = area
+                min_idx = idx
+                break
 
         if min_idx == -1 or min_area >= tolerance:
             break
 
         # Remove vertex.
         removed[min_idx] = True
-        remaining -= 1
 
         # Update linked list.
         p = prev_idx[min_idx]
@@ -1825,7 +1910,7 @@ def _visvalingam_whyatt(coords, tolerance):
         if nx_i >= 0 and nx_i < n:
             prev_idx[nx_i] = p
 
-        # Recompute areas for affected neighbors.
+        # Recompute areas for affected neighbors and push to heap.
         if p > 0 and prev_idx[p] >= 0:
             ax, ay = coords[prev_idx[p], 0], coords[prev_idx[p], 1]
             bx, by = coords[p, 0], coords[p, 1]
@@ -1833,6 +1918,8 @@ def _visvalingam_whyatt(coords, tolerance):
             new_area = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
             # Enforce monotonicity: area can only increase.
             areas[p] = max(new_area, min_area)
+            if not removed[p]:
+                heap_size = _heap_push(heap_areas, heap_indices, heap_size, areas[p], p)
 
         if nx_i >= 0 and nx_i < n - 1 and next_idx[nx_i] >= 0:
             ax, ay = coords[prev_idx[nx_i], 0], coords[prev_idx[nx_i], 1]
@@ -1840,6 +1927,8 @@ def _visvalingam_whyatt(coords, tolerance):
             cx, cy = coords[next_idx[nx_i], 0], coords[next_idx[nx_i], 1]
             new_area = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
             areas[nx_i] = max(new_area, min_area)
+            if not removed[nx_i]:
+                heap_size = _heap_push(heap_areas, heap_indices, heap_size, areas[nx_i], nx_i)
 
     # Collect remaining vertices.
     count = 0
