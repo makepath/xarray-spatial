@@ -944,6 +944,74 @@ def test_hotspots_zero_global_std():
         hotspots(agg, kernel)
 
 
+# Degenerate inputs: constant raster (std == 0), all-NaN raster (n == 0),
+# and a single valid cell (n == 1). The numpy/cupy paths raise eagerly via
+# _gistar_global_stats; the dask paths must raise the same error at compute
+# time instead of silently classifying to all zeros (issue #2843).
+def _hotspots_degenerate_cases():
+    constant = np.zeros((10, 10), dtype=np.float32)
+
+    all_nan = np.full((10, 10), np.nan, dtype=np.float32)
+
+    single_valid = np.full((10, 10), np.nan, dtype=np.float32)
+    single_valid[0, 0] = 5.0
+
+    std_msg = "Standard deviation of the input raster values is 0."
+    n_msg = "needs at least 2 valid"
+    return [
+        ('constant', constant, ZeroDivisionError, std_msg),
+        ('all_nan', all_nan, ValueError, n_msg),
+        ('single_valid', single_valid, ValueError, n_msg),
+    ]
+
+
+_HOTSPOTS_DEGENERATE = _hotspots_degenerate_cases()
+
+
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_numpy_2843(case, data, exc, msg):
+    agg = create_test_raster(data)
+    kernel = np.ones((3, 3))
+    with pytest.raises(exc, match=msg):
+        hotspots(agg, kernel)
+
+
+@dask_array_available
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_dask_numpy_2843(case, data, exc, msg):
+    # The dask backend must reject degenerate inputs the same way numpy does,
+    # but lazily: the error fires at compute(), not at graph-build time.
+    agg = create_test_raster(data, backend='dask')
+    kernel = np.ones((3, 3))
+    result = hotspots(agg, kernel)
+    with pytest.raises(exc, match=msg):
+        result.data.compute()
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_cupy_2843(case, data, exc, msg):
+    agg = create_test_raster(data, backend='cupy')
+    kernel = np.ones((3, 3))
+    with pytest.raises(exc, match=msg):
+        hotspots(agg, kernel)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_dask_cupy_2843(case, data, exc, msg):
+    agg = create_test_raster(data, backend='dask+cupy')
+    kernel = np.ones((3, 3))
+    result = hotspots(agg, kernel)
+    with pytest.raises(exc, match=msg):
+        result.data.compute()
+
+
 def test_hotspots_kernel_none_2771():
     # Regression for #2771: hotspots skipped custom_kernel validation, so a
     # None kernel raised AttributeError on kernel.shape instead of ValueError.
