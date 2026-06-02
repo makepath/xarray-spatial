@@ -475,3 +475,65 @@ def test_near_360_aspect_cupy_matches_numpy(backend):
     gpu_interior = _aspect_interior(_near_360_plane(backend))
     np.testing.assert_allclose(
         gpu_interior, np_interior, rtol=1e-6, atol=1e-3)
+
+
+# The output .name must agree across backends. xr.DataArray keeps a dask
+# array's internal graph token (e.g. '_trim-<hash>' planar, 'getitem-<hash>'
+# geodesic) as .name when name=None, so the dask backends used to disagree
+# with numpy/cupy. Regression for the aspect .name leak (same class as zonal
+# #2611, focal #2733, slope #2838).
+def _assert_name_planar(backend, name):
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    agg = create_test_raster(data, backend=backend, attrs={'res': (1, 1)},
+                             chunks=(3, 4))
+    assert aspect(agg, name=name).name == name
+
+
+def _geodesic_raster(backend):
+    H, W = 8, 10
+    lat = np.linspace(40.0, 41.0, H)
+    lon = np.linspace(10.0, 11.0, W)
+    data = np.random.default_rng(1).random((H, W)) * 100
+    raster = xr.DataArray(
+        data, dims=['lat', 'lon'], coords={'lat': lat, 'lon': lon},
+    )
+    if 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(raster.data)
+    if 'dask' in backend:
+        import dask.array as da
+        raster.data = da.from_array(raster.data, chunks=(4, 5))
+    return raster
+
+
+def _assert_name_geodesic(backend, name):
+    result = aspect(_geodesic_raster(backend), method='geodesic', name=name)
+    assert result.name == name
+
+
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_numpy(name):
+    _assert_name_planar('numpy', name)
+    _assert_name_geodesic('numpy', name)
+
+
+@dask_array_available
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_dask_numpy(name):
+    _assert_name_planar('dask+numpy', name)
+    _assert_name_geodesic('dask+numpy', name)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_cupy(name):
+    _assert_name_planar('cupy', name)
+    _assert_name_geodesic('cupy', name)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_dask_cupy(name):
+    _assert_name_planar('dask+cupy', name)
+    _assert_name_geodesic('dask+cupy', name)
