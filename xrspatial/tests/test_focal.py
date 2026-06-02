@@ -692,6 +692,16 @@ def test_apply_and_focal_stats_accept_binary_kernel(backend):
     assert stats_result.ndim == 3
 
 
+def test_apply_rejects_nan_kernel():
+    # A NaN kernel cell is neither 0 nor 1, so it is rejected like any other
+    # non-binary value (the error message calls out NaN explicitly).
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    kernel = np.array([[0, np.nan, 0], [1, 1, 1], [0, 1, 0]])
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    with pytest.raises(ValueError, match="kernel must be binary"):
+        apply(agg, kernel)
+
+
 def test_apply_focal_stats_agree_on_binary_kernel_numpy():
     # Reference invariant the guard protects: on a binary kernel,
     # focal_stats(mean) and apply(mean) agree (focal_stats delegates to

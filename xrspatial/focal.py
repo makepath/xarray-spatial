@@ -51,10 +51,10 @@ def _validate_binary_kernel(kernel, func_name):
     """
     if not np.all((kernel == 0) | (kernel == 1)):
         raise ValueError(
-            f"{func_name}(): kernel must be binary (only 0 and 1 values); "
-            "it is used as a membership mask, not a weight array. Apply "
-            "per-cell weights inside the func argument, or use convolve_2d "
-            "for a weighted convolution."
+            f"{func_name}(): kernel must be binary (only 0 and 1 values, "
+            "no other weights or NaN); it is used as a membership mask, not "
+            "a weight array. Apply per-cell weights inside the func argument, "
+            "or use convolve_2d for a weighted convolution."
         )
 
 
