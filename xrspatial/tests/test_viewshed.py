@@ -466,15 +466,22 @@ def test_viewshed_dask_tier_c_warns_and_quantifies_divergence():
     assert v_np.values[obs_r, obs_c] == 180.0
 
     # Document the divergence: this is the bug being pinned. On this seed
-    # the two models disagree on dozens of cells, well beyond "minor near
-    # occluded boundaries". If a future change makes Tier C exact, this
-    # assertion should be tightened to parity instead.
+    # the two models disagree on 25 of 400 cells (~6%), well beyond "minor
+    # near occluded boundaries". The assertion uses 10 as a floor below the
+    # observed 25 to stay robust against small implementation drift. If a
+    # future change makes Tier C exact, this assertion should be tightened
+    # to parity instead.
     assert mismatches > 0, (
         "Tier C is expected to diverge from the exact sweep on rough "
         "terrain; if it now matches, update this test to assert parity")
     assert mismatches >= 10, (
-        f"Tier C divergence ({mismatches} cells) is expected to be "
-        f"material on this random terrain, not minor")
+        f"Tier C divergence ({mismatches} cells, observed 25) is expected "
+        f"to be material on this random terrain, not minor")
+
+    # Note: cumulative_viewshed calls viewshed once per observer, so the
+    # Tier C warning can fire on each call. Python's default warning filter
+    # dedupes by (message, category, module, lineno), so it surfaces once
+    # per process rather than once per observer.
 
 
 def test_viewshed_cpu_memory_guard():
