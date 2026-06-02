@@ -292,6 +292,22 @@ class TestGeodesicAspectMemoryGuard:
         computed = result.compute()
         assert computed.shape == (200, 200)
 
+    @dask_array_available
+    def test_dask_single_huge_chunk_still_rejected(self, monkeypatch):
+        """A dask array whose only chunk spans the whole raster has no memory
+        advantage over eager, so the backend-aware guard must still reject it
+        (issue #2840)."""
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        raster = _make_geo_raster(
+            elev, 40.0, 41.0, 10.0, 11.0,
+            backend='dask+numpy', chunks=(200, 200),
+        )
+        with pytest.raises(MemoryError, match="aspect"):
+            aspect(raster, method='geodesic')
+
 
 # ---------------------------------------------------------------------------
 # Tests — cross-backend consistency
