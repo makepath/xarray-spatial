@@ -254,6 +254,35 @@ def _distance(x1, x2, y1, y2, metric):
     return np.float32(d)
 
 
+def _check_monotonic_coords(x_coords, y_coords, x, y):
+    """Reject non-monotonic 1D coordinates.
+
+    Every backend in this module assumes the 1D axis coordinates are
+    monotonic: ``max_possible_distance`` is taken from the endpoints, the
+    dask halo and the NumPy line-sweep treat array adjacency as spatial
+    adjacency, and the tiled KDTree convergence check lower-bounds the
+    out-of-region distance with chunk-boundary coordinate gaps. None of
+    those hold when a coordinate axis is not monotonic, so a non-monotonic
+    axis silently yields wrong proximity/allocation/direction. Reject it up
+    front with a clear message instead.
+
+    A single-element axis has no order to violate and is allowed.
+    """
+    for coords, name in ((x_coords, x), (y_coords, y)):
+        if len(coords) < 2:
+            continue
+        diffs = np.diff(coords)
+        ascending = np.all(diffs > 0)
+        descending = np.all(diffs < 0)
+        if not (ascending or descending):
+            raise ValueError(
+                "proximity/allocation/direction require monotonic "
+                "(strictly increasing or strictly decreasing) 1D "
+                "coordinates, but the {0!r} axis is not monotonic. Sort the "
+                "raster along {0!r} before calling.".format(name)
+            )
+
+
 def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     """Overlap depth in pixels for the bounded dask map_overlap call.
 
@@ -1194,6 +1223,10 @@ def _process(
     if da is not None and isinstance(y_coords, da.Array):
         y_coords = y_coords.compute()
 
+    # The endpoint-based max distance, the dask halo, the NumPy line-sweep,
+    # and the tiled KDTree convergence check all assume monotonic 1D coords.
+    _check_monotonic_coords(x_coords, y_coords, x, y)
+
     # Compute max_possible_distance using coordinate endpoints directly
     max_possible_distance = _distance(
         x_coords[0], x_coords[-1], y_coords[0], y_coords[-1], distance_metric
@@ -1537,6 +1570,9 @@ def proximity(
         2D array image with `raster.shape` = (height, width).
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1686,6 +1722,9 @@ def allocation(
         2D array of target data.
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1837,6 +1876,9 @@ def direction(
         2D array image with `raster.shape` = (height, width).
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
