@@ -28,6 +28,15 @@ def test_great_circle_distance():
             assert e_info
 
 
+def test_great_circle_distance_returns_meters():
+    # One degree of longitude at the equator spans ~111319.49 meters
+    # (radius * radians(1) = 6378137 * pi/180). In kilometers this would
+    # be ~111, so this fixed literal pins the unit down and keeps the
+    # docstring's "meters" claim honest.
+    dist = great_circle_distance(x1=0.0, x2=1.0, y1=0.0, y2=0.0)
+    assert dist == pytest.approx(111319.49, abs=1e-2)
+
+
 @pytest.fixture
 def test_raster(backend):
     height, width = 4, 6
@@ -296,6 +305,26 @@ def test_output_metadata_consistent_across_backends(
     assert result.name is None
     assert result.dims == test_raster.dims
     assert result.attrs == test_raster.attrs
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("max_distance", [-1, -0.5, -np.inf, np.nan])
+def test_invalid_max_distance_raises(test_raster, func, max_distance):
+    # A negative or NaN max_distance is meaningless and used to produce
+    # backend-dependent output (numpy squared it, the CUDA path compared
+    # against it directly).  It must raise on every backend instead.
+    with pytest.raises(ValueError, match="max_distance"):
+        func(test_raster, x='lon', y='lat', max_distance=max_distance)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_zero_max_distance_keeps_meaning(test_raster, func):
+    # Edge value: max_distance=0 is valid and means only target cells
+    # qualify.  It must not raise.
+    result = func(test_raster, x='lon', y='lat', max_distance=0)
+    general_output_checks(test_raster, result)
 
 
 def test_proximity_distance_against_qgis(raster, qgis_proximity_distance_target_values):
@@ -1313,6 +1342,70 @@ def test_proximity_res_attr_drives_bounded_dask_padding():
         result.values, expected, equal_nan=True, rtol=1e-5)
 
 
+# --- issue #2809: bounded-dask halo depth on irregular / degenerate coords --
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_bounded_dask_irregular_coords_matches_numpy(func):
+    """Bounded dask must match numpy when coords are irregularly spaced.
+
+    Regression for issue #2809 bug 1: the halo depth was taken from only the
+    first coordinate pair. With a large leading gap and dense spacing
+    afterwards, the overlap came out too thin and chunks dropped valid targets
+    just past their boundary, so in-range cells turned to NaN under dask.
+    """
+    # First gap is 100, every later gap is 1 -> first-pair spacing would size
+    # the halo at 0 pixels for max_distance=2.5, missing nearby targets.
+    coords = np.array([0, 100, 101, 102, 103, 104, 105, 106], dtype=float)
+    data = np.zeros((8, 8), dtype=np.float64)
+    data[3, 3] = 1.0
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = coords
+    raster['lat'] = coords
+
+    expected = func(raster, x='lon', y='lat', max_distance=2.5).data
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(data, chunks=(4, 2))
+    result = func(dask_raster, x='lon', y='lat', max_distance=2.5)
+
+    assert isinstance(result.data, da.Array)
+    np.testing.assert_allclose(
+        result.values, expected, equal_nan=True, rtol=1e-5)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("shape_name", ["1xN", "Nx1"])
+def test_bounded_dask_single_row_or_col_matches_numpy(func, shape_name):
+    """Bounded dask must not crash on 1xN / Nx1 rasters.
+
+    Regression for issue #2809 bug 2: the halo code indexed coords[1] along
+    both axes, so a single-row or single-column raster raised IndexError on
+    the bounded dask path while numpy handled it fine.
+    """
+    if shape_name == "1xN":
+        data = np.zeros((1, 6), dtype=np.float64)
+        data[0, 2] = 1.0
+        chunks = (1, 3)
+    else:
+        data = np.zeros((6, 1), dtype=np.float64)
+        data[2, 0] = 1.0
+        chunks = (3, 1)
+
+    raster = _backend_raster(data, 'numpy')
+    expected = func(raster, x='lon', y='lat', max_distance=2.5).data
+
+    dask_raster = _backend_raster(data, 'numpy')
+    dask_raster.data = da.from_array(data, chunks=chunks)
+    result = func(dask_raster, x='lon', y='lat', max_distance=2.5)
+
+    assert isinstance(result.data, da.Array)
+    np.testing.assert_allclose(
+        result.values, expected, equal_nan=True, rtol=1e-5)
+
+
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
 def test_target_values_none_default_matches_empty_list(func):
     # target_values default switched from [] to a None sentinel; passing
@@ -1334,3 +1427,119 @@ def test_target_values_none_default_matches_empty_list(func):
         np.nan_to_num(default_result.data),
         np.nan_to_num(explicit_result.data),
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #2812: GREAT_CIRCLE must match a brute-force nearest-target reference.
+#
+# The GDAL-style line-sweep propagates one nearest-target candidate between
+# adjacent pixels, which assumes the nearest-target field is locally
+# monotonic. That holds for EUCLIDEAN/MANHATTAN but not for GREAT_CIRCLE,
+# which wraps in longitude and converges at the poles. On wide-longitude
+# rasters the sweep latched onto a farther target and was off by ~1e6 metres.
+# ---------------------------------------------------------------------------
+
+def _brute_force_great_circle(data, lon, lat, process_mode):
+    """Exact nearest-target reference for GREAT_CIRCLE on a lat/lon raster.
+
+    process_mode is one of 'proximity', 'allocation', 'direction'. Mirrors the
+    semantics of the proximity functions: non-zero finite pixels are targets,
+    each output pixel reports the closest target under great-circle distance.
+    """
+    from xrspatial.proximity import _calc_direction
+
+    h, w = data.shape
+    mask = np.isfinite(data) & (data != 0)
+    tr, tc = np.where(mask)
+    out = np.full((h, w), np.nan, dtype=np.float32)
+    if len(tr) == 0:
+        return out
+    for i in range(h):
+        for j in range(w):
+            best = np.inf
+            best_k = -1
+            for k in range(len(tr)):
+                d = great_circle_distance(
+                    lon[j], lon[tc[k]], lat[i], lat[tr[k]])
+                if d < best:
+                    best = d
+                    best_k = k
+            if process_mode == 'proximity':
+                out[i, j] = best
+            elif process_mode == 'allocation':
+                out[i, j] = data[tr[best_k], tc[best_k]]
+            else:
+                out[i, j] = _calc_direction(
+                    lon[j], lon[tc[best_k]], lat[i], lat[tr[best_k]])
+    return out
+
+
+@pytest.fixture
+def _wide_longitude_raster_data():
+    # Wide longitude span at low latitude: the worst-case family found by a
+    # brute-force-vs-line-sweep sweep (off by ~5.9e6 m before the fix).
+    width, height = 11, 6
+    lon = np.linspace(-127.2, 173.3, width)
+    lat = np.linspace(21.2, 19.9, height)
+    data = np.zeros((height, width), dtype=np.float64)
+    data[2, 1] = 1.0
+    data[4, 0] = 2.0
+    data[5, 4] = 3.0
+    data[5, 6] = 4.0
+    return data, lon, lat
+
+
+def _wide_lon_raster(data, lon, lat, backend):
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = lon
+    raster['lat'] = lat
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(3, 6))
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize(
+    "func, mode",
+    [(proximity, 'proximity'),
+     (allocation, 'allocation'),
+     (direction, 'direction')],
+)
+def test_great_circle_matches_brute_force(
+        backend, func, mode, _wide_longitude_raster_data):
+    """GREAT_CIRCLE proximity/allocation/direction must match a brute-force
+    nearest-target reference on a wide-longitude raster (issue #2812)."""
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    data, lon, lat = _wide_longitude_raster_data
+    expected = _brute_force_great_circle(data, lon, lat, mode)
+
+    raster = _wide_lon_raster(data, lon, lat, backend)
+    result = func(raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE')
+    # rtol covers float32 rounding on million-metre distances; direction is
+    # in degrees so use a small absolute tolerance there.
+    if mode == 'direction':
+        general_output_checks(raster, result, expected, rtol=1e-4)
+    else:
+        general_output_checks(raster, result, expected, rtol=1e-5)
+
+
+def test_great_circle_numpy_off_by_more_than_a_metre_is_fixed(
+        _wide_longitude_raster_data):
+    """Direct numpy assertion that the old line-sweep error is gone.
+
+    Before the fix this raster was off from brute force by ~5.9e6 metres.
+    """
+    data, lon, lat = _wide_longitude_raster_data
+    expected = _brute_force_great_circle(data, lon, lat, 'proximity')
+
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = lon
+    raster['lat'] = lat
+    result = proximity(
+        raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE').data
+
+    assert np.nanmax(np.abs(result - expected)) < 1.0
