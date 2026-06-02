@@ -213,8 +213,17 @@ class TestGeodesicAspectValidation:
     def test_invalid_z_unit_raises(self):
         elev = _flat_surface()
         raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
-        with pytest.raises(ValueError, match="z_unit"):
+        with pytest.raises(ValueError, match="z_unit") as excinfo:
             aspect(raster, method='geodesic', z_unit='cubit')
+
+        # The message must list the accepted unit-name strings (the keys a
+        # user is allowed to pass), not the numeric conversion factors.
+        msg = str(excinfo.value)
+        assert "'meter'" in msg
+        assert "'foot'" in msg
+        # Bare numeric conversion factors must not leak into the message.
+        assert "0.3048" not in msg
+        assert "1609.344" not in msg
 
     def test_missing_coords_raises(self):
         data = np.ones((5, 5))
