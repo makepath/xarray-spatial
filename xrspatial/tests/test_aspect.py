@@ -252,6 +252,63 @@ def test_degenerate_shape_dask_cupy(func, shape):
     assert np.all(np.isnan(_to_numpy(result)))
 
 
+# ---- Rectangular-cell correctness (issue #2760) ----
+#
+# Planar aspect must honour cellsize_x / cellsize_y. For a raster whose
+# elevation increases by one unit per map-unit in both x and y, the
+# East and North gradients are equal in map units, so the downslope
+# points southwest and aspect is 315 degrees regardless of cell aspect
+# ratio. With the divide-by-8-only kernels (no cell-size correction)
+# this case returned 275.7106. See issue #2760.
+
+def _rectangular_cell_raster(backend='numpy', xres=10.0, yres=1.0):
+    ny, nx = 6, 6
+    yc = np.arange(ny) * yres
+    xc = np.arange(nx) * xres
+    X, Y = np.meshgrid(xc, yc)
+    data = (X + Y).astype(np.float64)
+    return create_test_raster(
+        data, backend=backend,
+        attrs={'res': (xres, yres), 'crs': 'EPSG: 5070'})
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_rectangular_cell_aspect(backend):
+    if backend.startswith('dask') and not dask_array_available:
+        pytest.skip("dask not available")
+    agg = _rectangular_cell_raster(backend=backend)
+    result = aspect(agg)
+    interior = _to_numpy(result)[1:-1, 1:-1]
+    np.testing.assert_allclose(interior, 315.0, rtol=1e-4)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_rectangular_cell_northness_eastness(backend):
+    if backend.startswith('dask') and not dask_array_available:
+        pytest.skip("dask not available")
+    agg = _rectangular_cell_raster(backend=backend)
+    north = _to_numpy(northness(agg))[1:-1, 1:-1]
+    east = _to_numpy(eastness(agg))[1:-1, 1:-1]
+    # aspect == 315: cos(315) = +sqrt(2)/2, sin(315) = -sqrt(2)/2
+    np.testing.assert_allclose(north, np.cos(np.deg2rad(315.0)), atol=1e-5)
+    np.testing.assert_allclose(east, np.sin(np.deg2rad(315.0)), atol=1e-5)
+
+
+@cuda_and_cupy_available
+def test_rectangular_cell_aspect_cupy():
+    agg = _rectangular_cell_raster(backend='cupy')
+    interior = _to_numpy(aspect(agg))[1:-1, 1:-1]
+    np.testing.assert_allclose(interior, 315.0, rtol=1e-4)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_rectangular_cell_aspect_dask_cupy():
+    agg = _rectangular_cell_raster(backend='dask+cupy')
+    interior = _to_numpy(aspect(agg))[1:-1, 1:-1]
+    np.testing.assert_allclose(interior, 315.0, rtol=1e-4)
+
+
 # ---- Independent analytic oracle for planar aspect ----
 #
 # The other planar tests only prove the four backends agree with each
@@ -340,14 +397,8 @@ def test_planar_aspect_oracle_square(backend, gx, gy, cellsize):
     np.testing.assert_allclose(interior, expected, rtol=1e-4, atol=1e-3)
 
 
-# Rectangular cells (xres != yres). aspect() ignores cell size today
-# (#2760), so the East/North gradient ratio is wrong and these fail until
-# that fix lands. xfail(strict=False) flips to XPASS automatically once
-# #2760 merges, signalling the marker can be removed.
-@pytest.mark.xfail(
-    reason="planar aspect ignores cellsize_x/cellsize_y; pending #2760",
-    strict=False,
-)
+# Rectangular cells (xres != yres). aspect() now reads cell size from the
+# coordinate spacing (#2760), so the East/North gradient ratio is correct.
 @pytest.mark.parametrize("backend", _ORACLE_BACKENDS)
 @pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0)])
 @pytest.mark.parametrize("cellsize_x,cellsize_y", [(10.0, 1.0), (1.0, 4.0)])
@@ -375,10 +426,6 @@ def test_planar_aspect_oracle_square_cupy(backend, gx, gy, cellsize):
 
 
 @cuda_and_cupy_available
-@pytest.mark.xfail(
-    reason="planar aspect ignores cellsize_x/cellsize_y; pending #2760",
-    strict=False,
-)
 @pytest.mark.parametrize("backend", ['cupy', 'dask+cupy'])
 @pytest.mark.parametrize("gx,gy", [(1.0, 1.0), (2.0, -3.0)])
 @pytest.mark.parametrize("cellsize_x,cellsize_y", [(10.0, 1.0), (1.0, 4.0)])
