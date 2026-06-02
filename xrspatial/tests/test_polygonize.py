@@ -1162,7 +1162,7 @@ class TestSimplifyHelpers:
 
         sizes = [50, 100, 200, 500]
         tolerance = 0.1
-        iterations = 20
+        iterations = 200
 
         for n in sizes:
             coords = make_coords(n)
@@ -1180,8 +1180,8 @@ class TestSimplifyHelpers:
             o2_time = (time.perf_counter() - start) / iterations
 
             ratio = heap_time / o2_time if o2_time > 0 else 0
-            # Sub-microsecond times have significant measurement noise;
-            # allow up to 3x overhead at this scale.
+            # 200 iterations reduce measurement noise; sub-microsecond times
+            # still have variance so allow up to 3x overhead at this scale.
             assert ratio < 3.0, (
                 f"Heap is {ratio:.2f}x slower than O(n^2) for n={n}, "
                 f"expected < 3x (heap={heap_time:.6f}s, o2={o2_time:.6f}s)"
@@ -1195,7 +1195,7 @@ class TestSimplifyHelpers:
         The heap-based implementation should scale as O(n log n), so
         when input size doubles, runtime should increase by less than 3x.
 
-        Uses larger inputs (2000-32000) and more iterations (10) for stable
+        Uses larger inputs (2000-32000) and more iterations (50) for stable
         timing measurements that avoid sub-millisecond noise.
         """
         import time
@@ -1218,9 +1218,9 @@ class TestSimplifyHelpers:
             _visvalingam_whyatt(coords, tolerance)
 
             start = time.perf_counter()
-            for _ in range(10):
+            for _ in range(50):
                 _visvalingam_whyatt(coords, tolerance)
-            elapsed = (time.perf_counter() - start) / 10
+            elapsed = (time.perf_counter() - start) / 50
             timings.append(elapsed)
 
         # When input size doubles, time should increase by less than 3x.
