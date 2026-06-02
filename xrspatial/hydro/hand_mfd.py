@@ -27,6 +27,7 @@ from xrspatial.hydro.watershed_mfd import (
     _to_numpy_f64,
 )
 from xrspatial.utils import (
+    _validate_mfd_fractions,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -707,6 +708,9 @@ def hand_mfd(flow_dir_mfd: xr.DataArray,
     if data.ndim != 3 or data.shape[0] != 8:
         raise ValueError(
             f"flow_dir_mfd must have shape (8, H, W), got {data.shape}")
+
+    _validate_mfd_fractions(data, func_name='hand_mfd',
+                            name='flow_dir_mfd')
 
     _, H, W = data.shape
 

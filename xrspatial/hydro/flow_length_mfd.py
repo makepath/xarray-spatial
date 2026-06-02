@@ -25,6 +25,7 @@ except ImportError:
 
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.utils import (
+    _validate_mfd_fractions,
     _validate_raster,
     get_dataarray_resolution,
     has_cuda_and_cupy,
@@ -1025,6 +1026,9 @@ def flow_length_mfd(flow_dir_mfd: xr.DataArray,
             "flow_dir_mfd must be a 3-D array of shape (8, H, W), "
             f"got shape {data.shape}"
         )
+
+    _validate_mfd_fractions(data, func_name='flow_length_mfd',
+                            name='flow_dir_mfd')
 
     cellsize_x, cellsize_y = get_dataarray_resolution(flow_dir_mfd)
     if not (np.isfinite(cellsize_x) and cellsize_x != 0

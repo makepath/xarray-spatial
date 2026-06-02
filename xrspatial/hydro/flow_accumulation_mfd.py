@@ -30,6 +30,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _validate_mfd_fractions,
     _validate_raster,
     cuda_args,
     has_cuda_and_cupy,
@@ -841,6 +842,9 @@ def flow_accumulation_mfd(flow_dir_mfd: xr.DataArray,
             "flow_dir_mfd must be a 3-D array of shape (8, H, W), "
             f"got shape {data.shape}"
         )
+
+    _validate_mfd_fractions(data, func_name='flow_accumulation_mfd',
+                            name='flow_dir_mfd')
 
     if isinstance(data, np.ndarray):
         _check_memory(data.shape[1], data.shape[2])

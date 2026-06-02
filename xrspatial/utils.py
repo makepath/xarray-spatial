@@ -183,6 +183,87 @@ def _validate_scalar(
             )
 
 
+def _validate_mfd_fractions(data, *, func_name: str, name: str = 'fractions',
+                            atol: float = 1e-6):
+    """Validate the VALUES of a (8, H, W) MFD fraction grid.
+
+    The public MFD functions document that each cell's 8 fraction
+    bands lie in ``[0, 1]`` and sum to either 1.0 (flow) or 0.0
+    (pit/flat/sink), with all-NaN bands at edges and nodata cells.
+    This checks those value invariants and raises a clear error when
+    the input violates them, before any hydrology math runs.
+
+    Three checks per cell:
+
+    * No negative fractions.
+    * The band sum is 1.0 or 0.0 within *atol*.
+    * NaN bands are all-or-nothing: either all 8 directions are NaN
+      (edge/nodata) or none are.  A partially-NaN cell is rejected.
+
+    Only numpy and cupy (in-memory) arrays are validated.  Dask arrays
+    are skipped so validation does not force computation; lazy
+    validation is handled separately.  The shape is assumed to already
+    be ``(8, H, W)`` (callers check that first).
+
+    Parameters
+    ----------
+    data : numpy.ndarray, cupy.ndarray, or dask.array.Array
+        The fraction grid (``DataArray.data``).
+    func_name : str
+        Name of the calling function (for error messages).
+    name : str
+        Parameter name (for error messages).
+    atol : float
+        Absolute tolerance for the band-sum check.
+
+    Raises
+    ------
+    ValueError
+        If any cell has a negative fraction, a band sum that is
+        neither ~1.0 nor ~0.0, or a partial-NaN band pattern.
+    """
+    if is_cupy_array(data):
+        xp = cupy
+    elif isinstance(data, np.ndarray):
+        xp = np
+    else:
+        # Dask (numpy- or cupy-backed) or other lazy types: skip value
+        # validation so we do not trigger computation.
+        return
+
+    nan_mask = xp.isnan(data)
+    nan_count = nan_mask.sum(axis=0)
+    # Partial NaN: some but not all of the 8 bands are NaN.
+    if bool(((nan_count > 0) & (nan_count < 8)).any()):
+        raise ValueError(
+            f"{func_name}(): `{name}` has cells with a partial-NaN band "
+            f"pattern.  Each cell must have all 8 direction bands NaN "
+            f"(edge/nodata) or none of them NaN."
+        )
+
+    finite = data[~nan_mask]
+    if finite.size:
+        if bool((finite < 0).any()):
+            raise ValueError(
+                f"{func_name}(): `{name}` contains negative flow "
+                f"fractions.  Fractions must be in [0, 1]."
+            )
+
+    # Per-cell band sums, treating NaN bands as 0 so all-NaN cells sum
+    # to 0.0 and pass the sink check.
+    sums = xp.nansum(data, axis=0)
+    valid_cell = nan_count == 0
+    bad_sum = valid_cell & ~(
+        (xp.abs(sums - 1.0) <= atol) | (xp.abs(sums) <= atol)
+    )
+    if bool(bad_sum.any()):
+        raise ValueError(
+            f"{func_name}(): `{name}` has cells whose flow fractions do "
+            f"not sum to 1.0 (flow) or 0.0 (pit/flat/sink) within "
+            f"tolerance {atol}."
+        )
+
+
 def _boundary_to_dask(boundary, is_cupy=False):
     """Convert a boundary mode string to the value expected by
     ``dask.array.map_overlap``'s *boundary* parameter."""
