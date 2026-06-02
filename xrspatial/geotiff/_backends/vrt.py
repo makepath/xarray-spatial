@@ -571,15 +571,15 @@ def read_vrt(source: str, *,
     _vrt_is_rotated = (
         gt is not None and (gt[2] != 0.0 or gt[4] != 0.0)
     )
+    height, width = arr.shape[:2]
+    if window is not None:
+        r0 = max(0, window[0])
+        c0 = max(0, window[1])
+        coord_window = (r0, c0, r0 + height, c0 + width)
+    else:
+        coord_window = None
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
-        height, width = arr.shape[:2]
-        if window is not None:
-            r0 = max(0, window[0])
-            c0 = max(0, window[1])
-            coord_window = (r0, c0, r0 + height, c0 + width)
-        else:
-            coord_window = None
         # Rotated VRTs emit int64 pixel coords to match the eager
         # non-VRT rotated path. Without this gate
         # the VRT branch handed back float projected coords while
@@ -601,13 +601,6 @@ def read_vrt(source: str, *,
         # back an empty coord dict, so downstream code that assumes x/y
         # exist broke on no-georef VRTs but worked on the equivalent
         # plain GeoTIFF.
-        height, width = arr.shape[:2]
-        if window is not None:
-            r0 = max(0, window[0])
-            c0 = max(0, window[1])
-            coord_window = (r0, c0, r0 + height, c0 + width)
-        else:
-            coord_window = None
         coords = _coords_from_pixel_geometry(
             0.0, 0.0, 1.0, 1.0, height, width,
             window=coord_window,
