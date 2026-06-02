@@ -905,34 +905,56 @@ def _focal_variety_cuda(data, kernel, out):
     dr = kernel.shape[0] // 2
     dc = kernel.shape[1] // 2
 
-    # Local buffer for up to 25 unique values (covers kernels up to 5x5).
-    # For larger kernels the buffer simply fills and stops counting,
-    # which is an acceptable trade-off for GPU register pressure.
-    MAX_UNIQ = 25
-    buf = cuda.local.array(MAX_UNIQ, nb.float32)
+    krows = kernel.shape[0]
+    kcols = kernel.shape[1]
+
+    # Count distinct non-NaN values without a scratch buffer: for each valid
+    # cell, scan only the earlier cells in the same window (row-major order).
+    # If none of them equals the current value, this is its first occurrence.
+    # This is O(window^2) per pixel but needs no cuda.local.array, so it works
+    # for arbitrary kernel sizes and matches the CPU implementation exactly.
     count = 0
 
-    for k in range(kernel.shape[0]):
-        for h in range(kernel.shape[1]):
+    for k in range(krows):
+        for h in range(kcols):
             if kernel[k, h] == 0:
                 continue
 
             ii = i + k - dr
             jj = j + h - dc
 
-            if 0 <= ii < rows and 0 <= jj < cols:
-                v = data[ii, jj]
-                if v != v:  # NaN check (NaN != NaN)
-                    continue
-                # check if already in buffer
-                found = False
-                for u in range(count):
-                    if buf[u] == v:
-                        found = True
+            if not (0 <= ii < rows and 0 <= jj < cols):
+                continue
+            v = data[ii, jj]
+            if v != v:  # NaN check (NaN != NaN)
+                continue
+
+            # Scan earlier kernel cells (flattened index < target).
+            target = k * kcols + h
+            first = True
+            for pk in range(krows):
+                if pk * kcols >= target:
+                    break
+                for ph in range(kcols):
+                    if pk * kcols + ph >= target:
                         break
-                if not found and count < MAX_UNIQ:
-                    buf[count] = v
-                    count += 1
+                    if kernel[pk, ph] == 0:
+                        continue
+                    pii = i + pk - dr
+                    pjj = j + ph - dc
+                    if not (0 <= pii < rows and 0 <= pjj < cols):
+                        continue
+                    pv = data[pii, pjj]
+                    if pv != pv:
+                        continue
+                    if pv == v:
+                        first = False
+                        break
+                if not first:
+                    break
+
+            if first:
+                count += 1
 
     if count == 0:
         out[i, j] = math.nan
