@@ -446,11 +446,63 @@ def calc_res(raster, xdim=None, ydim=None):
         Tuple of (x-resolution, y-resolution).
     """
 
+    if ydim is None:
+        ydim = raster.dims[-2]
+    if xdim is None:
+        xdim = raster.dims[-1]
+
     h, w = raster.shape[-2:]
     xrange, yrange = get_xy_range(raster, xdim, ydim)
     xres = (xrange[-1] - xrange[0]) / (w - 1)
     yres = (yrange[-1] - yrange[0]) / (h - 1)
+
+    _warn_if_irregular_spacing(raster, xdim, xres, "x")
+    _warn_if_irregular_spacing(raster, ydim, yres, "y")
+
     return xres, yres
+
+
+def _warn_if_irregular_spacing(raster, dim, res, axis_label):
+    """Warn when a 1-D coordinate on `dim` is not evenly spaced.
+
+    `calc_res` reduces the coordinate to a single average cell size
+    (full span divided by ``n - 1``). On an irregular grid that average
+    misrepresents every cell, and the caller gets no signal. Emit a
+    ``UserWarning`` so the averaging is visible and point at
+    ``attrs['res']`` for an explicit override (which
+    ``get_dataarray_resolution`` honors before it reaches `calc_res`).
+    """
+    coord = raster.coords.get(dim, None)
+    # A 2-point axis has a single step that always equals the averaged
+    # step, so it cannot be "irregular"; only check axes with >= 3 points.
+    if coord is None or coord.ndim != 1 or coord.size < 3:
+        return
+
+    values = np.asarray(coord.values)
+    if not np.issubdtype(values.dtype, np.number):
+        return
+
+    diffs = np.diff(values)
+    if not np.all(np.isfinite(diffs)):
+        return
+
+    # Compare each step magnitude against the averaged step. `res` comes
+    # from min/max span so it is non-negative regardless of axis
+    # direction; a descending (north-up) axis has negative diffs but is
+    # still regular, so compare absolute values. The relative tolerance
+    # keeps floating-point jitter from tripping the warning.
+    if np.allclose(np.abs(diffs), abs(res), rtol=1e-5, atol=0):
+        return
+
+    warnings.warn(
+        f"xrspatial: '{dim}' coordinate is not evenly spaced; "
+        f"using an averaged {axis_label}-resolution of {res}. "
+        "Per-cell spacing varies, so distance-based results may be "
+        "inaccurate. Set attrs['res'] to an explicit resolution to "
+        "silence this warning.",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def get_dataarray_resolution(
