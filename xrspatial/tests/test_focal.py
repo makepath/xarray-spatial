@@ -253,6 +253,24 @@ def test_apply_small_kernel_not_rejected_1284():
     assert out.shape == (50, 50)
 
 
+@pytest.mark.parametrize("entry_point", [
+    lambda agg, kernel: apply(agg, kernel),
+    lambda agg, kernel: focal_stats(agg, kernel, stats_funcs=['mean']),
+    lambda agg, kernel: hotspots(agg, kernel),
+])
+@pytest.mark.parametrize("bad_kernel", [
+    np.ones(3, dtype=np.float32),            # 1D
+    np.ones((3, 3, 3), dtype=np.float32),    # 3D
+])
+def test_entry_points_reject_non_2d_kernel_2842(entry_point, bad_kernel):
+    # Regression for #2842: a non-2D kernel must raise a clear, descriptive
+    # error rather than the raw "not enough values to unpack" ValueError
+    # leaking out of custom_kernel's `rows, cols = kernel.shape`.
+    raster = xr.DataArray(np.ones((10, 10), dtype=np.float32))
+    with pytest.raises(ValueError, match="not a 2D array"):
+        entry_point(raster, bad_kernel)
+
+
 def test_convolution_numpy(
     convolve_2d_data,
     convolution_custom_kernel,
