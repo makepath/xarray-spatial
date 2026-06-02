@@ -366,6 +366,56 @@ class TestFlowLengthMfdDask:
             result_np.data, result_da.data.compute(),
             equal_nan=True, rtol=1e-10)
 
+    @pytest.mark.parametrize("direction", ['downstream', 'upstream'])
+    def test_band_axis_chunked(self, direction):
+        """Input chunked along the 8-band axis still matches numpy."""
+        from xrspatial.hydro.flow_direction_mfd import flow_direction_mfd
+
+        np.random.seed(7)
+        elev = np.random.uniform(0, 100, (6, 6)).astype(np.float64)
+        elev_r = create_test_raster(elev, backend='numpy', name='elev')
+        mfd = flow_direction_mfd(elev_r)
+        mfd_data = mfd.data.astype(np.float64)
+
+        np_raster = _make_mfd_raster(mfd_data, backend='numpy')
+        da_raster = _make_mfd_raster(mfd_data, backend='dask', chunks=(3, 3))
+        # Split the band axis into two chunks to exercise the rechunk guard.
+        da_raster = da_raster.chunk({'neighbor': 4})
+
+        result_np = flow_length_mfd(np_raster, direction=direction)
+        result_da = flow_length_mfd(da_raster, direction=direction)
+
+        np.testing.assert_allclose(
+            result_np.data, result_da.data.compute(),
+            equal_nan=True, rtol=1e-10)
+
+    def test_assembly_is_lazy(self, monkeypatch):
+        """Assembling the output raster must be deferred to compute time."""
+        import importlib
+        mod = importlib.import_module('xrspatial.hydro.flow_length_mfd')
+        from xrspatial.hydro.flow_direction_mfd import flow_direction_mfd
+
+        counter = {'n': 0}
+        orig = mod._flow_length_mfd_downstream_tile
+
+        def _spy(*args, **kwargs):
+            counter['n'] += 1
+            return orig(*args, **kwargs)
+
+        monkeypatch.setattr(mod, '_flow_length_mfd_downstream_tile', _spy)
+
+        np.random.seed(11)
+        elev = np.random.uniform(0, 100, (8, 8)).astype(np.float64)
+        elev_r = create_test_raster(elev, backend='numpy', name='elev')
+        mfd = flow_direction_mfd(elev_r)
+        mfd_data = mfd.data.astype(np.float64)
+        da_raster = _make_mfd_raster(mfd_data, backend='dask', chunks=(3, 3))
+
+        result = flow_length_mfd(da_raster, direction='downstream')
+        calls_after_call = counter['n']
+        result.data.compute()
+        assert counter['n'] - calls_after_call > 0
+
 
 @cuda_and_cupy_available
 class TestFlowLengthMfdCuPy:
