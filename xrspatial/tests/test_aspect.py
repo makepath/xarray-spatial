@@ -437,3 +437,41 @@ def test_planar_aspect_oracle_rectangular_cupy(
     interior = _aspect_interior(agg)
     expected = _aspect_oracle(gx, gy)
     np.testing.assert_allclose(interior, expected, rtol=1e-4, atol=1e-3)
+
+
+# ---- Near-360 aspect band: cupy must match numpy (issue #2827) ----
+#
+# A plane with a tiny east gradient and a strong north gradient produces an
+# aspect just under 360 (e.g. 359.99994). The numpy/numba kernel emits that
+# value; the cupy kernel used to snap anything above 359.999 to 0, so the two
+# backends disagreed by ~360 on the same input. The random-data cross-backend
+# tests never land in this band, so it went unnoticed. See issue #2827.
+
+def _near_360_plane(backend='numpy'):
+    # gx tiny positive, gy positive -> downslope faces just west of north.
+    return _to_backend(_gradient_plane(1e-6, 1.0, 1.0, 1.0, n=5), backend)
+
+
+def test_near_360_aspect_numpy_lands_in_band():
+    """numpy emits a value in (359.999, 360); it never snaps to 0."""
+    interior = _aspect_interior(_near_360_plane('numpy'))
+    assert np.all(interior > 359.999)
+    assert np.all(interior < 360.0)
+
+
+@pytest.mark.parametrize("backend", _ORACLE_BACKENDS)
+def test_near_360_aspect_oracle(backend):
+    interior = _aspect_interior(_near_360_plane(backend))
+    expected = _aspect_oracle(1e-6, 1.0)
+    np.testing.assert_allclose(interior, expected, rtol=1e-6, atol=1e-3)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ['cupy', 'dask+cupy'])
+def test_near_360_aspect_cupy_matches_numpy(backend):
+    if backend == 'dask+cupy' and not has_dask_array():
+        pytest.skip("Requires dask.Array")
+    np_interior = _aspect_interior(_near_360_plane('numpy'))
+    gpu_interior = _aspect_interior(_near_360_plane(backend))
+    np.testing.assert_allclose(
+        gpu_interior, np_interior, rtol=1e-6, atol=1e-3)

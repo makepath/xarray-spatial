@@ -114,7 +114,11 @@ def _gpu(arr, cellsize_x, cellsize_y):
         # flat surface, slope = 0, thus invalid aspect
         _aspect = -1
     else:
-        _aspect = atan2(dz_dy, -dz_dx) * 57.29578
+        # Reuse the numpy kernel's RADIAN constant (180 / pi) so the branch
+        # below selects the same way on both backends; a coarser constant can
+        # push _aspect across the 90 boundary and yield 360 where numpy yields
+        # 0 (issue #2827).
+        _aspect = atan2(dz_dy, -dz_dx) * RADIAN
         # convert to compass direction values (0-360 degrees)
         if _aspect < 0:
             _aspect = 90 - _aspect
@@ -122,11 +126,14 @@ def _gpu(arr, cellsize_x, cellsize_y):
             _aspect = 360 - _aspect + 90
         else:
             _aspect = 90 - _aspect
+        # Keep the output in [0, 360) to match the numpy kernel. The numpy
+        # kernel needs no equivalent wrap: its `elif _aspect > 90` excludes an
+        # exact-90 tie, which then yields 0 via the else branch. The GPU's
+        # 450 - 90 = 360 case is folded back to 0 here so the two agree.
+        if _aspect >= 360.0:
+            _aspect -= 360.0
 
-    if _aspect > 359.999:  # lame float equality check...
-        return 0
-    else:
-        return _aspect
+    return _aspect
 
 
 @cuda.jit
