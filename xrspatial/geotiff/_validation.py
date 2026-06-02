@@ -360,6 +360,34 @@ def _validate_overview_level_arg(overview_level) -> None:
         )
 
 
+def _validate_gpu_arg(gpu, *, allow_none: bool = False) -> None:
+    """Validate the ``gpu`` dispatch flag type.
+
+    ``gpu`` selects the GPU backend by truthiness on both the read
+    (``open_geotiff`` / ``_validate_dispatch_kwargs``) and write
+    (``to_geotiff``) paths. Without a type check, a non-bool such as
+    ``gpu="False"`` is truthy and silently routes to the GPU path
+    instead of raising. ``bool`` is also a subclass of ``int``, so
+    ``gpu=1`` / ``gpu=0`` would otherwise sneak through any
+    ``isinstance(gpu, int)`` style guard; reject them as non-bool.
+
+    ``np.bool_`` is accepted alongside Python ``bool`` (it is not a
+    ``bool`` subclass but is the obvious numpy equivalent, matching how
+    ``nodata`` validation treats ``(bool, np.bool_)``).
+
+    ``allow_none=True`` keeps the writer's ``gpu=None`` "auto-detect
+    from the data" sentinel valid; the read path leaves it False so
+    only a ``bool`` is accepted.
+    """
+    if allow_none and gpu is None:
+        return
+    if not isinstance(gpu, (bool, np.bool_)):
+        suffix = " or None" if allow_none else ""
+        raise TypeError(
+            f"gpu must be a bool{suffix}, got "
+            f"{type(gpu).__name__}: {gpu!r}")
+
+
 def _validate_dispatch_kwargs(
     *,
     source,
@@ -444,6 +472,7 @@ def _validate_dispatch_kwargs(
     from ._reader import _MAX_CLOUD_BYTES_SENTINEL
 
     _validate_overview_level_arg(overview_level)
+    _validate_gpu_arg(gpu)
 
     if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL and not gpu:
         raise ValueError(

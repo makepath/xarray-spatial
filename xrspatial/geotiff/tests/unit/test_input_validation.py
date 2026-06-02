@@ -1767,3 +1767,83 @@ class TestDegenerateFailClosedAcrossBackends:
         p = str(tmp_path / "dask_cupy_fail_1xN.tif")
         with pytest.raises(ValueError, match="(?i)pixel size|transform"):
             to_geotiff(da_gpu, p)
+
+
+# ===========================================================================
+# Section: gpu dispatch flag is fail-closed
+#
+# ``gpu`` selected the GPU backend by truthiness on both the read
+# (``open_geotiff``) and write (``to_geotiff``) paths. A non-bool such
+# as ``gpu="False"`` is truthy, so it silently routed to the GPU path
+# instead of raising. ``bool`` is also a subclass of ``int``, so
+# ``gpu=1`` / ``gpu=0`` slipped past an ``isinstance(gpu, int)`` style
+# guard. ``gpu`` must be a real ``bool`` (read path) or ``bool``/``None``
+# (write path, where ``None`` means auto-detect from the data). See
+# issue #2819.
+# ===========================================================================
+
+
+@pytest.fixture
+def gpu_arg_data():
+    """A small CPU DataArray for the writer ``gpu`` validation tests."""
+    return xr.DataArray(
+        np.ones((4, 4), dtype="float64"),
+        dims=("y", "x"),
+        coords={"y": [0.5, 1.5, 2.5, 3.5], "x": [0.5, 1.5, 2.5, 3.5]},
+        attrs={"crs": 4326},
+    )
+
+
+class TestGpuArgFailClosed:
+    """Non-bool ``gpu`` raises ``TypeError`` before backend dispatch."""
+
+    # ---- read path: open_geotiff ----
+
+    @pytest.mark.parametrize("bad", ["False", "True", 1, 0, 1.0, [True]])
+    def test_open_geotiff_non_bool_gpu_rejected(self, multiband_tiff_path, bad):
+        src, _ = multiband_tiff_path
+        with pytest.raises(TypeError, match="gpu must be a bool"):
+            open_geotiff(src, gpu=bad)
+
+    @pytest.mark.parametrize("bad", ["False", 1, 0])
+    def test_open_geotiff_gpu_rejected_before_io(self, bad):
+        # Validation runs before the file is opened, so a missing source
+        # path still surfaces the gpu TypeError rather than an OSError.
+        with pytest.raises(TypeError, match="gpu must be a bool"):
+            open_geotiff("does_not_exist_2819.tif", gpu=bad)
+
+    def test_open_geotiff_gpu_none_rejected(self, multiband_tiff_path):
+        # The read path has no auto-detect sentinel; None is not a bool.
+        src, _ = multiband_tiff_path
+        with pytest.raises(TypeError, match="gpu must be a bool"):
+            open_geotiff(src, gpu=None)
+
+    def test_open_geotiff_gpu_false_still_reads(self, multiband_tiff_path):
+        src, arr = multiband_tiff_path
+        da = open_geotiff(src, gpu=False)
+        assert da.shape == (4, 6, 3)
+
+    # ---- write path: to_geotiff ----
+
+    @pytest.mark.parametrize("bad", ["False", "True", 1, 0, 1.0, [True]])
+    def test_to_geotiff_non_bool_gpu_rejected(self, gpu_arg_data, tmp_path, bad):
+        p = str(tmp_path / "gpu_arg_2819.tif")
+        with pytest.raises(TypeError, match="gpu must be a bool"):
+            to_geotiff(gpu_arg_data, p, gpu=bad)
+
+    def test_to_geotiff_gpu_none_auto_detects(self, gpu_arg_data, tmp_path):
+        # None is the write-path auto-detect sentinel and must stay valid.
+        p = str(tmp_path / "gpu_none_2819.tif")
+        out = to_geotiff(gpu_arg_data, p, gpu=None)
+        assert out == p
+
+    def test_to_geotiff_gpu_false_writes(self, gpu_arg_data, tmp_path):
+        p = str(tmp_path / "gpu_false_2819.tif")
+        out = to_geotiff(gpu_arg_data, p, gpu=False)
+        assert out == p
+
+    def test_to_geotiff_gpu_numpy_bool_accepted(self, gpu_arg_data, tmp_path):
+        # np.bool_ is a real bool subclass; accept it like Python bool.
+        p = str(tmp_path / "gpu_npbool_2819.tif")
+        out = to_geotiff(gpu_arg_data, p, gpu=np.bool_(False))
+        assert out == p
