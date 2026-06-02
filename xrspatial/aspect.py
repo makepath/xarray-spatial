@@ -15,11 +15,12 @@ import xarray as xr
 from numba import cuda
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memory,
+from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2,
+                                _check_geodesic_memory_backend_aware,
                                 _cpu_geodesic_aspect, _run_gpu_geodesic_aspect)
 from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
                              _extract_latlon_coords, _pad_array, _validate_boundary,
-                             _validate_raster, cuda_args, get_dataarray_resolution, has_dask_array,
+                             _validate_raster, cuda_args, get_dataarray_resolution,
                              ngjit)
 
 
@@ -450,14 +451,7 @@ def aspect(agg: xr.DataArray,
             )
         z_factor = Z_UNITS[z_unit]
 
-        # The full-raster memory guard only applies to in-memory (numpy/cupy)
-        # arrays, which materialize the whole (3, H, W) stack at once. Dask
-        # backends process the raster chunk-by-chunk via map_overlap, so peak
-        # memory is bounded by chunk size, not full-raster size.
-        is_dask = has_dask_array() and isinstance(agg.data, da.Array)
-        if not is_dask:
-            rows, cols = agg.shape[-2], agg.shape[-1]
-            _check_geodesic_memory(rows, cols, func_name='aspect')
+        _check_geodesic_memory_backend_aware(agg, func_name='aspect')
 
         lat_2d, lon_2d = _extract_latlon_coords(agg)
 
