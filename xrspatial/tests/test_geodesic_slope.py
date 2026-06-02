@@ -273,6 +273,47 @@ class TestGeodesicSlopeMemoryGuard:
         assert result.shape == (8, 8)
 
 
+@dask_array_available
+class TestGeodesicSlopeMemoryGuardDask:
+    """The dask geodesic backend streams the raster chunk by chunk, so the
+    memory guard must size against the largest chunk, not the full raster.
+    A raster that would be rejected eagerly should be allowed once it is
+    chunked small enough to fit."""
+
+    def test_chunked_raster_allowed_when_eager_would_reject(self, monkeypatch):
+        # 1 MB available. The 200x200 raster needs ~2.2 MB eagerly (56 B/cell)
+        # and trips the eager guard, but 20x20 chunks need only ~25 KB each.
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        # eager numpy of the same size is rejected (sanity check the budget).
+        r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        with pytest.raises(MemoryError, match="slope"):
+            slope(r_np, method='geodesic')
+        # same raster, chunked small — guard must let it through.
+        r_da = _make_geo_raster(
+            elev, 40.0, 41.0, 10.0, 11.0,
+            backend='dask+numpy', chunks=(20, 20),
+        )
+        result = slope(r_da, method='geodesic')
+        assert result.compute().shape == (200, 200)
+
+    def test_single_huge_chunk_still_rejected(self, monkeypatch):
+        # A dask array whose only chunk spans the whole raster has no memory
+        # advantage over eager, so the guard must still reject it.
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        r_da = _make_geo_raster(
+            elev, 40.0, 41.0, 10.0, 11.0,
+            backend='dask+numpy', chunks=(200, 200),
+        )
+        with pytest.raises(MemoryError, match="slope"):
+            slope(r_da, method='geodesic')
+
+
 # ---------------------------------------------------------------------------
 # Tests — cross-backend consistency
 # ---------------------------------------------------------------------------
@@ -296,7 +337,6 @@ class TestGeodesicSlopeDask:
 class TestGeodesicSlopeCupy:
 
     def test_numpy_equals_cupy(self):
-        import cupy
         elev = _east_tilted_surface(H=8, W=10, grade=100.0)
         r_np = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='numpy')
         r_cu = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0, backend='cupy')
@@ -320,4 +360,39 @@ class TestGeodesicSlopeDaskCupy:
         s_dc = slope(r_dc, method='geodesic')
         np.testing.assert_allclose(
             s_np.values, s_dc.data.compute().get(), rtol=1e-5, equal_nan=True
+        )
+
+    def test_latlon_not_materialized_on_gpu_at_graph_build(self):
+        """The dask+cupy geodesic path must keep lat/lon chunked.
+
+        Building the graph (no compute) for a large raster must not densify
+        the full (H, W) lat/lon grids onto the GPU. Converting the broadcast
+        views with ``cupy.asarray`` up front would allocate ~2*H*W*8 bytes of
+        GPU memory at graph-construction time and OOM on large rasters.
+        """
+        import cupy
+
+        H = W = 2048
+        elev = cupy.zeros((H, W), dtype=cupy.float64)
+        lat = np.linspace(40.0, 41.0, H)
+        lon = np.linspace(10.0, 11.0, W)
+        raster = xr.DataArray(
+            da.from_array(elev, chunks=(256, 256)),
+            dims=['lat', 'lon'],
+            coords={'lat': lat, 'lon': lon},
+        )
+
+        pool = cupy.get_default_memory_pool()
+        pool.free_all_blocks()
+        before = pool.used_bytes()
+        out = slope(raster, method='geodesic')   # graph construction only
+        out.data.__dask_graph__()
+        delta = pool.used_bytes() - before
+
+        # A single full lat or lon grid is H*W*8 bytes. If either were
+        # densified eagerly the delta would be at least that large.
+        one_full_grid = H * W * 8
+        assert delta < one_full_grid, (
+            f"graph construction allocated {delta} GPU bytes; expected well "
+            f"under one full lat/lon grid ({one_full_grid} bytes)"
         )

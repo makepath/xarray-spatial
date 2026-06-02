@@ -8,6 +8,7 @@
 # The algorithm is embarrassingly parallel across quads and across contour
 # levels, making it well suited to Dask chunking and GPU execution.
 
+import warnings
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -622,20 +623,34 @@ def contours(
 
     # Determine contour levels.
     if levels is None:
-        if da is not None and isinstance(agg.data, da.Array):
-            vmin, vmax = dask.compute(
-                da.nanmin(agg.data), da.nanmax(agg.data)
+        # Reduce over finite values only.  +/-inf cells would otherwise
+        # poison the range and make np.linspace emit non-finite levels,
+        # silently dropping every contour for the finite terrain.  An
+        # all-non-finite raster yields nan here, caught by the guard below;
+        # ignore the resulting empty-slice warning.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", "All-NaN slice encountered", RuntimeWarning
             )
-            vmin = float(vmin)
-            vmax = float(vmax)
-        elif cupy is not None and hasattr(agg.data, 'get'):
-            vmin = float(cupy.nanmin(agg.data))
-            vmax = float(cupy.nanmax(agg.data))
-        else:
-            vmin = float(np.nanmin(agg.values))
-            vmax = float(np.nanmax(agg.values))
+            if da is not None and isinstance(agg.data, da.Array):
+                finite = da.where(da.isfinite(agg.data), agg.data, np.nan)
+                vmin, vmax = dask.compute(
+                    da.nanmin(finite), da.nanmax(finite)
+                )
+                vmin = float(vmin)
+                vmax = float(vmax)
+            elif cupy is not None and hasattr(agg.data, 'get'):
+                finite = cupy.where(
+                    cupy.isfinite(agg.data), agg.data, cupy.nan
+                )
+                vmin = float(cupy.nanmin(finite))
+                vmax = float(cupy.nanmax(finite))
+            else:
+                finite = np.where(np.isfinite(agg.values), agg.values, np.nan)
+                vmin = float(np.nanmin(finite))
+                vmax = float(np.nanmax(finite))
 
-        if np.isnan(vmin) or np.isnan(vmax):
+        if not np.isfinite(vmin) or not np.isfinite(vmax):
             if return_type == "numpy":
                 return []
             return _to_geopandas([], crs=agg.attrs.get('crs', None))
