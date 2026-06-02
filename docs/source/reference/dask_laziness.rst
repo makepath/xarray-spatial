@@ -154,7 +154,10 @@ Visibility
      - Notes
    * - ``viewshed``
      - Fully materialized
-     - Sweepline algorithm needs random access
+     - Sweepline needs random access. Grids that exceed memory (no
+       ``max_distance``) use an approximate out-of-core sweep that does
+       not match the exact result and emits a ``UserWarning``; set
+       ``max_distance`` for exact results.
    * - ``line_of_sight``
      - Fully materialized
      - Extracts 1D transect via ``.compute()``

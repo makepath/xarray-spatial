@@ -420,6 +420,63 @@ def test_viewshed_dask_distance_sweep_target_elev():
             err_msg="Tier C angles diverge too far from numpy reference")
 
 
+def test_viewshed_dask_tier_c_warns_and_quantifies_divergence():
+    """Tier C (out-of-core distance sweep) is an approximate visibility
+    model that does not match the exact numpy sweep cell-for-cell.
+
+    Pins the documented contract for issue #2872:
+    1. A UserWarning is emitted when the Tier C path runs, so users feeding
+       large dask rasters into downstream visibility logic are not silently
+       misled.
+    2. The visibility-mask divergence vs the exact sweep is real and
+       material on rough terrain (not "minor near occluded boundaries").
+    """
+    from unittest.mock import patch
+
+    ny, nx = 20, 20
+    rng = np.random.RandomState(42)
+    terrain = rng.rand(ny, nx) * 10.0
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    obs_x, obs_y = 10.0, 10.0
+
+    # Exact numpy reference.
+    raster_np = xa.DataArray(terrain.copy(), coords=dict(x=xs, y=ys),
+                             dims=["y", "x"])
+    v_np = viewshed(raster_np, x=obs_x, y=obs_y)
+
+    # Force Tier C: shrink the memory budget so Tier B (full compute + R2)
+    # is skipped but the output-grid guard still passes.
+    raster_da = xa.DataArray(
+        da.from_array(terrain.copy(), chunks=(10, 10)),
+        coords=dict(x=xs, y=ys), dims=["y", "x"])
+    with patch('xrspatial.viewshed._available_memory_bytes',
+               return_value=10_000):
+        with pytest.warns(UserWarning,
+                          match="approximate visibility model"):
+            v_dask = viewshed(raster_da, x=obs_x, y=obs_y)
+
+    exact_mask = v_np.values != INVISIBLE
+    tier_c_mask = v_dask.values != INVISIBLE
+    mismatches = int((exact_mask != tier_c_mask).sum())
+
+    # The exact and Tier C masks must agree on the observer cell.
+    obs_r, obs_c = 10, 10
+    assert v_dask.values[obs_r, obs_c] == 180.0
+    assert v_np.values[obs_r, obs_c] == 180.0
+
+    # Document the divergence: this is the bug being pinned. On this seed
+    # the two models disagree on dozens of cells, well beyond "minor near
+    # occluded boundaries". If a future change makes Tier C exact, this
+    # assertion should be tightened to parity instead.
+    assert mismatches > 0, (
+        "Tier C is expected to diverge from the exact sweep on rough "
+        "terrain; if it now matches, update this test to assert parity")
+    assert mismatches >= 10, (
+        f"Tier C divergence ({mismatches} cells) is expected to be "
+        f"material on this random terrain, not minor")
+
+
 def test_viewshed_cpu_memory_guard():
     """_viewshed_cpu should refuse rasters that would blow past RAM.
 
