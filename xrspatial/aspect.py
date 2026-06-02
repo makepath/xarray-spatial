@@ -469,11 +469,17 @@ def aspect(agg: xr.DataArray,
         )
         out = mapper(agg)(agg.data, lat_2d, lon_2d, WGS84_A2, WGS84_B2, z_factor, boundary)
 
-    return xr.DataArray(out,
-                        name=name,
-                        coords=agg.coords,
-                        dims=agg.dims,
-                        attrs=agg.attrs)
+    result = xr.DataArray(out,
+                          name=name,
+                          coords=agg.coords,
+                          dims=agg.dims,
+                          attrs=agg.attrs)
+    # On dask backends, xr.DataArray keeps the dask array's internal graph
+    # token as .name when name=None, so reset it post-construction to match
+    # the numpy/cupy backends. (Same fix as zonal #2611, focal #2733,
+    # slope #2838.)
+    result.name = name
+    return result
 
 
 @supports_dataset
@@ -549,11 +555,15 @@ def northness(agg: xr.DataArray,
     else:
         trig = np.cos(np.deg2rad(asp_data))
         out = np.where(asp_data == -1, np.nan, trig)
-    return xr.DataArray(out,
-                        name=name,
-                        coords=agg.coords,
-                        dims=agg.dims,
-                        attrs=agg.attrs)
+    result = xr.DataArray(out,
+                          name=name,
+                          coords=agg.coords,
+                          dims=agg.dims,
+                          attrs=agg.attrs)
+    # Reset .name post-construction so dask backends don't leak the graph
+    # token when name=None, matching aspect()/slope() (#2841, #2838).
+    result.name = name
+    return result
 
 
 @supports_dataset
@@ -629,8 +639,12 @@ def eastness(agg: xr.DataArray,
     else:
         trig = np.sin(np.deg2rad(asp_data))
         out = np.where(asp_data == -1, np.nan, trig)
-    return xr.DataArray(out,
-                        name=name,
-                        coords=agg.coords,
-                        dims=agg.dims,
-                        attrs=agg.attrs)
+    result = xr.DataArray(out,
+                          name=name,
+                          coords=agg.coords,
+                          dims=agg.dims,
+                          attrs=agg.attrs)
+    # Reset .name post-construction so dask backends don't leak the graph
+    # token when name=None, matching aspect()/slope() (#2841, #2838).
+    result.name = name
+    return result
