@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -274,3 +276,87 @@ def test_degenerate_shape_geodesic(shape):
     general_output_checks(raster, result)
     assert result.shape == shape
     assert np.all(np.isnan(result.data))
+
+
+def _degree_coord_meter_elevation_raster():
+    # degree-like coords (lon/lat) with meter-scale elevation values
+    data = np.linspace(0, 999, 10 * 10, dtype=float).reshape(10, 10)
+    y = np.linspace(5.0, 5.0025, 10)
+    x = np.linspace(-74.93, -74.9275, 10)
+    return xr.DataArray(
+        data,
+        dims=('y', 'x'),
+        coords={'y': y, 'x': x},
+        attrs={'units': 'm'},
+    )
+
+
+def _projected_meter_raster():
+    # projected coords in meters (UTM-ish) with meter-scale elevation values
+    data = np.linspace(0, 999, 10 * 10, dtype=float).reshape(10, 10)
+    y = np.arange(10) * 30.0
+    x = 500_000.0 + np.arange(10) * 30.0
+    return xr.DataArray(
+        data,
+        dims=('y', 'x'),
+        coords={'y': y, 'x': x},
+        attrs={'units': 'm'},
+    )
+
+
+def test_planar_warns_on_degree_coords_meter_elevation():
+    raster = _degree_coord_meter_elevation_raster()
+    with pytest.warns(UserWarning, match="appears to have coordinates in degrees"):
+        slope(raster)  # method='planar' is the default
+
+
+def test_planar_no_warn_on_projected_meter_coords():
+    raster = _projected_meter_raster()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        slope(raster)  # must not raise: no unit-mismatch warning expected
+
+
+# A NoData (NaN) center cell must stay NaN in the slope output, even when all 8
+# of its neighbours are valid. The planar kernels read the center cell, so a
+# hole in the DEM can't masquerade as valid flat terrain. Regression for #2761.
+def _center_nan_data():
+    data = np.zeros((5, 5), dtype=np.float64)
+    data[2, 2] = np.nan
+    return data
+
+
+def test_center_nan_propagates_numpy():
+    agg = create_test_raster(_center_nan_data(), backend='numpy', attrs={'res': (1, 1)})
+    result = slope(agg)
+    general_output_checks(agg, result)
+    assert np.isnan(result.data[2, 2])
+
+
+@dask_array_available
+def test_center_nan_propagates_dask_numpy():
+    data = _center_nan_data()
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(3, 3))
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, slope, nan_edges=False)
+    assert np.isnan(slope(dask_agg).data.compute()[2, 2])
+
+
+@cuda_and_cupy_available
+def test_center_nan_propagates_cupy():
+    data = _center_nan_data()
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1, 1)})
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, slope, nan_edges=False)
+    assert np.isnan(slope(cupy_agg).data.get()[2, 2])
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_center_nan_propagates_dask_cupy():
+    data = _center_nan_data()
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1, 1)}, chunks=(3, 3))
+    assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, slope, nan_edges=False)

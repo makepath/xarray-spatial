@@ -12,9 +12,9 @@ Focal
 
 .. note::
 
-   Focal functions output **float32**.  NaN handling varies: ``mean``
-   excludes NaN neighbours from the average, while ``hotspots`` propagates
-   NaN from any neighbour.
+   ``mean`` and ``focal_stats`` output **float32**; ``hotspots`` outputs
+   **int8** confidence bands. Both ``mean`` and ``hotspots`` exclude NaN
+   neighbours from their neighbourhood computation.
 
 Apply
 =====
