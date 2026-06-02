@@ -223,6 +223,18 @@ def read_geotiff_dask(source: str, *,
             **vrt_kwargs,
         )
 
+    # ``open_geotiff`` gates ``stable_only=True`` for remote sources before
+    # dispatching here, but ``read_geotiff_dask`` is also a direct entry
+    # point. Apply the same gate so a direct caller cannot read an
+    # advanced-tier HTTP / fsspec source under ``stable_only=True``. The VRT
+    # branch above already forwards ``stable_only`` to ``read_vrt``.
+    from .._validation import _validate_stable_only_remote
+    _validate_stable_only_remote(
+        source,
+        stable_only=stable_only,
+        allow_experimental_codecs=allow_experimental_codecs,
+    )
+
     # HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
     # The same prefetch path also covers fsspec URIs (s3://, gs://, ...);
