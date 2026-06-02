@@ -231,23 +231,23 @@ def _validate_mfd_fractions(data, *, func_name: str, name: str = 'fractions',
         # validation so we do not trigger computation.
         return
 
-    nan_mask = xp.isnan(data)
-    nan_count = nan_mask.sum(axis=0)
+    prefix = f"{func_name}(): `{name}`"
+
+    nan_count = xp.isnan(data).sum(axis=0)
     # Partial NaN: some but not all of the 8 bands are NaN.
     if bool(((nan_count > 0) & (nan_count < 8)).any()):
         raise ValueError(
-            f"{func_name}(): `{name}` has cells with a partial-NaN band "
-            f"pattern.  Each cell must have all 8 direction bands NaN "
-            f"(edge/nodata) or none of them NaN."
+            f"{prefix} has cells with a partial-NaN band pattern.  Each "
+            f"cell must have all 8 direction bands NaN (edge/nodata) or "
+            f"none of them NaN."
         )
 
-    finite = data[~nan_mask]
-    if finite.size:
-        if bool((finite < 0).any()):
-            raise ValueError(
-                f"{func_name}(): `{name}` contains negative flow "
-                f"fractions.  Fractions must be in [0, 1]."
-            )
+    # NaN < 0 is False, so NaN cells never trip this (no copy needed).
+    if bool((data < 0).any()):
+        raise ValueError(
+            f"{prefix} contains negative flow fractions.  Fractions must "
+            f"be in [0, 1]."
+        )
 
     # Per-cell band sums, treating NaN bands as 0 so all-NaN cells sum
     # to 0.0 and pass the sink check.
@@ -258,9 +258,8 @@ def _validate_mfd_fractions(data, *, func_name: str, name: str = 'fractions',
     )
     if bool(bad_sum.any()):
         raise ValueError(
-            f"{func_name}(): `{name}` has cells whose flow fractions do "
-            f"not sum to 1.0 (flow) or 0.0 (pit/flat/sink) within "
-            f"tolerance {atol}."
+            f"{prefix} has cells whose flow fractions do not sum to 1.0 "
+            f"(flow) or 0.0 (pit/flat/sink) within tolerance {atol}."
         )
 
 
