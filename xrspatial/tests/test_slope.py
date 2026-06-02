@@ -111,6 +111,46 @@ def test_boundary_numpy_equals_dask(boundary, size, chunks):
         np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
 
 
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+def test_boundary_numpy_equals_cupy(boundary):
+    # The planar cupy backend has its own non-'nan' boundary branch
+    # (_run_cupy pads, recurses, then crops). Pin it against the numpy
+    # reference for every boundary mode so a GPU-only boundary regression
+    # can't ship undetected.
+    rng = np.random.default_rng(42)
+    data = (rng.random((10, 15)).astype(np.float64) * 500)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    cupy_agg = create_test_raster(data, backend='cupy', attrs={'res': (1, 1)})
+    np_result = slope(numpy_agg, boundary=boundary)
+    cupy_result = slope(cupy_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, cupy_result.data.get(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((10, 15), (5, 5)),    # multiple chunks → exercises overlap
+    ((10, 15), (10, 15)),  # single chunk (no overlap needed)
+])
+def test_boundary_numpy_equals_dask_cupy(boundary, size, chunks):
+    # The planar dask+cupy backend threads `boundary` through
+    # `_boundary_to_dask(..., is_cupy=True)` and map_overlap. Pin it against
+    # the numpy reference across chunkings so a GPU dask boundary regression
+    # can't ship undetected.
+    rng = np.random.default_rng(42)
+    data = (rng.random(size).astype(np.float64) * 500)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       attrs={'res': (1, 1)}, chunks=chunks)
+    np_result = slope(numpy_agg, boundary=boundary)
+    dc_result = slope(dask_cupy_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, dc_result.data.compute().get(), equal_nan=True, rtol=1e-5)
+
+
 @dask_array_available
 @pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
 def test_boundary_no_nan_edges(boundary, elevation_raster_no_nans):
