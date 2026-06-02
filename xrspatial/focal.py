@@ -817,9 +817,9 @@ def _focal_std_cuda(data, kernel, out):
     dr = kernel.shape[0] // 2
     dc = kernel.shape[1] // 2
 
+    # Pass 1: weighted mean.
     w_sum = 0.0
     sum_wx = 0.0
-    sum_wx2 = 0.0
 
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
@@ -836,18 +836,39 @@ def _focal_std_cuda(data, kernel, out):
                     continue
                 w_sum += w
                 sum_wx += w * x
-                sum_wx2 += w * x * x
 
-    if w_sum > 0.0:
-        mean = sum_wx / w_sum
-        var = (sum_wx2 / w_sum) - (mean * mean)
-
-        if var < 0.0:
-            var = 0.0
-
-        out[i, j] = math.sqrt(var)
-    else:
+    if w_sum <= 0.0:
         out[i, j] = math.nan
+        return
+
+    mean = sum_wx / w_sum
+
+    # Pass 2: weighted sum of squared deviations from the mean. Subtracting
+    # the mean before squaring avoids the catastrophic cancellation of the
+    # one-pass E[x^2] - E[x]^2 form, which loses all precision in float32
+    # when the values carry a large offset.
+    sum_wd2 = 0.0
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            w = kernel[k, h]
+            if w == 0:
+                continue
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                x = data[ii, jj]
+                if x != x:  # NaN check
+                    continue
+                d = x - mean
+                sum_wd2 += w * d * d
+
+    var = sum_wd2 / w_sum
+    if var < 0.0:
+        var = 0.0
+
+    out[i, j] = math.sqrt(var)
 
 
 @cuda.jit
@@ -861,9 +882,9 @@ def _focal_var_cuda(data, kernel, out):
     dr = kernel.shape[0] // 2
     dc = kernel.shape[1] // 2
 
+    # Pass 1: weighted mean.
     w_sum = 0.0
     sum_wx = 0.0
-    sum_wx2 = 0.0
 
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
@@ -880,18 +901,39 @@ def _focal_var_cuda(data, kernel, out):
                     continue
                 w_sum += w
                 sum_wx += w * x
-                sum_wx2 += w * x * x
 
-    if w_sum > 0.0:
-        mean = sum_wx / w_sum
-        var = (sum_wx2 / w_sum) - (mean * mean)
-
-        if var < 0.0:
-            var = 0.0
-
-        out[i, j] = var
-    else:
+    if w_sum <= 0.0:
         out[i, j] = math.nan
+        return
+
+    mean = sum_wx / w_sum
+
+    # Pass 2: weighted sum of squared deviations from the mean. Subtracting
+    # the mean before squaring avoids the catastrophic cancellation of the
+    # one-pass E[x^2] - E[x]^2 form, which loses all precision in float32
+    # when the values carry a large offset.
+    sum_wd2 = 0.0
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            w = kernel[k, h]
+            if w == 0:
+                continue
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                x = data[ii, jj]
+                if x != x:  # NaN check
+                    continue
+                d = x - mean
+                sum_wd2 += w * d * d
+
+    var = sum_wd2 / w_sum
+    if var < 0.0:
+        var = 0.0
+
+    out[i, j] = var
 
 
 @cuda.jit

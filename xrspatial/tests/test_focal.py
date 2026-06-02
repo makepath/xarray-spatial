@@ -747,6 +747,43 @@ def test_focal_stats_all_nan_window_1092(backend):
     assert np.isnan(_val('max', 1, 1))
 
 
+# --- GPU std/var precision on large-offset rasters (issue-2831) -----------
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("offset", [1e6, 1e7])
+def test_focal_stats_std_var_large_offset_gpu_matches_numpy_2831(offset):
+    """GPU std/var must not collapse on large-offset rasters (#2831).
+
+    The old GPU kernels used a one-pass E[x^2] - E[x]^2 variance in
+    float32. On values with a large offset (~1e6-1e7) the two terms are
+    nearly equal, so the subtraction lost all precision and the result
+    collapsed toward zero -- diverging from the float64 two-pass numpy
+    path. The two-pass kernel subtracts the window mean before squaring,
+    which holds precision at any offset.
+    """
+    rng = np.random.default_rng(0)
+    data = (offset + rng.random((8, 8))).astype(np.float64)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+
+    numpy_agg = create_test_raster(data, backend='numpy')
+    cupy_agg = create_test_raster(data, backend='cupy')
+
+    np_res = focal_stats(numpy_agg, kernel, stats_funcs=['std', 'var'])
+    cp_res = focal_stats(cupy_agg, kernel, stats_funcs=['std', 'var'])
+
+    for stat in ['std', 'var']:
+        # Interior only: boundary='nan' blanks the outer ring identically
+        # on both backends, but the interior is where the variance lives.
+        np_interior = np_res.sel(stats=stat).data[1:-1, 1:-1]
+        cp_interior = cp_res.sel(stats=stat).data.get()[1:-1, 1:-1]
+        # The variance is ~0.08 here; the old one-pass kernel returned ~0.
+        assert np.nanmax(np_interior) > 0.01, f"{stat} reference is flat"
+        np.testing.assert_allclose(
+            cp_interior, np_interior, rtol=1e-3, atol=1e-4,
+            err_msg=f"{stat} diverges at offset {offset:g}")
+
+
 # --- focal variety (issue-1040) ------------------------------------------
 
 def _variety_reference_data():
