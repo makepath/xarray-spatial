@@ -2851,6 +2851,11 @@ class TestPublicAPI:
             # so the request cannot be served without naming the
             # broader-tier opt-in.
             'VRTStableSourcesOnlyError',
+            # Sibling of VRTStableSourcesOnlyError for the non-VRT read
+            # paths: a caller opening an HTTP / fsspec source under
+            # ``stable_only=True`` is rejected because those readers are
+            # advanced-tier.
+            'RemoteStableSourcesOnlyError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
             # Canonical georef_status constants. Exposed so downstream

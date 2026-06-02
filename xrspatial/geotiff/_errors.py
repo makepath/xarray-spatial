@@ -327,6 +327,7 @@ __all__ = [
     "MixedBandMetadataError",
     "NonRepresentableEPSGCRSError",
     "NonUniformCoordsError",
+    "RemoteStableSourcesOnlyError",
     "RotatedTransformError",
     "UnknownCRSModelTypeError",
     "UnparseableCRSError",
