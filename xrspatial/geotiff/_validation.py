@@ -440,6 +440,12 @@ def _validate_dispatch_kwargs(
     gpu : bool
         True when the call routes through the GPU pipeline (either
         ``open_geotiff(gpu=True)`` or a direct ``read_geotiff_gpu``).
+        This is the dispatch bool, type-checked via
+        ``_validate_gpu_arg``. Not to be confused with
+        ``read_geotiff_gpu``'s own deprecated ``gpu='strict'/'auto'/
+        'loose'`` string parameter (the legacy ``on_gpu_failure``
+        alias), which never reaches this helper -- ``read_geotiff_gpu``
+        passes a literal ``True`` here.
     chunks : int, tuple, or None
         Caller's ``chunks=`` value. ``None`` means eager.
     overview_level
