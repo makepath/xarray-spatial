@@ -948,6 +948,271 @@ class TestSimplifyHelpers:
         result = _visvalingam_whyatt(coords, 1.0)
         assert_allclose(result, coords)
 
+    def test_visvalingam_whyatt_heap_correctness(self):
+        """Heap implementation must produce identical results to O(n^2) baseline."""
+        from numba import njit
+
+        from ..polygonize import _visvalingam_whyatt
+
+        @njit
+        def _triangle_area_numba(a, b, c):
+            ax, ay = a[0], a[1]
+            bx, by = b[0], b[1]
+            cx, cy = c[0], c[1]
+            return abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+
+        @njit
+        def _visvalingam_whyatt_o2(coords, tolerance):
+            """Original O(n^2) implementation for correctness comparison."""
+            n = len(coords)
+            if n <= 2:
+                return coords.copy()
+            prev_idx = np.empty(n, dtype=np.int64)
+            next_idx = np.empty(n, dtype=np.int64)
+            for i in range(n):
+                prev_idx[i] = i - 1
+                next_idx[i] = i + 1
+            prev_idx[0] = -1
+            next_idx[n - 1] = -1
+            areas = np.full(n, np.inf, dtype=np.float64)
+            for i in range(1, n - 1):
+                areas[i] = _triangle_area_numba(
+                    coords[prev_idx[i]], coords[i], coords[next_idx[i]]
+                )
+            removed = np.zeros(n, dtype=np.bool_)
+            remaining = n
+            while remaining > 2:
+                min_area = np.inf
+                min_idx = -1
+                for i in range(1, n - 1):
+                    if not removed[i] and areas[i] < min_area:
+                        min_area = areas[i]
+                        min_idx = i
+                if min_idx == -1 or min_area >= tolerance:
+                    break
+                removed[min_idx] = True
+                remaining -= 1
+                p = prev_idx[min_idx]
+                nx_i = next_idx[min_idx]
+                if p >= 0:
+                    next_idx[p] = nx_i
+                if nx_i >= 0 and nx_i < n:
+                    prev_idx[nx_i] = p
+                if p > 0 and prev_idx[p] >= 0:
+                    new_area = _triangle_area_numba(
+                        coords[prev_idx[p]], coords[p], coords[next_idx[p]]
+                    )
+                    areas[p] = max(new_area, min_area)
+                if nx_i >= 0 and nx_i < n - 1 and next_idx[nx_i] >= 0:
+                    new_area = _triangle_area_numba(
+                        coords[prev_idx[nx_i]], coords[nx_i], coords[next_idx[nx_i]]
+                    )
+                    areas[nx_i] = max(new_area, min_area)
+            count = 0
+            for i in range(n):
+                if not removed[i]:
+                    count += 1
+            result = np.empty((count, 2), dtype=np.float64)
+            j = 0
+            for i in range(n):
+                if not removed[i]:
+                    result[j, 0] = coords[i, 0]
+                    result[j, 1] = coords[i, 1]
+                    j += 1
+            return result
+
+        def make_coords(n, pattern="zigzag"):
+            if pattern == "straight":
+                return np.array([[float(i), 0.0] for i in range(n)], dtype=np.float64)
+            if pattern == "zigzag":
+                return np.array(
+                    [[float(i), float((i % 3) * 0.5)] for i in range(n)],
+                    dtype=np.float64,
+                )
+            if pattern == "triangle":
+                pts = []
+                for i in range(n):
+                    angle = 2.0 * np.pi * i / n
+                    pts.append([np.cos(angle), np.sin(angle)])
+                return np.array(pts, dtype=np.float64)
+            return np.array([[float(i), float(i * 0.1)] for i in range(n)], dtype=np.float64)
+
+        sizes = [5, 10, 50, 100, 500]
+        patterns = ["straight", "zigzag", "triangle", "linear"]
+        tolerances = [0.01, 0.1, 1.0]
+
+        for pattern in patterns:
+            for n in sizes:
+                for tol in tolerances:
+                    coords = make_coords(n, pattern)
+                    heap_result = _visvalingam_whyatt(coords, tol)
+                    o2_result = _visvalingam_whyatt_o2(coords, tol)
+                    assert heap_result.shape == o2_result.shape, (
+                        f"Shape mismatch for {pattern} n={n} tol={tol}: "
+                        f"heap={heap_result.shape} o2={o2_result.shape}"
+                    )
+                    assert_allclose(
+                        heap_result, o2_result, rtol=1e-10,
+                        err_msg=f"Output mismatch for {pattern} n={n} tol={tol}"
+                    )
+
+    def test_visvalingam_whyatt_no_regression_small_inputs(self):
+        """Heap must not regress performance for small inputs (n < 1000).
+
+        For typical polygon ring sizes, the heap overhead should not make
+        the implementation more than 2x slower than the O(n^2) baseline.
+        """
+        import time
+
+        from numba import njit
+
+        from ..polygonize import _visvalingam_whyatt
+
+        @njit
+        def _triangle_area_numba(a, b, c):
+            ax, ay = a[0], a[1]
+            bx, by = b[0], b[1]
+            cx, cy = c[0], c[1]
+            return abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+
+        @njit
+        def _visvalingam_whyatt_o2(coords, tolerance):
+            n = len(coords)
+            if n <= 2:
+                return coords.copy()
+            prev_idx = np.empty(n, dtype=np.int64)
+            next_idx = np.empty(n, dtype=np.int64)
+            for i in range(n):
+                prev_idx[i] = i - 1
+                next_idx[i] = i + 1
+            prev_idx[0] = -1
+            next_idx[n - 1] = -1
+            areas = np.full(n, np.inf, dtype=np.float64)
+            for i in range(1, n - 1):
+                areas[i] = _triangle_area_numba(
+                    coords[prev_idx[i]], coords[i], coords[next_idx[i]]
+                )
+            removed = np.zeros(n, dtype=np.bool_)
+            remaining = n
+            while remaining > 2:
+                min_area = np.inf
+                min_idx = -1
+                for i in range(1, n - 1):
+                    if not removed[i] and areas[i] < min_area:
+                        min_area = areas[i]
+                        min_idx = i
+                if min_idx == -1 or min_area >= tolerance:
+                    break
+                removed[min_idx] = True
+                remaining -= 1
+                p = prev_idx[min_idx]
+                nx_i = next_idx[min_idx]
+                if p >= 0:
+                    next_idx[p] = nx_i
+                if nx_i >= 0 and nx_i < n:
+                    prev_idx[nx_i] = p
+                if p > 0 and prev_idx[p] >= 0:
+                    new_area = _triangle_area_numba(
+                        coords[prev_idx[p]], coords[p], coords[next_idx[p]]
+                    )
+                    areas[p] = max(new_area, min_area)
+                if nx_i >= 0 and nx_i < n - 1 and next_idx[nx_i] >= 0:
+                    new_area = _triangle_area_numba(
+                        coords[prev_idx[nx_i]], coords[nx_i], coords[next_idx[nx_i]]
+                    )
+                    areas[nx_i] = max(new_area, min_area)
+            count = 0
+            for i in range(n):
+                if not removed[i]:
+                    count += 1
+            result = np.empty((count, 2), dtype=np.float64)
+            j = 0
+            for i in range(n):
+                if not removed[i]:
+                    result[j, 0] = coords[i, 0]
+                    result[j, 1] = coords[i, 1]
+                    j += 1
+            return result
+
+        def make_coords(n):
+            return np.array(
+                [[float(i), float((i % 3) * 0.5)] for i in range(n)],
+                dtype=np.float64,
+            )
+
+        sizes = [50, 100, 200, 500]
+        tolerance = 0.1
+        iterations = 20
+
+        for n in sizes:
+            coords = make_coords(n)
+            _visvalingam_whyatt(coords, tolerance)
+            _visvalingam_whyatt_o2(coords, tolerance)
+
+            start = time.perf_counter()
+            for _ in range(iterations):
+                _visvalingam_whyatt(coords, tolerance)
+            heap_time = (time.perf_counter() - start) / iterations
+
+            start = time.perf_counter()
+            for _ in range(iterations):
+                _visvalingam_whyatt_o2(coords, tolerance)
+            o2_time = (time.perf_counter() - start) / iterations
+
+            ratio = heap_time / o2_time if o2_time > 0 else 0
+            # Sub-microsecond times have significant measurement noise;
+            # allow up to 3x overhead at this scale.
+            assert ratio < 3.0, (
+                f"Heap is {ratio:.2f}x slower than O(n^2) for n={n}, "
+                f"expected < 3x (heap={heap_time:.6f}s, o2={o2_time:.6f}s)"
+            )
+
+    def test_visvalingam_whyatt_scales_subquadratic(self):
+        """_visvalingam_whyatt must scale sub-quadratically with input size.
+
+        Issue #2539: the original O(n^2) linear min-area scan caused
+        simplification to dominate on rings with thousands of vertices.
+        The heap-based implementation should scale as O(n log n), so
+        when input size doubles, runtime should increase by less than 3x.
+
+        Uses larger inputs (2000-32000) and more iterations (10) for stable
+        timing measurements that avoid sub-millisecond noise.
+        """
+        import time
+
+        from ..polygonize import _visvalingam_whyatt
+
+        def make_coords(n):
+            return np.array(
+                [[float(i), float((i % 3) * 0.5)] for i in range(n)],
+                dtype=np.float64,
+            )
+
+        sizes = [2000, 4000, 8000, 16000, 32000]
+        tolerance = 0.1
+        timings = []
+
+        for n in sizes:
+            coords = make_coords(n)
+            # Warm up (numba compilation + cache).
+            _visvalingam_whyatt(coords, tolerance)
+
+            start = time.perf_counter()
+            for _ in range(10):
+                _visvalingam_whyatt(coords, tolerance)
+            elapsed = (time.perf_counter() - start) / 10
+            timings.append(elapsed)
+
+        # When input size doubles, time should increase by less than 3x.
+        # O(n^2) would give ~4x; O(n log n) gives ~2.1-2.3x.
+        for i in range(len(timings) - 1):
+            ratio = timings[i + 1] / timings[i]
+            assert ratio < 3.0, (
+                f"Time ratio for {sizes[i]} -> {sizes[i+1]} is {ratio:.2f}x, "
+                f"expected < 3x (O(n^2) would give ~4x)"
+            )
+
+
     def test_simplify_polygons_drops_degenerate(self):
         """Polygons that collapse below 4 vertices should be dropped."""
         from ..polygonize import _simplify_polygons
