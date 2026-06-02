@@ -59,6 +59,9 @@ class TestFlowPathMfdShape:
         sp.data[0, 0] = 7.0
         out = flow_path_mfd(fr, sp)
         assert out.shape == (3, 3)
+        # All-east flow: the path from (0, 0) labels the whole top row 7.
+        np.testing.assert_array_equal(out.data[0], [7.0, 7.0, 7.0])
+        assert np.isnan(out.data[1:]).all()
 
 
 class TestWatershedMfdShape:
