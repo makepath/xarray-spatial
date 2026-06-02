@@ -126,12 +126,13 @@ def read_geotiff_dask(source: str, *,
         ``InvalidIntegerNodataError`` at graph-build time. See
         ``open_geotiff`` for the full description.
     stable_only : bool, default False
-        [advanced] Read-side opt-in for stable-tier sources only.
-        Forwarded to ``read_vrt`` when the source ends in ``.vrt`` so
-        the rejection fires at graph-build time. Non-VRT sources on
-        this entry point already ride the stable ``reader.local_file``
-        path, so the flag is a no-op for them. See ``open_geotiff`` for
-        the full description.
+        [advanced] Read-side opt-in that restricts the read to the
+        stable-tier local-file path. Forwarded to ``read_vrt`` when the
+        source ends in ``.vrt`` so the rejection fires at graph-build
+        time. Advanced-tier sources (VRT, and HTTP / fsspec sources
+        such as ``http(s)://`` or ``s3://``) are rejected; only a
+        local-file source on the stable ``reader.local_file`` path is
+        accepted. See ``open_geotiff`` for the full description.
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). Fires at graph
