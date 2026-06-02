@@ -1,4 +1,6 @@
 """Tests for geodesic slope computation."""
+import re
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -217,9 +219,8 @@ class TestGeodesicSlopeValidation:
         msg = str(excinfo.value)
         assert "'meter'" in msg
         assert "'foot'" in msg
-        # Bare numeric conversion factors must not leak into the message.
-        assert "0.3048" not in msg
-        assert "1609.344" not in msg
+        # No bare numeric conversion factor should leak into the message.
+        assert not re.search(r"\d+\.\d+", msg)
 
     def test_missing_coords_raises(self):
         data = np.ones((5, 5))
