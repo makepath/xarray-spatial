@@ -211,6 +211,27 @@ class VRTStableSourcesOnlyError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class RemoteStableSourcesOnlyError(GeoTIFFAmbiguousMetadataError):
+    """HTTP / fsspec source opened under ``stable_only=True``.
+
+    Raised when a caller reads an ``http(s)://`` URL or an fsspec URI
+    (``s3://``, ``gs://``, ``memory://``, ...) with ``stable_only=True``.
+    The remote readers (``reader.http`` and ``reader.fsspec``) sit at the
+    ``advanced`` tier in :data:`xrspatial.geotiff.SUPPORTED_FEATURES`, so
+    a request for stable-only sources cannot be served from a remote
+    source without an explicit opt-in. The sibling of
+    :class:`VRTStableSourcesOnlyError` for the eager and dask non-VRT
+    read paths; both subclass :class:`GeoTIFFAmbiguousMetadataError` so a
+    caller can catch the whole stable-only family at once.
+
+    Pass ``stable_only=False`` (the default) to keep the legacy
+    behaviour, or pass ``allow_experimental_codecs=True`` to opt into
+    the broader tier set explicitly. See the release contract document
+    at ``docs/source/reference/release_gate_geotiff.rst`` for the full
+    rationale.
+    """
+
+
 class UnknownCRSModelTypeError(GeoTIFFAmbiguousMetadataError):
     """Can't classify an EPSG as geographic or projected on write.
 
@@ -306,6 +327,7 @@ __all__ = [
     "MixedBandMetadataError",
     "NonRepresentableEPSGCRSError",
     "NonUniformCoordsError",
+    "RemoteStableSourcesOnlyError",
     "RotatedTransformError",
     "UnknownCRSModelTypeError",
     "UnparseableCRSError",

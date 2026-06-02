@@ -113,6 +113,20 @@ the corresponding caveats:
 * HTTP / range COG (tracked separately; see the byte-budget contract in
   #2298).
 
+Restricting a read to stable sources
+------------------------------------
+
+The ``stable_only=True`` opt-in restricts a read to stable-tier sources.
+Under it, ``open_geotiff`` rejects advanced-tier sources before any fetch
+or decode: a ``.vrt`` mosaic raises ``VRTStableSourcesOnlyError``, and an
+HTTP(S) URL or fsspec URI (``s3://``, ``gs://``, ``memory://``) raises
+``RemoteStableSourcesOnlyError``. Both subclass
+``GeoTIFFAmbiguousMetadataError``. The eager, dask, and GPU paths all run
+this check, so a remote source cannot slip through on a non-VRT path. Pass
+``allow_experimental_codecs=True`` to opt back into the advanced and
+experimental tiers, or drop ``stable_only`` for the default behaviour.
+Local-file reads always pass.
+
 Rotated and sheared transforms
 ==============================
 

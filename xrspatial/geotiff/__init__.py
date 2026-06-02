@@ -73,8 +73,9 @@ from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDTagError,
                       GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, InvalidCRSCodeError,
                       InvalidIntegerNodataError, MixedBandMetadataError,
-                      NonRepresentableEPSGCRSError, NonUniformCoordsError, RotatedTransformError,
-                      UnknownCRSModelTypeError, UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
+                      NonRepresentableEPSGCRSError, NonUniformCoordsError,
+                      RemoteStableSourcesOnlyError, RotatedTransformError, UnknownCRSModelTypeError,
+                      UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
                       VRTStableSourcesOnlyError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
@@ -116,6 +117,7 @@ __all__ = [
     'MixedBandMetadataError',
     'NonRepresentableEPSGCRSError',
     'NonUniformCoordsError',
+    'RemoteStableSourcesOnlyError',
     'RotatedTransformError',
     'SUPPORTED_FEATURES',
     'UnknownCRSModelTypeError',
@@ -913,6 +915,17 @@ def open_geotiff(source: str | BinaryIO, *,
     # File-like buffer rejections for ``gpu=True`` / ``chunks=...`` already
     # fired inside ``_validate_dispatch_kwargs`` above; the non-VRT branches
     # below run with a string source or an eager file-like.
+
+    # The VRT branch above gates ``stable_only=True`` for ``.vrt`` sources.
+    # The remaining non-VRT dispatch (GPU / dask / eager) can still route to
+    # the advanced-tier HTTP / fsspec readers, so apply the matching gate
+    # here before any backend fetches or decodes pixels.
+    from ._validation import _validate_stable_only_remote
+    _validate_stable_only_remote(
+        source,
+        stable_only=stable_only,
+        allow_experimental_codecs=allow_experimental_codecs,
+    )
 
     # GPU path
     if gpu:
