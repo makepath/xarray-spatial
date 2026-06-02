@@ -511,10 +511,21 @@ def _assert_name_geodesic(backend, name):
     assert result.name == name
 
 
+# northness() and eastness() wrap aspect() and build their own DataArray, so
+# they leak the same dask graph token (e.g. 'where-<hash>') when name=None.
+def _assert_name_derived(backend, name):
+    data = np.random.default_rng(2).random((8, 10)).astype(np.float64) * 100
+    agg = create_test_raster(data, backend=backend, attrs={'res': (1, 1)},
+                             chunks=(3, 4))
+    assert northness(agg, name=name).name == name
+    assert eastness(agg, name=name).name == name
+
+
 @pytest.mark.parametrize("name", [None, 'aspect'])
 def test_name_consistent_numpy(name):
     _assert_name_planar('numpy', name)
     _assert_name_geodesic('numpy', name)
+    _assert_name_derived('numpy', name)
 
 
 @dask_array_available
@@ -522,6 +533,7 @@ def test_name_consistent_numpy(name):
 def test_name_consistent_dask_numpy(name):
     _assert_name_planar('dask+numpy', name)
     _assert_name_geodesic('dask+numpy', name)
+    _assert_name_derived('dask+numpy', name)
 
 
 @cuda_and_cupy_available
@@ -529,6 +541,7 @@ def test_name_consistent_dask_numpy(name):
 def test_name_consistent_cupy(name):
     _assert_name_planar('cupy', name)
     _assert_name_geodesic('cupy', name)
+    _assert_name_derived('cupy', name)
 
 
 @dask_array_available
@@ -537,3 +550,4 @@ def test_name_consistent_cupy(name):
 def test_name_consistent_dask_cupy(name):
     _assert_name_planar('dask+cupy', name)
     _assert_name_geodesic('dask+cupy', name)
+    _assert_name_derived('dask+cupy', name)
