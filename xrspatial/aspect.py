@@ -350,8 +350,9 @@ def aspect(agg: xr.DataArray,
     From 67.5  to 112.5: East
     From 112.5 to 157.5: Southeast
     From 157.5 to 202.5: South
-    From 202.5 to 247.5: West
-    From 247.5 to 292.5: Northwest
+    From 202.5 to 247.5: Southwest
+    From 247.5 to 292.5: West
+    From 292.5 to 337.5: Northwest
     From 337.5 to 360:   North
 
     Note that values of -1 denote flat areas.
