@@ -20,7 +20,7 @@ from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memo
 from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
                              _extract_latlon_coords, _pad_array, _validate_boundary,
                              _validate_raster, cuda_args, get_dataarray_resolution, has_dask_array,
-                             ngjit)
+                             ngjit, warn_if_unit_mismatch)
 
 
 def _geodesic_cuda_dims(shape):
@@ -399,6 +399,14 @@ def aspect(agg: xr.DataArray,
         2D aggregate array of calculated aspect values.
         All other input attributes are preserved.
 
+    Notes
+    -----
+    The ``'planar'`` method uses the coordinate spacing directly as the cell
+    size. If the coordinates are in degrees (lat/lon) but the elevation values
+    are in meters, the result is wrong by orders of magnitude. When this
+    mismatch is detected, a ``UserWarning`` is emitted suggesting you reproject
+    to a projected CRS or use ``method='geodesic'``.
+
     References
     ----------
 
@@ -433,6 +441,7 @@ def aspect(agg: xr.DataArray,
     _validate_boundary(boundary)
 
     if method == 'planar':
+        warn_if_unit_mismatch(agg)
         cellsize_x, cellsize_y = get_dataarray_resolution(agg)
         mapper = ArrayTypeFunctionMapping(
             numpy_func=_run_numpy,
