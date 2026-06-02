@@ -169,6 +169,22 @@ def test_malformed_vrt_bbox_still_parses_without_stable_only(
         open_geotiff(malformed_vrt_path, bbox=(-1.0, -1.0, 1.0, 1.0))
 
 
+def test_stable_only_wins_over_window_bbox_conflict(memory_tiff_url):
+    """The tier gate is refused ahead of the ``window=``/``bbox=`` conflict.
+
+    Passing both ``window=`` and ``bbox=`` is mutually exclusive, but the
+    stable-only gate now runs first, so a remote source under
+    ``stable_only=True`` reports the tier rejection rather than the kwarg
+    conflict. Pins that precedence.
+    """
+    with pytest.raises(RemoteStableSourcesOnlyError) as excinfo:
+        open_geotiff(
+            memory_tiff_url, window=(0, 0, 2, 2), bbox=_MEMORY_BBOX,
+            stable_only=True,
+        )
+    _assert_stable_error(excinfo)
+
+
 def test_vrt_bbox_allowed_with_experimental_optin(georef_vrt_path):
     """``allow_experimental_codecs=True`` unlocks the VRT read; bbox resolves."""
     full = open_geotiff(georef_vrt_path)

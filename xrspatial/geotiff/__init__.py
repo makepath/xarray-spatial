@@ -853,7 +853,12 @@ def open_geotiff(source: str | BinaryIO, *,
     # for ``.vrt`` sources; ``read_vrt`` runs it again on the direct-call
     # path, so this is defence in depth, not the only gate. Each helper is
     # a no-op for the wrong source type, but branching keeps the intent
-    # obvious.
+    # obvious. Running ahead of the bbox block also puts this gate ahead
+    # of the ``window=``/``bbox=`` mutual-exclusion check below, so a
+    # stable-only remote/VRT source is refused on the tier gate before
+    # that kwarg conflict is reported -- the tier rejection wins, which
+    # matches refusing the unsupported source before validating kwargs
+    # that would not be honoured anyway.
     from ._validation import _validate_stable_only_remote
     from ._validation import _validate_stable_only_vrt
     if _is_vrt_source:
