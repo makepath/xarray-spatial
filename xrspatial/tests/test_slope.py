@@ -134,6 +134,7 @@ def test_boundary_numpy_equals_cupy(boundary):
 @pytest.mark.parametrize("size,chunks", [
     ((10, 15), (5, 5)),    # multiple chunks → exercises overlap
     ((10, 15), (10, 15)),  # single chunk (no overlap needed)
+    ((7, 9), (3, 3)),      # ragged last chunk under depth-1 overlap
 ])
 def test_boundary_numpy_equals_dask_cupy(boundary, size, chunks):
     # The planar dask+cupy backend threads `boundary` through
