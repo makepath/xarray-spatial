@@ -361,6 +361,30 @@ def test_zero_max_distance_keeps_meaning(test_raster, func):
     general_output_checks(test_raster, result)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("target_values", [[np.inf], [-np.inf], [np.nan], [2, np.inf]])
+def test_non_finite_target_values_raises(test_raster, func, target_values):
+    # A non-finite target_values entry used to produce backend-dependent
+    # output: numpy matched inf pixels and returned a real grid, while
+    # dask/cupy masked non-finite pixels out and returned all-NaN for the
+    # same raster (issue #2850).  It must raise on every backend instead.
+    with pytest.raises(ValueError, match="target_values"):
+        func(test_raster, x='lon', y='lat', target_values=target_values)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_finite_target_values_run(test_raster, func):
+    # The raster carries an inf and a nan pixel; the default (empty
+    # target_values) path must keep ignoring them on every backend, and
+    # explicit finite targets must keep working unchanged.
+    result_default = func(test_raster, x='lon', y='lat')
+    general_output_checks(test_raster, result_default)
+    result_explicit = func(test_raster, x='lon', y='lat', target_values=[1, 3])
+    general_output_checks(test_raster, result_explicit)
+
+
 def test_proximity_distance_against_qgis(raster, qgis_proximity_distance_target_values):
     target_values, qgis_result = qgis_proximity_distance_target_values
     input_raster = create_test_raster(raster)
