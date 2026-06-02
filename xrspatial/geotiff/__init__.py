@@ -719,18 +719,24 @@ def open_geotiff(source: str | BinaryIO, *,
         sentinels (e.g. external tooling that writes ``"nan"`` on
         integer outputs).
     stable_only : bool, default False
-        [advanced] Read-side opt-in for stable-tier sources only. When
-        ``True``, a ``.vrt`` source raises
+        [advanced] Read-side opt-in that restricts the read to the
+        stable-tier local-file path. When ``True``, advanced-tier
+        sources are rejected: a ``.vrt`` source raises
         :class:`VRTStableSourcesOnlyError` because ``reader.vrt`` and
         the VRT child-source pipeline sit at the ``advanced`` /
         ``experimental`` tiers in
-        :data:`xrspatial.geotiff.SUPPORTED_FEATURES`. Non-VRT sources
-        on this entry point already ride the stable ``reader.local_file``
-        path and the per-source codec gate, so the flag is a no-op for
-        them. The rejection names the file path and the
+        :data:`xrspatial.geotiff.SUPPORTED_FEATURES`, and HTTP /
+        fsspec sources (``http(s)://``, ``s3://``, etc.) are rejected
+        too because ``reader.http`` and ``reader.fsspec`` are also
+        ``advanced``. Only a local-file source riding the stable
+        ``reader.local_file`` path and the per-source codec gate is
+        accepted. The rejection names the offending source and the
         ``allow_experimental_codecs`` opt-in so the caller can unlock
         the broader tier set explicitly when needed. See
-        ``docs/source/reference/release_gate_geotiff.rst``.
+        ``docs/source/reference/release_gate_geotiff.rst``. The VRT
+        rejection is enforced today; the HTTP / fsspec rejection is the
+        documented contract being rolled out and may not yet fire on
+        every read path (tracked in issue #2820).
     allow_experimental_codecs : bool, default False
         Read-side opt-in for sources compressed with the Tier 3
         experimental codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``).
