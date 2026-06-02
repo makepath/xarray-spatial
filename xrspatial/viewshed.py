@@ -1581,9 +1581,11 @@ def _viewshed_cpu(
     num_events = 3 * (n_rows * n_cols - 1)
     event_list = np.zeros((num_events, 7), dtype=np.float64)
 
-    raster.data = raster.data.astype(np.float64, copy=False)
+    # Convert to float64 on a copy so the caller's input DataArray is never
+    # mutated (an int16 input must stay int16 after viewshed returns).
+    raster_data = raster.data.astype(np.float64)
 
-    _init_event_list(event_list=event_list, raster=raster.data,
+    _init_event_list(event_list=event_list, raster=raster_data,
                      vp_row=viewpoint_row, vp_col=viewpoint_col,
                      data=data, visibility_grid=visibility_grid)
 
@@ -1598,7 +1600,7 @@ def _viewshed_cpu(
     event_aes = event_list[:, 3:].copy()
 
     viewshed_img = _viewshed_cpu_sweep(
-        raster.data, viewpoint_row, viewpoint_col, viewpoint_elev,
+        raster_data, viewpoint_row, viewpoint_col, viewpoint_elev,
         viewpoint_target, ew_res, ns_res, event_rcts, event_aes, data,
         visibility_grid)
 
@@ -1730,10 +1732,15 @@ def viewshed(raster: xarray.DataArray,
             from .gpu_rtx.viewshed import viewshed_gpu
             return viewshed_gpu(raster, x, y, observer_elev, target_elev, name)
         else:
-            # Convert to numpy and run on cpu
+            # Convert to numpy and run on cpu. Build a new DataArray instead
+            # of reassigning raster.data so the caller's CuPy input is left
+            # unchanged.
             import cupy as cp
-            raster.data = cp.asnumpy(raster.data)
-            return _viewshed_cpu(raster, x, y, observer_elev, target_elev,
+            raster_np = xarray.DataArray(cp.asnumpy(raster.data),
+                                         coords=raster.coords,
+                                         attrs=raster.attrs,
+                                         dims=raster.dims)
+            return _viewshed_cpu(raster_np, x, y, observer_elev, target_elev,
                                  name)
 
     elif has_dask_array():
