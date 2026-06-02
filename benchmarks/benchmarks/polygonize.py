@@ -3,7 +3,7 @@ import xarray as xr
 
 from xrspatial import polygonize
 from xrspatial.polygonize import (
-    _calculate_regions, _scan,
+    _calculate_regions, _scan, _simplify_polygons,
 )
 
 try:
@@ -122,3 +122,22 @@ class PolygonizeTracing:
     def time_scan(self, nx):
         _scan(self.regions, self.values, self.mask, False, None,
               self.nx, self.ny)
+
+
+class PolygonizeSimplify:
+    """Benchmark polygonize with simplification (DP and VW)."""
+    params = (
+        [100, 300, 1000],
+        ["douglas-peucker", "visvalingam-whyatt"],
+    )
+    param_names = ("nx", "method")
+
+    def setup(self, nx, method):
+        ny = nx // 2
+        rng = np.random.default_rng(9461713)
+        raster = rng.integers(low=0, high=4, size=(ny, nx), dtype=np.int32)
+        self.raster = xr.DataArray(raster)
+
+    def time_simplify(self, nx, method):
+        polygonize(self.raster, simplify_tolerance=1.0,
+                   simplify_method=method)

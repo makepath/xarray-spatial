@@ -1809,7 +1809,8 @@ def _heap_push(heap_areas, heap_indices, heap_size, area, idx):
 def _heap_pop(heap_areas, heap_indices, heap_size):
     """Pop minimum from heap. Returns (area, idx, new_heap_size).
 
-    Returns (-1.0, -1, heap_size) if heap is empty.
+    Returns (-1.0, -1, heap_size) if heap is empty.  -1.0 is safe
+    as a sentinel because triangle areas are always non-negative.
     """
     if heap_size == 0:
         return -1.0, -1, heap_size
@@ -1870,16 +1871,19 @@ def _visvalingam_whyatt(coords, tolerance):
         areas[i] = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
 
     removed = np.zeros(n, dtype=np.bool_)
-    remaining = n
 
     # Build min-heap of (area, index) for interior vertices.
+    # Each interior vertex is pushed once initially (n-2 entries), and at
+    # most 2 new entries are pushed per removal (one per affected neighbor),
+    # for a total of at most (n-2) + 2*(n-2) = 3n-6 entries.  n * 3
+    # provides a small safety margin.
     heap_areas = np.empty(n * 3, dtype=np.float64)
     heap_indices = np.empty(n * 3, dtype=np.int64)
     heap_size = 0
     for i in range(1, n - 1):
         heap_size = _heap_push(heap_areas, heap_indices, heap_size, areas[i], i)
 
-    while remaining > 2:
+    while True:
         # Pop minimum, skipping stale entries (lazy deletion).
         min_area = -1.0
         min_idx = -1
@@ -1897,7 +1901,6 @@ def _visvalingam_whyatt(coords, tolerance):
 
         # Remove vertex.
         removed[min_idx] = True
-        remaining -= 1
 
         # Update linked list.
         p = prev_idx[min_idx]

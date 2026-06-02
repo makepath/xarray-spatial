@@ -948,6 +948,26 @@ class TestSimplifyHelpers:
         result = _visvalingam_whyatt(coords, 1.0)
         assert_allclose(result, coords)
 
+    def test_visvalingam_whyatt_nan_coords(self):
+        """VW on all-NaN coords should return all points unchanged."""
+        from ..polygonize import _visvalingam_whyatt
+        coords = np.array(
+            [[np.nan, np.nan], [np.nan, np.nan], [np.nan, np.nan],
+             [np.nan, np.nan], [np.nan, np.nan]],
+            dtype=np.float64)
+        result = _visvalingam_whyatt(coords, 0.1)
+        assert_allclose(result, coords)
+
+    def test_visvalingam_whyatt_identical_coords(self):
+        """VW on all-identical coords should simplify to just endpoints."""
+        from ..polygonize import _visvalingam_whyatt
+        coords = np.array(
+            [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+            dtype=np.float64)
+        result = _visvalingam_whyatt(coords, 0.01)
+        expected = np.array([[0.0, 0.0], [0.0, 0.0]], dtype=np.float64)
+        assert_allclose(result, expected)
+
     def test_visvalingam_whyatt_heap_correctness(self):
         """Heap implementation must produce identical results to O(n^2) baseline."""
         from numba import njit
