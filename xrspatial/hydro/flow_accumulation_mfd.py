@@ -163,6 +163,7 @@ def _flow_accum_mfd_cpu(fractions, height, width):
     valid = np.zeros((height, width), dtype=np.int8)
 
     # Pass 1: initialise
+    n_valid = 0
     for r in range(height):
         for c in range(width):
             v = fractions[0, r, c]
@@ -171,6 +172,7 @@ def _flow_accum_mfd_cpu(fractions, height, width):
             else:
                 valid[r, c] = 1
                 accum[r, c] = 1.0
+                n_valid += 1
 
     # Pass 2: compute in-degrees
     for r in range(height):
@@ -216,6 +218,15 @@ def _flow_accum_mfd_cpu(fractions, height, width):
                             queue_r[tail] = nr
                             queue_c[tail] = nc
                             tail += 1
+
+    # If a cycle remains, some valid cells never reached in_degree 0 and
+    # were never dequeued.  head counts the cells processed by the BFS.
+    if head < n_valid:
+        raise ValueError(
+            "flow_accumulation_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
 
     return accum
 
@@ -402,12 +413,14 @@ def _flow_accum_mfd_tile_kernel(fractions, h, w,
     valid = np.zeros((h, w), dtype=np.int8)
 
     # Initialise
+    n_valid = 0
     for r in range(h):
         for c in range(w):
             v = fractions[0, r, c]
             if v == v:  # not NaN
                 valid[r, c] = 1
                 accum[r, c] = 1.0
+                n_valid += 1
             else:
                 accum[r, c] = np.nan
 
@@ -474,6 +487,14 @@ def _flow_accum_mfd_tile_kernel(fractions, h, w,
                         queue_r[tail] = nr
                         queue_c[tail] = nc
                         tail += 1
+
+    # A cycle within this tile leaves some valid cells undequeued.
+    if head < n_valid:
+        raise ValueError(
+            "flow_accumulation_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
 
     return accum
 
