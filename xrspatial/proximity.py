@@ -745,7 +745,10 @@ def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
     the tie-break policy documented on ``allocation``/``direction``.
 
     Query the two nearest targets; wherever they are equidistant, keep the one
-    with the smaller index.
+    with the smaller index. This resolves 2-way ties, which is what grid
+    geometry produces in practice. A pixel equidistant to three or more targets
+    relies on cKDTree returning the lower index among the rest, which it does
+    for the row-major target order used here but does not strictly promise.
     """
     n_targets = tree.n
     if n_targets < 2:
@@ -1409,8 +1412,10 @@ def _process(
         # four-pass propagation order, which disagrees with the brute-force
         # and CUDA kernels. Route those modes through the brute-force search,
         # which keeps the lowest-flat-index target on a tie (see the
-        # `allocation`/`direction` docstrings). PROXIMITY only returns the
-        # distance, which is identical for tied targets, so the faster
+        # `allocation`/`direction` docstrings). Brute force is O(N*T) versus
+        # the line-sweep's O(N); the slower scan is a deliberate trade for a
+        # tie-break that matches every other backend. PROXIMITY only returns
+        # the distance, which is identical for tied targets, so the faster
         # line-sweep stays in use there.
         if process_mode in (ALLOCATION, DIRECTION):
             return _process_numpy_bruteforce(
