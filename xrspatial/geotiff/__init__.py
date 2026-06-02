@@ -733,7 +733,10 @@ def open_geotiff(source: str | BinaryIO, *,
         accepted. The rejection names the offending source and the
         ``allow_experimental_codecs`` opt-in so the caller can unlock
         the broader tier set explicitly when needed. See
-        ``docs/source/reference/release_gate_geotiff.rst``.
+        ``docs/source/reference/release_gate_geotiff.rst``. The VRT
+        rejection is enforced today; the HTTP / fsspec rejection is the
+        documented contract being rolled out and may not yet fire on
+        every read path (tracked in issue #2820).
     allow_experimental_codecs : bool, default False
         Read-side opt-in for sources compressed with the Tier 3
         experimental codecs (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``).

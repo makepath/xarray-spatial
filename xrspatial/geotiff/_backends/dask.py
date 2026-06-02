@@ -132,7 +132,10 @@ def read_geotiff_dask(source: str, *,
         time. Advanced-tier sources (VRT, and HTTP / fsspec sources
         such as ``http(s)://`` or ``s3://``) are rejected; only a
         local-file source on the stable ``reader.local_file`` path is
-        accepted. See ``open_geotiff`` for the full description.
+        accepted. The VRT rejection is enforced today; the HTTP /
+        fsspec rejection is the documented contract being rolled out
+        (tracked in issue #2820). See ``open_geotiff`` for the full
+        description.
     allow_experimental_codecs : bool, default False
         [advanced] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). Fires at graph
