@@ -82,6 +82,35 @@ def _check_geodesic_memory(rows, cols, func_name):
         )
 
 
+def _check_geodesic_memory_backend_aware(agg, func_name):
+    """Backend-aware front end for :func:`_check_geodesic_memory`.
+
+    Eager NumPy / CuPy backends build a ``(3, H, W)`` float64 stack for the
+    whole raster up front, so the guard sizes against the full ``(rows, cols)``.
+
+    Dask backends run the same stack chunk by chunk via ``map_overlap``, so
+    peak working memory is bounded by the largest chunk plus its 1-cell halo,
+    not the full raster. Sizing the guard against the full raster would reject
+    large-but-chunked rasters that would otherwise stream through fine, so for
+    Dask we check the largest chunk instead.
+    """
+    data = getattr(agg, "data", agg)
+
+    chunks = getattr(data, "chunks", None)
+    if chunks is None:
+        # Eager (NumPy / CuPy): size against the full raster.
+        rows, cols = agg.shape[-2], agg.shape[-1]
+        _check_geodesic_memory(rows, cols, func_name=func_name)
+        return
+
+    # Dask: size against the largest spatial chunk, plus the 1-cell halo that
+    # ``map_overlap`` adds on each side (depth (0, 1, 1) -> +2 per spatial dim).
+    row_chunks, col_chunks = chunks[-2], chunks[-1]
+    rows = (max(row_chunks) if row_chunks else 0) + 2
+    cols = (max(col_chunks) if col_chunks else 0) + 2
+    _check_geodesic_memory(rows, cols, func_name=func_name)
+
+
 # =====================================================================
 # CPU (Numba ngjit) primitives
 # =====================================================================

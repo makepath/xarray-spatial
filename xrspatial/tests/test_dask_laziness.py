@@ -16,6 +16,7 @@ from xrspatial.tests.general_checks import create_test_raster, dask_array_availa
 try:
     import dask
     import dask.array as da
+    import dask.callbacks  # noqa: F401  (registers dask.callbacks.Callback)
 except ImportError:
     da = None
 
@@ -30,6 +31,20 @@ def _is_lazy(result):
     if isinstance(result, da.Array):
         return True
     return False
+
+
+class _TaskCounter(dask.callbacks.Callback):
+    """Count dask tasks executed while the context is active.
+
+    Used to assert that a function builds its graph lazily (zero tasks run
+    during the call) rather than eagerly triggering computation.
+    """
+
+    def __init__(self):
+        self.count = 0
+
+    def _posttask(self, key, result, dsk, state, worker_id):
+        self.count += 1
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +131,21 @@ class TestFocalLazy:
         from xrspatial.focal import hotspots
         kernel = np.ones((3, 3), dtype=np.float32) / 9
         assert _is_lazy(hotspots(elev, kernel))
+
+    def test_hotspots_no_eager_compute(self, elev):
+        # hotspots() must build the graph without running any dask tasks.
+        # Previously it eagerly computed global mean/std, executing ~12
+        # tasks on the call itself (issue #2772).
+        from xrspatial.focal import hotspots
+        kernel = np.ones((3, 3), dtype=np.float32) / 9
+        with _TaskCounter() as counter:
+            result = hotspots(elev, kernel)
+        assert counter.count == 0, (
+            f"hotspots() ran {counter.count} dask tasks on call; expected 0 "
+            f"(should stay lazy)"
+        )
+        # The graph must still compute to a real result.
+        assert result.compute().shape == elev.shape
 
 
 # ---------------------------------------------------------------------------

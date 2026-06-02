@@ -133,6 +133,95 @@ class TestNaNHandling:
 
 
 # ---------------------------------------------------------------------------
+# Non-finite (inf) handling in automatic level generation (issue #2797)
+# ---------------------------------------------------------------------------
+
+def _make_ramp_with_inf():
+    """Left-to-right ramp with one +inf and one -inf cell in the corner."""
+    data = _make_ramp(ny=5, nx=10)
+    data[0, 0] = np.inf
+    data[1, 0] = -np.inf
+    return data
+
+
+class TestAutoLevelsInf:
+
+    def test_auto_levels_ignore_inf(self):
+        """+/-inf must not poison auto-generated levels (#2797)."""
+        data = _make_ramp_with_inf()
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, n_levels=5)
+        # The finite ramp spans 0..9, so auto-levels still produce contours.
+        assert len(result) > 0
+        for level, _ in result:
+            assert np.isfinite(level)
+
+    def test_auto_levels_match_finite_range(self):
+        """Levels come from the finite min/max, not the inf extremes."""
+        data = _make_ramp_with_inf()
+        finite = _make_ramp(ny=5, nx=10)
+        agg = create_test_raster(data, backend='numpy')
+        finite_agg = create_test_raster(finite, backend='numpy')
+        inf_levels = sorted({lvl for lvl, _ in contours(agg, n_levels=5)})
+        finite_levels = sorted(
+            {lvl for lvl, _ in contours(finite_agg, n_levels=5)}
+        )
+        assert inf_levels == finite_levels
+
+    def test_all_inf_returns_empty(self):
+        """An entirely non-finite raster yields no contours, no crash."""
+        data = np.full((4, 4), np.inf, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg)
+        assert result == []
+
+    def test_explicit_levels_unaffected_by_inf(self):
+        """Explicit levels bypass the range computation entirely."""
+        data = _make_ramp_with_inf()
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[4.5])
+        assert len(result) > 0
+
+    @dask_array_available
+    def test_auto_levels_ignore_inf_dask(self):
+        """Dask backend ignores inf in the lazy nanmin/nanmax path."""
+        data = _make_ramp_with_inf()
+        np_agg = create_test_raster(data, backend='numpy')
+        dask_agg = create_test_raster(
+            data, backend='dask+numpy', chunks=(3, 4)
+        )
+        np_levels = sorted({lvl for lvl, _ in contours(np_agg, n_levels=5)})
+        dk_levels = sorted({lvl for lvl, _ in contours(dask_agg, n_levels=5)})
+        assert len(dk_levels) > 0
+        assert np_levels == dk_levels
+
+    @cuda_and_cupy_available
+    def test_auto_levels_ignore_inf_cupy(self):
+        """CuPy backend ignores inf in the nanmin/nanmax path."""
+        data = _make_ramp_with_inf()
+        np_agg = create_test_raster(data, backend='numpy')
+        cupy_agg = create_test_raster(data, backend='cupy')
+        np_levels = sorted({lvl for lvl, _ in contours(np_agg, n_levels=5)})
+        cp_levels = sorted({lvl for lvl, _ in contours(cupy_agg, n_levels=5)})
+        assert len(cp_levels) > 0
+        assert np_levels == cp_levels
+
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_auto_levels_ignore_inf_dask_cupy(self):
+        """Dask+CuPy backend ignores inf in the lazy nanmin/nanmax path."""
+        data = _make_ramp_with_inf()
+        np_agg = create_test_raster(data, backend='numpy')
+        dc_agg = create_test_raster(
+            data, backend='dask+cupy', chunks=(3, 4)
+        )
+        np_levels = sorted({lvl for lvl, _ in contours(np_agg, n_levels=5)})
+        dc_levels = sorted({lvl for lvl, _ in contours(dc_agg, n_levels=5)})
+        assert len(dc_levels) > 0
+        assert np_levels == dc_levels
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 
