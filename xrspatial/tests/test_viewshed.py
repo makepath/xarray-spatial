@@ -758,6 +758,50 @@ def test_viewshed_nan_input_crashing_position():
     viewshed(raster, x=2.0, y=2.0, observer_elev=5)
 
 
+@pytest.mark.skipif(not has_rtx(), reason="rtxpy not available")
+@pytest.mark.parametrize("fine_axis", ["x", "y"])
+def test_viewshed_gpu_anisotropic_matches_cpu(fine_axis):
+    """GPU viewshed must agree with the CPU sweep on an anisotropic raster.
+
+    Regression test for issue #2861: the GPU mesh was built on integer grid
+    coordinates and ignored ew_res / ns_res, so the ray tracer worked on a
+    different terrain shape than the CPU sweep.  The mesh now uses the real
+    cell resolution.  On flat terrain the visibility angles are driven
+    purely by the horizontal geometry, so a resolution mix-up shows up
+    directly as an angle mismatch against the CPU reference.  Both
+    anisotropy orientations are checked so an ew_res / ns_res swap is
+    caught.
+    """
+    import cupy as cp
+
+    ny, nx = 9, 9
+    terrain = np.full((ny, nx), 1.3)  # flat, positive (RTX needs maxH > 0)
+    if fine_axis == "x":
+        xs = np.arange(nx, dtype=float) * 1.0    # fine
+        ys = np.arange(ny, dtype=float) * 7.0    # coarse
+    else:
+        xs = np.arange(nx, dtype=float) * 7.0    # coarse
+        ys = np.arange(ny, dtype=float) * 1.0    # fine
+
+    obs_x, obs_y, obs_elev = xs[4], ys[4], 5
+
+    cpu = viewshed(
+        xa.DataArray(terrain.copy(), coords=dict(x=xs, y=ys), dims=["y", "x"]),
+        x=obs_x, y=obs_y, observer_elev=obs_elev).values
+    gpu = viewshed(
+        xa.DataArray(cp.asarray(terrain.copy()),
+                     coords=dict(x=xs, y=ys), dims=["y", "x"]),
+        x=obs_x, y=obs_y, observer_elev=obs_elev).data.get()
+
+    # Same set of visible cells.
+    assert ((cpu > INVISIBLE) == (gpu > INVISIBLE)).all()
+
+    # Same visibility angles (skip the observer cell, fixed at 180).
+    mask = (cpu > INVISIBLE) & (gpu > INVISIBLE)
+    mask[4, 4] = False
+    np.testing.assert_allclose(gpu[mask], cpu[mask], atol=0.05)
+
+
 @pytest.mark.parametrize("backend", ["numpy", "cupy", "dask"])
 @pytest.mark.parametrize("fine_axis", ["x", "y"])
 def test_viewshed_max_distance_anisotropic(backend, fine_axis):

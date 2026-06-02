@@ -22,24 +22,29 @@ CAMERA_HEIGHT = 10000
 
 
 @nb.cuda.jit
-def _generate_primary_rays_kernel(data, H, W):
+def _generate_primary_rays_kernel(data, H, W, ew_res, ns_res):
     """
     A GPU kernel that given a set of x and y discrete coordinates on a raster
     terrain generates in @data a list of parallel rays that represent camera
     rays generated from an orthographic camera that is looking straight down
     at the surface from an origin height CAMERA_HEIGHT.
+
+    Ray origins are placed at the real-world cell centres (column * ew_res,
+    row * ns_res) so they land on the resolution-aware mesh built by
+    ``create_triangulation`` (issue #2861).  The small offset that nudges
+    the ray off a vertex scales with the cell size so it stays sub-cell.
     """
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < H and j >= 0 and j < W:
         if (j == W-1):
-            data[i, j, 0] = j - 1e-3
+            data[i, j, 0] = j * ew_res - 1e-3 * ew_res
         else:
-            data[i, j, 0] = j + 1e-3
+            data[i, j, 0] = j * ew_res + 1e-3 * ew_res
 
         if (i == H-1):
-            data[i, j, 1] = i - 1e-3
+            data[i, j, 1] = i * ns_res - 1e-3 * ns_res
         else:
-            data[i, j, 1] = i + 1e-3
+            data[i, j, 1] = i * ns_res + 1e-3 * ns_res
 
         data[i, j, 2] = CAMERA_HEIGHT  # Location of the camera (height)
         data[i, j, 3] = 1e-3
@@ -49,9 +54,10 @@ def _generate_primary_rays_kernel(data, H, W):
         data[i, j, 7] = np.inf
 
 
-def _generate_primary_rays(rays, H, W):
+def _generate_primary_rays(rays, H, W, ew_res, ns_res):
     griddim, blockdim = calc_cuda_dims((H, W))
-    _generate_primary_rays_kernel[griddim, blockdim](rays, H, W)
+    _generate_primary_rays_kernel[griddim, blockdim](
+        rays, H, W, ew_res, ns_res)
     return 0
 
 
@@ -187,6 +193,8 @@ def _viewshed_rt(
     observer_elev: float,
     target_elev: float,
     scale: float,
+    ew_res: float,
+    ns_res: float,
     name: Optional[str] = 'viewshed',
 ) -> xr.DataArray:
 
@@ -214,11 +222,10 @@ def _viewshed_rt(
     y_view = np.where(y_coords == y)[0][0]
     x_view = np.where(x_coords == x)[0][0]
 
-    y_range = (y_coords[0], y_coords[-1])
-    x_range = (x_coords[0], x_coords[-1])
-
-    ew_res = (x_range[1] - x_range[0]) / (W - 1)
-    ns_res = (y_range[1] - y_range[0]) / (H - 1)
+    # ew_res / ns_res are the same resolution used to build the mesh in
+    # create_triangulation, so the camera rays land on the resolution-aware
+    # geometry and the output angle calculation uses consistent units
+    # (issue #2861).
 
     # Device buffers
     d_rays = cupy.empty((H, W, 8), np.float32)
@@ -226,7 +233,7 @@ def _viewshed_rt(
     d_visgrid = cupy.empty((H, W), np.float32)
     d_vsrays = cupy.empty((H, W, 8), np.float32)
 
-    _generate_primary_rays(d_rays, H, W)
+    _generate_primary_rays(d_rays, H, W, ew_res, ns_res)
     device = cupy.cuda.Device(0)
     device.synchronize()
     res = optix.trace(d_rays, d_hits, W*H)
@@ -286,7 +293,7 @@ def viewshed_gpu(
     _check_gpu_memory("viewshed_gpu", H, W)
 
     optix = RTX()
-    scale = create_triangulation(raster, optix)
+    scale, ew_res, ns_res = create_triangulation(raster, optix)
 
     return _viewshed_rt(raster, optix, x, y, observer_elev, target_elev,
-                        scale, name)
+                        scale, ew_res, ns_res, name)
