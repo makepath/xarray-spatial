@@ -19,7 +19,8 @@ from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memo
                                 _cpu_geodesic_aspect, _run_gpu_geodesic_aspect)
 from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
                              _extract_latlon_coords, _pad_array, _validate_boundary,
-                             _validate_raster, cuda_args, ngjit)
+                             _validate_raster, cuda_args, get_dataarray_resolution, has_dask_array,
+                             ngjit)
 
 
 def _geodesic_cuda_dims(shape):
@@ -47,7 +48,7 @@ RADIAN = 180 / np.pi
 # =====================================================================
 
 @ngjit
-def _cpu(data: np.ndarray):
+def _cpu(data: np.ndarray, cellsize_x, cellsize_y):
     data = data.astype(np.float32)
     out = np.empty(data.shape, dtype=np.float32)
     out[:] = np.nan
@@ -64,8 +65,8 @@ def _cpu(data: np.ndarray):
             h = data[y+1, x]
             i = data[y+1, x+1]
 
-            dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / 8
-            dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / 8
+            dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x)
+            dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y)
 
             if dz_dx == 0 and dz_dy == 0:
                 # flat surface, slope = 0, thus invalid aspect
@@ -83,16 +84,19 @@ def _cpu(data: np.ndarray):
     return out
 
 
-def _run_numpy(data: np.ndarray, boundary: str = 'nan') -> np.ndarray:
+def _run_numpy(data: np.ndarray,
+               cellsize_x,
+               cellsize_y,
+               boundary: str = 'nan') -> np.ndarray:
     if boundary == 'nan':
-        return _cpu(data)
+        return _cpu(data, cellsize_x, cellsize_y)
     padded = _pad_array(data, 1, boundary)
-    result = _cpu(padded)
+    result = _cpu(padded, cellsize_x, cellsize_y)
     return result[1:-1, 1:-1]
 
 
 @cuda.jit(device=True)
-def _gpu(arr):
+def _gpu(arr, cellsize_x, cellsize_y):
 
     a = arr[0, 0]
     b = arr[0, 1]
@@ -103,8 +107,8 @@ def _gpu(arr):
     h = arr[2, 1]
     i = arr[2, 2]
 
-    dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / 8
-    dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / 8
+    dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x[0])
+    dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y[0])
 
     if dz_dx == 0 and dz_dy == 0:
         # flat surface, slope = 0, thus invalid aspect
@@ -126,7 +130,7 @@ def _gpu(arr):
 
 
 @cuda.jit
-def _run_gpu(arr, out):
+def _run_gpu(arr, cellsize_x_arr, cellsize_y_arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
@@ -134,26 +138,36 @@ def _run_gpu(arr, out):
         i+di < out.shape[0] and
             j-dj >= 0 and
             j+dj < out.shape[1]):
-        out[i, j] = _gpu(arr[i-di:i+di+1, j-dj:j+dj+1])
+        out[i, j] = _gpu(arr[i-di:i+di+1, j-dj:j+dj+1],
+                         cellsize_x_arr,
+                         cellsize_y_arr)
 
 
-def _run_cupy(data: cupy.ndarray, boundary: str = 'nan') -> cupy.ndarray:
+def _run_cupy(data: cupy.ndarray,
+              cellsize_x,
+              cellsize_y,
+              boundary: str = 'nan') -> cupy.ndarray:
     if boundary != 'nan':
         padded = _pad_array(data, 1, boundary)
-        result = _run_cupy(padded)
+        result = _run_cupy(padded, cellsize_x, cellsize_y)
         return result[1:-1, 1:-1]
 
+    cellsize_x_arr = cupy.array([float(cellsize_x)], dtype='f4')
+    cellsize_y_arr = cupy.array([float(cellsize_y)], dtype='f4')
     data = data.astype(cupy.float32)
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
-    _run_gpu[griddim, blockdim](data, out)
+    _run_gpu[griddim, blockdim](data, cellsize_x_arr, cellsize_y_arr, out)
     return out
 
 
-def _run_dask_numpy(data: da.Array, boundary: str = 'nan') -> da.Array:
+def _run_dask_numpy(data: da.Array,
+                    cellsize_x,
+                    cellsize_y,
+                    boundary: str = 'nan') -> da.Array:
     data = data.astype(np.float32)
-    _func = partial(_cpu)
+    _func = partial(_cpu, cellsize_x=cellsize_x, cellsize_y=cellsize_y)
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
@@ -161,9 +175,12 @@ def _run_dask_numpy(data: da.Array, boundary: str = 'nan') -> da.Array:
     return out
 
 
-def _run_dask_cupy(data: da.Array, boundary: str = 'nan') -> da.Array:
+def _run_dask_cupy(data: da.Array,
+                   cellsize_x,
+                   cellsize_y,
+                   boundary: str = 'nan') -> da.Array:
     data = data.astype(cupy.float32)
-    _func = partial(_run_cupy)
+    _func = partial(_run_cupy, cellsize_x=cellsize_x, cellsize_y=cellsize_y)
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
@@ -349,7 +366,8 @@ def aspect(agg: xr.DataArray,
     name : str, default='aspect'
         Name of ouput DataArray.
     method : str, default='planar'
-        ``'planar'`` uses the classic Horn algorithm with uniform cell size.
+        ``'planar'`` uses the classic Horn algorithm, scaling the gradients
+        by the x and y cell sizes so non-square cells are handled correctly.
         ``'geodesic'`` converts cells to Earth-Centered Earth-Fixed (ECEF)
         coordinates and fits a 3D plane, yielding accurate results for
         geographic (lat/lon) coordinate systems.
@@ -407,13 +425,14 @@ def aspect(agg: xr.DataArray,
     _validate_boundary(boundary)
 
     if method == 'planar':
+        cellsize_x, cellsize_y = get_dataarray_resolution(agg)
         mapper = ArrayTypeFunctionMapping(
             numpy_func=_run_numpy,
             dask_func=_run_dask_numpy,
             cupy_func=_run_cupy,
             dask_cupy_func=_run_dask_cupy,
         )
-        out = mapper(agg)(agg.data, boundary=boundary)
+        out = mapper(agg)(agg.data, cellsize_x, cellsize_y, boundary=boundary)
 
     else:  # geodesic
         if z_unit not in Z_UNITS:
@@ -423,8 +442,14 @@ def aspect(agg: xr.DataArray,
             )
         z_factor = Z_UNITS[z_unit]
 
-        rows, cols = agg.shape[-2], agg.shape[-1]
-        _check_geodesic_memory(rows, cols, func_name='aspect')
+        # The full-raster memory guard only applies to in-memory (numpy/cupy)
+        # arrays, which materialize the whole (3, H, W) stack at once. Dask
+        # backends process the raster chunk-by-chunk via map_overlap, so peak
+        # memory is bounded by chunk size, not full-raster size.
+        is_dask = has_dask_array() and isinstance(agg.data, da.Array)
+        if not is_dask:
+            rows, cols = agg.shape[-2], agg.shape[-1]
+            _check_geodesic_memory(rows, cols, func_name='aspect')
 
         lat_2d, lon_2d = _extract_latlon_coords(agg)
 
