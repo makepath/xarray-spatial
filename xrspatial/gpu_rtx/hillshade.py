@@ -200,7 +200,9 @@ def hillshade_rtx(raster: xr.DataArray,
     _check_gpu_memory("hillshade_rtx", H, W)
 
     optix = RTX()
-    scale, ew_res, ns_res = create_triangulation(raster, optix)
+    # hillshade does not use the z-scale; only viewshed scales the observer
+    # and target elevations by it.
+    _, ew_res, ns_res = create_triangulation(raster, optix)
 
     return _hillshade_rt(
         raster, optix, azimuth=azimuth, angle_altitude=angle_altitude,
