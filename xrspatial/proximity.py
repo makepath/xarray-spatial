@@ -276,10 +276,11 @@ def _check_monotonic_coords(x_coords, y_coords, x, y):
         descending = np.all(diffs < 0)
         if not (ascending or descending):
             raise ValueError(
-                "proximity/allocation/direction require monotonic "
-                "(strictly increasing or strictly decreasing) 1D "
-                "coordinates, but the {0!r} axis is not monotonic. Sort the "
-                "raster along {0!r} before calling.".format(name)
+                "proximity/allocation/direction require strictly monotonic "
+                "(strictly increasing or strictly decreasing, no duplicate or "
+                "NaN values) 1D coordinates, but the {0!r} axis does not "
+                "qualify. Sort the raster along {0!r} before calling.".format(
+                    name)
             )
 
 

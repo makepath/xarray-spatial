@@ -1697,9 +1697,11 @@ def test_descending_coords_allowed(backend, result_default_proximity):
     general_output_checks(raster, result, result_default_proximity)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_single_element_axis_allowed(backend):
     """A length-1 axis has no order to violate and must not be rejected."""
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("cupy not available")
     if 'dask' in backend and da is None:
         pytest.skip("dask not available")
 
@@ -1707,6 +1709,9 @@ def test_single_element_axis_allowed(backend):
     raster = xr.DataArray(data, dims=['lat', 'lon'])
     raster['lon'] = np.linspace(0, 30, 4)
     raster['lat'] = np.array([0.])
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
     if 'dask' in backend and da is not None:
         raster.data = da.from_array(raster.data, chunks=(1, 2))
 
