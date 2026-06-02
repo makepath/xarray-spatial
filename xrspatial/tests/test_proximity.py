@@ -535,6 +535,58 @@ def test_proximity_dask_kdtree_with_target_values():
     )
 
 
+# ---------------------------------------------------------------------------
+# Tie-breaking: when two targets are equidistant, every backend must pick the
+# same one. The documented policy is "lowest flat (row-major) index wins".
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def tie_break_raster_data():
+    # Targets at (1, 0)=1 and (1, 2)=2. The whole centre column is equidistant
+    # to both. Target 1 sits at flat index 3, target 2 at flat index 5, so the
+    # lowest-flat-index policy allocates the centre column to 1.
+    return np.array([[0., 0., 0.],
+                     [1., 0., 2.],
+                     [0., 0., 0.]], dtype=np.float64)
+
+
+@pytest.fixture
+def tie_break_expected_allocation():
+    return np.array([[1., 1., 2.],
+                     [1., 1., 2.],
+                     [1., 1., 2.]], dtype=np.float32)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_allocation_tie_break_lowest_flat_index(
+        backend, tie_break_raster_data, tie_break_expected_allocation):
+    raster = create_test_raster(
+        tie_break_raster_data, backend=backend, dims=['lat', 'lon'],
+        chunks=(1, 1),
+    )
+    result = allocation(raster, x='lon', y='lat')
+    general_output_checks(
+        raster, result, tie_break_expected_allocation, verify_dtype=True,
+    )
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_direction_tie_break_matches_numpy(backend, tie_break_raster_data):
+    # The numpy backend is the reference. Pin every other backend to it so the
+    # direction angle chosen on a tie stays identical across backends.
+    numpy_raster = create_test_raster(
+        tie_break_raster_data, backend='numpy', dims=['lat', 'lon'],
+    )
+    expected = direction(numpy_raster, x='lon', y='lat').data
+
+    raster = create_test_raster(
+        tie_break_raster_data, backend=backend, dims=['lat', 'lon'],
+        chunks=(1, 1),
+    )
+    result = direction(raster, x='lon', y='lat')
+    general_output_checks(raster, result, expected)
+
+
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 def test_proximity_dask_kdtree_no_targets():
     """No target pixels found → result is all NaN."""
@@ -702,6 +754,40 @@ def test_proximity_dask_kdtree_tiled_manhattan():
     np.testing.assert_allclose(
         dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
     )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_allocation_tie_break_tiled_path():
+    """The eager tiled KDTree fallback obeys the lowest-flat-index tie-break."""
+    data = np.array([[0., 0., 0.],
+                     [1., 0., 2.],
+                     [0., 0., 0.]], dtype=np.float64)
+    _lon = np.array([0., 1., 2.])
+    _lat = np.array([2., 1., 0.])
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(1, 1))
+
+    # Force the eager tiled KDTree path (see _force_tiled_proximity for the
+    # counter semantics): tiny cache budget, force the tiled decision, then a
+    # large value so the result-size guard passes.
+    call_count = [0]
+
+    def _small_then_large():
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            return 1
+        return 10 * 1024 ** 3
+
+    with patch('xrspatial.proximity._available_memory_bytes',
+               side_effect=_small_then_large):
+        result = allocation(raster, x='lon', y='lat')
+
+    expected = np.array([[1., 1., 2.],
+                         [1., 1., 2.],
+                         [1., 1., 2.]], dtype=np.float32)
+    np.testing.assert_array_equal(result.values, expected)
 
 
 @pytest.mark.skipif(da is None, reason="dask is not installed")
