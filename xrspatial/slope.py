@@ -351,8 +351,8 @@ def slope(agg: xr.DataArray,
         If `agg` is a DataArray, returns a DataArray of the same type.
         If `agg` is a Dataset, returns a Dataset with slope computed
         for each data variable.
-        2D array of slope values.
-        All other input attributes are preserved.
+        2D array of slope values in degrees. The output ``attrs['units']``
+        is set to ``'degrees'``; all other input attributes are preserved.
 
     Notes
     -----
@@ -412,7 +412,7 @@ def slope(agg: xr.DataArray,
     else:  # geodesic
         if z_unit not in Z_UNITS:
             raise ValueError(
-                f"z_unit must be one of {sorted(set(Z_UNITS.values()), key=str)}, "
+                f"z_unit must be one of {sorted(Z_UNITS)}, "
                 f"got {z_unit!r}"
             )
         z_factor = Z_UNITS[z_unit]
@@ -429,11 +429,17 @@ def slope(agg: xr.DataArray,
         )
         out = mapper(agg)(agg.data, lat_2d, lon_2d, WGS84_A2, WGS84_B2, z_factor, boundary)
 
+    # slope is reported in degrees, so override the input elevation 'units'
+    # (e.g. 'm') with the angle unit the result actually carries. Other input
+    # attrs are preserved.
+    attrs = dict(agg.attrs)
+    attrs['units'] = 'degrees'
+
     result = xr.DataArray(out,
                           name=name,
                           coords=agg.coords,
                           dims=agg.dims,
-                          attrs=agg.attrs)
+                          attrs=attrs)
     # On dask backends, xr.DataArray keeps the dask array's internal graph
     # token as .name when name=None, so reset it post-construction to match
     # the numpy/cupy backends. (Same fix as zonal #2611, focal #2733.)

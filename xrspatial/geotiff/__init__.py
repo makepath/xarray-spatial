@@ -842,6 +842,38 @@ def open_geotiff(source: str | BinaryIO, *,
     _is_vrt_source = (
         isinstance(source, str) and source.lower().endswith('.vrt'))
 
+    # Gate ``stable_only=True`` BEFORE resolving ``bbox=``. The bbox
+    # resolver reads source geo metadata first (the TIFF path reads a
+    # header, which is a range GET for an HTTP / fsspec source; the VRT
+    # path parses the VRT XML), so the stable-only rejection has to run
+    # ahead of it or a stable-only request would trigger remote I/O or a
+    # VRT parse before it is refused. ``_validate_stable_only_remote``
+    # documents exactly this ordering contract ("before any range GET or
+    # decode work"). ``_validate_stable_only_vrt`` is the matching gate
+    # for ``.vrt`` sources; ``read_vrt`` runs it again on the direct-call
+    # path, so this is defence in depth, not the only gate. Each helper is
+    # a no-op for the wrong source type, but branching keeps the intent
+    # obvious. Running ahead of the bbox block also puts this gate ahead
+    # of the ``window=``/``bbox=`` mutual-exclusion check below, so a
+    # stable-only remote/VRT source is refused on the tier gate before
+    # that kwarg conflict is reported -- the tier rejection wins, which
+    # matches refusing the unsupported source before validating kwargs
+    # that would not be honoured anyway.
+    from ._validation import _validate_stable_only_remote
+    from ._validation import _validate_stable_only_vrt
+    if _is_vrt_source:
+        _validate_stable_only_vrt(
+            source,
+            stable_only=stable_only,
+            allow_experimental_codecs=allow_experimental_codecs,
+        )
+    else:
+        _validate_stable_only_remote(
+            source,
+            stable_only=stable_only,
+            allow_experimental_codecs=allow_experimental_codecs,
+        )
+
     # Resolve ``bbox=`` to a pixel ``window=`` via a header-only
     # metadata read. Done at the dispatcher so every backend
     # (eager / dask / GPU / VRT) sees a uniform pixel window without
@@ -914,18 +946,8 @@ def open_geotiff(source: str | BinaryIO, *,
 
     # File-like buffer rejections for ``gpu=True`` / ``chunks=...`` already
     # fired inside ``_validate_dispatch_kwargs`` above; the non-VRT branches
-    # below run with a string source or an eager file-like.
-
-    # The VRT branch above gates ``stable_only=True`` for ``.vrt`` sources.
-    # The remaining non-VRT dispatch (GPU / dask / eager) can still route to
-    # the advanced-tier HTTP / fsspec readers, so apply the matching gate
-    # here before any backend fetches or decodes pixels.
-    from ._validation import _validate_stable_only_remote
-    _validate_stable_only_remote(
-        source,
-        stable_only=stable_only,
-        allow_experimental_codecs=allow_experimental_codecs,
-    )
+    # below run with a string source or an eager file-like. The remote /
+    # VRT ``stable_only=True`` gate ran ahead of bbox resolution above.
 
     # GPU path
     if gpu:
