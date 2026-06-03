@@ -27,6 +27,7 @@ from xrspatial.hydro.watershed_mfd import (
     _to_numpy_f64,
 )
 from xrspatial.utils import (
+    _validate_matching_shape,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -709,6 +710,13 @@ def hand_mfd(flow_dir_mfd: xr.DataArray,
             f"flow_dir_mfd must have shape (8, H, W), got {data.shape}")
 
     _, H, W = data.shape
+
+    _validate_matching_shape(
+        flow_accum, (H, W), func_name='hand_mfd',
+        name='flow_accum', expected_name='flow_dir_mfd')
+    _validate_matching_shape(
+        elevation, (H, W), func_name='hand_mfd',
+        name='elevation', expected_name='flow_dir_mfd')
 
     if isinstance(data, np.ndarray):
         _check_memory(H, W)
