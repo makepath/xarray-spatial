@@ -7,4 +7,4 @@ except ImportError:
 
 
 def has_rtx():
-    return has_cuda_and_cupy and RTX is not None
+    return has_cuda_and_cupy() and RTX is not None

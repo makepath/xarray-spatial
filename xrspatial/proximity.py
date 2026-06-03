@@ -735,6 +735,38 @@ def _process_proximity_line(
     return
 
 
+def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
+    """Nearest-target query that breaks ties by lowest target index.
+
+    ``cKDTree.query`` does not promise which of several equidistant targets
+    it returns, so allocation and direction can disagree with the brute-force
+    and CUDA backends on a tie. Target coordinates are stored in row-major
+    (flat-index) order, so the lowest target index is the lowest flat index --
+    the tie-break policy documented on ``allocation``/``direction``.
+
+    Query the two nearest targets; wherever they are equidistant, keep the one
+    with the smaller index. This resolves 2-way ties, which is what grid
+    geometry produces in practice. A pixel equidistant to three or more targets
+    relies on cKDTree returning the lower index among the rest, which it does
+    for the row-major target order used here but does not strictly promise.
+    """
+    n_targets = tree.n
+    if n_targets < 2:
+        return tree.query(query_pts, p=p, distance_upper_bound=max_distance)
+
+    dists2, idx2 = tree.query(query_pts, k=2, p=p,
+                              distance_upper_bound=max_distance)
+    dists = dists2[:, 0]
+    indices = idx2[:, 0]
+    # A tie exists where both neighbours are finite and equidistant. Prefer the
+    # smaller index in that case so the result is independent of cKDTree's
+    # internal traversal order.
+    tied = np.isfinite(dists2[:, 1]) & (dists2[:, 1] == dists)
+    if tied.any():
+        indices = np.where(tied, np.minimum(idx2[:, 0], idx2[:, 1]), indices)
+    return dists, indices
+
+
 def _kdtree_chunk_fn(block, y_coords_1d, x_coords_1d,
                      tree, block_info, max_distance, p,
                      process_mode, target_vals, target_coords):
@@ -751,8 +783,8 @@ def _kdtree_chunk_fn(block, y_coords_1d, x_coords_1d,
     yy, xx = np.meshgrid(chunk_ys, chunk_xs, indexing='ij')
     query_pts = np.column_stack([yy.ravel(), xx.ravel()])
 
-    dists, indices = tree.query(query_pts, p=p,
-                                distance_upper_bound=max_distance)
+    dists, indices = _kdtree_query_lowest_index(
+        tree, query_pts, p, max_distance)
 
     n_targets = len(target_vals)
     oob = indices >= n_targets
@@ -979,7 +1011,7 @@ def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
 
         tree = cKDTree(target_coords)
         ub = max_distance if np.isfinite(max_distance) else np.inf
-        dists, indices = tree.query(query_pts, p=p, distance_upper_bound=ub)
+        dists, indices = _kdtree_query_lowest_index(tree, query_pts, p, ub)
 
         n_targets = len(target_vals)
         oob = indices >= n_targets
@@ -1374,16 +1406,35 @@ def _process(
                 img, x_coords, y_coords, target_values,
                 np.float32(max_distance), distance_metric, process_mode,
             )
+        # ALLOCATION and DIRECTION pick a single target per pixel, so a tie
+        # between two equidistant targets must resolve the same way on every
+        # backend. The line-sweep breaks ties as a side effect of its
+        # four-pass propagation order, which disagrees with the brute-force
+        # and CUDA kernels. Route those modes through the brute-force search,
+        # which keeps the lowest-flat-index target on a tie (see the
+        # `allocation`/`direction` docstrings). Brute force is O(N*T) versus
+        # the line-sweep's O(N); the slower scan is a deliberate trade for a
+        # tie-break that matches every other backend. PROXIMITY only returns
+        # the distance, which is identical for tied targets, so the faster
+        # line-sweep stays in use there.
+        if process_mode in (ALLOCATION, DIRECTION):
+            return _process_numpy_bruteforce(
+                img, x_coords, y_coords, target_values,
+                np.float32(max_distance), distance_metric, process_mode,
+            )
         return _process_numpy_linesweep(img, x_coords, y_coords)
 
     def _process_dask(raster, xs, ys):
 
+        # Rechunk into a local variable instead of reassigning raster.data,
+        # which would mutate the caller's input DataArray (issue #2847).
+        data = raster.data
         if max_distance >= max_possible_distance:
             # consider all targets in the whole raster
             # the data array is computed at once,
             # make sure your data fit your memory
             height, width = raster.shape
-            raster.data = raster.data.rechunk({0: height, 1: width})
+            data = data.rechunk({0: height, 1: width})
             xs = xs.rechunk({0: height, 1: width})
             ys = ys.rechunk({0: height, 1: width})
             pad_y = pad_x = 0
@@ -1393,7 +1444,7 @@ def _process(
 
         out = da.map_overlap(
             _process_numpy,
-            raster.data, xs, ys,
+            data, xs, ys,
             depth=(pad_y, pad_x),
             boundary=np.nan,
             meta=np.array((), dtype=np.float32),
@@ -1680,6 +1731,13 @@ def allocation(
     `allocation` chunk by chunk by expanding the chunk's borders to cover
     the `max_distance`.
 
+    Tie-breaking: when two or more targets are exactly equidistant from a
+    pixel, the target with the lowest flat (row-major) index wins, i.e. the
+    first target encountered when scanning the raster top-to-bottom and
+    left-to-right. This policy is identical across all backends (numpy, cupy,
+    dask+numpy, dask+cupy), so the allocated value is deterministic regardless
+    of which backend computes it.
+
     Parameters
     ----------
     raster : xr.DataArray or xr.Dataset
@@ -1830,6 +1888,13 @@ def direction(
     The implementation for Dask-backed uses `dask.map_overlap` to compute
     proximity direction chunk by chunk by expanding the chunk's borders
     to cover the `max_distance`.
+
+    Tie-breaking: when two or more targets are exactly equidistant from a
+    pixel, the direction is computed toward the target with the lowest flat
+    (row-major) index, i.e. the first target encountered when scanning the
+    raster top-to-bottom and left-to-right. This policy is identical across
+    all backends (numpy, cupy, dask+numpy, dask+cupy), so the reported
+    direction is deterministic regardless of which backend computes it.
 
     Parameters
     ----------

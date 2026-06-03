@@ -332,6 +332,61 @@ class TestFlowAccumulationMFDDask:
         np.testing.assert_allclose(
             accum_dask.values, accum_np.values, atol=1e-10, equal_nan=True)
 
+    def test_dask_assembly_is_lazy(self, monkeypatch):
+        """The returned DataArray must not run the assembly kernel until compute.
+
+        The boundary-convergence sweep runs the tile kernel eagerly during the
+        call, but assembling the output raster must be deferred to compute time.
+        Spy on the tile kernel and confirm that ``.compute()`` triggers
+        additional kernel calls beyond what the convergence sweep ran.
+        """
+        dask = pytest.importorskip('dask.array')
+        import importlib
+        mod = importlib.import_module('xrspatial.hydro.flow_accumulation_mfd')
+
+        counter = {'n': 0}
+        orig = mod._flow_accum_mfd_tile_kernel
+
+        def _spy(*args, **kwargs):
+            counter['n'] += 1
+            return orig(*args, **kwargs)
+
+        monkeypatch.setattr(mod, '_flow_accum_mfd_tile_kernel', _spy)
+
+        elev = _make_bowl(11)
+        mfd_np = flow_direction_mfd(elev)
+        data_dask = dask.from_array(mfd_np.values, chunks=(8, 4, 4))
+        mfd_dask = xr.DataArray(data_dask, dims=mfd_np.dims, coords=mfd_np.coords)
+
+        accum = flow_accumulation_mfd(mfd_dask)
+        calls_after_call = counter['n']
+
+        # The output is a lazy dask-backed DataArray.
+        assert isinstance(accum.data, dask.Array)
+
+        accum.compute()
+        calls_added_by_compute = counter['n'] - calls_after_call
+
+        # If assembly were eager, compute would add zero kernel calls.
+        assert calls_added_by_compute > 0
+
+    def test_dask_band_axis_chunked(self):
+        """An input chunked along the 8-band axis still matches numpy."""
+        dask = pytest.importorskip('dask.array')
+        elev = _make_bowl(9)
+        mfd_np = flow_direction_mfd(elev)
+        accum_np = flow_accumulation_mfd(mfd_np)
+
+        # Chunk axis 0 into two blocks to exercise the rechunk guard.
+        data_dask = dask.from_array(mfd_np.values, chunks=(4, 5, 5))
+        mfd_dask = xr.DataArray(data_dask,
+                                dims=mfd_np.dims,
+                                coords=mfd_np.coords)
+        accum_dask = flow_accumulation_mfd(mfd_dask)
+
+        np.testing.assert_allclose(
+            accum_dask.values, accum_np.values, atol=1e-10, equal_nan=True)
+
 
 class TestFlowAccumulationMFDDataset:
     """Dataset support tests."""
@@ -414,3 +469,41 @@ class TestMemoryGuard:
         ):
             with pytest.raises(MemoryError, match="dask"):
                 flow_accumulation_mfd(mfd)
+
+
+def _make_cyclic_mfd(backend='numpy', chunks=(8, 2, 2)):
+    """MFD fractions with a 2-cell horizontal cycle in the top row.
+
+    Row 0: (0,0) flows E into (0,1); (0,1) flows W into (0,0).
+    Row 1: both cells flow S off the grid so they are not in the cycle.
+    """
+    fracs = np.zeros((8, 2, 2), dtype=np.float64)
+    fracs[0, 0, 0] = 1.0  # (0,0) -> E
+    fracs[4, 0, 1] = 1.0  # (0,1) -> W  (closes the cycle)
+    fracs[2, 1, 0] = 1.0  # (1,0) -> S off grid
+    fracs[2, 1, 1] = 1.0  # (1,1) -> S off grid
+    da_obj = xr.DataArray(
+        fracs,
+        dims=('neighbor', 'y', 'x'),
+        coords={'y': [1.0, 0.0], 'x': [0.0, 1.0]},
+    )
+    if backend == 'dask':
+        dask = pytest.importorskip('dask.array')
+        da_obj = xr.DataArray(
+            dask.from_array(fracs, chunks=chunks),
+            dims=da_obj.dims, coords=da_obj.coords)
+    return da_obj
+
+
+class TestFlowAccumulationMFDCycleDetection:
+    """A cyclic fraction grid must raise rather than return wrong values."""
+
+    def test_numpy_cycle_raises(self):
+        mfd = _make_cyclic_mfd(backend='numpy')
+        with pytest.raises(ValueError, match="cycle"):
+            flow_accumulation_mfd(mfd)
+
+    def test_dask_cycle_raises(self):
+        mfd = _make_cyclic_mfd(backend='dask')
+        with pytest.raises(ValueError, match="cycle"):
+            flow_accumulation_mfd(mfd).data.compute()
