@@ -1530,6 +1530,35 @@ def test_bounded_dask_irregular_coords_matches_numpy(func):
 
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_bounded_dask_does_not_mutate_input(func):
+    """Bounded dask must not rebind or rechunk the caller's .data (issue #2908).
+
+    When the halo is deeper than a chunk, the bounded path folds that axis into
+    a single chunk. The fold used to be assigned back to ``raster.data``, which
+    rebound the caller's DataArray (the same mutation issue #2847 guards
+    against) and left map_overlap reading a stale, un-folded array. Sizing the
+    halo at 3 px against width-2 column chunks forces the column-axis fold.
+    """
+    coords = np.array([0, 100, 101, 102, 103, 104, 105, 106], dtype=float)
+    data = np.zeros((8, 8), dtype=np.float64)
+    data[3, 3] = 1.0
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = coords
+    raster['lat'] = coords
+    raster.data = da.from_array(data, chunks=(4, 2))
+
+    data_before = raster.data
+    chunks_before = raster.data.chunks
+
+    func(raster, x='lon', y='lat', max_distance=2.5).compute()
+
+    assert raster.data is data_before, "bounded dask rebound the input .data"
+    assert raster.data.chunks == chunks_before, \
+        "bounded dask rechunked the input"
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
 @pytest.mark.parametrize("shape_name", ["1xN", "Nx1"])
 def test_bounded_dask_single_row_or_col_matches_numpy(func, shape_name):
     """Bounded dask must not crash on 1xN / Nx1 rasters.
