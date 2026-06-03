@@ -717,13 +717,19 @@ def test_viewshed_metadata_preserved(backend, max_distance):
 # NaN / nodata input
 # -------------------------------------------------------------------
 
-@pytest.mark.parametrize("nan_pos", [(1, 1), (0, 0), (4, 4)])
-def test_viewshed_nan_input_supported_positions(nan_pos):
-    """A single NaN cell at these positions runs without error.
+# Every NaN position around the 5x5 grid, including the observer row to the
+# right of the observer (2, 4), which used to raise ValueError: node not found.
+_NAN_POSITIONS = [
+    (1, 1), (0, 0), (4, 4), (2, 4), (2, 0), (0, 2), (4, 2), (3, 4), (2, 3),
+]
 
-    The CPU sweep falls back to the centre elevation when bilinear
-    neighbours are NaN, so these cases complete.  See the companion
-    xfail test for the positions that still crash (issue #2693).
+
+@pytest.mark.parametrize("nan_pos", _NAN_POSITIONS)
+def test_viewshed_nan_input_supported_positions(nan_pos):
+    """A single NaN cell at any position runs without error (issue #2857).
+
+    NaN cells generate no sweep events, so the sweep never tries to delete an
+    uninserted node.  The NaN cell stays at its INVISIBLE fill value.
     """
     arr = np.full((5, 5), 2.0)
     arr[nan_pos] = np.nan
@@ -735,19 +741,18 @@ def test_viewshed_nan_input_supported_positions(nan_pos):
 
     # Observer cell is always 180.
     assert v.values[2, 2] == 180.0
-    # The NaN cell itself must not be reported as a valid visibility angle.
-    assert v.values[nan_pos] == INVISIBLE or np.isnan(v.values[nan_pos])
+    # The NaN cell must read as INVISIBLE so downstream `!= INVISIBLE`
+    # visibility checks do not count it as visible.
+    assert v.values[nan_pos] == INVISIBLE
 
 
-@pytest.mark.xfail(reason="viewshed crashes on NaN at this position "
-                          "(ValueError: node not found), see issue #2693",
-                   strict=True)
-def test_viewshed_nan_input_crashing_position():
-    """Regression guard for the incomplete NaN handling in the CPU sweep.
+def test_viewshed_nan_observer_row_right_does_not_crash():
+    """Regression test for issue #2857.
 
-    A NaN on the observer's row to the right raises
-    ``ValueError: node not found`` from ``_delete_from_tree``.  This test
-    documents the bug; remove the xfail once issue #2693 is fixed.
+    A NaN on the observer's row to the right of the observer used to raise
+    ``ValueError: node not found`` from ``_delete_from_tree`` because the cell
+    was never inserted into the status structure yet still emitted an EXITING
+    event.
     """
     arr = np.full((5, 5), 2.0)
     arr[2, 4] = np.nan
@@ -755,7 +760,65 @@ def test_viewshed_nan_input_crashing_position():
     ys = np.arange(5.0)
     raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
 
-    viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+    v = viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+
+    assert v.values[2, 2] == 180.0
+    assert v.values[2, 4] == INVISIBLE
+
+
+def test_viewshed_nan_does_not_leak_visibility_to_origin():
+    """Skipped NaN cells must not leave events that mark cell (0, 0) visible.
+
+    The event list is pre-allocated; dropping events for NaN cells without
+    trimming the unused rows would sort all-zero rows as CENTER events at
+    cell (0, 0).  A NaN at the observer cell's neighbour exercises that path.
+    """
+    arr = np.full((5, 5), 2.0)
+    # Several NaNs so multiple event slots go unused.
+    arr[0, 1] = np.nan
+    arr[1, 0] = np.nan
+    arr[3, 3] = np.nan
+    xs = np.arange(5.0)
+    ys = np.arange(5.0)
+    raster = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    no_nan = xa.DataArray(np.full((5, 5), 2.0), coords=dict(x=xs, y=ys),
+                          dims=["y", "x"])
+
+    v = viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+    base = viewshed(no_nan, x=2.0, y=2.0, observer_elev=5)
+
+    # (0, 0) is a real cell here, not an artifact: its visibility must match
+    # the NaN-free run (the NaNs are elsewhere and don't block the line).
+    assert v.values[0, 0] == base.values[0, 0]
+    for pos in [(0, 1), (1, 0), (3, 3)]:
+        assert v.values[pos] == INVISIBLE
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_viewshed_nan_input_across_backends(backend):
+    """NaN handling holds on the CPU-backed backends (numpy, dask Tier B).
+
+    The cupy/RTX path is a separate implementation and is not covered here.
+    """
+    arr = np.full((5, 5), 2.0)
+    arr[2, 4] = np.nan   # observer row, right of observer
+    arr[1, 1] = np.nan
+    xs = np.arange(5.0)
+    ys = np.arange(5.0)
+
+    if backend == "numpy":
+        data = arr
+    else:
+        data = da.from_array(arr, chunks=(3, 2))
+    raster = xa.DataArray(data, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    v = viewshed(raster, x=2.0, y=2.0, observer_elev=5)
+    vals = v.values
+
+    assert vals[2, 2] == 180.0
+    assert vals[2, 4] == INVISIBLE
+    assert vals[1, 1] == INVISIBLE
 
 
 @pytest.mark.parametrize("backend", ["numpy", "cupy", "dask"])
