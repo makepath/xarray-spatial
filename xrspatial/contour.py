@@ -205,6 +205,18 @@ def _emit_seg(r, c, tl, tr, bl, br, level, edge_a, edge_b,
         r1 = float(r) + t
         c1 = float(c)
 
+    # Degenerate-segment policy: corners are classified with ``>= level``,
+    # so a corner exactly equal to the level is treated as above.  When that
+    # happens the interpolation parameter lands on the corner and both
+    # endpoints can collapse onto the same point, producing a zero-length
+    # segment.  Drop those here so no zero-length / single-point geometry
+    # reaches stitching or GeoDataFrame output.  Exact float equality is
+    # intended: a real collapse computes both endpoints from the same corner
+    # value and yields bit-identical coordinates, while near-equal endpoints
+    # are genuine short segments and must be kept.
+    if r0 == r1 and c0 == c1:
+        return
+
     seg_rows[idx, 0] = r0
     seg_rows[idx, 1] = r1
     seg_cols[idx, 0] = c0
@@ -278,9 +290,26 @@ def _stitch_segments(seg_rows, seg_cols, n_segs):
                     break
 
         coords = np.column_stack([line_r, line_c])
-        lines.append(coords)
+        # Drop polylines that collapse to a single distinct point.  A line
+        # with fewer than two distinct vertices has zero length and produces
+        # an invalid LineString downstream.
+        if _has_distinct_points(coords, DECIMALS):
+            lines.append(coords)
 
     return lines
+
+
+def _has_distinct_points(coords, decimals):
+    """Return True if a polyline has at least two distinct vertices."""
+    if len(coords) < 2:
+        return False
+    r0 = round(coords[0, 0], decimals)
+    c0 = round(coords[0, 1], decimals)
+    for i in range(1, len(coords)):
+        if round(coords[i, 0], decimals) != r0 or \
+                round(coords[i, 1], decimals) != c0:
+            return True
+    return False
 
 
 def _extend_line(line_r, line_c, direction, rows, cols, used, endpoint_map,
@@ -546,7 +575,10 @@ def _to_geopandas(results, crs=None):
 
     records = []
     for level, coords in results:
-        if len(coords) >= 2:
+        # Require at least two distinct vertices.  _stitch_segments already
+        # drops single-point polylines, but guard here too so the geopandas
+        # path never emits a zero-length / invalid LineString on its own.
+        if _has_distinct_points(coords, 10):
             # coords are (row, col); convert to (x, y) = (col, row)
             geom = LineString(coords[:, ::-1])
             records.append({'level': level, 'geometry': geom})
@@ -587,7 +619,9 @@ def contours(
 
     n_levels : int, default 10
         Number of contour levels to generate when ``levels`` is not
-        provided.
+        provided.  Must be an integer >= 1; otherwise a ``TypeError``
+        (non-integer) or ``ValueError`` (< 1) is raised.  Ignored when
+        ``levels`` is given, in which case it is not validated.
 
     return_type : str, default "numpy"
         Output format.  ``"numpy"`` returns a list of ``(level, coords)``
@@ -611,6 +645,14 @@ def contours(
     across chunk boundaries, so peak memory scales with total contour
     complexity rather than chunk size.
 
+    Corners are classified with ``>= level``, so a corner exactly equal
+    to the level is treated as above it.  This can make a traced segment
+    collapse onto a single point.  Such degenerate (zero-length or
+    single-distinct-point) segments and polylines are dropped before
+    output, so no zero-length or invalid geometry reaches the numpy or
+    geopandas result.  The rule is applied identically across the numpy,
+    cupy, dask+numpy, and dask+cupy backends.
+
     Examples
     --------
     >>> from xrspatial import contours
@@ -631,6 +673,17 @@ def contours(
 
     # Determine contour levels.
     if levels is None:
+        # n_levels is only consumed on this auto-level branch, so validate
+        # it here.  When explicit levels are supplied n_levels is ignored,
+        # and rejecting it then would be surprising.  Reject bools too:
+        # bool is an int subclass, but True/False as a level count is a bug.
+        if isinstance(n_levels, bool) or not isinstance(n_levels, (int, np.integer)):
+            raise TypeError(
+                f"n_levels must be an integer, got {type(n_levels).__name__}"
+            )
+        if n_levels < 1:
+            raise ValueError(f"n_levels must be >= 1, got {n_levels}")
+
         # Reduce over finite values only.  +/-inf cells would otherwise
         # poison the range and make np.linspace emit non-finite levels,
         # silently dropping every contour for the finite terrain.  An
