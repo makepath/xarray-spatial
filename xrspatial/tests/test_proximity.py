@@ -1559,6 +1559,40 @@ def test_bounded_dask_single_row_or_col_matches_numpy(func, shape_name):
         result.values, expected, equal_nan=True, rtol=1e-5)
 
 
+# --- issue #2854: bounded-dask halo depth larger than an axis length -------
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_bounded_dask_skinny_raster_matches_numpy(func):
+    """Bounded dask must not crash when the halo is deeper than an axis.
+
+    Regression for issue #2854: on a skinny raster ``_halo_depth`` can return
+    a pixel radius larger than the raster height/width. That depth went
+    straight into ``da.map_overlap``, which rejects a depth larger than the
+    array along that axis and raised ``ValueError: The overlapping depth ...
+    is larger than your array ...``. A valid raster with a finite
+    ``max_distance`` should still run and match the numpy backend.
+    """
+    data = np.zeros((3, 100), dtype=np.float64)
+    data[1, 50] = 1.0
+    xs = np.linspace(0, 99, 100)
+    ys = np.linspace(0, 2, 3)
+
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = xs
+    raster['lat'] = ys
+    expected = func(raster, x='lon', y='lat', max_distance=10).data
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(data, chunks=(3, 100))
+    result = func(dask_raster, x='lon', y='lat', max_distance=10)
+
+    assert isinstance(result.data, da.Array)
+    np.testing.assert_allclose(
+        result.values, expected, equal_nan=True, rtol=1e-5)
+
+
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
 def test_target_values_none_default_matches_empty_list(func):
     # target_values default switched from [] to a None sentinel; passing

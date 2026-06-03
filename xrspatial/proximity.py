@@ -334,6 +334,43 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     return pad_y, pad_x
 
 
+def _fit_halo_to_chunks(pad_y, pad_x, *arrays):
+    """Make a bounded halo depth that ``da.map_overlap`` will accept.
+
+    ``map_overlap`` rejects a depth that is larger than the smallest chunk
+    along that axis. The pixel halo from ``_halo_depth`` can exceed that on
+    skinny rasters (e.g. a 3-row raster with a 10-pixel halo), or on
+    great-circle rasters where the pixel pitch shrinks toward the poles. When
+    a halo is too deep for the chunking, fold that whole axis into a single
+    chunk and drop its depth to zero: every chunk then sees the full axis, so
+    no target within ``max_distance`` is missed and the result still matches
+    the NumPy backend. The fold deliberately trades chunking on that axis for
+    correctness; clamping the depth while keeping multiple chunks would
+    silently drop targets that fall in a non-adjacent chunk, so do not replace
+    it with a bare depth clamp.
+
+    ``arrays`` are the dask arrays passed to the same ``map_overlap`` call
+    (the raster and the coordinate grids); they all share the raster's
+    chunking and are rechunked together so the call stays aligned.
+
+    Returns the adjusted ``(pad_y, pad_x)`` and the (possibly rechunked)
+    arrays in the same order they were given.
+    """
+    arrays = list(arrays)
+    height, width = arrays[0].shape
+    chunks_y, chunks_x = arrays[0].chunks
+    rechunk = {}
+    if pad_y > min(chunks_y):
+        rechunk[0] = height
+        pad_y = 0
+    if pad_x > min(chunks_x):
+        rechunk[1] = width
+        pad_x = 0
+    if rechunk:
+        arrays = [a.rechunk(rechunk) for a in arrays]
+    return pad_y, pad_x, arrays
+
+
 @ngjit
 def _calc_direction(x1, x2, y1, y2):
     # Calculate direction from (x1, y1) to a source cell (x2, y2).
@@ -604,6 +641,10 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
     ys = da.repeat(y_da, raster.shape[1]).reshape(
         raster.shape).rechunk(raster.data.chunks)
 
+    # Keep the overlap depth within what map_overlap accepts on skinny rasters.
+    pad_y, pad_x, (raster_data, xs, ys) = _fit_halo_to_chunks(
+        pad_y, pad_x, raster.data, xs, ys)
+
     # Capture closure vars for the chunk function
     tv = target_values
     md = max_distance
@@ -618,7 +659,7 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
 
     return da.map_overlap(
         _chunk_func,
-        raster.data, xs, ys,
+        raster_data, xs, ys,
         depth=(pad_y, pad_x),
         boundary=np.nan,
         meta=cp.array((), dtype=cp.float32),
@@ -1492,6 +1533,8 @@ def _process(
         else:
             pad_y, pad_x = _halo_depth(
                 x_coords, y_coords, max_distance, distance_metric)
+            pad_y, pad_x, (raster.data, xs, ys) = _fit_halo_to_chunks(
+                pad_y, pad_x, raster.data, xs, ys)
 
         out = da.map_overlap(
             _process_numpy,
