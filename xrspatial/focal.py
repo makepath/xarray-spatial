@@ -33,6 +33,31 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_a
                              ngjit)
 
 
+def _validate_binary_kernel(kernel, func_name):
+    """Reject non-binary kernels for the mask-based focal APIs.
+
+    ``apply`` and ``focal_stats`` document the kernel as "2D array where
+    values of 1 indicate the kernel" -- a binary membership mask, not a
+    weight array.  The CPU and GPU code paths disagree on what a value
+    other than 0 or 1 means: ``_apply_numpy`` only copies cells where
+    ``kernel == 1`` (so a weight of 2 is dropped), while the GPU sum/mean
+    kernels treat every nonzero cell as a weight (``w * v``).  The result
+    is backend-dependent output for the same call.
+
+    Weighting belongs inside the user-supplied ``func`` (see the ``apply``
+    docstring example) or in ``convolve_2d`` / ``hotspots``, which handle
+    weighted kernels directly.  Reject anything that is not strictly 0/1
+    here so all four backends agree.
+    """
+    if not np.all((kernel == 0) | (kernel == 1)):
+        raise ValueError(
+            f"{func_name}(): kernel must be binary (only 0 and 1 values, "
+            "no other weights or NaN); it is used as a membership mask, not "
+            "a weight array. Apply per-cell weights inside the func argument, "
+            "or use convolve_2d for a weighted convolution."
+        )
+
+
 def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name):
     """Reject kernel + raster combinations that would OOM the host.
 
@@ -552,7 +577,11 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
         CuPy backed, Dask with NumPy backed, or Dask with CuPy backed
         DataArray.
     kernel : numpy.ndarray
-        2D array where values of 1 indicate the kernel.
+        2D binary array where values of 1 indicate the kernel. The kernel
+        is a membership mask, not a weight array; only 0 and 1 are allowed
+        and any other value raises a ValueError. Apply per-cell weights
+        inside ``func`` (see the example below), or use
+        ``xrspatial.convolution.convolve_2d`` for a weighted convolution.
     func : callable, default=xrspatial.focal._calc_mean
         Function which takes an input array and returns an array.
         For cupy and dask+cupy backends the function must be a
@@ -666,6 +695,7 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
 
     # Validate the kernel
     kernel = custom_kernel(kernel)
+    _validate_binary_kernel(kernel, func_name='apply')
 
     _validate_boundary(boundary)
 
@@ -1229,7 +1259,10 @@ def focal_stats(agg,
         CuPy backed, Dask with NumPy backed, or Dask with CuPy backed
         DataArray.
     kernel : numpy.array
-        2D array where values of 1 indicate the kernel.
+        2D binary array where values of 1 indicate the kernel. The kernel
+        is a membership mask, not a weight array; only 0 and 1 are allowed
+        and any other value raises a ValueError. For a weighted convolution
+        use ``xrspatial.convolution.convolve_2d`` instead.
     stats_funcs: list of string
         List of statistics types to be calculated.
         Default set to ['mean', 'max', 'min', 'range', 'std', 'var',
@@ -1297,6 +1330,7 @@ def focal_stats(agg,
 
     # Validate the kernel
     kernel = custom_kernel(kernel)
+    _validate_binary_kernel(kernel, func_name='focal_stats')
 
     _validate_boundary(boundary)
 

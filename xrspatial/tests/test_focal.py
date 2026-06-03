@@ -636,6 +636,107 @@ def test_focal_stats_preserves_float64(backend):
     assert _compute_dtype(result) == np.float64
 
 
+# --- non-binary kernel rejection (issue-2848) -----------------------------
+# apply() and focal_stats() document the kernel as a binary membership mask
+# ("values of 1 indicate the kernel"). The CPU path only kept cells equal to
+# 1 (dropping a weight of 2 entirely) while the GPU sum/mean kernels weighted
+# every nonzero cell by its value, so the same non-binary kernel produced
+# backend-dependent output. Both APIs now reject non-binary kernels on every
+# backend, so the inconsistency cannot arise.
+
+NON_BINARY_KERNELS = [
+    np.array([[0, 2, 0], [2, 2, 2], [0, 2, 0]]),   # all weights are 2
+    np.array([[0, 1, 0], [1, 2, 1], [0, 1, 0]]),   # mixed 1 and 2
+    np.array([[0, 0.5, 0], [0.5, 1, 0.5], [0, 0.5, 0]]),  # fractional weights
+]
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("kernel", NON_BINARY_KERNELS)
+def test_apply_rejects_non_binary_kernel(backend, kernel):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+
+    with pytest.raises(ValueError, match="kernel must be binary"):
+        apply(agg, kernel)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("kernel", NON_BINARY_KERNELS)
+def test_focal_stats_rejects_non_binary_kernel(backend, kernel):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+
+    with pytest.raises(ValueError, match="kernel must be binary"):
+        focal_stats(agg, kernel, stats_funcs=['mean', 'sum'])
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_apply_and_focal_stats_accept_binary_kernel(backend):
+    # The binary 0/1 contract still works on every backend after the guard.
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+
+    if 'cupy' in backend:
+        from xrspatial.focal import _focal_mean_cuda
+        func = _focal_mean_cuda
+    else:
+        from xrspatial.focal import _calc_mean
+        func = _calc_mean
+
+    apply_result = apply(agg, kernel, func)
+    general_output_checks(agg, apply_result)
+
+    stats_result = focal_stats(agg, kernel, stats_funcs=['mean', 'sum'])
+    assert stats_result.ndim == 3
+
+
+def test_apply_rejects_nan_kernel():
+    # A NaN kernel cell is neither 0 nor 1, so it is rejected like any other
+    # non-binary value (the error message calls out NaN explicitly).
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    kernel = np.array([[0, np.nan, 0], [1, 1, 1], [0, 1, 0]])
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    with pytest.raises(ValueError, match="kernel must be binary"):
+        apply(agg, kernel)
+
+
+def test_apply_focal_stats_agree_on_binary_kernel_numpy():
+    # Reference invariant the guard protects: on a binary kernel,
+    # focal_stats(mean) and apply(mean) agree (focal_stats delegates to
+    # apply on the CPU). This is the consistency the issue is about; with a
+    # non-binary kernel the two would have diverged, which is now blocked.
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    agg = xr.DataArray(data, dims=['y', 'x'])
+
+    from xrspatial.focal import _calc_mean
+    apply_mean = apply(agg, kernel, _calc_mean)
+    stats_mean = focal_stats(agg, kernel, stats_funcs=['mean']).sel(stats='mean')
+
+    np.testing.assert_allclose(
+        apply_mean.data, stats_mean.data, equal_nan=True)
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
 def test_apply_keeps_float32(backend):
     # The other side of the contract: a float32 input must not be promoted
