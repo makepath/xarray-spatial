@@ -204,6 +204,15 @@ def _emit_seg(r, c, tl, tr, bl, br, level, edge_a, edge_b,
         r1 = float(r) + t
         c1 = float(c)
 
+    # Degenerate-segment policy: corners are classified with ``>= level``,
+    # so a corner exactly equal to the level is treated as above.  When that
+    # happens the interpolation parameter lands on the corner and both
+    # endpoints can collapse onto the same point, producing a zero-length
+    # segment.  Drop those here so no zero-length / single-point geometry
+    # reaches stitching or GeoDataFrame output.
+    if r0 == r1 and c0 == c1:
+        return
+
     seg_rows[idx, 0] = r0
     seg_rows[idx, 1] = r1
     seg_cols[idx, 0] = c0
@@ -277,9 +286,26 @@ def _stitch_segments(seg_rows, seg_cols, n_segs):
                     break
 
         coords = np.column_stack([line_r, line_c])
-        lines.append(coords)
+        # Drop polylines that collapse to a single distinct point.  A line
+        # with fewer than two distinct vertices has zero length and produces
+        # an invalid LineString downstream.
+        if _has_distinct_points(coords, DECIMALS):
+            lines.append(coords)
 
     return lines
+
+
+def _has_distinct_points(coords, decimals):
+    """Return True if a polyline has at least two distinct vertices."""
+    if len(coords) < 2:
+        return False
+    r0 = round(coords[0, 0], decimals)
+    c0 = round(coords[0, 1], decimals)
+    for i in range(1, len(coords)):
+        if round(coords[i, 0], decimals) != r0 or \
+                round(coords[i, 1], decimals) != c0:
+            return True
+    return False
 
 
 def _extend_line(line_r, line_c, direction, rows, cols, used, endpoint_map,
@@ -607,6 +633,14 @@ def contours(
     is an inherently sequential graph traversal.  For Dask inputs,
     each chunk is processed independently and results are merged,
     keeping peak memory proportional to chunk size.
+
+    Corners are classified with ``>= level``, so a corner exactly equal
+    to the level is treated as above it.  This can make a traced segment
+    collapse onto a single point.  Such degenerate (zero-length or
+    single-distinct-point) segments and polylines are dropped before
+    output, so no zero-length or invalid geometry reaches the numpy or
+    geopandas result.  The rule is applied identically across the numpy,
+    cupy, dask+numpy, and dask+cupy backends.
 
     Examples
     --------
