@@ -156,17 +156,14 @@ def test_float_mask_on_integer_raster_matches_bool(
     assert _result_signature(vals, polys) == ref_sig
 
 
-@pytest.mark.xfail(
-    reason="float mask on float raster raises TypeError from "
-           "mask & nan_mask (polygonize.py:918); source bug #2623",
-    raises=TypeError, strict=True)
 @pytest.mark.parametrize("backend", _backend_params())
 @pytest.mark.parametrize("connectivity", [4, 8])
 @pytest.mark.parametrize("mask_dtype", _FLOAT_MASK_DTYPES)
 def test_float_mask_on_float_raster_2623(mask_dtype, backend, connectivity):
-    """A float mask on a float raster should polygonize, but currently
-    crashes (#2623).  xfail-strict so this flips to a pass once the
-    source casts the mask to bool before ``& nan_mask``."""
+    """A float mask on a float raster polygonizes the same as the bool
+    mask.  Regression for #2623: the float-raster branch cast the mask to
+    bool before ``& nan_mask`` so bitwise_and no longer rejects the float
+    array."""
     ref_vals, ref_polys = _bool_reference_same_backend(
         _FDATA, backend, connectivity)
     ref_sig = _result_signature(ref_vals, ref_polys)
