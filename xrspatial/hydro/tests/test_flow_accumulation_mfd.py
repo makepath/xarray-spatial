@@ -332,6 +332,61 @@ class TestFlowAccumulationMFDDask:
         np.testing.assert_allclose(
             accum_dask.values, accum_np.values, atol=1e-10, equal_nan=True)
 
+    def test_dask_assembly_is_lazy(self, monkeypatch):
+        """The returned DataArray must not run the assembly kernel until compute.
+
+        The boundary-convergence sweep runs the tile kernel eagerly during the
+        call, but assembling the output raster must be deferred to compute time.
+        Spy on the tile kernel and confirm that ``.compute()`` triggers
+        additional kernel calls beyond what the convergence sweep ran.
+        """
+        dask = pytest.importorskip('dask.array')
+        import importlib
+        mod = importlib.import_module('xrspatial.hydro.flow_accumulation_mfd')
+
+        counter = {'n': 0}
+        orig = mod._flow_accum_mfd_tile_kernel
+
+        def _spy(*args, **kwargs):
+            counter['n'] += 1
+            return orig(*args, **kwargs)
+
+        monkeypatch.setattr(mod, '_flow_accum_mfd_tile_kernel', _spy)
+
+        elev = _make_bowl(11)
+        mfd_np = flow_direction_mfd(elev)
+        data_dask = dask.from_array(mfd_np.values, chunks=(8, 4, 4))
+        mfd_dask = xr.DataArray(data_dask, dims=mfd_np.dims, coords=mfd_np.coords)
+
+        accum = flow_accumulation_mfd(mfd_dask)
+        calls_after_call = counter['n']
+
+        # The output is a lazy dask-backed DataArray.
+        assert isinstance(accum.data, dask.Array)
+
+        accum.compute()
+        calls_added_by_compute = counter['n'] - calls_after_call
+
+        # If assembly were eager, compute would add zero kernel calls.
+        assert calls_added_by_compute > 0
+
+    def test_dask_band_axis_chunked(self):
+        """An input chunked along the 8-band axis still matches numpy."""
+        dask = pytest.importorskip('dask.array')
+        elev = _make_bowl(9)
+        mfd_np = flow_direction_mfd(elev)
+        accum_np = flow_accumulation_mfd(mfd_np)
+
+        # Chunk axis 0 into two blocks to exercise the rechunk guard.
+        data_dask = dask.from_array(mfd_np.values, chunks=(4, 5, 5))
+        mfd_dask = xr.DataArray(data_dask,
+                                dims=mfd_np.dims,
+                                coords=mfd_np.coords)
+        accum_dask = flow_accumulation_mfd(mfd_dask)
+
+        np.testing.assert_allclose(
+            accum_dask.values, accum_np.values, atol=1e-10, equal_nan=True)
+
 
 class TestFlowAccumulationMFDDataset:
     """Dataset support tests."""
