@@ -1707,3 +1707,62 @@ def test_great_circle_numpy_off_by_more_than_a_metre_is_fixed(
         raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE').data
 
     assert np.nanmax(np.abs(result - expected)) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Regression: unbounded dask fallback must not mutate the caller's input
+# (issue #2847). _process_dask used to do raster.data = raster.data.rechunk(),
+# which rebound .data on the caller's DataArray for the GREAT_CIRCLE and
+# no-scipy fallback paths.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("op", [proximity, allocation, direction])
+def test_proximity_dask_great_circle_does_not_mutate_input(backend, op):
+    """GREAT_CIRCLE unbounded fallback keeps the input .data untouched."""
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+
+    data = np.zeros((8, 10), dtype=np.float64)
+    data[2, 3] = 1.0
+    data[6, 8] = 2.0
+    raster = _backend_raster(data, backend)
+
+    data_before = raster.data
+    chunks_before = raster.data.chunks
+
+    op(raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE')
+
+    assert raster.data is data_before, "proximity rebound the input .data"
+    assert raster.data.chunks == chunks_before, "proximity rechunked the input"
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("op", [proximity, allocation, direction])
+def test_proximity_dask_no_scipy_does_not_mutate_input(backend, op):
+    """No-scipy unbounded fallback keeps the input .data untouched."""
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+
+    import sys
+    prox_mod = sys.modules['xrspatial.proximity']
+
+    data = np.zeros((8, 10), dtype=np.float64)
+    data[2, 3] = 1.0
+    data[6, 8] = 2.0
+    raster = _backend_raster(data, backend)
+
+    data_before = raster.data
+    chunks_before = raster.data.chunks
+
+    original_ckdtree = prox_mod.cKDTree
+    try:
+        prox_mod.cKDTree = None
+        op(raster, x='lon', y='lat')
+    finally:
+        prox_mod.cKDTree = original_ckdtree
+
+    assert raster.data is data_before, "proximity rebound the input .data"
+    assert raster.data.chunks == chunks_before, "proximity rechunked the input"

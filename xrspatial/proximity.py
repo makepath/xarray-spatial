@@ -1426,12 +1426,15 @@ def _process(
 
     def _process_dask(raster, xs, ys):
 
+        # Rechunk into a local variable instead of reassigning raster.data,
+        # which would mutate the caller's input DataArray (issue #2847).
+        data = raster.data
         if max_distance >= max_possible_distance:
             # consider all targets in the whole raster
             # the data array is computed at once,
             # make sure your data fit your memory
             height, width = raster.shape
-            raster.data = raster.data.rechunk({0: height, 1: width})
+            data = data.rechunk({0: height, 1: width})
             xs = xs.rechunk({0: height, 1: width})
             ys = ys.rechunk({0: height, 1: width})
             pad_y = pad_x = 0
@@ -1441,7 +1444,7 @@ def _process(
 
         out = da.map_overlap(
             _process_numpy,
-            raster.data, xs, ys,
+            data, xs, ys,
             depth=(pad_y, pad_x),
             boundary=np.nan,
             meta=np.array((), dtype=np.float32),
