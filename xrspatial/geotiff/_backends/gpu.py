@@ -210,10 +210,13 @@ def read_geotiff_gpu(source: str, *,
     stable_only : bool, default False
         [experimental] Read-side opt-in for stable-tier sources only.
         The GPU read path does not consume VRT sources directly (VRT
-        routing happens in ``open_geotiff``), so this kwarg is accepted
-        for cross-backend signature symmetry and is a no-op on the GPU
-        eager / chunked paths. See ``open_geotiff`` for the full
-        description.
+        routing happens in ``open_geotiff``), but it does route HTTP /
+        fsspec sources through the CPU fallback, and those advanced-tier
+        readers must be gated. With ``stable_only=True`` a remote source
+        raises ``RemoteStableSourcesOnlyError`` before any cupy import or
+        decode, matching ``open_geotiff`` and ``read_geotiff_dask``. Pass
+        ``allow_experimental_codecs=True`` to unlock the advanced tier.
+        See ``open_geotiff`` for the full description.
     allow_experimental_codecs : bool, default False
         [experimental] Read-side opt-in for Tier 3 experimental codecs
         (``lerc``, ``jpeg2000`` / ``j2k``, ``lz4``). The GPU read path
@@ -273,6 +276,21 @@ def read_geotiff_gpu(source: str, *,
         missing_sources=missing_sources,
         band_nodata=band_nodata,
         max_cloud_bytes=max_cloud_bytes,
+    )
+
+    # ``open_geotiff`` and ``read_geotiff_dask`` gate ``stable_only=True``
+    # for advanced-tier HTTP / fsspec sources before dispatching. This GPU
+    # entry point is also a direct public reader and it routes remote
+    # sources through the CPU fallback below, so a direct caller could read
+    # an advanced-tier remote source under ``stable_only=True`` unless the
+    # same gate fires here. Run it before the cupy import, the CUDA
+    # preflight, and the remote fallback so the rejection is independent of
+    # GPU availability, matching the other two readers.
+    from .._validation import _validate_stable_only_remote
+    _validate_stable_only_remote(
+        source,
+        stable_only=stable_only,
+        allow_experimental_codecs=allow_experimental_codecs,
     )
 
     new_passed = on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL

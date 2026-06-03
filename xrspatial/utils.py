@@ -109,6 +109,45 @@ def _validate_raster(
                 )
 
 
+def _validate_matching_shape(
+    agg,
+    expected_shape,
+    *,
+    func_name: str,
+    name: str = 'raster',
+    expected_name: str = 'the primary raster',
+):
+    """Validate that *agg* has spatial shape ``expected_shape``.
+
+    Used to confirm a companion raster (e.g. start points, pour points,
+    flow accumulation) covers the same (H, W) grid as the primary input
+    before any kernel indexes into it.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        Companion raster to validate.
+    expected_shape : tuple of int
+        Required ``(H, W)`` shape.
+    func_name : str
+        Name of the calling function (for error messages).
+    name : str
+        Parameter name (for error messages).
+    expected_name : str
+        Description of the raster whose shape is the reference.
+
+    Raises
+    ------
+    ValueError
+        If ``agg.shape`` does not equal ``expected_shape``.
+    """
+    if tuple(agg.shape) != tuple(expected_shape):
+        raise ValueError(
+            f"{func_name}(): `{name}` shape {tuple(agg.shape)} does not "
+            f"match {expected_name} shape {tuple(expected_shape)}"
+        )
+
+
 def _validate_scalar(
     value,
     *,
@@ -896,6 +935,11 @@ Z_UNITS = {
 # Known dimension / coordinate names (lower-cased for matching)
 _LAT_NAMES = {'lat', 'latitude', 'y'}
 _LON_NAMES = {'lon', 'longitude', 'x'}
+# Names that unambiguously mean geographic lat/lon. These take precedence
+# over a numeric dimension coord so a curvilinear raster with numeric y/x
+# index coords plus real lat/lon coords resolves to the lat/lon coords.
+_EXPLICIT_LAT_NAMES = {'lat', 'latitude'}
+_EXPLICIT_LON_NAMES = {'lon', 'longitude'}
 
 
 def _extract_latlon_coords(agg: xr.DataArray):
@@ -926,9 +970,11 @@ def _extract_latlon_coords(agg: xr.DataArray):
     dim_y, dim_x = agg.dims[-2], agg.dims[-1]
 
     # --- locate lat coordinate ---
-    lat_coord = _find_coord(agg, dim_y, _LAT_NAMES, 'latitude')
+    lat_coord = _find_coord(agg, dim_y, _LAT_NAMES, _EXPLICIT_LAT_NAMES,
+                            'latitude')
     # --- locate lon coordinate ---
-    lon_coord = _find_coord(agg, dim_x, _LON_NAMES, 'longitude')
+    lon_coord = _find_coord(agg, dim_x, _LON_NAMES, _EXPLICIT_LON_NAMES,
+                            'longitude')
 
     lat_vals = np.asarray(lat_coord.values, dtype=np.float64)
     lon_vals = np.asarray(lon_coord.values, dtype=np.float64)
@@ -955,15 +1001,30 @@ def _extract_latlon_coords(agg: xr.DataArray):
     return lat_2d, lon_2d
 
 
-def _find_coord(agg, dim_name, known_names, label):
-    """Find a coordinate matching *dim_name* or one of *known_names*."""
-    # 1) Try the dimension name directly
+def _find_coord(agg, dim_name, known_names, explicit_names, label):
+    """Find a coordinate matching *dim_name* or one of *known_names*.
+
+    A coordinate whose name is unambiguously geographic (*explicit_names*,
+    e.g. ``lat``/``longitude``) is preferred over the dimension coord. This
+    keeps a curvilinear raster with numeric ``y``/``x`` index coords plus
+    real lat/lon coords from silently using the pixel indices as lat/lon.
+    If several explicit names are present (e.g. both ``lat`` and
+    ``latitude``), the first one in coord order wins.
+    """
+    # 1) Prefer an explicitly named geographic coordinate (lat/lon).
+    for name in agg.coords:
+        if str(name).lower() in explicit_names:
+            coord = agg.coords[name]
+            if np.issubdtype(coord.dtype, np.number):
+                return coord
+
+    # 2) Fall back to the dimension name directly.
     if dim_name in agg.coords:
         coord = agg.coords[dim_name]
         if np.issubdtype(coord.dtype, np.number):
             return coord
 
-    # 2) Scan all coords for a known name
+    # 3) Scan all coords for any other known name (e.g. y/x).
     for name in agg.coords:
         if str(name).lower() in known_names:
             coord = agg.coords[name]

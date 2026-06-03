@@ -22,10 +22,22 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, RemoteStableSourcesOnlyError,
-                               open_geotiff, read_geotiff_dask)
+                               open_geotiff, read_geotiff_dask, read_geotiff_gpu)
 from xrspatial.geotiff.tests._helpers.tiff_builders import make_minimal_tiff
 
 fsspec = pytest.importorskip("fsspec")
+
+
+def _gpu_available() -> bool:
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 
 _MEMORY_URL = "memory:///stable_only_2821/sample.tif"
@@ -133,4 +145,39 @@ def test_local_eager_source_succeeds_under_stable_only(local_tiff_path):
 def test_local_dask_source_succeeds_under_stable_only(local_tiff_path):
     """A plain local-file dask read still works under ``stable_only=True``."""
     result = open_geotiff(local_tiff_path, stable_only=True, chunks=2)
+    assert result.shape == (4, 4)
+
+
+# ---------------------------------------------------------------------------
+# Direct GPU entry point (issue #2867)
+#
+# ``read_geotiff_gpu`` is a public direct reader that routes HTTP / fsspec
+# sources through the CPU fallback, so it must apply the same remote gate as
+# ``open_geotiff`` and ``read_geotiff_dask``. The gate runs before the cupy
+# import and the CUDA preflight, so the rejection tests run on a CPU-only
+# machine -- no GPU required. Only the unlock test, which performs a real
+# read, needs cupy + CUDA.
+# ---------------------------------------------------------------------------
+
+
+def test_gpu_direct_fsspec_source_rejected_under_stable_only(memory_tiff_url):
+    """The direct ``read_geotiff_gpu`` entry point gates remote sources too."""
+    with pytest.raises(RemoteStableSourcesOnlyError) as excinfo:
+        read_geotiff_gpu(memory_tiff_url, stable_only=True)
+    _assert_remote_stable_error(excinfo)
+
+
+def test_gpu_direct_http_source_rejected_under_stable_only():
+    """An ``http://`` source is gated on the GPU path before any fetch."""
+    with pytest.raises(RemoteStableSourcesOnlyError) as excinfo:
+        read_geotiff_gpu("http://example.invalid/sample.tif", stable_only=True)
+    _assert_remote_stable_error(excinfo)
+
+
+@_gpu_only
+def test_gpu_direct_fsspec_source_allowed_with_experimental_optin(memory_tiff_url):
+    """``allow_experimental_codecs=True`` unlocks the advanced tier on GPU."""
+    result = read_geotiff_gpu(
+        memory_tiff_url, stable_only=True, allow_experimental_codecs=True,
+    )
     assert result.shape == (4, 4)

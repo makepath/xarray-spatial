@@ -15,12 +15,13 @@ import xarray as xr
 from numba import cuda
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2, _check_geodesic_memory,
+from xrspatial.geodesic import (INV_2R, WGS84_A2, WGS84_B2,
+                                _check_geodesic_memory_backend_aware,
                                 _cpu_geodesic_aspect, _run_gpu_geodesic_aspect)
 from xrspatial.utils import (Z_UNITS, ArrayTypeFunctionMapping, _boundary_to_dask,
                              _extract_latlon_coords, _pad_array, _validate_boundary,
-                             _validate_raster, cuda_args, get_dataarray_resolution, has_dask_array,
-                             ngjit)
+                             _validate_raster, cuda_args, get_dataarray_resolution,
+                             ngjit, warn_if_unit_mismatch)
 
 
 def _geodesic_cuda_dims(shape):
@@ -399,6 +400,14 @@ def aspect(agg: xr.DataArray,
         2D aggregate array of calculated aspect values.
         All other input attributes are preserved.
 
+    Notes
+    -----
+    The ``'planar'`` method uses the coordinate spacing directly as the cell
+    size. If the coordinates are in degrees (lat/lon) but the elevation values
+    are in meters, the result is wrong by orders of magnitude. When this
+    mismatch is detected, a ``UserWarning`` is emitted suggesting you reproject
+    to a projected CRS or use ``method='geodesic'``.
+
     References
     ----------
 
@@ -433,6 +442,7 @@ def aspect(agg: xr.DataArray,
     _validate_boundary(boundary)
 
     if method == 'planar':
+        warn_if_unit_mismatch(agg)
         cellsize_x, cellsize_y = get_dataarray_resolution(agg)
         mapper = ArrayTypeFunctionMapping(
             numpy_func=_run_numpy,
@@ -445,19 +455,12 @@ def aspect(agg: xr.DataArray,
     else:  # geodesic
         if z_unit not in Z_UNITS:
             raise ValueError(
-                f"z_unit must be one of {sorted(set(Z_UNITS.values()), key=str)}, "
+                f"z_unit must be one of {sorted(Z_UNITS)}, "
                 f"got {z_unit!r}"
             )
         z_factor = Z_UNITS[z_unit]
 
-        # The full-raster memory guard only applies to in-memory (numpy/cupy)
-        # arrays, which materialize the whole (3, H, W) stack at once. Dask
-        # backends process the raster chunk-by-chunk via map_overlap, so peak
-        # memory is bounded by chunk size, not full-raster size.
-        is_dask = has_dask_array() and isinstance(agg.data, da.Array)
-        if not is_dask:
-            rows, cols = agg.shape[-2], agg.shape[-1]
-            _check_geodesic_memory(rows, cols, func_name='aspect')
+        _check_geodesic_memory_backend_aware(agg, func_name='aspect')
 
         lat_2d, lon_2d = _extract_latlon_coords(agg)
 
@@ -469,11 +472,17 @@ def aspect(agg: xr.DataArray,
         )
         out = mapper(agg)(agg.data, lat_2d, lon_2d, WGS84_A2, WGS84_B2, z_factor, boundary)
 
-    return xr.DataArray(out,
-                        name=name,
-                        coords=agg.coords,
-                        dims=agg.dims,
-                        attrs=agg.attrs)
+    result = xr.DataArray(out,
+                          name=name,
+                          coords=agg.coords,
+                          dims=agg.dims,
+                          attrs=agg.attrs)
+    # On dask backends, xr.DataArray keeps the dask array's internal graph
+    # token as .name when name=None, so reset it post-construction to match
+    # the numpy/cupy backends. (Same fix as zonal #2611, focal #2733,
+    # slope #2838.)
+    result.name = name
+    return result
 
 
 @supports_dataset
@@ -549,11 +558,15 @@ def northness(agg: xr.DataArray,
     else:
         trig = np.cos(np.deg2rad(asp_data))
         out = np.where(asp_data == -1, np.nan, trig)
-    return xr.DataArray(out,
-                        name=name,
-                        coords=agg.coords,
-                        dims=agg.dims,
-                        attrs=agg.attrs)
+    result = xr.DataArray(out,
+                          name=name,
+                          coords=agg.coords,
+                          dims=agg.dims,
+                          attrs=agg.attrs)
+    # Reset .name post-construction so dask backends don't leak the graph
+    # token when name=None, matching aspect()/slope() (#2841, #2838).
+    result.name = name
+    return result
 
 
 @supports_dataset
@@ -629,8 +642,12 @@ def eastness(agg: xr.DataArray,
     else:
         trig = np.sin(np.deg2rad(asp_data))
         out = np.where(asp_data == -1, np.nan, trig)
-    return xr.DataArray(out,
-                        name=name,
-                        coords=agg.coords,
-                        dims=agg.dims,
-                        attrs=agg.attrs)
+    result = xr.DataArray(out,
+                          name=name,
+                          coords=agg.coords,
+                          dims=agg.dims,
+                          attrs=agg.attrs)
+    # Reset .name post-construction so dask backends don't leak the graph
+    # token when name=None, matching aspect()/slope() (#2841, #2838).
+    result.name = name
+    return result
