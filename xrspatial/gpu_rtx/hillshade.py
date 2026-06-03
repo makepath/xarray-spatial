@@ -15,24 +15,28 @@ from .mesh_utils import create_triangulation
 
 
 @nb.cuda.jit
-def _generate_primary_rays_kernel(data, H, W):
+def _generate_primary_rays_kernel(data, H, W, ew_res, ns_res):
     """
     A GPU kernel that given a set of x and y discrete coordinates on a raster
     terrain generates in @data a list of parallel rays that represent camera
     rays generated from an orthographic camera that is looking straight down
     at the surface from an origin height 10000.
+
+    Ray origins are placed at the real-world cell centres (column * ew_res,
+    row * ns_res) so they land on the resolution-aware mesh built by
+    ``create_triangulation`` (issue #2861).
     """
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < H and j >= 0 and j < W:
         if (j == W-1):
-            data[i, j, 0] = j - 1e-3
+            data[i, j, 0] = j * ew_res - 1e-3 * ew_res
         else:
-            data[i, j, 0] = j + 1e-3
+            data[i, j, 0] = j * ew_res + 1e-3 * ew_res
 
         if (i == H-1):
-            data[i, j, 1] = i - 1e-3
+            data[i, j, 1] = i * ns_res - 1e-3 * ns_res
         else:
-            data[i, j, 1] = i + 1e-3
+            data[i, j, 1] = i * ns_res + 1e-3 * ns_res
 
         data[i, j, 2] = 10000  # Location of the camera (height)
         data[i, j, 3] = 1e-3
@@ -42,9 +46,10 @@ def _generate_primary_rays_kernel(data, H, W):
         data[i, j, 7] = np.inf
 
 
-def _generate_primary_rays(rays, H, W):
+def _generate_primary_rays(rays, H, W, ew_res, ns_res):
     griddim, blockdim = calc_cuda_dims((H, W))
-    _generate_primary_rays_kernel[griddim, blockdim](rays, H, W)
+    _generate_primary_rays_kernel[griddim, blockdim](
+        rays, H, W, ew_res, ns_res)
     return 0
 
 
@@ -148,7 +153,9 @@ def _hillshade_rt(raster: xr.DataArray,
                   optix: RTX,
                   azimuth: int,
                   angle_altitude: int,
-                  shadows: bool) -> xr.DataArray:
+                  shadows: bool,
+                  ew_res: float,
+                  ns_res: float) -> xr.DataArray:
     H, W = raster.shape
     sun_dir = cupy.array(_get_sun_dir(angle_altitude, azimuth))
 
@@ -158,7 +165,7 @@ def _hillshade_rt(raster: xr.DataArray,
     d_aux = cupy.empty((H, W, 3), np.float32)
     d_output = cupy.empty((H, W), np.float32)
 
-    _generate_primary_rays(d_rays, H, W)
+    _generate_primary_rays(d_rays, H, W, ew_res, ns_res)
     device = cupy.cuda.Device(0)
     device.synchronize()
     res = optix.trace(d_rays, d_hits, W*H)
@@ -193,8 +200,10 @@ def hillshade_rtx(raster: xr.DataArray,
     _check_gpu_memory("hillshade_rtx", H, W)
 
     optix = RTX()
-    create_triangulation(raster, optix)
+    # hillshade does not use the z-scale; only viewshed scales the observer
+    # and target elevations by it.
+    _, ew_res, ns_res = create_triangulation(raster, optix)
 
     return _hillshade_rt(
         raster, optix, azimuth=azimuth, angle_altitude=angle_altitude,
-        shadows=shadows)
+        shadows=shadows, ew_res=ew_res, ns_res=ns_res)
