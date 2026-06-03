@@ -361,6 +361,39 @@ def test_zero_max_distance_keeps_meaning(test_raster, func):
     general_output_checks(test_raster, result)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("target_values", [[np.inf], [-np.inf], [np.nan], [2, np.inf]])
+def test_non_finite_target_values_raises(test_raster, func, target_values):
+    # A non-finite target_values entry used to produce backend-dependent
+    # output: numpy matched inf pixels and returned a real grid, while
+    # dask/cupy masked non-finite pixels out and returned all-NaN for the
+    # same raster (issue #2850).  It must raise on every backend instead.
+    with pytest.raises(ValueError, match="target_values"):
+        func(test_raster, x='lon', y='lat', target_values=target_values)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_non_numeric_target_values_raises(test_raster, func):
+    # A non-numeric target_values can't index a raster; it must raise a clear
+    # ValueError on every backend rather than a downstream TypeError (#2850).
+    with pytest.raises(ValueError, match="target_values"):
+        func(test_raster, x='lon', y='lat', target_values=['a', 'b'])
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_finite_target_values_run(test_raster, func):
+    # The raster carries an inf and a nan pixel; the default (empty
+    # target_values) path must keep ignoring them on every backend, and
+    # explicit finite targets must keep working unchanged.
+    result_default = func(test_raster, x='lon', y='lat')
+    general_output_checks(test_raster, result_default)
+    result_explicit = func(test_raster, x='lon', y='lat', target_values=[1, 3])
+    general_output_checks(test_raster, result_explicit)
+
+
 def test_proximity_distance_against_qgis(raster, qgis_proximity_distance_target_values):
     target_values, qgis_result = qgis_proximity_distance_target_values
     input_raster = create_test_raster(raster)
@@ -1526,6 +1559,40 @@ def test_bounded_dask_single_row_or_col_matches_numpy(func, shape_name):
         result.values, expected, equal_nan=True, rtol=1e-5)
 
 
+# --- issue #2854: bounded-dask halo depth larger than an axis length -------
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_bounded_dask_skinny_raster_matches_numpy(func):
+    """Bounded dask must not crash when the halo is deeper than an axis.
+
+    Regression for issue #2854: on a skinny raster ``_halo_depth`` can return
+    a pixel radius larger than the raster height/width. That depth went
+    straight into ``da.map_overlap``, which rejects a depth larger than the
+    array along that axis and raised ``ValueError: The overlapping depth ...
+    is larger than your array ...``. A valid raster with a finite
+    ``max_distance`` should still run and match the numpy backend.
+    """
+    data = np.zeros((3, 100), dtype=np.float64)
+    data[1, 50] = 1.0
+    xs = np.linspace(0, 99, 100)
+    ys = np.linspace(0, 2, 3)
+
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = xs
+    raster['lat'] = ys
+    expected = func(raster, x='lon', y='lat', max_distance=10).data
+
+    dask_raster = raster.copy()
+    dask_raster.data = da.from_array(data, chunks=(3, 100))
+    result = func(dask_raster, x='lon', y='lat', max_distance=10)
+
+    assert isinstance(result.data, da.Array)
+    np.testing.assert_allclose(
+        result.values, expected, equal_nan=True, rtol=1e-5)
+
+
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
 def test_target_values_none_default_matches_empty_list(func):
     # target_values default switched from [] to a None sentinel; passing
@@ -1707,6 +1774,103 @@ def test_great_circle_numpy_off_by_more_than_a_metre_is_fixed(
         raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE').data
 
     assert np.nanmax(np.abs(result - expected)) < 1.0
+
+
+# --- non-monotonic 1D coordinate rejection (issue #2851) ---
+
+
+def _nonmonotonic_raster(backend, axis):
+    """Build a raster whose `axis` ('lon' or 'lat') is non-monotonic.
+
+    All other inputs are valid so the only reason _process can fail is the
+    coordinate check.
+    """
+    data = np.asarray([[0., 0., 1., 0.],
+                       [0., 0., 0., 0.],
+                       [2., 0., 0., 0.],
+                       [0., 0., 0., 3.]])
+    lon = np.array([-20., -10., 0., 10.])
+    lat = np.array([20., 10., 0., -10.])
+    if axis == 'lon':
+        lon = np.array([-20., 0., -10., 10.])  # not sorted
+    else:
+        lat = np.array([20., 0., 10., -10.])  # not sorted
+
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = lon
+    raster['lat'] = lat
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(2, 2))
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("axis", ['lon', 'lat'])
+def test_nonmonotonic_coords_raise(backend, func, axis):
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("cupy not available")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    raster = _nonmonotonic_raster(backend, axis)
+    with pytest.raises(ValueError, match="monotonic"):
+        func(raster, x='lon', y='lat')
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_descending_coords_allowed(backend, result_default_proximity):
+    """A strictly decreasing axis is monotonic and must be accepted.
+
+    The default test raster already uses a descending lat axis; assert the
+    standard backends still produce the reference proximity.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("cupy not available")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    data = np.asarray([[0., 0., 0., 0., 0., 2.],
+                       [0., 0., 1., 0., 0., 0.],
+                       [0., np.inf, 3., 0., 0., 0.],
+                       [4., 0., 0., 0., np.nan, 0.]])
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = np.linspace(-20, 20, 6)   # ascending
+    raster['lat'] = np.linspace(20, -20, 4)   # descending
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(4, 3))
+
+    result = proximity(raster, x='lon', y='lat')
+    general_output_checks(raster, result, result_default_proximity)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_single_element_axis_allowed(backend):
+    """A length-1 axis has no order to violate and must not be rejected."""
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("cupy not available")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    data = np.asarray([[0., 1., 0., 2.]])
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = np.linspace(0, 30, 4)
+    raster['lat'] = np.array([0.])
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(1, 2))
+
+    result = proximity(raster, x='lon', y='lat')
+    # no exception; finite proximity at the target columns
+    assert result.shape == (1, 4)
 
 
 # ---------------------------------------------------------------------------

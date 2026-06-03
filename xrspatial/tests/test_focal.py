@@ -253,6 +253,24 @@ def test_apply_small_kernel_not_rejected_1284():
     assert out.shape == (50, 50)
 
 
+@pytest.mark.parametrize("entry_point", [
+    lambda agg, kernel: apply(agg, kernel),
+    lambda agg, kernel: focal_stats(agg, kernel, stats_funcs=['mean']),
+    lambda agg, kernel: hotspots(agg, kernel),
+])
+@pytest.mark.parametrize("bad_kernel", [
+    np.ones(3, dtype=np.float32),            # 1D
+    np.ones((3, 3, 3), dtype=np.float32),    # 3D
+])
+def test_entry_points_reject_non_2d_kernel_2842(entry_point, bad_kernel):
+    # Regression for #2842: a non-2D kernel must raise a clear, descriptive
+    # error rather than the raw "not enough values to unpack" ValueError
+    # leaking out of custom_kernel's `rows, cols = kernel.shape`.
+    raster = xr.DataArray(np.ones((10, 10), dtype=np.float32))
+    with pytest.raises(ValueError, match="not a 2D array"):
+        entry_point(raster, bad_kernel)
+
+
 def test_convolution_numpy(
     convolve_2d_data,
     convolution_custom_kernel,
@@ -618,6 +636,107 @@ def test_focal_stats_preserves_float64(backend):
     assert _compute_dtype(result) == np.float64
 
 
+# --- non-binary kernel rejection (issue-2848) -----------------------------
+# apply() and focal_stats() document the kernel as a binary membership mask
+# ("values of 1 indicate the kernel"). The CPU path only kept cells equal to
+# 1 (dropping a weight of 2 entirely) while the GPU sum/mean kernels weighted
+# every nonzero cell by its value, so the same non-binary kernel produced
+# backend-dependent output. Both APIs now reject non-binary kernels on every
+# backend, so the inconsistency cannot arise.
+
+NON_BINARY_KERNELS = [
+    np.array([[0, 2, 0], [2, 2, 2], [0, 2, 0]]),   # all weights are 2
+    np.array([[0, 1, 0], [1, 2, 1], [0, 1, 0]]),   # mixed 1 and 2
+    np.array([[0, 0.5, 0], [0.5, 1, 0.5], [0, 0.5, 0]]),  # fractional weights
+]
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("kernel", NON_BINARY_KERNELS)
+def test_apply_rejects_non_binary_kernel(backend, kernel):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+
+    with pytest.raises(ValueError, match="kernel must be binary"):
+        apply(agg, kernel)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("kernel", NON_BINARY_KERNELS)
+def test_focal_stats_rejects_non_binary_kernel(backend, kernel):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+
+    with pytest.raises(ValueError, match="kernel must be binary"):
+        focal_stats(agg, kernel, stats_funcs=['mean', 'sum'])
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_apply_and_focal_stats_accept_binary_kernel(backend):
+    # The binary 0/1 contract still works on every backend after the guard.
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+
+    if 'cupy' in backend:
+        from xrspatial.focal import _focal_mean_cuda
+        func = _focal_mean_cuda
+    else:
+        from xrspatial.focal import _calc_mean
+        func = _calc_mean
+
+    apply_result = apply(agg, kernel, func)
+    general_output_checks(agg, apply_result)
+
+    stats_result = focal_stats(agg, kernel, stats_funcs=['mean', 'sum'])
+    assert stats_result.ndim == 3
+
+
+def test_apply_rejects_nan_kernel():
+    # A NaN kernel cell is neither 0 nor 1, so it is rejected like any other
+    # non-binary value (the error message calls out NaN explicitly).
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    kernel = np.array([[0, np.nan, 0], [1, 1, 1], [0, 1, 0]])
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    with pytest.raises(ValueError, match="kernel must be binary"):
+        apply(agg, kernel)
+
+
+def test_apply_focal_stats_agree_on_binary_kernel_numpy():
+    # Reference invariant the guard protects: on a binary kernel,
+    # focal_stats(mean) and apply(mean) agree (focal_stats delegates to
+    # apply on the CPU). This is the consistency the issue is about; with a
+    # non-binary kernel the two would have diverged, which is now blocked.
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    agg = xr.DataArray(data, dims=['y', 'x'])
+
+    from xrspatial.focal import _calc_mean
+    apply_mean = apply(agg, kernel, _calc_mean)
+    stats_mean = focal_stats(agg, kernel, stats_funcs=['mean']).sel(stats='mean')
+
+    np.testing.assert_allclose(
+        apply_mean.data, stats_mean.data, equal_nan=True)
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
 def test_apply_keeps_float32(backend):
     # The other side of the contract: a float32 input must not be promoted
@@ -942,6 +1061,74 @@ def test_hotspots_zero_global_std():
     msg = "Standard deviation of the input raster values is 0."
     with pytest.raises(ZeroDivisionError, match=msg):
         hotspots(agg, kernel)
+
+
+# Degenerate inputs: constant raster (std == 0), all-NaN raster (n == 0),
+# and a single valid cell (n == 1). The numpy/cupy paths raise eagerly via
+# _gistar_global_stats; the dask paths must raise the same error at compute
+# time instead of silently classifying to all zeros (issue #2843).
+def _hotspots_degenerate_cases():
+    constant = np.zeros((10, 10), dtype=np.float32)
+
+    all_nan = np.full((10, 10), np.nan, dtype=np.float32)
+
+    single_valid = np.full((10, 10), np.nan, dtype=np.float32)
+    single_valid[0, 0] = 5.0
+
+    std_msg = "Standard deviation of the input raster values is 0."
+    n_msg = "needs at least 2 valid"
+    return [
+        ('constant', constant, ZeroDivisionError, std_msg),
+        ('all_nan', all_nan, ValueError, n_msg),
+        ('single_valid', single_valid, ValueError, n_msg),
+    ]
+
+
+_HOTSPOTS_DEGENERATE = _hotspots_degenerate_cases()
+
+
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_numpy_2843(case, data, exc, msg):
+    agg = create_test_raster(data)
+    kernel = np.ones((3, 3))
+    with pytest.raises(exc, match=msg):
+        hotspots(agg, kernel)
+
+
+@dask_array_available
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_dask_numpy_2843(case, data, exc, msg):
+    # The dask backend must reject degenerate inputs the same way numpy does,
+    # but lazily: the error fires at compute(), not at graph-build time.
+    agg = create_test_raster(data, backend='dask')
+    kernel = np.ones((3, 3))
+    result = hotspots(agg, kernel)
+    with pytest.raises(exc, match=msg):
+        result.data.compute()
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_cupy_2843(case, data, exc, msg):
+    agg = create_test_raster(data, backend='cupy')
+    kernel = np.ones((3, 3))
+    with pytest.raises(exc, match=msg):
+        hotspots(agg, kernel)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+@pytest.mark.parametrize('case,data,exc,msg', _HOTSPOTS_DEGENERATE,
+                         ids=[c[0] for c in _HOTSPOTS_DEGENERATE])
+def test_hotspots_degenerate_dask_cupy_2843(case, data, exc, msg):
+    agg = create_test_raster(data, backend='dask+cupy')
+    kernel = np.ones((3, 3))
+    result = hotspots(agg, kernel)
+    with pytest.raises(exc, match=msg):
+        result.data.compute()
 
 
 def test_hotspots_kernel_none_2771():
