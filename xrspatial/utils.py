@@ -969,6 +969,8 @@ def _find_coord(agg, dim_name, known_names, explicit_names, label):
     e.g. ``lat``/``longitude``) is preferred over the dimension coord. This
     keeps a curvilinear raster with numeric ``y``/``x`` index coords plus
     real lat/lon coords from silently using the pixel indices as lat/lon.
+    If several explicit names are present (e.g. both ``lat`` and
+    ``latitude``), the first one in coord order wins.
     """
     # 1) Prefer an explicitly named geographic coordinate (lat/lon).
     for name in agg.coords:
