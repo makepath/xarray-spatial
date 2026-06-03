@@ -1709,6 +1709,103 @@ def test_great_circle_numpy_off_by_more_than_a_metre_is_fixed(
     assert np.nanmax(np.abs(result - expected)) < 1.0
 
 
+# --- non-monotonic 1D coordinate rejection (issue #2851) ---
+
+
+def _nonmonotonic_raster(backend, axis):
+    """Build a raster whose `axis` ('lon' or 'lat') is non-monotonic.
+
+    All other inputs are valid so the only reason _process can fail is the
+    coordinate check.
+    """
+    data = np.asarray([[0., 0., 1., 0.],
+                       [0., 0., 0., 0.],
+                       [2., 0., 0., 0.],
+                       [0., 0., 0., 3.]])
+    lon = np.array([-20., -10., 0., 10.])
+    lat = np.array([20., 10., 0., -10.])
+    if axis == 'lon':
+        lon = np.array([-20., 0., -10., 10.])  # not sorted
+    else:
+        lat = np.array([20., 0., 10., -10.])  # not sorted
+
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = lon
+    raster['lat'] = lat
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(2, 2))
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("axis", ['lon', 'lat'])
+def test_nonmonotonic_coords_raise(backend, func, axis):
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("cupy not available")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    raster = _nonmonotonic_raster(backend, axis)
+    with pytest.raises(ValueError, match="monotonic"):
+        func(raster, x='lon', y='lat')
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_descending_coords_allowed(backend, result_default_proximity):
+    """A strictly decreasing axis is monotonic and must be accepted.
+
+    The default test raster already uses a descending lat axis; assert the
+    standard backends still produce the reference proximity.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("cupy not available")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    data = np.asarray([[0., 0., 0., 0., 0., 2.],
+                       [0., 0., 1., 0., 0., 0.],
+                       [0., np.inf, 3., 0., 0., 0.],
+                       [4., 0., 0., 0., np.nan, 0.]])
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = np.linspace(-20, 20, 6)   # ascending
+    raster['lat'] = np.linspace(20, -20, 4)   # descending
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(4, 3))
+
+    result = proximity(raster, x='lon', y='lat')
+    general_output_checks(raster, result, result_default_proximity)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_single_element_axis_allowed(backend):
+    """A length-1 axis has no order to violate and must not be rejected."""
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("cupy not available")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    data = np.asarray([[0., 1., 0., 2.]])
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = np.linspace(0, 30, 4)
+    raster['lat'] = np.array([0.])
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(1, 2))
+
+    result = proximity(raster, x='lon', y='lat')
+    # no exception; finite proximity at the target columns
+    assert result.shape == (1, 4)
+
+
 # ---------------------------------------------------------------------------
 # Regression: unbounded dask fallback must not mutate the caller's input
 # (issue #2847). _process_dask used to do raster.data = raster.data.rechunk(),
