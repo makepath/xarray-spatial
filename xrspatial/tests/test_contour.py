@@ -703,6 +703,79 @@ class TestCRSPropagation:
         assert isinstance(gdf, gpd.GeoDataFrame)
         assert gdf.crs is None
 
+    # CRS-resolver parity with polygonize (#2893). contours must use the
+    # same resolution order as polygonize._detect_raster_crs:
+    #   attrs['crs'] -> attrs['crs_wkt'] -> raster.rio.crs -> None.
+
+    @staticmethod
+    def _bare_raster():
+        """A peak raster with explicit coords and no CRS metadata."""
+        data = _make_peak()
+        agg = xr.DataArray(data, dims=['y', 'x'])
+        agg['y'] = np.linspace(2.0, 0.0, data.shape[0])
+        agg['x'] = np.linspace(0.0, 2.0, data.shape[1])
+        return agg
+
+    def test_geopandas_crs_from_crs_wkt(self):
+        """A raster with only attrs['crs_wkt'] still georeferences the gdf.
+
+        Previously contours read only attrs['crs'], so a crs_wkt-only raster
+        produced an unprojected GeoDataFrame.
+        """
+        pytest.importorskip("geopandas")
+        from pyproj import CRS
+
+        agg = self._bare_raster()
+        agg.attrs['crs_wkt'] = CRS.from_epsg(5070).to_wkt()
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert gdf.crs is not None
+        assert gdf.crs.to_epsg() == 5070
+
+    def test_geopandas_crs_attr_precedence(self):
+        """attrs['crs'] wins over attrs['crs_wkt'] when both are present."""
+        pytest.importorskip("geopandas")
+        from pyproj import CRS
+
+        agg = self._bare_raster()
+        agg.attrs['crs'] = 'EPSG:5070'
+        agg.attrs['crs_wkt'] = CRS.from_epsg(4326).to_wkt()
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert gdf.crs is not None
+        assert gdf.crs.to_epsg() == 5070
+
+    def test_geopandas_no_crs_info(self):
+        """A raster with no CRS info yields a GeoDataFrame with crs None."""
+        gpd = pytest.importorskip("geopandas")
+        agg = self._bare_raster()
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert isinstance(gdf, gpd.GeoDataFrame)
+        assert gdf.crs is None
+
+    @pytest.mark.parametrize("attrs", [
+        {'crs': 'EPSG:5070'},
+        {'crs_wkt': None},  # filled in below with a real WKT
+        {},
+    ])
+    def test_geopandas_crs_matches_detect_raster_crs(self, attrs):
+        """contours resolves the same CRS polygonize would for one raster."""
+        pytest.importorskip("geopandas")
+        from pyproj import CRS
+
+        from xrspatial.polygonize import _detect_raster_crs
+
+        if 'crs_wkt' in attrs:
+            attrs = {'crs_wkt': CRS.from_epsg(4326).to_wkt()}
+
+        agg = self._bare_raster()
+        agg.attrs.update(attrs)
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+
+        expected = _detect_raster_crs(agg)
+        if expected is None:
+            assert gdf.crs is None
+        else:
+            assert gdf.crs == CRS.from_user_input(expected)
+
 
 # ---------------------------------------------------------------------------
 # Non-default dim names: index -> coordinate transform (#2704 audit, Cat 5)
