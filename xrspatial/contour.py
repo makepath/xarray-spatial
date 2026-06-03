@@ -619,7 +619,9 @@ def contours(
 
     n_levels : int, default 10
         Number of contour levels to generate when ``levels`` is not
-        provided.
+        provided.  Must be an integer >= 1; otherwise a ``TypeError``
+        (non-integer) or ``ValueError`` (< 1) is raised.  Ignored when
+        ``levels`` is given, in which case it is not validated.
 
     return_type : str, default "numpy"
         Output format.  ``"numpy"`` returns a list of ``(level, coords)``
@@ -666,6 +668,17 @@ def contours(
 
     # Determine contour levels.
     if levels is None:
+        # n_levels is only consumed on this auto-level branch, so validate
+        # it here.  When explicit levels are supplied n_levels is ignored,
+        # and rejecting it then would be surprising.  Reject bools too:
+        # bool is an int subclass, but True/False as a level count is a bug.
+        if isinstance(n_levels, bool) or not isinstance(n_levels, (int, np.integer)):
+            raise TypeError(
+                f"n_levels must be an integer, got {type(n_levels).__name__}"
+            )
+        if n_levels < 1:
+            raise ValueError(f"n_levels must be >= 1, got {n_levels}")
+
         # Reduce over finite values only.  +/-inf cells would otherwise
         # poison the range and make np.linspace emit non-finite levels,
         # silently dropping every contour for the finite terrain.  An

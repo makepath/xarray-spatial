@@ -222,6 +222,54 @@ class TestAutoLevelsInf:
 
 
 # ---------------------------------------------------------------------------
+# n_levels validation contract (issue #2895)
+# ---------------------------------------------------------------------------
+
+class TestNLevelsValidation:
+
+    def test_n_levels_zero_raises(self):
+        """n_levels=0 must raise instead of silently returning nothing."""
+        agg = create_test_raster(_make_ramp(), backend='numpy')
+        with pytest.raises(ValueError, match="n_levels must be >= 1"):
+            contours(agg, n_levels=0)
+
+    def test_n_levels_negative_raises(self):
+        """n_levels=-1 must raise a clear out-of-range error."""
+        agg = create_test_raster(_make_ramp(), backend='numpy')
+        with pytest.raises(ValueError, match="n_levels must be >= 1"):
+            contours(agg, n_levels=-1)
+
+    def test_n_levels_float_raises_clear_typeerror(self):
+        """A non-integer n_levels raises a clear TypeError naming the
+        parameter, not a raw numpy 'cannot be interpreted as an integer'."""
+        agg = create_test_raster(_make_ramp(), backend='numpy')
+        with pytest.raises(TypeError, match="n_levels must be an integer"):
+            contours(agg, n_levels=2.5)
+
+    def test_n_levels_bool_raises(self):
+        """bool is an int subclass but is not a valid level count."""
+        agg = create_test_raster(_make_ramp(), backend='numpy')
+        with pytest.raises(TypeError, match="n_levels must be an integer"):
+            contours(agg, n_levels=True)
+
+    def test_n_levels_one_produces_single_level(self):
+        """n_levels=1 is valid and yields exactly one contour level."""
+        agg = create_test_raster(_make_ramp(ny=5, nx=10), backend='numpy')
+        result = contours(agg, n_levels=1)
+        levels = sorted({lvl for lvl, _ in result})
+        assert len(levels) == 1
+
+    def test_explicit_levels_skip_n_levels_validation(self):
+        """When explicit levels are given, n_levels is unused and an
+        otherwise-invalid value must not be rejected."""
+        agg = create_test_raster(_make_ramp(ny=5, nx=6), backend='numpy')
+        # n_levels=0 would raise on the auto branch; with explicit levels
+        # it is ignored and the call must succeed.
+        result = contours(agg, levels=[2.5], n_levels=0)
+        assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 
