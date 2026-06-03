@@ -1405,6 +1405,20 @@ def _gistar_global_stats(global_mean, global_std, n):
     return global_mean, global_std, n
 
 
+def _gistar_validate_lazy(z_block, global_std, n):
+    """Validate the global Gi* terms inside the dask graph.
+
+    The dask backends keep ``global_std`` and ``n`` as lazy 0-d arrays, so
+    the eager ``_gistar_global_stats`` check never runs on them. This block
+    function re-applies that check at compute time and returns ``z_block``
+    unchanged, so degenerate inputs (constant raster, all-NaN raster, or a
+    single valid cell) raise the same errors as the numpy and cupy paths
+    instead of silently classifying to all zeros.
+    """
+    _gistar_global_stats(0.0, float(global_std), int(n))
+    return z_block
+
+
 def _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
                    global_mean, global_std, n):
     """Getis-Ord Gi* z-score from the per-cell convolution terms.
@@ -1496,6 +1510,11 @@ def _hotspots_dask_numpy(raster, kernel, boundary='nan'):
     # per block.
     z_array = _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
                              global_mean, global_std, n)
+    # Re-apply the numpy-path degenerate-input check lazily so constant /
+    # all-NaN / single-valid-cell rasters raise at compute time instead of
+    # classifying to a silent all-zeros raster (issue #2843).
+    z_array = da.map_blocks(_gistar_validate_lazy, z_array, global_std, n,
+                            dtype=z_array.dtype, meta=z_array._meta)
     out = z_array.map_blocks(_calc_hotspots_numpy,
                              meta=np.array((), dtype=np.int8))
     return out
@@ -1531,6 +1550,11 @@ def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
 
     z_array = _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
                              global_mean, global_std, n)
+    # Re-apply the numpy-path degenerate-input check lazily so constant /
+    # all-NaN / single-valid-cell rasters raise at compute time instead of
+    # classifying to a silent all-zeros raster (issue #2843).
+    z_array = da.map_blocks(_gistar_validate_lazy, z_array, global_std, n,
+                            dtype=z_array.dtype, meta=z_array._meta)
     out = z_array.map_blocks(_calc_hotspots_cupy,
                              meta=cupy.array((), dtype=cupy.int8))
     return out

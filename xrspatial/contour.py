@@ -605,8 +605,10 @@ def contours(
     CuPy and Dask+CuPy arrays are accepted as input.  Data is
     transferred to CPU for the tracing step because segment stitching
     is an inherently sequential graph traversal.  For Dask inputs,
-    each chunk is processed independently and results are merged,
-    keeping peak memory proportional to chunk size.
+    chunking bounds the per-chunk scan buffers, but the global merge
+    step materializes all contour segments at once to stitch polylines
+    across chunk boundaries, so peak memory scales with total contour
+    complexity rather than chunk size.
 
     Examples
     --------
