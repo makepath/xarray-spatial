@@ -751,23 +751,25 @@ class TestCRSPropagation:
         assert isinstance(gdf, gpd.GeoDataFrame)
         assert gdf.crs is None
 
-    @pytest.mark.parametrize("attrs", [
-        {'crs': 'EPSG:5070'},
-        {'crs_wkt': None},  # filled in below with a real WKT
-        {},
+    @staticmethod
+    def _wkt_4326():
+        from pyproj import CRS
+        return {'crs_wkt': CRS.from_epsg(4326).to_wkt()}
+
+    @pytest.mark.parametrize("attrs_factory", [
+        pytest.param(lambda: {'crs': 'EPSG:5070'}, id="crs"),
+        pytest.param(lambda: TestCRSPropagation._wkt_4326(), id="crs_wkt"),
+        pytest.param(lambda: {}, id="no_crs"),
     ])
-    def test_geopandas_crs_matches_detect_raster_crs(self, attrs):
+    def test_geopandas_crs_matches_detect_raster_crs(self, attrs_factory):
         """contours resolves the same CRS polygonize would for one raster."""
         pytest.importorskip("geopandas")
         from pyproj import CRS
 
         from xrspatial.polygonize import _detect_raster_crs
 
-        if 'crs_wkt' in attrs:
-            attrs = {'crs_wkt': CRS.from_epsg(4326).to_wkt()}
-
         agg = self._bare_raster()
-        agg.attrs.update(attrs)
+        agg.attrs.update(attrs_factory())
         gdf = contours(agg, levels=[1.5], return_type="geopandas")
 
         expected = _detect_raster_crs(agg)
