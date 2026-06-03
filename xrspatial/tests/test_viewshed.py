@@ -890,3 +890,57 @@ def test_viewshed_max_distance_anisotropic(backend, fine_axis):
     # A cell 9 fine-axis cells away (> max_distance) stays INVISIBLE.
     far = (10, 19) if fine_axis == "x" else (19, 10)
     assert result[far] == INVISIBLE
+
+
+# -------------------------------------------------------------------
+# Input-not-mutated regression tests (issue #2852)
+# -------------------------------------------------------------------
+
+def _build_int16_raster(backend):
+    """5x5 int16 raster with a single non-zero cell, optionally cupy-backed."""
+    ny, nx = 5, 5
+    arr = np.zeros((ny, nx), dtype="int16")
+    arr[2, 2] = 3
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    if backend == "cupy":
+        import cupy as cp
+        arr = cp.asarray(arr)
+    elif backend == "dask":
+        arr = da.from_array(arr, chunks=(3, 3))
+    return xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_does_not_mutate_input(backend):
+    """viewshed() must not change the caller's input dtype or data (#2852)."""
+    raster = _build_int16_raster(backend)
+    before = np.asarray(raster.data.compute() if backend == "dask"
+                        else raster.data).copy()
+    before_dtype = raster.dtype
+
+    viewshed(raster, x=2, y=2, observer_elev=2)
+
+    assert raster.dtype == before_dtype == np.dtype("int16")
+    after = np.asarray(raster.data.compute() if backend == "dask"
+                       else raster.data)
+    np.testing.assert_array_equal(after, before)
+
+
+@pytest.mark.skipif(not has_cuda_and_cupy(), reason="Requires cupy")
+@pytest.mark.skipif(has_rtx(), reason="Tests the no-rtx CuPy CPU fallback")
+def test_viewshed_does_not_mutate_cupy_input():
+    """CuPy fallback path must leave the caller's CuPy input unchanged (#2852).
+
+    With cupy present but rtxpy absent, viewshed converts to numpy and runs on
+    the CPU. The input must stay a CuPy array of its original dtype.
+    """
+    import cupy as cp
+    raster = _build_int16_raster("cupy")
+    before = raster.data.get().copy()
+
+    viewshed(raster, x=2, y=2, observer_elev=2)
+
+    assert isinstance(raster.data, cp.ndarray)
+    assert raster.dtype == np.dtype("int16")
+    np.testing.assert_array_equal(raster.data.get(), before)
