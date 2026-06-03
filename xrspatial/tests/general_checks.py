@@ -174,34 +174,36 @@ def assert_boundary_mode_correctness(numpy_agg, dask_agg, func, depth=1, rtol=1e
             )
 
 
-def assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, func, nan_edges=True):
+def assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, func, nan_edges=True,
+                                   verify_attrs=True):
     numpy_result = func(numpy_agg)
     if nan_edges:
         assert_nan_edges_effect(numpy_result)
 
     dask_result = func(dask_agg)
-    general_output_checks(dask_agg, dask_result)
+    general_output_checks(dask_agg, dask_result, verify_attrs=verify_attrs)
     np.testing.assert_allclose(numpy_result.data, dask_result.data.compute(), equal_nan=True)
 
 
-def assert_numpy_equals_cupy(numpy_agg, cupy_agg, func, nan_edges=True, atol=0, rtol=1e-7):
+def assert_numpy_equals_cupy(numpy_agg, cupy_agg, func, nan_edges=True, atol=0, rtol=1e-7,
+                             verify_attrs=True):
     numpy_result = func(numpy_agg)
     if nan_edges:
         assert_nan_edges_effect(numpy_result)
 
     cupy_result = func(cupy_agg)
-    general_output_checks(cupy_agg, cupy_result)
+    general_output_checks(cupy_agg, cupy_result, verify_attrs=verify_attrs)
     np.testing.assert_allclose(
         numpy_result.data, cupy_result.data.get(), equal_nan=True, atol=atol, rtol=rtol)
 
 
 def assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, func,
-                                  nan_edges=True, atol=0, rtol=1e-7):
+                                  nan_edges=True, atol=0, rtol=1e-7, verify_attrs=True):
     numpy_result = func(numpy_agg)
     if nan_edges:
         assert_nan_edges_effect(numpy_result)
 
     dask_cupy_result = func(dask_cupy_agg)
-    general_output_checks(dask_cupy_agg, dask_cupy_result)
+    general_output_checks(dask_cupy_agg, dask_cupy_result, verify_attrs=verify_attrs)
     np.testing.assert_allclose(numpy_result.data, dask_cupy_result.data.compute().get(),
                                equal_nan=True, atol=atol, rtol=rtol)

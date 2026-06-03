@@ -1175,6 +1175,15 @@ def _init_event_list(event_list, raster, vp_row, vp_col,
                 _set_visibility(visibility_grid, i, j, 180)
                 continue
 
+            # NODATA cells generate no events: a NaN cell on the vp row to
+            # the right is never inserted into the status structure (the
+            # pre-insert loop guards on not np.isnan(data[1][i])), so emitting
+            # its EXITING event would make _delete_from_tree raise "node not
+            # found".  Skipping leaves the cell at its INVISIBLE fill value,
+            # which downstream `!= INVISIBLE` checks do not count as visible.
+            if np.isnan(inrast[1][j]):
+                continue
+
             # if it got here it is not the vp, not NODATA, and
             # within max distance from vp generate its 3 events
             # and insert them
@@ -1220,7 +1229,11 @@ def _init_event_list(event_list, raster, vp_row, vp_col,
             event_list[count_event] = e
             count_event += 1
 
-    return
+    # Skipped NODATA cells leave unused trailing rows in the pre-allocated
+    # event_list.  Return the count so the caller can drop them; otherwise the
+    # leftover all-zero rows sort as CENTER events at cell (0, 0) and would
+    # spuriously mark that cell visible.
+    return count_event
 
 
 @ngjit
@@ -1583,9 +1596,13 @@ def _viewshed_cpu(
 
     raster.data = raster.data.astype(np.float64, copy=False)
 
-    _init_event_list(event_list=event_list, raster=raster.data,
-                     vp_row=viewpoint_row, vp_col=viewpoint_col,
-                     data=data, visibility_grid=visibility_grid)
+    count_event = _init_event_list(
+        event_list=event_list, raster=raster.data,
+        vp_row=viewpoint_row, vp_col=viewpoint_col,
+        data=data, visibility_grid=visibility_grid)
+
+    # Drop unused trailing rows left by skipped NODATA cells before sorting.
+    event_list = event_list[:count_event]
 
     # sort the events radially by ang
     event_list = event_list[np.lexsort((event_list[:, E_TYPE_ID],

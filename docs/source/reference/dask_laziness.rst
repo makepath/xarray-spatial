@@ -78,8 +78,8 @@ Focal operations
      - Fully lazy
      - Multiple stats via ``map_overlap``, 3D output
    * - ``hotspots``
-     - Partially lazy
-     - Computes global mean and std, result is dask
+     - Fully lazy
+     - Global mean/std/count stay lazy; degenerate-input check fires at compute
 
 
 Classification
