@@ -541,3 +541,35 @@ class TestMemoryGuard:
         ):
             with pytest.raises(MemoryError, match="GPU working memory"):
                 flow_length_mfd(raster, direction='downstream')
+
+
+def _cyclic_fractions():
+    """2x2 fractions with a 2-cell horizontal cycle in the top row.
+
+    (0,0) -> E into (0,1); (0,1) -> W into (0,0).  Bottom row flows
+    S off grid, so only the top row forms the cycle.
+    """
+    fracs = np.zeros((8, 2, 2), dtype=np.float64)
+    fracs[0, 0, 0] = 1.0  # (0,0) -> E
+    fracs[4, 0, 1] = 1.0  # (0,1) -> W  (closes the cycle)
+    fracs[2, 1, 0] = 1.0  # (1,0) -> S off grid
+    fracs[2, 1, 1] = 1.0  # (1,1) -> S off grid
+    return fracs
+
+
+class TestFlowLengthMFDCycleDetection:
+    """A cyclic fraction grid must raise rather than return wrong values."""
+
+    @pytest.mark.parametrize('direction', ['downstream', 'upstream'])
+    def test_numpy_cycle_raises(self, direction):
+        raster = _make_mfd_raster(_cyclic_fractions(), backend='numpy')
+        with pytest.raises(ValueError, match="cycle"):
+            flow_length_mfd(raster, direction=direction)
+
+    @pytest.mark.parametrize('direction', ['downstream', 'upstream'])
+    def test_dask_cycle_raises(self, direction):
+        pytest.importorskip('dask.array')
+        raster = _make_mfd_raster(
+            _cyclic_fractions(), backend='dask', chunks=(2, 2))
+        with pytest.raises(ValueError, match="cycle"):
+            flow_length_mfd(raster, direction=direction).data.compute()

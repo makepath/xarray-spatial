@@ -174,12 +174,14 @@ def _flow_length_mfd_downstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
     flow_len = np.empty((H, W), dtype=np.float64)
 
     # Init
+    n_valid = 0
     for r in range(H):
         for c in range(W):
             v = fractions[0, r, c]
             if v == v:  # not NaN
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -223,6 +225,15 @@ def _flow_length_mfd_downstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
                         order_c[tail] = nc
                         tail += 1
 
+    # If a cycle remains, fewer than n_valid cells made it into the
+    # topological order.  The MFD grid must be a DAG.
+    if tail < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
+
     # Reverse pass: outlets -> divides
     for i in range(tail - 1, -1, -1):
         r = order_r[i]
@@ -257,12 +268,14 @@ def _flow_length_mfd_upstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
     valid = np.zeros((H, W), dtype=np.int8)
     flow_len = np.empty((H, W), dtype=np.float64)
 
+    n_valid = 0
     for r in range(H):
         for c in range(W):
             v = fractions[0, r, c]
             if v == v:
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -310,6 +323,15 @@ def _flow_length_mfd_upstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
                         queue_c[tail] = nc
                         tail += 1
 
+    # If a cycle remains, fewer than n_valid cells were dequeued.  head
+    # counts processed cells; the MFD grid must be a DAG.
+    if head < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
+
     return flow_len
 
 
@@ -353,12 +375,14 @@ def _flow_length_mfd_downstream_tile(fractions, h, w, cellsize_x, cellsize_y,
     flow_len = np.empty((h, w), dtype=np.float64)
 
     # Init
+    n_valid = 0
     for r in range(h):
         for c in range(w):
             v = fractions[0, r, c]
             if v == v:
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -401,6 +425,14 @@ def _flow_length_mfd_downstream_tile(fractions, h, w, cellsize_x, cellsize_y,
                         order_r[tail] = nr
                         order_c[tail] = nc
                         tail += 1
+
+    # A cycle within this tile leaves some valid cells out of the order.
+    if tail < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
 
     # Reverse pass
     for i in range(tail - 1, -1, -1):
@@ -470,12 +502,14 @@ def _flow_length_mfd_upstream_tile(fractions, h, w, cellsize_x, cellsize_y,
     valid = np.zeros((h, w), dtype=np.int8)
     flow_len = np.empty((h, w), dtype=np.float64)
 
+    n_valid = 0
     for r in range(h):
         for c in range(w):
             v = fractions[0, r, c]
             if v == v:
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -544,6 +578,14 @@ def _flow_length_mfd_upstream_tile(fractions, h, w, cellsize_x, cellsize_y,
                         queue_r[tail] = nr
                         queue_c[tail] = nc
                         tail += 1
+
+    # A cycle within this tile leaves some valid cells undequeued.
+    if head < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
 
     return flow_len
 

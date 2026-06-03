@@ -469,3 +469,41 @@ class TestMemoryGuard:
         ):
             with pytest.raises(MemoryError, match="dask"):
                 flow_accumulation_mfd(mfd)
+
+
+def _make_cyclic_mfd(backend='numpy', chunks=(8, 2, 2)):
+    """MFD fractions with a 2-cell horizontal cycle in the top row.
+
+    Row 0: (0,0) flows E into (0,1); (0,1) flows W into (0,0).
+    Row 1: both cells flow S off the grid so they are not in the cycle.
+    """
+    fracs = np.zeros((8, 2, 2), dtype=np.float64)
+    fracs[0, 0, 0] = 1.0  # (0,0) -> E
+    fracs[4, 0, 1] = 1.0  # (0,1) -> W  (closes the cycle)
+    fracs[2, 1, 0] = 1.0  # (1,0) -> S off grid
+    fracs[2, 1, 1] = 1.0  # (1,1) -> S off grid
+    da_obj = xr.DataArray(
+        fracs,
+        dims=('neighbor', 'y', 'x'),
+        coords={'y': [1.0, 0.0], 'x': [0.0, 1.0]},
+    )
+    if backend == 'dask':
+        dask = pytest.importorskip('dask.array')
+        da_obj = xr.DataArray(
+            dask.from_array(fracs, chunks=chunks),
+            dims=da_obj.dims, coords=da_obj.coords)
+    return da_obj
+
+
+class TestFlowAccumulationMFDCycleDetection:
+    """A cyclic fraction grid must raise rather than return wrong values."""
+
+    def test_numpy_cycle_raises(self):
+        mfd = _make_cyclic_mfd(backend='numpy')
+        with pytest.raises(ValueError, match="cycle"):
+            flow_accumulation_mfd(mfd)
+
+    def test_dask_cycle_raises(self):
+        mfd = _make_cyclic_mfd(backend='dask')
+        with pytest.raises(ValueError, match="cycle"):
+            flow_accumulation_mfd(mfd).data.compute()

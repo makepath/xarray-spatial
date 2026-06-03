@@ -166,8 +166,21 @@ def _flow_path_mfd_cpu(fractions, start_points, H, W):
                 continue
             label = v
             cr, cc = r, c
+            # A dominant-neighbor path through a DAG visits each cell at
+            # most once, so it cannot exceed H*W steps.  If it does, the
+            # fraction grid contains a cycle.
+            steps = 0
+            max_steps = H * W
             while True:
                 out[cr, cc] = label
+                steps += 1
+                if steps > max_steps:
+                    raise ValueError(
+                        "flow_path_mfd: the MFD fraction grid contains a "
+                        "cycle; a traced path revisited cells and did not "
+                        "terminate.  The input must be a directed acyclic "
+                        "graph, as produced by flow_direction_mfd."
+                    )
                 # Check if cell is valid
                 chk = fractions[0, cr, cc]
                 if chk != chk:  # NaN → nodata
@@ -295,9 +308,20 @@ def _flow_path_mfd_dask(fractions_data, start_points_data, chunks_y, chunks_x):
     dy_arr = [0, 1, 1, 1, 0, -1, -1, -1]
     dx_arr = [1, 1, 0, -1, -1, -1, 0, 1]
 
+    max_steps = H * W
+
     for r, c, label in points:
         cr, cc = r, c
+        steps = 0
         while True:
+            steps += 1
+            if steps > max_steps:
+                raise ValueError(
+                    "flow_path_mfd: the MFD fraction grid contains a cycle; "
+                    "a traced path revisited cells and did not terminate.  "
+                    "The input must be a directed acyclic graph, as produced "
+                    "by flow_direction_mfd."
+                )
             if _buf_len >= len(_buf_rows):
                 new_cap = len(_buf_rows) * 2
                 _new_rows = np.empty(new_cap, dtype=np.int64)
