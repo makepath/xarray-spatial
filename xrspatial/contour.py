@@ -209,7 +209,10 @@ def _emit_seg(r, c, tl, tr, bl, br, level, edge_a, edge_b,
     # happens the interpolation parameter lands on the corner and both
     # endpoints can collapse onto the same point, producing a zero-length
     # segment.  Drop those here so no zero-length / single-point geometry
-    # reaches stitching or GeoDataFrame output.
+    # reaches stitching or GeoDataFrame output.  Exact float equality is
+    # intended: a real collapse computes both endpoints from the same corner
+    # value and yields bit-identical coordinates, while near-equal endpoints
+    # are genuine short segments and must be kept.
     if r0 == r1 and c0 == c1:
         return
 
@@ -571,7 +574,10 @@ def _to_geopandas(results, crs=None):
 
     records = []
     for level, coords in results:
-        if len(coords) >= 2:
+        # Require at least two distinct vertices.  _stitch_segments already
+        # drops single-point polylines, but guard here too so the geopandas
+        # path never emits a zero-length / invalid LineString on its own.
+        if _has_distinct_points(coords, 10):
             # coords are (row, col); convert to (x, y) = (col, row)
             geom = LineString(coords[:, ::-1])
             records.append({'level': level, 'geometry': geom})
