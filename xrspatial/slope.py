@@ -425,7 +425,7 @@ def slope(agg: xr.DataArray,
     else:  # geodesic
         if z_unit not in Z_UNITS:
             raise ValueError(
-                f"z_unit must be one of {sorted(set(Z_UNITS.values()), key=str)}, "
+                f"z_unit must be one of {sorted(Z_UNITS)}, "
                 f"got {z_unit!r}"
             )
         z_factor = Z_UNITS[z_unit]
