@@ -1175,6 +1175,15 @@ def _init_event_list(event_list, raster, vp_row, vp_col,
                 _set_visibility(visibility_grid, i, j, 180)
                 continue
 
+            # NODATA cells generate no events: a NaN cell on the vp row to
+            # the right is never inserted into the status structure (the
+            # pre-insert loop guards on not np.isnan(data[1][i])), so emitting
+            # its EXITING event would make _delete_from_tree raise "node not
+            # found".  Skipping leaves the cell at its INVISIBLE fill value,
+            # which downstream `!= INVISIBLE` checks do not count as visible.
+            if np.isnan(inrast[1][j]):
+                continue
+
             # if it got here it is not the vp, not NODATA, and
             # within max distance from vp generate its 3 events
             # and insert them
@@ -1220,7 +1229,11 @@ def _init_event_list(event_list, raster, vp_row, vp_col,
             event_list[count_event] = e
             count_event += 1
 
-    return
+    # Skipped NODATA cells leave unused trailing rows in the pre-allocated
+    # event_list.  Return the count so the caller can drop them; otherwise the
+    # leftover all-zero rows sort as CENTER events at cell (0, 0) and would
+    # spuriously mark that cell visible.
+    return count_event
 
 
 @ngjit
@@ -1581,11 +1594,17 @@ def _viewshed_cpu(
     num_events = 3 * (n_rows * n_cols - 1)
     event_list = np.zeros((num_events, 7), dtype=np.float64)
 
-    raster.data = raster.data.astype(np.float64, copy=False)
+    # Convert to float64 on a copy so the caller's input DataArray is never
+    # mutated (an int16 input must stay int16 after viewshed returns).
+    raster_data = raster.data.astype(np.float64)
 
-    _init_event_list(event_list=event_list, raster=raster.data,
-                     vp_row=viewpoint_row, vp_col=viewpoint_col,
-                     data=data, visibility_grid=visibility_grid)
+    count_event = _init_event_list(
+        event_list=event_list, raster=raster_data,
+        vp_row=viewpoint_row, vp_col=viewpoint_col,
+        data=data, visibility_grid=visibility_grid)
+
+    # Drop unused trailing rows left by skipped NODATA cells before sorting.
+    event_list = event_list[:count_event]
 
     # sort the events radially by ang
     event_list = event_list[np.lexsort((event_list[:, E_TYPE_ID],
@@ -1598,7 +1617,7 @@ def _viewshed_cpu(
     event_aes = event_list[:, 3:].copy()
 
     viewshed_img = _viewshed_cpu_sweep(
-        raster.data, viewpoint_row, viewpoint_col, viewpoint_elev,
+        raster_data, viewpoint_row, viewpoint_col, viewpoint_elev,
         viewpoint_target, ew_res, ns_res, event_rcts, event_aes, data,
         visibility_grid)
 
@@ -1730,10 +1749,15 @@ def viewshed(raster: xarray.DataArray,
             from .gpu_rtx.viewshed import viewshed_gpu
             return viewshed_gpu(raster, x, y, observer_elev, target_elev, name)
         else:
-            # Convert to numpy and run on cpu
+            # Convert to numpy and run on cpu. Build a new DataArray instead
+            # of reassigning raster.data so the caller's CuPy input is left
+            # unchanged.
             import cupy as cp
-            raster.data = cp.asnumpy(raster.data)
-            return _viewshed_cpu(raster, x, y, observer_elev, target_elev,
+            raster_np = xarray.DataArray(cp.asnumpy(raster.data),
+                                         coords=raster.coords,
+                                         attrs=raster.attrs,
+                                         dims=raster.dims)
+            return _viewshed_cpu(raster_np, x, y, observer_elev, target_elev,
                                  name)
 
     elif has_dask_array():

@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -475,3 +477,118 @@ def test_near_360_aspect_cupy_matches_numpy(backend):
     gpu_interior = _aspect_interior(_near_360_plane(backend))
     np.testing.assert_allclose(
         gpu_interior, np_interior, rtol=1e-6, atol=1e-3)
+
+
+def _degree_coord_meter_elevation_raster():
+    # degree-like coords (lon/lat) with meter-scale elevation values
+    data = np.linspace(0, 999, 10 * 10, dtype=float).reshape(10, 10)
+    y = np.linspace(5.0, 5.0025, 10)
+    x = np.linspace(-74.93, -74.9275, 10)
+    return xr.DataArray(
+        data,
+        dims=('y', 'x'),
+        coords={'y': y, 'x': x},
+        attrs={'units': 'm'},
+    )
+
+
+def _projected_meter_raster():
+    # projected coords in meters (UTM-ish) with meter-scale elevation values
+    data = np.linspace(0, 999, 10 * 10, dtype=float).reshape(10, 10)
+    y = np.arange(10) * 30.0
+    x = 500_000.0 + np.arange(10) * 30.0
+    return xr.DataArray(
+        data,
+        dims=('y', 'x'),
+        coords={'y': y, 'x': x},
+        attrs={'units': 'm'},
+    )
+
+
+def test_planar_warns_on_degree_coords_meter_elevation():
+    raster = _degree_coord_meter_elevation_raster()
+    with pytest.warns(UserWarning, match="appears to have coordinates in degrees"):
+        aspect(raster)  # method='planar' is the default
+
+
+def test_planar_no_warn_on_projected_meter_coords():
+    raster = _projected_meter_raster()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        aspect(raster)  # must not raise: no unit-mismatch warning expected
+
+
+# The output .name must agree across backends. xr.DataArray keeps a dask
+# array's internal graph token (e.g. '_trim-<hash>' planar, 'getitem-<hash>'
+# geodesic) as .name when name=None, so the dask backends used to disagree
+# with numpy/cupy. Regression for the aspect .name leak (same class as zonal
+# #2611, focal #2733, slope #2838).
+def _assert_name_planar(backend, name):
+    data = np.random.default_rng(0).random((8, 10)).astype(np.float64) * 100
+    agg = create_test_raster(data, backend=backend, attrs={'res': (1, 1)},
+                             chunks=(3, 4))
+    assert aspect(agg, name=name).name == name
+
+
+def _geodesic_raster(backend):
+    H, W = 8, 10
+    lat = np.linspace(40.0, 41.0, H)
+    lon = np.linspace(10.0, 11.0, W)
+    data = np.random.default_rng(1).random((H, W)) * 100
+    raster = xr.DataArray(
+        data, dims=['lat', 'lon'], coords={'lat': lat, 'lon': lon},
+    )
+    if 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(raster.data)
+    if 'dask' in backend:
+        import dask.array as da
+        raster.data = da.from_array(raster.data, chunks=(4, 5))
+    return raster
+
+
+def _assert_name_geodesic(backend, name):
+    result = aspect(_geodesic_raster(backend), method='geodesic', name=name)
+    assert result.name == name
+
+
+# northness() and eastness() wrap aspect() and build their own DataArray, so
+# they leak the same dask graph token (e.g. 'where-<hash>') when name=None.
+def _assert_name_derived(backend, name):
+    data = np.random.default_rng(2).random((8, 10)).astype(np.float64) * 100
+    agg = create_test_raster(data, backend=backend, attrs={'res': (1, 1)},
+                             chunks=(3, 4))
+    assert northness(agg, name=name).name == name
+    assert eastness(agg, name=name).name == name
+
+
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_numpy(name):
+    _assert_name_planar('numpy', name)
+    _assert_name_geodesic('numpy', name)
+    _assert_name_derived('numpy', name)
+
+
+@dask_array_available
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_dask_numpy(name):
+    _assert_name_planar('dask+numpy', name)
+    _assert_name_geodesic('dask+numpy', name)
+    _assert_name_derived('dask+numpy', name)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_cupy(name):
+    _assert_name_planar('cupy', name)
+    _assert_name_geodesic('cupy', name)
+    _assert_name_derived('cupy', name)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("name", [None, 'aspect'])
+def test_name_consistent_dask_cupy(name):
+    _assert_name_planar('dask+cupy', name)
+    _assert_name_geodesic('dask+cupy', name)
+    _assert_name_derived('dask+cupy', name)

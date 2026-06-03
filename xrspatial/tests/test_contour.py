@@ -703,6 +703,81 @@ class TestCRSPropagation:
         assert isinstance(gdf, gpd.GeoDataFrame)
         assert gdf.crs is None
 
+    # CRS-resolver parity with polygonize (#2893). contours must use the
+    # same resolution order as polygonize._detect_raster_crs:
+    #   attrs['crs'] -> attrs['crs_wkt'] -> raster.rio.crs -> None.
+
+    @staticmethod
+    def _bare_raster():
+        """A peak raster with explicit coords and no CRS metadata."""
+        data = _make_peak()
+        agg = xr.DataArray(data, dims=['y', 'x'])
+        agg['y'] = np.linspace(2.0, 0.0, data.shape[0])
+        agg['x'] = np.linspace(0.0, 2.0, data.shape[1])
+        return agg
+
+    def test_geopandas_crs_from_crs_wkt(self):
+        """A raster with only attrs['crs_wkt'] still georeferences the gdf.
+
+        Previously contours read only attrs['crs'], so a crs_wkt-only raster
+        produced an unprojected GeoDataFrame.
+        """
+        pytest.importorskip("geopandas")
+        from pyproj import CRS
+
+        agg = self._bare_raster()
+        agg.attrs['crs_wkt'] = CRS.from_epsg(5070).to_wkt()
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert gdf.crs is not None
+        assert gdf.crs.to_epsg() == 5070
+
+    def test_geopandas_crs_attr_precedence(self):
+        """attrs['crs'] wins over attrs['crs_wkt'] when both are present."""
+        pytest.importorskip("geopandas")
+        from pyproj import CRS
+
+        agg = self._bare_raster()
+        agg.attrs['crs'] = 'EPSG:5070'
+        agg.attrs['crs_wkt'] = CRS.from_epsg(4326).to_wkt()
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert gdf.crs is not None
+        assert gdf.crs.to_epsg() == 5070
+
+    def test_geopandas_no_crs_info(self):
+        """A raster with no CRS info yields a GeoDataFrame with crs None."""
+        gpd = pytest.importorskip("geopandas")
+        agg = self._bare_raster()
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert isinstance(gdf, gpd.GeoDataFrame)
+        assert gdf.crs is None
+
+    @staticmethod
+    def _wkt_4326():
+        from pyproj import CRS
+        return {'crs_wkt': CRS.from_epsg(4326).to_wkt()}
+
+    @pytest.mark.parametrize("attrs_factory", [
+        pytest.param(lambda: {'crs': 'EPSG:5070'}, id="crs"),
+        pytest.param(lambda: TestCRSPropagation._wkt_4326(), id="crs_wkt"),
+        pytest.param(lambda: {}, id="no_crs"),
+    ])
+    def test_geopandas_crs_matches_detect_raster_crs(self, attrs_factory):
+        """contours resolves the same CRS polygonize would for one raster."""
+        pytest.importorskip("geopandas")
+        from pyproj import CRS
+
+        from xrspatial.polygonize import _detect_raster_crs
+
+        agg = self._bare_raster()
+        agg.attrs.update(attrs_factory())
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+
+        expected = _detect_raster_crs(agg)
+        if expected is None:
+            assert gdf.crs is None
+        else:
+            assert gdf.crs == CRS.from_user_input(expected)
+
 
 # ---------------------------------------------------------------------------
 # Non-default dim names: index -> coordinate transform (#2704 audit, Cat 5)
@@ -756,3 +831,116 @@ class TestNonDefaultDims:
         for (lvl_a, c_a), (lvl_b, c_b) in zip(r_yx, r_ll):
             assert lvl_a == lvl_b
             np.testing.assert_allclose(c_a, c_b)
+
+
+# ---------------------------------------------------------------------------
+# Degenerate geometry at exact-level corners (issue #2892)
+# ---------------------------------------------------------------------------
+
+def _make_checkerboard(n=4, lo=0.0, hi=1.0):
+    """n x n checkerboard alternating between lo and hi."""
+    board = np.indices((n, n)).sum(axis=0) % 2
+    return np.where(board == 0, lo, hi).astype(np.float64)
+
+
+def _assert_no_degenerate_numpy(result):
+    """Every numpy polyline has at least two distinct vertices, no repeats."""
+    for level, coords in result:
+        # No two consecutive points are identical.
+        if len(coords) >= 2:
+            diffs = np.abs(np.diff(coords, axis=0)).sum(axis=1)
+            assert np.all(diffs > 0), (
+                f"repeated consecutive point at level {level}: {coords}"
+            )
+        # At least two distinct vertices (non-zero extent).
+        distinct = np.unique(np.round(coords, 10), axis=0)
+        assert len(distinct) >= 2, (
+            f"single-point polyline at level {level}: {coords}"
+        )
+
+
+def _assert_no_degenerate_geopandas(gdf):
+    """No geometry is zero-length or invalid in Shapely."""
+    for geom in gdf.geometry:
+        assert geom.length > 0, f"zero-length geometry: {geom.wkt}"
+        assert geom.is_valid, f"invalid geometry: {geom.wkt}"
+
+
+class TestDegenerateExactLevel:
+    """A corner exactly equal to the level must not poison the output.
+
+    Corners are classified with ``>= level`` (treated as above), so the
+    fix is to drop the zero-length / single-point segments that would
+    otherwise collapse onto that corner.  The rule must hold identically
+    on every backend.
+    """
+
+    def test_checkerboard_numpy_no_zero_length(self):
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.0])
+        _assert_no_degenerate_numpy(result)
+
+    def test_checkerboard_numpy_geopandas_valid(self):
+        pytest.importorskip("geopandas")
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='numpy')
+        gdf = contours(agg, levels=[1.0], return_type="geopandas")
+        _assert_no_degenerate_geopandas(gdf)
+
+    def test_checkerboard_equality_consistent(self):
+        """The level lands on every 'hi' corner; orientation must not matter.
+
+        Two checkerboards that differ only by which phase carries the
+        exact-level value must both yield clean (degenerate-free) output.
+        """
+        for lo, hi in [(0.0, 1.0), (1.0, 2.0), (2.0, 1.0)]:
+            data = _make_checkerboard(4, lo=lo, hi=hi)
+            agg = create_test_raster(data, backend='numpy')
+            result = contours(agg, levels=[1.0])
+            _assert_no_degenerate_numpy(result)
+
+    @dask_array_available
+    def test_checkerboard_dask_no_zero_length(self):
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+        result = contours(agg, levels=[1.0])
+        _assert_no_degenerate_numpy(result)
+
+    @dask_array_available
+    def test_checkerboard_dask_geopandas_valid(self):
+        pytest.importorskip("geopandas")
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+        gdf = contours(agg, levels=[1.0], return_type="geopandas")
+        _assert_no_degenerate_geopandas(gdf)
+
+    @dask_array_available
+    def test_checkerboard_numpy_matches_dask(self):
+        """numpy and dask agree that the checkerboard yields no geometry."""
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        np_agg = create_test_raster(data, backend='numpy')
+        dk_agg = create_test_raster(
+            data, backend='dask+numpy', chunks=(2, 2)
+        )
+        np_res = contours(np_agg, levels=[1.0])
+        dk_res = contours(dk_agg, levels=[1.0])
+        _assert_no_degenerate_numpy(np_res)
+        _assert_no_degenerate_numpy(dk_res)
+        assert len(np_res) == len(dk_res)
+
+    def test_genuine_contour_survives(self):
+        """The degenerate filter must not drop real crossings.
+
+        A ramp that crosses the level mid-edge still produces a valid,
+        non-zero-length contour.
+        """
+        pytest.importorskip("geopandas")
+        data = _make_ramp(ny=5, nx=6)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[2.5])
+        assert len(result) > 0
+        _assert_no_degenerate_numpy(result)
+        gdf = contours(agg, levels=[2.5], return_type="geopandas")
+        assert len(gdf) > 0
+        _assert_no_degenerate_geopandas(gdf)

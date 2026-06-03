@@ -167,6 +167,76 @@ def test_numpy_equals_dask(chunks):
         np_result.data, dk_result.data.compute(), equal_nan=True)
 
 
+@dask_array_available
+def test_dask_band_axis_chunked():
+    """Input chunked along the 8-band axis still matches numpy."""
+    fracs = _make_all_east(4, 6)
+    pp = np.full((4, 6), np.nan, dtype=np.float64)
+    pp[0, 5] = 1.0
+    pp[3, 5] = 2.0
+
+    fd_np = _make_mfd_raster(fracs, backend='numpy')
+    pp_np = create_test_raster(pp, backend='numpy')
+    fd_dk = _make_mfd_raster(fracs, backend='dask', chunks=(2, 2))
+    fd_dk = fd_dk.chunk({'neighbor': 4})
+    pp_dk = create_test_raster(pp, backend='dask', chunks=(2, 2))
+
+    np_result = watershed_mfd(fd_np, pp_np)
+    dk_result = watershed_mfd(fd_dk, pp_dk)
+
+    np.testing.assert_allclose(
+        np_result.data, dk_result.data.compute(), equal_nan=True)
+
+
+@dask_array_available
+def test_dask_pour_points_chunk_mismatch():
+    """Pour points chunked differently from fractions still match numpy."""
+    fracs = _make_all_east(4, 6)
+    pp = np.full((4, 6), np.nan, dtype=np.float64)
+    pp[0, 5] = 1.0
+    pp[3, 5] = 2.0
+
+    fd_np = _make_mfd_raster(fracs, backend='numpy')
+    pp_np = create_test_raster(pp, backend='numpy')
+    fd_dk = _make_mfd_raster(fracs, backend='dask', chunks=(2, 2))
+    # Pour points chunked 3x3 while fractions are 2x2.
+    pp_dk = create_test_raster(pp, backend='dask', chunks=(3, 3))
+
+    np_result = watershed_mfd(fd_np, pp_np)
+    dk_result = watershed_mfd(fd_dk, pp_dk)
+
+    np.testing.assert_allclose(
+        np_result.data, dk_result.data.compute(), equal_nan=True)
+
+
+@dask_array_available
+def test_dask_assembly_is_lazy(monkeypatch):
+    """Assembling the output raster must be deferred to compute time."""
+    import importlib
+    mod = importlib.import_module('xrspatial.hydro.watershed_mfd')
+
+    counter = {'n': 0}
+    orig = mod._watershed_mfd_tile_kernel
+
+    def _spy(*args, **kwargs):
+        counter['n'] += 1
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, '_watershed_mfd_tile_kernel', _spy)
+
+    fracs = _make_all_east(6, 6)
+    pp = np.full((6, 6), np.nan, dtype=np.float64)
+    pp[0, 5] = 1.0
+    pp[5, 5] = 2.0
+    fd_dk = _make_mfd_raster(fracs, backend='dask', chunks=(2, 2))
+    pp_dk = create_test_raster(pp, backend='dask', chunks=(2, 2))
+
+    result = watershed_mfd(fd_dk, pp_dk)
+    calls_after_call = counter['n']
+    result.data.compute()
+    assert counter['n'] - calls_after_call > 0
+
+
 @cuda_and_cupy_available
 def test_numpy_equals_cupy():
     fracs = _make_all_east(3, 4)

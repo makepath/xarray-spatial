@@ -40,6 +40,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _validate_matching_shape,
     _validate_mfd_fractions,
     _validate_raster,
     cuda_args,
@@ -1026,6 +1027,9 @@ def stream_link_mfd(fractions: xr.DataArray,
             f"got shape {data.shape}"
         )
 
+    _validate_matching_shape(
+        flow_accum, data.shape[1:], func_name='stream_link_mfd',
+        name='flow_accum', expected_name='fractions')
     _validate_mfd_fractions(data, func_name='stream_link_mfd',
                             name='fractions')
 

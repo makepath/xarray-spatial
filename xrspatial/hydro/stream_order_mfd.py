@@ -37,6 +37,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _validate_matching_shape,
     _validate_mfd_fractions,
     _validate_raster,
     cuda_args,
@@ -1513,6 +1514,9 @@ def stream_order_mfd(fractions: xr.DataArray,
             f"got shape {frac_data.shape}"
         )
 
+    _validate_matching_shape(
+        flow_accum, frac_data.shape[1:], func_name='stream_order_mfd',
+        name='flow_accum', expected_name='fractions')
     _validate_mfd_fractions(frac_data, func_name='stream_order_mfd',
                             name='fractions')
 
