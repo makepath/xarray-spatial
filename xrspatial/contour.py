@@ -9,7 +9,6 @@
 # levels, making it well suited to Dask chunking and GPU execution.
 
 import warnings
-from itertools import chain
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -402,7 +401,12 @@ def _contours_dask(data, levels):
         r_off += rsize
 
     chunk_results = dask.compute(*all_results)
-    return _deduplicate_by_level(chain.from_iterable(chunk_results))
+
+    merged = []
+    for chunk_lines in chunk_results:
+        merged.extend(chunk_lines)
+
+    return _deduplicate_by_level(merged)
 
 
 def _contours_dask_cupy(data, levels):
@@ -429,7 +433,12 @@ def _contours_dask_cupy(data, levels):
         r_off += rsize
 
     chunk_results = dask.compute(*all_results)
-    return _deduplicate_by_level(chain.from_iterable(chunk_results))
+
+    merged = []
+    for chunk_lines in chunk_results:
+        merged.extend(chunk_lines)
+
+    return _deduplicate_by_level(merged)
 
 
 def _process_chunk_numpy(chunk_data, levels, r_offset, c_offset):
