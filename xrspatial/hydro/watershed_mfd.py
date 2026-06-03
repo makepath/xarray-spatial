@@ -29,6 +29,7 @@ except ImportError:
 
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.utils import (
+    _validate_matching_shape,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -561,6 +562,14 @@ def _watershed_mfd_dask(fractions_da, pour_points_da, chunks_y, chunks_x):
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
 
+    # The 8 direction bands must stay in a single chunk: every tile kernel
+    # needs all 8 fractions, and the lazy assembly drops axis 0 per block.
+    if fractions_da.chunks[0] != (fractions_da.shape[0],):
+        fractions_da = fractions_da.rechunk({0: fractions_da.shape[0]})
+    # Align pour points to the fractions' spatial tile grid so the lazy
+    # assembly can map both arrays block-for-block.
+    pour_points_da = pour_points_da.rechunk((chunks_y, chunks_x))
+
     frac_bdry = _preprocess_mfd_tiles(fractions_da, chunks_y, chunks_x)
     boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=np.nan)
 
@@ -592,32 +601,30 @@ def _watershed_mfd_dask(fractions_da, pour_points_da, chunks_y, chunks_x):
 
     boundaries = boundaries.snapshot()
 
-    # Assemble final result
-    rows = []
-    for iy in range(n_tile_y):
-        row = []
-        for ix in range(n_tile_x):
-            y_start = sum(chunks_y[:iy])
-            y_end = y_start + chunks_y[iy]
-            x_start = sum(chunks_x[:ix])
-            x_end = x_start + chunks_x[ix]
+    # Assemble the final result lazily.  The converged boundary snapshot and
+    # fraction strips are small, so we capture them in a closure and let
+    # map_blocks run the per-tile kernel at compute time.  Nothing here
+    # materializes the full output raster during the API call.
+    y_starts = np.cumsum((0,) + tuple(chunks_y[:-1]))
+    x_starts = np.cumsum((0,) + tuple(chunks_x[:-1]))
 
-            chunk = np.asarray(
-                fractions_da[:, y_start:y_end, x_start:x_end].compute(),
-                dtype=np.float64)
-            pp_chunk = np.asarray(
-                pour_points_da.blocks[iy, ix].compute(), dtype=np.float64)
-            _, h, w = chunk.shape
+    def _tile(chunk, pp_chunk, block_info=None):
+        loc = block_info[0]['array-location']
+        iy = int(np.searchsorted(y_starts, loc[1][0], side='right')) - 1
+        ix = int(np.searchsorted(x_starts, loc[2][0], side='right')) - 1
 
-            exits = _compute_exit_labels_mfd(
-                iy, ix, boundaries, frac_bdry,
-                chunks_y, chunks_x, n_tile_y, n_tile_x)
+        chunk = np.asarray(chunk, dtype=np.float64)
+        pp_chunk = np.asarray(pp_chunk, dtype=np.float64)
+        _, h, w = chunk.shape
+        exits = _compute_exit_labels_mfd(
+            iy, ix, boundaries, frac_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x)
+        return _watershed_mfd_tile_kernel(chunk, h, w, pp_chunk, *exits)
 
-            tile = _watershed_mfd_tile_kernel(chunk, h, w, pp_chunk, *exits)
-            row.append(da.from_array(tile, chunks=tile.shape))
-        rows.append(row)
-
-    return da.block(rows)
+    return da.map_blocks(
+        _tile, fractions_da, pour_points_da, drop_axis=0,
+        dtype=np.float64, meta=np.array((), dtype=np.float64),
+    )
 
 
 # =====================================================================
@@ -679,6 +686,10 @@ def watershed_mfd(flow_dir_mfd: xr.DataArray,
             f"flow_dir_mfd must have shape (8, H, W), got {data.shape}")
 
     _, H, W = data.shape
+
+    _validate_matching_shape(
+        pour_points, (H, W), func_name='watershed_mfd',
+        name='pour_points', expected_name='flow_dir_mfd')
 
     if isinstance(data, np.ndarray):
         _check_memory(H, W)

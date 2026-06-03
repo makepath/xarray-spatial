@@ -109,6 +109,45 @@ def _validate_raster(
                 )
 
 
+def _validate_matching_shape(
+    agg,
+    expected_shape,
+    *,
+    func_name: str,
+    name: str = 'raster',
+    expected_name: str = 'the primary raster',
+):
+    """Validate that *agg* has spatial shape ``expected_shape``.
+
+    Used to confirm a companion raster (e.g. start points, pour points,
+    flow accumulation) covers the same (H, W) grid as the primary input
+    before any kernel indexes into it.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        Companion raster to validate.
+    expected_shape : tuple of int
+        Required ``(H, W)`` shape.
+    func_name : str
+        Name of the calling function (for error messages).
+    name : str
+        Parameter name (for error messages).
+    expected_name : str
+        Description of the raster whose shape is the reference.
+
+    Raises
+    ------
+    ValueError
+        If ``agg.shape`` does not equal ``expected_shape``.
+    """
+    if tuple(agg.shape) != tuple(expected_shape):
+        raise ValueError(
+            f"{func_name}(): `{name}` shape {tuple(agg.shape)} does not "
+            f"match {expected_name} shape {tuple(expected_shape)}"
+        )
+
+
 def _validate_scalar(
     value,
     *,
