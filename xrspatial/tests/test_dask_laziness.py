@@ -118,12 +118,14 @@ class TestFocalLazy:
 
     def test_apply(self, elev):
         from xrspatial.focal import apply as focal_apply
-        kernel = np.ones((3, 3), dtype=np.float32) / 9
+        # apply() takes a binary membership mask, not a weighted kernel.
+        kernel = np.ones((3, 3), dtype=np.float32)
         assert _is_lazy(focal_apply(elev, kernel))
 
     def test_focal_stats(self, elev):
         from xrspatial.focal import focal_stats
-        kernel = np.ones((3, 3), dtype=np.float32) / 9
+        # focal_stats() takes a binary membership mask, not a weighted kernel.
+        kernel = np.ones((3, 3), dtype=np.float32)
         result = focal_stats(elev, kernel)
         assert _is_lazy(result)
 

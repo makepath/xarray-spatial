@@ -756,3 +756,4 @@ class TestNonDefaultDims:
         for (lvl_a, c_a), (lvl_b, c_b) in zip(r_yx, r_ll):
             assert lvl_a == lvl_b
             np.testing.assert_allclose(c_a, c_b)
+

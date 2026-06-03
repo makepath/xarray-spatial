@@ -254,6 +254,36 @@ def _distance(x1, x2, y1, y2, metric):
     return np.float32(d)
 
 
+def _check_monotonic_coords(x_coords, y_coords, x, y):
+    """Reject non-monotonic 1D coordinates.
+
+    Every backend in this module assumes the 1D axis coordinates are
+    monotonic: ``max_possible_distance`` is taken from the endpoints, the
+    dask halo and the NumPy line-sweep treat array adjacency as spatial
+    adjacency, and the tiled KDTree convergence check lower-bounds the
+    out-of-region distance with chunk-boundary coordinate gaps. None of
+    those hold when a coordinate axis is not monotonic, so a non-monotonic
+    axis silently yields wrong proximity/allocation/direction. Reject it up
+    front with a clear message instead.
+
+    A single-element axis has no order to violate and is allowed.
+    """
+    for coords, name in ((x_coords, x), (y_coords, y)):
+        if len(coords) < 2:
+            continue
+        diffs = np.diff(coords)
+        ascending = np.all(diffs > 0)
+        descending = np.all(diffs < 0)
+        if not (ascending or descending):
+            raise ValueError(
+                "proximity/allocation/direction require strictly monotonic "
+                "(strictly increasing or strictly decreasing, no duplicate or "
+                "NaN values) 1D coordinates, but the {0!r} axis does not "
+                "qualify. Sort the raster along {0!r} before calling.".format(
+                    name)
+            )
+
+
 def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     """Overlap depth in pixels for the bounded dask map_overlap call.
 
@@ -735,6 +765,38 @@ def _process_proximity_line(
     return
 
 
+def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
+    """Nearest-target query that breaks ties by lowest target index.
+
+    ``cKDTree.query`` does not promise which of several equidistant targets
+    it returns, so allocation and direction can disagree with the brute-force
+    and CUDA backends on a tie. Target coordinates are stored in row-major
+    (flat-index) order, so the lowest target index is the lowest flat index --
+    the tie-break policy documented on ``allocation``/``direction``.
+
+    Query the two nearest targets; wherever they are equidistant, keep the one
+    with the smaller index. This resolves 2-way ties, which is what grid
+    geometry produces in practice. A pixel equidistant to three or more targets
+    relies on cKDTree returning the lower index among the rest, which it does
+    for the row-major target order used here but does not strictly promise.
+    """
+    n_targets = tree.n
+    if n_targets < 2:
+        return tree.query(query_pts, p=p, distance_upper_bound=max_distance)
+
+    dists2, idx2 = tree.query(query_pts, k=2, p=p,
+                              distance_upper_bound=max_distance)
+    dists = dists2[:, 0]
+    indices = idx2[:, 0]
+    # A tie exists where both neighbours are finite and equidistant. Prefer the
+    # smaller index in that case so the result is independent of cKDTree's
+    # internal traversal order.
+    tied = np.isfinite(dists2[:, 1]) & (dists2[:, 1] == dists)
+    if tied.any():
+        indices = np.where(tied, np.minimum(idx2[:, 0], idx2[:, 1]), indices)
+    return dists, indices
+
+
 def _kdtree_chunk_fn(block, y_coords_1d, x_coords_1d,
                      tree, block_info, max_distance, p,
                      process_mode, target_vals, target_coords):
@@ -751,8 +813,8 @@ def _kdtree_chunk_fn(block, y_coords_1d, x_coords_1d,
     yy, xx = np.meshgrid(chunk_ys, chunk_xs, indexing='ij')
     query_pts = np.column_stack([yy.ravel(), xx.ravel()])
 
-    dists, indices = tree.query(query_pts, p=p,
-                                distance_upper_bound=max_distance)
+    dists, indices = _kdtree_query_lowest_index(
+        tree, query_pts, p, max_distance)
 
     n_targets = len(target_vals)
     oob = indices >= n_targets
@@ -979,7 +1041,7 @@ def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
 
         tree = cKDTree(target_coords)
         ub = max_distance if np.isfinite(max_distance) else np.inf
-        dists, indices = tree.query(query_pts, p=p, distance_upper_bound=ub)
+        dists, indices = _kdtree_query_lowest_index(tree, query_pts, p, ub)
 
         n_targets = len(target_vals)
         oob = indices >= n_targets
@@ -1176,6 +1238,23 @@ def _process(
 
     target_values = np.asarray(target_values)
 
+    # Reject non-finite explicit target_values. On numpy a pixel holding inf
+    # matched target_values=[inf] and ran the search, while dask/cupy mask
+    # non-finite pixels out and returned all-NaN for the same input. nan can
+    # never match a pixel anyway (nan == nan is False). Fail fast instead of
+    # producing backend-dependent output (issue #2850). A non-numeric dtype
+    # (e.g. strings) can't index a raster either, so it gets the same error
+    # rather than a downstream TypeError from np.isfinite.
+    if target_values.size and (
+        target_values.dtype.kind not in "iuf"
+        or not np.isfinite(target_values).all()
+    ):
+        raise ValueError(
+            "target_values must all be finite numbers, got {0!r}.".format(
+                target_values.tolist()
+            )
+        )
+
     if max_distance is None:
         max_distance = np.inf
 
@@ -1193,6 +1272,10 @@ def _process(
         x_coords = x_coords.compute()
     if da is not None and isinstance(y_coords, da.Array):
         y_coords = y_coords.compute()
+
+    # The endpoint-based max distance, the dask halo, the NumPy line-sweep,
+    # and the tiled KDTree convergence check all assume monotonic 1D coords.
+    _check_monotonic_coords(x_coords, y_coords, x, y)
 
     # Compute max_possible_distance using coordinate endpoints directly
     max_possible_distance = _distance(
@@ -1374,16 +1457,35 @@ def _process(
                 img, x_coords, y_coords, target_values,
                 np.float32(max_distance), distance_metric, process_mode,
             )
+        # ALLOCATION and DIRECTION pick a single target per pixel, so a tie
+        # between two equidistant targets must resolve the same way on every
+        # backend. The line-sweep breaks ties as a side effect of its
+        # four-pass propagation order, which disagrees with the brute-force
+        # and CUDA kernels. Route those modes through the brute-force search,
+        # which keeps the lowest-flat-index target on a tie (see the
+        # `allocation`/`direction` docstrings). Brute force is O(N*T) versus
+        # the line-sweep's O(N); the slower scan is a deliberate trade for a
+        # tie-break that matches every other backend. PROXIMITY only returns
+        # the distance, which is identical for tied targets, so the faster
+        # line-sweep stays in use there.
+        if process_mode in (ALLOCATION, DIRECTION):
+            return _process_numpy_bruteforce(
+                img, x_coords, y_coords, target_values,
+                np.float32(max_distance), distance_metric, process_mode,
+            )
         return _process_numpy_linesweep(img, x_coords, y_coords)
 
     def _process_dask(raster, xs, ys):
 
+        # Rechunk into a local variable instead of reassigning raster.data,
+        # which would mutate the caller's input DataArray (issue #2847).
+        data = raster.data
         if max_distance >= max_possible_distance:
             # consider all targets in the whole raster
             # the data array is computed at once,
             # make sure your data fit your memory
             height, width = raster.shape
-            raster.data = raster.data.rechunk({0: height, 1: width})
+            data = data.rechunk({0: height, 1: width})
             xs = xs.rechunk({0: height, 1: width})
             ys = ys.rechunk({0: height, 1: width})
             pad_y = pad_x = 0
@@ -1393,7 +1495,7 @@ def _process(
 
         out = da.map_overlap(
             _process_numpy,
-            raster.data, xs, ys,
+            data, xs, ys,
             depth=(pad_y, pad_x),
             boundary=np.nan,
             meta=np.array((), dtype=np.float32),
@@ -1537,6 +1639,9 @@ def proximity(
         2D array image with `raster.shape` = (height, width).
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1547,7 +1652,8 @@ def proximity(
     target_values: list
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
-        values.
+        values. All entries must be finite; a non-finite value (inf or
+        nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
@@ -1680,12 +1786,22 @@ def allocation(
     `allocation` chunk by chunk by expanding the chunk's borders to cover
     the `max_distance`.
 
+    Tie-breaking: when two or more targets are exactly equidistant from a
+    pixel, the target with the lowest flat (row-major) index wins, i.e. the
+    first target encountered when scanning the raster top-to-bottom and
+    left-to-right. This policy is identical across all backends (numpy, cupy,
+    dask+numpy, dask+cupy), so the allocated value is deterministic regardless
+    of which backend computes it.
+
     Parameters
     ----------
     raster : xr.DataArray or xr.Dataset
         2D array of target data.
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1696,7 +1812,8 @@ def allocation(
     target_values : list
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
-        values.
+        values. All entries must be finite; a non-finite value (inf or
+        nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
@@ -1831,12 +1948,22 @@ def direction(
     proximity direction chunk by chunk by expanding the chunk's borders
     to cover the `max_distance`.
 
+    Tie-breaking: when two or more targets are exactly equidistant from a
+    pixel, the direction is computed toward the target with the lowest flat
+    (row-major) index, i.e. the first target encountered when scanning the
+    raster top-to-bottom and left-to-right. This policy is identical across
+    all backends (numpy, cupy, dask+numpy, dask+cupy), so the reported
+    direction is deterministic regardless of which backend computes it.
+
     Parameters
     ----------
     raster : xr.DataArray or xr.Dataset
         2D array image with `raster.shape` = (height, width).
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1847,7 +1974,8 @@ def direction(
     target_values: list
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
-        non-zero pixel values.
+        non-zero pixel values. All entries must be finite; a non-finite
+        value (inf or nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
