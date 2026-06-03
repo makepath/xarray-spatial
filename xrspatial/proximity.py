@@ -1533,8 +1533,14 @@ def _process(
         else:
             pad_y, pad_x = _halo_depth(
                 x_coords, y_coords, max_distance, distance_metric)
-            pad_y, pad_x, (raster.data, xs, ys) = _fit_halo_to_chunks(
-                pad_y, pad_x, raster.data, xs, ys)
+            # Fold into the same local ``data`` the map_overlap call uses, not
+            # ``raster.data``: assigning back to ``raster.data`` would both
+            # mutate the caller's input (issue #2847) and leave map_overlap
+            # reading the stale, un-folded array while xs/ys are folded, so
+            # chunking disagrees and in-range targets in adjacent chunks drop
+            # to NaN (issue #2908).
+            pad_y, pad_x, (data, xs, ys) = _fit_halo_to_chunks(
+                pad_y, pad_x, data, xs, ys)
 
         out = da.map_overlap(
             _process_numpy,
