@@ -473,6 +473,94 @@ def test_center_nan_propagates_dask_cupy():
                                   verify_attrs=False)
 
 
+# ---------------------------------------------------------------------------
+# Planar cell-size validation (issue #2897)
+# ---------------------------------------------------------------------------
+
+INVALID_RES = [
+    (0, 0),         # zero on both axes
+    (0, 1),         # zero on x
+    (1, 0),         # zero on y
+    (-1, 1),        # negative on x
+    (1, -1),        # negative on y
+    (np.inf, 1),    # inf on x
+    (1, np.inf),    # inf on y
+    (np.nan, 1),    # nan on x
+    (1, np.nan),    # nan on y
+]
+
+
+@pytest.mark.parametrize("res", INVALID_RES)
+def test_planar_invalid_cellsize_numpy(res):
+    """slope(method='planar') must reject zero, negative, or non-finite cell
+    sizes with a clear ValueError instead of a raw ZeroDivisionError, silent
+    NaN interior, or plausible-but-wrong values.
+    """
+    data = np.zeros((5, 5), dtype=np.float32)
+    agg = create_test_raster(data, backend='numpy', attrs={'res': res})
+    with pytest.raises(ValueError, match="positive, finite cell size"):
+        slope(agg)
+
+
+@dask_array_available
+@pytest.mark.parametrize("res", INVALID_RES)
+def test_planar_invalid_cellsize_dask_numpy(res):
+    data = np.zeros((5, 5), dtype=np.float32)
+    agg = create_test_raster(data, backend='dask+numpy',
+                             attrs={'res': res}, chunks=(3, 3))
+    with pytest.raises(ValueError, match="positive, finite cell size"):
+        slope(agg)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("res", INVALID_RES)
+def test_planar_invalid_cellsize_cupy(res):
+    data = np.zeros((5, 5), dtype=np.float32)
+    agg = create_test_raster(data, backend='cupy', attrs={'res': res})
+    with pytest.raises(ValueError, match="positive, finite cell size"):
+        slope(agg)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("res", INVALID_RES)
+def test_planar_invalid_cellsize_dask_cupy(res):
+    data = np.zeros((5, 5), dtype=np.float32)
+    agg = create_test_raster(data, backend='dask+cupy',
+                             attrs={'res': res}, chunks=(3, 3))
+    with pytest.raises(ValueError, match="positive, finite cell size"):
+        slope(agg)
+
+
+def test_planar_valid_cellsize_still_works():
+    """A normal positive cell size must not trip the new guard."""
+    data = np.zeros((5, 5), dtype=np.float32)
+    agg = create_test_raster(data, backend='numpy', attrs={'res': (10, 10)})
+    result = slope(agg)
+    # slope() sets attrs['units'] = 'degrees' (#2894), so the output attrs
+    # legitimately differ from the input; the units contract is covered
+    # separately by the units tests below.
+    general_output_checks(agg, result, verify_attrs=False)
+
+
+def test_geodesic_unaffected_by_invalid_res_attr():
+    """The geodesic path takes its scale from lat/lon coords, so a bogus 'res'
+    attribute must not trigger the planar cell-size guard.
+    """
+    lat = np.linspace(40.0, 40.4, 5)
+    lon = np.linspace(-105.0, -104.6, 5)
+    data = np.zeros((5, 5), dtype=np.float64)
+    agg = xr.DataArray(
+        data,
+        coords={'y': lat, 'x': lon},
+        dims=['y', 'x'],
+        attrs={'res': (0, 0)},
+    )
+    # Must not raise the planar guard; geodesic uses lat/lon coords.
+    result = slope(agg, method='geodesic')
+    general_output_checks(agg, result, verify_attrs=False)
+
+
 # slope is reported in degrees, so the output must advertise units='degrees'
 # rather than leaking the input elevation units (e.g. 'm'). Regression for #2894.
 def test_units_overridden_to_degrees_numpy():

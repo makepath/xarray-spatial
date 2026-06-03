@@ -360,7 +360,9 @@ def slope(agg: xr.DataArray,
     size. If the coordinates are in degrees (lat/lon) but the elevation values
     are in meters, the result is wrong by orders of magnitude. When this
     mismatch is detected, a ``UserWarning`` is emitted suggesting you reproject
-    to a projected CRS or use ``method='geodesic'``.
+    to a projected CRS or use ``method='geodesic'``. The ``'planar'`` method also
+    raises a ``ValueError`` if the cell size on either axis is zero, negative, or
+    non-finite, since those values cannot produce a valid slope.
 
     References
     ----------
@@ -401,6 +403,17 @@ def slope(agg: xr.DataArray,
     if method == 'planar':
         warn_if_unit_mismatch(agg)
         cellsize_x, cellsize_y = get_dataarray_resolution(agg)
+        # Reject negatives too (curvature() only checks == 0): a negative cell
+        # size would silently flip the slope sign rather than error out.
+        if (not np.isfinite(cellsize_x) or not np.isfinite(cellsize_y)
+                or cellsize_x <= 0 or cellsize_y <= 0):
+            raise ValueError(
+                "slope(method='planar') requires a positive, finite cell size "
+                f"on both axes; got cellsize_x={cellsize_x!r}, "
+                f"cellsize_y={cellsize_y!r}. "
+                "Set agg.attrs['res'] to a (x, y) tuple of positive floats, "
+                "or attach numeric x/y coordinates to the DataArray."
+            )
         mapper = ArrayTypeFunctionMapping(
             numpy_func=_run_numpy,
             cupy_func=_run_cupy,
