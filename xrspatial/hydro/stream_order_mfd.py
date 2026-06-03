@@ -38,6 +38,7 @@ except ImportError:
 
 from xrspatial.utils import (
     _validate_matching_shape,
+    _validate_mfd_fractions,
     _validate_raster,
     cuda_args,
     has_cuda_and_cupy,
@@ -1516,6 +1517,8 @@ def stream_order_mfd(fractions: xr.DataArray,
     _validate_matching_shape(
         flow_accum, frac_data.shape[1:], func_name='stream_order_mfd',
         name='flow_accum', expected_name='fractions')
+    _validate_mfd_fractions(frac_data, func_name='stream_order_mfd',
+                            name='fractions')
 
     if isinstance(frac_data, np.ndarray):
         _check_memory(frac_data.shape[1], frac_data.shape[2])

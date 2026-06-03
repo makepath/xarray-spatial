@@ -30,6 +30,7 @@ except ImportError:
 
 from xrspatial.utils import (
     _validate_matching_shape,
+    _validate_mfd_fractions,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -452,6 +453,9 @@ def flow_path_mfd(flow_dir_mfd: xr.DataArray,
     if data.ndim != 3 or data.shape[0] != 8:
         raise ValueError(
             f"flow_dir_mfd must have shape (8, H, W), got {data.shape}")
+
+    _validate_mfd_fractions(data, func_name='flow_path_mfd',
+                            name='flow_dir_mfd')
 
     _, H, W = data.shape
 

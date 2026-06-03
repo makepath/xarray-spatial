@@ -1,3 +1,4 @@
+import warnings
 from collections import OrderedDict
 from math import atan, atan2, fabs
 from math import pi as PI
@@ -1656,10 +1657,12 @@ def viewshed(raster: xarray.DataArray,
         when it is being analyzed for visibility.
     max_distance : float, optional
         Maximum analysis distance from the observer in surface units.
-        Cells beyond this distance are marked INVISIBLE without being
-        evaluated. When set and the raster is dask-backed, only the
-        chunks within the distance window are loaded — this is the most
-        efficient way to run viewshed on very large dask rasters.
+        Must be a finite number >= 0; a negative or non-finite value
+        raises ``ValueError``. Cells beyond this distance are marked
+        INVISIBLE without being evaluated. When set and the raster is
+        dask-backed, only the chunks within the distance window are
+        loaded — this is the most efficient way to run viewshed on very
+        large dask rasters.
     name : str, default='viewshed'
         Name of the output DataArray. Set on every backend so the
         result name does not depend on which backend ran.
@@ -1687,15 +1690,26 @@ def viewshed(raster: xarray.DataArray,
       mesh of the terrain. The mesh discretisation can introduce small
       angular errors (typically < 0.03 degrees for visible cells).
     - **Dask**: When ``max_distance`` is set or the grid fits in memory,
-      the exact CPU algorithm is used on the relevant window. For very
-      large grids that exceed memory, a horizon-profile distance-sweep
-      algorithm is used instead. This algorithm discretises angles and
-      may produce minor visibility differences near the boundary of
-      occluded regions.
+      the exact CPU algorithm is used on the relevant window, so results
+      match the numpy backend. For very large grids that exceed memory
+      and have no ``max_distance``, an out-of-core horizon-profile
+      distance-sweep algorithm is used instead. This is a different,
+      approximate visibility model from the exact GRASS sweep, and the
+      two do **not** agree cell-for-cell. On rough terrain the visibility
+      mask can differ for a substantial fraction of cells (measured at up
+      to ~20% on small random rasters), with both false positives and
+      false negatives relative to the exact sweep. The error is geometric
+      and does not shrink with finer angle discretisation. When this path
+      runs, :func:`viewshed` emits a ``UserWarning`` so the approximation
+      is not silent. If you need results that match the exact sweep on a
+      large dask raster, set ``max_distance`` to restrict the analysis to
+      a window that fits in memory.
 
-    Both backends agree on which cells are visible vs invisible in the
-    vast majority of cases, but the reported vertical angles may differ
-    by a small amount near cell boundaries.
+    The CPU and GPU backends, and the dask exact-window path, agree on
+    which cells are visible vs invisible in the vast majority of cases;
+    reported vertical angles may differ by a small amount near cell
+    boundaries. The dask out-of-core distance sweep is the exception
+    described above.
 
     Examples
     --------
@@ -1735,8 +1749,16 @@ def viewshed(raster: xarray.DataArray,
     """
     _validate_raster(raster, func_name='viewshed', name='raster')
 
-    # --- max_distance: extract spatial window for any backend ---
+    # --- max_distance: validate, then extract spatial window for any backend ---
     if max_distance is not None:
+        try:
+            is_bad = not np.isfinite(max_distance) or max_distance < 0
+        except (TypeError, ValueError):
+            is_bad = True
+        if is_bad:
+            raise ValueError(
+                "max_distance must be a finite number >= 0, "
+                f"got {max_distance!r}")
         return _viewshed_windowed(raster, x, y, observer_elev, target_elev,
                                   max_distance, name)
 
@@ -2249,6 +2271,22 @@ def _viewshed_dask(raster, x, y, observer_elev, target_elev, name='viewshed'):
                                 dims=raster.dims, attrs=raster.attrs)
 
     # --- Tier C: out-of-core distance sweep (CPU only) ---
+    # This path uses a horizon-profile distance sweep, an approximate
+    # visibility model that does not match the exact GRASS sweep used by
+    # the numpy/Tier-B backends. On rough terrain the visibility mask can
+    # differ for a substantial fraction of cells. Warn so the divergence
+    # is not silent (see issue #2872).
+    warnings.warn(
+        "viewshed: grid exceeds memory and no max_distance is set, so the "
+        "dask out-of-core horizon-profile distance sweep is used. This is "
+        "an approximate visibility model and does NOT match the exact "
+        "numpy sweep cell-for-cell; the mask can differ for a substantial "
+        "fraction of cells on rough terrain. Set max_distance to restrict "
+        "the analysis to a window that fits in memory for exact results.",
+        UserWarning,
+        stacklevel=3,
+    )
+
     output_bytes = height * width * 8
     if output_bytes > 0.8 * avail:
         raise MemoryError(

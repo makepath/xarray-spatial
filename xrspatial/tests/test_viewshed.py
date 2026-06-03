@@ -420,6 +420,70 @@ def test_viewshed_dask_distance_sweep_target_elev():
             err_msg="Tier C angles diverge too far from numpy reference")
 
 
+def test_viewshed_dask_tier_c_warns_and_quantifies_divergence():
+    """Tier C (out-of-core distance sweep) is an approximate visibility
+    model that does not match the exact numpy sweep cell-for-cell.
+
+    Pins the documented contract for issue #2872:
+    1. A UserWarning is emitted when the Tier C path runs, so users feeding
+       large dask rasters into downstream visibility logic are not silently
+       misled.
+    2. The visibility-mask divergence vs the exact sweep is real and
+       material on rough terrain (not "minor near occluded boundaries").
+    """
+    from unittest.mock import patch
+
+    ny, nx = 20, 20
+    rng = np.random.RandomState(42)
+    terrain = rng.rand(ny, nx) * 10.0
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    obs_x, obs_y = 10.0, 10.0
+
+    # Exact numpy reference.
+    raster_np = xa.DataArray(terrain.copy(), coords=dict(x=xs, y=ys),
+                             dims=["y", "x"])
+    v_np = viewshed(raster_np, x=obs_x, y=obs_y)
+
+    # Force Tier C: shrink the memory budget so Tier B (full compute + R2)
+    # is skipped but the output-grid guard still passes.
+    raster_da = xa.DataArray(
+        da.from_array(terrain.copy(), chunks=(10, 10)),
+        coords=dict(x=xs, y=ys), dims=["y", "x"])
+    with patch('xrspatial.viewshed._available_memory_bytes',
+               return_value=10_000):
+        with pytest.warns(UserWarning,
+                          match="approximate visibility model"):
+            v_dask = viewshed(raster_da, x=obs_x, y=obs_y)
+
+    exact_mask = v_np.values != INVISIBLE
+    tier_c_mask = v_dask.values != INVISIBLE
+    mismatches = int((exact_mask != tier_c_mask).sum())
+
+    # The exact and Tier C masks must agree on the observer cell.
+    obs_r, obs_c = 10, 10
+    assert v_dask.values[obs_r, obs_c] == 180.0
+    assert v_np.values[obs_r, obs_c] == 180.0
+
+    # Document the divergence: this is the bug being pinned. On this seed
+    # the two models disagree on 25 of 400 cells (~6%), well beyond "minor
+    # near occluded boundaries". The assertion uses 10 as a floor below the
+    # observed 25 to stay robust against small implementation drift. If a
+    # future change makes Tier C exact, this assertion should be tightened
+    # to parity instead.
+    assert mismatches > 0, (
+        "Tier C is expected to diverge from the exact sweep on rough "
+        "terrain; if it now matches, update this test to assert parity")
+    assert mismatches >= 10, (
+        f"Tier C divergence ({mismatches} cells, observed 25) is expected "
+        f"to be material on this random terrain, not minor")
+
+    # Note: cumulative_viewshed calls viewshed once per observer, so the
+    # Tier C warning can fire on each call. Python's default warning filter
+    # dedupes by (message, category, module, lineno), so it surfaces once
+    # per process rather than once per observer.
+
+
 def test_viewshed_cpu_memory_guard():
     """_viewshed_cpu should refuse rasters that would blow past RAM.
 
@@ -578,6 +642,31 @@ def test_viewshed_custom_name(backend):
     raster = _make_raster(backend)
     result = viewshed(raster, x=3, y=2, observer_elev=1, name="my_vs")
     assert result.name == "my_vs"
+
+
+@pytest.mark.parametrize("bad", [-1.0, -0.5, float("nan"),
+                                 float("inf"), float("-inf")])
+def test_viewshed_invalid_max_distance_raises(bad):
+    """Negative or non-finite max_distance raises a clear ValueError (#2855).
+
+    Validation lives at the public entry point, before backend dispatch,
+    so a single numpy raster covers every backend. Previously these
+    values fell through to confusing internal errors (e.g. "zero-size
+    array to reduction operation minimum" or "cannot convert float NaN
+    to integer").
+    """
+    raster = _make_raster("numpy")
+    with pytest.raises(ValueError, match="max_distance must be a finite"):
+        viewshed(raster, x=3, y=2, observer_elev=1, max_distance=bad)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+@pytest.mark.parametrize("good", [0.0, 3.0])
+def test_viewshed_valid_max_distance_still_works(backend, good):
+    """Finite max_distance >= 0 passes validation and returns a result."""
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=1, max_distance=good)
+    assert result.shape == raster.shape
 
 
 # -------------------------------------------------------------------
@@ -819,6 +908,50 @@ def test_viewshed_nan_input_across_backends(backend):
     assert vals[2, 2] == 180.0
     assert vals[2, 4] == INVISIBLE
     assert vals[1, 1] == INVISIBLE
+
+
+@pytest.mark.skipif(not has_rtx(), reason="rtxpy not available")
+@pytest.mark.parametrize("fine_axis", ["x", "y"])
+def test_viewshed_gpu_anisotropic_matches_cpu(fine_axis):
+    """GPU viewshed must agree with the CPU sweep on an anisotropic raster.
+
+    Regression test for issue #2861: the GPU mesh was built on integer grid
+    coordinates and ignored ew_res / ns_res, so the ray tracer worked on a
+    different terrain shape than the CPU sweep.  The mesh now uses the real
+    cell resolution.  On flat terrain the visibility angles are driven
+    purely by the horizontal geometry, so a resolution mix-up shows up
+    directly as an angle mismatch against the CPU reference.  Both
+    anisotropy orientations are checked so an ew_res / ns_res swap is
+    caught.
+    """
+    import cupy as cp
+
+    ny, nx = 9, 9
+    terrain = np.full((ny, nx), 1.3)  # flat, positive (RTX needs maxH > 0)
+    if fine_axis == "x":
+        xs = np.arange(nx, dtype=float) * 1.0    # fine
+        ys = np.arange(ny, dtype=float) * 7.0    # coarse
+    else:
+        xs = np.arange(nx, dtype=float) * 7.0    # coarse
+        ys = np.arange(ny, dtype=float) * 1.0    # fine
+
+    obs_x, obs_y, obs_elev = xs[4], ys[4], 5
+
+    cpu = viewshed(
+        xa.DataArray(terrain.copy(), coords=dict(x=xs, y=ys), dims=["y", "x"]),
+        x=obs_x, y=obs_y, observer_elev=obs_elev).values
+    gpu = viewshed(
+        xa.DataArray(cp.asarray(terrain.copy()),
+                     coords=dict(x=xs, y=ys), dims=["y", "x"]),
+        x=obs_x, y=obs_y, observer_elev=obs_elev).data.get()
+
+    # Same set of visible cells.
+    assert ((cpu > INVISIBLE) == (gpu > INVISIBLE)).all()
+
+    # Same visibility angles (skip the observer cell, fixed at 180).
+    mask = (cpu > INVISIBLE) & (gpu > INVISIBLE)
+    mask[4, 4] = False
+    np.testing.assert_allclose(gpu[mask], cpu[mask], atol=0.05)
 
 
 @pytest.mark.parametrize("backend", ["numpy", "cupy", "dask"])
