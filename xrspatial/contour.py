@@ -661,6 +661,11 @@ def contours(
     >>> level, coords = lines[0]
     """
     _validate_raster(agg, func_name='contours', name='agg', ndim=2)
+    if return_type not in ("numpy", "geopandas"):
+        raise ValueError(
+            f"Invalid return_type '{return_type}'. "
+            "Allowed values are 'numpy' and 'geopandas'."
+        )
     if agg.shape[0] < 2 or agg.shape[1] < 2:
         raise ValueError(
             "Input raster must have at least 2 rows and 2 columns"
@@ -744,6 +749,8 @@ def contours(
         crs = _detect_raster_crs(agg)
         return _to_geopandas(results, crs=crs)
     else:
+        # Unreachable: return_type is validated at the top of the function.
+        # Kept as a defensive guard.
         raise ValueError(
             f"Invalid return_type '{return_type}'. "
             "Allowed values are 'numpy' and 'geopandas'."

@@ -330,6 +330,46 @@ class TestEdgeCases:
         with pytest.raises(TypeError, match="xarray.DataArray"):
             contours(data, levels=[0.5])
 
+    def test_invalid_return_type_rejected(self):
+        """A bad return_type raises ValueError for a normal raster."""
+        data = _make_ramp(ny=5, nx=6)
+        agg = create_test_raster(data, backend='numpy')
+        with pytest.raises(ValueError, match="Invalid return_type"):
+            contours(agg, levels=[2.5], return_type="bad")
+
+    def test_invalid_return_type_rejected_all_nan(self):
+        """A bad return_type raises even on the all-non-finite path.
+
+        Previously the all-non-finite early return handed back an empty
+        GeoDataFrame for any non-'numpy' value instead of raising.
+        """
+        data = np.full((4, 4), np.nan, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        with pytest.raises(ValueError, match="Invalid return_type"):
+            contours(agg, return_type="bad")
+
+    def test_invalid_return_type_checked_before_data_work(self):
+        """return_type is validated before level computation / extraction.
+
+        A degenerate all-NaN raster (which would otherwise take the
+        early-return path) still raises on the bad argument.
+        """
+        data = np.full((4, 4), np.nan, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        with pytest.raises(ValueError, match="Invalid return_type"):
+            contours(agg, levels=[0.5], return_type="bad")
+
+    def test_valid_return_types_accepted(self):
+        """The two valid return_type values still work."""
+        data = _make_ramp(ny=5, nx=6)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[2.5], return_type="numpy")
+        assert isinstance(result, list)
+
+        gpd = pytest.importorskip("geopandas")
+        gdf = contours(agg, levels=[2.5], return_type="geopandas")
+        assert isinstance(gdf, gpd.GeoDataFrame)
+
 
 # ---------------------------------------------------------------------------
 # Segment stitching
