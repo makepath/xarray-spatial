@@ -1238,6 +1238,23 @@ def _process(
 
     target_values = np.asarray(target_values)
 
+    # Reject non-finite explicit target_values. On numpy a pixel holding inf
+    # matched target_values=[inf] and ran the search, while dask/cupy mask
+    # non-finite pixels out and returned all-NaN for the same input. nan can
+    # never match a pixel anyway (nan == nan is False). Fail fast instead of
+    # producing backend-dependent output (issue #2850). A non-numeric dtype
+    # (e.g. strings) can't index a raster either, so it gets the same error
+    # rather than a downstream TypeError from np.isfinite.
+    if target_values.size and (
+        target_values.dtype.kind not in "iuf"
+        or not np.isfinite(target_values).all()
+    ):
+        raise ValueError(
+            "target_values must all be finite numbers, got {0!r}.".format(
+                target_values.tolist()
+            )
+        )
+
     if max_distance is None:
         max_distance = np.inf
 
@@ -1635,7 +1652,8 @@ def proximity(
     target_values: list
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
-        values.
+        values. All entries must be finite; a non-finite value (inf or
+        nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
@@ -1794,7 +1812,8 @@ def allocation(
     target_values : list
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
-        values.
+        values. All entries must be finite; a non-finite value (inf or
+        nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
@@ -1955,7 +1974,8 @@ def direction(
     target_values: list
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
-        non-zero pixel values.
+        non-zero pixel values. All entries must be finite; a non-finite
+        value (inf or nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
