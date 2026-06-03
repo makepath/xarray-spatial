@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from .._geotiff_fixtures import write_minimal_tiff
+
 import xrspatial.geotiff as geotiff_pkg
 from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataError,
                                MixedBandMetadataError, _runtime)
@@ -1441,92 +1443,9 @@ def _da(*, coords=None, attrs=None, shape=(4, 4)):
 
 
 def _write_minimal_tiff_with_wkt(path: str, wkt: str) -> None:
-    """Hand-build a 4x4 float32 TIFF that stashes ``wkt`` in
-    ``GeoAsciiParams`` (tag 34737), referenced from
-    ``GeoKeyDirectory`` (tag 34735) as ``GTCitationGeoKey`` (id 1026)."""
-    bo = '<'
-    pixels = np.zeros((4, 4), dtype=np.float32).tobytes()
     ascii_buf = bytearray((wkt + '|').encode('ascii'))
-    # GeoKeyDirectory: header + one entry pointing into GeoAsciiParams.
-    gkd = [
-        1, 1, 0, 1,
-        1026,                  # GTCitationGeoKey
-        34737,                 # location = GeoAsciiParams tag
-        len(wkt) + 1,          # count (incl. '|')
-        0,                     # offset into GeoAsciiParams
-    ]
-    tag_list = []
-
-    def add_short(tag, val):
-        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
-
-    def add_long(tag, val):
-        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
-
-    def add_shorts(tag, vals):
-        tag_list.append((tag, 3, len(vals),
-                         struct.pack(f'{bo}{len(vals)}H', *vals)))
-
-    def add_doubles(tag, vals):
-        tag_list.append((tag, 12, len(vals),
-                         struct.pack(f'{bo}{len(vals)}d', *vals)))
-
-    def add_ascii(tag, raw_bytes):
-        if not raw_bytes.endswith(b'\x00'):
-            raw_bytes = raw_bytes + b'\x00'
-        tag_list.append((tag, 2, len(raw_bytes), raw_bytes))
-
-    add_short(256, 4)
-    add_short(257, 4)
-    add_short(258, 32)
-    add_short(259, 1)
-    add_short(262, 1)
-    add_short(277, 1)
-    add_short(339, 3)
-    add_short(278, 4)
-    add_long(273, 0)
-    add_long(279, len(pixels))
-    add_doubles(33550, [1.0, 1.0, 0.0])
-    add_doubles(33922, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    add_shorts(34735, gkd)
-    add_ascii(34737, bytes(ascii_buf))
-    tag_list.sort(key=lambda t: t[0])
-
-    n = len(tag_list)
-    ifd_start = 8
-    ifd_size = 2 + 12 * n + 4
-    overflow_start = ifd_start + ifd_size
-    overflow_buf = bytearray()
-    tag_offsets: dict[int, int | None] = {}
-    for tag, _typ, _count, raw in tag_list:
-        if len(raw) > 4:
-            tag_offsets[tag] = len(overflow_buf)
-            overflow_buf.extend(raw)
-            if len(overflow_buf) % 2:
-                overflow_buf.append(0)
-        else:
-            tag_offsets[tag] = None
-    pixel_data_start = overflow_start + len(overflow_buf)
-    patched = []
-    for tag, typ, count, raw in tag_list:
-        if tag == 273:
-            raw = struct.pack(f'{bo}I', pixel_data_start)
-        patched.append((tag, typ, count, raw))
-    tag_list = patched
-    out = bytearray(b'II')
-    out.extend(struct.pack(f'{bo}H', 42))
-    out.extend(struct.pack(f'{bo}I', ifd_start))
-    out.extend(struct.pack(f'{bo}H', n))
-    for tag, typ, count, raw in tag_list:
-        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
-        if len(raw) <= 4:
-            out.extend(raw.ljust(4, b'\x00'))
-        else:
-            out.extend(struct.pack(f'{bo}I', overflow_start + tag_offsets[tag]))
-    out.extend(struct.pack(f'{bo}I', 0))
-    out.extend(overflow_buf)
-    out.extend(pixels)
-    Path(path).write_bytes(bytes(out))
+    gkd = [1, 1, 0, 1, 1026, 34737, len(wkt) + 1, 0]
+    write_minimal_tiff(path, geokeys=gkd, geo_ascii=wkt)
 
 
 def _write_rotated_vrt(

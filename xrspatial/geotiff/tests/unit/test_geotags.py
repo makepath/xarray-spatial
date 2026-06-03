@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import struct
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -18,6 +17,7 @@ from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._validation import (_check_read_inconsistent_geokeys,
                                            _registered_read_metadata_checks, validate_read_metadata)
 
+from .._geotiff_fixtures import write_minimal_tiff
 from ..conftest import make_minimal_tiff
 
 
@@ -747,94 +747,14 @@ def _write_tiff_with_geokeys(
     projected_cs_type: int | None,
     geographic_type: int | None,
 ) -> None:
-    """Hand-build a 4x4 float32 TIFF with a tiny GeoKey directory.
-
-    Only ``ModelTypeGeoKey`` plus optional ``ProjectedCSTypeGeoKey`` and
-    ``GeographicTypeGeoKey`` are written; the rest of the directory is
-    minimal. Pass ``None`` to either type-key argument to omit it.
-
-    Unique fixture for issue #2417 -- name carries the issue number so
-    parallel test runs and other worktrees do not collide on tmp paths.
-    """
-    bo = '<'
-    pixels = np.zeros((4, 4), dtype=np.float32).tobytes()
-
-    # GeoKeyDirectory header: (version, rev_maj, rev_min, n_keys)
     n_keys = 1 + int(projected_cs_type is not None) + int(geographic_type is not None)
     gkd = [1, 1, 0, n_keys]
-    # ModelTypeGeoKey: id 1024, location 0 (immediate value), count 1, value.
     gkd.extend([1024, 0, 1, model_type])
     if projected_cs_type is not None:
         gkd.extend([3072, 0, 1, projected_cs_type])
     if geographic_type is not None:
         gkd.extend([2048, 0, 1, geographic_type])
-
-    tag_list = []
-
-    def add_short(tag, val):
-        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
-
-    def add_long(tag, val):
-        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
-
-    def add_shorts(tag, vals):
-        tag_list.append((tag, 3, len(vals),
-                         struct.pack(f'{bo}{len(vals)}H', *vals)))
-
-    def add_doubles(tag, vals):
-        tag_list.append((tag, 12, len(vals),
-                         struct.pack(f'{bo}{len(vals)}d', *vals)))
-
-    add_short(256, 4)
-    add_short(257, 4)
-    add_short(258, 32)
-    add_short(259, 1)
-    add_short(262, 1)
-    add_short(277, 1)
-    add_short(339, 3)
-    add_short(278, 4)
-    add_long(273, 0)
-    add_long(279, len(pixels))
-    add_doubles(33550, [1.0, 1.0, 0.0])
-    add_doubles(33922, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    add_shorts(34735, gkd)
-    tag_list.sort(key=lambda t: t[0])
-
-    n = len(tag_list)
-    ifd_start = 8
-    ifd_size = 2 + 12 * n + 4
-    overflow_start = ifd_start + ifd_size
-    overflow_buf = bytearray()
-    tag_offsets: dict[int, int | None] = {}
-    for tag, _typ, _count, raw in tag_list:
-        if len(raw) > 4:
-            tag_offsets[tag] = len(overflow_buf)
-            overflow_buf.extend(raw)
-            if len(overflow_buf) % 2:
-                overflow_buf.append(0)
-        else:
-            tag_offsets[tag] = None
-    pixel_data_start = overflow_start + len(overflow_buf)
-    patched = []
-    for tag, typ, count, raw in tag_list:
-        if tag == 273:
-            raw = struct.pack(f'{bo}I', pixel_data_start)
-        patched.append((tag, typ, count, raw))
-    tag_list = patched
-    out = bytearray(b'II')
-    out.extend(struct.pack(f'{bo}H', 42))
-    out.extend(struct.pack(f'{bo}I', ifd_start))
-    out.extend(struct.pack(f'{bo}H', n))
-    for tag, typ, count, raw in tag_list:
-        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
-        if len(raw) <= 4:
-            out.extend(raw.ljust(4, b'\x00'))
-        else:
-            out.extend(struct.pack(f'{bo}I', overflow_start + tag_offsets[tag]))
-    out.extend(struct.pack(f'{bo}I', 0))
-    out.extend(overflow_buf)
-    out.extend(pixels)
-    Path(path).write_bytes(bytes(out))
+    write_minimal_tiff(path, geokeys=gkd)
 
 
 def test_open_geotiff_rejects_model_geographic_with_projected_key(tmp_path):
