@@ -756,3 +756,116 @@ class TestNonDefaultDims:
         for (lvl_a, c_a), (lvl_b, c_b) in zip(r_yx, r_ll):
             assert lvl_a == lvl_b
             np.testing.assert_allclose(c_a, c_b)
+
+
+# ---------------------------------------------------------------------------
+# Degenerate geometry at exact-level corners (issue #2892)
+# ---------------------------------------------------------------------------
+
+def _make_checkerboard(n=4, lo=0.0, hi=1.0):
+    """n x n checkerboard alternating between lo and hi."""
+    board = np.indices((n, n)).sum(axis=0) % 2
+    return np.where(board == 0, lo, hi).astype(np.float64)
+
+
+def _assert_no_degenerate_numpy(result):
+    """Every numpy polyline has at least two distinct vertices, no repeats."""
+    for level, coords in result:
+        # No two consecutive points are identical.
+        if len(coords) >= 2:
+            diffs = np.abs(np.diff(coords, axis=0)).sum(axis=1)
+            assert np.all(diffs > 0), (
+                f"repeated consecutive point at level {level}: {coords}"
+            )
+        # At least two distinct vertices (non-zero extent).
+        distinct = np.unique(np.round(coords, 10), axis=0)
+        assert len(distinct) >= 2, (
+            f"single-point polyline at level {level}: {coords}"
+        )
+
+
+def _assert_no_degenerate_geopandas(gdf):
+    """No geometry is zero-length or invalid in Shapely."""
+    for geom in gdf.geometry:
+        assert geom.length > 0, f"zero-length geometry: {geom.wkt}"
+        assert geom.is_valid, f"invalid geometry: {geom.wkt}"
+
+
+class TestDegenerateExactLevel:
+    """A corner exactly equal to the level must not poison the output.
+
+    Corners are classified with ``>= level`` (treated as above), so the
+    fix is to drop the zero-length / single-point segments that would
+    otherwise collapse onto that corner.  The rule must hold identically
+    on every backend.
+    """
+
+    def test_checkerboard_numpy_no_zero_length(self):
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.0])
+        _assert_no_degenerate_numpy(result)
+
+    def test_checkerboard_numpy_geopandas_valid(self):
+        pytest.importorskip("geopandas")
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='numpy')
+        gdf = contours(agg, levels=[1.0], return_type="geopandas")
+        _assert_no_degenerate_geopandas(gdf)
+
+    def test_checkerboard_equality_consistent(self):
+        """The level lands on every 'hi' corner; orientation must not matter.
+
+        Two checkerboards that differ only by which phase carries the
+        exact-level value must both yield clean (degenerate-free) output.
+        """
+        for lo, hi in [(0.0, 1.0), (1.0, 2.0), (2.0, 1.0)]:
+            data = _make_checkerboard(4, lo=lo, hi=hi)
+            agg = create_test_raster(data, backend='numpy')
+            result = contours(agg, levels=[1.0])
+            _assert_no_degenerate_numpy(result)
+
+    @dask_array_available
+    def test_checkerboard_dask_no_zero_length(self):
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+        result = contours(agg, levels=[1.0])
+        _assert_no_degenerate_numpy(result)
+
+    @dask_array_available
+    def test_checkerboard_dask_geopandas_valid(self):
+        pytest.importorskip("geopandas")
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+        gdf = contours(agg, levels=[1.0], return_type="geopandas")
+        _assert_no_degenerate_geopandas(gdf)
+
+    @dask_array_available
+    def test_checkerboard_numpy_matches_dask(self):
+        """numpy and dask agree that the checkerboard yields no geometry."""
+        data = _make_checkerboard(4, lo=0.0, hi=1.0)
+        np_agg = create_test_raster(data, backend='numpy')
+        dk_agg = create_test_raster(
+            data, backend='dask+numpy', chunks=(2, 2)
+        )
+        np_res = contours(np_agg, levels=[1.0])
+        dk_res = contours(dk_agg, levels=[1.0])
+        _assert_no_degenerate_numpy(np_res)
+        _assert_no_degenerate_numpy(dk_res)
+        assert len(np_res) == len(dk_res)
+
+    def test_genuine_contour_survives(self):
+        """The degenerate filter must not drop real crossings.
+
+        A ramp that crosses the level mid-edge still produces a valid,
+        non-zero-length contour.
+        """
+        pytest.importorskip("geopandas")
+        data = _make_ramp(ny=5, nx=6)
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[2.5])
+        assert len(result) > 0
+        _assert_no_degenerate_numpy(result)
+        gdf = contours(agg, levels=[2.5], return_type="geopandas")
+        assert len(gdf) > 0
+        _assert_no_degenerate_geopandas(gdf)
