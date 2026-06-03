@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.convolution import circle_kernel, convolve_2d
+from xrspatial.convolution import circle_kernel, convolve_2d, custom_kernel
 
 
 KERNEL = circle_kernel(1, 1, 1)
@@ -26,6 +26,18 @@ def test_convolve_2d_rejects_wrong_ndim():
     # 1D input should be rejected before reaching the kernel
     with pytest.raises(ValueError, match="must be 2D"):
         convolve_2d(np.zeros(10, dtype=np.float64), KERNEL)
+
+
+@pytest.mark.parametrize("bad_kernel", [
+    np.ones(3, dtype=np.float32),            # 1D
+    np.ones((3, 3, 3), dtype=np.float32),    # 3D
+])
+def test_custom_kernel_rejects_non_2d(bad_kernel):
+    # Regression for #2842: custom_kernel must raise a clear error for a
+    # non-2D kernel instead of leaking "not enough values to unpack" from
+    # the `rows, cols = kernel.shape` line.
+    with pytest.raises(ValueError, match="not a 2D array"):
+        custom_kernel(bad_kernel)
 
 
 def test_convolve_2d_accepts_float64():

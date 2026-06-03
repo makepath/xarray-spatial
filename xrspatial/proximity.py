@@ -254,6 +254,36 @@ def _distance(x1, x2, y1, y2, metric):
     return np.float32(d)
 
 
+def _check_monotonic_coords(x_coords, y_coords, x, y):
+    """Reject non-monotonic 1D coordinates.
+
+    Every backend in this module assumes the 1D axis coordinates are
+    monotonic: ``max_possible_distance`` is taken from the endpoints, the
+    dask halo and the NumPy line-sweep treat array adjacency as spatial
+    adjacency, and the tiled KDTree convergence check lower-bounds the
+    out-of-region distance with chunk-boundary coordinate gaps. None of
+    those hold when a coordinate axis is not monotonic, so a non-monotonic
+    axis silently yields wrong proximity/allocation/direction. Reject it up
+    front with a clear message instead.
+
+    A single-element axis has no order to violate and is allowed.
+    """
+    for coords, name in ((x_coords, x), (y_coords, y)):
+        if len(coords) < 2:
+            continue
+        diffs = np.diff(coords)
+        ascending = np.all(diffs > 0)
+        descending = np.all(diffs < 0)
+        if not (ascending or descending):
+            raise ValueError(
+                "proximity/allocation/direction require strictly monotonic "
+                "(strictly increasing or strictly decreasing, no duplicate or "
+                "NaN values) 1D coordinates, but the {0!r} axis does not "
+                "qualify. Sort the raster along {0!r} before calling.".format(
+                    name)
+            )
+
+
 def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     """Overlap depth in pixels for the bounded dask map_overlap call.
 
@@ -302,6 +332,43 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     pad_y = 0 if dist_per_row is None else int(max_distance / dist_per_row + 0.5)
     pad_x = 0 if dist_per_col is None else int(max_distance / dist_per_col + 0.5)
     return pad_y, pad_x
+
+
+def _fit_halo_to_chunks(pad_y, pad_x, *arrays):
+    """Make a bounded halo depth that ``da.map_overlap`` will accept.
+
+    ``map_overlap`` rejects a depth that is larger than the smallest chunk
+    along that axis. The pixel halo from ``_halo_depth`` can exceed that on
+    skinny rasters (e.g. a 3-row raster with a 10-pixel halo), or on
+    great-circle rasters where the pixel pitch shrinks toward the poles. When
+    a halo is too deep for the chunking, fold that whole axis into a single
+    chunk and drop its depth to zero: every chunk then sees the full axis, so
+    no target within ``max_distance`` is missed and the result still matches
+    the NumPy backend. The fold deliberately trades chunking on that axis for
+    correctness; clamping the depth while keeping multiple chunks would
+    silently drop targets that fall in a non-adjacent chunk, so do not replace
+    it with a bare depth clamp.
+
+    ``arrays`` are the dask arrays passed to the same ``map_overlap`` call
+    (the raster and the coordinate grids); they all share the raster's
+    chunking and are rechunked together so the call stays aligned.
+
+    Returns the adjusted ``(pad_y, pad_x)`` and the (possibly rechunked)
+    arrays in the same order they were given.
+    """
+    arrays = list(arrays)
+    height, width = arrays[0].shape
+    chunks_y, chunks_x = arrays[0].chunks
+    rechunk = {}
+    if pad_y > min(chunks_y):
+        rechunk[0] = height
+        pad_y = 0
+    if pad_x > min(chunks_x):
+        rechunk[1] = width
+        pad_x = 0
+    if rechunk:
+        arrays = [a.rechunk(rechunk) for a in arrays]
+    return pad_y, pad_x, arrays
 
 
 @ngjit
@@ -574,6 +641,10 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
     ys = da.repeat(y_da, raster.shape[1]).reshape(
         raster.shape).rechunk(raster.data.chunks)
 
+    # Keep the overlap depth within what map_overlap accepts on skinny rasters.
+    pad_y, pad_x, (raster_data, xs, ys) = _fit_halo_to_chunks(
+        pad_y, pad_x, raster.data, xs, ys)
+
     # Capture closure vars for the chunk function
     tv = target_values
     md = max_distance
@@ -588,7 +659,7 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
 
     return da.map_overlap(
         _chunk_func,
-        raster.data, xs, ys,
+        raster_data, xs, ys,
         depth=(pad_y, pad_x),
         boundary=np.nan,
         meta=cp.array((), dtype=cp.float32),
@@ -1208,6 +1279,23 @@ def _process(
 
     target_values = np.asarray(target_values)
 
+    # Reject non-finite explicit target_values. On numpy a pixel holding inf
+    # matched target_values=[inf] and ran the search, while dask/cupy mask
+    # non-finite pixels out and returned all-NaN for the same input. nan can
+    # never match a pixel anyway (nan == nan is False). Fail fast instead of
+    # producing backend-dependent output (issue #2850). A non-numeric dtype
+    # (e.g. strings) can't index a raster either, so it gets the same error
+    # rather than a downstream TypeError from np.isfinite.
+    if target_values.size and (
+        target_values.dtype.kind not in "iuf"
+        or not np.isfinite(target_values).all()
+    ):
+        raise ValueError(
+            "target_values must all be finite numbers, got {0!r}.".format(
+                target_values.tolist()
+            )
+        )
+
     if max_distance is None:
         max_distance = np.inf
 
@@ -1225,6 +1313,10 @@ def _process(
         x_coords = x_coords.compute()
     if da is not None and isinstance(y_coords, da.Array):
         y_coords = y_coords.compute()
+
+    # The endpoint-based max distance, the dask halo, the NumPy line-sweep,
+    # and the tiled KDTree convergence check all assume monotonic 1D coords.
+    _check_monotonic_coords(x_coords, y_coords, x, y)
 
     # Compute max_possible_distance using coordinate endpoints directly
     max_possible_distance = _distance(
@@ -1441,6 +1533,8 @@ def _process(
         else:
             pad_y, pad_x = _halo_depth(
                 x_coords, y_coords, max_distance, distance_metric)
+            pad_y, pad_x, (raster.data, xs, ys) = _fit_halo_to_chunks(
+                pad_y, pad_x, raster.data, xs, ys)
 
         out = da.map_overlap(
             _process_numpy,
@@ -1588,6 +1682,9 @@ def proximity(
         2D array image with `raster.shape` = (height, width).
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1598,7 +1695,8 @@ def proximity(
     target_values: list
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
-        values.
+        values. All entries must be finite; a non-finite value (inf or
+        nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
@@ -1744,6 +1842,9 @@ def allocation(
         2D array of target data.
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1754,7 +1855,8 @@ def allocation(
     target_values : list
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
-        values.
+        values. All entries must be finite; a non-finite value (inf or
+        nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
@@ -1902,6 +2004,9 @@ def direction(
         2D array image with `raster.shape` = (height, width).
         If a Dataset is passed, the function is applied to each
         data variable independently, returning a Dataset.
+        The 1D ``x`` and ``y`` coordinates must be monotonic (strictly
+        increasing or strictly decreasing); a non-monotonic axis raises
+        a ValueError.
 
     x : str, default='x'
         Name of x-coordinates.
@@ -1912,7 +2017,8 @@ def direction(
     target_values: list
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
-        non-zero pixel values.
+        non-zero pixel values. All entries must be finite; a non-finite
+        value (inf or nan) raises ValueError.
 
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
