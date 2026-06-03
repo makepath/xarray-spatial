@@ -18,6 +18,13 @@ Proximity
    into a single chunk.  Set a finite ``max_distance`` to keep memory
    bounded.
 
+.. caution::
+
+   ``proximity()``, ``allocation()``, and ``direction()`` require monotonic
+   1D ``x`` and ``y`` coordinates (strictly increasing or strictly
+   decreasing). A non-monotonic axis raises a ``ValueError``; sort the raster
+   along that axis first.
+
 Allocation
 ==========
 .. autosummary::

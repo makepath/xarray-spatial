@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import xarray as xr
 
+from .polygonize import _detect_raster_crs
 from .utils import ArrayTypeFunctionMapping, _validate_raster, ngjit
 
 if TYPE_CHECKING:
@@ -637,8 +638,10 @@ def contours(
     CuPy and Dask+CuPy arrays are accepted as input.  Data is
     transferred to CPU for the tracing step because segment stitching
     is an inherently sequential graph traversal.  For Dask inputs,
-    each chunk is processed independently and results are merged,
-    keeping peak memory proportional to chunk size.
+    chunking bounds the per-chunk scan buffers, but the global merge
+    step materializes all contour segments at once to stitch polylines
+    across chunk boundaries, so peak memory scales with total contour
+    complexity rather than chunk size.
 
     Corners are classified with ``>= level``, so a corner exactly equal
     to the level is treated as above it.  This can make a traced segment
@@ -693,7 +696,7 @@ def contours(
         if not np.isfinite(vmin) or not np.isfinite(vmax):
             if return_type == "numpy":
                 return []
-            return _to_geopandas([], crs=agg.attrs.get('crs', None))
+            return _to_geopandas([], crs=_detect_raster_crs(agg))
 
         # Exclude exact min/max to avoid tracing along the boundary.
         levels = np.linspace(vmin, vmax, n_levels + 2)[1:-1]
@@ -725,7 +728,7 @@ def contours(
     if return_type == "numpy":
         return results
     elif return_type == "geopandas":
-        crs = agg.attrs.get('crs', None)
+        crs = _detect_raster_crs(agg)
         return _to_geopandas(results, crs=crs)
     else:
         raise ValueError(
