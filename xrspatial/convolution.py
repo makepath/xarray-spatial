@@ -325,6 +325,12 @@ def custom_kernel(kernel):
             "The kernel received was of type {} and needs to be "
             "of type `ndarray`".format(type(kernel))
         )
+    elif kernel.ndim != 2:
+        raise ValueError(
+            "Received a custom kernel that is not a 2D array.",
+            "A custom kernel needs to be a 2D array, the supplied kernel "
+            "has shape {}.".format(kernel.shape)
+        )
     else:
         rows, cols = kernel.shape
 
