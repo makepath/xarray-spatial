@@ -490,9 +490,13 @@ def test_units_overridden_to_degrees_numpy():
 @dask_array_available
 def test_units_overridden_to_degrees_dask_numpy():
     agg = create_test_raster(_degenerate_data((5, 5)), backend='dask+numpy',
-                             attrs={'res': (1, 1), 'units': 'm'}, chunks=(3, 3))
+                             attrs={'res': (1, 1), 'units': 'm', 'crs': 'EPSG:5070'},
+                             chunks=(3, 3))
     result = slope(agg)
     assert result.attrs['units'] == 'degrees'
+    # non-units attrs still propagate through the dask path
+    assert result.attrs['res'] == (1, 1)
+    assert result.attrs['crs'] == 'EPSG:5070'
     assert agg.attrs['units'] == 'm'
 
 
