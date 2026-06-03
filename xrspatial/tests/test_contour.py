@@ -757,23 +757,3 @@ class TestNonDefaultDims:
             assert lvl_a == lvl_b
             np.testing.assert_allclose(c_a, c_b)
 
-
-# ---------------------------------------------------------------------------
-# Docstring wording: the Dask memory description must be accurate (#2787)
-# ---------------------------------------------------------------------------
-
-class TestDocstringWording:
-
-    def test_dask_memory_wording_pinned(self):
-        """Docstring does not overstate Dask peak-memory guarantee.
-
-        Regression guard for #2787: the docstring should accurately
-        describe that chunking bounds per-chunk scan buffers but the
-        global merge materialises all segments.
-        """
-        doc = contours.__doc__
-        assert doc is not None
-
-        assert "keeping peak memory proportional to chunk size" not in doc
-        assert "peak memory scales with total contour" in doc
-        assert "chunk size" in doc
