@@ -403,6 +403,8 @@ def slope(agg: xr.DataArray,
     if method == 'planar':
         warn_if_unit_mismatch(agg)
         cellsize_x, cellsize_y = get_dataarray_resolution(agg)
+        # Reject negatives too (curvature() only checks == 0): a negative cell
+        # size would silently flip the slope sign rather than error out.
         if (not np.isfinite(cellsize_x) or not np.isfinite(cellsize_y)
                 or cellsize_x <= 0 or cellsize_y <= 0):
             raise ValueError(
