@@ -340,3 +340,41 @@ def test_numpy_equals_dask_cupy():
 
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+def _make_cyclic_fractions():
+    """2x2 fractions with a 2-cell horizontal cycle in the top row.
+
+    A dominant-neighbor trace from (0,0) would loop forever without a
+    step cap: (0,0) -> E (0,1) -> W (0,0) -> ...
+    """
+    fracs = np.zeros((8, 2, 2), dtype=np.float64)
+    fracs[0, 0, 0] = 1.0  # (0,0) -> E
+    fracs[4, 0, 1] = 1.0  # (0,1) -> W  (closes the cycle)
+    fracs[2, 1, 0] = 1.0
+    fracs[2, 1, 1] = 1.0
+    return fracs
+
+
+def test_numpy_cycle_raises():
+    """A start point inside a cycle must raise, not hang."""
+    fracs = _make_cyclic_fractions()
+    sp = np.full((2, 2), np.nan)
+    sp[0, 0] = 1.0
+    fd = _make_mfd_raster(fracs, backend='numpy')
+    sp_da = create_test_raster(sp.astype(np.float64), backend='numpy')
+    with pytest.raises(ValueError, match="cycle"):
+        flow_path_mfd(fd, sp_da)
+
+
+def test_dask_cycle_raises():
+    """Dask path must also raise on a cycle rather than loop forever."""
+    pytest.importorskip('dask.array')
+    fracs = _make_cyclic_fractions()
+    sp = np.full((2, 2), np.nan)
+    sp[0, 0] = 1.0
+    fd = _make_mfd_raster(fracs, backend='dask', chunks=(2, 2))
+    sp_da = create_test_raster(
+        sp.astype(np.float64), backend='dask', chunks=(2, 2))
+    with pytest.raises(ValueError, match="cycle"):
+        flow_path_mfd(fd, sp_da).data.compute()
