@@ -798,6 +798,13 @@ def test_polygonize_nan_pixels_excluded_dask():
 class TestSimplifyHelpers:
     """Tests for internal simplification helper functions."""
 
+    @staticmethod
+    def _make_zigzag_coords(n):
+        return np.array(
+            [[float(i), float((i % 3) * 0.5)] for i in range(n)],
+            dtype=np.float64,
+        )
+
     def test_douglas_peucker_straight_line(self):
         """DP on a straight line should reduce to just endpoints."""
         from ..polygonize import _douglas_peucker
@@ -1155,10 +1162,7 @@ class TestSimplifyHelpers:
             return result
 
         def make_coords(n):
-            return np.array(
-                [[float(i), float((i % 3) * 0.5)] for i in range(n)],
-                dtype=np.float64,
-            )
+            return self._make_zigzag_coords(n)
 
         sizes = [50, 100, 200, 500]
         tolerance = 0.1
@@ -1199,25 +1203,26 @@ class TestSimplifyHelpers:
         """
         from ..polygonize import _visvalingam_whyatt
 
-        def make_coords(n):
-            return np.array(
-                [[float(i), float((i % 3) * 0.5)] for i in range(n)],
-                dtype=np.float64,
-            )
-
         sizes = [2000, 4000, 8000, 16000, 32000]
         tolerance = 0.1
 
         for n in sizes:
-            coords = make_coords(n)
-            # Warm up (numba compilation + cache).
+            coords = self._make_zigzag_coords(n)
+            # Warm up call (triggers numba JIT compilation and cache population,
+            # discarded; the second call below is the timed/measured one).
             _visvalingam_whyatt(coords, tolerance)
-            # Verify it completes and returns a valid array.
             result = _visvalingam_whyatt(coords, tolerance)
             assert result.shape[0] >= 2, (
                 f"Expected at least 2 vertices for n={n}, got {result.shape[0]}"
             )
             assert result.shape[1] == 2
+            # Verify meaningful simplification occurred: at minimum the
+            # collinear upslope vertices (every 3rd interior point) are
+            # removed, so output must be < 90 % of input.
+            assert result.shape[0] < n * 0.9, (
+                f"Expected < {0.9 * n:.0f} vertices for n={n}, "
+                f"got {result.shape[0]} (ratio={result.shape[0]/n:.4f})"
+            )
 
 
     def test_simplify_polygons_drops_degenerate(self):
