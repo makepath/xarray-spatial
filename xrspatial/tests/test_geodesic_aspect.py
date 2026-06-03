@@ -1,4 +1,6 @@
 """Tests for geodesic aspect computation."""
+import re
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -213,8 +215,16 @@ class TestGeodesicAspectValidation:
     def test_invalid_z_unit_raises(self):
         elev = _flat_surface()
         raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
-        with pytest.raises(ValueError, match="z_unit"):
+        with pytest.raises(ValueError, match="z_unit") as excinfo:
             aspect(raster, method='geodesic', z_unit='cubit')
+
+        # The message must list the accepted unit-name strings (the keys a
+        # user is allowed to pass), not the numeric conversion factors.
+        msg = str(excinfo.value)
+        assert "'meter'" in msg
+        assert "'foot'" in msg
+        # No bare numeric conversion factor should leak into the message.
+        assert not re.search(r"\d+\.\d+", msg)
 
     def test_missing_coords_raises(self):
         data = np.ones((5, 5))
@@ -291,6 +301,22 @@ class TestGeodesicAspectMemoryGuard:
         result = aspect(raster, method='geodesic')
         computed = result.compute()
         assert computed.shape == (200, 200)
+
+    @dask_array_available
+    def test_dask_single_huge_chunk_still_rejected(self, monkeypatch):
+        """A dask array whose only chunk spans the whole raster has no memory
+        advantage over eager, so the backend-aware guard must still reject it
+        (issue #2840)."""
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        raster = _make_geo_raster(
+            elev, 40.0, 41.0, 10.0, 11.0,
+            backend='dask+numpy', chunks=(200, 200),
+        )
+        with pytest.raises(MemoryError, match="aspect"):
+            aspect(raster, method='geodesic')
 
 
 # ---------------------------------------------------------------------------

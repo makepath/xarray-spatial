@@ -174,12 +174,14 @@ def _flow_length_mfd_downstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
     flow_len = np.empty((H, W), dtype=np.float64)
 
     # Init
+    n_valid = 0
     for r in range(H):
         for c in range(W):
             v = fractions[0, r, c]
             if v == v:  # not NaN
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -223,6 +225,15 @@ def _flow_length_mfd_downstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
                         order_c[tail] = nc
                         tail += 1
 
+    # If a cycle remains, fewer than n_valid cells made it into the
+    # topological order.  The MFD grid must be a DAG.
+    if tail < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
+
     # Reverse pass: outlets -> divides
     for i in range(tail - 1, -1, -1):
         r = order_r[i]
@@ -257,12 +268,14 @@ def _flow_length_mfd_upstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
     valid = np.zeros((H, W), dtype=np.int8)
     flow_len = np.empty((H, W), dtype=np.float64)
 
+    n_valid = 0
     for r in range(H):
         for c in range(W):
             v = fractions[0, r, c]
             if v == v:
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -310,6 +323,15 @@ def _flow_length_mfd_upstream_cpu(fractions, H, W, cellsize_x, cellsize_y):
                         queue_c[tail] = nc
                         tail += 1
 
+    # If a cycle remains, fewer than n_valid cells were dequeued.  head
+    # counts processed cells; the MFD grid must be a DAG.
+    if head < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
+
     return flow_len
 
 
@@ -353,12 +375,14 @@ def _flow_length_mfd_downstream_tile(fractions, h, w, cellsize_x, cellsize_y,
     flow_len = np.empty((h, w), dtype=np.float64)
 
     # Init
+    n_valid = 0
     for r in range(h):
         for c in range(w):
             v = fractions[0, r, c]
             if v == v:
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -401,6 +425,14 @@ def _flow_length_mfd_downstream_tile(fractions, h, w, cellsize_x, cellsize_y,
                         order_r[tail] = nr
                         order_c[tail] = nc
                         tail += 1
+
+    # A cycle within this tile leaves some valid cells out of the order.
+    if tail < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
 
     # Reverse pass
     for i in range(tail - 1, -1, -1):
@@ -470,12 +502,14 @@ def _flow_length_mfd_upstream_tile(fractions, h, w, cellsize_x, cellsize_y,
     valid = np.zeros((h, w), dtype=np.int8)
     flow_len = np.empty((h, w), dtype=np.float64)
 
+    n_valid = 0
     for r in range(h):
         for c in range(w):
             v = fractions[0, r, c]
             if v == v:
                 valid[r, c] = 1
                 flow_len[r, c] = 0.0
+                n_valid += 1
             else:
                 flow_len[r, c] = np.nan
 
@@ -544,6 +578,14 @@ def _flow_length_mfd_upstream_tile(fractions, h, w, cellsize_x, cellsize_y,
                         queue_r[tail] = nr
                         queue_c[tail] = nc
                         tail += 1
+
+    # A cycle within this tile leaves some valid cells undequeued.
+    if head < n_valid:
+        raise ValueError(
+            "flow_length_mfd: the MFD fraction grid contains a cycle "
+            "(some cells never reach zero in-degree).  The input must be a "
+            "directed acyclic graph, as produced by flow_direction_mfd."
+        )
 
     return flow_len
 
@@ -866,6 +908,11 @@ def _flow_length_mfd_dask_iterative(fractions_da, direction,
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
 
+    # The 8 direction bands must stay in a single chunk: every tile kernel
+    # needs all 8 fractions, and the lazy assembly drops axis 0 per block.
+    if fractions_da.chunks[0] != (fractions_da.shape[0],):
+        fractions_da = fractions_da.rechunk({0: fractions_da.shape[0]})
+
     frac_bdry = _preprocess_mfd_tiles(fractions_da, chunks_y, chunks_x)
 
     fill = np.nan if direction == 'downstream' else 0.0
@@ -910,39 +957,40 @@ def _flow_length_mfd_dask_iterative(fractions_da, direction,
 def _assemble_result(fractions_da, boundaries, frac_bdry,
                       chunks_y, chunks_x, n_tile_y, n_tile_x,
                       direction, cellsize_x, cellsize_y):
-    """Build dask array by re-running tiles with converged boundaries."""
-    rows = []
-    for iy in range(n_tile_y):
-        row = []
-        for ix in range(n_tile_x):
-            y_start = sum(chunks_y[:iy])
-            y_end = y_start + chunks_y[iy]
-            x_start = sum(chunks_x[:ix])
-            x_end = x_start + chunks_x[ix]
+    """Build a lazy dask array by re-running tiles with converged boundaries.
 
-            chunk = np.asarray(
-                fractions_da[:, y_start:y_end, x_start:x_end].compute(),
-                dtype=np.float64)
-            _, h, w = chunk.shape
+    The converged boundary snapshot and fraction strips are small, so we
+    capture them in a closure and let ``map_blocks`` run the per-tile
+    kernel at compute time.  Nothing here materializes the full output
+    raster during the API call.
+    """
+    y_starts = np.cumsum((0,) + tuple(chunks_y[:-1]))
+    x_starts = np.cumsum((0,) + tuple(chunks_x[:-1]))
 
-            if direction == 'downstream':
-                seeds = _compute_exit_seeds_downstream(
-                    iy, ix, boundaries, frac_bdry,
-                    chunks_y, chunks_x, n_tile_y, n_tile_x)
-                tile = _flow_length_mfd_downstream_tile(
-                    chunk, h, w, cellsize_x, cellsize_y, *seeds)
-            else:
-                seeds = _compute_entry_seeds_upstream(
-                    iy, ix, boundaries, frac_bdry,
-                    chunks_y, chunks_x, n_tile_y, n_tile_x,
-                    cellsize_x, cellsize_y)
-                tile = _flow_length_mfd_upstream_tile(
-                    chunk, h, w, cellsize_x, cellsize_y, *seeds)
+    def _tile(chunk, block_info=None):
+        loc = block_info[0]['array-location']
+        iy = int(np.searchsorted(y_starts, loc[1][0], side='right')) - 1
+        ix = int(np.searchsorted(x_starts, loc[2][0], side='right')) - 1
 
-            row.append(da.from_array(tile, chunks=tile.shape))
-        rows.append(row)
+        chunk = np.asarray(chunk, dtype=np.float64)
+        _, h, w = chunk.shape
+        if direction == 'downstream':
+            seeds = _compute_exit_seeds_downstream(
+                iy, ix, boundaries, frac_bdry,
+                chunks_y, chunks_x, n_tile_y, n_tile_x)
+            return _flow_length_mfd_downstream_tile(
+                chunk, h, w, cellsize_x, cellsize_y, *seeds)
+        seeds = _compute_entry_seeds_upstream(
+            iy, ix, boundaries, frac_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x,
+            cellsize_x, cellsize_y)
+        return _flow_length_mfd_upstream_tile(
+            chunk, h, w, cellsize_x, cellsize_y, *seeds)
 
-    return da.block(rows)
+    return da.map_blocks(
+        _tile, fractions_da, drop_axis=0,
+        dtype=np.float64, meta=np.array((), dtype=np.float64),
+    )
 
 
 def _flow_length_mfd_dask_cupy(fractions_da, direction,
