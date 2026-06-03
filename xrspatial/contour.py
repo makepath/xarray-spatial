@@ -9,6 +9,7 @@
 # levels, making it well suited to Dask chunking and GPU execution.
 
 import warnings
+from itertools import chain
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -401,12 +402,7 @@ def _contours_dask(data, levels):
         r_off += rsize
 
     chunk_results = dask.compute(*all_results)
-
-    merged = []
-    for chunk_lines in chunk_results:
-        merged.extend(chunk_lines)
-
-    return _deduplicate_by_level(merged)
+    return _deduplicate_by_level(chain.from_iterable(chunk_results))
 
 
 def _contours_dask_cupy(data, levels):
@@ -433,12 +429,7 @@ def _contours_dask_cupy(data, levels):
         r_off += rsize
 
     chunk_results = dask.compute(*all_results)
-
-    merged = []
-    for chunk_lines in chunk_results:
-        merged.extend(chunk_lines)
-
-    return _deduplicate_by_level(merged)
+    return _deduplicate_by_level(chain.from_iterable(chunk_results))
 
 
 def _process_chunk_numpy(chunk_data, levels, r_offset, c_offset):
@@ -605,8 +596,10 @@ def contours(
     CuPy and Dask+CuPy arrays are accepted as input.  Data is
     transferred to CPU for the tracing step because segment stitching
     is an inherently sequential graph traversal.  For Dask inputs,
-    each chunk is processed independently and results are merged,
-    keeping peak memory proportional to chunk size.
+    chunking bounds the per-chunk scan buffers, but the global merge
+    step materializes all contour segments at once to stitch polylines
+    across chunk boundaries, so peak memory scales with total contour
+    complexity rather than chunk size.
 
     Examples
     --------
