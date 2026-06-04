@@ -7,11 +7,7 @@ import warnings
 import numpy as np
 import xarray as xr
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _validate_raster,
-    _validate_scalar,
-)
+from xrspatial.utils import ArrayTypeFunctionMapping, _validate_raster, _validate_scalar
 
 from ._validation import extract_grid_coords, validate_points
 
@@ -231,7 +227,7 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
             y_sl = y_grid[loc[0][0]:loc[0][1]]
             x_sl = x_grid[loc[1][0]:loc[1][1]]
             _, var = _kriging_predict(x_pts, y_pts, z_pts, x_sl, y_sl,
-                                     vario_func, K_inv, True)
+                                      vario_func, K_inv, True)
             return var
 
         variance = da.map_blocks(_chunk_var, template_data, dtype=np.float64)
@@ -321,7 +317,7 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
             y_sl = y_grid[loc[0][0]:loc[0][1]]
             x_sl = x_grid[loc[1][0]:loc[1][1]]
             _, var = _kriging_predict_cupy(x_pts, y_pts, z_pts, x_sl, y_sl,
-                                          vario_func, K_inv, True)
+                                           vario_func, K_inv, True)
             return var
 
         variance = da.map_blocks(
