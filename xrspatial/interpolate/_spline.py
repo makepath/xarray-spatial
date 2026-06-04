@@ -220,7 +220,10 @@ def _spline_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
 
     # The point coordinates and weight vector are the same for every
     # chunk, so upload them to the device once instead of re-uploading
-    # inside each per-chunk call.
+    # inside each per-chunk call.  Under the threaded/synchronous
+    # scheduler the per-chunk closure shares these device buffers by
+    # reference; a distributed scheduler would re-serialise them per
+    # task, which is no worse than the previous per-chunk upload.
     n = len(x_pts)
     x_gpu = cupy.asarray(x_pts)
     y_gpu = cupy.asarray(y_pts)
