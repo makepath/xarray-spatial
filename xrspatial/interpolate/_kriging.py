@@ -336,7 +336,7 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
 # Public API
 # ---------------------------------------------------------------------------
 
-def _check_kriging_memory(n_points, grid_pixels):
+def _check_kriging_memory(n_points, grid_pixels, is_dask=False):
     """Raise MemoryError if kriging() would exceed available memory.
 
     Three allocations dominate kriging memory use:
@@ -355,13 +355,20 @@ def _check_kriging_memory(n_points, grid_pixels):
     Worst case is the maximum of these three.  The variogram and matrix
     builds run sequentially, and ``k0`` is built later, so peak usage
     is bounded by the largest single allocation.
+
+    When ``is_dask`` is True the prediction ``k0`` matrix is built one
+    chunk at a time by ``map_blocks``, so its peak size scales with the
+    chunk rather than ``grid_pixels``.  ``grid_pixels`` is not a valid
+    bound for that path, so the ``k0`` term is dropped.  The variogram
+    and matrix terms are point-based and materialised on the host
+    regardless of backend, so they still apply.
     """
     n = int(n_points)
     g = int(grid_pixels)
 
     pair_bytes = 4 * (n * (n - 1) // 2) * 8 if n > 1 else 0
     matrix_bytes = 3 * (n + 1) * (n + 1) * 8
-    k0_bytes = 3 * g * (n + 1) * 8
+    k0_bytes = 0 if is_dask else 3 * g * (n + 1) * 8
 
     estimate = max(pair_bytes, matrix_bytes, k0_bytes)
 
@@ -446,7 +453,8 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
     # Memory guard.  Runs after input validation so we know N and the
     # template grid size, but before any large allocation.
     grid_pixels = int(np.prod(template.shape))
-    _check_kriging_memory(len(x_arr), grid_pixels)
+    is_dask = da is not None and isinstance(template.data, da.Array)
+    _check_kriging_memory(len(x_arr), grid_pixels, is_dask=is_dask)
 
     # Experimental variogram
     lag_h, lag_sv = _experimental_variogram(x_arr, y_arr, z_arr, nlags)

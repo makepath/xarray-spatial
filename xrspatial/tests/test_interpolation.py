@@ -487,6 +487,59 @@ class TestKrigingMemoryGuard:
         with pytest.raises(MemoryError, match='prediction matrix'):
             _check_kriging_memory(n_points=10, grid_pixels=100_000)
 
+    def test_check_helper_dask_skips_k0_term(self):
+        """is_dask=True drops the grid-sized k0 term from the estimate."""
+        from xrspatial.interpolate._kriging import _check_kriging_memory
+
+        # Same n and grid_pixels as the message test above, which trips
+        # the guard at 1 MB available.  With is_dask=True the k0 term is
+        # dropped, so the tiny point-based terms stay well under 1 MB and
+        # nothing is raised.
+        _check_kriging_memory(n_points=10, grid_pixels=100_000,
+                              is_dask=True)
+
+    def test_check_helper_dask_still_guards_matrix(self, monkeypatch):
+        """is_dask=True keeps the point-based matrix guard."""
+        from xrspatial.interpolate._kriging import _check_kriging_memory
+
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 32 * 1024 ** 2,
+        )
+
+        # n=3000 -> matrix_bytes ~ 216 MB regardless of backend.
+        with pytest.raises(MemoryError, match='kriging matrix'):
+            _check_kriging_memory(n_points=3000, grid_pixels=4,
+                                  is_dask=True)
+
+    @dask_array_available
+    def test_dask_template_skips_grid_memory_guard(self, monkeypatch):
+        """A large chunked dask template is not rejected by the guard.
+
+        The dask backend builds the prediction matrix per chunk, so the
+        full-grid k0 estimate must not gate it (issue #2923).
+        """
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 64 * 1024 ** 2,
+        )
+
+        rng = np.random.RandomState(0)
+        x = rng.uniform(0, 100, 20)
+        y = rng.uniform(0, 100, 20)
+        z = 2.0 * x + 3.0 * y + rng.normal(0, 0.1, 20)
+
+        # Full-grid k0 would be ~8 GB, far over 64 MB, but each
+        # 200x200 chunk only needs ~20 MB.
+        template = _make_template(
+            np.linspace(0, 100, 4000),
+            np.linspace(0, 100, 4000),
+            backend='dask', chunks=(200, 200),
+        )
+
+        result = kriging(x, y, z, template)
+        assert result.shape == template.shape
+
 
 class TestIDWMemoryGuard:
     """Verify idw(k=...) refuses to allocate more than ~80% of RAM.
