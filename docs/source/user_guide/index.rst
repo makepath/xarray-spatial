@@ -8,6 +8,7 @@ User Guide
    :maxdepth: 1
 
    caveats
+   stability_policy
    data_types
    classification
    fire
