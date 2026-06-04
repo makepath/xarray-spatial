@@ -219,6 +219,73 @@ class TestSpline:
         np.testing.assert_allclose(
             np_result.values, da_result.values, rtol=1e-10)
 
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self):
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        np_result = spline(x, y, z, np_template)
+        cp_result = spline(x, y, z, cp_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(cp_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_matches_numpy(self):
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        dc_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        np_result = spline(x, y, z, np_template)
+        dc_result = spline(x, y, z, dc_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(dc_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_uploads_points_once(self, monkeypatch):
+        """The dask+cupy path uploads the point/weight arrays once.
+
+        These arrays are the same for every chunk, so the number of
+        host-to-device transfers of them must not scale with chunk
+        count.  Regression guard against re-uploading inside the
+        per-chunk closure.
+        """
+        import cupy
+
+        from xrspatial.interpolate import _spline as spline_mod
+
+        n_points = 8
+        rng = np.random.RandomState(0)
+        x = rng.uniform(0, 2, n_points)
+        y = rng.uniform(0, 2, n_points)
+        z = rng.uniform(0, 2, n_points)
+
+        coords = np.linspace(0.0, 2.0, 8)
+
+        orig_asarray = cupy.asarray
+        invariant_uploads = {'n': 0}
+
+        def counting_asarray(a, *args, **kwargs):
+            # Point coordinate vectors (len n_points) and the weight
+            # vector (len n_points + 3) are the chunk-invariant uploads.
+            if isinstance(a, np.ndarray) and a.size in (
+                    n_points, n_points + 3):
+                invariant_uploads['n'] += 1
+            return orig_asarray(a, *args, **kwargs)
+
+        monkeypatch.setattr(spline_mod.cupy, 'asarray', counting_asarray)
+
+        template = _make_template(coords, coords,
+                                  backend='dask_cupy', chunks=(2, 2))
+        result = spline(x, y, z, template)
+        result.data.compute()
+
+        # x_pts, y_pts and weights -> exactly three uploads, regardless
+        # of how many chunks the grid was split into.
+        assert invariant_uploads['n'] == 3
+
 
 # ===================================================================
 # Kriging tests
