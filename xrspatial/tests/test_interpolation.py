@@ -397,6 +397,31 @@ class TestKriging:
         # Variance reflects the nugget rather than collapsing to it.
         assert var.ravel()[0] > c0
 
+    def test_single_point(self):
+        """A single input point falls back to a constant prediction.
+
+        With one point there are no distance pairs, so the experimental
+        variogram is empty and kriging cannot fit spatial structure. The
+        function should reach the default-variogram fallback (issue #2917)
+        rather than crashing on an empty-array reduction.
+        """
+        template = _make_template([0.0, 1.0], [0.0, 1.0])
+        with pytest.warns(UserWarning, match='fewer than 3'):
+            result = kriging([5.0], [5.0], [42.0], template)
+        assert np.all(np.isfinite(result.values))
+        np.testing.assert_allclose(result.values, 42.0)
+
+    def test_single_valid_point_after_nan_drop(self):
+        """NaN filtering down to one point reaches the same fallback."""
+        template = _make_template([0.0, 1.0], [0.0, 1.0])
+        x = np.array([1.0, np.nan, np.nan])
+        y = np.array([2.0, np.nan, np.nan])
+        z = np.array([7.0, np.nan, np.nan])
+        with pytest.warns(UserWarning, match='fewer than 3'):
+            result = kriging(x, y, z, template)
+        assert np.all(np.isfinite(result.values))
+        np.testing.assert_allclose(result.values, 7.0)
+
     @dask_array_available
     def test_dask_matches_numpy(self):
         x, y, z = self._spatial_data()

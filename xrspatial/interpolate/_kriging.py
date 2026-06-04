@@ -72,6 +72,10 @@ def _experimental_variogram(x, y, z, nlags):
     dists = np.sqrt(dx ** 2 + dy ** 2)
     semivar = 0.5 * (z[i_idx] - z[j_idx]) ** 2
 
+    if dists.size == 0:
+        # Fewer than two points: no pairs, so no spatial structure to bin.
+        return np.array([]), np.array([])
+
     max_dist = dists.max() / 2.0
     if max_dist <= 0:
         return np.array([]), np.array([])
