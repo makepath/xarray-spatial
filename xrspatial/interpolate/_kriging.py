@@ -135,7 +135,14 @@ def _build_kriging_matrix(x, y, vario_func):
     D = np.sqrt(dx ** 2 + dy ** 2)
 
     K = np.zeros((n + 1, n + 1), dtype=np.float64)
-    K[:n, :n] = vario_func(D)
+    G = vario_func(D)
+    # The semivariogram has gamma(0) = 0 by definition; vario_func(0)
+    # returns the nugget c0, which is the one-sided limit as h -> 0+,
+    # not the value at h = 0.  Force the diagonal to 0 so a non-zero
+    # nugget is not placed on the matrix diagonal (which would force
+    # exact interpolation and bias the kriging variance downward).
+    np.fill_diagonal(G, 0.0)
+    K[:n, :n] = G
     K[:n, n] = 1.0
     K[n, :n] = 1.0
 
