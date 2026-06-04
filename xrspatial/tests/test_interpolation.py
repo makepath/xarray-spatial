@@ -276,6 +276,71 @@ class TestKriging:
             assert np.all(np.isfinite(result.values)), \
                 f"model={model} produced non-finite values"
 
+    def test_matrix_diagonal_is_zero_with_nugget(self):
+        """gamma(0)=0: a non-zero nugget must not land on the diagonal.
+
+        vario_func(0) returns the nugget c0, but the semivariogram is
+        zero at lag 0 by definition. _build_kriging_matrix must zero the
+        diagonal of the variogram block so a non-zero nugget does not
+        force exact interpolation or shrink the kriging variance.
+        """
+        from xrspatial.interpolate._kriging import (
+            _build_kriging_matrix,
+            _spherical,
+        )
+
+        x = np.array([0.0, 1.0, 2.0, 3.0])
+        y = np.array([0.0, 0.0, 1.0, 1.0])
+
+        c0 = 0.5  # non-zero nugget
+        assert _spherical(np.array([0.0]), c0, 1.0, 2.0)[0] == c0
+
+        def vario(h):
+            return _spherical(h, c0, 1.0, 2.0)
+
+        k_inv = _build_kriging_matrix(x, y, vario)
+        assert k_inv is not None
+        # Reconstruct K from its inverse and check the variogram-block
+        # diagonal is 0, not the nugget.
+        k = np.linalg.inv(k_inv)
+        n = len(x)
+        np.testing.assert_allclose(np.diag(k[:n, :n]), 0.0, atol=1e-9)
+
+    def test_nugget_smooths_and_inflates_variance(self):
+        """A non-zero nugget should smooth predictions and lift variance.
+
+        With the nugget on the diagonal (the old bug) prediction at a
+        data point reproduces the observed value exactly and the
+        variance there collapses to ~the nugget. With gamma(0)=0 the
+        predictor smooths through the noise, so the prediction at a data
+        location differs from the observed value and the variance is
+        strictly larger than that buggy floor.
+        """
+        from xrspatial.interpolate._kriging import (
+            _build_kriging_matrix,
+            _kriging_predict,
+            _spherical,
+        )
+
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        y = np.zeros_like(x)
+        z = np.array([1.0, 3.0, 2.0, 5.0, 4.0])
+
+        c0 = 0.5
+        def vario(h):
+            return _spherical(h, c0, 1.0, 3.0)
+
+        k_inv = _build_kriging_matrix(x, y, vario)
+        # Predict exactly at the data point x=2 (observed z=2.0).
+        pred, var = _kriging_predict(
+            x, y, z, np.array([2.0]), np.array([0.0]),
+            vario, k_inv, True)
+
+        # Smoothing: prediction does not reproduce the observed value.
+        assert abs(pred.ravel()[0] - 2.0) > 1e-3
+        # Variance reflects the nugget rather than collapsing to it.
+        assert var.ravel()[0] > c0
+
     @dask_array_available
     def test_dask_matches_numpy(self):
         x, y, z = self._spatial_data()
