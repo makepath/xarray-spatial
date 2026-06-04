@@ -208,6 +208,37 @@ class TestSpline:
         result = spline([0.5], [0.5], [42.0], template, smoothing=0.0)
         np.testing.assert_allclose(result.values, 42.0, atol=1e-6)
 
+    def test_two_point_affine_fit(self):
+        """n == 2 falls back to a least-squares affine fit.
+
+        With two points the full TPS system is underdetermined, so
+        _tps_build_and_solve fits z = a0 + a1*x + a2*y instead. Two
+        points on the x-axis with z = 10 and 20 define the gradient
+        along x; the midpoint should read 15.
+        """
+        x = np.array([0.0, 2.0])
+        y = np.array([0.0, 0.0])
+        z = np.array([10.0, 20.0])
+        template = _make_template([0.0], [0.0, 1.0, 2.0])
+        result = spline(x, y, z, template, smoothing=0.0)
+        np.testing.assert_allclose(
+            result.values, [[10.0, 15.0, 20.0]], atol=1e-6)
+
+    def test_output_metadata(self):
+        """Output DataArray preserves template coords, dims, and name."""
+        x, y, z = _grid_points()
+        template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        template.attrs['res'] = (1.0, 1.0)
+        result = spline(x, y, z, template, name='my_spline')
+        assert result.name == 'my_spline'
+        assert result.dims == template.dims
+        assert result.shape == template.shape
+        assert result.attrs == template.attrs
+        np.testing.assert_array_equal(result.coords['x'].values,
+                                      template.coords['x'].values)
+        np.testing.assert_array_equal(result.coords['y'].values,
+                                      template.coords['y'].values)
+
     @dask_array_available
     def test_dask_matches_numpy(self):
         x, y, z = _grid_points()
@@ -218,6 +249,31 @@ class TestSpline:
         da_result = spline(x, y, z, da_template)
         np.testing.assert_allclose(
             np_result.values, da_result.values, rtol=1e-10)
+
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self):
+        """CuPy backend produces same results as numpy."""
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        np_result = spline(x, y, z, np_template)
+        cp_result = spline(x, y, z, cp_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(cp_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_matches_numpy(self):
+        """Dask+CuPy backend produces same results as numpy."""
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        dc_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        np_result = spline(x, y, z, np_template)
+        dc_result = spline(x, y, z, dc_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(dc_result), rtol=1e-10)
 
 
 # ===================================================================
