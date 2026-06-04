@@ -8,8 +8,9 @@ float-mask code paths were never exercised.
 
 Inside the algorithm the mask is consumed as a truth value:
 ``_calculate_regions`` indexes ``mask[ij]``, and the float-raster branch of
-``_polygonize_numpy`` does ``mask = mask & nan_mask``. A regression that
-mishandled a non-bool mask would silently change which pixels participate.
+``_polygonize_numpy`` does ``mask = mask.astype(bool) & nan_mask``. A
+regression that mishandled a non-bool mask would silently change which
+pixels participate.
 
 What these tests pin:
 
@@ -20,12 +21,12 @@ What these tests pin:
   variable under test is the mask dtype -- not the unrelated
   numpy-vs-dask polygon-representation differences.
 
-* Float masks: integer rasters accept a float mask, but a float-dtype
-  mask on a float-dtype raster currently raises ``TypeError`` from the
-  ``mask & nan_mask`` line (xrspatial/polygonize.py:918).  That is a
-  source bug tracked in #2623; the float-mask cases are marked xfail so
-  the expectation is recorded and the test flips green automatically
-  once the source is fixed.
+* Float masks: a float mask works on both integer and float rasters.
+  The float-raster branch casts the mask to bool before ``& nan_mask``,
+  so ``bitwise_and`` no longer rejects the float array.  Before #2623 a
+  float mask on a float raster raised ``TypeError`` from that line; the
+  float-mask cases now assert the result matches the same-backend
+  bool-mask reference.
 
 CUDA-dependent variants are guarded with the project's GPU-skip
 decorator.
@@ -156,17 +157,14 @@ def test_float_mask_on_integer_raster_matches_bool(
     assert _result_signature(vals, polys) == ref_sig
 
 
-@pytest.mark.xfail(
-    reason="float mask on float raster raises TypeError from "
-           "mask & nan_mask (polygonize.py:918); source bug #2623",
-    raises=TypeError, strict=True)
 @pytest.mark.parametrize("backend", _backend_params())
 @pytest.mark.parametrize("connectivity", [4, 8])
 @pytest.mark.parametrize("mask_dtype", _FLOAT_MASK_DTYPES)
 def test_float_mask_on_float_raster_2623(mask_dtype, backend, connectivity):
-    """A float mask on a float raster should polygonize, but currently
-    crashes (#2623).  xfail-strict so this flips to a pass once the
-    source casts the mask to bool before ``& nan_mask``."""
+    """A float mask on a float raster polygonizes the same as the bool
+    mask.  Regression for #2623: the float-raster branch cast the mask to
+    bool before ``& nan_mask`` so bitwise_and no longer rejects the float
+    array."""
     ref_vals, ref_polys = _bool_reference_same_backend(
         _FDATA, backend, connectivity)
     ref_sig = _result_signature(ref_vals, ref_polys)

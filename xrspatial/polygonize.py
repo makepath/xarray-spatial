@@ -1042,7 +1042,7 @@ def _polygonize_numpy(
     if np.issubdtype(values.dtype, np.floating):
         nan_mask = ~np.isnan(values)
         if mask is not None:
-            mask = mask & nan_mask
+            mask = mask.astype(bool) & nan_mask
         else:
             mask = nan_mask
 
@@ -1308,7 +1308,7 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
     if np.issubdtype(block.dtype, np.floating):
         nan_mask = ~np.isnan(block)
         if mask_block is not None:
-            full_mask = mask_block & nan_mask
+            full_mask = mask_block.astype(bool) & nan_mask
         else:
             full_mask = nan_mask
     else:
