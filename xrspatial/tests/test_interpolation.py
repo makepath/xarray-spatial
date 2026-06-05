@@ -552,6 +552,52 @@ class TestKriging:
         np.testing.assert_allclose(
             np_var.values, _to_numpy(dc_var), atol=1e-12)
 
+    @dask_array_available
+    def test_dask_return_variance_matches_numpy(self):
+        """Dask+numpy variance matches numpy (exercises _chunk_var)."""
+        x, y, z = self._spatial_data()
+        np_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        da_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='dask', chunks=(2, 2))
+        np_pred, np_var = kriging(x, y, z, np_template, return_variance=True)
+        da_pred, da_var = kriging(x, y, z, da_template, return_variance=True)
+        np.testing.assert_allclose(
+            np_pred.values, da_pred.values, rtol=1e-10)
+        np.testing.assert_allclose(
+            np_var.values, da_var.values, atol=1e-12)
+
+    def test_nlags_nondefault(self):
+        """A non-default nlags value still produces finite output."""
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        result = kriging(x, y, z, template, nlags=5)
+        assert np.all(np.isfinite(result.values))
+
+    def test_two_point_warns_few_lag_bins(self):
+        """Two points yield fewer than 3 lag bins and warn; output finite."""
+        x = np.array([0.0, 1.0])
+        y = np.array([0.0, 0.0])
+        z = np.array([5.0, 10.0])
+        template = _make_template([0.0, 1.0], [0.0, 1.0])
+        with pytest.warns(UserWarning, match='fewer than 3'):
+            result = kriging(x, y, z, template)
+        assert np.all(np.isfinite(result.values))
+
+    def test_output_metadata(self):
+        """Output preserves template coords, dims, attrs, and name."""
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        template.attrs['res'] = (2.0, 2.0)
+        result = kriging(x, y, z, template, name='my_kriging')
+        assert result.name == 'my_kriging'
+        assert result.dims == template.dims
+        assert result.shape == template.shape
+        assert result.attrs.get('res') == (2.0, 2.0)
+        np.testing.assert_array_equal(result.coords['x'].values,
+                                      template.coords['x'].values)
+        np.testing.assert_array_equal(result.coords['y'].values,
+                                      template.coords['y'].values)
+
 
 # ===================================================================
 # Validation / edge-case tests
@@ -583,6 +629,22 @@ class TestValidation:
         with pytest.raises(ValueError, match='variogram_model'):
             kriging([0, 1], [0, 1], [0, 1], template,
                     variogram_model='invalid')
+
+    @pytest.mark.parametrize('nlags', [0, -1])
+    def test_kriging_nlags_below_min_raises(self, nlags):
+        template = _make_template([0.0], [0.0])
+        with pytest.raises(ValueError, match='nlags'):
+            kriging([0, 1], [0, 1], [0, 1], template, nlags=nlags)
+
+    def test_kriging_nlags_non_int_raises(self):
+        template = _make_template([0.0], [0.0])
+        with pytest.raises(TypeError, match='nlags'):
+            kriging([0, 1], [0, 1], [0, 1], template, nlags=2.5)
+
+    def test_kriging_all_nan_points(self):
+        template = _make_template([0.0], [0.0])
+        with pytest.raises(ValueError, match='no valid'):
+            kriging([np.nan], [np.nan], [np.nan], template)
 
     def test_spline_negative_smoothing(self):
         template = _make_template([0.0], [0.0])
