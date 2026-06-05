@@ -512,7 +512,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  mask_nodata: bool = _MASK_NODATA_DEPRECATED_SENTINEL,  # type: ignore[assignment]
                  mask_and_scale: bool = False,
                  parse_coordinates: bool = True,
-                 lock=None,
+                 lock: object | None = None,
                  cache: bool = True,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
@@ -719,12 +719,15 @@ def open_geotiff(source: str | BinaryIO, *,
         Supported on the CPU eager and dask paths; combining
         ``parse_coordinates=False`` with ``gpu=True`` or a ``.vrt`` source
         raises ``ValueError``.
-    lock, cache
+    lock : object or None
         [advanced] Accepted for ``open_rasterio`` signature compatibility
-        but have no effect: xrspatial's reader re-opens the source per
-        window, so there is no shared GDAL handle to lock and no caching
-        layer to toggle. Passing a non-default value emits a
-        ``GeoTIFFFallbackWarning``.
+        but has no effect: xrspatial's reader re-opens the source per
+        window, so there is no shared GDAL handle to lock. Passing a
+        non-default value emits a ``GeoTIFFFallbackWarning``.
+    cache : bool
+        [advanced] Accepted for ``open_rasterio`` signature compatibility
+        but has no effect: xrspatial has no caching backend to toggle.
+        Passing a non-default value emits a ``GeoTIFFFallbackWarning``.
     allow_rotated : bool, default False
         [advanced] Read-only opt-in. ``to_geotiff`` does not currently
         emit ``rotated_affine``; it rejects DataArrays that carry the

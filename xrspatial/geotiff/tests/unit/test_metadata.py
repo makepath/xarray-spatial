@@ -1099,7 +1099,7 @@ class TestIntegerNodataPromotion_1484:
         path = str(tmp_path / 'u16_nodata_1484.tif')
         write(arr, path, nodata=65535, compression='none', tiled=False)
 
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.dtype == np.float64
         assert np.isnan(da.values[1, 0])
         np.testing.assert_array_equal(
@@ -1112,7 +1112,7 @@ class TestIntegerNodataPromotion_1484:
         path = str(tmp_path / 'u16_nodata_cast_1484.tif')
         write(arr, path, nodata=65535, compression='none', tiled=False)
         with pytest.raises(ValueError, match='float.*int'):
-            open_geotiff(path, dtype='uint16')
+            open_geotiff(path, dtype='uint16', masked=True)
 
     def test_uint16_no_nodata_keeps_dtype(self, tmp_path):
         arr = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint16)

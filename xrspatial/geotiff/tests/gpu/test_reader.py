@@ -615,8 +615,8 @@ def test_gpu_uint16_nodata_promoted_and_masked_tiled_1542(tmp_path):
     write(arr, path, nodata=65535, compression='deflate',
           tiled=True, tile_size=16)
 
-    cpu = open_geotiff(path)
-    gpu = open_geotiff(path, gpu=True)
+    cpu = open_geotiff(path, masked=True)
+    gpu = open_geotiff(path, gpu=True, masked=True)
 
     assert cpu.dtype == gpu.dtype == np.float64
     assert cpu.attrs.get('nodata') == 65535.0
@@ -638,8 +638,8 @@ def test_gpu_uint16_nodata_promoted_and_masked_stripped_1542(tmp_path):
     path = str(tmp_path / 'gpu_u16_nodata_1542_stripped.tif')
     write(arr, path, nodata=65535, compression='deflate', tiled=False)
 
-    cpu = open_geotiff(path)
-    gpu = open_geotiff(path, gpu=True)
+    cpu = open_geotiff(path, masked=True)
+    gpu = open_geotiff(path, gpu=True, masked=True)
 
     assert cpu.dtype == gpu.dtype == np.float64
     assert gpu.attrs.get('nodata') == 65535.0
@@ -718,10 +718,10 @@ def test_gpu_all_four_backends_agree_on_nodata_1542(tmp_path):
     write(arr, path, nodata=65535, compression='deflate',
           tiled=True, tile_size=16)
 
-    da_np = open_geotiff(path)
-    da_dask = open_geotiff(path, chunks=512)
-    da_gpu = open_geotiff(path, gpu=True)
-    da_gpu_dask = open_geotiff(path, gpu=True, chunks=512)
+    da_np = open_geotiff(path, masked=True)
+    da_dask = open_geotiff(path, chunks=512, masked=True)
+    da_gpu = open_geotiff(path, gpu=True, masked=True)
+    da_gpu_dask = open_geotiff(path, gpu=True, chunks=512, masked=True)
 
     for label, da in [('np', da_np), ('dask+np', da_dask),
                       ('gpu', da_gpu), ('gpu+dask', da_gpu_dask)]:
@@ -750,8 +750,8 @@ def test_gpu_int16_negative_nodata_1542(tmp_path):
     write(arr, path, nodata=-9999, compression='deflate',
           tiled=True, tile_size=16)
 
-    cpu = open_geotiff(path)
-    gpu = open_geotiff(path, gpu=True)
+    cpu = open_geotiff(path, masked=True)
+    gpu = open_geotiff(path, gpu=True, masked=True)
     assert cpu.dtype == gpu.dtype == np.float64
     assert gpu.attrs.get('nodata') == -9999.0
     np.testing.assert_array_equal(np.isnan(cpu.values),

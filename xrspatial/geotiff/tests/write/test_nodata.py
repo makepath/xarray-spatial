@@ -352,7 +352,7 @@ class TestOpenGeotiffEager:
 
     def test_uint64_max_masked_to_nan(self, tmp_path):
         path = self._write(str(tmp_path), np.uint64, 2**64 - 1)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.dtype == np.float64
         assert np.isnan(da.values[0, 0])
         assert da.values[1, 1] == 100.0
@@ -361,7 +361,7 @@ class TestOpenGeotiffEager:
 
     def test_int64_max_masked_to_nan(self, tmp_path):
         path = self._write(str(tmp_path), np.int64, 2**63 - 1)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.dtype == np.float64
         assert np.isnan(da.values[0, 0])
         assert da.values[1, 1] == 100.0
@@ -372,7 +372,7 @@ class TestOpenGeotiffEager:
         # and worked before the fix.  Make sure the new int-first path
         # has not broken it.
         path = self._write(str(tmp_path), np.int64, -(2**63))
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.dtype == np.float64
         assert np.isnan(da.values[0, 0])
         assert da.values[1, 1] == 100.0
@@ -381,7 +381,7 @@ class TestOpenGeotiffEager:
     def test_uint16_max_still_masked(self, tmp_path):
         # Regression guard: small integer sentinels still work.
         path = self._write(str(tmp_path), np.uint16, 65535)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.dtype == np.float64
         assert np.isnan(da.values[0, 0])
         assert da.values[1, 1] == 100.0
@@ -390,7 +390,7 @@ class TestOpenGeotiffEager:
     def test_int32_negative_still_masked(self, tmp_path):
         # Regression guard: signed-int small sentinels still work.
         path = self._write(str(tmp_path), np.int32, -9999)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.dtype == np.float64
         assert np.isnan(da.values[0, 0])
         assert da.attrs["nodata"] == -9999
@@ -402,7 +402,7 @@ class TestOpenGeotiffEager:
         da = xr.DataArray(arr, dims=("y", "x"))
         path = os.path.join(str(tmp_path), "f.tif")
         to_geotiff(da, path, nodata=-9999.0)
-        out = open_geotiff(path)
+        out = open_geotiff(path, masked=True)
         assert np.isnan(out.values[0, 0])
 
 
@@ -579,7 +579,7 @@ def test_open_geotiff_uint16_in_range_nodata_still_masks(tmp_path):
     da = xr.DataArray(arr, dims=['y', 'x'])
     path = str(tmp_path / 'uint16_in_range_nodata.tif')
     to_geotiff(da, path, crs=4326, nodata=65535)
-    result = open_geotiff(path)
+    result = open_geotiff(path, masked=True)
     assert result.dtype == np.float64
     # The 65535 pixel should be NaN; the rest unchanged.
     assert np.isnan(result.values[1, 2])
@@ -652,7 +652,7 @@ def test_regression_dtype_uint16_was_unreachable(
     """
     path, _ = uint16_with_matching_sentinel
     with pytest.raises(ValueError):
-        open_geotiff(path, dtype='uint16')
+        open_geotiff(path, dtype='uint16', masked=True)
 
 
 def test_mask_nodata_false_preserves_uint16(uint16_with_matching_sentinel):
@@ -677,14 +677,26 @@ def test_mask_nodata_false_no_dtype_kwarg(uint16_with_matching_sentinel):
 
 def test_default_mask_nodata_true_still_promotes(
         uint16_with_matching_sentinel):
-    """Default ``mask_nodata=True`` keeps the existing behaviour."""
+    """The new default (``masked=False``) does NOT promote or mask.
+
+    ``open_geotiff`` now matches rioxarray's ``open_rasterio``: a bare
+    read keeps the source integer dtype and leaves the sentinel pixels
+    untouched. Passing ``masked=True`` restores the old promote-to-NaN
+    behaviour.
+    """
     path, _ = uint16_with_matching_sentinel
+    # Default: no masking -> uint16 preserved, sentinels survive.
     da = open_geotiff(path)
-    assert da.dtype == np.float64
-    assert np.isnan(da.values).sum() == 4
-    # Sentinel positions should be NaN.
-    assert np.isnan(da.values[0, 0])
-    assert np.isnan(da.values[1, 2])
+    assert da.dtype == np.uint16
+    assert not np.isnan(np.asarray(da.values, dtype=np.float64)).any()
+    assert da.attrs.get('masked_nodata') in (False, None)
+
+    # Opt in: masking promotes to float64 and replaces the sentinel.
+    masked = open_geotiff(path, masked=True)
+    assert masked.dtype == np.float64
+    assert np.isnan(masked.values).sum() == 4
+    assert np.isnan(masked.values[0, 0])
+    assert np.isnan(masked.values[1, 2])
 
 
 def test_no_match_both_modes_agree(uint16_no_match):
@@ -748,12 +760,25 @@ def test_dask_path_mask_nodata_false(uint16_with_matching_sentinel):
 
 
 def test_dask_path_default_still_promotes(uint16_with_matching_sentinel):
-    """The dask default (``mask_nodata=True``) still promotes to float64."""
+    """The dask default (``masked=False``) does NOT promote to float64.
+
+    Mirrors the eager-path new default: a bare chunked read keeps the
+    uint16 source dtype and leaves the sentinel pixels untouched.
+    ``masked=True`` restores the promote-to-NaN behaviour.
+    """
     path, _ = uint16_with_matching_sentinel
+    # Default: no masking -> uint16 preserved on the dask graph.
     da = open_geotiff(path, chunks=2)
-    assert da.dtype == np.float64
+    assert da.dtype == np.uint16
     computed = da.compute()
-    assert np.isnan(computed.values).sum() == 4
+    assert computed.dtype == np.uint16
+    assert not np.isnan(
+        np.asarray(computed.values, dtype=np.float64)).any()
+
+    # Opt in: masking promotes to float64 and replaces the sentinel.
+    masked = open_geotiff(path, chunks=2, masked=True)
+    assert masked.dtype == np.float64
+    assert np.isnan(masked.compute().values).sum() == 4
 
 
 def test_dask_dtype_cast_with_opt_out(uint16_with_matching_sentinel):

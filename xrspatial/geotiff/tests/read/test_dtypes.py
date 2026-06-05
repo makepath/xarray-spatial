@@ -163,7 +163,7 @@ class TestDtypeEager:
         path = str(tmp_path / 'dtype_nodata_int_eager.tif')
         to_geotiff(da, path, compression='none')
         with pytest.raises(ValueError, match='float.*int'):
-            open_geotiff(path, dtype='int32')
+            open_geotiff(path, dtype='int32', masked=True)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ class TestDtypeDask:
         path = str(tmp_path / 'dtype_nodata_int_dask.tif')
         to_geotiff(da, path, compression='none')
         with pytest.raises(ValueError, match='float.*int'):
-            open_geotiff(path, dtype='int32', chunks=2)
+            open_geotiff(path, dtype='int32', chunks=2, masked=True)
 
 
 # ---------------------------------------------------------------------------

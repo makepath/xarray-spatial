@@ -76,7 +76,7 @@ def _read_write_read(da: xr.DataArray, tmp_path, tag: str) -> xr.DataArray:
     """Run one ``write -> read`` cycle on ``da`` and return the new DataArray."""
     path = str(tmp_path / f"rt_{tag}_1986.tif")
     to_geotiff(da, path, compression='none', tiled=False)
-    return open_geotiff(path)
+    return open_geotiff(path, masked=True)
 
 
 # Canonical attrs whose values must lock across a write -> read cycle
@@ -222,7 +222,7 @@ class TestIntWithDeclaredNodata:
         write(arr, path, nodata=-9999, geo_transform=_default_gt(),
               crs_epsg=4326, compression='none', tiled=False)
 
-        da1 = open_geotiff(path)
+        da1 = open_geotiff(path, masked=True)
         # Dtype drift: int -> float64 with NaN at sentinel.
         assert da1.dtype == np.float64
         assert np.isnan(da1.values[1, 0])
@@ -246,7 +246,7 @@ class TestIntWithDeclaredNodata:
         write(arr, path, nodata=65535, geo_transform=_default_gt(),
               crs_epsg=4326, compression='none', tiled=False)
 
-        da1 = open_geotiff(path)
+        da1 = open_geotiff(path, masked=True)
         assert da1.dtype == np.float64
         assert np.isnan(da1.values[1, 0])
         assert da1.attrs.get('nodata') == 65535

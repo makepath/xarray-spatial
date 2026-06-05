@@ -1010,7 +1010,7 @@ class TestSparseTiles:
         path = str(tmp_path / 'sparse_nodata_2426.tif')
         _write_sparse_tiled(path, nodata=0)
 
-        arr = open_geotiff(path)
+        arr = open_geotiff(path, masked=True)
         arr_np = np.asarray(arr)
         assert arr_np[:64, :64].sum() == 64 * 64 * 100
         assert np.all(np.isnan(arr_np[:64, 64:]))
@@ -1046,7 +1046,7 @@ class TestSparseStrips:
         path = str(tmp_path / 'sparse_strips_2426.tif')
         _write_sparse_stripped_small(path, nodata=0)
 
-        arr = open_geotiff(path)
+        arr = open_geotiff(path, masked=True)
         arr_np = np.asarray(arr)
         assert arr_np[:32, :].sum() == 32 * 128 * 200
         assert np.all(np.isnan(arr_np[32:, :]))
@@ -1060,7 +1060,7 @@ class TestSparseTilesGPU:
         path = str(tmp_path / 'sparse_gpu_2426.tif')
         _write_sparse_tiled(path, nodata=0)
 
-        arr = open_geotiff(path, gpu=True)
+        arr = open_geotiff(path, gpu=True, masked=True)
         # GPU read applies the high-level nodata mask: the
         # source uint16 raster is promoted to float64 and sentinel
         # values become NaN, matching the CPU eager path.

@@ -564,7 +564,7 @@ def test_float_sentinel_match_and_mask(tmp_path):
     path = str(tmp_path / 'eager_parity_2179_float_sentinel.tif')
     _write_with_nodata(arr, path, nodata=-9999.0)
 
-    cpu, gpu = _read_both(path)
+    cpu, gpu = _read_both(path, masked=True)
 
     # dtype + masked_nodata first: float source stays at its declared
     # dtype on both backends; the mask substitutes NaN.
@@ -592,7 +592,7 @@ def test_int_in_range_sentinel_promotes_to_float(tmp_path):
     path = str(tmp_path / 'eager_parity_2179_int_sentinel.tif')
     _write_with_nodata(arr, path, nodata=65535)
 
-    cpu, gpu = _read_both(path)
+    cpu, gpu = _read_both(path, masked=True)
 
     # Integer promotion fires on both backends.
     assert cpu.dtype == np.float64

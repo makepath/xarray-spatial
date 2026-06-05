@@ -1454,9 +1454,9 @@ def test_gpu_writer_cog_overview_sentinel_roundtrip_1948():
         )
 
         # Read full-resolution and the two overview levels.
-        full = open_geotiff(path)
-        ov1 = open_geotiff(path, overview_level=1)
-        ov2 = open_geotiff(path, overview_level=2)
+        full = open_geotiff(path, masked=True)
+        ov1 = open_geotiff(path, overview_level=1, masked=True)
+        ov2 = open_geotiff(path, overview_level=2, masked=True)
 
     # Full-resolution: sentinel pixels survive as NaN (the read path
     # masks the sentinel back to NaN since attrs['nodata'] is set).

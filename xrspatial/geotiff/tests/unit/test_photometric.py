@@ -270,7 +270,7 @@ def test_eager_numpy_miniswhite_nodata(
     path = str(tmp_path / "mw_eager.tif")
     _write_miniswhite_tiff(path, stored, nodata_str)
 
-    arr = open_geotiff(path)
+    arr = open_geotiff(path, masked=True)
 
     assert arr.attrs["nodata"] == sentinel
     np.testing.assert_array_equal(arr.values, expected)
@@ -290,7 +290,7 @@ def test_dask_miniswhite_nodata(tmp_path, case_factory, nodata_str, sentinel):
     path = str(tmp_path / "mw_dask.tif")
     _write_miniswhite_tiff(path, stored, nodata_str)
 
-    arr = open_geotiff(path, chunks=2).compute()
+    arr = open_geotiff(path, chunks=2, masked=True).compute()
 
     assert arr.attrs["nodata"] == sentinel
     np.testing.assert_array_equal(arr.values, expected)
@@ -308,7 +308,7 @@ def test_eager_miniswhite_uint8_no_collision(tmp_path):
         [[np.nan, 155.0, 55.0], [205.0, np.nan, 25.0]], dtype=np.float64
     )
 
-    arr = open_geotiff(path)
+    arr = open_geotiff(path, masked=True)
 
     np.testing.assert_array_equal(arr.values, expected)
 
@@ -332,13 +332,13 @@ def test_miniswhite_backend_parity_uint8_nodata_zero(tmp_path):
     path = str(tmp_path / "mw_parity.tif")
     _write_miniswhite_tiff(path, stored, "0", tiled=True)
 
-    eager = open_geotiff(path).values
-    dask_result = open_geotiff(path, chunks=2).compute().values
+    eager = open_geotiff(path, masked=True).values
+    dask_result = open_geotiff(path, chunks=2, masked=True).compute().values
     np.testing.assert_array_equal(eager, expected)
     np.testing.assert_array_equal(dask_result, expected)
     np.testing.assert_array_equal(eager, dask_result)
     if _HAS_GPU:
-        gpu = open_geotiff(path, gpu=True).data.get()
+        gpu = open_geotiff(path, gpu=True, masked=True).data.get()
         np.testing.assert_array_equal(gpu, expected)
         np.testing.assert_array_equal(eager, gpu)
 
@@ -349,7 +349,7 @@ def test_gpu_eager_miniswhite_uint8_nodata_zero(tmp_path):
     path = str(tmp_path / "mw_uint8_gpu.tif")
     _write_miniswhite_tiff(path, stored, "0", tiled=True)
 
-    arr = open_geotiff(path, gpu=True)
+    arr = open_geotiff(path, gpu=True, masked=True)
 
     assert arr.attrs["nodata"] == 0
     np.testing.assert_array_equal(arr.data.get(), expected)
@@ -375,7 +375,7 @@ def test_gpu_sparse_tile_miniswhite_nodata_zero(tmp_path):
     _write_miniswhite_tiff(path, stored, "0", tiled=True)
     _patch_first_tile_sparse(path)
 
-    arr = open_geotiff(path, gpu=True)
+    arr = open_geotiff(path, gpu=True, masked=True)
     out = arr.data.get()
 
     assert np.all(np.isnan(out[:16, :16]))
@@ -433,7 +433,7 @@ def test_miniswhite_float_with_nodata_round_trips_nan(tmp_path):
     arr = np.array([[10.0, np.nan, 20.0, 30.0]], dtype=np.float32)
     path = tmp_path / "rt_float_nd.tif"
     to_geotiff(_da(arr), str(path), photometric='miniswhite', nodata=-9999.0)
-    r = open_geotiff(str(path))
+    r = open_geotiff(str(path), masked=True)
     out = np.asarray(r.values)
     assert np.isnan(out[0, 1]), (
         "nodata position must round-trip back to NaN after MinIsWhite "
@@ -458,7 +458,7 @@ def test_miniswhite_uint16_in_range_nodata_round_trips_nan(tmp_path):
                'assume_square_pixels_for_degenerate_axis': True},
     )
     to_geotiff(da_in, str(path), photometric='miniswhite', nodata=9999)
-    r = open_geotiff(str(path))
+    r = open_geotiff(str(path), masked=True)
     out = np.asarray(r.values)
     assert np.isnan(out[0, 1]), (
         f"in-range uint nodata must round-trip to NaN through the "
