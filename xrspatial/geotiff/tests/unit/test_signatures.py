@@ -2612,6 +2612,47 @@ def _make_single_tile_vrt(tmp_path, arr: np.ndarray) -> str:
     return vrt_path
 
 
+def _make_georef_single_tile_vrt(tmp_path, arr: np.ndarray) -> str:
+    """Single-source VRT with an explicit ``origin (0,0); pixel (1,-1)``
+    GeoTransform.
+
+    ``_make_single_tile_vrt`` writes a bare numpy array, which produces a
+    non-georeferenced tile; build_vrt then omits the ``<GeoTransform>``
+    (see issue #2966) and the VRT reads back with integer pixel coords.
+    Tests that assert the windowed *transform* / float coordinate shift
+    need a real GeoTransform pinned to origin ``(0, 0)`` so the
+    pixel-is-area center math (``coord = (idx + 0.5) * res``) lands on the
+    documented values. Hand-build the XML so the GeoTransform is explicit
+    rather than derived from a tile's own (origin-shifted) tags.
+    """
+    h, w = arr.shape[:2]
+    dtype_map = {np.dtype('float32'): 'Float32',
+                 np.dtype('float64'): 'Float64',
+                 np.dtype('uint8'): 'Byte',
+                 np.dtype('int32'): 'Int32',
+                 np.dtype('uint16'): 'UInt16'}
+    data_type = dtype_map[arr.dtype]
+    tile_path = _write_tile_to_vrt(tmp_path, 'georef_tile.tif', arr)
+    lines = [
+        f'<VRTDataset rasterXSize="{w}" rasterYSize="{h}">',
+        '  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>',
+        f'  <VRTRasterBand dataType="{data_type}" band="1">',
+        '    <SimpleSource>',
+        f'      <SourceFilename relativeToVRT="1">'
+        f'{os.path.basename(tile_path)}</SourceFilename>',
+        '      <SourceBand>1</SourceBand>',
+        f'      <SrcRect xOff="0" yOff="0" xSize="{w}" ySize="{h}"/>',
+        f'      <DstRect xOff="0" yOff="0" xSize="{w}" ySize="{h}"/>',
+        '    </SimpleSource>',
+        '  </VRTRasterBand>',
+        '</VRTDataset>',
+    ]
+    vrt_path = str(tmp_path / 'georef_single.vrt')
+    with open(vrt_path, 'w') as f:
+        f.write('\n'.join(lines))
+    return vrt_path
+
+
 def _make_2x1_mosaic_vrt(tmp_path, left: np.ndarray,
                          right: np.ndarray) -> str:
     """Create a 2x1 horizontal mosaic VRT for cross-source window tests.
@@ -2763,7 +2804,7 @@ class TestReadVrtWindowEager:
         agree.
         """
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
-        vrt = _make_single_tile_vrt(tmp_path, arr)
+        vrt = _make_georef_single_tile_vrt(tmp_path, arr)
 
         result = _read_vrt(vrt, window=(2, 3, 6, 10))
 
@@ -2787,7 +2828,7 @@ class TestReadVrtWindowEager:
         first y coord must be ``0 + (2 + 0.5) * -1.0 = -2.5``.
         """
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
-        vrt = _make_single_tile_vrt(tmp_path, arr)
+        vrt = _make_georef_single_tile_vrt(tmp_path, arr)
 
         result = _read_vrt(vrt, window=(2, 3, 6, 10))
 

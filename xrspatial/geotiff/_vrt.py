@@ -1881,6 +1881,40 @@ def _check_no_mixed_raster_type(sources_meta: list[dict]) -> None:
             )
 
 
+def _check_no_mixed_georef(sources_meta: list[dict]) -> None:
+    """Reject mixing georeferenced and non-georeferenced VRT sources.
+
+    A source TIFF with no georeferencing (``has_georef`` False) carries a
+    default identity transform, not a real mapping. The mosaic-placement
+    math reads ``origin_x`` / ``pixel_width`` off each source transform to
+    position its tile, so a non-georeferenced source dropped into an
+    otherwise georeferenced mosaic would be placed at pixel-space origin
+    ``(0, 0)`` as if those identity values were real CRS coordinates.
+    Refuse rather than emit a mosaic that mislocates the tile.
+
+    The all-georeferenced and all-non-georeferenced cases both pass:
+    build_vrt emits a ``<GeoTransform>`` only when every source is
+    georeferenced, so the all-non-georeferenced VRT preserves
+    ``georef_status='none'`` on read.
+    """
+    if not sources_meta:
+        return
+    georef_flags = [bool(m.get('has_georef')) for m in sources_meta]
+    if any(georef_flags) and not all(georef_flags):
+        georeffed = [m['path'] for m, g in zip(sources_meta, georef_flags)
+                     if g]
+        plain = [m['path'] for m, g in zip(sources_meta, georef_flags)
+                 if not g]
+        raise ValueError(
+            f"VRT sources mix georeferenced and non-georeferenced TIFFs. "
+            f"Georeferenced: {georeffed!r}; non-georeferenced: {plain!r}. "
+            f"A non-georeferenced source carries only a default identity "
+            f"transform, so it cannot be placed on a georeferenced "
+            f"mosaic. Either georeference every source or none of them "
+            f"before building the VRT."
+        )
+
+
 def _nodata_values_agree(a, b) -> bool:
     """Return True iff two nodata sentinels are the same value.
 
@@ -2039,6 +2073,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
             'bps': bps,
             'sample_format': ifd.sample_format,
             'transform': geo.transform,
+            'has_georef': geo.has_georef,
             'crs_wkt': geo.crs_wkt,
             'nodata': geo.nodata,
             'raster_type': geo.raster_type,
@@ -2093,6 +2128,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     #      the read-side ``MixedBandMetadataError`` opt-out pattern.
     _check_no_rotated_source_transforms(sources_meta)
     _check_no_mixed_raster_type(sources_meta)
+    _check_no_mixed_georef(sources_meta)
     _check_no_mixed_nodata(sources_meta, caller_nodata=nodata)
 
     # Pixel size, sample format, band count, and CRS share the
@@ -2184,8 +2220,17 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     lines = [f'<VRTDataset rasterXSize="{int(total_w)}" rasterYSize="{int(total_h)}">']
     if srs:
         lines.append(f'  <SRS>{_xml_text(srs)}</SRS>')
-    lines.append(f'  <GeoTransform>{mosaic_x0}, {res_x}, 0.0, '
-                 f'{mosaic_y_top}, 0.0, {res_y}</GeoTransform>')
+    # Only emit a <GeoTransform> when the sources actually carry
+    # georeferencing. A non-georeferenced source has a default identity
+    # transform (origin 0,0; pixel 1,-1), and emitting that as a real
+    # GeoTransform fabricates georeferencing: the VRT would read back as
+    # ``georef_status='transform_only'`` instead of ``'none'``. The
+    # mixed-georef gate above guarantees every source agrees, so checking
+    # ``first`` is enough. Omitting the element makes the reader fall back
+    # to integer pixel coordinates, preserving ``georef_status='none'``.
+    if first.get('has_georef'):
+        lines.append(f'  <GeoTransform>{mosaic_x0}, {res_x}, 0.0, '
+                     f'{mosaic_y_top}, 0.0, {res_y}</GeoTransform>')
 
     for band_num in range(1, n_bands + 1):
         lines.append(
@@ -2242,7 +2287,13 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     lines.append('</VRTDataset>')
 
     xml = '\n'.join(lines) + '\n'
-    with open(vrt_path, 'w') as f:
-        f.write(xml)
+    # Write the index atomically: a temp file in the destination
+    # directory followed by ``os.replace``. The tiled writer promotes the
+    # tile directory before this call, so a direct in-place write here is
+    # the last non-atomic step and an interrupted write would leave a
+    # partial ``.vrt`` pointing at a complete tile set. ``_write_bytes``
+    # already implements the temp-then-rename pattern for local paths.
+    from ._writer import _write_bytes
+    _write_bytes(xml.encode('utf-8'), vrt_path)
 
     return vrt_path

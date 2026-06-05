@@ -33,7 +33,8 @@ import xarray as xr
 
 from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError, _read_geotiff_dask,
                                _read_vrt, build_vrt, open_geotiff, to_geotiff)
-from xrspatial.geotiff._attrs import GEOREF_STATUS_FULL, GEOREF_STATUS_TRANSFORM_ONLY
+from xrspatial.geotiff._attrs import (GEOREF_STATUS_FULL, GEOREF_STATUS_NONE,
+                                      GEOREF_STATUS_TRANSFORM_ONLY)
 from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._vrt import parse_vrt
@@ -1795,3 +1796,88 @@ def test_missing_sources_warn_records_holes(tmp_path):
     assert isinstance(holes[0], dict), f'vrt_holes entry type drifted: {type(holes[0]).__name__}; #1734 documents a dict shape'  # noqa: E501
     hole_source = holes[0]['source']
     assert 'tmp_2321_missing_src.tif' in hole_source, f'hole source path drifted: {hole_source!r}'
+
+
+# ---------------------------------------------------------------------------
+# Non-georeferenced sources: build_vrt must not fabricate a GeoTransform
+# (issue #2966)
+# ---------------------------------------------------------------------------
+
+
+def _write_plain_tif_2966(tmp_path, name, shape=(3, 4)):
+    """Write a non-georeferenced TIFF (bare array, no CRS/transform).
+
+    The low-level ``write`` helper bypasses ``to_geotiff`` so the source
+    carries no GeoTIFF transform tags and reads back as
+    ``georef_status='none'``.
+    """
+    arr = np.arange(int(np.prod(shape)), dtype=np.float32).reshape(shape)
+    path = str(tmp_path / name)
+    write(arr, path, compression='none', tiled=False)
+    return path, arr
+
+
+def _write_georef_tif_2966(tmp_path, name, shape=(3, 4)):
+    """Write a georeferenced TIFF via ``to_geotiff`` (real CRS + transform)."""
+    arr = np.arange(int(np.prod(shape)), dtype=np.float32).reshape(shape)
+    y = np.linspace(50.0, 20.0, shape[0])
+    x = np.linspace(100.0, 130.0, shape[1])
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': y, 'x': x},
+                      attrs={'crs': 'EPSG:4326'})
+    path = str(tmp_path / name)
+    to_geotiff(da, path, compression='none')
+    return path, arr
+
+
+def test_build_vrt_non_georef_source_omits_geotransform(tmp_path):
+    """A VRT over a non-georeferenced source must not carry a
+    ``<GeoTransform>`` element (issue #2966)."""
+    tif, _ = _write_plain_tif_2966(tmp_path, 'plain_2966.tif')
+    assert open_geotiff(tif).attrs.get('georef_status') == GEOREF_STATUS_NONE
+
+    vrt_path = str(tmp_path / 'plain_2966.vrt')
+    build_vrt(vrt_path, [tif])
+
+    xml = pathlib.Path(vrt_path).read_text()
+    assert '<GeoTransform>' not in xml, (
+        'build_vrt fabricated a GeoTransform for a non-georeferenced '
+        'source: ' + xml
+    )
+
+
+def test_build_vrt_non_georef_source_preserves_status_none(tmp_path):
+    """The VRT over a non-georeferenced source reads back as
+    ``georef_status='none'`` with no fabricated transform (issue #2966)."""
+    tif, arr = _write_plain_tif_2966(tmp_path, 'plain_status_2966.tif')
+
+    vrt_path = str(tmp_path / 'plain_status_2966.vrt')
+    build_vrt(vrt_path, [tif])
+    out = open_geotiff(vrt_path)
+
+    assert out.attrs.get('georef_status') == GEOREF_STATUS_NONE
+    assert out.attrs.get('transform') is None
+    np.testing.assert_array_equal(out.values, arr)
+
+
+def test_build_vrt_georef_source_still_emits_geotransform(tmp_path):
+    """Regression guard: a georeferenced source still gets a
+    ``<GeoTransform>`` and a non-``none`` status (issue #2966)."""
+    tif, _ = _write_georef_tif_2966(tmp_path, 'geo_2966.tif')
+
+    vrt_path = str(tmp_path / 'geo_2966.vrt')
+    build_vrt(vrt_path, [tif])
+
+    xml = pathlib.Path(vrt_path).read_text()
+    assert '<GeoTransform>' in xml
+    assert open_geotiff(vrt_path).attrs.get('georef_status') != GEOREF_STATUS_NONE
+
+
+def test_build_vrt_mixed_georef_sources_rejected(tmp_path):
+    """Mixing a georeferenced and a non-georeferenced source is rejected
+    rather than silently mislocating the plain tile (issue #2966)."""
+    geo_tif, _ = _write_georef_tif_2966(tmp_path, 'mix_geo_2966.tif')
+    plain_tif, _ = _write_plain_tif_2966(tmp_path, 'mix_plain_2966.tif')
+
+    vrt_path = str(tmp_path / 'mixed_2966.vrt')
+    with pytest.raises(ValueError, match='mix georeferenced and non-georeferenced'):
+        build_vrt(vrt_path, [geo_tif, plain_tif])

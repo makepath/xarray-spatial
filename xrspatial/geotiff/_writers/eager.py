@@ -1200,143 +1200,148 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         vrt_dir, f'{tiles_dir_name}.tmp-{uuid.uuid4().hex}')
     os.makedirs(staging_dir, exist_ok=True)
 
-    # Resolve CRS. ``numbers.Integral`` covers numpy integer scalars
-    # (``np.int32``, ``np.int64``) so ``crs=np.int64(4326)`` does not
-    # silently fall through to ``epsg=None``. Validator already
-    # rejects bool.
-    _validate_crs_arg(crs)
-    epsg = None
-    wkt_fallback = None
-    if isinstance(crs, numbers.Integral):
-        epsg = int(crs)
-    elif isinstance(crs, str):
-        epsg = _wkt_to_epsg(crs)
-        if epsg is None:
-            wkt_fallback = crs
-
-    geo_transform = None
-    raster_type = RASTER_PIXEL_IS_AREA
-    x_res = None
-    y_res = None
-    res_unit = None
-    gdal_meta_xml = None
-    extra_tags_list = None
-
-    if isinstance(data, xr.DataArray):
-        raw = data.data
-        if epsg is None and crs is None:
-            crs_attr = data.attrs.get('crs')
-            if isinstance(crs_attr, str):
-                epsg = _wkt_to_epsg(crs_attr)
-                if epsg is None and wkt_fallback is None:
-                    wkt_fallback = crs_attr
-            elif crs_attr is not None:
-                # Same gate as the kwarg path: reject bool / non-int
-                # types and confirm the EPSG resolves before writing it
-                # to disk. Without this, ``attrs={'crs': True}`` round-
-                # trips as EPSG=1.
-                _validate_crs_arg(crs_attr)
-                epsg = int(crs_attr)
-            if epsg is None:
-                wkt = data.attrs.get('crs_wkt')
-                if isinstance(wkt, str):
-                    epsg = _wkt_to_epsg(wkt)
-                    if epsg is None and wkt_fallback is None:
-                        wkt_fallback = wkt
-        if nodata is None:
-            # Use the same alias-aware resolver that to_geotiff /
-            # _write_geotiff_gpu apply so a rioxarray-style DataArray
-            # (``attrs['nodatavals']``) or a CF-style one
-            # (``attrs['_FillValue']``) round-trips through ``.vrt``
-            # the same way it does through ``.tif``. Using
-            # ``attrs.get('nodata')`` directly would silently drop both
-            # aliases.
-            nodata = _resolve_nodata_attr(data.attrs)
-        # Mirror the ``to_geotiff`` gate so per-tile writes only
-        # NaN-rewrite when the read side promoted the sentinel. See
-        # ``_should_restore_nan_sentinel`` for the semantics; default
-        # True keeps existing behaviour.
-        restore_sentinel = _should_restore_nan_sentinel(data.attrs)
-        # Resolve via the centralised resolver. Same precedence as
-        # ``to_geotiff``: attrs['transform'] wins over coord-derived.
-        geo_transform = _resolve_georef(data).transform
-        # Match the to_geotiff fail-closed guard so VRT writes don't
-        # silently produce non-georeferenced tiles either.
-        _require_transform_for_georeferenced(data, geo_transform)
-        # Pull the same rich-tag set that to_geotiff forwards to
-        # ``write`` so per-tile files under the VRT carry it too.
-        _rich = _extract_rich_tags(data.attrs)
-        raster_type = _rich['raster_type']
-        gdal_meta_xml = _rich['gdal_metadata_xml']
-        extra_tags_list = _rich['extra_tags']
-        x_res = _rich['x_resolution']
-        y_res = _rich['y_resolution']
-        res_unit = _rich['resolution_unit']
-    else:
-        raw = data
-
-    # Refuse to write an unvalidatable CRS string into the per-tile
-    # GTCitationGeoKey fields unless the caller opts in.
-    # ``_write_single_tile`` forwards ``wkt_fallback`` to the geokey
-    # builder once per tile, so validate once up front rather than
-    # per-tile.
-    if epsg is None:
-        _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
-
-    # Check for dask backing
-    is_dask = hasattr(raw, 'dask')
-
-    if is_dask:
-        if raw.ndim != 2:
-            raise ValueError(
-                "VRT tiled output currently supports 2D arrays only, "
-                f"got {raw.ndim}D. Squeeze or select a band first.")
-        # Use dask chunk grid
-        import dask
-        row_chunks = raw.chunks[0]  # tuple of chunk sizes along y
-        col_chunks = raw.chunks[1]  # tuple of chunk sizes along x
-        n_row_tiles = len(row_chunks)
-        n_col_tiles = len(col_chunks)
-    else:
-        # Numpy: tile using tile_size
-        if hasattr(raw, 'get'):
-            np_arr = raw.get()  # CuPy
-        elif hasattr(raw, 'compute'):
-            np_arr = raw.compute()
-        else:
-            np_arr = np.asarray(raw)
-        if np_arr.ndim != 2:
-            raise ValueError(
-                "VRT tiled output currently supports 2D arrays only, "
-                f"got {np_arr.ndim}D. Squeeze or select a band first.")
-        height, width = np_arr.shape[:2]
-        n_row_tiles = (height + tile_size - 1) // tile_size
-        n_col_tiles = (width + tile_size - 1) // tile_size
-
-    # Zero-padding width for tile names
-    pad_width = max(2, len(str(max(n_row_tiles, n_col_tiles) - 1)))
-
-    # Tiles are written into ``staging_dir``; ``tile_names`` records the
-    # bare filenames so the final tile paths (under ``tiles_dir``) can be
-    # rebuilt for the VRT index after the atomic rename below.
-    tile_names = []
-    delayed_tasks = []
-
     def _cleanup_staging():
         shutil.rmtree(staging_dir, ignore_errors=True)
 
-    def _safe_write_tile(*args, **kwargs):
-        # Return the exception instead of raising so a failure in one
-        # threaded dask task does not abort ``dask.compute`` while sibling
-        # threads are still writing into the staging dir. The caller raises
-        # the first captured failure after every task has settled.
-        try:
-            _write_single_tile(*args, **kwargs)
-        except BaseException as exc:  # noqa: BLE001 - re-raised by caller
-            return exc
-        return None
-
+    # The validation below (CRS, georef transform, the 2D-only
+    # check) and the per-tile write can all raise after the staging
+    # dir exists. Guard everything so a failed write removes the
+    # ``*.tmp-*`` staging dir and leaves no partial output, matching
+    # the contract documented at the leftover-state guard above.
     try:
+        # Resolve CRS. ``numbers.Integral`` covers numpy integer scalars
+        # (``np.int32``, ``np.int64``) so ``crs=np.int64(4326)`` does not
+        # silently fall through to ``epsg=None``. Validator already
+        # rejects bool.
+        _validate_crs_arg(crs)
+        epsg = None
+        wkt_fallback = None
+        if isinstance(crs, numbers.Integral):
+            epsg = int(crs)
+        elif isinstance(crs, str):
+            epsg = _wkt_to_epsg(crs)
+            if epsg is None:
+                wkt_fallback = crs
+
+        geo_transform = None
+        raster_type = RASTER_PIXEL_IS_AREA
+        x_res = None
+        y_res = None
+        res_unit = None
+        gdal_meta_xml = None
+        extra_tags_list = None
+
+        if isinstance(data, xr.DataArray):
+            raw = data.data
+            if epsg is None and crs is None:
+                crs_attr = data.attrs.get('crs')
+                if isinstance(crs_attr, str):
+                    epsg = _wkt_to_epsg(crs_attr)
+                    if epsg is None and wkt_fallback is None:
+                        wkt_fallback = crs_attr
+                elif crs_attr is not None:
+                    # Same gate as the kwarg path: reject bool / non-int
+                    # types and confirm the EPSG resolves before writing it
+                    # to disk. Without this, ``attrs={'crs': True}`` round-
+                    # trips as EPSG=1.
+                    _validate_crs_arg(crs_attr)
+                    epsg = int(crs_attr)
+                if epsg is None:
+                    wkt = data.attrs.get('crs_wkt')
+                    if isinstance(wkt, str):
+                        epsg = _wkt_to_epsg(wkt)
+                        if epsg is None and wkt_fallback is None:
+                            wkt_fallback = wkt
+            if nodata is None:
+                # Use the same alias-aware resolver that to_geotiff /
+                # _write_geotiff_gpu apply so a rioxarray-style DataArray
+                # (``attrs['nodatavals']``) or a CF-style one
+                # (``attrs['_FillValue']``) round-trips through ``.vrt``
+                # the same way it does through ``.tif``. Using
+                # ``attrs.get('nodata')`` directly would silently drop both
+                # aliases.
+                nodata = _resolve_nodata_attr(data.attrs)
+            # Mirror the ``to_geotiff`` gate so per-tile writes only
+            # NaN-rewrite when the read side promoted the sentinel. See
+            # ``_should_restore_nan_sentinel`` for the semantics; default
+            # True keeps existing behaviour.
+            restore_sentinel = _should_restore_nan_sentinel(data.attrs)
+            # Resolve via the centralised resolver. Same precedence as
+            # ``to_geotiff``: attrs['transform'] wins over coord-derived.
+            geo_transform = _resolve_georef(data).transform
+            # Match the to_geotiff fail-closed guard so VRT writes don't
+            # silently produce non-georeferenced tiles either.
+            _require_transform_for_georeferenced(data, geo_transform)
+            # Pull the same rich-tag set that to_geotiff forwards to
+            # ``write`` so per-tile files under the VRT carry it too.
+            _rich = _extract_rich_tags(data.attrs)
+            raster_type = _rich['raster_type']
+            gdal_meta_xml = _rich['gdal_metadata_xml']
+            extra_tags_list = _rich['extra_tags']
+            x_res = _rich['x_resolution']
+            y_res = _rich['y_resolution']
+            res_unit = _rich['resolution_unit']
+        else:
+            raw = data
+
+        # Refuse to write an unvalidatable CRS string into the per-tile
+        # GTCitationGeoKey fields unless the caller opts in.
+        # ``_write_single_tile`` forwards ``wkt_fallback`` to the geokey
+        # builder once per tile, so validate once up front rather than
+        # per-tile.
+        if epsg is None:
+            _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
+
+        # Check for dask backing
+        is_dask = hasattr(raw, 'dask')
+
+        if is_dask:
+            if raw.ndim != 2:
+                raise ValueError(
+                    "VRT tiled output currently supports 2D arrays only, "
+                    f"got {raw.ndim}D. Squeeze or select a band first.")
+            # Use dask chunk grid
+            import dask
+            row_chunks = raw.chunks[0]  # tuple of chunk sizes along y
+            col_chunks = raw.chunks[1]  # tuple of chunk sizes along x
+            n_row_tiles = len(row_chunks)
+            n_col_tiles = len(col_chunks)
+        else:
+            # Numpy: tile using tile_size
+            if hasattr(raw, 'get'):
+                np_arr = raw.get()  # CuPy
+            elif hasattr(raw, 'compute'):
+                np_arr = raw.compute()
+            else:
+                np_arr = np.asarray(raw)
+            if np_arr.ndim != 2:
+                raise ValueError(
+                    "VRT tiled output currently supports 2D arrays only, "
+                    f"got {np_arr.ndim}D. Squeeze or select a band first.")
+            height, width = np_arr.shape[:2]
+            n_row_tiles = (height + tile_size - 1) // tile_size
+            n_col_tiles = (width + tile_size - 1) // tile_size
+
+        # Zero-padding width for tile names
+        pad_width = max(2, len(str(max(n_row_tiles, n_col_tiles) - 1)))
+
+        # Tiles are written into ``staging_dir``; ``tile_names`` records the
+        # bare filenames so the final tile paths (under ``tiles_dir``) can be
+        # rebuilt for the VRT index after the atomic rename below.
+        tile_names = []
+        delayed_tasks = []
+
+        def _safe_write_tile(*args, **kwargs):
+            # Return the exception instead of raising so a failure in one
+            # threaded dask task does not abort ``dask.compute`` while sibling
+            # threads are still writing into the staging dir. The caller raises
+            # the first captured failure after every task has settled.
+            try:
+                _write_single_tile(*args, **kwargs)
+            except BaseException as exc:  # noqa: BLE001 - re-raised by caller
+                return exc
+            return None
+
         row_offset = 0
         for ri in range(n_row_tiles):
             if is_dask:
