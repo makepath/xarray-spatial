@@ -710,6 +710,13 @@ def open_geotiff(source: str | BinaryIO, *,
         array; a source with differing per-band values is read with band
         0's. Supported on the CPU eager and dask paths; combining it with
         ``gpu=True`` or a ``.vrt`` source raises ``ValueError``.
+        Round-trip caveat: the source's ``SCALE`` / ``OFFSET`` tags stay on
+        ``attrs['gdal_metadata']`` / ``attrs['gdal_metadata_xml']`` after the
+        read, so writing a ``mask_and_scale=True`` result back out with
+        ``to_geotiff`` re-embeds them, and reading that file again with
+        ``mask_and_scale=True`` applies the scale a second time. Drop those
+        tags (and ``attrs['scale_factor']`` / ``attrs['add_offset']``) before
+        writing if you need a clean round-trip.
     parse_coordinates : bool, default True
         [stable] If True (the default), build ``x`` / ``y`` coordinate
         arrays from the transform. If False, skip them and return a
@@ -876,6 +883,11 @@ def open_geotiff(source: str | BinaryIO, *,
     # ``read_geotiff_gpu`` (gpu -> on_gpu_failure): passing both the old and
     # new name is ambiguous and raises, passing the old name alone warns.
     if mask_nodata is not _MASK_NODATA_DEPRECATED_SENTINEL:
+        # ``masked`` carries a real default of False, so an explicit
+        # ``masked=False`` cannot be told apart from the default here; that
+        # one combination (``masked=False`` + ``mask_nodata=True``) does not
+        # raise and resolves to the ``mask_nodata`` value. This matches the
+        # documented stance on ``read_geotiff_gpu``'s gpu/on_gpu_failure pair.
         if masked is not False:
             raise TypeError(
                 "open_geotiff: pass either 'masked' or the deprecated "
@@ -919,7 +931,7 @@ def open_geotiff(source: str | BinaryIO, *,
     # combination up front rather than silently ignoring the kwarg -- the
     # same per-backend rejection contract the dispatcher already applies to
     # on_gpu_failure / missing_sources / max_cloud_bytes.
-    _is_vrt_source_early = (
+    _is_vrt_source = (
         isinstance(source, str) and source.lower().endswith('.vrt'))
     if mask_and_scale or not parse_coordinates:
         offending = (
@@ -930,7 +942,7 @@ def open_geotiff(source: str | BinaryIO, *,
                 f"{offending} is not supported with gpu=True; it is "
                 "implemented on the CPU eager and dask paths. Drop gpu=True "
                 "or the kwarg.")
-        if _is_vrt_source_early:
+        if _is_vrt_source:
             raise ValueError(
                 f"{offending} is not supported for .vrt sources; it is "
                 "implemented on the CPU eager and dask paths over .tif "
@@ -959,8 +971,8 @@ def open_geotiff(source: str | BinaryIO, *,
 
     missing_sources_passed = (
         missing_sources is not _MISSING_SOURCES_SENTINEL)
-    _is_vrt_source = (
-        isinstance(source, str) and source.lower().endswith('.vrt'))
+    # ``_is_vrt_source`` was resolved above for the mask_and_scale /
+    # parse_coordinates gate.
 
     # Gate ``stable_only=True`` BEFORE resolving ``bbox=``. The bbox
     # resolver reads source geo metadata first (the TIFF path reads a
