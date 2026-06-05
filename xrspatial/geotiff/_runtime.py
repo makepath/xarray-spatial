@@ -48,6 +48,14 @@ _VRT_PATH_DEPRECATED_SENTINEL = object()
 # ``path is None`` branch and raised a "missing required argument"
 # TypeError for the wrong reason.
 _VRT_PATH_MISSING_SENTINEL = object()
+# ``open_geotiff`` renamed ``mask_nodata`` -> ``masked`` (and flipped the
+# default from True to False) and ``name`` -> ``default_name`` to match
+# rioxarray's ``open_rasterio``. Each sentinel distinguishes "caller passed
+# the deprecated alias" from "caller passed nothing", so passing both the old
+# and new name raises TypeError and the old name alone warns. Same rationale
+# as ``_GPU_DEPRECATED_SENTINEL`` above.
+_MASK_NODATA_DEPRECATED_SENTINEL = object()
+_NAME_DEPRECATED_SENTINEL = object()
 
 
 # Spatial dim names recognised on 3D writer inputs. ``y``/``x`` are the

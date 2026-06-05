@@ -81,7 +81,8 @@ from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform 
 from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
 from ._reader import read_to_array as _read_to_array
 from ._runtime import (_CRS_WKT_DEPRECATED_SENTINEL, _GPU_DEPRECATED_SENTINEL,  # noqa: F401
-                       _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL, GeoTIFFFallbackWarning,
+                       _MASK_NODATA_DEPRECATED_SENTINEL, _MISSING_SOURCES_SENTINEL,
+                       _NAME_DEPRECATED_SENTINEL, _ON_GPU_FAILURE_SENTINEL, GeoTIFFFallbackWarning,
                        _geotiff_strict_mode, _gpu_fallback_warning_message)
 from ._validation import (_validate_3d_writer_dims, _validate_chunks_arg,  # noqa: F401
                           _validate_tile_size_arg)
@@ -491,7 +492,8 @@ def open_geotiff(source: str | BinaryIO, *,
                  bbox: tuple | None = None,
                  overview_level: int | None = None,
                  band: int | None = None,
-                 name: str | None = None,
+                 default_name: str | None = None,
+                 name: str | None = _NAME_DEPRECATED_SENTINEL,  # type: ignore[assignment]
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
                  max_pixels: int | None = None,
@@ -506,7 +508,12 @@ def open_geotiff(source: str | BinaryIO, *,
                  allow_experimental_codecs: bool = False,
                  allow_internal_only_jpeg: bool = False,
                  band_nodata: str | None = None,
-                 mask_nodata: bool = True,
+                 masked: bool = False,
+                 mask_nodata: bool = _MASK_NODATA_DEPRECATED_SENTINEL,  # type: ignore[assignment]
+                 mask_and_scale: bool = False,
+                 parse_coordinates: bool = True,
+                 lock=None,
+                 cache: bool = True,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
@@ -537,8 +544,14 @@ def open_geotiff(source: str | BinaryIO, *,
     map. Per-parameter tier markers below describe the
     tier the parameter itself carries; a parameter's effective tier
     is bounded by the function-level surface above (e.g. ``[stable]``
-    ``mask_nodata`` is still only stable when combined with a
+    ``masked`` is still only stable when combined with a
     ``[stable]`` source, codec, and options).
+
+    The read/masking parameters are named to match rioxarray's
+    ``open_rasterio`` (``masked``, ``default_name``, ``mask_and_scale``,
+    ``parse_coordinates``, ``lock``, ``cache``) so callers can move between
+    the two with minimal edits. ``masked`` defaults to ``False`` (no
+    sentinel-to-NaN promotion), matching ``open_rasterio``.
 
     Automatically dispatches to the best backend:
     - ``gpu=True``: GPU-accelerated read via nvCOMP (returns CuPy)
@@ -596,8 +609,13 @@ def open_geotiff(source: str | BinaryIO, *,
         release-gate parity.
     band : int or None
         [stable] Band index (0-based). None returns all bands.
+    default_name : str or None
+        [stable] Name for the DataArray. None derives it from the source
+        file name. Matches rioxarray's ``open_rasterio`` parameter.
     name : str or None
-        [stable] Name for the DataArray.
+        [deprecated] Deprecated alias of ``default_name``; emits a
+        ``DeprecationWarning``. Passing both ``default_name`` and ``name``
+        raises ``TypeError``.
     chunks : int, tuple, or None
         [stable] Chunk size for Dask lazy reading. Dask reads are
         gated against the eager reader by the cross-backend parity
@@ -664,17 +682,49 @@ def open_geotiff(source: str | BinaryIO, *,
         using band 0's sentinel for the whole mosaic. Passing this
         kwarg with a non-VRT source raises ``ValueError`` because the
         policy only applies to the VRT pipeline.
-    mask_nodata : bool, default True
-        [stable] If True (the default), replace the nodata sentinel
-        with ``NaN``; integer rasters get promoted to ``float64`` first
-        so NaN can be represented. If False, skip the sentinel-to-NaN
+    masked : bool, default False
+        [stable] If True, replace the nodata sentinel with ``NaN``;
+        integer rasters get promoted to ``float64`` first so NaN can be
+        represented. If False (the default), skip the sentinel-to-NaN
         step and keep the source dtype. ``attrs['nodata']`` still
-        carries the raw sentinel either way, so downstream code can
-        mask explicitly. Pass ``mask_nodata=False`` when you want to
-        preserve an integer source dtype via ``dtype=``: the default
-        ``mask_nodata=True`` promotes to ``float64`` whenever the
-        sentinel matches an actual pixel, and ``dtype=<integer>`` then
-        raises ``ValueError`` on the float-to-int cast.
+        carries the raw sentinel either way, so downstream code can mask
+        explicitly. The default matches rioxarray's ``open_rasterio``
+        (``masked=False``); note that earlier xrspatial releases masked
+        by default (``mask_nodata=True``), so a bare ``open_geotiff(path)``
+        no longer promotes the sentinel to NaN. Pass ``masked=True`` and
+        ``dtype=<integer>`` together and the read raises ``ValueError``
+        once the sentinel matches a pixel, because the float64 promotion
+        then makes the integer cast lossy.
+    mask_nodata : bool
+        [deprecated] Deprecated alias of ``masked``; emits a
+        ``DeprecationWarning``. Passing both ``masked`` and ``mask_nodata``
+        raises ``TypeError``. Note the default also changed from
+        ``mask_nodata=True`` to ``masked=False``.
+    mask_and_scale : bool, default False
+        [advanced] If True, read the source's GDAL ``SCALE`` / ``OFFSET``
+        metadata and return ``data * scale + offset``, masking the nodata
+        sentinel to NaN as well (matching rioxarray's ``open_rasterio``).
+        The applied values are recorded on ``attrs['scale_factor']`` /
+        ``attrs['add_offset']``. A source without scale / offset metadata
+        is a no-op. A single scale / offset pair is applied to the whole
+        array; a source with differing per-band values is read with band
+        0's. Supported on the CPU eager and dask paths; combining it with
+        ``gpu=True`` or a ``.vrt`` source raises ``ValueError``.
+    parse_coordinates : bool, default True
+        [stable] If True (the default), build ``x`` / ``y`` coordinate
+        arrays from the transform. If False, skip them and return a
+        DataArray with only dimensions (matching rioxarray's
+        ``open_rasterio``); ``attrs['transform']`` and ``attrs['crs']``
+        still carry the georeferencing, and the ``band`` coord is kept.
+        Supported on the CPU eager and dask paths; combining
+        ``parse_coordinates=False`` with ``gpu=True`` or a ``.vrt`` source
+        raises ``ValueError``.
+    lock, cache
+        [advanced] Accepted for ``open_rasterio`` signature compatibility
+        but have no effect: xrspatial's reader re-opens the source per
+        window, so there is no shared GDAL handle to lock and no caching
+        layer to toggle. Passing a non-default value emits a
+        ``GeoTIFFFallbackWarning``.
     allow_rotated : bool, default False
         [advanced] Read-only opt-in. ``to_geotiff`` does not currently
         emit ``rotated_affine``; it rejects DataArrays that carry the
@@ -777,16 +827,17 @@ def open_geotiff(source: str | BinaryIO, *,
     is what makes write -> read -> write -> read round-trips bit-stable for
     rasters with fractional pixel sizes or origins.
 
-    Integer rasters with a nodata sentinel are silently promoted to
-    ``float64`` with NaN replacing the sentinel so downstream NaN-aware
-    code works uniformly. To keep the source dtype on a file whose
-    sentinel matches actual pixels, pass ``mask_nodata=False``; the raw
-    sentinel stays in the data and ``attrs['nodata']`` still carries it.
-    Passing ``dtype=<integer>`` on its own is not enough: the
-    sentinel-to-NaN promotion runs first and the subsequent integer cast
-    then raises ``ValueError`` (float-to-int is lossy in a way users
-    rarely intend). When the file has no in-range sentinel match, the
-    promotion is skipped and ``dtype=<integer>`` works either way.
+    With ``masked=True``, integer rasters with a nodata sentinel are
+    promoted to ``float64`` with NaN replacing the sentinel so downstream
+    NaN-aware code works uniformly. The default ``masked=False`` keeps the
+    source dtype and leaves the raw sentinel in the data;
+    ``attrs['nodata']`` still carries it either way. With ``masked=True``,
+    passing ``dtype=<integer>`` as well is not enough to keep an integer
+    dtype: the sentinel-to-NaN promotion runs first and the subsequent
+    integer cast then raises ``ValueError`` (float-to-int is lossy in a
+    way users rarely intend). When the file has no in-range sentinel
+    match, the promotion is skipped and ``dtype=<integer>`` works either
+    way.
 
     Examples
     --------
@@ -815,6 +866,72 @@ def open_geotiff(source: str | BinaryIO, *,
     from ._reader import _coerce_path
 
     source = _coerce_path(source)
+
+    # Resolve the rioxarray-compatible renames. ``masked`` / ``default_name``
+    # are the canonical names; ``mask_nodata`` / ``name`` are deprecated
+    # aliases kept for back-compat. Mirrors the sentinel-based deprecation in
+    # ``read_geotiff_gpu`` (gpu -> on_gpu_failure): passing both the old and
+    # new name is ambiguous and raises, passing the old name alone warns.
+    if mask_nodata is not _MASK_NODATA_DEPRECATED_SENTINEL:
+        if masked is not False:
+            raise TypeError(
+                "open_geotiff: pass either 'masked' or the deprecated "
+                "'mask_nodata' alias, not both.")
+        warnings.warn(
+            "open_geotiff(..., mask_nodata=...) is deprecated; use "
+            "masked=... instead. Note the default also changed from "
+            "mask_nodata=True to masked=False to match rioxarray's "
+            "open_rasterio: a bare open_geotiff(path) no longer promotes "
+            "the nodata sentinel to NaN.",
+            DeprecationWarning, stacklevel=2)
+        masked = mask_nodata
+    if name is not _NAME_DEPRECATED_SENTINEL:
+        if default_name is not None:
+            raise TypeError(
+                "open_geotiff: pass either 'default_name' or the deprecated "
+                "'name' alias, not both.")
+        warnings.warn(
+            "open_geotiff(..., name=...) is deprecated; use default_name=... "
+            "instead to match rioxarray's open_rasterio.",
+            DeprecationWarning, stacklevel=2)
+        default_name = name
+
+    # ``lock`` / ``cache`` are accepted for open_rasterio signature
+    # compatibility. xrspatial's dask reader re-opens the source per window,
+    # so there is no shared GDAL handle to lock and no caching backend to
+    # toggle. Warn rather than silently ignore so a porting caller is not
+    # surprised by a no-op.
+    if lock is not None or cache is not True:
+        warnings.warn(
+            "open_geotiff: 'lock' and 'cache' are accepted for rioxarray "
+            "open_rasterio compatibility but have no effect; xrspatial's "
+            "reader re-opens the source per window, so there is no shared "
+            "GDAL handle to lock and no caching layer to toggle.",
+            GeoTIFFFallbackWarning, stacklevel=2)
+
+    # ``mask_and_scale`` and ``parse_coordinates=False`` are implemented on
+    # the CPU eager and dask paths only. The GPU and VRT-mosaic paths build
+    # their DataArrays through separate code that is not covered by the
+    # cross-backend parity suite for these options, so refuse the
+    # combination up front rather than silently ignoring the kwarg -- the
+    # same per-backend rejection contract the dispatcher already applies to
+    # on_gpu_failure / missing_sources / max_cloud_bytes.
+    _is_vrt_source_early = (
+        isinstance(source, str) and source.lower().endswith('.vrt'))
+    if mask_and_scale or not parse_coordinates:
+        offending = (
+            'mask_and_scale=True' if mask_and_scale
+            else 'parse_coordinates=False')
+        if gpu:
+            raise ValueError(
+                f"{offending} is not supported with gpu=True; it is "
+                "implemented on the CPU eager and dask paths. Drop gpu=True "
+                "or the kwarg.")
+        if _is_vrt_source_early:
+            raise ValueError(
+                f"{offending} is not supported for .vrt sources; it is "
+                "implemented on the CPU eager and dask paths over .tif "
+                "sources. Drop the kwarg.")
 
     # All dispatcher-level kwarg rejection lives in
     # ``_validate_dispatch_kwargs`` so the three direct backends
@@ -932,7 +1049,7 @@ def open_geotiff(source: str | BinaryIO, *,
         if missing_sources_passed:
             vrt_kwargs['missing_sources'] = missing_sources
         return read_vrt(source, dtype=dtype, window=window, band=band,
-                        name=name, chunks=chunks, gpu=gpu,
+                        name=default_name, chunks=chunks, gpu=gpu,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
                         allow_unparseable_crs=allow_unparseable_crs,
@@ -941,7 +1058,7 @@ def open_geotiff(source: str | BinaryIO, *,
                         allow_experimental_codecs=allow_experimental_codecs,
                         allow_internal_only_jpeg=allow_internal_only_jpeg,
                         band_nodata=band_nodata,
-                        mask_nodata=mask_nodata,
+                        mask_nodata=masked,
                         **vrt_kwargs)
 
     # File-like buffer rejections for ``gpu=True`` / ``chunks=...`` already
@@ -957,7 +1074,7 @@ def open_geotiff(source: str | BinaryIO, *,
         return read_geotiff_gpu(source, dtype=dtype,
                                 overview_level=overview_level,
                                 window=window, band=band,
-                                name=name, chunks=chunks,
+                                name=default_name, chunks=chunks,
                                 max_pixels=max_pixels,
                                 allow_rotated=allow_rotated,
                                 allow_unparseable_crs=allow_unparseable_crs,
@@ -967,7 +1084,7 @@ def open_geotiff(source: str | BinaryIO, *,
                                     allow_experimental_codecs),
                                 allow_internal_only_jpeg=(
                                     allow_internal_only_jpeg),
-                                mask_nodata=mask_nodata,
+                                mask_nodata=masked,
                                 **gpu_kwargs)
 
     # Dask path (CPU)
@@ -975,7 +1092,7 @@ def open_geotiff(source: str | BinaryIO, *,
         return read_geotiff_dask(source, dtype=dtype, chunks=chunks,
                                  overview_level=overview_level,
                                  window=window, band=band,
-                                 max_pixels=max_pixels, name=name,
+                                 max_pixels=max_pixels, name=default_name,
                                  allow_rotated=allow_rotated,
                                  allow_unparseable_crs=allow_unparseable_crs,
                                  allow_invalid_nodata=allow_invalid_nodata,
@@ -984,7 +1101,9 @@ def open_geotiff(source: str | BinaryIO, *,
                                      allow_experimental_codecs),
                                  allow_internal_only_jpeg=(
                                      allow_internal_only_jpeg),
-                                 mask_nodata=mask_nodata)
+                                 mask_nodata=masked,
+                                 mask_and_scale=mask_and_scale,
+                                 parse_coordinates=parse_coordinates)
 
     kwargs = {}
     if max_pixels is not None:
@@ -1007,11 +1126,11 @@ def open_geotiff(source: str | BinaryIO, *,
         **kwargs,
     )
 
-    if name is None:
+    if default_name is None:
         # Derive from source path. File-like buffers don't have a path,
         # so leave name unset rather than fabricating one.
         if isinstance(source, str):
-            name = os.path.splitext(os.path.basename(source))[0]
+            default_name = os.path.splitext(os.path.basename(source))[0]
 
     # Hand the post-decode buffer to the shared eager finalizer. The
     # helper runs the same validate -> populate attrs -> mask -> cast
@@ -1030,12 +1149,14 @@ def open_geotiff(source: str | BinaryIO, *,
         geo_info=geo_info,
         nodata=nodata,
         mask_sentinel=mask_sentinel,
-        mask_nodata=mask_nodata,
+        mask_nodata=masked,
         dtype=dtype,
         window=window,
-        name=name,
+        name=default_name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        mask_and_scale=mask_and_scale,
+        parse_coordinates=parse_coordinates,
     )
 
 

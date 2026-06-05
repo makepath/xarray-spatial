@@ -1527,6 +1527,35 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
     return arr, nodata_pixels_present
 
 
+def _extract_scale_offset(gdal_metadata):
+    """Pull SCALE / OFFSET from parsed GDAL_METADATA for ``mask_and_scale``.
+
+    Returns ``(scale, offset)`` floats, defaulting to ``(1.0, 0.0)`` when the
+    source carries no scale / offset. GDAL stores these in the GDAL_METADATA
+    XML either as dataset-level ``SCALE`` / ``OFFSET`` items or per-band items
+    keyed ``(name, band_index)`` by :func:`_parse_gdal_metadata`. Dataset-level
+    values are preferred; band 0's per-band values are the fallback. A single
+    pair is applied to the whole array, so a source with differing per-band
+    scale / offset is read with band 0's values (documented limitation).
+    """
+    scale, offset = 1.0, 0.0
+    if not gdal_metadata:
+        return scale, offset
+
+    def _num(keys, default):
+        for k in keys:
+            if k in gdal_metadata:
+                try:
+                    return float(gdal_metadata[k])
+                except (TypeError, ValueError):
+                    return default
+        return default
+
+    scale = _num(['SCALE', ('SCALE', 0)], 1.0)
+    offset = _num(['OFFSET', ('OFFSET', 0)], 0.0)
+    return scale, offset
+
+
 def _finalize_eager_read(
     arr,
     *,
@@ -1540,6 +1569,8 @@ def _finalize_eager_read(
     allow_rotated: bool = False,
     allow_unparseable_crs: bool = False,
     attrs_in: dict | None = None,
+    mask_and_scale: bool = False,
+    parse_coordinates: bool = True,
 ):
     """Validate, populate attrs, mask, cast, and build an eager DataArray.
 
@@ -1593,14 +1624,32 @@ def _finalize_eager_read(
     attrs: dict = dict(attrs_in) if attrs_in else {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
 
+    # ``mask_and_scale`` implies masking (rioxarray applies scale / offset
+    # AND masks the nodata sentinel to NaN), so fold it into the mask gate.
+    effective_mask = mask_nodata or mask_and_scale
+
     # Apply the nodata-to-NaN mask (or compute pixels_present
-    # without rewriting if ``mask_nodata=False``). Skipped entirely when
+    # without rewriting if masking is off). Skipped entirely when
     # the source declared no sentinel.
     nodata_pixels_present: bool | None = None
     if nodata is not None:
         arr, nodata_pixels_present = _apply_eager_nodata_mask(
-            arr, mask_sentinel=mask_sentinel, mask_nodata=mask_nodata,
+            arr, mask_sentinel=mask_sentinel, mask_nodata=effective_mask,
         )
+
+    # ``mask_and_scale``: apply ``data * scale + offset`` from the source's
+    # GDAL_METADATA. Runs before the caller's ``dtype=`` cast so a
+    # ``dtype=<integer>`` request raises the same float-to-int ValueError the
+    # mask path raises (scaling promotes to float).
+    if mask_and_scale:
+        scale, offset = _extract_scale_offset(
+            getattr(geo_info, 'gdal_metadata', None))
+        if scale != 1.0 or offset != 0.0:
+            if arr.dtype.kind != 'f':
+                arr = arr.astype(np.float64)
+            arr = arr * scale + offset
+            attrs['scale_factor'] = scale
+            attrs['add_offset'] = offset
 
     # Caller-requested dtype cast (post-mask so the integer
     # promotion above runs first). ``_validate_dtype_cast`` lives in
@@ -1622,16 +1671,20 @@ def _finalize_eager_read(
     # masked" rather than "masking was disabled").
     _set_nodata_attrs(
         attrs, nodata,
-        masked=(mask_nodata and np.dtype(str(arr.dtype)).kind == 'f'),
+        masked=(effective_mask and np.dtype(str(arr.dtype)).kind == 'f'),
         pixels_present=nodata_pixels_present,
         dtype_cast=dtype_cast_attr,
     )
 
     # Build the DataArray. ``_coords_from_geo_info`` honours the
     # windowed-read contract (origin shifted to the window's top-left).
+    # ``parse_coordinates=False`` skips the x / y coordinate arrays
+    # (matching rioxarray); the transform / crs attrs still carry the
+    # georeferencing, and the band coord is kept.
     height, width = arr.shape[:2]
-    coords = _coords_from_geo_info(
-        geo_info, height, width, window=window,
+    coords = (
+        _coords_from_geo_info(geo_info, height, width, window=window)
+        if parse_coordinates else {}
     )
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
