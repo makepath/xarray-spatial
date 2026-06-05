@@ -1023,7 +1023,16 @@ def test_release_gate_eager_dask_full_parity(
             f"`python -m xrspatial.geotiff.tests.golden_corpus.generate`"
         )
 
-    eager = open_geotiff(str(path), **open_kwargs)
+    # ``_read_geotiff_dask`` keeps the legacy masking-on default
+    # (``mask_nodata=True``); ``open_geotiff`` flipped its default to
+    # ``masked=False``. Mirror the dask default on the eager call so the
+    # two backends are compared under the same masking policy, while
+    # still honouring an explicit ``mask_nodata=`` in ``open_kwargs``
+    # (the masked-nodata-lifecycle scenario).
+    eager_kwargs = {"masked": open_kwargs.get("mask_nodata", True),
+                    **{k: v for k, v in open_kwargs.items()
+                       if k != "mask_nodata"}}
+    eager = open_geotiff(str(path), **eager_kwargs)
     lazy = _read_geotiff_dask(
         str(path), chunks=_EAGER_DASK_CHUNK_SIZE, **open_kwargs,
     )
@@ -1549,9 +1558,9 @@ def _overview_assert_transform_scales(
 
 
 def _overview_read_levels_eager(path: str) -> dict:
-    out = {0: open_geotiff(path)}
+    out = {0: open_geotiff(path, masked=True)}
     for i, _ in enumerate(_OVERVIEW_FACTORS, start=1):
-        out[i] = open_geotiff(path, overview_level=i)
+        out[i] = open_geotiff(path, masked=True, overview_level=i)
     return out
 
 

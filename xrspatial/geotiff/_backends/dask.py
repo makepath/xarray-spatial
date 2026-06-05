@@ -40,7 +40,9 @@ def _read_geotiff_dask(source: str, *,
                        allow_experimental_codecs: bool = False,
                        allow_internal_only_jpeg: bool = False,
                        band_nodata: str | None = None,
-                       mask_nodata: bool = True) -> xr.DataArray:
+                       mask_nodata: bool = True,
+                       mask_and_scale: bool = False,
+                       parse_coordinates: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
     Release-contract tier (see
@@ -105,6 +107,15 @@ def _read_geotiff_dask(source: str, *,
         either way. Pass ``mask_nodata=False`` together with
         ``dtype=<integer>`` to keep an integer source dtype; the
         default promotes to ``float64`` and the cast then raises.
+    mask_and_scale : bool, default False
+        [advanced] If True, apply the source's GDAL ``SCALE`` / ``OFFSET``
+        (``data * scale + offset``) lazily on the assembled dask array and
+        mask the nodata sentinel. Records ``attrs['scale_factor']`` /
+        ``attrs['add_offset']``. No-op when the source carries no scale /
+        offset metadata.
+    parse_coordinates : bool, default True
+        [stable] If False, skip the ``x`` / ``y`` coordinate arrays; the
+        ``transform`` / ``crs`` attrs still carry the georeferencing.
     allow_rotated : bool, default False
         [advanced] Read-side opt-in for rotated / sheared
         ``ModelTransformationTag`` files. Forwarded to every per-chunk
@@ -418,6 +429,10 @@ def _read_geotiff_dask(source: str, *,
             and file_dtype.kind in ('u', 'i')
             and lifecycle.sentinel_fits_buffer):
         effective_dtype = np.dtype('float64')
+    # ``mask_and_scale`` applies ``data * scale + offset`` (and masks), which
+    # promotes any integer source to float regardless of the sentinel.
+    if mask_and_scale and file_dtype.kind != 'f':
+        effective_dtype = np.dtype('float64')
 
     if dtype is not None:
         target_dtype = np.dtype(dtype)
@@ -505,7 +520,7 @@ def _read_geotiff_dask(source: str, *,
     attrs = _finalize_lazy_read_attrs(
         geo_info=geo_info,
         nodata=nodata_attr,
-        mask_nodata=mask_nodata,
+        mask_nodata=(mask_nodata or mask_and_scale),
         graph_dtype=target_dtype,
         caller_dtype=dtype,
         window=window,
@@ -580,7 +595,7 @@ def _read_geotiff_dask(source: str, *,
             # int-promotion branches in ``_delayed_read_window``. The
             # original sentinel is still carried in ``attrs['nodata']`` via
             # ``nodata_attr`` so write round-trips preserve the tag.
-            chunk_nodata = nodata if mask_nodata else None
+            chunk_nodata = nodata if (mask_nodata or mask_and_scale) else None
             # ``effective_source`` swaps in the sidecar URL when the
             # requested overview lives in an external ``.tif.ovr``.
             # For local files and non-sidecar remote
@@ -612,6 +627,24 @@ def _read_geotiff_dask(source: str, *,
         dask_rows.append(da.concatenate(dask_cols, axis=1))
 
     dask_arr = da.concatenate(dask_rows, axis=0)
+
+    # ``mask_and_scale``: apply ``data * scale + offset`` lazily on the
+    # assembled dask array. The per-chunk mask above already promoted the
+    # graph to float and replaced sentinels with NaN.
+    if mask_and_scale:
+        from .._attrs import _extract_scale_offset
+        scale, offset = _extract_scale_offset(
+            getattr(geo_info, 'gdal_metadata', None))
+        if scale != 1.0 or offset != 0.0:
+            dask_arr = dask_arr * scale + offset
+            attrs['scale_factor'] = scale
+            attrs['add_offset'] = offset
+
+    # ``parse_coordinates=False`` drops the x / y coordinate arrays (the
+    # transform / crs attrs still carry georeferencing); the band coord is
+    # kept.
+    if not parse_coordinates:
+        coords = {}
 
     if out_has_band_axis:
         dims = ['y', 'x', 'band']

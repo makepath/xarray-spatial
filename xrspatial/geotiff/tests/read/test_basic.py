@@ -650,7 +650,7 @@ class TestNodataRestore:
         )
 
         # Read it (nodata=0 -> NaN)
-        da = open_geotiff(path1)
+        da = open_geotiff(path1, masked=True)
         assert np.isnan(da.values[1, 0])
         assert da.attrs['nodata'] == 0
 

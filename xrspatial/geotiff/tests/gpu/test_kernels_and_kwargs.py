@@ -2483,7 +2483,7 @@ def test_open_geotiff_gpu_mask_nodata_false_threads_through_2052(
     from xrspatial.geotiff import open_geotiff
 
     path, arr = uint16_with_matching_sentinel_2052
-    da = open_geotiff(path, gpu=True, mask_nodata=False)
+    da = open_geotiff(path, gpu=True, masked=False)
 
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.data.get(), arr)
@@ -2544,7 +2544,7 @@ def test_open_geotiff_dask_gpu_mask_nodata_false_threads_through_2052(
     from xrspatial.geotiff import open_geotiff
 
     path, arr = uint16_with_matching_sentinel_2052
-    da = open_geotiff(path, gpu=True, chunks=2, mask_nodata=False)
+    da = open_geotiff(path, gpu=True, chunks=2, masked=False)
 
     assert da.dtype == np.uint16
     computed = da.compute()
@@ -2584,7 +2584,7 @@ def test_open_geotiff_vrt_mask_nodata_false_threads_through_2052(
     from xrspatial.geotiff import open_geotiff
 
     vrt_path, arr = uint16_vrt_with_matching_sentinel_2052
-    da = open_geotiff(vrt_path, mask_nodata=False)
+    da = open_geotiff(vrt_path, masked=False)
 
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(np.asarray(da.values), arr)
@@ -2637,7 +2637,7 @@ def test_open_geotiff_vrt_chunked_mask_nodata_false_threads_through_2052(
     from xrspatial.geotiff import open_geotiff
 
     vrt_path, arr = uint16_vrt_with_matching_sentinel_2052
-    da = open_geotiff(vrt_path, chunks=2, mask_nodata=False)
+    da = open_geotiff(vrt_path, chunks=2, masked=False)
 
     assert da.dtype == np.uint16
     computed = da.compute()
@@ -2651,8 +2651,8 @@ def test_cross_backend_parity_eager_dask_numpy_2052(
 
     path, arr = uint16_with_matching_sentinel_2052
 
-    eager = open_geotiff(path, mask_nodata=False)
-    dask_ = open_geotiff(path, chunks=2, mask_nodata=False).compute()
+    eager = open_geotiff(path, masked=False)
+    dask_ = open_geotiff(path, chunks=2, masked=False).compute()
 
     assert eager.dtype == np.uint16
     assert dask_.dtype == np.uint16
@@ -2668,8 +2668,8 @@ def test_cross_backend_parity_eager_gpu_2052(
 
     path, arr = uint16_with_matching_sentinel_2052
 
-    eager = open_geotiff(path, mask_nodata=False)
-    gpu = open_geotiff(path, gpu=True, mask_nodata=False)
+    eager = open_geotiff(path, masked=False)
+    gpu = open_geotiff(path, gpu=True, masked=False)
 
     assert eager.dtype == np.uint16
     assert gpu.dtype == np.uint16
@@ -2685,9 +2685,9 @@ def test_cross_backend_parity_eager_dask_gpu_2052(
 
     path, arr = uint16_with_matching_sentinel_2052
 
-    eager = open_geotiff(path, mask_nodata=False)
+    eager = open_geotiff(path, masked=False)
     dgpu = open_geotiff(
-        path, gpu=True, chunks=2, mask_nodata=False).compute()
+        path, gpu=True, chunks=2, masked=False).compute()
 
     assert eager.dtype == np.uint16
     assert dgpu.dtype == np.uint16
@@ -2705,8 +2705,8 @@ def test_cross_backend_parity_eager_vrt_2052(
     tif_path, arr = uint16_with_matching_sentinel_2052
     vrt_path, _ = uint16_vrt_with_matching_sentinel_2052
 
-    eager = open_geotiff(tif_path, mask_nodata=False)
-    vrt = open_geotiff(vrt_path, mask_nodata=False)
+    eager = open_geotiff(tif_path, masked=False)
+    vrt = open_geotiff(vrt_path, masked=False)
 
     assert eager.dtype == vrt.dtype == np.uint16
     np.testing.assert_array_equal(eager.values, np.asarray(vrt.values))

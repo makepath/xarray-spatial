@@ -89,8 +89,8 @@ write.
        replaced sentinel pixels with NaN (so the buffer is NaN-aware);
        ``False`` when the array still carries the literal sentinel
        values, including the case where the array is float dtype
-       because the caller passed ``mask_nodata=False`` together with
-       ``dtype=float...``. Only set when ``nodata`` is set; absence
+       because the caller passed ``masked=False`` (the default) together
+       with ``dtype=float...``. Only set when ``nodata`` is set; absence
        means no declared sentinel. See issue #2092.
    * - ``nodata_pixels_present``
      - bool

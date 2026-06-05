@@ -181,11 +181,12 @@ this section is the brief.
   (``xrspatial/geotiff/tests/write/test_nodata.py``).
 * Float nodata. The on-disk sentinel is recorded on
   ``attrs['nodata']`` and surfaces as NaN in pixel data only when the
-  read promotes via ``mask_nodata=True`` (the default for float
-  outputs). With ``mask_nodata=False`` the raw float sentinel passes
-  through, so downstream callers can branch on the exact value;
-  ``xrspatial/geotiff/tests/write/test_nodata.py`` pins this
-  split.
+  read promotes via ``masked=True``. The default is ``masked=False``
+  (matching rioxarray's ``open_rasterio``), so by default the raw float
+  sentinel passes through and downstream callers can branch on the exact
+  value; pass ``masked=True`` to get NaN-masked output.
+  ``xrspatial/geotiff/tests/write/test_nodata.py`` pins this split.
+  (``mask_nodata`` is a deprecated alias of ``masked``.)
 * NaN nodata. A file that declares ``nodata=NaN`` is read with NaN in
   both ``attrs['nodata']`` and pixel data (NaN propagates either way).
 * ``attrs['masked_nodata']``. Every read sets a boolean lifecycle

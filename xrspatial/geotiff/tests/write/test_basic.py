@@ -280,7 +280,7 @@ def test_nodata_sentinel_float_disk_vs_read(tmp_path):
     np.testing.assert_array_equal(raw[~nan_mask], expected[~nan_mask])
 
     # Read back through open_geotiff: sentinel becomes NaN again.
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     np.testing.assert_array_equal(np.isnan(out.data), nan_mask)
     np.testing.assert_array_equal(out.data[~nan_mask], expected[~nan_mask])
     assert out.attrs.get('nodata') == -9999.0
@@ -303,7 +303,7 @@ def test_nodata_uint8_sentinel(tmp_path):
     np.testing.assert_array_equal(raw, arr)
 
     # Read-back: open_geotiff promotes integer with nodata to float + NaN.
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     assert out.dtype.kind == 'f'
     assert np.isnan(out.data[0, 0])
     assert np.isnan(out.data[4, 4])

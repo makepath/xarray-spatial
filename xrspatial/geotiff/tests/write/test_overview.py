@@ -381,7 +381,7 @@ def test_cpu_cog_overview_mean_partial_block(tmp_path):
                tiled=True, tile_size=16, overview_levels=[2],
                overview_resampling='mean')
 
-    ov = open_geotiff(p, overview_level=1)
+    ov = open_geotiff(p, overview_level=1, masked=True)
     # Top-left 2x2 was all-NaN -> reduces to NaN -> rewritten to -9999
     #   on disk, then read back as NaN once overview-nodata
     #   inheritance restores attrs['nodata'] and re-masks
@@ -960,11 +960,11 @@ def test_to_geotiff_int_cubic_overview_round_trip(tmp_path):
     to_geotiff(da, str(path), cog=True, overview_resampling='cubic',
                nodata=-9999, crs=4326)
     # Level 0: full resolution.
-    r0 = open_geotiff(str(path), overview_level=0)
+    r0 = open_geotiff(str(path), overview_level=0, masked=True)
     uniq_0 = set(np.unique(r0.values[~np.isnan(r0.values)]))
     assert uniq_0 == {100.0}
     # Level 1: the historically poisoned level.
-    r1 = open_geotiff(str(path), overview_level=1)
+    r1 = open_geotiff(str(path), overview_level=1, masked=True)
     finite_1 = r1.values[~np.isnan(r1.values)]
     # All finite values must be 100 (the only valid data value); no ringing.
     np.testing.assert_array_equal(finite_1, 100.0)
@@ -1001,8 +1001,8 @@ def test_to_geotiff_int_cubic_overview_matches_mean_finite_range(tmp_path):
                nodata=65535, crs=4326)
     to_geotiff(da, str(mean_path), cog=True, overview_resampling='mean',
                nodata=65535, crs=4326)
-    r_cubic = open_geotiff(str(cubic_path), overview_level=0)
-    r_mean = open_geotiff(str(mean_path), overview_level=0)
+    r_cubic = open_geotiff(str(cubic_path), overview_level=0, masked=True)
+    r_mean = open_geotiff(str(mean_path), overview_level=0, masked=True)
     # Sentinel masks should land on the same pixels for both methods on a
     # constant valid region with a constant nodata corner.
     np.testing.assert_array_equal(
@@ -1880,7 +1880,7 @@ def test_overview_sentinel_pixels_masked_to_nan(tmp_path, backend_kwargs):
 
     expected_nan_counts = {0: 256, 1: 64, 2: 16}
     for lvl, expected in expected_nan_counts.items():
-        da = open_geotiff(path, overview_level=lvl, **backend_kwargs)
+        da = open_geotiff(path, overview_level=lvl, masked=True, **backend_kwargs)
         vals = _materialise(da)
         actual_nan = int(np.isnan(vals).sum())
         sentinel_remaining = int((vals == -9999.0).sum())
@@ -1908,7 +1908,7 @@ def test_overview_nanmean_matches_pre_sentinel_value(tmp_path, backend_kwargs):
     _make_cog_with_nodata(path)
 
     for lvl in (0, 1, 2):
-        da = open_geotiff(path, overview_level=lvl, **backend_kwargs)
+        da = open_geotiff(path, overview_level=lvl, masked=True, **backend_kwargs)
         vals = _materialise(da)
         assert np.nanmean(vals) == pytest.approx(100.0), (
             f"backend={backend_kwargs}, overview_level={lvl}: nanmean="

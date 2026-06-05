@@ -152,7 +152,7 @@ class TestIntegerNodata:
         path = str(tmp_path / 'uint8_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=255)
 
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert np.isnan(da.values[1, 1])
         assert da.values[0, 1] == 1.0
         assert da.dtype == np.float64  # promoted from uint8
@@ -162,7 +162,7 @@ class TestIntegerNodata:
         path = str(tmp_path / 'uint16_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=0)
 
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert np.isnan(da.values[0, 1])
         assert np.isnan(da.values[1, 1])
         assert da.values[0, 0] == 100.0
@@ -172,7 +172,7 @@ class TestIntegerNodata:
         path = str(tmp_path / 'int16_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=-9999)
 
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert np.isnan(da.values[0, 0])
         assert np.isnan(da.values[1, 1])
         assert da.values[0, 1] == 10.0
@@ -936,7 +936,7 @@ class TestVRT:
         with open(vrt_path, 'w') as f:
             f.write(vrt_xml)
 
-        da = open_geotiff(vrt_path)
+        da = open_geotiff(vrt_path, masked=True)
         vals = da.values
 
         # The sentinel pixel must be NaN.

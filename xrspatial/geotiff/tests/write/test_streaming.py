@@ -367,7 +367,7 @@ class TestStreamingEdgeCases:
 
         path = str(tmp_path / 'nan_1084.tif')
         to_geotiff(dask_da, path)
-        result = open_geotiff(path)
+        result = open_geotiff(path, masked=True)
 
         assert np.isnan(result.values[15, 15])
         assert result.values[0, 0] == pytest.approx(1.0)

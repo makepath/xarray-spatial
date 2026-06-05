@@ -403,6 +403,9 @@ _CANONICAL_ORDER = (
     "bbox",
     "overview_level",
     "band",
+    # rioxarray ``open_rasterio`` name for the DataArray. Sits immediately
+    # before its deprecated ``name`` alias.
+    "default_name",
     "name",
     "chunks",
     "gpu",
@@ -428,7 +431,17 @@ _CANONICAL_ORDER = (
     "allow_experimental_codecs",
     "allow_internal_only_jpeg",
     "band_nodata",
+    # rioxarray ``open_rasterio`` masking flag (default False). Sits
+    # immediately before its deprecated ``mask_nodata`` alias.
+    "masked",
     "mask_nodata",
+    # rioxarray-compatible read options. ``mask_and_scale`` /
+    # ``parse_coordinates`` are also threaded into ``read_geotiff_dask``;
+    # ``lock`` / ``cache`` are open_geotiff-only accept-and-warn shims.
+    "mask_and_scale",
+    "parse_coordinates",
+    "lock",
+    "cache",
 )
 
 
@@ -2095,7 +2108,7 @@ def test_read_geotiff_gpu_chunks_max_pixels_rejects_oversized(small_tiff_path):
 
 def test_open_geotiff_chunks_name_flows_through(small_tiff_path):
     path, arr = small_tiff_path
-    da = open_geotiff(path, chunks=4, name="dispatch_dask")
+    da = open_geotiff(path, chunks=4, default_name="dispatch_dask")
     assert da.name == "dispatch_dask"
     np.testing.assert_array_equal(da.values, arr)
 
@@ -2103,7 +2116,7 @@ def test_open_geotiff_chunks_name_flows_through(small_tiff_path):
 @requires_gpu
 def test_open_geotiff_gpu_name_flows_through(small_tiff_path):
     path, arr = small_tiff_path
-    da = open_geotiff(path, gpu=True, name="dispatch_gpu")
+    da = open_geotiff(path, gpu=True, default_name="dispatch_gpu")
     assert da.name == "dispatch_gpu"
     np.testing.assert_array_equal(da.data.get(), arr)
 
@@ -2111,7 +2124,7 @@ def test_open_geotiff_gpu_name_flows_through(small_tiff_path):
 @requires_gpu
 def test_open_geotiff_gpu_chunks_name_flows_through(small_tiff_path):
     path, arr = small_tiff_path
-    da = open_geotiff(path, gpu=True, chunks=4, name="dispatch_dask_gpu")
+    da = open_geotiff(path, gpu=True, chunks=4, default_name="dispatch_dask_gpu")
     assert da.name == "dispatch_dask_gpu"
     np.testing.assert_array_equal(da.data.compute().get(), arr)
 

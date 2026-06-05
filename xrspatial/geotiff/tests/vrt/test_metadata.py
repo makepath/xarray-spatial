@@ -218,7 +218,7 @@ def test_vrt_eager_float_source_mask_off_reports_false(tmp_path):
     """Eager VRT + float source + ``mask_nodata=False`` must report
     ``masked_nodata=False``. Pre-fix rule (dtype alone) said ``True``."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src.tif', 'tmp_2159_eager_unmasked.vrt')  # noqa: E501
-    out = open_geotiff(vrt, mask_nodata=False)
+    out = open_geotiff(vrt, masked=False)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is False, f"caller opted out of masking but attrs say masked_nodata={out.attrs.get('masked_nodata')!r}"  # noqa: E501
 
@@ -227,7 +227,7 @@ def test_vrt_eager_float_source_mask_on_reports_true(tmp_path):
     """Canonical direction: float source + masking on. The masking
     step runs, attr says True. Regression guard."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src_masked.tif', 'tmp_2159_eager_masked.vrt')  # noqa: E501
-    out = open_geotiff(vrt)
+    out = open_geotiff(vrt, masked=True)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is True
 
@@ -238,7 +238,7 @@ def test_vrt_eager_int_source_mask_off_reports_false(tmp_path):
     got this right (int dtype -> False); keep it green under the
     new ``mask_nodata and dtype.kind == 'f'`` rule."""
     vrt = _masked_nodata_attr_write_int_vrt(tmp_path, 'tmp_2159_eager_int_src.tif', 'tmp_2159_eager_int_unmasked.vrt')  # noqa: E501
-    out = open_geotiff(vrt, mask_nodata=False)
+    out = open_geotiff(vrt, masked=False)
     assert out.dtype.kind == 'i'
     assert out.attrs.get('masked_nodata') is False
 
@@ -250,7 +250,7 @@ def test_vrt_eager_float_source_mask_off_with_cast_reports_false(tmp_path):
     ``mask_nodata=False`` and says False. The caller-supplied cast is
     still recorded via ``nodata_dtype_cast``."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_eager_float_src_cast.tif', 'tmp_2159_eager_unmasked_cast.vrt')  # noqa: E501
-    out = open_geotiff(vrt, mask_nodata=False, dtype=np.float64)
+    out = open_geotiff(vrt, masked=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_dtype_cast') == 'float64'
@@ -301,7 +301,7 @@ def test_vrt_attr_matches_dask_backend_under_mask_off(tmp_path):
     cross-backend invariant the contract at
     ``_attrs._set_nodata_attrs`` calls out."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_xbackend_src.tif', 'tmp_2159_xbackend.vrt')  # noqa: E501
-    eager = open_geotiff(vrt, mask_nodata=False, dtype=np.float64)
+    eager = open_geotiff(vrt, masked=False, dtype=np.float64)
     chunked = _read_geotiff_dask(vrt, chunks=2, mask_nodata=False, dtype=np.float64)
     assert eager.attrs.get('masked_nodata') is False
     assert chunked.attrs.get('masked_nodata') is False
@@ -504,7 +504,7 @@ def test_vrt_uint16_nodata_promotes_to_float64(tmp_path):
     """VRT route NaN-masks integer-with-nodata, matching open_geotiff."""
     tif = str(tmp_path / 'src_1564.tif')
     _int_nodata_write_uint16_with_nodata_tif(tif, sentinel=65535)
-    eager = open_geotiff(tif)
+    eager = open_geotiff(tif, masked=True)
     assert eager.dtype == np.float64
     assert np.isnan(eager.values[1, 0])
     vrt_path = str(tmp_path / 'src_1564.vrt')
@@ -1378,12 +1378,12 @@ def _metadata_parity_build_integer_with_nodata_vrt(tmp_path: pathlib.Path) -> st
 
 def _metadata_parity_read_eager_numpy(vrt_path: str):
     """Eager numpy via the dispatcher (mirrors public surface)."""
-    return open_geotiff(vrt_path)
+    return open_geotiff(vrt_path, masked=True)
 
 
 def _metadata_parity_read_dask(vrt_path: str):
     """Dask via the dispatcher, then ``compute()`` for value parity."""
-    lazy = open_geotiff(vrt_path, chunks=2)
+    lazy = open_geotiff(vrt_path, chunks=2, masked=True)
     return lazy.compute()
 
 

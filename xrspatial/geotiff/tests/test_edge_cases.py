@@ -491,7 +491,7 @@ class TestPublicAPIEdgeCases:
         path = str(tmp_path / 'both.tif')
         to_geotiff(arr, path, crs=4326, nodata=-9999.0, compression='none')
 
-        result = open_geotiff(path)
+        result = open_geotiff(path, masked=True)
         assert result.attrs['crs'] == 4326
         assert np.isnan(result.values[0, 1])
         assert result.values[1, 1] == 2.0
@@ -576,7 +576,7 @@ class TestPublicAPIEdgeCases:
         path = str(tmp_path / 'nodata_str.tif')
         to_geotiff(da, path, compression='none')
 
-        result = open_geotiff(path)
+        result = open_geotiff(path, masked=True)
         # The nodata sentinel should be masked to NaN on read
         assert np.isnan(result.values[0, 1])
         assert np.isnan(result.values[1, 0])

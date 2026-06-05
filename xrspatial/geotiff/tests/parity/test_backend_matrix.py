@@ -454,6 +454,7 @@ _FIXTURES: list[_FixtureSpec] = [
         expected_masked=True,
         source_type=_SRC_LOCAL_TIFF,
         builder=_build_float32_with_nodata,
+        read_kwargs={"masked": True},
     ),
     _FixtureSpec(
         fix_id="int8-unmasked",
@@ -1790,19 +1791,19 @@ class _ApBackend:
 
 
 def _ap_open_eager(path):
-    return open_geotiff(path)
+    return open_geotiff(path, masked=True)
 
 
 def _ap_open_dask(path):
-    return open_geotiff(path, chunks=16)
+    return open_geotiff(path, chunks=16, masked=True)
 
 
 def _ap_open_gpu(path):
-    return open_geotiff(path, gpu=True)
+    return open_geotiff(path, gpu=True, masked=True)
 
 
 def _ap_open_dask_gpu(path):
-    return open_geotiff(path, gpu=True, chunks=16)
+    return open_geotiff(path, gpu=True, chunks=16, masked=True)
 
 
 def _ap_open_vrt(path, meta):
@@ -1875,7 +1876,7 @@ def test_canonical_attrs_match_across_backends(tmp_path, fixture):
     path = str(tmp_path / f'attrs_parity_{fixture.name}.tif')
     meta = fixture.writer(path)
 
-    baseline = _ap_attrs_for_parity(open_geotiff(path).attrs)
+    baseline = _ap_attrs_for_parity(open_geotiff(path, masked=True).attrs)
 
     divergences = {}
     for backend in _AP_AVAILABLE_BACKENDS:
@@ -1915,7 +1916,7 @@ def test_canonical_attrs_keys_match_across_backends(tmp_path, fixture):
     path = str(tmp_path / f'attrs_parity_keys_{fixture.name}.tif')
     meta = fixture.writer(path)
 
-    baseline_keys = set(_ap_attrs_for_parity(open_geotiff(path).attrs).keys())
+    baseline_keys = set(_ap_attrs_for_parity(open_geotiff(path, masked=True).attrs).keys())
 
     diffs = {}
     for backend in _AP_AVAILABLE_BACKENDS:

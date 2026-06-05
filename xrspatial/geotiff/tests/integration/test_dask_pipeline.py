@@ -125,7 +125,7 @@ def uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks(tmp_path):
 def test_eager_promotes_to_float64_and_masks(uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks):  # noqa: E501
     """Baseline: the eager path produces float64 with 4 NaNs."""
     path, _ = uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks
-    eager = open_geotiff(path)
+    eager = open_geotiff(path, masked=True)
     assert eager.dtype == np.float64
     assert np.isnan(eager.values).sum() == 4
     assert np.isnan(eager.values[6:8, 6:8]).all()
@@ -139,8 +139,8 @@ def test_dask_chunks_4_matches_eager(uint16_with_sentinel_only_in_corner_dask_in
     chunk back to uint16 at concat time.
     """
     path, _ = uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks
-    eager = open_geotiff(path)
-    dk = open_geotiff(path, chunks=4)
+    eager = open_geotiff(path, masked=True)
+    dk = open_geotiff(path, masked=True, chunks=4)
     assert dk.dtype == np.float64
     computed = dk.compute()
     assert computed.dtype == np.float64
@@ -160,7 +160,7 @@ def test_dask_chunks_2_per_chunk_dtype_uniform(
     as uint16 because the mask never matched there.
     """
     path, _ = uint16_with_sentinel_only_in_corner_dask_int_nodata_chunks
-    dk = open_geotiff(path, chunks=2)
+    dk = open_geotiff(path, masked=True, chunks=2)
     blocks = dk.data.to_delayed().flatten()
     for i, block in enumerate(blocks):
         chunk = block.compute()
@@ -323,8 +323,8 @@ def uint16_with_sentinel_in_first_chunk_dask_no_op_astype(tmp_path):
 def test_uint16_mask_path_still_promotes(uint16_with_sentinel_in_first_chunk_dask_no_op_astype):
     """The int-sentinel float64 promotion still runs when sentinels are present."""
     path, arr = uint16_with_sentinel_in_first_chunk_dask_no_op_astype
-    eager = open_geotiff(path)
-    dk = open_geotiff(path, chunks=4)
+    eager = open_geotiff(path, masked=True)
+    dk = open_geotiff(path, masked=True, chunks=4)
     assert dk.dtype == np.float64
     computed = dk.compute()
     assert computed.dtype == np.float64
@@ -740,7 +740,7 @@ class TestStreamingWriteAllNan_dask_streaming_write_degenerate:
         )
         assert not np.isnan(raw).any()
         # Public read still maps the sentinel back to NaN.
-        result = open_geotiff(path)
+        result = open_geotiff(path, masked=True)
         assert np.isnan(result.values).all()
         assert result.attrs.get('nodata') == pytest.approx(-9999.0)
 
@@ -797,7 +797,7 @@ class TestStreamingWriteMixedNanInf_dask_streaming_write_degenerate:
             "found surviving NaN floats"
         )
         # Public read maps the sentinel back to NaN, keeps Inf as-is.
-        result = open_geotiff(path)
+        result = open_geotiff(path, masked=True)
         assert np.isnan(result.values[0, 1])
         assert np.isnan(result.values[2, 2])
         assert result.values[1, 0] == np.inf
