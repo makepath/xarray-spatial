@@ -158,6 +158,36 @@ class TestWriteInvalidInput:
         with pytest.raises(ValueError, match="(Unsupported|Unknown) compression"):
             write(arr, str(tmp_path / 'bad.tif'), compression='bzip2')
 
+    @pytest.mark.parametrize('bad', [5, 5.0, ['deflate'], object()])
+    def test_to_geotiff_non_string_compression_typeerror(self, tmp_path, bad):
+        # Regression for #2975: a non-string ``compression`` skipped the
+        # public wrapper's name-validation block and later landed in
+        # ``compression.lower()`` during compression_level validation,
+        # surfacing as a raw ``AttributeError``. The wrapper now rejects
+        # the bad type with the same ``TypeError`` shape as the low-level
+        # writer's guard.
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_2975_badtype.tif')
+        with pytest.raises(TypeError, match="compression must be a str"):
+            to_geotiff(arr, path, compression=bad, compression_level=1)
+
+    def test_to_geotiff_non_string_compression_no_level(self, tmp_path):
+        # The same rejection must fire even without ``compression_level``,
+        # so a non-string never reaches any ``.lower()`` call (#2975).
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_2975_badtype_nolevel.tif')
+        with pytest.raises(TypeError, match="compression must be a str"):
+            to_geotiff(arr, path, compression=7)
+
+    def test_to_geotiff_valid_compression_still_works(self, tmp_path):
+        # Valid string compressions, the no-compression 'none' string, and
+        # a string + compression_level combo must still write (#2975).
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        to_geotiff(arr, str(tmp_path / 'tmp_2975_default.tif'))
+        to_geotiff(arr, str(tmp_path / 'tmp_2975_none.tif'), compression='none')
+        to_geotiff(arr, str(tmp_path / 'tmp_2975_deflate.tif'),
+                   compression='deflate', compression_level=6)
+
 
 # -------------------------------------------------------------------------
 # Section: writer dtype x compression matrix
