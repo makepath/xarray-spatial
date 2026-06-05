@@ -1172,8 +1172,11 @@ def _read_cpu_gpu_lerc(path):
     from xrspatial.geotiff._reader import read_to_array
 
     cpu, _geo = read_to_array(path, allow_experimental_codecs=True)
+    # The backend default is unmasked (#2976); request masking so the
+    # GPU read promotes the sentinel to NaN to match the CPU mask.
     gpu_da = _read_geotiff_gpu(
         path, gpu='strict', allow_experimental_codecs=True,
+        mask_nodata=True,
     )
     gpu_host = gpu_da.data.get()
     return cpu, gpu_host

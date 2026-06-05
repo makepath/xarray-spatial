@@ -1030,7 +1030,7 @@ def test_dtype_cast_absent_without_caller_dtype(tmp_path, opener):
     when masking auto-promotes the graph dtype to float64."""
     path = str(tmp_path / "tmp_2178_no_cast.tif")
     _make_int_with_nodata_tiff(path)
-    out = opener(path)
+    out = opener(path, mask_nodata=True)
     # Masking promoted the int source to float64 on the graph dtype,
     # but the caller did not ask for a cast.
     assert out.dtype == np.float64

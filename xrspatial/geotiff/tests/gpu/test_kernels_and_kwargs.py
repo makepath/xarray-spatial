@@ -1643,16 +1643,18 @@ def test_gds_chunked_lerc_mask_sentinel_nodata_1896(
     write(arr, path, compression="lerc", tiled=True, tile_size=8,
           nodata=-9999.0)
 
+    # The backend default is unmasked (#2976); request masking on both
+    # the eager and chunked GPU reads so the sentinel promotes to NaN.
     eager = _read_geotiff_gpu(
         path, on_gpu_failure='strict',
-        allow_experimental_codecs=True,
+        allow_experimental_codecs=True, mask_nodata=True,
     ).data.get()
 
     ifd, geo_info, header = _parse_for_gds_1896(path)
     chunked_da = _read_geotiff_gpu_chunked_gds(
         path, ifd, geo_info, header,
         dtype=None, chunks=4, window=None, band=None,
-        name=None, max_pixels=None,
+        name=None, max_pixels=None, mask_nodata=True,
     )
     chunked = chunked_da.data.compute().get()
 
@@ -2459,19 +2461,20 @@ def test_read_geotiff_gpu_mask_nodata_false_preserves_uint16_2052(
 
 
 @_gpu_only
-def test_read_geotiff_gpu_default_mask_nodata_true_still_promotes_2052(
+def test_read_geotiff_gpu_default_unmasked_keeps_uint16_2976(
         uint16_with_matching_sentinel_2052):
-    """The GPU default is unchanged: ``mask_nodata=True`` promotes."""
+    """The GPU default matches ``open_geotiff`` (unmasked): a bare
+    ``_read_geotiff_gpu(path)`` keeps the source dtype and sentinel."""
     import cupy
 
     from xrspatial.geotiff import _read_geotiff_gpu
 
-    path, _ = uint16_with_matching_sentinel_2052
+    path, arr = uint16_with_matching_sentinel_2052
     da = _read_geotiff_gpu(path)
 
-    assert da.dtype == np.float64
-    nan_count = int(cupy.isnan(da.data).sum().get())
-    assert nan_count == len(_SENTINEL_POS_2052)
+    assert da.dtype == np.uint16
+    assert int(cupy.isnan(da.data.astype(cupy.float64)).sum().get()) == 0
+    np.testing.assert_array_equal(da.data.get(), arr)
 
 
 @_gpu_only
@@ -2519,20 +2522,23 @@ def test_read_geotiff_gpu_dask_mask_nodata_false_preserves_uint16_2052(
 
 
 @_gpu_only
-def test_read_geotiff_gpu_dask_default_mask_nodata_true_still_promotes_2052(
+def test_read_geotiff_gpu_dask_default_unmasked_keeps_uint16_2976(
         uint16_with_matching_sentinel_2052):
-    """The dask+GPU default still promotes the graph dtype to float64."""
+    """The dask+GPU default matches ``open_geotiff`` (unmasked): the
+    graph dtype stays uint16 and the sentinel survives."""
     import cupy
 
     from xrspatial.geotiff import _read_geotiff_gpu
 
-    path, _ = uint16_with_matching_sentinel_2052
+    path, arr = uint16_with_matching_sentinel_2052
     da = _read_geotiff_gpu(path, chunks=2)
 
-    assert da.dtype == np.float64
+    assert da.dtype == np.uint16
     computed = da.compute()
-    nan_count = int(cupy.isnan(computed.data).sum().get())
-    assert nan_count == len(_SENTINEL_POS_2052)
+    assert computed.dtype == np.uint16
+    assert int(cupy.isnan(
+        computed.data.astype(cupy.float64)).sum().get()) == 0
+    np.testing.assert_array_equal(computed.data.get(), arr)
 
 
 @_gpu_only
@@ -2565,16 +2571,18 @@ def test_read_vrt_mask_nodata_false_preserves_uint16_2052(
     assert da.attrs["nodata"] == 0
 
 
-def test_read_vrt_default_mask_nodata_true_still_promotes_2052(
+def test_read_vrt_default_unmasked_keeps_uint16_2976(
         uint16_vrt_with_matching_sentinel_2052):
-    """The VRT default unchanged: ``mask_nodata=True`` promotes."""
+    """The VRT default matches ``open_geotiff`` (unmasked): a bare
+    ``_read_vrt(path)`` keeps the source dtype and sentinel."""
     from xrspatial.geotiff import _read_vrt
 
-    vrt_path, _ = uint16_vrt_with_matching_sentinel_2052
+    vrt_path, arr = uint16_vrt_with_matching_sentinel_2052
     da = _read_vrt(vrt_path)
 
-    assert da.dtype == np.float64
-    assert int(np.isnan(da.values).sum()) == len(_SENTINEL_POS_2052)
+    assert da.dtype == np.uint16
+    assert int(np.isnan(np.asarray(da.values, dtype=float)).sum()) == 0
+    np.testing.assert_array_equal(np.asarray(da.values), arr)
 
 
 def test_open_geotiff_vrt_mask_nodata_false_threads_through_2052(
@@ -2617,17 +2625,20 @@ def test_read_vrt_chunked_mask_nodata_false_preserves_uint16_2052(
     np.testing.assert_array_equal(np.asarray(computed.values), arr)
 
 
-def test_read_vrt_chunked_default_mask_nodata_true_still_promotes_2052(
+def test_read_vrt_chunked_default_unmasked_keeps_uint16_2976(
         uint16_vrt_with_matching_sentinel_2052):
-    """The chunked-VRT default still promotes to float64."""
+    """The chunked-VRT default matches ``open_geotiff`` (unmasked): the
+    graph dtype stays uint16 and the sentinel survives."""
     from xrspatial.geotiff import _read_vrt
 
-    vrt_path, _ = uint16_vrt_with_matching_sentinel_2052
+    vrt_path, arr = uint16_vrt_with_matching_sentinel_2052
     da = _read_vrt(vrt_path, chunks=2)
 
-    assert da.dtype == np.float64
+    assert da.dtype == np.uint16
     computed = da.compute()
-    assert int(np.isnan(computed.values).sum()) == len(_SENTINEL_POS_2052)
+    assert computed.dtype == np.uint16
+    assert int(np.isnan(np.asarray(computed.values, dtype=float)).sum()) == 0
+    np.testing.assert_array_equal(np.asarray(computed.values), arr)
 
 
 def test_open_geotiff_vrt_chunked_mask_nodata_false_threads_through_2052(

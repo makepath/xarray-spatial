@@ -131,7 +131,7 @@ def _read_vrt(source: str, *,
               allow_experimental_codecs: bool = False,
               allow_internal_only_jpeg: bool = False,
               band_nodata: str | None = None,
-              mask_nodata: bool = True) -> xr.DataArray:
+              mask_nodata: bool = False) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     Release-contract tier (see
@@ -233,14 +233,15 @@ def _read_vrt(source: str, *,
         to keep the legacy flatten-to-band-0 semantics explicitly. Any
         other value raises ``ValueError`` at the boundary so typos
         surface up front instead of degrading silently into strict mode.
-    mask_nodata : bool, default True
+    mask_nodata : bool, default False
         [advanced] If True, run the integer-sentinel-to-NaN promotion
         on the assembled mosaic. If False, skip it and keep the source
         dtype with the raw sentinel still in the data. ``attrs['nodata']``
-        carries the sentinel either way. Pass ``mask_nodata=False``
-        together with ``dtype=<integer>`` when you need to preserve an
-        integer source dtype on a VRT whose declared sentinel matches
-        actual pixels. Float source bands are NaN-aware
+        carries the sentinel either way. The default matches
+        ``open_geotiff`` (unmasked, rioxarray-compatible): a bare
+        ``_read_vrt(path)`` keeps the source dtype and the raw sentinel.
+        Pass ``mask_nodata=True`` to restore the promote-to-NaN
+        behaviour on integer mosaics. Float source bands are NaN-aware
         by virtue of how the internal reader handles them, so this kwarg
         is most useful for integer-dtype mosaics.
     allow_rotated : bool, default False

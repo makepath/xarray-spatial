@@ -329,7 +329,7 @@ def test_uint64_nodata_masks_max_sentinel_in_data(tmp_path):
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
     vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='UInt64', src_path=str(src), nodata=big)  # noqa: E501
-    r = _read_vrt(vrt)
+    r = _read_vrt(vrt, mask_nodata=True)
     assert r.dtype == np.float64, f'sentinel hit must promote to float64, got {r.dtype}'
     assert np.isnan(r.values[1, 1]), f'the 2**64-1 cell must be masked to NaN; got {r.values[1, 1]!r}'  # noqa: E501
     assert r.values[0, 0] == 1.0
@@ -347,7 +347,7 @@ def test_int64_min_nodata_masks_correctly(tmp_path):
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
     vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Int64', src_path=str(src), nodata=info.min)  # noqa: E501
-    r = _read_vrt(vrt)
+    r = _read_vrt(vrt, mask_nodata=True)
     assert r.dtype == np.float64
     assert np.isnan(r.values[0, 0])
     assert r.values[0, 1] == -1.0
@@ -366,7 +366,7 @@ def test_int32_negative_nodata_still_masks(tmp_path):
     src = tmp_path / 'src.tif'
     _dtype_validation_write(b, src)
     vrt = _dtype_validation_build_single_band_vrt(tmp_path, dtype_attr='Int32', src_path=str(src), nodata=-9999)  # noqa: E501
-    r = _read_vrt(vrt)
+    r = _read_vrt(vrt, mask_nodata=True)
     assert r.dtype == np.float64
     assert np.isnan(r.values[0, 1])
     assert np.isnan(r.values[1, 0])
@@ -509,7 +509,7 @@ def test_float32_vrt_uint16_source_masks_in_range_sentinel(tmp_path):
     """
     src = _int_source_float_dtype_write_uint16_with_sentinel(tmp_path)
     vrt = _int_source_float_dtype_build_vrt(tmp_path, src, 'Float32', 65535)
-    r = _read_vrt(vrt)
+    r = _read_vrt(vrt, mask_nodata=True)
     assert r.dtype == np.float32, f'Float32-declared VRT should return float32, got {r.dtype}'
     assert np.isnan(r.values[1, 1]), f'Sentinel pixel (uint16 65535 -> float32) should be NaN-masked; got values[1, 1]={r.values[1, 1]}'  # noqa: E501
     assert r.attrs.get('nodata') == 65535.0
@@ -520,7 +520,7 @@ def test_float64_vrt_int16_source_masks_negative_sentinel(tmp_path):
     """Float64 VRT, int16 source with negative sentinel: pixel becomes NaN."""
     src = _int_source_float_dtype_write_int16_with_sentinel(tmp_path, sentinel=-1)
     vrt = _int_source_float_dtype_build_vrt(tmp_path, src, 'Float64', -1)
-    r = _read_vrt(vrt)
+    r = _read_vrt(vrt, mask_nodata=True)
     assert r.dtype == np.float64
     assert np.isnan(r.values[1, 1]), f'Sentinel pixel (-1) should be NaN-masked; got values[1, 1]={r.values[1, 1]}'  # noqa: E501
     assert r.attrs.get('nodata') == -1.0
@@ -568,7 +568,7 @@ def test_float_vrt_int_source_dask_path_masks_sentinel(tmp_path):
     """
     src = _int_source_float_dtype_write_uint16_with_sentinel(tmp_path)
     vrt = _int_source_float_dtype_build_vrt(tmp_path, src, 'Float32', 65535)
-    r = _read_vrt(vrt, chunks=2)
+    r = _read_vrt(vrt, chunks=2, mask_nodata=True)
     assert r.dtype == np.float32
     val = r.values
     assert np.isnan(val[1, 1])
@@ -596,11 +596,11 @@ def test_float_vrt_int_source_with_band_select(tmp_path):
     vrt_path = str(tmp_path / 'mb.vrt')
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
-    r0 = _read_vrt(vrt_path, band=0, band_nodata='first')
+    r0 = _read_vrt(vrt_path, band=0, band_nodata='first', mask_nodata=True)
     assert r0.dtype == np.float32
     assert np.isnan(r0.values[1, 1])
     assert r0.attrs.get('nodata') == 65535.0
-    r1 = _read_vrt(vrt_path, band=1, band_nodata='first')
+    r1 = _read_vrt(vrt_path, band=1, band_nodata='first', mask_nodata=True)
     assert r1.dtype == np.float32
     assert np.isnan(r1.values[1, 1])
     assert r1.attrs.get('nodata') == 65000.0
@@ -869,7 +869,7 @@ def test_multiband_uint16_per_band_sentinel_each_masked(tmp_path):
     as NaN but band 1's (1,1) cell as the literal 65000.0.
     """
     vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
-    r = _read_vrt(vrt_path, band_nodata='first')
+    r = _read_vrt(vrt_path, band_nodata='first', mask_nodata=True)
     assert r.shape == (2, 2, 2)
     assert r.dtype == np.float64, f'expected float64 promotion, got {r.dtype}'
     assert np.isnan(r.values[1, 1, 0]), "band 0's sentinel pixel was not NaN-masked."
@@ -889,7 +889,7 @@ def test_multiband_int32_negative_per_band_sentinel(tmp_path):
     range guard accepts negatives.
     """
     vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path, dtype_str='Int32', np_dtype=np.int32, band0_sentinel=-9999, band1_sentinel=-7777, band0_other=(10, 20, 30), band1_other=(40, 50, 60))  # noqa: E501
-    r = _read_vrt(vrt_path, band_nodata='first')
+    r = _read_vrt(vrt_path, band_nodata='first', mask_nodata=True)
     assert r.dtype == np.float64
     assert np.isnan(r.values[1, 1, 0])
     assert np.isnan(r.values[1, 1, 1])
@@ -909,7 +909,7 @@ def test_multiband_only_one_band_has_sentinel_present(tmp_path):
     import os
     p1 = os.path.join(os.path.dirname(vrt_path), 'vrt_b1_1611.tif')
     write(b1_no_sentinel, p1, nodata=65000, compression='none', tiled=False)
-    r = _read_vrt(vrt_path, band_nodata='first')
+    r = _read_vrt(vrt_path, band_nodata='first', mask_nodata=True)
     assert r.dtype == np.float64, "Even when only band 0 has a present sentinel, the array still needs promotion so band 0's NaN can be expressed."  # noqa: E501
     assert np.isnan(r.values[1, 1, 0])
     assert r.values[1, 1, 1] == 99.0
@@ -944,7 +944,7 @@ def test_multiband_per_band_out_of_range_sentinel_is_no_op(tmp_path):
     xml = xml.replace('<NoDataValue>10</NoDataValue>', '<NoDataValue>-9999</NoDataValue>')
     with open(vrt_path, 'w') as f:
         f.write(xml)
-    r = _read_vrt(vrt_path, band_nodata='first')
+    r = _read_vrt(vrt_path, band_nodata='first', mask_nodata=True)
     assert np.isnan(r.values[1, 1, 0])
     assert r.values[1, 1, 1] == 10.0 or r.values[1, 1, 1] == 10
 
@@ -957,8 +957,8 @@ def test_multiband_band_kwarg_still_per_band_post_pr1602(tmp_path):
     sentinel.
     """
     vrt_path = _multiband_int_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
-    r0 = _read_vrt(vrt_path, band=0, band_nodata='first')
-    r1 = _read_vrt(vrt_path, band=1, band_nodata='first')
+    r0 = _read_vrt(vrt_path, band=0, band_nodata='first', mask_nodata=True)
+    r1 = _read_vrt(vrt_path, band=1, band_nodata='first', mask_nodata=True)
     assert r0.dtype == np.float64
     assert r1.dtype == np.float64
     assert r0.attrs.get('nodata') == 65535.0

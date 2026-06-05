@@ -1472,12 +1472,13 @@ def test_chunked_gpu_dtype_matches_cpu_dask_1909(
     from xrspatial.geotiff import _read_geotiff_dask
     from xrspatial.geotiff._backends.gpu import _read_geotiff_gpu_chunked_gds
 
-    cpu = _read_geotiff_dask(uint16_no_sentinel_path_1909, chunks=4)
+    cpu = _read_geotiff_dask(
+        uint16_no_sentinel_path_1909, chunks=4, mask_nodata=True)
     ifd, geo_info, header = _parse_for_gds_1909(uint16_no_sentinel_path_1909)
     gpu = _read_geotiff_gpu_chunked_gds(
         uint16_no_sentinel_path_1909, ifd, geo_info, header,
         dtype=None, chunks=4, window=None, band=None,
-        name=None, max_pixels=None,
+        name=None, max_pixels=None, mask_nodata=True,
     )
     assert cpu.data.dtype == gpu.data.dtype, (
         f"CPU dask declared {cpu.data.dtype} but GPU dask declared "

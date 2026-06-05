@@ -269,7 +269,7 @@ def test_vrt_chunked_float_source_mask_off_reports_false(tmp_path):
 def test_vrt_chunked_float_source_mask_on_reports_true(tmp_path):
     """Canonical direction on the chunked path: masking on, attr True."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src_masked.tif', 'tmp_2159_chunked_masked.vrt')  # noqa: E501
-    out = _read_geotiff_dask(vrt, chunks=2)
+    out = _read_geotiff_dask(vrt, chunks=2, mask_nodata=True)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is True
 
@@ -343,7 +343,7 @@ def test_read_vrt_band0_uses_band0_nodata(tmp_path):
     at the call site that the test is exercising the legacy behaviour.
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
-    r = _read_vrt(vrt_path, band=0, band_nodata='first')
+    r = _read_vrt(vrt_path, band=0, band_nodata='first', mask_nodata=True)
     assert r.dtype == np.float64
     assert r.attrs.get('nodata') == 65535.0
     assert np.isnan(r.values[1, 1])
@@ -357,7 +357,7 @@ def test_read_vrt_band1_uses_band1_nodata(tmp_path):
     [9,65000]] and attrs['nodata']=65535.
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
-    r = _read_vrt(vrt_path, band=1, band_nodata='first')
+    r = _read_vrt(vrt_path, band=1, band_nodata='first', mask_nodata=True)
     assert r.dtype == np.float64, 'band=1 read kept uint16 dtype; per-band nodata regression.'
     assert r.attrs.get('nodata') == 65000.0, f"attrs['nodata'] was {r.attrs.get('nodata')}, expected 65000 from band 1's <NoDataValue>."  # noqa: E501
     assert np.isnan(r.values[1, 1]), "band 1's sentinel pixel was not NaN-masked; promotion ran against the wrong sentinel."  # noqa: E501
@@ -510,7 +510,7 @@ def test_vrt_uint16_nodata_promotes_to_float64(tmp_path):
     assert np.isnan(eager.values[1, 0])
     vrt_path = str(tmp_path / 'src_1564.vrt')
     build_vrt(vrt_path, [tif])
-    via_vrt = _read_vrt(vrt_path)
+    via_vrt = _read_vrt(vrt_path, mask_nodata=True)
     assert via_vrt.dtype == np.float64, f'VRT integer-with-nodata should promote to float64; got {via_vrt.dtype}'  # noqa: E501
     assert np.isnan(via_vrt.values[1, 0]), f'VRT sentinel pixel should be NaN; got {via_vrt.values[1, 0]} (literal sentinel survived)'  # noqa: E501
     assert via_vrt.attrs.get('nodata') == 65535.0
@@ -538,7 +538,7 @@ def test_vrt_float_nodata_still_masks(tmp_path):
     to_geotiff(da, tif, compression='none', nodata=-9999.0)
     vrt_path = str(tmp_path / 'srcf_1564.vrt')
     build_vrt(vrt_path, [tif])
-    via_vrt = _read_vrt(vrt_path)
+    via_vrt = _read_vrt(vrt_path, mask_nodata=True)
     assert via_vrt.dtype == np.float32
     assert np.isnan(via_vrt.values[0, 2])
     assert np.isnan(via_vrt.values[1, 1])
@@ -642,22 +642,25 @@ def _mask_nodata_float_build_vrt(tmp_path, source_path, vrt_dtype, nodata_value,
     return p
 
 
-def test_default_mask_nodata_true_rewrites_float_sentinel(tmp_path):
-    """The default behaviour (mask_nodata=True) still substitutes NaN.
+def test_default_unmasked_keeps_float_sentinel_2976(tmp_path):
+    """The default (``mask_nodata=False``) matches ``open_geotiff``.
 
-    Pins the existing contract so the fix below does not regress the
-    masking happy path.
+    A bare ``_read_vrt`` keeps the float sentinel literal rather than
+    substituting NaN. ``mask_nodata=True`` restores the NaN substitution
+    (see ``test_default_mask_nodata_true_rewrites_float_sentinel``'s
+    masked sibling).
     """
     src, _ = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
     r = _read_vrt(vrt)
     assert r.dtype == np.float32
-    assert np.isnan(r.values[1, 1])
-    assert np.isnan(r.values[2, 1])
+    assert not np.isnan(r.values).any()
+    assert r.values[1, 1] == np.float32(-9999.0)
+    assert r.values[2, 1] == np.float32(-9999.0)
     assert r.values[0, 0] == 1.0
     assert r.values[1, 0] == 4.0
     assert r.attrs.get('nodata') == -9999.0
-    assert r.attrs.get('masked_nodata') is True
+    assert r.attrs.get('masked_nodata') is False
 
 
 def test_eager_mask_nodata_false_preserves_float_sentinel(tmp_path):
@@ -741,7 +744,7 @@ def test_masked_vs_unmasked_differ_only_at_sentinels(tmp_path):
     """
     src, _ = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
-    masked = _read_vrt(vrt).values
+    masked = _read_vrt(vrt, mask_nodata=True).values
     unmasked = _read_vrt(vrt, mask_nodata=False).values
     nan_positions = np.isnan(masked)
     sentinel_positions = unmasked == np.float32(-9999.0)
@@ -785,21 +788,22 @@ def test_int_source_float_vrt_mask_nodata_false_keeps_literal(tmp_path):
     assert r.attrs.get('masked_nodata') is False
 
 
-def test_int_source_float_vrt_default_still_promotes(tmp_path):
-    """Default ``mask_nodata=True`` still NaN-masks the int->float promotion.
+def test_int_source_float_vrt_default_unmasked_2976(tmp_path):
+    """Default ``mask_nodata=False`` matches ``open_geotiff``.
 
-    Baseline that documents the default contract for the integer
-    source path: the int->float NaN-promotion behavior is unchanged
-    when the opt-out is not requested.
+    An integer source feeding a Float32 VRT casts the literal sentinel
+    to ``65535.0`` rather than NaN-masking it. ``mask_nodata=True``
+    restores the int->float NaN promotion.
     """
     src, _ = _mask_nodata_float_write_uint16_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_default_2158.vrt', shape=(2, 2))  # noqa: E501
     r = _read_vrt(vrt)
     assert r.dtype == np.float32
-    assert np.isnan(r.values[1, 1])
+    assert not np.isnan(r.values).any()
+    assert r.values[1, 1] == np.float32(65535.0)
     assert r.values[0, 0] == 1.0
     assert r.attrs.get('nodata') == 65535.0
-    assert r.attrs.get('masked_nodata') is True
+    assert r.attrs.get('masked_nodata') is False
 
 
 # ---------------------------------------------------------------------------
@@ -1406,9 +1410,11 @@ def _metadata_parity_read_gpu_eager(vrt_path: str):
     ``open_geotiff(..., gpu=True)`` rejects ``.vrt`` sources up front
     (the dispatcher routes ``.vrt`` to ``_read_vrt`` and ``_read_vrt``
     owns the ``gpu`` kwarg, see ``_backends/vrt.py``). Use the direct
-    entry point here so the GPU eager path is exercised.
+    entry point here so the GPU eager path is exercised. ``mask_nodata``
+    is passed explicitly to match the masked numpy / dask baselines
+    above (the backend default is unmasked, see #2976).
     """
-    return _read_vrt(vrt_path, gpu=True)
+    return _read_vrt(vrt_path, gpu=True, mask_nodata=True)
 
 
 _BACKENDS = [pytest.param('numpy', _metadata_parity_read_eager_numpy, id='numpy'), pytest.param('dask', _metadata_parity_read_dask, id='dask'), pytest.param('gpu', _metadata_parity_read_gpu_eager, id='gpu', marks=requires_gpu)]  # noqa: E501
