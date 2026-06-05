@@ -3,14 +3,14 @@
 A single :func:`validate_parsed_vrt` entry point that audits an
 already-parsed :class:`xrspatial.geotiff._vrt.VRTDataset` against every
 capability the read pipeline does not honour. Both the direct
-``read_vrt`` entry point in ``_backends/vrt.py`` and the dispatched
+``_read_vrt`` entry point in ``_backends/vrt.py`` and the dispatched
 ``open_geotiff('foo.vrt')`` branch in ``__init__.py`` call this
 validator before any source bytes are decoded, so the two entry points
 produce equivalent failures for the same bad input.
 
 Why centralise: prior to this module the capability checks were spread
-across ``_vrt.read_vrt`` (per-source ``SrcRect`` / ``DstRect`` rejects
-mid-decode), ``_backends/vrt.read_vrt`` (CRS / rotated-transform /
+across ``_vrt._read_vrt`` (per-source ``SrcRect`` / ``DstRect`` rejects
+mid-decode), ``_backends/vrt._read_vrt`` (CRS / rotated-transform /
 mixed-nodata checks via ``validate_read_metadata`` at the eager
 boundary), and ``_check_resample_alg_supported`` (per-source resample
 reject at the placement site). Under chunked dispatch the per-source
@@ -71,7 +71,7 @@ def validate_parsed_vrt(
     parsed : VRTDataset
         The already-parsed VRT structure. The validator never re-parses
         XML; callers feed in the output of ``parse_vrt`` or the value
-        threaded through ``read_vrt(..., parsed=...)``.
+        threaded through ``_read_vrt(..., parsed=...)``.
     source : str
         Path to the ``.vrt`` file. Used only for error messages so a
         caller can locate the offending file without re-parsing.

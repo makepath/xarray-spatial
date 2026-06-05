@@ -552,7 +552,7 @@ def test_open_geotiff_rotated_with_crs_drops_crs_gpu(tmp_path, chunks):
     """``allow_rotated=True`` on the GPU eager + dask+CuPy paths drops
     ``crs`` / ``crs_wkt``.
 
-    ``read_geotiff_gpu`` must forward ``allow_rotated`` when it falls back
+    ``_read_geotiff_gpu`` must forward ``allow_rotated`` when it falls back
     to ``_read_to_array`` for the stripped layout (and the three tiled
     CPU-fallback sites); otherwise the CPU re-read raises. The dask+CuPy
     path routes through the dask backend with ``cupy.asarray`` mapped over

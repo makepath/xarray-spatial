@@ -51,8 +51,8 @@ What you should NOT rely on:
 
 * GPU support for every codec on the CPU path. ``allow_experimental_codecs``
   does NOT widen the GPU codec set; on the GPU writer, codecs outside the
-  GPU-supported set route through a CPU fallback inside
-  ``write_geotiff_gpu`` rather than executing on the GPU. Locked by
+  GPU-supported set route through a CPU fallback inside the GPU writer
+  (``_write_geotiff_gpu``) rather than executing on the GPU. Locked by
   ``xrspatial/geotiff/tests/gpu/test_writer.py``.
 * GPU promotion to ``stable`` inside this release cycle. See the GPU
   rows in :ref:`reference.geotiff_release_gate` for the current tier
@@ -206,20 +206,26 @@ The lifecycle is locked end-to-end by
 
 Reading
 =======
+``open_geotiff`` is the single read entry point. The backend follows the
+parameters: ``gpu=True`` returns a CuPy-backed array, ``chunks=N`` returns a
+lazy dask array, and a ``.vrt`` source reads a mosaic.
+
 .. autosummary::
     :toctree: _autosummary
 
     xrspatial.geotiff.open_geotiff
-    xrspatial.geotiff.read_vrt
 
 Writing
 =======
+``to_geotiff`` is the single write entry point (``gpu=True`` or CuPy data
+selects the GPU path; a ``.vrt`` output path writes tiles plus an index).
+``build_vrt`` mosaics a list of existing GeoTIFF files into a VRT.
+
 .. autosummary::
     :toctree: _autosummary
 
     xrspatial.geotiff.to_geotiff
-    xrspatial.geotiff.write_geotiff_gpu
-    xrspatial.geotiff.write_vrt
+    xrspatial.geotiff.build_vrt
 
 COG validator CI gate
 =====================
@@ -346,7 +352,7 @@ with the original exception type and message.
 
 Set ``XRSPATIAL_GEOTIFF_STRICT=1`` (or ``true``, ``yes``) to promote those
 warnings into raised exceptions. The same env var also forces
-``read_geotiff_gpu(on_gpu_failure='auto')`` to behave like
+``open_geotiff(gpu=True, on_gpu_failure='auto')`` to behave like
 ``on_gpu_failure='strict'`` so CI can fail loudly when the GPU fast path
 silently falls back to CPU.
 
@@ -393,9 +399,9 @@ VRT support matrix (issue #2321)
 
 VRT reads sit at the ``advanced`` tier in
 :data:`xrspatial.geotiff.SUPPORTED_FEATURES` (``reader.vrt``).
-``open_geotiff``, ``read_vrt``, and ``write_vrt`` all target the same
-narrow subset of GDAL's VRT spec. The reference below is the canonical
-contract; the three docstrings echo it.
+``open_geotiff`` (on a ``.vrt`` source), ``to_geotiff`` (to a ``.vrt``
+output), and ``build_vrt`` all target the same narrow subset of GDAL's VRT
+spec. The reference below is the canonical contract; the docstrings echo it.
 
 Supported
 ---------
@@ -404,7 +410,7 @@ Supported
   GeoTIFF files. The VRT XML must resolve to source paths under the
   VRT's own directory (or under a root listed in
   ``XRSPATIAL_VRT_ALLOWED_ROOTS``); see the source-path containment
-  note on ``read_vrt`` (#1671).
+  note on the VRT reader (``_read_vrt``) (#1671).
 * Sources that agree on CRS, transform orientation (axis-aligned,
   same sign on the y step), pixel size, dtype, and band count. The
   read rejects mismatch with ``MixedBandMetadataError`` /
@@ -450,11 +456,11 @@ the fail-closed defaults:
 
 .. code-block:: python
 
-    from xrspatial.geotiff import open_geotiff, write_vrt
+    from xrspatial.geotiff import build_vrt, open_geotiff
 
     # Write a VRT that mosaics two tiles. Both tiles share CRS,
     # pixel size, dtype, and band count.
-    vrt_path = write_vrt(
+    vrt_path = build_vrt(
         'mosaic.vrt',
         source_files=['tile_west.tif', 'tile_east.tif'],
     )
@@ -486,7 +492,8 @@ per-band nodata sentinels triggers the fail-closed check:
 VRT missing sources
 ===================
 
-``read_vrt`` accepts ``missing_sources='warn'`` or ``'raise'``. The default
+``open_geotiff`` accepts ``missing_sources='warn'`` or ``'raise'`` for
+``.vrt`` sources. The default
 ``'raise'`` (since #1860) fails the read immediately if any source file
 referenced by the VRT does not exist on disk. Both the eager and chunked
 dispatchers honour this at construction time -- chunked callers do not

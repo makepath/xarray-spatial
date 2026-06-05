@@ -943,7 +943,7 @@ class TestCoordsToTransform3D:
         """
         import cupy as cp
 
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         np_arr = np.arange(10 * 20 * 3, dtype=np.uint8).reshape(10, 20, 3)
         da = xr.DataArray(
@@ -956,7 +956,7 @@ class TestCoordsToTransform3D:
             },
         )
         p = str(tmp_path / 'roundtrip_3d_gpu.tif')
-        write_geotiff_gpu(da, p)
+        _write_geotiff_gpu(da, p)
         rt = open_geotiff(p)
         pw = abs(float(rt.x.values[1] - rt.x.values[0]))
         assert pw > 1.5, (

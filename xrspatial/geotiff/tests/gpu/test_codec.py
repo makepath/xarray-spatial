@@ -110,7 +110,7 @@ def test_gpu_write_roundtrip_after_batched_compress_1712(compression):
     """GPU compress path round-trips uncorrupted for deflate + zstd."""
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, write_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _write_geotiff_gpu
 
     rng = np.random.default_rng(seed=1712)
     arr_cpu = rng.random((512, 512), dtype=np.float32)
@@ -120,7 +120,7 @@ def test_gpu_write_roundtrip_after_batched_compress_1712(compression):
     with tempfile.TemporaryDirectory(prefix="nvcomp_batch_1712_") as td:
         path = os.path.join(td, f"roundtrip_{compression}.tif")
         try:
-            write_geotiff_gpu(
+            _write_geotiff_gpu(
                 darr, path,
                 compression=compression,
                 tiled=True,
@@ -138,15 +138,15 @@ def test_gpu_write_zero_tile_edge_case_1712():
     """A 0-tile compress returns an empty list without indexing into None."""
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, write_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _write_geotiff_gpu
 
     arr_gpu = cupy.zeros((32, 32), dtype=cupy.float32)
     darr = xr.DataArray(arr_gpu, dims=["y", "x"])
     with tempfile.TemporaryDirectory(prefix="nvcomp_batch_1712_") as td:
         path = os.path.join(td, "tiny.tif")
         try:
-            write_geotiff_gpu(darr, path, compression="zstd",
-                              tiled=True, tile_size=32)
+            _write_geotiff_gpu(darr, path, compression="zstd",
+                               tiled=True, tile_size=32)
         except RuntimeError as e:
             pytest.skip(f"nvCOMP unavailable: {e}")
         back = open_geotiff(path)
@@ -229,7 +229,7 @@ def _wrap_nvcomp_with_call_recorder_p3(monkeypatch):
 ])
 def test_nvcomp_batch_upload_correctness_p3(tmp_path, monkeypatch, size, tile):
     """GPU decode of Deflate-tiled TIFFs is bit-exact vs CPU."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     rng = np.random.RandomState(20260508)
@@ -243,7 +243,7 @@ def test_nvcomp_batch_upload_correctness_p3(tmp_path, monkeypatch, size, tile):
     np.testing.assert_array_equal(cpu, arr)
 
     records = _wrap_nvcomp_with_call_recorder_p3(monkeypatch)
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     np.testing.assert_array_equal(gpu_da.data.get(), cpu)
 
     assert any(success for _, success in records), (
@@ -278,7 +278,7 @@ def test_nvcomp_kvikio_fallback_skips_zstd_p3(monkeypatch):
 @_nvcomp_only_p3
 def test_nvcomp_batch_upload_perf_regression_guard_p3(tmp_path, monkeypatch):
     """Sanity guard: 2048x2048 Deflate-tiled GPU decode finishes quickly."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     rng = np.random.RandomState(20260508)
     arr = rng.randint(0, 4096, size=(2048, 2048), dtype=np.uint16)
@@ -286,11 +286,11 @@ def test_nvcomp_batch_upload_perf_regression_guard_p3(tmp_path, monkeypatch):
     _write_deflate_tiled_p3(path, arr, tile=(128, 128))
 
     # Warm up.
-    _ = read_geotiff_gpu(str(path))
+    _ = _read_geotiff_gpu(str(path))
 
     records = _wrap_nvcomp_with_call_recorder_p3(monkeypatch)
     t0 = time.perf_counter()
-    out = read_geotiff_gpu(str(path))
+    out = _read_geotiff_gpu(str(path))
     elapsed = time.perf_counter() - t0
 
     assert any(success for _, success in records), (
@@ -299,7 +299,7 @@ def test_nvcomp_batch_upload_perf_regression_guard_p3(tmp_path, monkeypatch):
     )
 
     assert elapsed < 0.2, (
-        f"read_geotiff_gpu on 2048x2048 deflate-tiled TIFF took "
+        f"_read_geotiff_gpu on 2048x2048 deflate-tiled TIFF took "
         f"{elapsed * 1000:.1f} ms (threshold 200 ms) -- possible "
         f"regression in the nvCOMP batched H2D upload path"
     )
@@ -1014,7 +1014,7 @@ def test_rgb_jpeg_gpu_no_crash_1549(tmp_path, monkeypatch):
     """3-band JPEG must not raise CUDARuntimeError on GPU read."""
     import cupy
 
-    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu
+    from xrspatial.geotiff import _gpu_decode, _read_geotiff_gpu
 
     spy = {"calls": 0, "successes": 0}
     original = _gpu_decode._try_nvjpeg_batch_decode
@@ -1031,7 +1031,7 @@ def test_rgb_jpeg_gpu_no_crash_1549(tmp_path, monkeypatch):
     path = str(tmp_path / "rgb_jpeg_1549.tif")
     _write_jpeg_rgb_tiff_1549(path)
 
-    arr = read_geotiff_gpu(path, gpu='strict', allow_internal_only_jpeg=True)
+    arr = _read_geotiff_gpu(path, gpu='strict', allow_internal_only_jpeg=True)
     assert isinstance(arr.data, cupy.ndarray)
     decoded = arr.data.get()
     assert decoded.shape == (256, 256, 3)
@@ -1168,11 +1168,11 @@ def lerc_writer_with_mask_gpu(monkeypatch):
 
 def _read_cpu_gpu_lerc(path):
     """Read *path* with both readers and return ``(cpu_array, gpu_host_array)``."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     cpu, _geo = read_to_array(path, allow_experimental_codecs=True)
-    gpu_da = read_geotiff_gpu(
+    gpu_da = _read_geotiff_gpu(
         path, gpu='strict', allow_experimental_codecs=True,
     )
     gpu_host = gpu_da.data.get()
@@ -1299,12 +1299,12 @@ _gpu_only_1517 = pytest.mark.skipif(
 
 
 def _block_cpu_fallback_1517(monkeypatch):
-    """Make any call to ``read_to_array`` from ``read_geotiff_gpu`` fail loudly."""
+    """Make any call to ``read_to_array`` from ``_read_geotiff_gpu`` fail loudly."""
     from xrspatial.geotiff._backends import gpu as gpu_backend
 
     def _no_fallback(*args, **kwargs):
         raise AssertionError(
-            "read_geotiff_gpu fell back to read_to_array; "
+            "_read_geotiff_gpu fell back to read_to_array; "
             "the GPU decode path was not exercised."
         )
 
@@ -1319,7 +1319,7 @@ def test_gpu_predictor2_big_endian_int32_tiled_reproducer_1517(tmp_path, monkeyp
     import cupy
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     rng = np.random.RandomState(20260507)
@@ -1337,7 +1337,7 @@ def test_gpu_predictor2_big_endian_int32_tiled_reproducer_1517(tmp_path, monkeyp
     np.testing.assert_array_equal(cpu, arr)
 
     _block_cpu_fallback_1517(monkeypatch)
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(np.int32)
     assert gpu_da.data.dtype.isnative
@@ -1354,7 +1354,7 @@ def test_gpu_predictor2_big_endian_dtypes_tiled_1517(tmp_path, monkeypatch, dtyp
     import cupy
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     rng = np.random.RandomState(20260508)
@@ -1376,7 +1376,7 @@ def test_gpu_predictor2_big_endian_dtypes_tiled_1517(tmp_path, monkeypatch, dtyp
     np.testing.assert_array_equal(cpu, arr)
 
     _block_cpu_fallback_1517(monkeypatch)
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(dtype)
     assert gpu_da.data.dtype.isnative
@@ -1389,7 +1389,7 @@ def test_gpu_predictor2_big_endian_stripped_uint16_1517(tmp_path):
     import cupy
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     rng = np.random.RandomState(20260509)
@@ -1403,7 +1403,7 @@ def test_gpu_predictor2_big_endian_stripped_uint16_1517(tmp_path):
     cpu, _ = read_to_array(str(path))
     np.testing.assert_array_equal(cpu, arr)
 
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(np.uint16)
     assert gpu_da.data.dtype.isnative
@@ -1416,7 +1416,7 @@ def test_gpu_predictor2_little_endian_still_works_1517(tmp_path, monkeypatch):
     import cupy
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     rng = np.random.RandomState(20260510)
@@ -1434,7 +1434,7 @@ def test_gpu_predictor2_little_endian_still_works_1517(tmp_path, monkeypatch):
     np.testing.assert_array_equal(cpu, arr)
 
     _block_cpu_fallback_1517(monkeypatch)
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(np.int32)
     np.testing.assert_array_equal(gpu_da.data.get(), cpu)
@@ -1446,7 +1446,7 @@ def test_gpu_predictor3_big_endian_still_works_1517(tmp_path, monkeypatch):
     import cupy
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     rng = np.random.RandomState(20260511)
@@ -1462,7 +1462,7 @@ def test_gpu_predictor3_big_endian_still_works_1517(tmp_path, monkeypatch):
     np.testing.assert_array_equal(cpu, arr)
 
     _block_cpu_fallback_1517(monkeypatch)
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(np.float32)
     np.testing.assert_array_equal(gpu_da.data.get(), cpu)
@@ -1676,27 +1676,27 @@ def _build_predictor3_uint32_tiled_tiff_1933(
 
 @requires_gpu
 class TestGPUEagerRejectsMalformedFile_1933:
-    """``read_geotiff_gpu`` rejects predictor=3 + integer SampleFormat."""
+    """``_read_geotiff_gpu`` rejects predictor=3 + integer SampleFormat."""
 
     def test_gpu_eager_stripped_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         arr = np.array(
             [[1, 2, 3, 4], [5, 6, 7, 8]], dtype=np.uint32)
         path = tmp_path / "pred3_uint32_stripped.tif"
         path.write_bytes(_build_predictor3_uint32_stripped_tiff_1933(arr))
         with pytest.raises(ValueError, match="Predictor=3"):
-            read_geotiff_gpu(str(path))
+            _read_geotiff_gpu(str(path))
 
     def test_gpu_eager_tiled_raises(self, tmp_path):
         """Tiled layout hits the tiled GPU validator at gpu.py:443."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         arr = np.arange(256, dtype=np.uint32).reshape(16, 16)
         path = tmp_path / "pred3_uint32_tiled.tif"
         path.write_bytes(_build_predictor3_uint32_tiled_tiff_1933(arr))
         with pytest.raises(ValueError, match="Predictor=3"):
-            read_geotiff_gpu(str(path))
+            _read_geotiff_gpu(str(path))
 
     def test_gpu_dispatcher_eager_raises(self, tmp_path):
         """``open_geotiff(gpu=True)`` dispatcher rejects the file."""
@@ -1714,25 +1714,25 @@ class TestGPUChunkedRejectsMalformedFile_1933:
     """The dask+GPU paths also reject predictor=3 + integer."""
 
     def test_read_geotiff_gpu_chunked_stripped_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         arr = np.arange(64, dtype=np.uint32).reshape(8, 8)
         path = tmp_path / "pred3_uint32_chunked_str.tif"
         path.write_bytes(_build_predictor3_uint32_stripped_tiff_1933(arr))
         with pytest.raises(ValueError, match="Predictor=3"):
-            read_geotiff_gpu(str(path), chunks=4)
+            _read_geotiff_gpu(str(path), chunks=4)
 
     def test_read_geotiff_gpu_chunked_tiled_raises(self, tmp_path):
         """Tiled chunked path with KvikIO available exercises gpu.py:999."""
         pytest.importorskip("kvikio")
 
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         arr = np.arange(256, dtype=np.uint32).reshape(16, 16)
         path = tmp_path / "pred3_uint32_chunked_tiled.tif"
         path.write_bytes(_build_predictor3_uint32_tiled_tiff_1933(arr))
         with pytest.raises(ValueError, match="Predictor=3"):
-            read_geotiff_gpu(str(path), chunks=16)
+            _read_geotiff_gpu(str(path), chunks=16)
 
     def test_open_geotiff_chunks_gpu_dispatcher_raises(self, tmp_path):
         """``open_geotiff(chunks=, gpu=True)`` dispatcher rejects the file."""
@@ -1750,7 +1750,7 @@ class TestValidPredictor3StillWorksOnGPU_1933:
     """A legitimate predictor=3 + float32 tiled file still decodes on GPU."""
 
     def test_predictor3_float32_gpu_round_trip(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+        from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
         arr = np.linspace(-1.0, 1.0, 256, dtype=np.float32).reshape(16, 16)
         path = tmp_path / "pred3_float32_tiled.tif"
@@ -1759,12 +1759,12 @@ class TestValidPredictor3StillWorksOnGPU_1933:
             tiled=True, tile_size=16,
         )
 
-        result = read_geotiff_gpu(str(path))
+        result = _read_geotiff_gpu(str(path))
         assert result.dtype == np.float32
         np.testing.assert_array_equal(result.data.get(), arr)
 
     def test_predictor3_float32_dask_gpu_round_trip(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+        from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
         arr = np.linspace(-1.0, 1.0, 256, dtype=np.float32).reshape(16, 16)
         path = tmp_path / "pred3_float32_dask.tif"
@@ -1773,7 +1773,7 @@ class TestValidPredictor3StillWorksOnGPU_1933:
             tiled=True, tile_size=16,
         )
 
-        result = read_geotiff_gpu(str(path), chunks=8)
+        result = _read_geotiff_gpu(str(path), chunks=8)
         assert result.dtype == np.float32
         np.testing.assert_array_equal(result.compute().data.get(), arr)
 
@@ -1783,7 +1783,7 @@ class TestErrorMessageStable_1933:
     """The GPU error wording matches the eager/dask wording."""
 
     def test_gpu_error_message_matches_eager(self, tmp_path):
-        from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+        from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
         arr = np.arange(64, dtype=np.uint32).reshape(8, 8)
         path = tmp_path / "pred3_uint32_msg.tif"
@@ -1792,7 +1792,7 @@ class TestErrorMessageStable_1933:
         with pytest.raises(ValueError) as exc_eager:
             open_geotiff(str(path))
         with pytest.raises(ValueError) as exc_gpu:
-            read_geotiff_gpu(str(path))
+            _read_geotiff_gpu(str(path))
 
         assert str(exc_eager.value) == str(exc_gpu.value), (
             "GPU and eager paths must surface the same Predictor=3 "
@@ -1805,11 +1805,11 @@ class TestErrorMessageStable_1933:
 # ============================================================
 # Source: test_gpu_jpeg_interop_reject_issue_D_1845.py
 #
-# ``write_geotiff_gpu`` mirrors ``to_geotiff`` and rejects
+# ``_write_geotiff_gpu`` mirrors ``to_geotiff`` and rejects
 # ``compression='jpeg'`` by default. ``allow_internal_only_jpeg=True``
 # opts in and emits ``GeoTIFFFallbackWarning``.
 
-from xrspatial.geotiff import GeoTIFFFallbackWarning, write_geotiff_gpu  # noqa: E402
+from xrspatial.geotiff import GeoTIFFFallbackWarning, _write_geotiff_gpu  # noqa: E402
 
 
 def _make_rgb_uint8_da_1845() -> xr.DataArray:
@@ -1833,7 +1833,7 @@ def test_write_geotiff_gpu_rejects_jpeg_without_opt_in_1845(tmp_path):
     path = str(tmp_path / "rejected_issue_D_1845.tif")
 
     with pytest.raises(ValueError, match="JPEGTables"):
-        write_geotiff_gpu(da, path, compression='jpeg')
+        _write_geotiff_gpu(da, path, compression='jpeg')
 
 
 def test_write_geotiff_gpu_rejects_jpeg_message_mentions_alternatives_1845(tmp_path):
@@ -1842,7 +1842,7 @@ def test_write_geotiff_gpu_rejects_jpeg_message_mentions_alternatives_1845(tmp_p
     path = str(tmp_path / "rejected_msg_issue_D_1845.tif")
 
     with pytest.raises(ValueError) as exc:
-        write_geotiff_gpu(da, path, compression='jpeg')
+        _write_geotiff_gpu(da, path, compression='jpeg')
 
     msg = str(exc.value)
     assert "deflate" in msg
@@ -1855,7 +1855,7 @@ def test_write_geotiff_gpu_rejects_jpeg_case_insensitive_1845(tmp_path):
     path = str(tmp_path / "rejected_upper_issue_D_1845.tif")
 
     with pytest.raises(ValueError, match="JPEGTables"):
-        write_geotiff_gpu(da, path, compression='JPEG')
+        _write_geotiff_gpu(da, path, compression='JPEG')
 
 
 @requires_gpu
@@ -1865,7 +1865,7 @@ def test_write_geotiff_gpu_jpeg_opt_in_emits_warning_1845(tmp_path):
     path = str(tmp_path / "opt_in_issue_D_1845.tif")
 
     with pytest.warns(GeoTIFFFallbackWarning, match="JPEGTables"):
-        write_geotiff_gpu(
+        _write_geotiff_gpu(
             da, path,
             compression='jpeg',
             allow_internal_only_jpeg=True,
@@ -1883,7 +1883,7 @@ def test_write_geotiff_gpu_non_jpeg_unaffected_by_flag_1845(tmp_path):
 
     with _warnings.catch_warnings():
         _warnings.simplefilter("error", GeoTIFFFallbackWarning)
-        write_geotiff_gpu(
+        _write_geotiff_gpu(
             da, path,
             compression='zstd',
             allow_internal_only_jpeg=True,

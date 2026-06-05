@@ -74,7 +74,7 @@ _requires_rasterio_and_dask = pytest.mark.skipif(
 )
 
 from xrspatial.geotiff import (SUPPORTED_FEATURES, UnsafeURLError, open_geotiff,  # noqa: E402
-                               read_geotiff_dask, to_geotiff)
+                               _read_geotiff_dask, to_geotiff)
 from xrspatial.geotiff._compression import (COMPRESSION_DEFLATE, COMPRESSION_LZW,  # noqa: E402
                                             COMPRESSION_NONE, COMPRESSION_PACKBITS,
                                             COMPRESSION_ZSTD)
@@ -870,7 +870,7 @@ def test_release_gate_dask_read_is_lazy(tmp_path) -> None:
 # disagree between the eager and dask paths is the highest release risk
 # for the GeoTIFF surface. This block reads each fixture in a small
 # representative corpus once through ``open_geotiff`` and once through
-# ``read_geotiff_dask``, then asserts full raster equivalence.
+# ``_read_geotiff_dask``, then asserts full raster equivalence.
 
 # Corpus fixtures live under ``golden_corpus/fixtures``.
 _EAGER_DASK_FIXTURES_DIR = (
@@ -1024,7 +1024,7 @@ def test_release_gate_eager_dask_full_parity(
         )
 
     eager = open_geotiff(str(path), **open_kwargs)
-    lazy = read_geotiff_dask(
+    lazy = _read_geotiff_dask(
         str(path), chunks=_EAGER_DASK_CHUNK_SIZE, **open_kwargs,
     )
 
@@ -1556,9 +1556,9 @@ def _overview_read_levels_eager(path: str) -> dict:
 
 
 def _overview_read_levels_dask(path: str) -> dict:
-    out = {0: read_geotiff_dask(path, chunks=8)}
+    out = {0: _read_geotiff_dask(path, chunks=8)}
     for i, _ in enumerate(_OVERVIEW_FACTORS, start=1):
-        out[i] = read_geotiff_dask(path, chunks=8, overview_level=i)
+        out[i] = _read_geotiff_dask(path, chunks=8, overview_level=i)
     return out
 
 
@@ -1904,7 +1904,7 @@ def _wsp_open_eager(path, *, window=None):
 
 
 def _wsp_open_dask(path, *, window=None):
-    return read_geotiff_dask(str(path), window=window, chunks=32)
+    return _read_geotiff_dask(str(path), window=window, chunks=32)
 
 
 _WSP_READERS = (
@@ -2367,7 +2367,7 @@ def test_release_gate_negative_rotated_dask(
 ) -> None:
     """Dask path raises the same typed error, uniformly with the eager path."""
     with pytest.raises(RotatedTransformError) as excinfo:
-        read_geotiff_dask(_neg_rotated_geotiff_path, chunks=2)
+        _read_geotiff_dask(_neg_rotated_geotiff_path, chunks=2)
     _neg_assert_rotated_message(str(excinfo.value))
 
 

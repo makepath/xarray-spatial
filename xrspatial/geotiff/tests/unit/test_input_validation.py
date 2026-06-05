@@ -9,7 +9,7 @@ Sections, by validation axis:
    ``int`` / ``np.integer``; ``bool`` / ``np.bool_`` raise ``ValueError``
    and ``float`` / ``str`` raise ``TypeError``, across every read entry
    point.
-2. Size-parameter validation -- ``tile_size`` and ``read_geotiff_dask``
+2. Size-parameter validation -- ``tile_size`` and ``_read_geotiff_dask``
    ``chunks`` must be positive, and ``tile_size`` must be a multiple of
    16 when ``tiled=True``.
 3. Source-dimension validation -- zero / negative ``ImageWidth`` /
@@ -33,8 +33,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (_header, open_geotiff, read_geotiff_dask, to_geotiff,
-                               write_geotiff_gpu)
+from xrspatial.geotiff import (_header, open_geotiff, _read_geotiff_dask, to_geotiff,
+                               _write_geotiff_gpu)
 from xrspatial.geotiff._coords import coords_to_transform
 from xrspatial.geotiff._dtypes import LONG, SHORT
 from xrspatial.geotiff._header import (MAX_PIXEL_ARRAY_COUNT, TAG_BITS_PER_SAMPLE, TAG_COLORMAP,
@@ -155,52 +155,52 @@ class TestBandBoolRejection:
             open_geotiff(path, band=False)
 
     def test_read_geotiff_dask_band_true_rejected(self, multiband_tiff_path):
-        """``read_geotiff_dask(..., band=True)`` rejected before scheduling."""
-        from xrspatial.geotiff import read_geotiff_dask
+        """``_read_geotiff_dask(..., band=True)`` rejected before scheduling."""
+        from xrspatial.geotiff import _read_geotiff_dask
 
         path, _ = multiband_tiff_path
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_geotiff_dask(path, chunks=4, band=True)
+            _read_geotiff_dask(path, chunks=4, band=True)
 
     def test_read_geotiff_dask_band_false_rejected(self, multiband_tiff_path):
-        """``read_geotiff_dask(..., band=False)`` raises the same way."""
-        from xrspatial.geotiff import read_geotiff_dask
+        """``_read_geotiff_dask(..., band=False)`` raises the same way."""
+        from xrspatial.geotiff import _read_geotiff_dask
 
         path, _ = multiband_tiff_path
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_geotiff_dask(path, chunks=4, band=False)
+            _read_geotiff_dask(path, chunks=4, band=False)
 
     @requires_gpu
     def test_read_geotiff_gpu_band_true_rejected(self, multiband_tiff_path):
-        """``read_geotiff_gpu(..., band=True)`` is rejected (cupy required)."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        """``_read_geotiff_gpu(..., band=True)`` is rejected (cupy required)."""
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = multiband_tiff_path
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_geotiff_gpu(path, band=True)
+            _read_geotiff_gpu(path, band=True)
 
     @requires_gpu
     def test_read_geotiff_gpu_band_false_rejected(self, multiband_tiff_path):
-        """``read_geotiff_gpu(..., band=False)`` raises the same way."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        """``_read_geotiff_gpu(..., band=False)`` raises the same way."""
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = multiband_tiff_path
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_geotiff_gpu(path, band=False)
+            _read_geotiff_gpu(path, band=False)
 
     def test_read_vrt_band_true_still_rejected(self, multiband_vrt_path):
         """VRT path's existing bool rejection remains in place."""
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
 
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_vrt(multiband_vrt_path, band=True)
+            _read_vrt(multiband_vrt_path, band=True)
 
     def test_read_vrt_band_false_still_rejected(self, multiband_vrt_path):
         """VRT path rejects ``band=False`` as well."""
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
 
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_vrt(multiband_vrt_path, band=False)
+            _read_vrt(multiband_vrt_path, band=False)
 
     # np.bool_ parity: ``isinstance(np.bool_(True), bool)`` is False so it
     # bypasses a plain ``isinstance(band, bool)`` guard and is then treated
@@ -220,28 +220,28 @@ class TestBandBoolRejection:
             open_geotiff(path, band=np.bool_(False))
 
     def test_read_geotiff_dask_band_np_bool_rejected(self, multiband_tiff_path):
-        """``read_geotiff_dask`` rejects ``band=np.bool_(True)``."""
-        from xrspatial.geotiff import read_geotiff_dask
+        """``_read_geotiff_dask`` rejects ``band=np.bool_(True)``."""
+        from xrspatial.geotiff import _read_geotiff_dask
 
         path, _ = multiband_tiff_path
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_geotiff_dask(path, band=np.bool_(True))
+            _read_geotiff_dask(path, band=np.bool_(True))
 
     @requires_gpu
     def test_read_geotiff_gpu_band_np_bool_rejected(self, multiband_tiff_path):
-        """``read_geotiff_gpu`` rejects ``band=np.bool_(True)``."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        """``_read_geotiff_gpu`` rejects ``band=np.bool_(True)``."""
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = multiband_tiff_path
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_geotiff_gpu(path, band=np.bool_(True))
+            _read_geotiff_gpu(path, band=np.bool_(True))
 
     def test_read_vrt_band_np_bool_still_rejected(self, multiband_vrt_path):
         """VRT path already rejects ``np.bool_`` via its integer-type check."""
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
 
         with pytest.raises(ValueError, match="band must be a non-negative int"):
-            read_vrt(multiband_vrt_path, band=np.bool_(True))
+            _read_vrt(multiband_vrt_path, band=np.bool_(True))
 
 
 class TestBandTypeRejection:
@@ -303,46 +303,46 @@ class TestBandTypeRejection:
             open_geotiff(path, band="0")
 
     def test_read_geotiff_dask_band_float_rejected(self, multiband_tiff_path):
-        """``read_geotiff_dask(..., band=0.0)`` rejected before scheduling."""
-        from xrspatial.geotiff import read_geotiff_dask
+        """``_read_geotiff_dask(..., band=0.0)`` rejected before scheduling."""
+        from xrspatial.geotiff import _read_geotiff_dask
 
         path, _ = multiband_tiff_path
         with pytest.raises(TypeError, match="band must be a non-negative int"):
-            read_geotiff_dask(path, chunks=4, band=0.0)
+            _read_geotiff_dask(path, chunks=4, band=0.0)
 
     def test_read_geotiff_dask_band_str_rejected(self, multiband_tiff_path):
-        """``read_geotiff_dask(..., band='0')`` raises ``TypeError``."""
-        from xrspatial.geotiff import read_geotiff_dask
+        """``_read_geotiff_dask(..., band='0')`` raises ``TypeError``."""
+        from xrspatial.geotiff import _read_geotiff_dask
 
         path, _ = multiband_tiff_path
         with pytest.raises(TypeError, match="band must be a non-negative int"):
-            read_geotiff_dask(path, chunks=4, band="0")
+            _read_geotiff_dask(path, chunks=4, band="0")
 
     def test_read_geotiff_dask_band_int_still_works(self, multiband_tiff_path):
         """``band=1`` still routes through and reads band 1."""
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
 
         path, arr = multiband_tiff_path
-        out = read_geotiff_dask(path, chunks=4, band=1)
+        out = _read_geotiff_dask(path, chunks=4, band=1)
         np.testing.assert_array_equal(out.values, arr[:, :, 1])
 
     @requires_gpu
     def test_read_geotiff_gpu_band_float_rejected(self, multiband_tiff_path):
-        """``read_geotiff_gpu(..., band=0.0)`` raises ``TypeError``."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        """``_read_geotiff_gpu(..., band=0.0)`` raises ``TypeError``."""
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = multiband_tiff_path
         with pytest.raises(TypeError, match="band must be a non-negative int"):
-            read_geotiff_gpu(path, band=0.0)
+            _read_geotiff_gpu(path, band=0.0)
 
     @requires_gpu
     def test_read_geotiff_gpu_band_str_rejected(self, multiband_tiff_path):
-        """``read_geotiff_gpu(..., band='0')`` raises ``TypeError``."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        """``_read_geotiff_gpu(..., band='0')`` raises ``TypeError``."""
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = multiband_tiff_path
         with pytest.raises(TypeError, match="band must be a non-negative int"):
-            read_geotiff_gpu(path, band="0")
+            _read_geotiff_gpu(path, band="0")
 
 
 # ===========================================================================
@@ -351,11 +351,11 @@ class TestBandTypeRejection:
 # Two writer/reader size parameters used to flow through unchecked:
 # ``to_geotiff(..., tiled=True, tile_size=0)`` reached the tiled writer
 # where ``math.ceil(width / tile_size)`` raised a bare ZeroDivisionError,
-# and ``read_geotiff_dask(chunks=0)`` propagated zero into dask's chunk
+# and ``_read_geotiff_dask(chunks=0)`` propagated zero into dask's chunk
 # math. Both now validate up front and raise ``ValueError`` naming the
 # parameter. On top of positivity, ``tile_size`` must be a
 # multiple of 16 when ``tiled=True`` per the TIFF 6 spec; the error
-# suggests the nearest valid value(s). ``write_geotiff_gpu`` is
+# suggests the nearest valid value(s). ``_write_geotiff_gpu`` is
 # always tiled and shares the same check before any cupy import.
 # ===========================================================================
 
@@ -492,13 +492,13 @@ class TestTileSizeMultipleOf16:
         assert 'tile_size=0' not in msg
 
     def test_write_geotiff_gpu_tile_size_17_rejected(self, tmp_path):
-        """``write_geotiff_gpu`` shares the multiple-of-16 check with
+        """``_write_geotiff_gpu`` shares the multiple-of-16 check with
         ``to_geotiff``. The validation runs before any cupy import, so the
         bad-tile-size path can be exercised on CPU-only runs."""
         da = _make_da()
         out = os.path.join(str(tmp_path), 'gpu_tile_size_17.tif')
         with pytest.raises(ValueError) as exc:
-            write_geotiff_gpu(da, out, tile_size=17)
+            _write_geotiff_gpu(da, out, tile_size=17)
         msg = str(exc.value)
         assert 'tile_size' in msg
         assert '17' in msg
@@ -511,7 +511,7 @@ class TestTileSizeMultipleOf16:
         da = _make_da()
         out = os.path.join(str(tmp_path), 'gpu_tile_size_0.tif')
         with pytest.raises(ValueError, match=r'tile_size.*positive'):
-            write_geotiff_gpu(da, out, tile_size=0)
+            _write_geotiff_gpu(da, out, tile_size=0)
 
     def test_write_geotiff_gpu_tile_size_float_rejected(self, tmp_path):
         """``tile_size`` must be an int; floats are rejected by the shared
@@ -519,48 +519,48 @@ class TestTileSizeMultipleOf16:
         da = _make_da()
         out = os.path.join(str(tmp_path), 'gpu_tile_size_float.tif')
         with pytest.raises(ValueError, match=r'tile_size.*positive int'):
-            write_geotiff_gpu(da, out, tile_size=256.0)
+            _write_geotiff_gpu(da, out, tile_size=256.0)
 
 
 class TestReadDaskChunksValidation:
-    """``read_geotiff_dask(chunks=...)`` must be a positive int or a
+    """``_read_geotiff_dask(chunks=...)`` must be a positive int or a
     length-2 tuple of positive ints."""
 
     def test_chunks_zero_raises(self, tmp_path):
         path = _make_raster(str(tmp_path))
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_dask(path, chunks=0)
+            _read_geotiff_dask(path, chunks=0)
 
     def test_chunks_negative_raises(self, tmp_path):
         path = _make_raster(str(tmp_path))
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_dask(path, chunks=-1)
+            _read_geotiff_dask(path, chunks=-1)
 
     def test_chunks_tuple_zero_row_raises(self, tmp_path):
         path = _make_raster(str(tmp_path))
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_dask(path, chunks=(0, 256))
+            _read_geotiff_dask(path, chunks=(0, 256))
 
     def test_chunks_tuple_negative_col_raises(self, tmp_path):
         path = _make_raster(str(tmp_path))
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_dask(path, chunks=(256, -1))
+            _read_geotiff_dask(path, chunks=(256, -1))
 
     def test_chunks_tuple_wrong_length_raises(self, tmp_path):
         path = _make_raster(str(tmp_path))
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_dask(path, chunks=(64, 64, 64))
+            _read_geotiff_dask(path, chunks=(64, 64, 64))
 
     def test_positive_int_chunks_works(self, tmp_path):
         path = _make_raster(str(tmp_path))
-        arr = read_geotiff_dask(path, chunks=256)
+        arr = _read_geotiff_dask(path, chunks=256)
         assert arr.shape == (10, 10)
         # Materialise to confirm the lazy graph is well-formed.
         np.asarray(arr)
 
     def test_positive_tuple_chunks_works(self, tmp_path):
         path = _make_raster(str(tmp_path))
-        arr = read_geotiff_dask(path, chunks=(4, 8))
+        arr = _read_geotiff_dask(path, chunks=(4, 8))
         assert arr.shape == (10, 10)
         np.asarray(arr)
 
@@ -568,13 +568,13 @@ class TestReadDaskChunksValidation:
         # Numpy integer scalars (e.g. np.int64) should behave like plain
         # ``int`` for the scalar ``chunks`` form.
         path = _make_raster(str(tmp_path))
-        arr = read_geotiff_dask(path, chunks=np.int64(256))
+        arr = _read_geotiff_dask(path, chunks=np.int64(256))
         assert arr.shape == (10, 10)
         np.asarray(arr)
 
     def test_numpy_int_tuple_chunks_works(self, tmp_path):
         path = _make_raster(str(tmp_path))
-        arr = read_geotiff_dask(path, chunks=(np.int64(256), 256))
+        arr = _read_geotiff_dask(path, chunks=(np.int64(256), 256))
         assert arr.shape == (10, 10)
         np.asarray(arr)
 
@@ -1743,7 +1743,7 @@ class TestDegenerateFailClosedAcrossBackends:
         da_gpu.attrs = dict(da_cpu.attrs)
         p = str(tmp_path / "gpu_fail_1xN.tif")
         with pytest.raises(ValueError, match="(?i)pixel size|transform"):
-            write_geotiff_gpu(da_gpu, p)
+            _write_geotiff_gpu(da_gpu, p)
 
     @requires_gpu
     def test_gpu_Nx1_raises(self, tmp_path):
@@ -1754,7 +1754,7 @@ class TestDegenerateFailClosedAcrossBackends:
         da_gpu.attrs = dict(da_cpu.attrs)
         p = str(tmp_path / "gpu_fail_Nx1.tif")
         with pytest.raises(ValueError, match="(?i)pixel size|transform"):
-            write_geotiff_gpu(da_gpu, p)
+            _write_geotiff_gpu(da_gpu, p)
 
     @requires_gpu
     def test_dask_cupy_1xN_raises(self, tmp_path):

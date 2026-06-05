@@ -180,7 +180,7 @@ Local GeoTIFF read and write
        ``T_full * Affine.translation(col_off, row_off)`` (no float
        drift), and the canonical non-transform release attrs unchanged.
        Covered for both ``open_geotiff(window=...)`` and
-       ``read_geotiff_dask(window=...)``.
+       ``open_geotiff(window=..., chunks=...)``.
      - ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
        (windowed-reads section)
      - `#2341`_
@@ -194,7 +194,7 @@ Local GeoTIFF read and write
      - `#2341`_
    * - ``reader.dask`` -- eager / dask parity
      - stable
-     - ``open_geotiff(path)`` and ``read_geotiff_dask(path)`` return the
+     - ``open_geotiff(path)`` and ``open_geotiff(path, chunks=...)`` return the
        same pixels, ``dims``, ``coords``, and the seven release-attr
        keys (``transform``, ``crs``, ``crs_wkt``, ``nodata``,
        ``masked_nodata``, ``georef_status``, ``raster_type``) across
@@ -557,7 +557,7 @@ VRT supported subset
      - ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
        (VRT presence meta-gate)
      - `#2321`_
-   * - ``write_vrt``
+   * - ``build_vrt``
      - advanced
      - Writer rejects source-incompatibility cases at the writer boundary.
      - ``xrspatial/geotiff/tests/vrt/test_validation.py``

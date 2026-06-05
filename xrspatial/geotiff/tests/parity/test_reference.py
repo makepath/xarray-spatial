@@ -27,8 +27,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, to_geotiff,
-                               write_geotiff_gpu)
+from xrspatial.geotiff import (open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, to_geotiff,
+                               _write_geotiff_gpu)
 
 from .._helpers.markers import requires_gpu
 
@@ -69,9 +69,9 @@ class TestSinglePixelRead:
         np.testing.assert_array_equal(computed.values, arr)
 
     def test_read_geotiff_dask_direct(self, single_pixel_path):
-        """The explicit ``read_geotiff_dask`` entry point matches dispatch."""
+        """The explicit ``_read_geotiff_dask`` entry point matches dispatch."""
         path, arr = single_pixel_path
-        result = read_geotiff_dask(path, chunks=8)
+        result = _read_geotiff_dask(path, chunks=8)
         assert result.shape == (1, 1)
         np.testing.assert_array_equal(result.compute().values, arr)
 
@@ -84,9 +84,9 @@ class TestSinglePixelRead:
 
     @requires_gpu
     def test_read_geotiff_gpu_direct(self, single_pixel_path):
-        """The explicit ``read_geotiff_gpu`` entry point matches dispatch."""
+        """The explicit ``_read_geotiff_gpu`` entry point matches dispatch."""
         path, arr = single_pixel_path
-        result = read_geotiff_gpu(path)
+        result = _read_geotiff_gpu(path)
         assert result.shape == (1, 1)
         np.testing.assert_array_equal(result.data.get(), arr)
 
@@ -185,7 +185,7 @@ class TestSingleColumnRead:
 
 @requires_gpu
 class TestGpuWriterDegenerateShapes:
-    """``write_geotiff_gpu`` must accept 1-pixel, 1-row, and 1-column inputs.
+    """``_write_geotiff_gpu`` must accept 1-pixel, 1-row, and 1-column inputs.
 
     The GPU writer's tile-encoding path uses an internal grid sizing
     helper that fell back to host code for shapes smaller than the
@@ -198,7 +198,7 @@ class TestGpuWriterDegenerateShapes:
         arr = cupy.array([[42.0]], dtype=cupy.float32)
         da_gpu = xr.DataArray(arr, dims=["y", "x"])
         p = str(tmp_path / "gpu_1x1.tif")
-        write_geotiff_gpu(da_gpu, p)
+        _write_geotiff_gpu(da_gpu, p)
 
         result = open_geotiff(p)
         assert result.shape == (1, 1)
@@ -210,7 +210,7 @@ class TestGpuWriterDegenerateShapes:
         arr = cupy.asarray(arr_np)
         da_gpu = xr.DataArray(arr, dims=["y", "x"])
         p = str(tmp_path / "gpu_1xN.tif")
-        write_geotiff_gpu(da_gpu, p)
+        _write_geotiff_gpu(da_gpu, p)
 
         result = open_geotiff(p)
         assert result.shape == (1, 10)
@@ -222,7 +222,7 @@ class TestGpuWriterDegenerateShapes:
         arr = cupy.asarray(arr_np)
         da_gpu = xr.DataArray(arr, dims=["y", "x"])
         p = str(tmp_path / "gpu_Nx1.tif")
-        write_geotiff_gpu(da_gpu, p)
+        _write_geotiff_gpu(da_gpu, p)
 
         result = open_geotiff(p)
         assert result.shape == (10, 1)

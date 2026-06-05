@@ -136,7 +136,7 @@ class TestToGeotiffMetadataRoundTrip:
 # TIFF with a SubIFDs entry leaked those tags into
 # ``attrs['extra_tags']`` because they were not in ``_MANAGED_TAGS``.
 # Writing the DataArray back via ``to_geotiff`` or
-# ``write_geotiff_gpu`` then re-emitted them on the output IFD,
+# ``_write_geotiff_gpu`` then re-emitted them on the output IFD,
 # producing:
 #
 # * A primary IFD wrongly marked as a reduced-resolution overview

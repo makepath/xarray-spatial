@@ -2504,21 +2504,21 @@ def test_block_reduce_2d_gpu_matches_cpu_with_nan(method):
     ('median', _RAMP_EXPECTED_MEDIAN),
 ])
 def test_write_geotiff_gpu_cog_overview_resampling(tmp_path, method, expected):
-    """End-to-end: ``write_geotiff_gpu(cog=True, overview_resampling=method)``
+    """End-to-end: ``_write_geotiff_gpu(cog=True, overview_resampling=method)``
     writes a COG whose overview level 1 matches the closed-form 2x2
     reduction. Exercises the GPU make-overview path including the dispatch
     on ``method``."""
     import cupy
 
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     arr = _arr_4x4_ramp()
     arr_gpu = cupy.asarray(arr)
     da = xr.DataArray(arr_gpu, dims=['y', 'x'])
     p = str(tmp_path / f'cog_{method}_gpu.tif')
-    write_geotiff_gpu(da, p, cog=True, compression='deflate', tiled=True,
-                      tile_size=16, overview_levels=[2],
-                      overview_resampling=method)
+    _write_geotiff_gpu(da, p, cog=True, compression='deflate', tiled=True,
+                       tile_size=16, overview_levels=[2],
+                       overview_resampling=method)
 
     ov = open_geotiff(p, overview_level=1)
     np.testing.assert_allclose(np.asarray(ov.data), expected)

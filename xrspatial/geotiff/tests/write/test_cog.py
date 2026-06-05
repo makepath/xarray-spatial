@@ -319,9 +319,9 @@ class TestGPUCOGOverviews:
         gpu_arr = cupy.asarray(arr)
 
         path = str(tmp_path / 'cog_1150_gpu_rt.tif')
-        from xrspatial.geotiff import write_geotiff_gpu
-        write_geotiff_gpu(gpu_arr, path, crs=4326, compression='deflate',
-                          cog=True, overview_levels=[2])
+        from xrspatial.geotiff import _write_geotiff_gpu
+        _write_geotiff_gpu(gpu_arr, path, crs=4326, compression='deflate',
+                           cog=True, overview_levels=[2])
 
         result = open_geotiff(path)
         np.testing.assert_array_almost_equal(result.values, arr, decimal=5)
@@ -338,9 +338,9 @@ class TestGPUCOGOverviews:
         gpu_arr = cupy.asarray(arr)
 
         path = str(tmp_path / 'cog_1150_gpu_auto.tif')
-        from xrspatial.geotiff import write_geotiff_gpu
-        write_geotiff_gpu(gpu_arr, path, compression='deflate',
-                          cog=True, tile_size=16)
+        from xrspatial.geotiff import _write_geotiff_gpu
+        _write_geotiff_gpu(gpu_arr, path, compression='deflate',
+                           cog=True, tile_size=16)
 
         with open(path, 'rb') as f:
             raw = f.read()
@@ -354,10 +354,10 @@ class TestGPUCOGOverviews:
         gpu_arr = cupy.asarray(arr)
 
         path = str(tmp_path / 'cog_1150_gpu_nearest.tif')
-        from xrspatial.geotiff import write_geotiff_gpu
-        write_geotiff_gpu(gpu_arr, path, compression='deflate',
-                          cog=True, overview_levels=[2],
-                          overview_resampling='nearest')
+        from xrspatial.geotiff import _write_geotiff_gpu
+        _write_geotiff_gpu(gpu_arr, path, compression='deflate',
+                           cog=True, overview_levels=[2],
+                           overview_resampling='nearest')
 
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)

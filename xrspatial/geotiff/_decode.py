@@ -572,7 +572,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # TIFF header against malformed values; it is not the caller's output
     # budget. The output-window check below uses ``max_pixels`` and is
     # what enforces the user's per-call memory cap. The source-read path
-    # under ``read_vrt`` relies on that output check to honour a small
+    # under ``_read_vrt`` relies on that output check to honour a small
     # caller ``max_pixels`` against a normal-tile source.
     _check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT, dtype=dtype)
 

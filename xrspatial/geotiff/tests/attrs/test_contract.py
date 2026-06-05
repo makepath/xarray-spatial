@@ -32,7 +32,7 @@ import xarray as xr
 
 from xrspatial.geotiff import ConflictingNodataError
 from xrspatial.geotiff import _attrs as _attrs_module
-from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff
+from xrspatial.geotiff import open_geotiff, _read_vrt, to_geotiff
 from xrspatial.geotiff._attrs import _ATTRS_CONTRACT_VERSION, _resolve_nodata_attr
 
 from .._helpers.markers import requires_gpu
@@ -931,11 +931,11 @@ def test_version_stamp_present_per_tiff_backend(tmp_path, opener, label):
 
 
 def _v_vrt_eager(path):
-    return read_vrt(path)
+    return _read_vrt(path)
 
 
 def _v_vrt_chunked(path):
-    return read_vrt(path, chunks=32)
+    return _read_vrt(path, chunks=32)
 
 
 _VERSION_VRT_OPENERS = [

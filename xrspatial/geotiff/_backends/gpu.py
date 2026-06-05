@@ -1,8 +1,8 @@
-"""GPU read backend: ``read_geotiff_gpu`` and its private helpers.
+"""GPU read backend: ``_read_geotiff_gpu`` and its private helpers.
 
-``_read_geotiff_gpu_chunked`` calls into ``read_geotiff_dask`` for its
+``_read_geotiff_gpu_chunked`` calls into ``_read_geotiff_dask`` for its
 CPU-decode fallback path, imported statically at the top of the module
-via ``from .dask import read_geotiff_dask``.
+via ``from .dask import _read_geotiff_dask``.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .._validation import (_validate_chunks_arg, _validate_dispatch_kwargs, _val
 from ._gpu_helpers import (_apply_nodata_mask_gpu, _apply_orientation_geo_info,
                            _apply_orientation_gpu, _gpu_apply_window_band,
                            _gpu_decode_single_band_tiles)
-from .dask import read_geotiff_dask
+from .dask import _read_geotiff_dask
 
 
 def _preflight_cuda_runtime(cupy) -> None:
@@ -42,39 +42,39 @@ def _preflight_cuda_runtime(cupy) -> None:
         device_count = cupy.cuda.runtime.getDeviceCount()
     except Exception as e:
         raise RuntimeError(
-            f"read_geotiff_gpu: CUDA runtime is not usable "
+            f"_read_geotiff_gpu: CUDA runtime is not usable "
             f"({type(e).__name__}: {e}). Check the GPU driver matches "
             f"the installed cupy build, or pass gpu=False."
         ) from e
     if device_count == 0:
         raise RuntimeError(
-            "read_geotiff_gpu: cupy reports 0 CUDA devices. Check "
+            "_read_geotiff_gpu: cupy reports 0 CUDA devices. Check "
             "the GPU driver and CUDA_VISIBLE_DEVICES, or pass gpu=False."
         )
 
 
-def read_geotiff_gpu(source: str, *,
-                     dtype: str | np.dtype | None = None,
-                     window: tuple | None = None,
-                     overview_level: int | None = None,
-                     band: int | None = None,
-                     name: str | None = None,
-                     chunks: int | tuple | None = None,
-                     max_pixels: int | None = None,
-                     max_cloud_bytes: int | None = (
+def _read_geotiff_gpu(source: str, *,
+                      dtype: str | np.dtype | None = None,
+                      window: tuple | None = None,
+                      overview_level: int | None = None,
+                      band: int | None = None,
+                      name: str | None = None,
+                      chunks: int | tuple | None = None,
+                      max_pixels: int | None = None,
+                      max_cloud_bytes: int | None = (
                          _MAX_CLOUD_BYTES_SENTINEL),  # type: ignore[assignment]
-                     on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
-                     missing_sources: str = _MISSING_SOURCES_SENTINEL,
-                     allow_rotated: bool = False,
-                     allow_unparseable_crs: bool = False,
-                     allow_invalid_nodata: bool = False,
-                     stable_only: bool = False,
-                     allow_experimental_codecs: bool = False,
-                     allow_internal_only_jpeg: bool = False,
-                     band_nodata: str | None = None,
-                     mask_nodata: bool = True,
-                     gpu: str = _GPU_DEPRECATED_SENTINEL,
-                     ) -> xr.DataArray:
+                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                      missing_sources: str = _MISSING_SOURCES_SENTINEL,
+                      allow_rotated: bool = False,
+                      allow_unparseable_crs: bool = False,
+                      allow_invalid_nodata: bool = False,
+                      stable_only: bool = False,
+                      allow_experimental_codecs: bool = False,
+                      allow_internal_only_jpeg: bool = False,
+                      band_nodata: str | None = None,
+                      mask_nodata: bool = True,
+                      gpu: str = _GPU_DEPRECATED_SENTINEL,
+                      ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
     Release-contract tier (see
@@ -113,7 +113,7 @@ def read_geotiff_gpu(source: str, *,
     dtype : str, numpy.dtype, or None
         [experimental] Cast the result to this dtype after reading.
         None keeps the file's native dtype. Float-to-int casts raise
-        ValueError, mirroring ``open_geotiff`` / ``read_geotiff_dask``.
+        ValueError, mirroring ``open_geotiff`` / ``_read_geotiff_dask``.
     overview_level : int or None
         [experimental] Overview level (0 = full resolution).
     window : tuple or None
@@ -121,7 +121,7 @@ def read_geotiff_gpu(source: str, *,
         for windowed reading. None reads the full raster. The GPU
         pipeline currently decodes all tiles and slices on device
         after assembly, so the kwarg restores API parity with
-        ``open_geotiff`` and ``read_geotiff_dask`` but does not yet
+        ``open_geotiff`` and ``_read_geotiff_dask`` but does not yet
         skip I/O for partial windows. The returned coords,
         ``attrs['transform']``, and shape match the eager numpy path.
     band : int or None
@@ -179,7 +179,7 @@ def read_geotiff_gpu(source: str, *,
         ``on_gpu_failure`` raises ``TypeError``. The old name shipped
         with values ``'auto'`` / ``'strict'`` and was easy to confuse
         with the boolean ``gpu=`` kwarg on ``open_geotiff`` /
-        ``to_geotiff`` / ``read_vrt``.
+        ``to_geotiff`` / ``_read_vrt``.
     mask_nodata : bool, default True
         [experimental] If True, replace the nodata sentinel with NaN
         (integer rasters get promoted to ``float64`` first). If False,
@@ -214,7 +214,7 @@ def read_geotiff_gpu(source: str, *,
         fsspec sources through the CPU fallback, and those advanced-tier
         readers must be gated. With ``stable_only=True`` a remote source
         raises ``RemoteStableSourcesOnlyError`` before any cupy import or
-        decode, matching ``open_geotiff`` and ``read_geotiff_dask``. Pass
+        decode, matching ``open_geotiff`` and ``_read_geotiff_dask``. Pass
         ``allow_experimental_codecs=True`` to unlock the advanced tier.
         See ``open_geotiff`` for the full description.
     allow_experimental_codecs : bool, default False
@@ -229,14 +229,14 @@ def read_geotiff_gpu(source: str, *,
         for the full description.
     band_nodata : {'first', None}, optional
         [internal-only] VRT-only. Accepted at the signature level for
-        parity with ``open_geotiff``; passing it to ``read_geotiff_gpu``
+        parity with ``open_geotiff``; passing it to ``_read_geotiff_gpu``
         raises ``ValueError`` because the GPU dispatcher rejects
         ``.vrt`` sources up front and the kwarg only applies to VRT.
-        See ``read_vrt`` for the kwarg's meaning.
+        See ``_read_vrt`` for the kwarg's meaning.
     missing_sources : {'raise', 'warn'}, optional
         [internal-only] VRT-only. Same shape as ``band_nodata`` above:
         accepted for signature parity, rejected at dispatch with
-        ``ValueError`` for non-VRT sources. See ``read_vrt`` for the
+        ``ValueError`` for non-VRT sources. See ``_read_vrt`` for the
         full description.
     max_cloud_bytes : int or None, optional
         [internal-only] Accepted for cross-backend signature symmetry
@@ -278,7 +278,7 @@ def read_geotiff_gpu(source: str, *,
         max_cloud_bytes=max_cloud_bytes,
     )
 
-    # ``open_geotiff`` and ``read_geotiff_dask`` gate ``stable_only=True``
+    # ``open_geotiff`` and ``_read_geotiff_dask`` gate ``stable_only=True``
     # for advanced-tier HTTP / fsspec sources before dispatching. This GPU
     # entry point is also a direct public reader and it routes remote
     # sources through the CPU fallback below, so a direct caller could read
@@ -300,13 +300,13 @@ def read_geotiff_gpu(source: str, *,
         # chosen (including the matching ``on_gpu_failure='auto',
         # gpu='auto'`` pair). Refuse rather than silently picking one.
         raise TypeError(
-            "read_geotiff_gpu: pass either 'on_gpu_failure' or the "
+            "_read_geotiff_gpu: pass either 'on_gpu_failure' or the "
             "deprecated 'gpu' alias, not both.")
     if old_passed:
         warnings.warn(
-            "read_geotiff_gpu(..., gpu=...) is deprecated; use "
+            "_read_geotiff_gpu(..., gpu=...) is deprecated; use "
             "on_gpu_failure=... instead. The kwarg was renamed because "
-            "'gpu' on open_geotiff/to_geotiff/read_vrt is a bool that "
+            "'gpu' on open_geotiff/to_geotiff/_read_vrt is a bool that "
             "selects the GPU backend, while here it selects the failure "
             "policy when the GPU path raises.",
             DeprecationWarning,
@@ -320,7 +320,7 @@ def read_geotiff_gpu(source: str, *,
         raise ValueError(
             f"on_gpu_failure must be 'auto' or 'strict', got {gpu!r}")
     # Reject non-positive chunk sizes up front so the GPU dask+cupy path
-    # surfaces the same error as ``read_geotiff_dask``. Previously
+    # surfaces the same error as ``_read_geotiff_dask``. Previously
     # ``chunks=0`` raised ``ZeroDivisionError`` deep in cupy/dask, and
     # ``chunks=-1`` was silently accepted (negative chunks fall out of
     # the dask chunk grid as a no-op). ``chunks=None`` is the default
@@ -484,7 +484,7 @@ def read_geotiff_gpu(source: str, *,
             ifd.compression,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
-            entry_point="read_geotiff_gpu",
+            entry_point="_read_geotiff_gpu",
         )
 
         # Keep ``data`` / ``header`` bound to the base file's buffers so
@@ -531,7 +531,7 @@ def read_geotiff_gpu(source: str, *,
         # file pixels or display pixels?), so the CPU reader
         # ``_reader.read_to_array`` rejects ``window=`` for orientation != 1.
         # Mirror that here so the GPU path agrees with the CPU path and
-        # ``read_geotiff_dask``. Use the same error wording so the failure
+        # ``_read_geotiff_dask``. Use the same error wording so the failure
         # message is identical across backends.
         if orientation != 1 and window is not None:
             raise ValueError(
@@ -544,7 +544,7 @@ def read_geotiff_gpu(source: str, *,
         # Validate band against the selected IFD's sample count.
         # ``samples_per_pixel`` is at least 1 for any valid TIFF; we treat
         # ``band=0`` as "first band" for single-band files too so the
-        # behaviour mirrors ``read_geotiff_dask``.
+        # behaviour mirrors ``_read_geotiff_dask``.
         ifd_samples = ifd.samples_per_pixel
         if band is not None:
             # Reject ``bool`` and ``np.bool_`` up front;
@@ -859,7 +859,7 @@ def read_geotiff_gpu(source: str, *,
                     if gpu == 'strict' or _geotiff_strict_mode():
                         raise
                     warnings.warn(
-                        f"read_geotiff_gpu: GPU decode failed "
+                        f"_read_geotiff_gpu: GPU decode failed "
                         f"({type(e).__name__}: {e}); falling back to CPU.",
                         RuntimeWarning,
                         stacklevel=2,
@@ -898,7 +898,7 @@ def read_geotiff_gpu(source: str, *,
                 if gpu == 'strict' or _geotiff_strict_mode():
                     raise
                 warnings.warn(
-                    f"read_geotiff_gpu: GPU decode failed "
+                    f"_read_geotiff_gpu: GPU decode failed "
                     f"({type(e).__name__}: {e}); falling back to CPU.",
                     RuntimeWarning,
                     stacklevel=2,
@@ -1076,7 +1076,7 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
     """Eager CPU decode + GPU upload for HTTP / fsspec sources.
 
     Reached via ``open_geotiff(url, gpu=True)`` and the direct
-    ``read_geotiff_gpu(url)`` entry point. The eager GPU pipeline
+    ``_read_geotiff_gpu(url)`` entry point. The eager GPU pipeline
     assumes the source is a local file: it opens ``_FileSource(source)``,
     calls ``gpu_decode_tiles_from_file`` (which KvikIO-DMAs the on-disk
     tiles), and falls back to a local ``mmap`` slice in the CPU
@@ -1304,7 +1304,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                               allow_experimental_codecs: bool = False,
                               allow_internal_only_jpeg: bool = False,
                               mask_nodata: bool = True):
-    """Lazy Dask+CuPy backend for ``read_geotiff_gpu(chunks=...)``.
+    """Lazy Dask+CuPy backend for ``_read_geotiff_gpu(chunks=...)``.
 
     Two paths produce the same shape of dask graph:
 
@@ -1317,7 +1317,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
 
     2. **CPU decode + GPU upload** for everything else (HTTP / fsspec,
        no KvikIO, planar=2, sparse, MinIsWhite, non-trivial orientation,
-       stripped layouts). Reuses ``read_geotiff_dask`` to build the
+       stripped layouts). Reuses ``_read_geotiff_dask`` to build the
        per-chunk windowed delayed graph and ``map_blocks(cupy.asarray)``
        to upload each block. Peak GPU memory is still one chunk; the
        cost is per-chunk CPU decode rather than GDS DMA.
@@ -1337,7 +1337,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
     # the GDS fast
     # path (handled in ``_read_geotiff_gpu_chunked_gds`` which runs
     # the same cap on its own metadata parse) or falls through to
-    # ``read_geotiff_dask`` whose per-chunk ``read_to_array`` calls
+    # ``_read_geotiff_dask`` whose per-chunk ``read_to_array`` calls
     # apply the cap inside the CPU reader. The check here closes the
     # window between "qualification probe parses the IFDs" and "the
     # dispatch decides which path to take" so a forged tile is
@@ -1387,7 +1387,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
             ifd = select_overview_ifd(ifds, overview_level)
             # The GDS qualification probe parses base-file IFDs only --
             # sidecar files do not qualify for the disk->GPU fast path
-            # and the chunked path falls through to ``read_geotiff_dask``
+            # and the chunked path falls through to ``_read_geotiff_dask``
             # which carries its own sidecar handling. Pass
             # ``sidecar_origin=None`` explicitly so all four call sites
             # of this helper share the same call shape.
@@ -1419,7 +1419,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
         # for (the CPU path re-parses metadata anyway).
         pass
 
-    cpu_da = read_geotiff_dask(
+    cpu_da = _read_geotiff_dask(
         source, dtype=dtype, chunks=chunks,
         overview_level=overview_level, window=window, band=band,
         max_pixels=max_pixels, name=name,
@@ -1662,7 +1662,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         blocks_rows.append(da_mod.concatenate(blocks_cols, axis=1))
     dask_arr = da_mod.concatenate(blocks_rows, axis=0)
 
-    # Build coords/attrs that match read_geotiff_dask's output.
+    # Build coords/attrs that match _read_geotiff_dask's output.
     coords = _coords_from_geo_info(geo_info, out_h, out_w, window=window)
     if out_has_band_axis:
         dims = ['y', 'x', 'band']

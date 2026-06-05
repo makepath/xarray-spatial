@@ -2,8 +2,8 @@
 
 This module is private to :mod:`xrspatial.geotiff`. The supported public
 write entry points are :func:`xrspatial.geotiff.to_geotiff`,
-:func:`xrspatial.geotiff.write_geotiff_gpu`, and
-:func:`xrspatial.geotiff.write_vrt`. Direct callers of the helpers
+:func:`xrspatial.geotiff._write_geotiff_gpu`, and
+:func:`xrspatial.geotiff.build_vrt`. Direct callers of the helpers
 defined here bypass the DataArray-level validation that the public
 wrappers run (``transform`` derivation, ``masked_nodata`` handling,
 ``band``-first dim reordering, ...) and must accept the resulting byte

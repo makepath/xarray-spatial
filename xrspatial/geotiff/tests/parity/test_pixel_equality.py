@@ -6,8 +6,8 @@ because they fail in the same ways:
 * Pixel-byte parity across (numpy / dask+numpy / cupy / dask+cupy) on a
   representative dtype + compression + layout matrix, plus VRT, COG,
   BigTIFF, and MinIsWhite fixtures.
-* Cross-entry-point parity: ``read_geotiff_dask``, ``read_geotiff_gpu``,
-  and ``read_vrt`` agree with ``open_geotiff`` for the same source.
+* Cross-entry-point parity: ``_read_geotiff_dask``, ``_read_geotiff_gpu``,
+  and ``_read_vrt`` agree with ``open_geotiff`` for the same source.
 * Kwarg threading through the dispatcher: ``open_geotiff`` and
   ``to_geotiff`` forward window / band / max_pixels / tiled / etc. to
   the backend-specific entry points instead of silently dropping them.
@@ -30,8 +30,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
-                               to_geotiff, write_vrt)
+from xrspatial.geotiff import (open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
+                               to_geotiff, build_vrt)
 
 from .._helpers.markers import gpu_available, requires_gpu, requires_loopback
 
@@ -167,7 +167,7 @@ def _write_vrt_mosaic(dir_path: Path) -> Path:
             to_geotiff(da, str(p), compression="none", tiled=False)
             tile_paths.append(str(p))
     vrt_path = dir_path / "mosaic_1813.vrt"
-    write_vrt(str(vrt_path), tile_paths, relative=False, crs=4326)
+    build_vrt(str(vrt_path), tile_paths, relative=False, crs=4326)
     return vrt_path
 
 
@@ -318,14 +318,14 @@ def test_open_geotiff_attrs_match(fixture_factory, fix_id, backend_kwargs):
 
 @pytest.mark.parametrize("fix_id", _TIFF_FIXTURES)
 def test_read_geotiff_dask_matches_open_geotiff(fixture_factory, fix_id):
-    """``read_geotiff_dask(p)`` byte-matches ``open_geotiff(p, chunks=N)``."""
+    """``_read_geotiff_dask(p)`` byte-matches ``open_geotiff(p, chunks=N)``."""
     path = fixture_factory(fix_id)
     via_open = open_geotiff(str(path), chunks=32)
-    via_direct = read_geotiff_dask(str(path), chunks=32)
+    via_direct = _read_geotiff_dask(str(path), chunks=32)
     a = _materialise(via_open).tobytes()
     b = _materialise(via_direct).tobytes()
     assert a == b, (
-        f"fixture={fix_id}: read_geotiff_dask diverges from "
+        f"fixture={fix_id}: _read_geotiff_dask diverges from "
         f"open_geotiff(chunks=32)"
     )
 
@@ -333,14 +333,14 @@ def test_read_geotiff_dask_matches_open_geotiff(fixture_factory, fix_id):
 @_skip_no_gpu
 @pytest.mark.parametrize("fix_id", _TIFF_FIXTURES)
 def test_read_geotiff_gpu_matches_open_geotiff(fixture_factory, fix_id):
-    """``read_geotiff_gpu(p)`` byte-matches ``open_geotiff(p, gpu=True)``."""
+    """``_read_geotiff_gpu(p)`` byte-matches ``open_geotiff(p, gpu=True)``."""
     path = fixture_factory(fix_id)
     via_open = open_geotiff(str(path), gpu=True)
-    via_direct = read_geotiff_gpu(str(path))
+    via_direct = _read_geotiff_gpu(str(path))
     a = _materialise(via_open).tobytes()
     b = _materialise(via_direct).tobytes()
     assert a == b, (
-        f"fixture={fix_id}: read_geotiff_gpu diverges from "
+        f"fixture={fix_id}: _read_geotiff_gpu diverges from "
         f"open_geotiff(gpu=True)"
     )
 
@@ -352,8 +352,8 @@ def test_read_geotiff_gpu_matches_open_geotiff(fixture_factory, fix_id):
 @pytest.mark.parametrize("backend_kwargs", _BACKENDS)
 def test_read_vrt_pixel_bytes_match(fixture_factory, backend_kwargs):
     path = fixture_factory("vrt")
-    ref = read_vrt(str(path))
-    actual = read_vrt(str(path), **backend_kwargs)
+    ref = _read_vrt(str(path))
+    actual = _read_vrt(str(path), **backend_kwargs)
     assert _materialise(ref).tobytes() == _materialise(actual).tobytes(), (
         f"read_vrt backend={backend_kwargs}: pixel bytes differ"
     )
@@ -362,8 +362,8 @@ def test_read_vrt_pixel_bytes_match(fixture_factory, backend_kwargs):
 @pytest.mark.parametrize("backend_kwargs", _BACKENDS)
 def test_read_vrt_coords_match(fixture_factory, backend_kwargs):
     path = fixture_factory("vrt")
-    ref = read_vrt(str(path))
-    actual = read_vrt(str(path), **backend_kwargs)
+    ref = _read_vrt(str(path))
+    actual = _read_vrt(str(path), **backend_kwargs)
     for axis in ("y", "x"):
         ref_c = _coord_view(ref, axis)
         actual_c = _coord_view(actual, axis)
@@ -378,12 +378,12 @@ def test_read_vrt_coords_match(fixture_factory, backend_kwargs):
 
 @pytest.mark.parametrize("backend_kwargs", _BACKENDS)
 def test_open_geotiff_dot_vrt_routes_to_read_vrt(fixture_factory, backend_kwargs):
-    """``open_geotiff(path.vrt)`` byte-matches ``read_vrt(path)``."""
+    """``open_geotiff(path.vrt)`` byte-matches ``_read_vrt(path)``."""
     path = fixture_factory("vrt")
     via_open = open_geotiff(str(path), **backend_kwargs)
-    via_direct = read_vrt(str(path), **backend_kwargs)
+    via_direct = _read_vrt(str(path), **backend_kwargs)
     assert _materialise(via_open).tobytes() == _materialise(via_direct).tobytes(), (
-        f"open_geotiff(.vrt) diverges from read_vrt: backend={backend_kwargs}"
+        f"open_geotiff(.vrt) diverges from _read_vrt: backend={backend_kwargs}"
     )
 
 
@@ -404,7 +404,7 @@ def test_fixture_builders_produce_readable_files(fixture_factory, fix_id):
 # ===========================================================================
 #
 # ``open_geotiff`` and ``to_geotiff`` route to backend-specific entry
-# points (``read_geotiff_dask``, ``write_geotiff_gpu``) whose kwarg sets
+# points (``_read_geotiff_dask``, ``_write_geotiff_gpu``) whose kwarg sets
 # were narrower than the dispatcher's. The dispatcher silently dropped
 # the missing kwargs when it routed to the smaller-API backend; the
 # fix pins them through. These tests gate that contract.
@@ -450,7 +450,7 @@ def small_multiband_tiff_path(tmp_path):
 def test_read_geotiff_dask_window_clips_region(small_tiff_path):
     """``window=`` restricts the lazy region; chunks span only the window."""
     path, arr = small_tiff_path
-    da = read_geotiff_dask(path, chunks=2, window=(1, 2, 4, 6))
+    da = _read_geotiff_dask(path, chunks=2, window=(1, 2, 4, 6))
     assert da.shape == (3, 4)
     np.testing.assert_array_equal(da.values, arr[1:4, 2:6])
 
@@ -466,7 +466,7 @@ def test_read_geotiff_dask_window_via_dispatcher(small_tiff_path):
 def test_read_geotiff_dask_band_selects_single_band(small_multiband_tiff_path):
     """``band=`` produces a 2D DataArray with the selected band."""
     path, arr = small_multiband_tiff_path
-    da = read_geotiff_dask(path, chunks=4, band=1)
+    da = _read_geotiff_dask(path, chunks=4, band=1)
     assert da.ndim == 2
     np.testing.assert_array_equal(da.values, arr[:, :, 1])
 
@@ -492,12 +492,12 @@ def test_read_geotiff_dask_max_pixels_bounds_chunk_not_full_image(
     path, arr = small_tiff_path
 
     # Per-chunk cap is satisfied; full image is not. Should succeed.
-    da = read_geotiff_dask(path, chunks=2, max_pixels=10)
+    da = _read_geotiff_dask(path, chunks=2, max_pixels=10)
     np.testing.assert_array_equal(da.values, arr)
 
     # Per-chunk cap is exceeded. The graph builds, but the chunk task
     # raises the safety-limit error on compute.
-    da = read_geotiff_dask(path, chunks=4, max_pixels=10)
+    da = _read_geotiff_dask(path, chunks=4, max_pixels=10)
     with pytest.raises(ValueError, match="exceed the safety limit"):
         da.compute()
 
@@ -515,11 +515,11 @@ def test_read_geotiff_dask_max_pixels_chunk_includes_band_count(
     path, arr = small_multiband_tiff_path
 
     # Per-chunk cap satisfied (12 px <= 20) but full image (72) is not.
-    da = read_geotiff_dask(path, chunks=2, max_pixels=20)
+    da = _read_geotiff_dask(path, chunks=2, max_pixels=20)
     np.testing.assert_array_equal(da.values, arr)
 
     # Per-chunk cap exceeded (48 px > 20). Graph builds, compute raises.
-    da = read_geotiff_dask(path, chunks=4, max_pixels=20)
+    da = _read_geotiff_dask(path, chunks=4, max_pixels=20)
     with pytest.raises(ValueError, match="exceed the safety limit"):
         da.compute()
 
@@ -527,7 +527,7 @@ def test_read_geotiff_dask_max_pixels_chunk_includes_band_count(
 def test_read_geotiff_dask_window_band_combined(small_multiband_tiff_path):
     """``window`` and ``band`` cooperate."""
     path, arr = small_multiband_tiff_path
-    da = read_geotiff_dask(path, chunks=2, window=(1, 1, 4, 5), band=0)
+    da = _read_geotiff_dask(path, chunks=2, window=(1, 1, 4, 5), band=0)
     assert da.shape == (3, 4)
     np.testing.assert_array_equal(da.values, arr[1:4, 1:5, 0])
 
@@ -536,32 +536,32 @@ def test_read_geotiff_dask_invalid_window_raises(small_tiff_path):
     """Out-of-bounds windows fail loudly instead of silently clipping."""
     path, _ = small_tiff_path
     with pytest.raises(ValueError, match="window=.* is outside"):
-        read_geotiff_dask(path, chunks=2, window=(0, 0, 100, 100))
+        _read_geotiff_dask(path, chunks=2, window=(0, 0, 100, 100))
 
 
 def test_read_geotiff_dask_invalid_band_raises(small_multiband_tiff_path):
     """Out-of-range band indexes fail with IndexError."""
     path, _ = small_multiband_tiff_path
     with pytest.raises(IndexError, match="band=5 out of range"):
-        read_geotiff_dask(path, chunks=4, band=5)
+        _read_geotiff_dask(path, chunks=4, band=5)
 
 
 def test_write_geotiff_gpu_rejects_tiled_false(tmp_path):
     """The GPU writer is tiled-only; ``tiled=False`` must fail loudly."""
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     dummy = np.zeros((2, 2), dtype=np.float32)
     with pytest.raises(ValueError, match="tiled=True"):
-        write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), tiled=False)
+        _write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), tiled=False)
 
 
 def test_write_geotiff_gpu_rejects_nonzero_max_z_error(tmp_path):
     """LERC budget is not implementable on the GPU path."""
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     dummy = np.zeros((2, 2), dtype=np.float32)
     with pytest.raises(ValueError, match="max_z_error is not supported"):
-        write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), max_z_error=1.0)
+        _write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), max_z_error=1.0)
 
 
 @_skip_no_gpu
@@ -569,14 +569,14 @@ def test_write_geotiff_gpu_accepts_streaming_buffer_bytes_as_noop(tmp_path):
     """``streaming_buffer_bytes`` is accepted for API parity (no-op)."""
     import cupy
 
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     arr = cupy.arange(16, dtype=cupy.float32).reshape(4, 4)
     da = xr.DataArray(arr, dims=['y', 'x'],
                       coords={'y': np.arange(4, dtype=np.float64),
                               'x': np.arange(4, dtype=np.float64)})
     p = tmp_path / 'kwarg_parity_streaming.tif'
-    write_geotiff_gpu(da, str(p), streaming_buffer_bytes=4096, tile_size=16)
+    _write_geotiff_gpu(da, str(p), streaming_buffer_bytes=4096, tile_size=16)
     rd = open_geotiff(str(p))
     np.testing.assert_array_equal(rd.values, arr.get())
 

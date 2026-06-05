@@ -3,9 +3,9 @@
 Covers:
 
 * early ``compression`` validation in ``to_geotiff``
-* read dispatch leaves ``read_geotiff_dask`` with a defensive
-  ``.vrt`` fallback that delegates to ``read_vrt``
-* ``write_vrt`` docstring lists kwargs (rejects unknown ones)
+* read dispatch leaves ``_read_geotiff_dask`` with a defensive
+  ``.vrt`` fallback that delegates to ``_read_vrt``
+* ``build_vrt`` docstring lists kwargs (rejects unknown ones)
 * predictor doc covers True/2 equivalence and 3=fp
 * ``tile_size`` warns when ``tiled=False`` and non-default
 * mmap cache eviction (LRU + env var override)
@@ -23,7 +23,7 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import read_geotiff_dask, to_geotiff, write_vrt
+from xrspatial.geotiff import _read_geotiff_dask, to_geotiff, build_vrt
 from xrspatial.geotiff._reader import _MmapCache, read_to_array
 from xrspatial.geotiff._writer import _MAX_OVERVIEW_LEVELS, write
 
@@ -61,9 +61,9 @@ class TestC1CompressionValidation:
 
 class TestC2ReadDispatch:
     def test_read_geotiff_dask_handles_vrt_directly(self, tmp_path):
-        # Build a 2-tile VRT and confirm read_geotiff_dask routes to the
+        # Build a 2-tile VRT and confirm _read_geotiff_dask routes to the
         # VRT reader without trying to parse XML as TIFF.
-        from xrspatial.geotiff import write_vrt as wv
+        from xrspatial.geotiff import build_vrt as wv
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         a_path = str(tmp_path / 'a_1488.tif')
         b_path = str(tmp_path / 'b_1488.tif')
@@ -75,12 +75,12 @@ class TestC2ReadDispatch:
         vrt_path = str(tmp_path / 'mosaic_1488.vrt')
         wv(vrt_path, [a_path, b_path])
 
-        result = read_geotiff_dask(vrt_path, chunks=8)
+        result = _read_geotiff_dask(vrt_path, chunks=8)
         assert result.dims == ('y', 'x')
 
 
 # ---------------------------------------------------------------------------
-# write_vrt kwargs documented
+# build_vrt kwargs documented
 # ---------------------------------------------------------------------------
 
 class TestC5WriteVrtKwargs:
@@ -93,7 +93,7 @@ class TestC5WriteVrtKwargs:
         # canonical name (``crs_wkt`` is the deprecated alias); pass
         # ``crs=None`` instead of the deprecated alias to avoid the
         # DeprecationWarning the alias now emits.
-        write_vrt(vrt_path, [a_path], relative=False, crs=None,
+        build_vrt(vrt_path, [a_path], relative=False, crs=None,
                   nodata=-9999.0)
         assert os.path.exists(vrt_path)
 
@@ -103,14 +103,14 @@ class TestC5WriteVrtKwargs:
         write(arr, a_path, compression='none')
         vrt_path = str(tmp_path / 'mosaic_c5b_1488.vrt')
         with pytest.raises(TypeError):
-            write_vrt(vrt_path, [a_path], not_a_real_kwarg=True)
+            build_vrt(vrt_path, [a_path], not_a_real_kwarg=True)
 
     def test_docstring_lists_kwargs(self):
         # Defensive: the docstring is the contract here -- guard
         # against future regressions.
-        assert 'relative' in write_vrt.__doc__
-        assert 'crs_wkt' in write_vrt.__doc__
-        assert 'nodata' in write_vrt.__doc__
+        assert 'relative' in build_vrt.__doc__
+        assert 'crs_wkt' in build_vrt.__doc__
+        assert 'nodata' in build_vrt.__doc__
 
 
 # ---------------------------------------------------------------------------
@@ -374,13 +374,13 @@ class TestP5DaskTaskCap:
         path = str(tmp_path / 'p5_1488.tif')
         write(arr, path, compression='none', tiled=True, tile_size=64)
         with pytest.raises(ValueError, match=r"50,000-task cap"):
-            read_geotiff_dask(path, chunks=2)
+            _read_geotiff_dask(path, chunks=2)
 
     def test_normal_chunks_pass(self, tmp_path):
         arr = np.zeros((512, 512), dtype=np.uint8)
         path = str(tmp_path / 'p5b_1488.tif')
         write(arr, path, compression='none', tiled=True, tile_size=128)
-        result = read_geotiff_dask(path, chunks=128)
+        result = _read_geotiff_dask(path, chunks=128)
         assert result.shape == (512, 512)
 
 

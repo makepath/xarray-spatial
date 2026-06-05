@@ -2,20 +2,20 @@
 
 The VRT path in ``xrspatial.geotiff``
 is reached when ``open_geotiff`` sees a ``.vrt`` source path; it
-delegates to ``read_vrt`` which parses the GDAL VRT XML and stitches
+delegates to ``_read_vrt`` which parses the GDAL VRT XML and stitches
 the listed source GeoTIFFs back into a single DataArray.
 
 This module synthesises a two-source horizontal mosaic from one corpus
 fixture: the source ``.tif`` is rasterio-copied twice into a temp
 directory with the second copy's origin shifted east by one image
-width, then ``write_vrt`` builds the VRT XML, and ``open_geotiff``
+width, then ``build_vrt`` builds the VRT XML, and ``open_geotiff``
 reads it back. The oracle reads the same VRT through rasterio so any
 divergence is in xrspatial's VRT plumbing, not in the mosaic geometry.
 
 A separate cell uses the COG fixture as the source. Its transform is
 the manifest default (``[0.001, 0, -120, 0, -0.001, 45]``); the
 right-half copy is shifted by ``+pixel_width * width`` so the two
-copies do not overlap, which is what ``write_vrt`` expects for a clean
+copies do not overlap, which is what ``build_vrt`` expects for a clean
 mosaic. The expected mosaic has shape ``(H, 2 * W)``.
 
 VRT-specific gaps -- if any surface -- go in ``_VRT_SKIPS``. The
@@ -33,7 +33,7 @@ import pytest
 pytest.importorskip("yaml")
 rasterio = pytest.importorskip("rasterio")
 
-from xrspatial.geotiff import open_geotiff, write_vrt  # noqa: E402
+from xrspatial.geotiff import open_geotiff, build_vrt  # noqa: E402
 
 # Golden-corpus fixtures span every codec/tier, including the
 # experimental and internal-only ones. Opting in here lets the parity
@@ -88,7 +88,7 @@ def _build_two_source_vrt(
         dst.write(data, 1)
 
     vrt_path = tmp_dir / "mosaic.vrt"
-    write_vrt(str(vrt_path), [str(left), str(right)])
+    build_vrt(str(vrt_path), [str(left), str(right)])
 
     expected = np.concatenate([data, data], axis=1)
     return vrt_path, expected

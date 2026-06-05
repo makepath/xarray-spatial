@@ -41,7 +41,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (NonUniformCoordsError, _coords_to_transform, _transform_from_attr,
-                               open_geotiff, read_vrt, to_geotiff, write_geotiff_gpu)
+                               open_geotiff, _read_vrt, to_geotiff, _write_geotiff_gpu)
 from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GEOREF_STATUS_CRS_ONLY,
                                       GEOREF_STATUS_FULL, GEOREF_STATUS_NONE,
                                       GEOREF_STATUS_ROTATED_DROPPED, GEOREF_STATUS_TRANSFORM_ONLY,
@@ -876,7 +876,7 @@ def test_vrt_full_status(tmp_path):
         crs_wkt='EPSG:4326',
         geo_transform='100.0, 1.0, 0.0, 200.5, 0.0, -1.0',
     )
-    rd = read_vrt(str(vrt))
+    rd = _read_vrt(str(vrt))
     assert rd.attrs[_STATUS_KEY] == GEOREF_STATUS_FULL
 
 
@@ -889,7 +889,7 @@ def test_vrt_crs_only_status(tmp_path):
         vrt, os.path.basename(src), height=4, width=4,
         crs_wkt='EPSG:4326',
     )
-    rd = read_vrt(str(vrt))
+    rd = _read_vrt(str(vrt))
     assert rd.attrs[_STATUS_KEY] == GEOREF_STATUS_CRS_ONLY
 
 
@@ -899,7 +899,7 @@ def test_vrt_none_status(tmp_path):
     _make_none_tiff(str(src))
     vrt = tmp_path / "georef_status_2136_vrt_none.vrt"
     _write_vrt_georef_status(vrt, os.path.basename(src), height=4, width=4)
-    rd = read_vrt(str(vrt))
+    rd = _read_vrt(str(vrt))
     assert rd.attrs[_STATUS_KEY] == GEOREF_STATUS_NONE
 
 
@@ -912,7 +912,7 @@ def test_vrt_full_status_chunked(tmp_path):
         crs_wkt='EPSG:4326',
         geo_transform='100.0, 1.0, 0.0, 200.5, 0.0, -1.0',
     )
-    rd = read_vrt(str(vrt), chunks=2)
+    rd = _read_vrt(str(vrt), chunks=2)
     assert rd.attrs[_STATUS_KEY] == GEOREF_STATUS_FULL
 
 
@@ -1332,7 +1332,7 @@ class TestGpuWindowedCoords:
 
     def test_offset_window_integer_coords(self, no_georef_path_1710):
         """GPU windowed read at a non-zero origin: the stripped-GPU
-        fallback in ``read_geotiff_gpu`` must check ``has_georef`` rather
+        fallback in ``_read_geotiff_gpu`` must check ``has_georef`` rather
         than ``t is None``; otherwise a non-georef TIFF emits
         ``[-0.5, -1.5, ...]`` via the unit
         ``GeoTransform`` placeholder. Pin the contract that the offset
@@ -2111,7 +2111,7 @@ class TestGpuWriterDegenerateGeoref:
         da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
         da_gpu.attrs = dict(da_cpu.attrs)
         p = str(tmp_path / "georef_1xN_gpu_1945.tif")
-        write_geotiff_gpu(da_gpu, p)
+        _write_geotiff_gpu(da_gpu, p)
         _assert_round_trip_1945(p, da_cpu)
 
     def test_Nx1_round_trip_preserves_transform(self, tmp_path):
@@ -2120,7 +2120,7 @@ class TestGpuWriterDegenerateGeoref:
         da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
         da_gpu.attrs = dict(da_cpu.attrs)
         p = str(tmp_path / "georef_Nx1_gpu_1945.tif")
-        write_geotiff_gpu(da_gpu, p)
+        _write_geotiff_gpu(da_gpu, p)
         _assert_round_trip_1945(p, da_cpu)
 
     def test_1x1_with_transform_attr_round_trips(self, tmp_path):
@@ -2129,7 +2129,7 @@ class TestGpuWriterDegenerateGeoref:
         da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
         da_gpu.attrs = dict(da_cpu.attrs)
         p = str(tmp_path / "georef_1x1_gpu_1945.tif")
-        write_geotiff_gpu(da_gpu, p)
+        _write_geotiff_gpu(da_gpu, p)
         _assert_round_trip_1945(p, da_cpu)
 
     def test_1x1_without_transform_raises(self, tmp_path):
@@ -2139,7 +2139,7 @@ class TestGpuWriterDegenerateGeoref:
         da_gpu.attrs = dict(da_cpu.attrs)
         p = str(tmp_path / "georef_1x1_no_tx_gpu_1945.tif")
         with pytest.raises(ValueError, match="(?i)pixel size|transform"):
-            write_geotiff_gpu(da_gpu, p)
+            _write_geotiff_gpu(da_gpu, p)
 
 
 @_gpu_only

@@ -10,7 +10,7 @@ Section 1 -- Dispatcher kwarg parity
     entry point so ``overview_level``, ``max_cloud_bytes``,
     ``missing_sources``, ``band_nodata``, ``on_gpu_failure``, and the
     file-like-source guard reject identically across ``open_geotiff`` /
-    ``read_geotiff_dask`` / ``read_geotiff_gpu`` / ``read_vrt``.
+    ``_read_geotiff_dask`` / ``_read_geotiff_gpu`` / ``_read_vrt``.
 
 Section 2 -- Eager finalization parity
     ``_finalize_eager_read`` stamps the same nodata / georef attrs on the
@@ -20,8 +20,8 @@ Section 2 -- Eager finalization parity
 
 Section 3 -- Lazy finalization parity
     ``_finalize_lazy_read_attrs`` stamps the same attrs on the two dask
-    backends (``read_geotiff_dask`` and the dask branch of
-    ``read_geotiff_gpu``). Covers the five georef states plus the
+    backends (``_read_geotiff_dask`` and the dask branch of
+    ``_read_geotiff_gpu``). Covers the five georef states plus the
     ``nodata_pixels_present`` / ``nodata_dtype_cast`` lazy contract.
 
 GPU and dask+GPU rows skip when cupy + CUDA are absent via the shared
@@ -35,8 +35,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
-                               to_geotiff, write_vrt)
+from xrspatial.geotiff import (open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
+                               to_geotiff, build_vrt)
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_CRS_ONLY, GEOREF_STATUS_FULL,
                                       GEOREF_STATUS_NONE, GEOREF_STATUS_ROTATED_DROPPED,
                                       GEOREF_STATUS_TRANSFORM_ONLY)
@@ -77,7 +77,7 @@ def _build_vrt(tmp_path):
     """Build a 1-source VRT mosaic referencing a small local GeoTIFF."""
     src = _build_local_tif(tmp_path, name='vrt_src_2175.tif')
     vrt = str(tmp_path / 'mosaic_2175.vrt')
-    write_vrt(vrt, [src])
+    build_vrt(vrt, [src])
     return vrt, src
 
 
@@ -107,57 +107,57 @@ def test_open_geotiff_overview_level_float(tmp_path):
 def test_dask_overview_level_bool(tmp_path, value):
     path = _build_local_tif(tmp_path)
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_dask(path, overview_level=value)
+        _read_geotiff_dask(path, overview_level=value)
 
 
 def test_dask_overview_level_str(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(TypeError, match="str"):
-        read_geotiff_dask(path, overview_level="0")
+        _read_geotiff_dask(path, overview_level="0")
 
 
 def test_dask_overview_level_float(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(TypeError, match="float"):
-        read_geotiff_dask(path, overview_level=1.0)
+        _read_geotiff_dask(path, overview_level=1.0)
 
 
 @pytest.mark.parametrize("value", [True, False])
 def test_gpu_overview_level_bool(tmp_path, value):
     path = _build_local_tif(tmp_path)
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_gpu(path, overview_level=value)
+        _read_geotiff_gpu(path, overview_level=value)
 
 
 def test_gpu_overview_level_str(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(TypeError, match="str"):
-        read_geotiff_gpu(path, overview_level="0")
+        _read_geotiff_gpu(path, overview_level="0")
 
 
 def test_gpu_overview_level_float(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(TypeError, match="float"):
-        read_geotiff_gpu(path, overview_level=1.0)
+        _read_geotiff_gpu(path, overview_level=1.0)
 
 
 @pytest.mark.parametrize("value", [True, False])
 def test_vrt_overview_level_bool(tmp_path, value):
     vrt, _src = _build_vrt(tmp_path)
     with pytest.raises(TypeError, match="bool"):
-        read_vrt(vrt, overview_level=value)
+        _read_vrt(vrt, overview_level=value)
 
 
 def test_vrt_overview_level_str(tmp_path):
     vrt, _src = _build_vrt(tmp_path)
     with pytest.raises(TypeError, match="str"):
-        read_vrt(vrt, overview_level="0")
+        _read_vrt(vrt, overview_level="0")
 
 
 def test_vrt_overview_level_float(tmp_path):
     vrt, _src = _build_vrt(tmp_path)
     with pytest.raises(TypeError, match="float"):
-        read_vrt(vrt, overview_level=1.0)
+        _read_vrt(vrt, overview_level=1.0)
 
 
 # --- max_cloud_bytes incompatibility through every applicable backend ---
@@ -184,19 +184,19 @@ def test_open_geotiff_vrt_rejects_max_cloud_bytes(tmp_path):
 def test_dask_rejects_max_cloud_bytes(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
-        read_geotiff_dask(path, max_cloud_bytes=8)
+        _read_geotiff_dask(path, max_cloud_bytes=8)
 
 
 def test_gpu_rejects_max_cloud_bytes(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
-        read_geotiff_gpu(path, max_cloud_bytes=8)
+        _read_geotiff_gpu(path, max_cloud_bytes=8)
 
 
 def test_vrt_rejects_max_cloud_bytes(tmp_path):
     vrt, _src = _build_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
-        read_vrt(vrt, max_cloud_bytes=8)
+        _read_vrt(vrt, max_cloud_bytes=8)
 
 
 def test_explicit_none_max_cloud_bytes_rejected_on_dask_direct(tmp_path):
@@ -207,19 +207,19 @@ def test_explicit_none_max_cloud_bytes_rejected_on_dask_direct(tmp_path):
     """
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
-        read_geotiff_dask(path, max_cloud_bytes=None)
+        _read_geotiff_dask(path, max_cloud_bytes=None)
 
 
 def test_explicit_none_max_cloud_bytes_rejected_on_gpu_direct(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
-        read_geotiff_gpu(path, max_cloud_bytes=None)
+        _read_geotiff_gpu(path, max_cloud_bytes=None)
 
 
 def test_explicit_none_max_cloud_bytes_rejected_on_vrt_direct(tmp_path):
     vrt, _src = _build_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
-        read_vrt(vrt, max_cloud_bytes=None)
+        _read_vrt(vrt, max_cloud_bytes=None)
 
 
 # --- missing_sources on non-VRT sources ---
@@ -234,13 +234,13 @@ def test_open_geotiff_rejects_missing_sources_on_tif(tmp_path):
 def test_dask_rejects_missing_sources_on_tif(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"missing_sources only applies"):
-        read_geotiff_dask(path, missing_sources='raise')
+        _read_geotiff_dask(path, missing_sources='raise')
 
 
 def test_gpu_rejects_missing_sources_on_tif(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"missing_sources only applies"):
-        read_geotiff_gpu(path, missing_sources='raise')
+        _read_geotiff_gpu(path, missing_sources='raise')
 
 
 # --- band_nodata on non-VRT sources ---
@@ -255,13 +255,13 @@ def test_open_geotiff_rejects_band_nodata_on_tif(tmp_path):
 def test_dask_rejects_band_nodata_on_tif(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"band_nodata only applies"):
-        read_geotiff_dask(path, band_nodata='first')
+        _read_geotiff_dask(path, band_nodata='first')
 
 
 def test_gpu_rejects_band_nodata_on_tif(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"band_nodata only applies"):
-        read_geotiff_gpu(path, band_nodata='first')
+        _read_geotiff_gpu(path, band_nodata='first')
 
 
 # --- on_gpu_failure when GPU is disabled ---
@@ -276,13 +276,13 @@ def test_open_geotiff_rejects_on_gpu_failure_when_gpu_false(tmp_path):
 def test_dask_rejects_on_gpu_failure(tmp_path):
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"on_gpu_failure only applies"):
-        read_geotiff_dask(path, on_gpu_failure='strict')
+        _read_geotiff_dask(path, on_gpu_failure='strict')
 
 
 def test_vrt_rejects_on_gpu_failure(tmp_path):
     vrt, _src = _build_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"on_gpu_failure only applies"):
-        read_vrt(vrt, on_gpu_failure='strict')
+        _read_vrt(vrt, on_gpu_failure='strict')
 
 
 # --- File-like sources reject gpu=True / chunks=... ---
@@ -315,7 +315,7 @@ def test_dask_rejects_file_like(tmp_path):
     with pytest.raises(
             ValueError,
             match=r"chunks=\.\.\. \(dask\) is not supported for file-like"):
-        read_geotiff_dask(buf)
+        _read_geotiff_dask(buf)
 
 
 def test_gpu_rejects_file_like(tmp_path):
@@ -325,7 +325,7 @@ def test_gpu_rejects_file_like(tmp_path):
     with pytest.raises(
             ValueError,
             match=r"gpu=True is not supported for file-like"):
-        read_geotiff_gpu(buf)
+        _read_geotiff_gpu(buf)
 
 
 # --- Path-object sources survive the helper's file-like guard ---
@@ -341,14 +341,14 @@ def test_open_geotiff_accepts_path_object(tmp_path):
 def test_dask_accepts_path_object(tmp_path):
     from pathlib import Path
     path = _build_local_tif(tmp_path)
-    out = read_geotiff_dask(Path(path), chunks=4)
+    out = _read_geotiff_dask(Path(path), chunks=4)
     assert out.shape == (8, 8)
 
 
 def test_vrt_accepts_path_object(tmp_path):
     from pathlib import Path
     vrt, _src = _build_vrt(tmp_path)
-    out = read_vrt(Path(vrt))
+    out = _read_vrt(Path(vrt))
     assert out.shape == (8, 8)
 
 
@@ -356,7 +356,7 @@ def test_vrt_accepts_path_object(tmp_path):
 def test_gpu_accepts_path_object(tmp_path):
     from pathlib import Path
     path = _build_local_tif(tmp_path)
-    out = read_geotiff_gpu(Path(path))
+    out = _read_geotiff_gpu(Path(path))
     assert out.shape == (8, 8)
 
 
@@ -374,7 +374,7 @@ def test_gpu_path_object_does_not_raise_file_like_error(tmp_path):
     # GPU reason. The one thing it must NOT raise is the file-like
     # ValueError introduced by the validator misclassifying Path.
     try:
-        read_geotiff_gpu(Path(path))
+        _read_geotiff_gpu(Path(path))
     except ValueError as e:
         assert "file-like" not in str(e), (
             f"validator misclassified Path as file-like: {e}"
@@ -397,13 +397,13 @@ def test_open_geotiff_defaults_round_trip(tmp_path):
 
 def test_dask_defaults_round_trip(tmp_path):
     path = _build_local_tif(tmp_path)
-    out = read_geotiff_dask(path)
+    out = _read_geotiff_dask(path)
     assert out.shape == (8, 8)
 
 
 def test_vrt_defaults_round_trip(tmp_path):
     vrt, _src = _build_vrt(tmp_path)
-    out = read_vrt(vrt)
+    out = _read_vrt(vrt)
     assert out.shape == (8, 8)
 
 
@@ -427,7 +427,7 @@ def test_max_cloud_bytes_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
     vrt, _ = _build_vrt(tmp_path)
     open_dask = _get_error(open_geotiff, path, chunks=4, max_cloud_bytes=8)
-    direct_dask = _get_error(read_geotiff_dask, path, max_cloud_bytes=8)
+    direct_dask = _get_error(_read_geotiff_dask, path, max_cloud_bytes=8)
     # Both raise ValueError with the same dask-incompatibility message.
     assert open_dask[0] == "ValueError"
     assert direct_dask[0] == "ValueError"
@@ -436,7 +436,7 @@ def test_max_cloud_bytes_message_parity(tmp_path):
         assert "dask" in msg
 
     open_gpu = _get_error(open_geotiff, path, gpu=True, max_cloud_bytes=8)
-    direct_gpu = _get_error(read_geotiff_gpu, path, max_cloud_bytes=8)
+    direct_gpu = _get_error(_read_geotiff_gpu, path, max_cloud_bytes=8)
     assert open_gpu[0] == "ValueError"
     assert direct_gpu[0] == "ValueError"
     for _, msg in (open_gpu, direct_gpu):
@@ -444,7 +444,7 @@ def test_max_cloud_bytes_message_parity(tmp_path):
         assert "gpu" in msg.lower()
 
     open_vrt = _get_error(open_geotiff, vrt, max_cloud_bytes=8)
-    direct_vrt = _get_error(read_vrt, vrt, max_cloud_bytes=8)
+    direct_vrt = _get_error(_read_vrt, vrt, max_cloud_bytes=8)
     assert open_vrt[0] == "ValueError"
     assert direct_vrt[0] == "ValueError"
     for _, msg in (open_vrt, direct_vrt):
@@ -456,8 +456,8 @@ def test_band_nodata_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
     results = [
         _get_error(open_geotiff, path, band_nodata='first'),
-        _get_error(read_geotiff_dask, path, band_nodata='first'),
-        _get_error(read_geotiff_gpu, path, band_nodata='first'),
+        _get_error(_read_geotiff_dask, path, band_nodata='first'),
+        _get_error(_read_geotiff_gpu, path, band_nodata='first'),
     ]
     for kind, msg in results:
         assert kind == "ValueError"
@@ -468,8 +468,8 @@ def test_missing_sources_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
     results = [
         _get_error(open_geotiff, path, missing_sources='raise'),
-        _get_error(read_geotiff_dask, path, missing_sources='raise'),
-        _get_error(read_geotiff_gpu, path, missing_sources='raise'),
+        _get_error(_read_geotiff_dask, path, missing_sources='raise'),
+        _get_error(_read_geotiff_gpu, path, missing_sources='raise'),
     ]
     for kind, msg in results:
         assert kind == "ValueError"
@@ -481,8 +481,8 @@ def test_on_gpu_failure_message_parity(tmp_path):
     vrt, _ = _build_vrt(tmp_path)
     results = [
         _get_error(open_geotiff, path, on_gpu_failure='strict'),
-        _get_error(read_geotiff_dask, path, on_gpu_failure='strict'),
-        _get_error(read_vrt, vrt, on_gpu_failure='strict'),
+        _get_error(_read_geotiff_dask, path, on_gpu_failure='strict'),
+        _get_error(_read_vrt, vrt, on_gpu_failure='strict'),
     ]
     for kind, msg in results:
         assert kind == "ValueError"
@@ -494,9 +494,9 @@ def test_overview_level_message_parity(tmp_path):
     vrt, _ = _build_vrt(tmp_path)
     results = [
         _get_error(open_geotiff, path, overview_level="bad"),
-        _get_error(read_geotiff_dask, path, overview_level="bad"),
-        _get_error(read_geotiff_gpu, path, overview_level="bad"),
-        _get_error(read_vrt, vrt, overview_level="bad"),
+        _get_error(_read_geotiff_dask, path, overview_level="bad"),
+        _get_error(_read_geotiff_gpu, path, overview_level="bad"),
+        _get_error(_read_vrt, vrt, overview_level="bad"),
     ]
     for kind, msg in results:
         assert kind == "TypeError"
@@ -815,19 +815,19 @@ def test_multiband_stripped_parity(tmp_path):
 # ===========================================================================
 #
 # ``_finalize_lazy_read_attrs`` centralises the validate-then-populate-then-
-# stamp logic shared by ``read_geotiff_dask`` (CPU+dask) and the dask branch
-# of ``read_geotiff_gpu`` (GPU+dask). Each test opens the same fixture
+# stamp logic shared by ``_read_geotiff_dask`` (CPU+dask) and the dask branch
+# of ``_read_geotiff_gpu`` (GPU+dask). Each test opens the same fixture
 # through both backends and compares the attrs.
 
 tifffile = pytest.importorskip("tifffile")
 
 
 def _open_cpu_dask(path, **kwargs):
-    return read_geotiff_dask(path, chunks=2, **kwargs)
+    return _read_geotiff_dask(path, chunks=2, **kwargs)
 
 
 def _open_gpu_dask(path, **kwargs):
-    return read_geotiff_gpu(path, chunks=2, **kwargs)
+    return _read_geotiff_gpu(path, chunks=2, **kwargs)
 
 
 _BACKENDS = [

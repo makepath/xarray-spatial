@@ -509,14 +509,14 @@ def test_overhead_matches_actual_emitted_size_via_writer_1905(tmp_path):
 # ``to_geotiff`` accepts a ``bigtiff`` kwarg but the Parameters block of
 # the docstring used to jump from ``overview_resampling`` directly to
 # ``gpu``.
-# ``write_geotiff_gpu`` documents the same kwarg correctly, so users
+# ``_write_geotiff_gpu`` documents the same kwarg correctly, so users
 # learning the API from ``to_geotiff(...)`` could not tell the option
 # existed. This section pins the docstring entry against future drift.
 import inspect  # noqa: E402
 import re  # noqa: E402
 
 from xrspatial.geotiff import to_geotiff as _to_geotiff_1683  # noqa: E402
-from xrspatial.geotiff import write_geotiff_gpu as _write_geotiff_gpu_1683  # noqa: E402
+from xrspatial.geotiff import _write_geotiff_gpu as _write_geotiff_gpu_1683  # noqa: E402
 
 
 def _documented_params_1683(fn) -> list[str]:
@@ -569,6 +569,6 @@ def test_write_geotiff_gpu_parameters_match_signature_1683():
     documented = _documented_params_1683(_write_geotiff_gpu_1683)
     missing = [p for p in params if p not in documented]
     assert not missing, (
-        f"write_geotiff_gpu docstring is missing parameter "
+        f"_write_geotiff_gpu docstring is missing parameter "
         f"descriptions for {missing}; documented params were {documented}"
     )

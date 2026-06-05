@@ -36,10 +36,10 @@ Section 5 -- ``gil_friendly`` deflate kwarg
 
 Section 6 -- Reader / writer kwarg behaviour
     Override-effect and dtype-cast coverage for kwargs that the
-    signature pins above only assert as *accepted*: ``read_geotiff_gpu``
-    / ``read_geotiff_dask`` ``name`` and ``max_pixels``, ``write_vrt``
+    signature pins above only assert as *accepted*: ``_read_geotiff_gpu``
+    / ``_read_geotiff_dask`` ``name`` and ``max_pixels``, ``build_vrt``
     ``relative`` / ``crs`` / ``nodata``, GPU reader ``dtype``, GPU writer
-    ``bigtiff`` / ``predictor``, and ``read_vrt`` ``window``.
+    ``bigtiff`` / ``predictor``, and ``_read_vrt`` ``window``.
 
 The sections share a *concern* (the public API contract) rather than
 runtime logic. GPU rows skip when cupy + CUDA are absent via the shared
@@ -63,8 +63,8 @@ import xarray as xr
 import xrspatial.geotiff as g
 import xrspatial.geotiff._compression as comp_mod
 from xrspatial.geotiff import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _wkt_to_epsg,
-                               open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
-                               to_geotiff, write_geotiff_gpu, write_vrt)
+                               open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
+                               to_geotiff, _write_geotiff_gpu, build_vrt)
 from xrspatial.geotiff._attrs import (_COMPRESSION_TAG_TO_NAME, _validate_read_codec_optin,
                                       _validate_write_rich_tag_optin)
 from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLATE, COMPRESSION_LZ4,
@@ -112,17 +112,17 @@ def test_open_geotiff_window_annotated():
 
 
 def test_read_vrt_window_annotated():
-    assert _annotation(read_vrt, 'window') == 'tuple | None'
+    assert _annotation(_read_vrt, 'window') == 'tuple | None'
 
 
 def test_read_geotiff_dask_window_annotated():
     """Pre-existing annotation -- keep it pinned so it does not regress."""
-    assert _annotation(read_geotiff_dask, 'window') == 'tuple | None'
+    assert _annotation(_read_geotiff_dask, 'window') == 'tuple | None'
 
 
 def test_read_geotiff_gpu_window_annotated():
     """Pre-existing annotation -- keep it pinned so it does not regress."""
-    assert _annotation(read_geotiff_gpu, 'window') == 'tuple | None'
+    assert _annotation(_read_geotiff_gpu, 'window') == 'tuple | None'
 
 
 # --- path: str or binary file-like (writer entry points) ---
@@ -136,22 +136,22 @@ def test_to_geotiff_path_annotated():
 
 
 def test_write_geotiff_gpu_path_annotated():
-    """``write_geotiff_gpu(data, path, ...)`` ``path`` mirrors ``to_geotiff``."""
-    ann = _annotation(write_geotiff_gpu, 'path')
+    """``_write_geotiff_gpu(data, path, ...)`` ``path`` mirrors ``to_geotiff``."""
+    ann = _annotation(_write_geotiff_gpu, 'path')
     assert 'str' in ann
     assert 'BinaryIO' in ann
 
 
 def test_write_vrt_path_annotated():
-    """``write_vrt(path, ...)`` is str-only (VRT writes are path-only by
+    """``build_vrt(path, ...)`` is str-only (VRT writes are path-only by
     design; no file-like buffer support). The canonical name
-    is ``path`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``).
+    is ``path`` (parity with ``to_geotiff`` / ``_write_geotiff_gpu``).
     The annotation is plain ``str``: the default value is a private
     sentinel (not ``None``) so the deprecation shim can distinguish
-    ``write_vrt(path=None, ...)`` (rejected with TypeError) from a
+    ``build_vrt(path=None, ...)`` (rejected with TypeError) from a
     caller who omitted ``path`` entirely (routed through the ``vrt_path``
     alias)."""
-    assert _annotation(write_vrt, 'path') == 'str'
+    assert _annotation(build_vrt, 'path') == 'str'
 
 
 def test_write_vrt_vrt_path_annotated():
@@ -159,7 +159,7 @@ def test_write_vrt_vrt_path_annotated():
     annotation as ``path`` (str-only at the type level; ``None`` only
     appears because the sentinel default lets the shim detect omission).
     Pinned so a future re-rename does not silently widen the alias."""
-    assert _annotation(write_vrt, 'vrt_path') == 'str | None'
+    assert _annotation(build_vrt, 'vrt_path') == 'str | None'
 
 
 # --- source: str or BinaryIO (open_geotiff is the public dispatch) ---
@@ -178,22 +178,22 @@ def test_open_geotiff_source_annotated():
 
 
 def test_read_geotiff_dask_source_str_only():
-    """``read_geotiff_dask(source: str)`` stays str-only: the dask path
+    """``_read_geotiff_dask(source: str)`` stays str-only: the dask path
     reopens the source by path from each worker task and does not
     support file-like buffers."""
-    assert _annotation(read_geotiff_dask, 'source') == 'str'
+    assert _annotation(_read_geotiff_dask, 'source') == 'str'
 
 
 def test_read_geotiff_gpu_source_str_only():
-    """``read_geotiff_gpu(source: str)`` stays str-only: GPU decode
+    """``_read_geotiff_gpu(source: str)`` stays str-only: GPU decode
     paths read by path / mmap and do not support file-like buffers."""
-    assert _annotation(read_geotiff_gpu, 'source') == 'str'
+    assert _annotation(_read_geotiff_gpu, 'source') == 'str'
 
 
 def test_read_vrt_source_str_only():
-    """``read_vrt(source: str)`` stays str-only: the VRT XML references
+    """``_read_vrt(source: str)`` stays str-only: the VRT XML references
     its own source files on disk."""
-    assert _annotation(read_vrt, 'source') == 'str'
+    assert _annotation(_read_vrt, 'source') == 'str'
 
 
 # --- dtype: str | np.dtype | None on every reader entry point ---
@@ -207,15 +207,15 @@ def test_open_geotiff_dtype_annotated():
 
 
 def test_read_geotiff_dask_dtype_annotated():
-    assert _annotation(read_geotiff_dask, 'dtype') == 'str | np.dtype | None'
+    assert _annotation(_read_geotiff_dask, 'dtype') == 'str | np.dtype | None'
 
 
 def test_read_geotiff_gpu_dtype_annotated():
-    assert _annotation(read_geotiff_gpu, 'dtype') == 'str | np.dtype | None'
+    assert _annotation(_read_geotiff_gpu, 'dtype') == 'str | np.dtype | None'
 
 
 def test_read_vrt_dtype_annotated():
-    assert _annotation(read_vrt, 'dtype') == 'str | np.dtype | None'
+    assert _annotation(_read_vrt, 'dtype') == 'str | np.dtype | None'
 
 
 # --- on_gpu_failure: 'auto' | 'strict' (GPU failure policy) ---
@@ -226,13 +226,13 @@ def test_open_geotiff_on_gpu_failure_annotated():
 
 
 def test_read_geotiff_gpu_on_gpu_failure_annotated():
-    assert _annotation(read_geotiff_gpu, 'on_gpu_failure') == 'str'
+    assert _annotation(_read_geotiff_gpu, 'on_gpu_failure') == 'str'
 
 
 def test_read_geotiff_gpu_deprecated_gpu_alias_annotated():
-    """The deprecated ``gpu=`` alias on ``read_geotiff_gpu`` carries the
+    """The deprecated ``gpu=`` alias on ``_read_geotiff_gpu`` carries the
     same ``str`` annotation as the new ``on_gpu_failure`` kwarg."""
-    assert _annotation(read_geotiff_gpu, 'gpu') == 'str'
+    assert _annotation(_read_geotiff_gpu, 'gpu') == 'str'
 
 
 # --- nodata: float | int | None on every writer entry point ---
@@ -243,12 +243,12 @@ def test_to_geotiff_nodata_annotated():
 
 
 def test_write_geotiff_gpu_nodata_annotated():
-    assert _annotation(write_geotiff_gpu, 'nodata') == 'float | int | None'
+    assert _annotation(_write_geotiff_gpu, 'nodata') == 'float | int | None'
 
 
 def test_write_vrt_nodata_annotated():
     """Pre-existing annotation -- keep it pinned."""
-    assert _annotation(write_vrt, 'nodata') == 'float | int | None'
+    assert _annotation(build_vrt, 'nodata') == 'float | int | None'
 
 
 # --- streaming_buffer_bytes: int on both writer entry points ---
@@ -271,10 +271,10 @@ def test_write_geotiff_gpu_streaming_buffer_bytes_annotated():
     hint. The kwarg is a runtime no-op on the GPU writer (deleted on
     entry); the annotation parity is the only consistency dimension."""
     assert _annotation(
-        write_geotiff_gpu, 'streaming_buffer_bytes'
+        _write_geotiff_gpu, 'streaming_buffer_bytes'
     ) == 'int'
     assert (
-        inspect.signature(write_geotiff_gpu)
+        inspect.signature(_write_geotiff_gpu)
         .parameters['streaming_buffer_bytes']
         .default
         == 256 * 1024 * 1024
@@ -376,8 +376,8 @@ def test_write_geotiff_gpu_streaming_buffer_bytes_runtime_noop(tmp_path):
     )
     p1 = str(tmp_path / 'default.tif')
     p2 = str(tmp_path / 'override.tif')
-    write_geotiff_gpu(da_gpu, p1)
-    write_geotiff_gpu(da_gpu, p2, streaming_buffer_bytes=8 * 1024 * 1024)
+    _write_geotiff_gpu(da_gpu, p1)
+    _write_geotiff_gpu(da_gpu, p2, streaming_buffer_bytes=8 * 1024 * 1024)
     # Both files have identical sizes -- the buffer kwarg is a no-op.
     assert os.path.getsize(p1) == os.path.getsize(p2)
 
@@ -387,7 +387,7 @@ def test_write_geotiff_gpu_streaming_buffer_bytes_runtime_noop(tmp_path):
 # ===========================================================================
 #
 # ``open_geotiff`` is the canonical surface. The three backend readers
-# (``read_geotiff_gpu``, ``read_geotiff_dask``, ``read_vrt``) must list the
+# (``_read_geotiff_gpu``, ``_read_geotiff_dask``, ``_read_vrt``) must list the
 # shared kwargs in the same relative order so ``inspect.signature``, IDE
 # autocomplete, and Sphinx-rendered docs do not drift. Each per-backend
 # signature carries its own subset of the canonical parameter list;
@@ -447,7 +447,7 @@ def _assert_canonical(fn, allowed_tail=()):
 
     Parameters that appear in ``_CANONICAL_ORDER`` must show up in the
     same relative order. Extras (e.g. the deprecated ``gpu`` alias on
-    ``read_geotiff_gpu``) are accepted at the tail when listed in
+    ``_read_geotiff_gpu``) are accepted at the tail when listed in
     ``allowed_tail`` and otherwise rejected so new kwargs cannot be
     quietly added in arbitrary positions.
     """
@@ -478,55 +478,55 @@ def test_open_geotiff_defines_canonical_order():
 
 
 def test_read_geotiff_gpu_matches_canonical_order():
-    """``read_geotiff_gpu`` must list shared params in the canonical order."""
+    """``_read_geotiff_gpu`` must list shared params in the canonical order."""
     # ``gpu`` here is the deprecated alias for ``on_gpu_failure`` (see
-    # ``read_geotiff_gpu``'s docstring). It is not the boolean backend
-    # selector that lives on ``open_geotiff`` / ``read_vrt``, so it sits
+    # ``_read_geotiff_gpu``'s docstring). It is not the boolean backend
+    # selector that lives on ``open_geotiff`` / ``_read_vrt``, so it sits
     # at the tail rather than in its canonical-order slot.
-    params = _kwonly_params(read_geotiff_gpu)
+    params = _kwonly_params(_read_geotiff_gpu)
     # ``gpu`` is the deprecated alias, intentionally last.
     assert params[-1] == "gpu", (
-        f"read_geotiff_gpu must keep the deprecated 'gpu' alias as the last "
+        f"_read_geotiff_gpu must keep the deprecated 'gpu' alias as the last "
         f"kwarg; got {params!r}"
     )
     # Drop the alias and run the canonical-subset check on the rest.
     head = params[:-1]
     canonical_head = [p for p in _CANONICAL_ORDER if p in head]
     assert head == canonical_head, (
-        f"read_geotiff_gpu kwarg order {head!r} does not match the canonical "
+        f"_read_geotiff_gpu kwarg order {head!r} does not match the canonical "
         f"subset {canonical_head!r}"
     )
 
 
 def test_read_geotiff_dask_matches_canonical_order():
-    """``read_geotiff_dask`` must list shared params in the canonical order."""
-    _assert_canonical(read_geotiff_dask)
+    """``_read_geotiff_dask`` must list shared params in the canonical order."""
+    _assert_canonical(_read_geotiff_dask)
 
 
 def test_read_vrt_matches_canonical_order():
-    """``read_vrt`` must list shared params in the canonical order.
+    """``_read_vrt`` must list shared params in the canonical order.
 
     ``band_nodata`` is the opt-out for the mixed-band metadata
     check; it is VRT-specific (no analogue on the other readers) and so
     lives in the per-function tail rather than in the shared canonical
     order.
     """
-    _assert_canonical(read_vrt, allowed_tail=('band_nodata',))
+    _assert_canonical(_read_vrt, allowed_tail=('band_nodata',))
 
 
 def test_no_pairwise_order_inversions():
     """For any pair of params shared by two readers, the order is consistent.
 
-    ``read_geotiff_gpu``'s ``gpu`` kwarg is a deprecated alias for
+    ``_read_geotiff_gpu``'s ``gpu`` kwarg is a deprecated alias for
     ``on_gpu_failure`` rather than the boolean backend selector that
-    ``open_geotiff`` / ``read_vrt`` expose, so it is excluded from the
+    ``open_geotiff`` / ``_read_vrt`` expose, so it is excluded from the
     cross-reader pair check.
     """
-    readers = (open_geotiff, read_geotiff_gpu, read_geotiff_dask, read_vrt)
+    readers = (open_geotiff, _read_geotiff_gpu, _read_geotiff_dask, _read_vrt)
     orders = {}
     for fn in readers:
         params = _kwonly_params(fn)
-        if fn is read_geotiff_gpu:
+        if fn is _read_geotiff_gpu:
             # Drop the deprecated alias before cross-comparing with the other
             # readers' boolean ``gpu`` kwarg (different meaning, same name).
             params = [p for p in params if p != "gpu"]
@@ -608,9 +608,9 @@ def _write_test_tif(tmp_path, compression: str,
 
 
 @pytest.mark.parametrize(
-    "fn", [open_geotiff, read_geotiff_dask, read_geotiff_gpu])
+    "fn", [open_geotiff, _read_geotiff_dask, _read_geotiff_gpu])
 def test_read_signature_has_codec_optin(fn):
-    """``open_geotiff`` / ``read_geotiff_dask`` / ``read_geotiff_gpu``
+    """``open_geotiff`` / ``_read_geotiff_dask`` / ``_read_geotiff_gpu``
     expose ``allow_experimental_codecs=False`` and
     ``allow_internal_only_jpeg=False``. The default is ``False`` so
     accidental removal of the gate would surface here.
@@ -842,7 +842,7 @@ def test_read_geotiff_dask_rejects_experimental_codec(tmp_path):
     path = _write_test_tif(
         tmp_path, 'lz4', allow_experimental_codecs=True)
     with pytest.raises(ValueError, match='allow_experimental_codecs'):
-        read_geotiff_dask(path, chunks=16)
+        _read_geotiff_dask(path, chunks=16)
 
 
 def test_read_geotiff_dask_accepts_experimental_codec_with_flag(tmp_path):
@@ -850,7 +850,7 @@ def test_read_geotiff_dask_accepts_experimental_codec_with_flag(tmp_path):
     path = _write_test_tif(
         tmp_path, 'lz4', allow_experimental_codecs=True)
     try:
-        da = read_geotiff_dask(
+        da = _read_geotiff_dask(
             path, chunks=16, allow_experimental_codecs=True)
     except (ImportError, ModuleNotFoundError) as e:
         pytest.skip(f"optional decoder missing: {e}")
@@ -915,7 +915,7 @@ def test_write_geotiff_gpu_rejects_rich_tags_without_flag(tmp_path):
     )
     path = os.path.join(str(tmp_path), 'rich_gpu.tif')
     with pytest.raises(ValueError, match='gdal_metadata_xml'):
-        write_geotiff_gpu(da, path)
+        _write_geotiff_gpu(da, path)
 
 
 # --- Already-gated paths: pin the existing opt-in inventory ---
@@ -1751,12 +1751,12 @@ def test_write_deflate_round_trip_across_parallelism_modes(
 # Override-effect and dtype-cast coverage for kwargs that the signature
 # pins in earlier sections assert only as *accepted*. Three groups:
 #
-#   6a -- ``write_vrt`` ``relative`` / ``crs`` / ``nodata`` override effect,
+#   6a -- ``build_vrt`` ``relative`` / ``crs`` / ``nodata`` override effect,
 #         plus the empty-``source_files`` error path.
-#   6b -- ``read_geotiff_gpu`` / ``read_geotiff_dask`` ``name`` and
-#         ``max_pixels``, ``read_geotiff_gpu`` ``dtype`` cast, GPU writer
+#   6b -- ``_read_geotiff_gpu`` / ``_read_geotiff_dask`` ``name`` and
+#         ``max_pixels``, ``_read_geotiff_gpu`` ``dtype`` cast, GPU writer
 #         ``bigtiff``.
-#   6c -- GPU writer ``predictor`` encode kernels and ``read_vrt(window=)``
+#   6c -- GPU writer ``predictor`` encode kernels and ``_read_vrt(window=)``
 #         windowed-read semantics.
 
 
@@ -1819,7 +1819,7 @@ def small_tiff_path(tmp_path):
     return str(p), arr
 
 
-# --- 6a: write_vrt override effect (relative / crs / nodata) + error path ---
+# --- 6a: build_vrt override effect (relative / crs / nodata) + error path ---
 
 
 class TestWriteVrtRelativeBehaviour:
@@ -1833,7 +1833,7 @@ class TestWriteVrtRelativeBehaviour:
 
     def test_relative_true_writes_relative_path(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'rel_true.vrt')
-        write_vrt(vrt_path, [source_tif], relative=True)
+        build_vrt(vrt_path, [source_tif], relative=True)
 
         xml = self._read_xml(vrt_path)
         # The on-disk text must carry the relativeToVRT="1" attribute,
@@ -1850,7 +1850,7 @@ class TestWriteVrtRelativeBehaviour:
 
     def test_relative_false_writes_absolute_path(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'rel_false.vrt')
-        write_vrt(vrt_path, [source_tif], relative=False)
+        build_vrt(vrt_path, [source_tif], relative=False)
 
         xml = self._read_xml(vrt_path)
         # ``relative=False`` must flip the attribute and emit an absolute
@@ -1867,7 +1867,7 @@ class TestWriteVrtRelativeBehaviour:
         """relative=True still round-trips: parse_vrt resolves the
         relative path back to the absolute one."""
         vrt_path = str(tmp_path / 'rel_true_rt.vrt')
-        write_vrt(vrt_path, [source_tif], relative=True)
+        build_vrt(vrt_path, [source_tif], relative=True)
         parsed = parse_vrt(self._read_xml(vrt_path), vrt_dir=str(tmp_path))
         assert len(parsed.bands) == 1
         assert len(parsed.bands[0].sources) == 1
@@ -1880,7 +1880,7 @@ class TestWriteVrtRelativeBehaviour:
 
     def test_relative_false_parses_back_to_same_source(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'rel_false_rt.vrt')
-        write_vrt(vrt_path, [source_tif], relative=False)
+        build_vrt(vrt_path, [source_tif], relative=False)
         parsed = parse_vrt(self._read_xml(vrt_path), vrt_dir=str(tmp_path))
         assert len(parsed.bands) == 1
         assert (
@@ -1895,7 +1895,7 @@ class TestWriteVrtCrsWktBehaviour:
     override wins.
 
     The kwarg was formerly named ``crs_wkt``. The new canonical name
-    is ``crs`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``);
+    is ``crs`` (parity with ``to_geotiff`` / ``_write_geotiff_gpu``);
     the old name is still accepted with ``DeprecationWarning``. These
     tests exercise the new path; the deprecated path is covered by
     the VRT write tests.
@@ -1914,7 +1914,7 @@ class TestWriteVrtCrsWktBehaviour:
             'PROJECTION["Transverse_Mercator"],UNIT["metre",1]]'
         )
         vrt_path = str(tmp_path / 'crs_wkt_override.vrt')
-        write_vrt(vrt_path, [source_tif], crs=override)
+        build_vrt(vrt_path, [source_tif], crs=override)
         parsed = self._read_parsed(vrt_path, tmp_path)
         assert parsed.crs_wkt == override
 
@@ -1924,7 +1924,7 @@ class TestWriteVrtCrsWktBehaviour:
         non-empty, and match the source TIF's own crs_wkt (no silent
         substitution, no None on the fall-back path)."""
         vrt_path = str(tmp_path / 'crs_wkt_default.vrt')
-        write_vrt(vrt_path, [source_tif])
+        build_vrt(vrt_path, [source_tif])
         parsed = self._read_parsed(vrt_path, tmp_path)
 
         source_da = open_geotiff(source_tif)
@@ -1947,10 +1947,10 @@ class TestWriteVrtCrsWktBehaviour:
         )
         # Override path
         vrt_override = str(tmp_path / 'override.vrt')
-        write_vrt(vrt_override, [source_tif], crs=override)
+        build_vrt(vrt_override, [source_tif], crs=override)
         # Default path
         vrt_default = str(tmp_path / 'default.vrt')
-        write_vrt(vrt_default, [source_tif])
+        build_vrt(vrt_default, [source_tif])
 
         with open(vrt_override, 'r') as fh:
             text_override = fh.read()
@@ -1972,7 +1972,7 @@ class TestWriteVrtNodataBehaviour:
 
     def test_nodata_override_wins(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'nodata_override.vrt')
-        write_vrt(vrt_path, [source_tif], nodata=-9999.0)
+        build_vrt(vrt_path, [source_tif], nodata=-9999.0)
         bands = self._bands(vrt_path, tmp_path)
         assert len(bands) == 1
         assert bands[0].nodata == -9999.0
@@ -1983,7 +1983,7 @@ class TestWriteVrtNodataBehaviour:
         silently dropped the default-from-source code path would land
         ``None`` here."""
         vrt_path = str(tmp_path / 'nodata_default.vrt')
-        write_vrt(vrt_path, [source_tif])
+        build_vrt(vrt_path, [source_tif])
         bands = self._bands(vrt_path, tmp_path)
         assert len(bands) == 1
         assert bands[0].nodata == -1.0
@@ -1992,14 +1992,14 @@ class TestWriteVrtNodataBehaviour:
         """Raw XML check: the override sentinel value lands in a
         <NoDataValue> element."""
         vrt_path = str(tmp_path / 'nodata_xml.vrt')
-        write_vrt(vrt_path, [source_tif], nodata=-12345.0)
+        build_vrt(vrt_path, [source_tif], nodata=-12345.0)
         with open(vrt_path, 'r') as fh:
             xml = fh.read()
         assert '<NoDataValue>-12345.0</NoDataValue>' in xml
 
 
 class TestWriteVrtEmptySourceFiles:
-    """``write_vrt(source_files=[])`` raises with a clear message.
+    """``build_vrt(source_files=[])`` raises with a clear message.
     The error path is uncovered. A regression dropping the
     pre-validation would surface much further down as an IndexError
     when computing the bounding box of zero sources."""
@@ -2007,12 +2007,12 @@ class TestWriteVrtEmptySourceFiles:
     def test_empty_list_raises(self, tmp_path):
         vrt_path = str(tmp_path / 'should_not_exist.vrt')
         with pytest.raises(ValueError, match="source_files must not be empty"):
-            write_vrt(vrt_path, [])
+            build_vrt(vrt_path, [])
 
     def test_empty_list_does_not_create_file(self, tmp_path):
         vrt_path = str(tmp_path / 'should_not_exist_2.vrt')
         try:
-            write_vrt(vrt_path, [])
+            build_vrt(vrt_path, [])
         except ValueError:
             pass
         assert not os.path.exists(vrt_path)
@@ -2023,14 +2023,14 @@ class TestWriteVrtEmptySourceFiles:
 
 def test_read_geotiff_dask_name_kwarg_sets_name(small_tiff_path):
     path, arr = small_tiff_path
-    da = read_geotiff_dask(path, chunks=4, name="custom_dask")
+    da = _read_geotiff_dask(path, chunks=4, name="custom_dask")
     assert da.name == "custom_dask"
     np.testing.assert_array_equal(da.values, arr)
 
 
 def test_read_geotiff_dask_default_name_from_path(small_tiff_path):
     path, _ = small_tiff_path
-    da = read_geotiff_dask(path, chunks=4)
+    da = _read_geotiff_dask(path, chunks=4)
     # Default name is filename stem when no override is supplied.
     assert da.name == "small"
 
@@ -2038,7 +2038,7 @@ def test_read_geotiff_dask_default_name_from_path(small_tiff_path):
 @requires_gpu
 def test_read_geotiff_gpu_name_kwarg_sets_name(small_tiff_path):
     path, arr = small_tiff_path
-    da = read_geotiff_gpu(path, name="custom_gpu")
+    da = _read_geotiff_gpu(path, name="custom_gpu")
     assert da.name == "custom_gpu"
     np.testing.assert_array_equal(da.data.get(), arr)
 
@@ -2046,14 +2046,14 @@ def test_read_geotiff_gpu_name_kwarg_sets_name(small_tiff_path):
 @requires_gpu
 def test_read_geotiff_gpu_default_name_from_path(small_tiff_path):
     path, _ = small_tiff_path
-    da = read_geotiff_gpu(path)
+    da = _read_geotiff_gpu(path)
     assert da.name == "small"
 
 
 @requires_gpu
 def test_read_geotiff_gpu_chunks_name_kwarg_sets_name(small_tiff_path):
     path, arr = small_tiff_path
-    da = read_geotiff_gpu(path, chunks=4, name="custom_dask_gpu")
+    da = _read_geotiff_gpu(path, chunks=4, name="custom_dask_gpu")
     assert da.name == "custom_dask_gpu"
     np.testing.assert_array_equal(da.data.compute().get(), arr)
 
@@ -2064,7 +2064,7 @@ def test_read_geotiff_gpu_max_pixels_accepts_within_budget(small_tiff_path):
     # 8 * 8 = 64 pixels but per-tile dim safety check uses tile_size=16
     # (256 pixels per tile); 300 leaves room. The fixture's tile_size
     # was bumped to 16 to satisfy the TIFF 6 multiple-of-16 rule.
-    da = read_geotiff_gpu(path, max_pixels=300)
+    da = _read_geotiff_gpu(path, max_pixels=300)
     np.testing.assert_array_equal(da.data.get(), arr)
 
 
@@ -2072,7 +2072,7 @@ def test_read_geotiff_gpu_max_pixels_accepts_within_budget(small_tiff_path):
 def test_read_geotiff_gpu_max_pixels_rejects_oversized(small_tiff_path):
     path, _ = small_tiff_path
     with pytest.raises(ValueError, match="safety limit|exceeds max_pixels"):
-        read_geotiff_gpu(path, max_pixels=10)
+        _read_geotiff_gpu(path, max_pixels=10)
 
 
 @requires_gpu
@@ -2089,7 +2089,7 @@ def test_read_geotiff_gpu_chunks_max_pixels_rejects_oversized(small_tiff_path):
     """
     path, _ = small_tiff_path
     with pytest.raises(ValueError, match="safety limit|exceeds max_pixels"):
-        da = read_geotiff_gpu(path, chunks=4, max_pixels=10)
+        da = _read_geotiff_gpu(path, chunks=4, max_pixels=10)
         da.compute()
 
 
@@ -2125,31 +2125,31 @@ def test_open_geotiff_gpu_max_pixels_rejects(small_tiff_path):
 
 @requires_gpu
 class TestReadGeotiffGpuDtype:
-    """``read_geotiff_gpu(dtype=...)`` casts on device. The eager CPU
+    """``_read_geotiff_gpu(dtype=...)`` casts on device. The eager CPU
     path has TestDtypeEager; the dask path has TestDtypeDask. The GPU
     path had no equivalent."""
 
     def test_float64_to_float32(self, float64_tif):
         path, orig = float64_tif
-        result = read_geotiff_gpu(path, dtype='float32')
+        result = _read_geotiff_gpu(path, dtype='float32')
         assert result.dtype == np.float32
         np.testing.assert_array_almost_equal(
             result.data.get(), orig.astype(np.float32), decimal=6)
 
     def test_float64_to_float16(self, float64_tif):
         path, _ = float64_tif
-        result = read_geotiff_gpu(path, dtype=np.float16)
+        result = _read_geotiff_gpu(path, dtype=np.float16)
         assert result.dtype == np.float16
 
     def test_uint16_to_int32(self, uint16_tif):
         path, orig = uint16_tif
-        result = read_geotiff_gpu(path, dtype='int32')
+        result = _read_geotiff_gpu(path, dtype='int32')
         assert result.dtype == np.int32
         np.testing.assert_array_equal(result.data.get(), orig.astype(np.int32))
 
     def test_uint16_to_uint8(self, uint16_tif):
         path, _ = uint16_tif
-        result = read_geotiff_gpu(path, dtype='uint8')
+        result = _read_geotiff_gpu(path, dtype='uint8')
         assert result.dtype == np.uint8
 
     def test_float_to_int_raises(self, float64_tif):
@@ -2157,23 +2157,23 @@ class TestReadGeotiffGpuDtype:
         # The validator runs before the GPU upload; the error contract is
         # the same as the CPU path (``float`` ... ``int``).
         with pytest.raises(ValueError, match='float.*int'):
-            read_geotiff_gpu(path, dtype='int32')
+            _read_geotiff_gpu(path, dtype='int32')
 
     def test_dtype_none_preserves_native_float64(self, float64_tif):
         path, _ = float64_tif
-        result = read_geotiff_gpu(path, dtype=None)
+        result = _read_geotiff_gpu(path, dtype=None)
         assert result.dtype == np.float64
 
     def test_dtype_none_preserves_native_uint16(self, uint16_tif):
         path, _ = uint16_tif
-        result = read_geotiff_gpu(path, dtype=None)
+        result = _read_geotiff_gpu(path, dtype=None)
         assert result.dtype == np.uint16
 
 
 @requires_gpu
 class TestOpenGeotiffGpuDispatchDtype:
     """``open_geotiff(..., gpu=True, dtype=...)`` forwards through the
-    dispatcher into ``read_geotiff_gpu``. Pin the dispatch path so a
+    dispatcher into ``_read_geotiff_gpu``. Pin the dispatch path so a
     regression dropping ``dtype=`` on the GPU branch surfaces here too."""
 
     def test_dispatch_float64_to_float32(self, float64_tif):
@@ -2191,14 +2191,14 @@ class TestOpenGeotiffGpuDispatchDtype:
 
 @requires_gpu
 class TestReadGeotiffGpuChunksDtype:
-    """``read_geotiff_gpu(chunks=..., dtype=...)`` -- dask + GPU + dtype
+    """``_read_geotiff_gpu(chunks=..., dtype=...)`` -- dask + GPU + dtype
     combination is a separate dispatch path through the GPU reader and
     its own ``astype`` step on the cupy array, then a ``chunk`` call.
     Cover the cast for the dask+GPU branch too."""
 
     def test_chunks_float64_to_float32(self, float64_tif):
         path, orig = float64_tif
-        result = read_geotiff_gpu(path, chunks=20, dtype='float32')
+        result = _read_geotiff_gpu(path, chunks=20, dtype='float32')
         assert result.dtype == np.float32
         # ``.data`` is a dask array of cupy chunks. Compute, then
         # ``.get()`` the resulting cupy host buffer.
@@ -2209,7 +2209,7 @@ class TestReadGeotiffGpuChunksDtype:
 
 @requires_gpu
 class TestWriteGeotiffGpuBigtiff:
-    """``write_geotiff_gpu(bigtiff=)`` threads ``force_bigtiff=`` to
+    """``_write_geotiff_gpu(bigtiff=)`` threads ``force_bigtiff=`` to
     ``_assemble_tiff``. The CPU writer has equivalent header-level
     bigtiff coverage; the GPU writer did not.
 
@@ -2232,9 +2232,9 @@ class TestWriteGeotiffGpuBigtiff:
                     'x': np.arange(8, dtype=np.float64)},
         )
         path = str(tmp_path / 'gpu_bigtiff_true.tif')
-        write_geotiff_gpu(da, path, bigtiff=True, tile_size=16)
+        _write_geotiff_gpu(da, path, bigtiff=True, tile_size=16)
         assert self._read_header_is_bigtiff(path), (
-            "write_geotiff_gpu(bigtiff=True) should emit BigTIFF header "
+            "_write_geotiff_gpu(bigtiff=True) should emit BigTIFF header "
             "(magic byte 43)."
         )
         # Data round-trips even with the BigTIFF header.
@@ -2250,9 +2250,9 @@ class TestWriteGeotiffGpuBigtiff:
                     'x': np.arange(8, dtype=np.float64)},
         )
         path = str(tmp_path / 'gpu_bigtiff_false.tif')
-        write_geotiff_gpu(da, path, bigtiff=False, tile_size=16)
+        _write_geotiff_gpu(da, path, bigtiff=False, tile_size=16)
         assert not self._read_header_is_bigtiff(path), (
-            "write_geotiff_gpu(bigtiff=False) should emit classic TIFF."
+            "_write_geotiff_gpu(bigtiff=False) should emit classic TIFF."
         )
 
     def test_bigtiff_none_stays_classic_small_file(self, tmp_path):
@@ -2268,16 +2268,16 @@ class TestWriteGeotiffGpuBigtiff:
                     'x': np.arange(8, dtype=np.float64)},
         )
         path = str(tmp_path / 'gpu_bigtiff_default.tif')
-        write_geotiff_gpu(da, path, tile_size=16)
+        _write_geotiff_gpu(da, path, tile_size=16)
         assert not self._read_header_is_bigtiff(path), (
-            "write_geotiff_gpu default should auto-pick classic TIFF for "
+            "_write_geotiff_gpu default should auto-pick classic TIFF for "
             "tiny outputs; a default switch to BigTIFF would break "
             "older readers."
         )
 
     def test_to_geotiff_gpu_bigtiff_threads_through(self, tmp_path):
         """``to_geotiff(..., gpu=True, bigtiff=True)`` dispatches into
-        ``write_geotiff_gpu(bigtiff=True)``. Cover the dispatcher's
+        ``_write_geotiff_gpu(bigtiff=True)``. Cover the dispatcher's
         thread-through so a regression dropping ``bigtiff=`` on the GPU
         dispatch branch surfaces here too."""
         import cupy
@@ -2297,7 +2297,7 @@ class TestWriteGeotiffGpuBigtiff:
         np.testing.assert_array_equal(rd.values, arr.get())
 
 
-# --- 6c: GPU writer predictor encode kernels + read_vrt(window=) ---
+# --- 6c: GPU writer predictor encode kernels + _read_vrt(window=) ---
 
 
 def _read_predictor_tag(path: str) -> int | None:
@@ -2358,8 +2358,8 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_u8_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=True,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=True,
+                           tile_size=16)
 
         # Round-trip through the public reader
         out = open_geotiff(path)
@@ -2375,8 +2375,8 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_int_u8_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=2,
+                           tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -2397,8 +2397,8 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_u8_3band_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=2,
+                           tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -2416,8 +2416,8 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_no_pred_u8_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=False,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=False,
+                           tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -2440,8 +2440,8 @@ class TestWriteGeotiffGpuPredictor2Uint16:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_u16_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=2,
+                           tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -2467,8 +2467,8 @@ class TestWriteGeotiffGpuPredictor2Int32:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_i32_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=2,
+                           tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -2495,8 +2495,8 @@ class TestWriteGeotiffGpuPredictor3Float:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred3_f32_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=3,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=3,
+                           tile_size=16)
 
         out = open_geotiff(path)
         # FP predictor is lossless: equality, not allclose
@@ -2510,8 +2510,8 @@ class TestWriteGeotiffGpuPredictor3Float:
         da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred3_f64_2026_05_12_v2.tif')
 
-        write_geotiff_gpu(da, path, compression='deflate', predictor=3,
-                          tile_size=16)
+        _write_geotiff_gpu(da, path, compression='deflate', predictor=3,
+                           tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -2526,14 +2526,14 @@ class TestWriteGeotiffGpuPredictor3Float:
 
         with pytest.raises(ValueError,
                            match=r"predictor=3.*requires float"):
-            write_geotiff_gpu(da, path, compression='deflate', predictor=3,
-                              tile_size=16)
+            _write_geotiff_gpu(da, path, compression='deflate', predictor=3,
+                               tile_size=16)
 
 
 @requires_gpu
 class TestWriteGeotiffGpuPredictorCpuParity:
     """Pixel-exact parity between CPU ``to_geotiff(predictor=X)`` and
-    GPU ``write_geotiff_gpu(predictor=X)``.
+    GPU ``_write_geotiff_gpu(predictor=X)``.
 
     Predictor encode is a lossless transform: identical inputs must
     produce identical decoded outputs regardless of whether the
@@ -2552,8 +2552,8 @@ class TestWriteGeotiffGpuPredictorCpuParity:
 
         to_geotiff(_da_with_float_coords(arr), cpu_path,
                    compression='deflate', predictor=2, tile_size=16)
-        write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
-                          compression='deflate', predictor=2, tile_size=16)
+        _write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
+                           compression='deflate', predictor=2, tile_size=16)
 
         cpu_out = open_geotiff(cpu_path).values
         gpu_out = open_geotiff(gpu_path).values
@@ -2570,8 +2570,8 @@ class TestWriteGeotiffGpuPredictorCpuParity:
 
         to_geotiff(_da_with_float_coords(arr), cpu_path,
                    compression='deflate', predictor=3, tile_size=16)
-        write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
-                          compression='deflate', predictor=3, tile_size=16)
+        _write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
+                           compression='deflate', predictor=3, tile_size=16)
 
         cpu_out = open_geotiff(cpu_path).values
         gpu_out = open_geotiff(gpu_path).values
@@ -2604,7 +2604,7 @@ def _make_2x1_mosaic_vrt(tmp_path, left: np.ndarray,
     """Create a 2x1 horizontal mosaic VRT for cross-source window tests.
 
     Hand-built XML so the dst_rect placements are explicit -- VRT's
-    write_vrt helper only handles single-source layouts directly.
+    build_vrt helper only handles single-source layouts directly.
     """
     h, lw = left.shape[:2]
     rw = right.shape[1]
@@ -2649,7 +2649,7 @@ def _make_2x1_mosaic_vrt(tmp_path, left: np.ndarray,
 
 
 class TestReadVrtWindowEager:
-    """Eager numpy ``read_vrt(window=...)`` slices the assembled raster."""
+    """Eager numpy ``_read_vrt(window=...)`` slices the assembled raster."""
 
     def test_window_subregion_of_single_source(self, tmp_path):
         """Window picks a 4x6 sub-block from an 8x16 single-source VRT."""
@@ -2657,7 +2657,7 @@ class TestReadVrtWindowEager:
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
         # rows 2..6, cols 4..10
-        result = read_vrt(vrt, window=(2, 4, 6, 10))
+        result = _read_vrt(vrt, window=(2, 4, 6, 10))
 
         assert result.shape == (4, 6)
         np.testing.assert_array_equal(result.values, arr[2:6, 4:10])
@@ -2667,15 +2667,15 @@ class TestReadVrtWindowEager:
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        full = read_vrt(vrt).values
-        windowed = read_vrt(vrt, window=(0, 0, 8, 16)).values
+        full = _read_vrt(vrt).values
+        windowed = _read_vrt(vrt, window=(0, 0, 8, 16)).values
 
         np.testing.assert_array_equal(windowed, full)
 
     def test_window_outside_raster_bounds_rejected(self, tmp_path):
         """Window extending past raster bounds raises ``ValueError``.
 
-        ``read_vrt`` used to silently clamp out-of-bounds windows. That
+        ``_read_vrt`` used to silently clamp out-of-bounds windows. That
         masked caller bugs (typo'd coords, off-by-one extents) and made
         the returned shape disagree with the caller's coord arrays. The
         validator now rejects such windows up front with a typed
@@ -2685,12 +2685,12 @@ class TestReadVrtWindowEager:
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
         with pytest.raises(ValueError, match="outside the VRT extent"):
-            read_vrt(vrt, window=(0, 0, 100, 100))
+            _read_vrt(vrt, window=(0, 0, 100, 100))
 
     def test_window_negative_offsets_rejected(self, tmp_path):
         """Negative start offsets raise ``ValueError``.
 
-        ``read_vrt`` validates the window
+        ``_read_vrt`` validates the window
         against the VRT extent. Negative offsets are rejected the same
         way an over-large window is, rather than being silently clamped
         to zero.
@@ -2699,7 +2699,7 @@ class TestReadVrtWindowEager:
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
         with pytest.raises(ValueError, match="outside the VRT extent"):
-            read_vrt(vrt, window=(-1, -2, 3, 4))
+            _read_vrt(vrt, window=(-1, -2, 3, 4))
 
     def test_window_across_mosaic_seam(self, tmp_path):
         """Window straddling a multi-source seam reads both sources.
@@ -2717,7 +2717,7 @@ class TestReadVrtWindowEager:
         vrt = _make_2x1_mosaic_vrt(tmp_path, left, right)
 
         # Window rows 0..4, cols 0..6 (cuts across seam at col 4)
-        result = read_vrt(vrt, window=(0, 0, 4, 6))
+        result = _read_vrt(vrt, window=(0, 0, 4, 6))
 
         assert result.shape == (4, 6)
         # cols 0-3 of window are cols 0-3 of left
@@ -2733,7 +2733,7 @@ class TestReadVrtWindowEager:
         vrt = _make_2x1_mosaic_vrt(tmp_path, left, right)
 
         # Window cols 5..8 -> right cols 1..4
-        result = read_vrt(vrt, window=(0, 5, 4, 8))
+        result = _read_vrt(vrt, window=(0, 5, 4, 8))
 
         assert result.shape == (4, 3)
         np.testing.assert_array_equal(result.values, right[:, 1:4])
@@ -2746,13 +2746,13 @@ class TestReadVrtWindowEager:
         must advertise the shifted origin ``origin_x' = origin_x +
         c0*res_x`` and ``origin_y' = origin_y + r0*res_y``. This is
         the metadata-propagation contract that ``open_geotiff
-        (window=)`` already honours; ``read_vrt(window=)`` must
+        (window=)`` already honours; ``_read_vrt(window=)`` must
         agree.
         """
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        result = read_vrt(vrt, window=(2, 3, 6, 10))
+        result = _read_vrt(vrt, window=(2, 3, 6, 10))
 
         # GeoTransform from _vrt.write_vrt default: pixel-is-area,
         # res_x=1.0, res_y=-1.0, origin (0, 0).
@@ -2776,14 +2776,14 @@ class TestReadVrtWindowEager:
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        result = read_vrt(vrt, window=(2, 3, 6, 10))
+        result = _read_vrt(vrt, window=(2, 3, 6, 10))
 
         assert float(result.x[0]) == pytest.approx(3.5)
         assert float(result.y[0]) == pytest.approx(-2.5)
 
 
 class TestReadVrtWindowWithBand:
-    """``read_vrt(window=, band=)`` combinations.
+    """``_read_vrt(window=, band=)`` combinations.
 
     A regression in either kwarg's interaction with the other (band
     selection after window slicing, nodata sentinel resolved per
@@ -2795,7 +2795,7 @@ class TestReadVrtWindowWithBand:
         h, w = 4, 8
         band0 = np.arange(h * w, dtype=np.float32).reshape(h, w)
         band1 = (band0 * -1.0).astype(np.float32)
-        # Stack into 3D so write_vrt produces a multi-band TIFF source
+        # Stack into 3D so build_vrt produces a multi-band TIFF source
         full = np.stack([band0, band1], axis=-1)
 
         tile_path = str(tmp_path / 'multi.tif')
@@ -2809,7 +2809,7 @@ class TestReadVrtWindowWithBand:
         vrt, full = self._make_multiband_vrt(tmp_path)
 
         # window rows 1..3, cols 2..6, band 1
-        result = read_vrt(vrt, window=(1, 2, 3, 6), band=1)
+        result = _read_vrt(vrt, window=(1, 2, 3, 6), band=1)
 
         assert result.ndim == 2  # band selection yields 2D
         assert result.shape == (2, 4)
@@ -2819,7 +2819,7 @@ class TestReadVrtWindowWithBand:
 
 
 class TestReadVrtWindowDask:
-    """``read_vrt(window=, chunks=)`` returns a dask-chunked DataArray.
+    """``_read_vrt(window=, chunks=)`` returns a dask-chunked DataArray.
 
     The chunk size must apply to the windowed shape, not the full
     VRT extent. A regression that dropped the window before chunking
@@ -2832,7 +2832,7 @@ class TestReadVrtWindowDask:
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        result = read_vrt(vrt, window=(2, 4, 6, 10), chunks=2)
+        result = _read_vrt(vrt, window=(2, 4, 6, 10), chunks=2)
 
         assert isinstance(result.data, da_mod.Array)
         assert result.shape == (4, 6)
@@ -2843,7 +2843,7 @@ class TestReadVrtWindowDask:
 
 @requires_gpu
 class TestReadVrtWindowGpu:
-    """``read_vrt(window=, gpu=True)`` returns a CuPy-backed DataArray.
+    """``_read_vrt(window=, gpu=True)`` returns a CuPy-backed DataArray.
 
     The eager VRT decode happens on CPU (the internal reader walks
     SimpleSources and assembles); the final ``if gpu: cupy.asarray``
@@ -2858,7 +2858,7 @@ class TestReadVrtWindowGpu:
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        result = read_vrt(vrt, window=(2, 4, 6, 10), gpu=True)
+        result = _read_vrt(vrt, window=(2, 4, 6, 10), gpu=True)
 
         assert isinstance(result.data, cupy.ndarray)
         assert result.shape == (4, 6)
@@ -2874,7 +2874,7 @@ class TestReadVrtWindowGpu:
         arr = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        result = read_vrt(vrt, window=(2, 4, 6, 10), gpu=True, chunks=2)
+        result = _read_vrt(vrt, window=(2, 4, 6, 10), gpu=True, chunks=2)
 
         assert isinstance(result.data, da_mod.Array)
         assert isinstance(result.data._meta, cupy.ndarray)
@@ -2995,7 +2995,7 @@ def test_vrt_missing_source_default_warns_then_continues(
     clear_strict_env, tmp_path,
 ):
     """A VRT referencing a missing source file warns once and skips it."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     vrt_path = tmp_path / 'mosaic_1662_missing.vrt'
     missing_src = f'{tmp_path}/does_not_exist_1662.tif'
@@ -3018,10 +3018,10 @@ def test_vrt_missing_source_default_warns_then_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        # Public ``read_vrt`` defaults to ``missing_sources='raise'``
+        # Public ``_read_vrt`` defaults to ``missing_sources='raise'``
         # since #1860. Opt back into the lenient warn-then-continue
         # behaviour to keep exercising the warning path.
-        da = read_vrt(str(vrt_path), missing_sources='warn')
+        da = _read_vrt(str(vrt_path), missing_sources='warn')
 
     # The mosaic should still load (with a hole) and one warning should
     # describe the skipped source.
@@ -3037,7 +3037,7 @@ def test_vrt_missing_source_default_warns_then_continues(
 
 def test_vrt_missing_source_strict_raises(set_strict_env, tmp_path):
     """In strict mode the missing source surfaces as an exception."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     vrt_path = tmp_path / 'mosaic_1662_missing_strict.vrt'
     missing_src = f'{tmp_path}/does_not_exist_1662_strict.tif'
@@ -3059,7 +3059,7 @@ def test_vrt_missing_source_strict_raises(set_strict_env, tmp_path):
     )
 
     with pytest.raises(Exception):
-        read_vrt(str(vrt_path))
+        _read_vrt(str(vrt_path))
 
 
 # ---------------------------------------------------------------------------
@@ -3142,7 +3142,7 @@ def test_warn_or_raise_gpu_fallback_preserves_traceback(set_strict_env):
 
 
 # ---------------------------------------------------------------------------
-# read_geotiff_gpu on_gpu_failure='auto' + env var integration
+# _read_geotiff_gpu on_gpu_failure='auto' + env var integration
 # ---------------------------------------------------------------------------
 
 def _gpu_available() -> bool:
@@ -3160,13 +3160,13 @@ _HAS_GPU = _gpu_available()
 
 @pytest.mark.skipif(
     not _HAS_GPU,
-    reason="cupy + CUDA required for read_geotiff_gpu fallback test",
+    reason="cupy + CUDA required for _read_geotiff_gpu fallback test",
 )
 def test_read_geotiff_gpu_env_var_promotes_to_strict(monkeypatch, tmp_path):
     """With on_gpu_failure='auto' but XRSPATIAL_GEOTIFF_STRICT=1, a GPU
     decode failure surfaces instead of falling back to CPU.
 
-    The seam: ``read_geotiff_gpu`` does a local
+    The seam: ``_read_geotiff_gpu`` does a local
     ``from ._gpu_decode import gpu_decode_tiles_from_file`` inside the
     function body, so rebinding the attribute on the
     ``xrspatial.geotiff._gpu_decode`` module is picked up on the next
@@ -3177,7 +3177,7 @@ def test_read_geotiff_gpu_env_var_promotes_to_strict(monkeypatch, tmp_path):
     import numpy as np
     import xarray as xr
 
-    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _gpu_decode, _read_geotiff_gpu, to_geotiff
 
     # 1. Write a small valid TIF so the metadata parse succeeds and we
     # reach the GPU decode stage.
@@ -3205,7 +3205,7 @@ def test_read_geotiff_gpu_env_var_promotes_to_strict(monkeypatch, tmp_path):
     monkeypatch.delenv('XRSPATIAL_GEOTIFF_STRICT', raising=False)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        result = read_geotiff_gpu(p)
+        result = _read_geotiff_gpu(p)
     assert isinstance(result, xr.DataArray)
     assert isinstance(result.data, cp.ndarray)
 
@@ -3213,7 +3213,7 @@ def test_read_geotiff_gpu_env_var_promotes_to_strict(monkeypatch, tmp_path):
     # the patched RuntimeError instead of falling back.
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_STRICT', '1')
     with pytest.raises(RuntimeError, match=sentinel):
-        read_geotiff_gpu(p)
+        _read_geotiff_gpu(p)
 
 # ===========================================================================
 # Public namespace no-leak regression (#1708)
