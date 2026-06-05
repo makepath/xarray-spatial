@@ -2,6 +2,26 @@
 -----------
 
 
+### Version 0.10.4 - 2026-06-04
+
+#### Bug fixes and improvements
+- kriging: guard single-point input in the variogram (#2924)
+- kriging: zero the matrix diagonal so the nugget is not placed on it (#2922)
+- polygonize: cast the float mask to bool before combining it with nan_mask (#2623) (#2913)
+- spline: upload invariant point/weight data to the GPU once on the dask+cupy path (#2929)
+- kriging: skip the full-grid k0 memory term for dask templates (#2923) (#2926)
+- kriging: fix flake8 E128 and isort drift in interpolate/_kriging.py (#2916) (#2918)
+- geotiff: extract a shared GeoTIFF fixture builder (#2912)
+- Add GPU and edge-case test coverage for spline() (#2927)
+- Add kriging test coverage for dask+numpy variance, nlags, and edge cases (#2921) (#2928)
+- Add GPU backend test coverage for idw() (#2925)
+- Remove a flaky wall-clock visvalingam-whyatt regression test (#2914)
+- docs: add a 1.0.0 stability policy and LTS commitment page (#2958)
+
+#### New contributors
+- Thanks to @SAY-5 (Sai Asish Y) for their first contribution (#2913)
+
+
 ### Version 0.10.3 - 2026-06-03
 
 #### New features
