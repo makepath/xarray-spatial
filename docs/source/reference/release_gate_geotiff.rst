@@ -199,7 +199,7 @@ Local GeoTIFF read and write
        keys (``transform``, ``crs``, ``crs_wkt``, ``nodata``,
        ``masked_nodata``, ``georef_status``, ``raster_type``) across
        four scenarios: integer-nodata, float-NaN-nodata, MinIsWhite,
-       and the ``mask_nodata=False`` raw-sentinel branch of the
+       and the ``masked=False`` raw-sentinel branch of the
        nodata lifecycle.
      - ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
        (eager / dask full parity section)
@@ -384,7 +384,7 @@ Nodata lifecycle
      - stable
      - The sentinel survives read and write across every backend; integer
        sentinels are preserved bit-exact, float sentinels surface as NaN
-       only when ``mask_nodata=True``.
+       only when ``masked=True`` (default ``masked=False``).
      - ``xrspatial/geotiff/tests/read/test_nodata.py``,
        ``xrspatial/geotiff/tests/write/test_nodata.py``
      - `#2341`_
