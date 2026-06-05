@@ -162,12 +162,14 @@ def _tps_cuda_kernel(x_pts, y_pts, weights, n_pts, x_grid, y_grid, out):
 # CuPy backend (CPU solve + GPU evaluate)
 # ---------------------------------------------------------------------------
 
-def _spline_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
-                 smoothing, weights, template_data):
-    n = len(x_pts)
-    x_gpu = cupy.asarray(x_pts)
-    y_gpu = cupy.asarray(y_pts)
-    w_gpu = cupy.asarray(weights)
+def _tps_evaluate_gpu(x_gpu, y_gpu, w_gpu, n, x_grid, y_grid):
+    """Evaluate the TPS surface on the GPU.
+
+    ``x_gpu``, ``y_gpu`` and ``w_gpu`` are the point coordinates and the
+    solved weight vector, already resident on the device.  ``x_grid`` and
+    ``y_grid`` are host coordinate slices for the current output tile and
+    are the only arrays uploaded here.
+    """
     xg_gpu = cupy.asarray(x_grid)
     yg_gpu = cupy.asarray(y_grid)
 
@@ -179,6 +181,15 @@ def _spline_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
         x_gpu, y_gpu, w_gpu, n, xg_gpu, yg_gpu, out,
     )
     return out
+
+
+def _spline_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
+                 smoothing, weights, template_data):
+    n = len(x_pts)
+    x_gpu = cupy.asarray(x_pts)
+    y_gpu = cupy.asarray(y_pts)
+    w_gpu = cupy.asarray(weights)
+    return _tps_evaluate_gpu(x_gpu, y_gpu, w_gpu, n, x_grid, y_grid)
 
 
 # ---------------------------------------------------------------------------
@@ -207,14 +218,24 @@ def _spline_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
 def _spline_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
                       smoothing, weights, template_data):
 
+    # The point coordinates and weight vector are the same for every
+    # chunk, so upload them to the device once instead of re-uploading
+    # inside each per-chunk call.  Under the threaded/synchronous
+    # scheduler the per-chunk closure shares these device buffers by
+    # reference; a distributed scheduler would re-serialise them per
+    # task, which is no worse than the previous per-chunk upload.
+    n = len(x_pts)
+    x_gpu = cupy.asarray(x_pts)
+    y_gpu = cupy.asarray(y_pts)
+    w_gpu = cupy.asarray(weights)
+
     def _chunk(block, block_info=None):
         if block_info is None:
             return block
         loc = block_info[0]['array-location']
         y_sl = y_grid[loc[0][0]:loc[0][1]]
         x_sl = x_grid[loc[1][0]:loc[1][1]]
-        return _spline_cupy(x_pts, y_pts, z_pts, x_sl, y_sl,
-                            smoothing, weights, None)
+        return _tps_evaluate_gpu(x_gpu, y_gpu, w_gpu, n, x_sl, y_sl)
 
     return da.map_blocks(
         _chunk, template_data, dtype=np.float64,
