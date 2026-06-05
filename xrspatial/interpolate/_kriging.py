@@ -7,11 +7,7 @@ import warnings
 import numpy as np
 import xarray as xr
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _validate_raster,
-    _validate_scalar,
-)
+from xrspatial.utils import ArrayTypeFunctionMapping, _validate_raster, _validate_scalar
 
 from ._validation import extract_grid_coords, validate_points
 
@@ -76,6 +72,10 @@ def _experimental_variogram(x, y, z, nlags):
     dists = np.sqrt(dx ** 2 + dy ** 2)
     semivar = 0.5 * (z[i_idx] - z[j_idx]) ** 2
 
+    if dists.size == 0:
+        # Fewer than two points: no pairs, so no spatial structure to bin.
+        return np.array([]), np.array([])
+
     max_dist = dists.max() / 2.0
     if max_dist <= 0:
         return np.array([]), np.array([])
@@ -139,7 +139,14 @@ def _build_kriging_matrix(x, y, vario_func):
     D = np.sqrt(dx ** 2 + dy ** 2)
 
     K = np.zeros((n + 1, n + 1), dtype=np.float64)
-    K[:n, :n] = vario_func(D)
+    G = vario_func(D)
+    # The semivariogram has gamma(0) = 0 by definition; vario_func(0)
+    # returns the nugget c0, which is the one-sided limit as h -> 0+,
+    # not the value at h = 0.  Force the diagonal to 0 so a non-zero
+    # nugget is not placed on the matrix diagonal (which would force
+    # exact interpolation and bias the kriging variance downward).
+    np.fill_diagonal(G, 0.0)
+    K[:n, :n] = G
     K[:n, n] = 1.0
     K[n, :n] = 1.0
 
@@ -231,7 +238,7 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
             y_sl = y_grid[loc[0][0]:loc[0][1]]
             x_sl = x_grid[loc[1][0]:loc[1][1]]
             _, var = _kriging_predict(x_pts, y_pts, z_pts, x_sl, y_sl,
-                                     vario_func, K_inv, True)
+                                      vario_func, K_inv, True)
             return var
 
         variance = da.map_blocks(_chunk_var, template_data, dtype=np.float64)
@@ -321,7 +328,7 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
             y_sl = y_grid[loc[0][0]:loc[0][1]]
             x_sl = x_grid[loc[1][0]:loc[1][1]]
             _, var = _kriging_predict_cupy(x_pts, y_pts, z_pts, x_sl, y_sl,
-                                          vario_func, K_inv, True)
+                                           vario_func, K_inv, True)
             return var
 
         variance = da.map_blocks(
@@ -336,7 +343,7 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
 # Public API
 # ---------------------------------------------------------------------------
 
-def _check_kriging_memory(n_points, grid_pixels):
+def _check_kriging_memory(n_points, grid_pixels, is_dask=False):
     """Raise MemoryError if kriging() would exceed available memory.
 
     Three allocations dominate kriging memory use:
@@ -355,13 +362,20 @@ def _check_kriging_memory(n_points, grid_pixels):
     Worst case is the maximum of these three.  The variogram and matrix
     builds run sequentially, and ``k0`` is built later, so peak usage
     is bounded by the largest single allocation.
+
+    When ``is_dask`` is True the prediction ``k0`` matrix is built one
+    chunk at a time by ``map_blocks``, so its peak size scales with the
+    chunk rather than ``grid_pixels``.  ``grid_pixels`` is not a valid
+    bound for that path, so the ``k0`` term is dropped.  The variogram
+    and matrix terms are point-based and materialised on the host
+    regardless of backend, so they still apply.
     """
     n = int(n_points)
     g = int(grid_pixels)
 
     pair_bytes = 4 * (n * (n - 1) // 2) * 8 if n > 1 else 0
     matrix_bytes = 3 * (n + 1) * (n + 1) * 8
-    k0_bytes = 3 * g * (n + 1) * 8
+    k0_bytes = 0 if is_dask else 3 * g * (n + 1) * 8
 
     estimate = max(pair_bytes, matrix_bytes, k0_bytes)
 
@@ -446,7 +460,8 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
     # Memory guard.  Runs after input validation so we know N and the
     # template grid size, but before any large allocation.
     grid_pixels = int(np.prod(template.shape))
-    _check_kriging_memory(len(x_arr), grid_pixels)
+    is_dask = da is not None and isinstance(template.data, da.Array)
+    _check_kriging_memory(len(x_arr), grid_pixels, is_dask=is_dask)
 
     # Experimental variogram
     lag_h, lag_sv = _experimental_variogram(x_arr, y_arr, z_arr, nlags)

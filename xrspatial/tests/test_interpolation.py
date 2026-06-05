@@ -154,6 +154,60 @@ class TestIDW:
         np.testing.assert_allclose(
             np_result.values, da_result.values, rtol=1e-10)
 
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self):
+        """CuPy backend (all-points) produces same results as numpy."""
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        np_result = idw(x, y, z, np_template)
+        cp_result = idw(x, y, z, cp_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(cp_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    def test_cupy_exact_interpolation(self):
+        """CuPy exact-match path returns the coincident point's value."""
+        x, y, z = _grid_points()
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        result = idw(x, y, z, cp_template, power=2.0)
+        expected = z.reshape(3, 3)
+        np.testing.assert_allclose(_to_numpy(result), expected)
+
+    @cuda_and_cupy_available
+    def test_cupy_knearest_rejected(self):
+        """k-nearest mode is rejected on the CuPy backend."""
+        x, y, z = _grid_points()
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        with pytest.raises(NotImplementedError, match='k-nearest'):
+            idw(x, y, z, cp_template, k=2)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_matches_numpy(self):
+        """Dask+CuPy backend (all-points) produces same results as numpy."""
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        dc_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        np_result = idw(x, y, z, np_template)
+        dc_result = idw(x, y, z, dc_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(dc_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_knearest_rejected(self):
+        """k-nearest mode is rejected on the Dask+CuPy backend."""
+        x, y, z = _grid_points()
+        dc_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        with pytest.raises(NotImplementedError):
+            idw(x, y, z, dc_template, k=2)
+
 
 # ===================================================================
 # Spline tests
@@ -208,6 +262,37 @@ class TestSpline:
         result = spline([0.5], [0.5], [42.0], template, smoothing=0.0)
         np.testing.assert_allclose(result.values, 42.0, atol=1e-6)
 
+    def test_two_point_affine_fit(self):
+        """n == 2 falls back to a least-squares affine fit.
+
+        With two points the full TPS system is underdetermined, so
+        _tps_build_and_solve fits z = a0 + a1*x + a2*y instead. Two
+        points on the x-axis with z = 10 and 20 define the gradient
+        along x; the midpoint should read 15.
+        """
+        x = np.array([0.0, 2.0])
+        y = np.array([0.0, 0.0])
+        z = np.array([10.0, 20.0])
+        template = _make_template([0.0], [0.0, 1.0, 2.0])
+        result = spline(x, y, z, template, smoothing=0.0)
+        np.testing.assert_allclose(
+            result.values, [[10.0, 15.0, 20.0]], atol=1e-6)
+
+    def test_output_metadata(self):
+        """Output DataArray preserves template coords, dims, and name."""
+        x, y, z = _grid_points()
+        template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        template.attrs['res'] = (1.0, 1.0)
+        result = spline(x, y, z, template, name='my_spline')
+        assert result.name == 'my_spline'
+        assert result.dims == template.dims
+        assert result.shape == template.shape
+        assert result.attrs == template.attrs
+        np.testing.assert_array_equal(result.coords['x'].values,
+                                      template.coords['x'].values)
+        np.testing.assert_array_equal(result.coords['y'].values,
+                                      template.coords['y'].values)
+
     @dask_array_available
     def test_dask_matches_numpy(self):
         x, y, z = _grid_points()
@@ -221,6 +306,7 @@ class TestSpline:
 
     @cuda_and_cupy_available
     def test_cupy_matches_numpy(self):
+        """CuPy backend produces same results as numpy."""
         x, y, z = _grid_points()
         np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
         cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
@@ -233,6 +319,7 @@ class TestSpline:
     @cuda_and_cupy_available
     @dask_array_available
     def test_dask_cupy_matches_numpy(self):
+        """Dask+CuPy backend produces same results as numpy."""
         x, y, z = _grid_points()
         np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
         dc_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
@@ -342,6 +429,96 @@ class TestKriging:
             result = kriging(x, y, z, template, variogram_model=model)
             assert np.all(np.isfinite(result.values)), \
                 f"model={model} produced non-finite values"
+
+    def test_matrix_diagonal_is_zero_with_nugget(self):
+        """gamma(0)=0: a non-zero nugget must not land on the diagonal.
+
+        vario_func(0) returns the nugget c0, but the semivariogram is
+        zero at lag 0 by definition. _build_kriging_matrix must zero the
+        diagonal of the variogram block so a non-zero nugget does not
+        force exact interpolation or shrink the kriging variance.
+        """
+        from xrspatial.interpolate._kriging import (
+            _build_kriging_matrix,
+            _spherical,
+        )
+
+        x = np.array([0.0, 1.0, 2.0, 3.0])
+        y = np.array([0.0, 0.0, 1.0, 1.0])
+
+        c0 = 0.5  # non-zero nugget
+        assert _spherical(np.array([0.0]), c0, 1.0, 2.0)[0] == c0
+
+        def vario(h):
+            return _spherical(h, c0, 1.0, 2.0)
+
+        k_inv = _build_kriging_matrix(x, y, vario)
+        assert k_inv is not None
+        # Reconstruct K from its inverse and check the variogram-block
+        # diagonal is 0, not the nugget.
+        k = np.linalg.inv(k_inv)
+        n = len(x)
+        np.testing.assert_allclose(np.diag(k[:n, :n]), 0.0, atol=1e-9)
+
+    def test_nugget_smooths_and_inflates_variance(self):
+        """A non-zero nugget should smooth predictions and lift variance.
+
+        With the nugget on the diagonal (the old bug) prediction at a
+        data point reproduces the observed value exactly and the
+        variance there collapses to ~the nugget. With gamma(0)=0 the
+        predictor smooths through the noise, so the prediction at a data
+        location differs from the observed value and the variance is
+        strictly larger than that buggy floor.
+        """
+        from xrspatial.interpolate._kriging import (
+            _build_kriging_matrix,
+            _kriging_predict,
+            _spherical,
+        )
+
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        y = np.zeros_like(x)
+        z = np.array([1.0, 3.0, 2.0, 5.0, 4.0])
+
+        c0 = 0.5
+        def vario(h):
+            return _spherical(h, c0, 1.0, 3.0)
+
+        k_inv = _build_kriging_matrix(x, y, vario)
+        # Predict exactly at the data point x=2 (observed z=2.0).
+        pred, var = _kriging_predict(
+            x, y, z, np.array([2.0]), np.array([0.0]),
+            vario, k_inv, True)
+
+        # Smoothing: prediction does not reproduce the observed value.
+        assert abs(pred.ravel()[0] - 2.0) > 1e-3
+        # Variance reflects the nugget rather than collapsing to it.
+        assert var.ravel()[0] > c0
+
+    def test_single_point(self):
+        """A single input point falls back to a constant prediction.
+
+        With one point there are no distance pairs, so the experimental
+        variogram is empty and kriging cannot fit spatial structure. The
+        function should reach the default-variogram fallback (issue #2917)
+        rather than crashing on an empty-array reduction.
+        """
+        template = _make_template([0.0, 1.0], [0.0, 1.0])
+        with pytest.warns(UserWarning, match='fewer than 3'):
+            result = kriging([5.0], [5.0], [42.0], template)
+        assert np.all(np.isfinite(result.values))
+        np.testing.assert_allclose(result.values, 42.0)
+
+    def test_single_valid_point_after_nan_drop(self):
+        """NaN filtering down to one point reaches the same fallback."""
+        template = _make_template([0.0, 1.0], [0.0, 1.0])
+        x = np.array([1.0, np.nan, np.nan])
+        y = np.array([2.0, np.nan, np.nan])
+        z = np.array([7.0, np.nan, np.nan])
+        with pytest.warns(UserWarning, match='fewer than 3'):
+            result = kriging(x, y, z, template)
+        assert np.all(np.isfinite(result.values))
+        np.testing.assert_allclose(result.values, 7.0)
 
     @dask_array_available
     def test_dask_matches_numpy(self):
@@ -553,6 +730,59 @@ class TestKrigingMemoryGuard:
         # n=10, grid_pixels=100000 -> k0 ~ 26 MB > 1 MB * 0.8.
         with pytest.raises(MemoryError, match='prediction matrix'):
             _check_kriging_memory(n_points=10, grid_pixels=100_000)
+
+    def test_check_helper_dask_skips_k0_term(self):
+        """is_dask=True drops the grid-sized k0 term from the estimate."""
+        from xrspatial.interpolate._kriging import _check_kriging_memory
+
+        # Same n and grid_pixels as the message test above, which trips
+        # the guard at 1 MB available.  With is_dask=True the k0 term is
+        # dropped, so the tiny point-based terms stay well under 1 MB and
+        # nothing is raised.
+        _check_kriging_memory(n_points=10, grid_pixels=100_000,
+                              is_dask=True)
+
+    def test_check_helper_dask_still_guards_matrix(self, monkeypatch):
+        """is_dask=True keeps the point-based matrix guard."""
+        from xrspatial.interpolate._kriging import _check_kriging_memory
+
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 32 * 1024 ** 2,
+        )
+
+        # n=3000 -> matrix_bytes ~ 216 MB regardless of backend.
+        with pytest.raises(MemoryError, match='kriging matrix'):
+            _check_kriging_memory(n_points=3000, grid_pixels=4,
+                                  is_dask=True)
+
+    @dask_array_available
+    def test_dask_template_skips_grid_memory_guard(self, monkeypatch):
+        """A large chunked dask template is not rejected by the guard.
+
+        The dask backend builds the prediction matrix per chunk, so the
+        full-grid k0 estimate must not gate it (issue #2923).
+        """
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 64 * 1024 ** 2,
+        )
+
+        rng = np.random.RandomState(0)
+        x = rng.uniform(0, 100, 20)
+        y = rng.uniform(0, 100, 20)
+        z = 2.0 * x + 3.0 * y + rng.normal(0, 0.1, 20)
+
+        # Full-grid k0 would be ~8 GB, far over 64 MB, but each
+        # 200x200 chunk only needs ~20 MB.
+        template = _make_template(
+            np.linspace(0, 100, 4000),
+            np.linspace(0, 100, 4000),
+            backend='dask', chunks=(200, 200),
+        )
+
+        result = kriging(x, y, z, template)
+        assert result.shape == template.shape
 
 
 class TestIDWMemoryGuard:
