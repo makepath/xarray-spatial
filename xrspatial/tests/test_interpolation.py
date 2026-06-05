@@ -154,6 +154,60 @@ class TestIDW:
         np.testing.assert_allclose(
             np_result.values, da_result.values, rtol=1e-10)
 
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self):
+        """CuPy backend (all-points) produces same results as numpy."""
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        np_result = idw(x, y, z, np_template)
+        cp_result = idw(x, y, z, cp_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(cp_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    def test_cupy_exact_interpolation(self):
+        """CuPy exact-match path returns the coincident point's value."""
+        x, y, z = _grid_points()
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        result = idw(x, y, z, cp_template, power=2.0)
+        expected = z.reshape(3, 3)
+        np.testing.assert_allclose(_to_numpy(result), expected)
+
+    @cuda_and_cupy_available
+    def test_cupy_knearest_rejected(self):
+        """k-nearest mode is rejected on the CuPy backend."""
+        x, y, z = _grid_points()
+        cp_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='cupy')
+        with pytest.raises(NotImplementedError, match='k-nearest'):
+            idw(x, y, z, cp_template, k=2)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_matches_numpy(self):
+        """Dask+CuPy backend (all-points) produces same results as numpy."""
+        x, y, z = _grid_points()
+        np_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        dc_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        np_result = idw(x, y, z, np_template)
+        dc_result = idw(x, y, z, dc_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(dc_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_knearest_rejected(self):
+        """k-nearest mode is rejected on the Dask+CuPy backend."""
+        x, y, z = _grid_points()
+        dc_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        with pytest.raises(NotImplementedError):
+            idw(x, y, z, dc_template, k=2)
+
 
 # ===================================================================
 # Spline tests
