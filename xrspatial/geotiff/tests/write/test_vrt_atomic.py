@@ -103,6 +103,34 @@ def test_failed_tiled_write_leaves_no_poisoned_output_and_retry_succeeds(
         np.asarray(result.data).squeeze(), da.values, decimal=5)
 
 
+def test_early_validation_failure_leaves_no_staging_dir(tmp_path):
+    """A write that fails validation *after* the staging dir is created
+    (here: the 2D-only check rejecting a 3D array) must still remove the
+    staging dir, so no ``*.tmp-*`` leftover blocks a later retry (#2964).
+
+    This failure happens before any tile is written, so it exercises the
+    early-failure path the per-tile tests do not.
+    """
+    arr = np.arange(2 * 16 * 16, dtype=np.float32).reshape(2, 16, 16)
+    da = xr.DataArray(
+        arr,
+        dims=['band', 'y', 'x'],
+        coords={'y': np.linspace(15.5, 0.5, 16),
+                'x': np.linspace(0.5, 15.5, 16)},
+        attrs={'crs': 4326},
+    )
+    vrt_path = str(tmp_path / 'atomic_2964_3d.vrt')
+
+    with pytest.raises(ValueError, match="2D arrays only"):
+        to_geotiff(da, vrt_path, tiled=True, tile_size=16,
+                   compression='none')
+
+    leftovers = [f for f in os.listdir(tmp_path) if '.tmp-' in f]
+    assert leftovers == [], f"staging dir leaked on validation failure: {leftovers}"
+    assert not os.path.exists(_tiles_dir_for(vrt_path))
+    assert not os.path.exists(vrt_path)
+
+
 def test_preexisting_empty_tiles_dir_is_reused(tmp_path):
     """An empty ``*_tiles`` directory left over from a prior aborted run
     passes the non-empty leftover-state guard, so the write must promote
