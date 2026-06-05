@@ -1004,7 +1004,7 @@ def test_read_geotiff_gpu_chunks_window_subset_1876(small_raster_path_1876):
 
     eager = _read_geotiff_gpu(small_raster_path_1876, window=(4, 4, 24, 28))
     chunked = _read_geotiff_gpu(small_raster_path_1876, chunks=8,
-                               window=(4, 4, 24, 28))
+                                window=(4, 4, 24, 28))
 
     eager_np = cupy.asnumpy(eager.data)
     chunked_np = cupy.asnumpy(chunked.compute().data)

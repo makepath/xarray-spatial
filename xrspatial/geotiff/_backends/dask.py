@@ -22,25 +22,25 @@ from .vrt import _read_vrt
 
 
 def _read_geotiff_dask(source: str, *,
-                      dtype: str | np.dtype | None = None,
-                      window: tuple | None = None,
-                      overview_level: int | None = None,
-                      band: int | None = None,
-                      name: str | None = None,
-                      chunks: int | tuple = 512,
-                      max_pixels: int | None = None,
-                      max_cloud_bytes: int | None = (
+                       dtype: str | np.dtype | None = None,
+                       window: tuple | None = None,
+                       overview_level: int | None = None,
+                       band: int | None = None,
+                       name: str | None = None,
+                       chunks: int | tuple = 512,
+                       max_pixels: int | None = None,
+                       max_cloud_bytes: int | None = (
                           _MAX_CLOUD_BYTES_SENTINEL),  # type: ignore[assignment]
-                      on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
-                      missing_sources: str = _MISSING_SOURCES_SENTINEL,
-                      allow_rotated: bool = False,
-                      allow_unparseable_crs: bool = False,
-                      allow_invalid_nodata: bool = False,
-                      stable_only: bool = False,
-                      allow_experimental_codecs: bool = False,
-                      allow_internal_only_jpeg: bool = False,
-                      band_nodata: str | None = None,
-                      mask_nodata: bool = True) -> xr.DataArray:
+                       on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                       missing_sources: str = _MISSING_SOURCES_SENTINEL,
+                       allow_rotated: bool = False,
+                       allow_unparseable_crs: bool = False,
+                       allow_invalid_nodata: bool = False,
+                       stable_only: bool = False,
+                       allow_experimental_codecs: bool = False,
+                       allow_internal_only_jpeg: bool = False,
+                       band_nodata: str | None = None,
+                       mask_nodata: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
     Release-contract tier (see

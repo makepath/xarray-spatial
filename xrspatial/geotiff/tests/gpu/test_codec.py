@@ -146,7 +146,7 @@ def test_gpu_write_zero_tile_edge_case_1712():
         path = os.path.join(td, "tiny.tif")
         try:
             _write_geotiff_gpu(darr, path, compression="zstd",
-                              tiled=True, tile_size=32)
+                               tiled=True, tile_size=32)
         except RuntimeError as e:
             pytest.skip(f"nvCOMP unavailable: {e}")
         back = open_geotiff(path)

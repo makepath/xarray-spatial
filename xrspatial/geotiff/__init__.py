@@ -89,7 +89,10 @@ from ._validation import (_validate_3d_writer_dims, _validate_chunks_arg,  # noq
 # the handful of internal call sites that need it.
 from ._writers.eager import _write_single_tile  # noqa: F401
 from ._writers.eager import to_geotiff
-from ._writers.gpu import _write_geotiff_gpu
+# Re-export only: bound on the package so ``xrspatial.geotiff._write_geotiff_gpu``
+# resolves for tests that monkeypatch it and callers bypassing auto-dispatch.
+# ``to_geotiff`` reaches it via ``_writers.eager``; not called here directly.
+from ._writers.gpu import _write_geotiff_gpu  # noqa: F401
 from ._writers.vrt import build_vrt
 
 # All names below are part of the supported public API. ``plot_geotiff``
@@ -924,17 +927,17 @@ def open_geotiff(source: str | BinaryIO, *,
         if missing_sources_passed:
             vrt_kwargs['missing_sources'] = missing_sources
         return _read_vrt(source, dtype=dtype, window=window, band=band,
-                        name=name, chunks=chunks, gpu=gpu,
-                        max_pixels=max_pixels,
-                        allow_rotated=allow_rotated,
-                        allow_unparseable_crs=allow_unparseable_crs,
-                        allow_invalid_nodata=allow_invalid_nodata,
-                        stable_only=stable_only,
-                        allow_experimental_codecs=allow_experimental_codecs,
-                        allow_internal_only_jpeg=allow_internal_only_jpeg,
-                        band_nodata=band_nodata,
-                        mask_nodata=mask_nodata,
-                        **vrt_kwargs)
+                         name=name, chunks=chunks, gpu=gpu,
+                         max_pixels=max_pixels,
+                         allow_rotated=allow_rotated,
+                         allow_unparseable_crs=allow_unparseable_crs,
+                         allow_invalid_nodata=allow_invalid_nodata,
+                         stable_only=stable_only,
+                         allow_experimental_codecs=allow_experimental_codecs,
+                         allow_internal_only_jpeg=allow_internal_only_jpeg,
+                         band_nodata=band_nodata,
+                         mask_nodata=mask_nodata,
+                         **vrt_kwargs)
 
     # File-like buffer rejections for ``gpu=True`` / ``chunks=...`` already
     # fired inside ``_validate_dispatch_kwargs`` above; the non-VRT branches
@@ -947,36 +950,36 @@ def open_geotiff(source: str | BinaryIO, *,
         if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL:
             gpu_kwargs['on_gpu_failure'] = on_gpu_failure
         return _read_geotiff_gpu(source, dtype=dtype,
-                                overview_level=overview_level,
-                                window=window, band=band,
-                                name=name, chunks=chunks,
-                                max_pixels=max_pixels,
-                                allow_rotated=allow_rotated,
-                                allow_unparseable_crs=allow_unparseable_crs,
-                                allow_invalid_nodata=allow_invalid_nodata,
-                                stable_only=stable_only,
-                                allow_experimental_codecs=(
-                                    allow_experimental_codecs),
-                                allow_internal_only_jpeg=(
-                                    allow_internal_only_jpeg),
-                                mask_nodata=mask_nodata,
-                                **gpu_kwargs)
-
-    # Dask path (CPU)
-    if chunks is not None:
-        return _read_geotiff_dask(source, dtype=dtype, chunks=chunks,
                                  overview_level=overview_level,
                                  window=window, band=band,
-                                 max_pixels=max_pixels, name=name,
+                                 name=name, chunks=chunks,
+                                 max_pixels=max_pixels,
                                  allow_rotated=allow_rotated,
                                  allow_unparseable_crs=allow_unparseable_crs,
                                  allow_invalid_nodata=allow_invalid_nodata,
                                  stable_only=stable_only,
                                  allow_experimental_codecs=(
-                                     allow_experimental_codecs),
+                                    allow_experimental_codecs),
                                  allow_internal_only_jpeg=(
+                                    allow_internal_only_jpeg),
+                                 mask_nodata=mask_nodata,
+                                 **gpu_kwargs)
+
+    # Dask path (CPU)
+    if chunks is not None:
+        return _read_geotiff_dask(source, dtype=dtype, chunks=chunks,
+                                  overview_level=overview_level,
+                                  window=window, band=band,
+                                  max_pixels=max_pixels, name=name,
+                                  allow_rotated=allow_rotated,
+                                  allow_unparseable_crs=allow_unparseable_crs,
+                                  allow_invalid_nodata=allow_invalid_nodata,
+                                  stable_only=stable_only,
+                                  allow_experimental_codecs=(
+                                     allow_experimental_codecs),
+                                  allow_internal_only_jpeg=(
                                      allow_internal_only_jpeg),
-                                 mask_nodata=mask_nodata)
+                                  mask_nodata=mask_nodata)
 
     kwargs = {}
     if max_pixels is not None:

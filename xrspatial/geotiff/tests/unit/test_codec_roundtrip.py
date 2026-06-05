@@ -1350,7 +1350,7 @@ def test_write_geotiff_gpu_accepts_cpu_fallback_codecs(tmp_path, codec):
     )
     path = str(tmp_path / f"out_{codec}.tif")
     _write_geotiff_gpu(da, path, compression=codec,
-                      allow_experimental_codecs=True)
+                       allow_experimental_codecs=True)
     assert os.path.exists(path), (
         f"_write_geotiff_gpu(compression={codec!r}) failed to write a file"
     )

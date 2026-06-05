@@ -237,7 +237,7 @@ def test_extra_tags_custom_tag_round_trips_via_gpu_writer(tmp_path):
     # Rich-tag extra_tags is an experimental write surface. Opt in on
     # both write and read sides for the round-trip.
     _write_geotiff_gpu(da_gpu, out, compression='none',
-                      allow_experimental_codecs=True)
+                       allow_experimental_codecs=True)
 
     rd = open_geotiff(out)
     et = rd.attrs.get('extra_tags') or []

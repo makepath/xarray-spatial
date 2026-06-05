@@ -2517,8 +2517,8 @@ def test_write_geotiff_gpu_cog_overview_resampling(tmp_path, method, expected):
     da = xr.DataArray(arr_gpu, dims=['y', 'x'])
     p = str(tmp_path / f'cog_{method}_gpu.tif')
     _write_geotiff_gpu(da, p, cog=True, compression='deflate', tiled=True,
-                      tile_size=16, overview_levels=[2],
-                      overview_resampling=method)
+                       tile_size=16, overview_levels=[2],
+                       overview_resampling=method)
 
     ov = open_geotiff(p, overview_level=1)
     np.testing.assert_allclose(np.asarray(ov.data), expected)
