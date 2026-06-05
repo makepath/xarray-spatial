@@ -56,7 +56,7 @@ import xarray as xr
 from hypothesis import HealthCheck, assume, event, given, settings
 from hypothesis import strategies as st
 
-from xrspatial.geotiff import build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import _build_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY, GeoTransform
 from xrspatial.geotiff._writer import write
 
@@ -631,7 +631,7 @@ class TestVRTRoundTripFromCorpus:
     in-memory array back as a plain GeoTIFF (no VRT) and asserts the
     re-read matches the original VRT read byte-for-byte. The VRT XML
     itself does not round-trip -- the writer emits a single TIFF, not
-    a VRT pointing at sources. Use ``build_vrt`` explicitly when a VRT
+    a VRT pointing at sources. Use ``_build_vrt`` explicitly when a VRT
     is the desired output.
     """
 
@@ -662,7 +662,7 @@ class TestVRTRoundTripFromCorpus:
             dst.write(data, 1)
 
         vrt = tmp_path / "vrt_mosaic_1986.vrt"
-        build_vrt(str(vrt), [str(left), str(right)])
+        _build_vrt(str(vrt), [str(left), str(right)])
 
         da1 = open_geotiff(str(vrt))
         expected = np.concatenate([data, data], axis=1)

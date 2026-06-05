@@ -24,7 +24,7 @@ import os
 # on_gpu_failure=<value>" (forward verbatim).
 _GPU_DEPRECATED_SENTINEL = object()
 _ON_GPU_FAILURE_SENTINEL = object()
-# ``build_vrt`` needs to distinguish "user passed crs_wkt= explicitly"
+# ``_build_vrt`` needs to distinguish "user passed crs_wkt= explicitly"
 # (deprecation path) from "user passed nothing" (no warning, pick CRS
 # from the first source). A plain default of None does not work because
 # None is itself a value a caller could supply alongside crs=.
@@ -34,17 +34,17 @@ _CRS_WKT_DEPRECATED_SENTINEL = object()
 # kwarg up front for non-VRT sources) from "caller set missing_sources=<value>"
 # (forward verbatim to _read_vrt). Mirrors the on_gpu_failure pattern.
 _MISSING_SOURCES_SENTINEL = object()
-# ``build_vrt`` historically named its first positional kwarg ``vrt_path``
+# ``_build_vrt`` historically named its first positional kwarg ``vrt_path``
 # while ``to_geotiff`` / ``_write_geotiff_gpu`` use ``path``. The deprecation
 # shim adds ``path`` as the new name and accepts ``vrt_path`` with a
 # DeprecationWarning. The sentinel pattern distinguishes "user passed
 # vrt_path= explicitly" from "user passed nothing", which is the same
 # rationale ``_CRS_WKT_DEPRECATED_SENTINEL`` documents above.
 _VRT_PATH_DEPRECATED_SENTINEL = object()
-# ``build_vrt`` also needs to distinguish "user passed path= explicitly"
+# ``_build_vrt`` also needs to distinguish "user passed path= explicitly"
 # (including an explicit ``path=None``, which is an error) from "user
 # passed nothing" (fall through to the ``vrt_path`` shim). Without this
-# sentinel, ``build_vrt(None, sources)`` silently fell through to the
+# sentinel, ``_build_vrt(None, sources)`` silently fell through to the
 # ``path is None`` branch and raised a "missing required argument"
 # TypeError for the wrong reason.
 _VRT_PATH_MISSING_SENTINEL = object()

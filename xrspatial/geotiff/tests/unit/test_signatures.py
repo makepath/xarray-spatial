@@ -37,7 +37,7 @@ Section 5 -- ``gil_friendly`` deflate kwarg
 Section 6 -- Reader / writer kwarg behaviour
     Override-effect and dtype-cast coverage for kwargs that the
     signature pins above only assert as *accepted*: ``_read_geotiff_gpu``
-    / ``_read_geotiff_dask`` ``name`` and ``max_pixels``, ``build_vrt``
+    / ``_read_geotiff_dask`` ``name`` and ``max_pixels``, ``_build_vrt``
     ``relative`` / ``crs`` / ``nodata``, GPU reader ``dtype``, GPU writer
     ``bigtiff`` / ``predictor``, and ``_read_vrt`` ``window``.
 
@@ -62,9 +62,9 @@ import xarray as xr
 
 import xrspatial.geotiff as g
 import xrspatial.geotiff._compression as comp_mod
-from xrspatial.geotiff import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _read_geotiff_dask,
-                               _read_geotiff_gpu, _read_vrt, _wkt_to_epsg, _write_geotiff_gpu,
-                               build_vrt, open_geotiff, to_geotiff)
+from xrspatial.geotiff import (GeoTIFFFallbackWarning, _build_vrt, _geotiff_strict_mode,
+                               _read_geotiff_dask, _read_geotiff_gpu, _read_vrt, _wkt_to_epsg,
+                               _write_geotiff_gpu, open_geotiff, to_geotiff)
 from xrspatial.geotiff._attrs import (_COMPRESSION_TAG_TO_NAME, _validate_read_codec_optin,
                                       _validate_write_rich_tag_optin)
 from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLATE, COMPRESSION_LZ4,
@@ -143,15 +143,15 @@ def test_write_geotiff_gpu_path_annotated():
 
 
 def test_write_vrt_path_annotated():
-    """``build_vrt(path, ...)`` is str-only (VRT writes are path-only by
+    """``_build_vrt(path, ...)`` is str-only (VRT writes are path-only by
     design; no file-like buffer support). The canonical name
     is ``path`` (parity with ``to_geotiff`` / ``_write_geotiff_gpu``).
     The annotation is plain ``str``: the default value is a private
     sentinel (not ``None``) so the deprecation shim can distinguish
-    ``build_vrt(path=None, ...)`` (rejected with TypeError) from a
+    ``_build_vrt(path=None, ...)`` (rejected with TypeError) from a
     caller who omitted ``path`` entirely (routed through the ``vrt_path``
     alias)."""
-    assert _annotation(build_vrt, 'path') == 'str'
+    assert _annotation(_build_vrt, 'path') == 'str'
 
 
 def test_write_vrt_vrt_path_annotated():
@@ -159,7 +159,7 @@ def test_write_vrt_vrt_path_annotated():
     annotation as ``path`` (str-only at the type level; ``None`` only
     appears because the sentinel default lets the shim detect omission).
     Pinned so a future re-rename does not silently widen the alias."""
-    assert _annotation(build_vrt, 'vrt_path') == 'str | None'
+    assert _annotation(_build_vrt, 'vrt_path') == 'str | None'
 
 
 # --- source: str or BinaryIO (open_geotiff is the public dispatch) ---
@@ -248,7 +248,7 @@ def test_write_geotiff_gpu_nodata_annotated():
 
 def test_write_vrt_nodata_annotated():
     """Pre-existing annotation -- keep it pinned."""
-    assert _annotation(build_vrt, 'nodata') == 'float | int | None'
+    assert _annotation(_build_vrt, 'nodata') == 'float | int | None'
 
 
 # --- streaming_buffer_bytes: int on both writer entry points ---
@@ -1764,7 +1764,7 @@ def test_write_deflate_round_trip_across_parallelism_modes(
 # Override-effect and dtype-cast coverage for kwargs that the signature
 # pins in earlier sections assert only as *accepted*. Three groups:
 #
-#   6a -- ``build_vrt`` ``relative`` / ``crs`` / ``nodata`` override effect,
+#   6a -- ``_build_vrt`` ``relative`` / ``crs`` / ``nodata`` override effect,
 #         plus the empty-``source_files`` error path.
 #   6b -- ``_read_geotiff_gpu`` / ``_read_geotiff_dask`` ``name`` and
 #         ``max_pixels``, ``_read_geotiff_gpu`` ``dtype`` cast, GPU writer
@@ -1832,7 +1832,7 @@ def small_tiff_path(tmp_path):
     return str(p), arr
 
 
-# --- 6a: build_vrt override effect (relative / crs / nodata) + error path ---
+# --- 6a: _build_vrt override effect (relative / crs / nodata) + error path ---
 
 
 class TestWriteVrtRelativeBehaviour:
@@ -1846,7 +1846,7 @@ class TestWriteVrtRelativeBehaviour:
 
     def test_relative_true_writes_relative_path(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'rel_true.vrt')
-        build_vrt(vrt_path, [source_tif], relative=True)
+        _build_vrt(vrt_path, [source_tif], relative=True)
 
         xml = self._read_xml(vrt_path)
         # The on-disk text must carry the relativeToVRT="1" attribute,
@@ -1863,7 +1863,7 @@ class TestWriteVrtRelativeBehaviour:
 
     def test_relative_false_writes_absolute_path(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'rel_false.vrt')
-        build_vrt(vrt_path, [source_tif], relative=False)
+        _build_vrt(vrt_path, [source_tif], relative=False)
 
         xml = self._read_xml(vrt_path)
         # ``relative=False`` must flip the attribute and emit an absolute
@@ -1880,7 +1880,7 @@ class TestWriteVrtRelativeBehaviour:
         """relative=True still round-trips: parse_vrt resolves the
         relative path back to the absolute one."""
         vrt_path = str(tmp_path / 'rel_true_rt.vrt')
-        build_vrt(vrt_path, [source_tif], relative=True)
+        _build_vrt(vrt_path, [source_tif], relative=True)
         parsed = parse_vrt(self._read_xml(vrt_path), vrt_dir=str(tmp_path))
         assert len(parsed.bands) == 1
         assert len(parsed.bands[0].sources) == 1
@@ -1893,7 +1893,7 @@ class TestWriteVrtRelativeBehaviour:
 
     def test_relative_false_parses_back_to_same_source(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'rel_false_rt.vrt')
-        build_vrt(vrt_path, [source_tif], relative=False)
+        _build_vrt(vrt_path, [source_tif], relative=False)
         parsed = parse_vrt(self._read_xml(vrt_path), vrt_dir=str(tmp_path))
         assert len(parsed.bands) == 1
         assert (
@@ -1927,7 +1927,7 @@ class TestWriteVrtCrsWktBehaviour:
             'PROJECTION["Transverse_Mercator"],UNIT["metre",1]]'
         )
         vrt_path = str(tmp_path / 'crs_wkt_override.vrt')
-        build_vrt(vrt_path, [source_tif], crs=override)
+        _build_vrt(vrt_path, [source_tif], crs=override)
         parsed = self._read_parsed(vrt_path, tmp_path)
         assert parsed.crs_wkt == override
 
@@ -1937,7 +1937,7 @@ class TestWriteVrtCrsWktBehaviour:
         non-empty, and match the source TIF's own crs_wkt (no silent
         substitution, no None on the fall-back path)."""
         vrt_path = str(tmp_path / 'crs_wkt_default.vrt')
-        build_vrt(vrt_path, [source_tif])
+        _build_vrt(vrt_path, [source_tif])
         parsed = self._read_parsed(vrt_path, tmp_path)
 
         source_da = open_geotiff(source_tif)
@@ -1960,10 +1960,10 @@ class TestWriteVrtCrsWktBehaviour:
         )
         # Override path
         vrt_override = str(tmp_path / 'override.vrt')
-        build_vrt(vrt_override, [source_tif], crs=override)
+        _build_vrt(vrt_override, [source_tif], crs=override)
         # Default path
         vrt_default = str(tmp_path / 'default.vrt')
-        build_vrt(vrt_default, [source_tif])
+        _build_vrt(vrt_default, [source_tif])
 
         with open(vrt_override, 'r') as fh:
             text_override = fh.read()
@@ -1985,7 +1985,7 @@ class TestWriteVrtNodataBehaviour:
 
     def test_nodata_override_wins(self, source_tif, tmp_path):
         vrt_path = str(tmp_path / 'nodata_override.vrt')
-        build_vrt(vrt_path, [source_tif], nodata=-9999.0)
+        _build_vrt(vrt_path, [source_tif], nodata=-9999.0)
         bands = self._bands(vrt_path, tmp_path)
         assert len(bands) == 1
         assert bands[0].nodata == -9999.0
@@ -1996,7 +1996,7 @@ class TestWriteVrtNodataBehaviour:
         silently dropped the default-from-source code path would land
         ``None`` here."""
         vrt_path = str(tmp_path / 'nodata_default.vrt')
-        build_vrt(vrt_path, [source_tif])
+        _build_vrt(vrt_path, [source_tif])
         bands = self._bands(vrt_path, tmp_path)
         assert len(bands) == 1
         assert bands[0].nodata == -1.0
@@ -2005,14 +2005,14 @@ class TestWriteVrtNodataBehaviour:
         """Raw XML check: the override sentinel value lands in a
         <NoDataValue> element."""
         vrt_path = str(tmp_path / 'nodata_xml.vrt')
-        build_vrt(vrt_path, [source_tif], nodata=-12345.0)
+        _build_vrt(vrt_path, [source_tif], nodata=-12345.0)
         with open(vrt_path, 'r') as fh:
             xml = fh.read()
         assert '<NoDataValue>-12345.0</NoDataValue>' in xml
 
 
 class TestWriteVrtEmptySourceFiles:
-    """``build_vrt(source_files=[])`` raises with a clear message.
+    """``_build_vrt(source_files=[])`` raises with a clear message.
     The error path is uncovered. A regression dropping the
     pre-validation would surface much further down as an IndexError
     when computing the bounding box of zero sources."""
@@ -2020,12 +2020,12 @@ class TestWriteVrtEmptySourceFiles:
     def test_empty_list_raises(self, tmp_path):
         vrt_path = str(tmp_path / 'should_not_exist.vrt')
         with pytest.raises(ValueError, match="source_files must not be empty"):
-            build_vrt(vrt_path, [])
+            _build_vrt(vrt_path, [])
 
     def test_empty_list_does_not_create_file(self, tmp_path):
         vrt_path = str(tmp_path / 'should_not_exist_2.vrt')
         try:
-            build_vrt(vrt_path, [])
+            _build_vrt(vrt_path, [])
         except ValueError:
             pass
         assert not os.path.exists(vrt_path)
@@ -2617,7 +2617,7 @@ def _make_georef_single_tile_vrt(tmp_path, arr: np.ndarray) -> str:
     GeoTransform.
 
     ``_make_single_tile_vrt`` writes a bare numpy array, which produces a
-    non-georeferenced tile; build_vrt then omits the ``<GeoTransform>``
+    non-georeferenced tile; _build_vrt then omits the ``<GeoTransform>``
     (see issue #2966) and the VRT reads back with integer pixel coords.
     Tests that assert the windowed *transform* / float coordinate shift
     need a real GeoTransform pinned to origin ``(0, 0)`` so the
@@ -2658,7 +2658,7 @@ def _make_2x1_mosaic_vrt(tmp_path, left: np.ndarray,
     """Create a 2x1 horizontal mosaic VRT for cross-source window tests.
 
     Hand-built XML so the dst_rect placements are explicit -- VRT's
-    build_vrt helper only handles single-source layouts directly.
+    _build_vrt helper only handles single-source layouts directly.
     """
     h, lw = left.shape[:2]
     rw = right.shape[1]
@@ -2849,7 +2849,7 @@ class TestReadVrtWindowWithBand:
         h, w = 4, 8
         band0 = np.arange(h * w, dtype=np.float32).reshape(h, w)
         band1 = (band0 * -1.0).astype(np.float32)
-        # Stack into 3D so build_vrt produces a multi-band TIFF source
+        # Stack into 3D so _build_vrt produces a multi-band TIFF source
         full = np.stack([band0, band1], axis=-1)
 
         tile_path = str(tmp_path / 'multi.tif')

@@ -1771,9 +1771,9 @@ def _kwarg_drop_small_vrt(tmp_path):
     tile_b = tmp_path / "tile_b.tif"
     to_geotiff(da_b, str(tile_b))
 
-    from xrspatial.geotiff import build_vrt
+    from xrspatial.geotiff import _build_vrt
     vrt_path = tmp_path / "mosaic.vrt"
-    build_vrt(str(vrt_path), [str(tile_a), str(tile_b)])
+    _build_vrt(str(vrt_path), [str(tile_a), str(tile_b)])
     return str(vrt_path)
 
 

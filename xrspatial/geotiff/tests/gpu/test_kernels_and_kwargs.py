@@ -2074,11 +2074,11 @@ def _make_tif_1776(tmp_path) -> str:
 
 def _make_vrt_1776(tmp_path) -> str:
     """Write a 10x10 GeoTIFF plus a single-source VRT and return the .vrt path."""
-    from xrspatial.geotiff import build_vrt
+    from xrspatial.geotiff import _build_vrt
 
     tif = _make_tif_1776(tmp_path)
     vrt = os.path.join(str(tmp_path), 'src_1776.vrt')
-    build_vrt(vrt, [tif])
+    _build_vrt(vrt, [tif])
     return vrt
 
 
@@ -2426,7 +2426,7 @@ def uint16_with_matching_sentinel_2052(tmp_path):
 @pytest.fixture
 def uint16_vrt_with_matching_sentinel_2052(tmp_path):
     """A single-source VRT wrapping the uint16 fixture above."""
-    from xrspatial.geotiff import build_vrt
+    from xrspatial.geotiff import _build_vrt
     from xrspatial.geotiff._writer import write
 
     arr = np.array(
@@ -2440,7 +2440,7 @@ def uint16_vrt_with_matching_sentinel_2052(tmp_path):
     write(arr, tif_path, nodata=0, compression="none", tiled=False)
 
     vrt_path = str(tmp_path / "uint16_match_2052.vrt")
-    build_vrt(vrt_path, [tif_path])
+    _build_vrt(vrt_path, [tif_path])
     return vrt_path, arr
 
 

@@ -12,7 +12,7 @@ Sections:
 * ``mask_nodata=False`` preserves float sentinels
 * Tile-level metadata parity for VRT tiled writes
 * VRT XML parsed once on the chunked path
-* ``build_vrt`` escapes XML special characters
+* ``_build_vrt`` escapes XML special characters
 * XML size cap on eager ``_read_vrt``
 * XML size cap on chunked ``_read_vrt``
 * VRT metadata parity across backends
@@ -31,8 +31,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError, _read_geotiff_dask,
-                               _read_vrt, build_vrt, open_geotiff, to_geotiff)
+from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError, _build_vrt,
+                               _read_geotiff_dask, _read_vrt, open_geotiff, to_geotiff)
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_FULL, GEOREF_STATUS_NONE,
                                       GEOREF_STATUS_TRANSFORM_ONLY)
 from xrspatial.geotiff._errors import VRTUnsupportedError
@@ -509,7 +509,7 @@ def test_vrt_uint16_nodata_promotes_to_float64(tmp_path):
     assert eager.dtype == np.float64
     assert np.isnan(eager.values[1, 0])
     vrt_path = str(tmp_path / 'src_1564.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
     via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.float64, f'VRT integer-with-nodata should promote to float64; got {via_vrt.dtype}'  # noqa: E501
     assert np.isnan(via_vrt.values[1, 0]), f'VRT sentinel pixel should be NaN; got {via_vrt.values[1, 0]} (literal sentinel survived)'  # noqa: E501
@@ -523,7 +523,7 @@ def test_vrt_uint16_no_nodata_keeps_dtype(tmp_path):
     tif = str(tmp_path / 'src_no_nodata_1564.tif')
     to_geotiff(da, tif, compression='none')
     vrt_path = str(tmp_path / 'src_no_nodata_1564.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
     via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.uint16
     np.testing.assert_array_equal(via_vrt.values, arr)
@@ -537,7 +537,7 @@ def test_vrt_float_nodata_still_masks(tmp_path):
     tif = str(tmp_path / 'srcf_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=-9999.0)
     vrt_path = str(tmp_path / 'srcf_1564.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
     via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.float32
     assert np.isnan(via_vrt.values[0, 2])
@@ -547,7 +547,7 @@ def test_vrt_float_nodata_still_masks(tmp_path):
 def _int_nodata_rewrite_vrt_nodata(vrt_path, new_nodata_text):
     """Rewrite the <NoDataValue> element of an existing VRT to a literal
     string so we can exercise fractional / out-of-range cases without
-    going through ``build_vrt`` (which only accepts numeric values)."""
+    going through ``_build_vrt`` (which only accepts numeric values)."""
     with open(vrt_path, 'r') as f:
         xml = f.read()
     import re
@@ -565,7 +565,7 @@ def test_vrt_fractional_nodata_is_not_masked(tmp_path):
     tif = str(tmp_path / 'frac_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=1)
     vrt_path = str(tmp_path / 'frac_1564.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
     _int_nodata_rewrite_vrt_nodata(vrt_path, '1.9')
     via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.uint16, f'Fractional NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype}, pixel @[0,0]={via_vrt.values[0, 0]})'  # noqa: E501
@@ -580,7 +580,7 @@ def test_vrt_out_of_range_nodata_is_not_masked(tmp_path):
     tif = str(tmp_path / 'oor_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=0)
     vrt_path = str(tmp_path / 'oor_1564.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
     _int_nodata_rewrite_vrt_nodata(vrt_path, '-1')
     via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.uint16, f'Out-of-range NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype})'  # noqa: E501
@@ -594,7 +594,7 @@ def test_vrt_open_geotiff_parity_uint16_nodata(tmp_path):
     _int_nodata_write_uint16_with_nodata_tif(tif, sentinel=65535)
     direct = open_geotiff(tif)
     vrt_path = str(tmp_path / 'parity_1564.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
     via_vrt = open_geotiff(vrt_path)
     assert direct.dtype == via_vrt.dtype
     np.testing.assert_array_equal(np.isnan(direct.values), np.isnan(via_vrt.values), err_msg='VRT route should NaN-mask the same pixels as direct read')  # noqa: E501
@@ -1111,7 +1111,7 @@ def test_parsed_kwarg_does_not_mutate_caller_holes(single_parse_single_tile_vrt_
 
 
 # ---------------------------------------------------------------------------
-# build_vrt escapes XML special chars
+# _build_vrt escapes XML special chars
 # ---------------------------------------------------------------------------
 
 
@@ -1128,7 +1128,7 @@ def xml_escape_sample_tif(tmp_path):
 
 
 def test_crs_wkt_with_xml_special_chars_round_trips(xml_escape_sample_tif, tmp_path):
-    """A WKT containing ``& < > " '`` must round-trip through build_vrt /
+    """A WKT containing ``& < > " '`` must round-trip through _build_vrt /
     parse_vrt unchanged (the entities are escaped on the way out and
     decoded on the way in)."""
     nasty_wkt = 'GEOGCS["spec & <chars> with "quotes" and \'apostrophes\'"]'
@@ -1175,7 +1175,7 @@ def test_source_filename_with_ampersand_round_trips(tmp_path):
 
 
 def test_written_vrt_is_well_formed_xml(xml_escape_sample_tif, tmp_path):
-    """Sanity check: the bytes written by build_vrt always parse cleanly
+    """Sanity check: the bytes written by _build_vrt always parse cleanly
     as XML, even when crs_wkt carries every XML predefined entity."""
     nasty = '< & > " \''
     vrt_path = str(tmp_path / 'wf.vrt')
@@ -1799,7 +1799,7 @@ def test_missing_sources_warn_records_holes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Non-georeferenced sources: build_vrt must not fabricate a GeoTransform
+# Non-georeferenced sources: _build_vrt must not fabricate a GeoTransform
 # (issue #2966)
 # ---------------------------------------------------------------------------
 
@@ -1836,11 +1836,11 @@ def test_build_vrt_non_georef_source_omits_geotransform(tmp_path):
     assert open_geotiff(tif).attrs.get('georef_status') == GEOREF_STATUS_NONE
 
     vrt_path = str(tmp_path / 'plain_2966.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
 
     xml = pathlib.Path(vrt_path).read_text()
     assert '<GeoTransform>' not in xml, (
-        'build_vrt fabricated a GeoTransform for a non-georeferenced '
+        '_build_vrt fabricated a GeoTransform for a non-georeferenced '
         'source: ' + xml
     )
 
@@ -1851,7 +1851,7 @@ def test_build_vrt_non_georef_source_preserves_status_none(tmp_path):
     tif, arr = _write_plain_tif_2966(tmp_path, 'plain_status_2966.tif')
 
     vrt_path = str(tmp_path / 'plain_status_2966.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
     out = open_geotiff(vrt_path)
 
     assert out.attrs.get('georef_status') == GEOREF_STATUS_NONE
@@ -1865,7 +1865,7 @@ def test_build_vrt_georef_source_still_emits_geotransform(tmp_path):
     tif, _ = _write_georef_tif_2966(tmp_path, 'geo_2966.tif')
 
     vrt_path = str(tmp_path / 'geo_2966.vrt')
-    build_vrt(vrt_path, [tif])
+    _build_vrt(vrt_path, [tif])
 
     xml = pathlib.Path(vrt_path).read_text()
     assert '<GeoTransform>' in xml
@@ -1880,4 +1880,4 @@ def test_build_vrt_mixed_georef_sources_rejected(tmp_path):
 
     vrt_path = str(tmp_path / 'mixed_2966.vrt')
     with pytest.raises(ValueError, match='mix georeferenced and non-georeferenced'):
-        build_vrt(vrt_path, [geo_tif, plain_tif])
+        _build_vrt(vrt_path, [geo_tif, plain_tif])

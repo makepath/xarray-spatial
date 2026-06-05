@@ -261,7 +261,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     str or binary file-like
         The ``path`` argument (a string for filesystem paths, the
         file-like object for BytesIO destinations). Returning the path
-        mirrors ``to_geotiff`` and ``build_vrt`` so callers can handle
+        mirrors ``to_geotiff`` and ``_build_vrt`` so callers can handle
         the three writers uniformly.
 
     Raises

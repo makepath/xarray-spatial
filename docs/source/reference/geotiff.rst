@@ -220,13 +220,13 @@ Writing
 =======
 ``to_geotiff`` is the single write entry point (``gpu=True`` or CuPy data
 selects the GPU path; a ``.vrt`` output path writes tiles plus an index).
-``build_vrt`` mosaics a list of existing GeoTIFF files into a VRT.
+Writing to a ``.vrt`` path is how you produce a VRT mosaic; the underlying
+index emitter is internal.
 
 .. autosummary::
     :toctree: _autosummary
 
     xrspatial.geotiff.to_geotiff
-    xrspatial.geotiff.build_vrt
 
 COG validator CI gate
 =====================
@@ -400,9 +400,9 @@ VRT support matrix (issue #2321)
 
 VRT reads sit at the ``advanced`` tier in
 :data:`xrspatial.geotiff.SUPPORTED_FEATURES` (``reader.vrt``).
-``open_geotiff`` (on a ``.vrt`` source), ``to_geotiff`` (to a ``.vrt``
-output), and ``build_vrt`` all target the same narrow subset of GDAL's VRT
-spec. The reference below is the canonical contract; the docstrings echo it.
+``open_geotiff`` (on a ``.vrt`` source) and ``to_geotiff`` (to a ``.vrt``
+output) both target the same narrow subset of GDAL's VRT spec. The
+reference below is the canonical contract; the docstrings echo it.
 
 Supported
 ---------
@@ -452,23 +452,22 @@ Non-goals (intentionally unsupported)
 Safe usage
 ----------
 
-A simple mosaic over two compatible GeoTIFF tiles, read eagerly with
-the fail-closed defaults:
+Write a chunked DataArray to a ``.vrt`` path (``to_geotiff`` tiles the
+array and emits the index), then read it back eagerly with the
+fail-closed defaults:
 
 .. code-block:: python
 
-    from xrspatial.geotiff import build_vrt, open_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
-    # Write a VRT that mosaics two tiles. Both tiles share CRS,
-    # pixel size, dtype, and band count.
-    vrt_path = build_vrt(
-        'mosaic.vrt',
-        source_files=['tile_west.tif', 'tile_east.tif'],
-    )
+    # ``da`` is a 2D dask-backed DataArray with crs / transform set.
+    # Writing to a .vrt produces a directory of tiled GeoTIFFs plus
+    # the VRT index that references them.
+    to_geotiff(da, 'mosaic.vrt')
 
     # Read with the defaults: missing_sources='raise',
     # band_nodata=None (fail closed on disagreeing per-band sentinels).
-    da = open_geotiff(vrt_path)
+    back = open_geotiff('mosaic.vrt')
 
 Intentionally raises
 --------------------

@@ -21,10 +21,11 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import UnsafeURLError, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt
+from xrspatial.geotiff import (UnsafeURLError, _build_vrt, _read_geotiff_dask, _read_geotiff_gpu,
+                               _read_vrt)
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import _sources as _sources_mod
-from xrspatial.geotiff import _write_geotiff_gpu, build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import _write_geotiff_gpu, open_geotiff, to_geotiff
 from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._reader import (_FULL_IMAGE_BUDGET_HEADER_SLACK, INITIAL_HTTP_HEADER_BYTES,
@@ -6042,7 +6043,7 @@ def _build_vrt_2026_05_15(tmp_path):
     """Build a 1-source VRT mosaic referencing a small local GeoTIFF."""
     src = _build_local_tif_2026_05_15(tmp_path, name='vrt_src.tif')
     vrt = str(tmp_path / 'mosaic.vrt')
-    build_vrt(vrt, [src])
+    _build_vrt(vrt, [src])
     return vrt, src
 
 
@@ -6228,7 +6229,7 @@ _PUBLIC_ENTRY_POINTS_2106 = (
     _read_vrt,
     to_geotiff,
     _write_geotiff_gpu,
-    build_vrt,
+    _build_vrt,
 )
 
 

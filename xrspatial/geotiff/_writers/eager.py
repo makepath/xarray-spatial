@@ -4,9 +4,9 @@ Holds ``to_geotiff`` (the public eager writer),
 ``_write_single_tile`` (per-tile worker used by ``_write_vrt_tiled``),
 and ``_write_vrt_tiled`` (the deprecated ``vrt_tiled=True`` path on
 ``to_geotiff``). Companion modules ``_writers/gpu.py`` and
-``_writers/vrt.py`` hold the GPU writer and the public ``build_vrt``;
-``to_geotiff`` dispatches to them when the caller asks for a GPU
-output or a ``.vrt`` path.
+``_writers/vrt.py`` hold the GPU writer and the internal ``_build_vrt``
+VRT-index emitter; ``to_geotiff`` dispatches to them when the caller
+asks for a GPU output or a ``.vrt`` path.
 """
 from __future__ import annotations
 
@@ -341,7 +341,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     str or binary file-like
         The ``path`` argument (a string for filesystem paths, the
         file-like object for BytesIO destinations). Returning the path
-        lines up with ``build_vrt`` and lets callers chain a write into
+        lines up with ``_build_vrt`` and lets callers chain a write into
         a read without round-tripping through a variable; existing
         callers that discarded the previous ``None`` return are
         unaffected.
@@ -1470,9 +1470,13 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # Write VRT index with relative paths. The VRT lives at ``vrt_path``;
     # tile paths now resolve under the final ``tiles_dir``.
     tile_paths = [os.path.join(tiles_dir, name) for name in tile_names]
-    from .._vrt import write_vrt as _write_vrt_fn
+    # Route through the internal ``_build_vrt`` helper so it is the single
+    # entry point for VRT-index emission (it wraps ``_vrt.write_vrt`` with
+    # the shared nodata/crs normalisation). ``nodata`` was already resolved
+    # and validated above; passing it again is idempotent.
+    from .vrt import _build_vrt
     try:
-        _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
+        _build_vrt(vrt_path, tile_paths, relative=True, nodata=nodata)
     except BaseException:
         # The index step failed after the rename. Remove the now-renamed
         # tile dir too so a retry is not blocked by the leftover-state

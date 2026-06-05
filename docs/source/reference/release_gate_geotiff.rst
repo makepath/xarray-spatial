@@ -557,9 +557,10 @@ VRT supported subset
      - ``xrspatial/geotiff/tests/release_gates/test_stable_features.py``
        (VRT presence meta-gate)
      - `#2321`_
-   * - ``build_vrt``
+   * - VRT write (``.vrt`` output)
      - advanced
-     - Writer rejects source-incompatibility cases at the writer boundary.
+     - Writer rejects source-incompatibility cases at the writer boundary
+       (``to_geotiff`` to a ``.vrt`` path via the internal ``_build_vrt``).
      - ``xrspatial/geotiff/tests/vrt/test_validation.py``
      - `#2342`_
 

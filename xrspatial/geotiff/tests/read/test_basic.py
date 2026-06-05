@@ -19,7 +19,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import GeoTIFFFallbackWarning
-from xrspatial.geotiff import build_vrt as _write_vrt_1810
+from xrspatial.geotiff import _build_vrt as _write_vrt_1810
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._dtypes import tiff_dtype_to_numpy
 from xrspatial.geotiff._geotags import RASTER_PIXEL_IS_POINT, TAG_GEO_ASCII_PARAMS, extract_geo_info
