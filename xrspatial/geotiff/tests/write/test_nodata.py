@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import _read_geotiff_dask, _read_vrt, build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import _read_geotiff_dask, _read_vrt, _build_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._attrs import _resolve_nodata_attr
 from xrspatial.geotiff._geotags import GeoTransform, _parse_nodata_str, build_geo_tags
 from xrspatial.geotiff._reader import _int_nodata_in_range, _resolve_masked_fill
@@ -431,7 +431,7 @@ class TestReadGeotiffDask:
 
 class TestVrtRoundTrip:
     """write_vrt -> _read_vrt round-trip -- the path that surfaced the bug
-    in the wild (build_vrt stringifies geo_info.nodata into XML)."""
+    in the wild (_build_vrt stringifies geo_info.nodata into XML)."""
 
     def test_uint64_max_round_trip_via_vrt(self, tmp_path):
         arr = np.full((16, 16), 100, dtype=np.uint64)
@@ -441,7 +441,7 @@ class TestVrtRoundTrip:
         to_geotiff(da_in, tif_path, nodata=2**64 - 1)
 
         vrt_path = os.path.join(str(tmp_path), "t.vrt")
-        build_vrt(vrt_path, [tif_path])
+        _build_vrt(vrt_path, [tif_path])
 
         # The VRT XML should carry the integer string literal, not a
         # scientific-notation float that loses one ULP at the dtype max.
@@ -463,7 +463,7 @@ class TestVrtRoundTrip:
         to_geotiff(da_in, tif_path, nodata=2**63 - 1)
 
         vrt_path = os.path.join(str(tmp_path), "t.vrt")
-        build_vrt(vrt_path, [tif_path])
+        _build_vrt(vrt_path, [tif_path])
 
         with open(vrt_path) as f:
             xml = f.read()

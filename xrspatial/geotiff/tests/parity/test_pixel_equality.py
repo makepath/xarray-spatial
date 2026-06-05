@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (_read_geotiff_dask, _read_geotiff_gpu, _read_vrt, build_vrt,
+from xrspatial.geotiff import (_read_geotiff_dask, _read_geotiff_gpu, _read_vrt, _build_vrt,
                                open_geotiff, to_geotiff)
 
 from .._helpers.markers import gpu_available, requires_gpu, requires_loopback
@@ -167,7 +167,7 @@ def _write_vrt_mosaic(dir_path: Path) -> Path:
             to_geotiff(da, str(p), compression="none", tiled=False)
             tile_paths.append(str(p))
     vrt_path = dir_path / "mosaic_1813.vrt"
-    build_vrt(str(vrt_path), tile_paths, relative=False, crs=4326)
+    _build_vrt(str(vrt_path), tile_paths, relative=False, crs=4326)
     return vrt_path
 
 

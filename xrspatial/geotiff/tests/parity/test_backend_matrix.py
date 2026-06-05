@@ -71,7 +71,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import _read_vrt, build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import _read_vrt, _build_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
 from xrspatial.geotiff._errors import RotatedTransformError, UnparseableCRSError
 
@@ -407,7 +407,7 @@ def _build_vrt_mosaic(dir_path: Path, target: Path) -> Path:
         p = dir_path / f"{target.stem}_tile_{c}.tif"
         to_geotiff(da, str(p), compression="none", tiled=False)
         tile_paths.append(str(p))
-    build_vrt(str(target), tile_paths, relative=False, crs=4326)
+    _build_vrt(str(target), tile_paths, relative=False, crs=4326)
     return target
 
 
@@ -1179,7 +1179,7 @@ def _fp_read_vrt_eager(path: pathlib.Path, fixture_id: str) -> xr.DataArray:
         shutil.copy2(path, local_src)
     vrt_path = cache_dir / f"{fixture_id}.vrt"
     if not vrt_path.exists():
-        build_vrt(str(vrt_path), [str(local_src)])
+        _build_vrt(str(vrt_path), [str(local_src)])
     return open_geotiff(str(vrt_path), **_FP_OPTIN)
 
 

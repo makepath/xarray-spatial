@@ -3,7 +3,7 @@
 ``_wkt_to_epsg`` and ``_resolve_crs_to_wkt`` are pure leaves over
 ``pyproj`` (lazy-imported inside) and the strict-mode / fallback-warning
 machinery from ``_runtime``. They are called from ``to_geotiff``,
-``_write_geotiff_gpu``, and ``build_vrt`` to normalise the EPSG / WKT /
+``_write_geotiff_gpu``, and ``_build_vrt`` to normalise the EPSG / WKT /
 PROJ kwarg they each accept.
 """
 from __future__ import annotations
@@ -231,10 +231,10 @@ def _resolve_crs_to_wkt(crs) -> str | None:
     Mirrors ``to_geotiff`` / ``_write_geotiff_gpu``'s ``crs`` kwarg semantics
     so callers can pass an int EPSG code, a WKT string, or a PROJ string
     interchangeably. Returns the canonical WKT string (or ``None`` if
-    ``crs`` is ``None``) for forwarding to ``_vrt.build_vrt``, which only
+    ``crs`` is ``None``) for forwarding to ``_vrt.write_vrt``, which only
     speaks WKT.
 
-    Used by ``build_vrt`` to close the parameter-naming
+    Used by ``_build_vrt`` to close the parameter-naming
     drift versus the eager and GPU writer entry points.
 
     Parameters
@@ -275,7 +275,7 @@ def _resolve_crs_to_wkt(crs) -> str | None:
             f"got {type(crs).__name__}")
     if isinstance(crs, str):
         # Empty string is a common "no CRS" sentinel from upstream
-        # GeoTIFFs; preserve the existing _vrt.build_vrt semantics (it
+        # GeoTIFFs; preserve the existing _vrt.write_vrt semantics (it
         # falls back to the first source's CRS for empty strings too).
         if not crs:
             return None

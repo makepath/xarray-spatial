@@ -6,7 +6,7 @@ the reader quartet stay consistent with each other and with the docs.
 Three sections, each a former top-level file:
 
 Section 1 -- Writer signature / docstring parity
-    ``build_vrt`` exposes its documented kwargs through an explicit
+    ``_build_vrt`` exposes its documented kwargs through an explicit
     signature (no ``**kwargs`` catch-all), ``_write_geotiff_gpu`` lists
     ``'cubic'`` in its ``overview_resampling`` docstring, and its
     ``data`` parameter carries the same type hint as ``to_geotiff``.
@@ -36,7 +36,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (SUPPORTED_FEATURES, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
-                               _write_geotiff_gpu, build_vrt, open_geotiff, to_geotiff)
+                               _write_geotiff_gpu, _build_vrt, open_geotiff, to_geotiff)
 
 from .._helpers.markers import requires_gpu
 
@@ -45,7 +45,7 @@ from .._helpers.markers import requires_gpu
 # ===========================================================================
 #
 # Three drifts this section guards against:
-# ``build_vrt`` swallowed every kwarg into ``**kwargs`` so the documented
+# ``_build_vrt`` swallowed every kwarg into ``**kwargs`` so the documented
 # ``relative`` / ``crs`` / ``nodata`` were invisible to ``inspect.signature``;
 # ``_write_geotiff_gpu``'s ``overview_resampling`` docstring omitted
 # ``'cubic'``; and ``_write_geotiff_gpu(data, ...)`` lacked the type hint
@@ -53,7 +53,7 @@ from .._helpers.markers import requires_gpu
 
 
 def test_write_vrt_signature_exposes_documented_kwargs():
-    """``inspect.signature(build_vrt)`` reports the four accepted kwargs.
+    """``inspect.signature(_build_vrt)`` reports the four accepted kwargs.
 
     When the public wrapper used ``**kwargs``, ``inspect.signature``
     only saw ``vrt_path`` and ``source_files``. ``crs`` was added for
@@ -62,7 +62,7 @@ def test_write_vrt_signature_exposes_documented_kwargs():
     deprecation shim can tell "user passed nothing" from "user passed
     crs_wkt=None").
     """
-    sig = inspect.signature(build_vrt)
+    sig = inspect.signature(_build_vrt)
     params = sig.parameters
     assert 'relative' in params
     assert 'crs' in params  # canonical kwarg
@@ -99,7 +99,7 @@ def test_write_vrt_unknown_kwarg_rejected_at_public_level(tmp_path):
     to_geotiff(da, tif_path)
 
     with pytest.raises(TypeError, match='typo_kwarg'):
-        build_vrt(str(tmp_path / 't.vrt'), [tif_path], typo_kwarg=1)
+        _build_vrt(str(tmp_path / 't.vrt'), [tif_path], typo_kwarg=1)
 
 
 def test_write_vrt_accepts_documented_kwargs(tmp_path):
@@ -118,7 +118,7 @@ def test_write_vrt_accepts_documented_kwargs(tmp_path):
     to_geotiff(da, tif_path)
 
     vrt_path = str(tmp_path / 't.vrt')
-    out = build_vrt(
+    out = _build_vrt(
         vrt_path, [tif_path],
         relative=False, crs=None, nodata=-9999.0,
     )

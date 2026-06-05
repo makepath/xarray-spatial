@@ -35,7 +35,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (_read_geotiff_dask, _read_geotiff_gpu, _read_vrt, build_vrt,
+from xrspatial.geotiff import (_read_geotiff_dask, _read_geotiff_gpu, _read_vrt, _build_vrt,
                                open_geotiff, to_geotiff)
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_CRS_ONLY, GEOREF_STATUS_FULL,
                                       GEOREF_STATUS_NONE, GEOREF_STATUS_ROTATED_DROPPED,
@@ -73,11 +73,11 @@ def _build_local_tif(tmp_path, name='src_2175.tif'):
     return path
 
 
-def _build_vrt(tmp_path):
+def _make_one_source_vrt(tmp_path):
     """Build a 1-source VRT mosaic referencing a small local GeoTIFF."""
     src = _build_local_tif(tmp_path, name='vrt_src_2175.tif')
     vrt = str(tmp_path / 'mosaic_2175.vrt')
-    build_vrt(vrt, [src])
+    _build_vrt(vrt, [src])
     return vrt, src
 
 
@@ -143,19 +143,19 @@ def test_gpu_overview_level_float(tmp_path):
 
 @pytest.mark.parametrize("value", [True, False])
 def test_vrt_overview_level_bool(tmp_path, value):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     with pytest.raises(TypeError, match="bool"):
         _read_vrt(vrt, overview_level=value)
 
 
 def test_vrt_overview_level_str(tmp_path):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     with pytest.raises(TypeError, match="str"):
         _read_vrt(vrt, overview_level="0")
 
 
 def test_vrt_overview_level_float(tmp_path):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     with pytest.raises(TypeError, match="float"):
         _read_vrt(vrt, overview_level=1.0)
 
@@ -176,7 +176,7 @@ def test_open_geotiff_gpu_rejects_max_cloud_bytes(tmp_path):
 
 
 def test_open_geotiff_vrt_rejects_max_cloud_bytes(tmp_path):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         open_geotiff(vrt, max_cloud_bytes=8)
 
@@ -194,7 +194,7 @@ def test_gpu_rejects_max_cloud_bytes(tmp_path):
 
 
 def test_vrt_rejects_max_cloud_bytes(tmp_path):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         _read_vrt(vrt, max_cloud_bytes=8)
 
@@ -217,7 +217,7 @@ def test_explicit_none_max_cloud_bytes_rejected_on_gpu_direct(tmp_path):
 
 
 def test_explicit_none_max_cloud_bytes_rejected_on_vrt_direct(tmp_path):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         _read_vrt(vrt, max_cloud_bytes=None)
 
@@ -280,7 +280,7 @@ def test_dask_rejects_on_gpu_failure(tmp_path):
 
 
 def test_vrt_rejects_on_gpu_failure(tmp_path):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"on_gpu_failure only applies"):
         _read_vrt(vrt, on_gpu_failure='strict')
 
@@ -347,7 +347,7 @@ def test_dask_accepts_path_object(tmp_path):
 
 def test_vrt_accepts_path_object(tmp_path):
     from pathlib import Path
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     out = _read_vrt(Path(vrt))
     assert out.shape == (8, 8)
 
@@ -402,7 +402,7 @@ def test_dask_defaults_round_trip(tmp_path):
 
 
 def test_vrt_defaults_round_trip(tmp_path):
-    vrt, _src = _build_vrt(tmp_path)
+    vrt, _src = _make_one_source_vrt(tmp_path)
     out = _read_vrt(vrt)
     assert out.shape == (8, 8)
 
@@ -425,7 +425,7 @@ def _get_error(callable_, *args, **kwargs):
 
 def test_max_cloud_bytes_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
-    vrt, _ = _build_vrt(tmp_path)
+    vrt, _ = _make_one_source_vrt(tmp_path)
     open_dask = _get_error(open_geotiff, path, chunks=4, max_cloud_bytes=8)
     direct_dask = _get_error(_read_geotiff_dask, path, max_cloud_bytes=8)
     # Both raise ValueError with the same dask-incompatibility message.
@@ -478,7 +478,7 @@ def test_missing_sources_message_parity(tmp_path):
 
 def test_on_gpu_failure_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
-    vrt, _ = _build_vrt(tmp_path)
+    vrt, _ = _make_one_source_vrt(tmp_path)
     results = [
         _get_error(open_geotiff, path, on_gpu_failure='strict'),
         _get_error(_read_geotiff_dask, path, on_gpu_failure='strict'),
@@ -491,7 +491,7 @@ def test_on_gpu_failure_message_parity(tmp_path):
 
 def test_overview_level_message_parity(tmp_path):
     path = _build_local_tif(tmp_path)
-    vrt, _ = _build_vrt(tmp_path)
+    vrt, _ = _make_one_source_vrt(tmp_path)
     results = [
         _get_error(open_geotiff, path, overview_level="bad"),
         _get_error(_read_geotiff_dask, path, overview_level="bad"),
