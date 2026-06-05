@@ -1526,6 +1526,78 @@ def test_compatible_sources_succeed(tmp_path):
     assert os.path.exists(vrt)
 
 
+def test_write_vrt_leaves_no_temp_file(tmp_path):
+    """A successful write_vrt leaves the final .vrt and no stray temp
+    files in the destination directory (issue #2965)."""
+    d = _unique_dir(tmp_path, "atomic_clean")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0)
+    vrt = os.path.join(d, "out.vrt")
+    _priv_write_vrt(vrt, [a, b])
+    assert os.path.exists(vrt)
+    # No leftover temp artifacts from the temp-then-rename write.
+    leftovers = glob.glob(os.path.join(d, "*.tmp")) + glob.glob(
+        os.path.join(d, "*.tmp*"))
+    assert leftovers == [], f"temp files not cleaned up: {leftovers}"
+
+
+def test_write_vrt_no_partial_file_on_write_failure(tmp_path, monkeypatch):
+    """If the index write fails mid-flight, no partial .vrt is left at
+    the final path (issue #2965). The write goes to a temp file in the
+    destination directory and is os.replace'd into place, so a failure
+    before the rename never publishes a truncated index."""
+    d = _unique_dir(tmp_path, "atomic_fail")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0)
+    vrt = os.path.join(d, "out.vrt")
+
+    # Force the atomic helper to blow up while writing the temp file,
+    # before any rename onto the final path could happen.
+    def boom(file_bytes, path):
+        raise OSError("simulated disk-full during VRT index write")
+
+    # write_vrt imports _write_bytes locally from _writer at call time,
+    # so patching the source module is what intercepts the call.
+    monkeypatch.setattr(writer_mod, "_write_bytes", boom)
+
+    with pytest.raises(OSError, match="simulated disk-full"):
+        _priv_write_vrt(vrt, [a, b])
+
+    # The final path must not exist as a partial file.
+    assert not os.path.exists(vrt)
+
+
+def test_write_vrt_failure_preserves_existing_file(tmp_path, monkeypatch):
+    """A failed re-write leaves any pre-existing .vrt at the final path
+    untouched rather than truncating it (issue #2965)."""
+    d = _unique_dir(tmp_path, "atomic_preserve")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0)
+    vrt = os.path.join(d, "out.vrt")
+
+    # First write succeeds and produces a valid index.
+    _priv_write_vrt(vrt, [a, b])
+    original = open(vrt, "rb").read()
+    assert original
+
+    def boom(file_bytes, path):
+        raise OSError("simulated failure during VRT rewrite")
+
+    monkeypatch.setattr(writer_mod, "_write_bytes", boom)
+    with pytest.raises(OSError, match="simulated failure"):
+        _priv_write_vrt(vrt, [a, b])
+
+    # The original index is intact (the temp-then-rename never published
+    # a partial file over it).
+    assert open(vrt, "rb").read() == original
+
+
 def test_pixel_size_within_tolerance_accepted(tmp_path):
     d = _unique_dir(tmp_path, "tol")
     a = os.path.join(d, "a.tif")

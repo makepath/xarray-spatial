@@ -2242,7 +2242,13 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     lines.append('</VRTDataset>')
 
     xml = '\n'.join(lines) + '\n'
-    with open(vrt_path, 'w') as f:
-        f.write(xml)
+    # Write the index atomically: a temp file in the destination
+    # directory followed by ``os.replace``. The tiled writer promotes the
+    # tile directory before this call, so a direct in-place write here is
+    # the last non-atomic step and an interrupted write would leave a
+    # partial ``.vrt`` pointing at a complete tile set. ``_write_bytes``
+    # already implements the temp-then-rename pattern for local paths.
+    from ._writer import _write_bytes
+    _write_bytes(xml.encode('utf-8'), vrt_path)
 
     return vrt_path
