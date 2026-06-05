@@ -55,11 +55,11 @@ def _build_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
     Parameters
     ----------
     path : str
-        [advanced] Output .vrt file path. Mirrors the ``path`` kwarg
+        [internal-only] Output .vrt file path. Mirrors the ``path`` kwarg
         on ``to_geotiff`` and ``_write_geotiff_gpu`` so the writer trio
         shares a single destination-arg name.
     source_files : list of str
-        [advanced] Paths to the source GeoTIFF files.
+        [internal-only] Paths to the source GeoTIFF files.
     vrt_path : str, optional
         [internal-only] Deprecated alias for ``path``. Emits
         ``DeprecationWarning`` when supplied; passing both ``path``
@@ -68,10 +68,10 @@ def _build_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
         ``_build_vrt(vrt_path=...)`` keyword) keep working through the
         deprecation window. New code should use ``path``.
     relative : bool, optional
-        [advanced] Store source paths relative to the VRT file
+        [internal-only] Store source paths relative to the VRT file
         (default True).
     crs : int, str, or None, optional
-        [advanced] EPSG code (int), WKT string, or PROJ string. If
+        [internal-only] EPSG code (int), WKT string, or PROJ string. If
         None, the CRS is taken from the first source GeoTIFF. Mirrors
         the ``crs`` kwarg on ``to_geotiff`` and ``_write_geotiff_gpu``
         so the same value can be forwarded to whichever writer the
@@ -87,7 +87,7 @@ def _build_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
         ``str | None`` surface is preserved; new code should use
         ``crs`` instead, which additionally accepts ``int`` EPSG codes.
     nodata : float, int, or None, optional
-        [advanced] NoData value. If None, taken from the first source
+        [internal-only] NoData value. If None, taken from the first source
         GeoTIFF.
         Integer sentinels (e.g. ``65535`` for uint16, ``-9999`` for
         int32) are accepted so the surface lines up with the
