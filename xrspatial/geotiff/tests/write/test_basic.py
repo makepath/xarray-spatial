@@ -1583,7 +1583,8 @@ def test_write_vrt_failure_preserves_existing_file(tmp_path, monkeypatch):
 
     # First write succeeds and produces a valid index.
     _priv_write_vrt(vrt, [a, b])
-    original = open(vrt, "rb").read()
+    with open(vrt, "rb") as f:
+        original = f.read()
     assert original
 
     def boom(file_bytes, path):
@@ -1595,7 +1596,8 @@ def test_write_vrt_failure_preserves_existing_file(tmp_path, monkeypatch):
 
     # The original index is intact (the temp-then-rename never published
     # a partial file over it).
-    assert open(vrt, "rb").read() == original
+    with open(vrt, "rb") as f:
+        assert f.read() == original
 
 
 def test_pixel_size_within_tolerance_accepted(tmp_path):
