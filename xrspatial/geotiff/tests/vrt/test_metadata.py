@@ -31,8 +31,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError, _read_geotiff_dask,
-                               _read_vrt, _build_vrt, open_geotiff, to_geotiff)
+from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError, _build_vrt,
+                               _read_geotiff_dask, _read_vrt, open_geotiff, to_geotiff)
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_FULL, GEOREF_STATUS_NONE,
                                       GEOREF_STATUS_TRANSFORM_ONLY)
 from xrspatial.geotiff._errors import VRTUnsupportedError

@@ -71,7 +71,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import _read_vrt, _build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import _build_vrt, _read_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
 from xrspatial.geotiff._errors import RotatedTransformError, UnparseableCRSError
 

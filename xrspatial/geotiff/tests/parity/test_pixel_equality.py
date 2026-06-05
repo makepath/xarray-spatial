@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (_read_geotiff_dask, _read_geotiff_gpu, _read_vrt, _build_vrt,
+from xrspatial.geotiff import (_build_vrt, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
                                open_geotiff, to_geotiff)
 
 from .._helpers.markers import gpu_available, requires_gpu, requires_loopback

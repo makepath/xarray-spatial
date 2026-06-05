@@ -23,7 +23,7 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import _read_geotiff_dask, _build_vrt, to_geotiff
+from xrspatial.geotiff import _build_vrt, _read_geotiff_dask, to_geotiff
 from xrspatial.geotiff._reader import _MmapCache, read_to_array
 from xrspatial.geotiff._writer import _MAX_OVERVIEW_LEVELS, write
 
@@ -94,7 +94,7 @@ class TestC5WriteVrtKwargs:
         # ``crs=None`` instead of the deprecated alias to avoid the
         # DeprecationWarning the alias now emits.
         _build_vrt(vrt_path, [a_path], relative=False, crs=None,
-                  nodata=-9999.0)
+                   nodata=-9999.0)
         assert os.path.exists(vrt_path)
 
     def test_unknown_kwarg_raises_typeerror(self, tmp_path):

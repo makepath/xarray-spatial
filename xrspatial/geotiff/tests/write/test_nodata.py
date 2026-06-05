@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import _read_geotiff_dask, _read_vrt, _build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import _build_vrt, _read_geotiff_dask, _read_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._attrs import _resolve_nodata_attr
 from xrspatial.geotiff._geotags import GeoTransform, _parse_nodata_str, build_geo_tags
 from xrspatial.geotiff._reader import _int_nodata_in_range, _resolve_masked_fill
