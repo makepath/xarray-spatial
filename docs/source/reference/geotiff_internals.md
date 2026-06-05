@@ -18,17 +18,17 @@ public API. Files referenced live under `xrspatial/geotiff/`.
 | Entry point          | File                              | Returns                |
 | -------------------- | --------------------------------- | ---------------------- |
 | `open_geotiff`       | `xrspatial/geotiff/__init__.py`   | dispatcher (NumPy / CuPy / Dask / Dask+CuPy / VRT) |
-| `read_geotiff_dask`  | `xrspatial/geotiff/_backends/dask.py` | Dask-NumPy DataArray |
-| `read_geotiff_gpu`   | `xrspatial/geotiff/_backends/gpu.py`  | CuPy or Dask-CuPy DataArray |
-| `read_vrt`           | `xrspatial/geotiff/_backends/vrt.py`  | NumPy / CuPy / Dask DataArray (mosaic) |
+| `_read_geotiff_dask`  | `xrspatial/geotiff/_backends/dask.py` | Dask-NumPy DataArray |
+| `_read_geotiff_gpu`   | `xrspatial/geotiff/_backends/gpu.py`  | CuPy or Dask-CuPy DataArray |
+| `_read_vrt`           | `xrspatial/geotiff/_backends/vrt.py`  | NumPy / CuPy / Dask DataArray (mosaic) |
 
 ### Write
 
 | Entry point          | File                              | Input                  |
 | -------------------- | --------------------------------- | ---------------------- |
 | `to_geotiff`         | `xrspatial/geotiff/_writers/eager.py` | NumPy / Dask DataArray (auto-dispatches to GPU when input is CuPy-backed) |
-| `write_geotiff_gpu`  | `xrspatial/geotiff/_writers/gpu.py`   | CuPy DataArray |
-| `write_vrt`          | `xrspatial/geotiff/_writers/vrt.py`   | list of GeoTIFF paths (XML emitter) |
+| `_write_geotiff_gpu`  | `xrspatial/geotiff/_writers/gpu.py`   | CuPy DataArray |
+| `build_vrt`          | `xrspatial/geotiff/_writers/vrt.py`   | list of GeoTIFF paths (XML emitter) |
 
 ## Contract steps
 
@@ -122,12 +122,12 @@ now and that the call-site comments justify.
 
 ### Read backends
 
-| Step | `open_geotiff` (eager) | `read_geotiff_dask` | `read_geotiff_gpu` (eager) | `read_geotiff_gpu` (chunked) | `read_vrt` (eager) | `read_vrt` (chunked) |
+| Step | `open_geotiff` (eager) | `_read_geotiff_dask` | `_read_geotiff_gpu` (eager) | `_read_geotiff_gpu` (chunked) | `_read_vrt` (eager) | `_read_vrt` (chunked) |
 | ---- | ---------------------- | ------------------- | -------------------------- | ---------------------------- | ------------------ | -------------------- |
 | 1. source / kwarg validation | shared (`_validate_dispatch_kwargs` then dispatches) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`) | shared (`_validate_dispatch_kwargs`, `_validate_chunks_arg`); duplicated inline overview-level / `missing_sources` / `band_nodata` value rejections | shared (`_validate_dispatch_kwargs`); duplicated inline overview-level / `missing_sources` / `band_nodata` value rejections |
 | 2. metadata parse | shared (`read_to_array` -> `_parse_cog_http_meta` for cloud (with `.tif.ovr` sidecar discovery via `discover_remote_sidecar`), `parse_header` + `parse_all_ifds` + sidecar otherwise) | shared (`_read_geo_info` for local, `_parse_cog_http_meta` for HTTP/fsspec, both with `.tif.ovr` sidecar discovery via `discover_remote_sidecar` -- #2239) | shared (`extract_geo_info_with_overview_inheritance`, `select_overview_ifd`); duplicated inline IFD + sidecar load lifted from `_read_geo_info` | shared (`extract_geo_info_with_overview_inheritance`); duplicated inline IFD + sidecar handling | duplicated (`_parse_vrt` + `_read_vrt_internal` -- VRT-specific, no shared metadata parser) | duplicated (`_parse_vrt` + per-chunk `_vrt_chunk_read`) |
 | 3. transform / georef classification | shared (`_populate_attrs_from_geo_info` via `_finalize_eager_read`) | shared (`_populate_attrs_from_geo_info` via `_finalize_lazy_read_attrs`) | shared (`_populate_attrs_from_geo_info` via `_finalize_eager_read`) | shared (`_populate_attrs_from_geo_info` via `_finalize_lazy_read_attrs`) | shared (`_vrt_to_synthetic_geo_info` -> `_finalize_lazy_read_attrs`); documented divergence: per-band nodata sentinel selection runs before the helper, and `vrt_holes` is injected through `attrs_in` because `GeoInfo` has no slot for it | shared (`_vrt_to_synthetic_geo_info` -> `_finalize_lazy_read_attrs`); same documented divergence |
-| 4. pixel decode | shared (`read_to_array`) | shared (per-chunk `read_to_array` / `_fetch_decode_cog_http_tiles`) | duplicated (inline GDS / KvikIO / nvCOMP path with CPU fallback via `read_to_array`) | duplicated (inline GDS + per-chunk delayed; HTTP / fsspec / stripped layouts fall back to `read_geotiff_dask`) | duplicated (`_read_vrt_internal._read_data` per source) | duplicated (per-chunk `_vrt_chunk_read` decodes only sources intersecting the window) |
+| 4. pixel decode | shared (`read_to_array`) | shared (per-chunk `read_to_array` / `_fetch_decode_cog_http_tiles`) | duplicated (inline GDS / KvikIO / nvCOMP path with CPU fallback via `read_to_array`) | duplicated (inline GDS + per-chunk delayed; HTTP / fsspec / stripped layouts fall back to `_read_geotiff_dask`) | duplicated (`_read_vrt_internal._read_data` per source) | duplicated (per-chunk `_vrt_chunk_read` decodes only sources intersecting the window) |
 | 5. orientation / photometric | shared (`read_to_array` applies both) | shared (per chunk via `read_to_array`); rejects non-default orientation on HTTP COG dask path | shared on CPU-fallback (`read_to_array`); duplicated on pure GPU path (`_apply_orientation_gpu`, `_apply_orientation_geo_info`, inline MinIsWhite inversion) | shared on CPU-fallback; duplicated on disk-to-GPU per-chunk path (`_decode_window_gpu_direct`); rejects orientation != 1 in `_gds_chunk_path_available` | duplicated (inline NaN masking in `_vrt._read_data` for float sources; VRT does not carry an orientation tag) | duplicated (per chunk same as eager VRT) |
 | 6. nodata mask + dtype cast | shared (`_apply_eager_nodata_mask` + `_validate_dtype_cast` via `_finalize_eager_read`) | duplicated (per-chunk mask inline in `_delayed_read_window`); shared `_validate_dtype_cast` on graph dtype | shared (`_apply_eager_nodata_mask` via `_finalize_eager_read`) on both stripped and tiled paths | duplicated (per-chunk mask inline in `_chunk_task`); shared `_validate_dtype_cast` | duplicated (`_apply_integer_sentinel_mask_with_presence` for per-band integer sentinels, plus inline float-NaN proxy and pre-cast dtype tracking); shared `_validate_dtype_cast` | duplicated (per-chunk integer sentinel mask via `_apply_integer_sentinel_mask_with_presence`); shared `_validate_dtype_cast` |
 | 7. attrs finalization | shared (`_finalize_eager_read` -> `_validate_read_geo_info` + `_populate_attrs_from_geo_info` + `_set_nodata_attrs`) | shared (`_finalize_lazy_read_attrs`); documented divergence: `nodata_pixels_present` stays unset on lazy outputs (issue #2135) | shared (`_finalize_eager_read`); GPU MinIsWhite picks `mask_sentinel` from three local stashes (`_mw_mask_nodata`, `_cpu_fallback_geo._mask_nodata`, or raw `nodata`) | shared (`_finalize_lazy_read_attrs`); same `nodata_pixels_present` divergence as the CPU dask path | shared (`_finalize_lazy_read_attrs`); documented divergences: `vrt_holes` injected via `attrs_in` seed; per-band nodata selection runs before the helper; `nodata_pixels_present` stamped post-helper from a VRT-aware scan (`_vrt_mask_with_presence` / `_vrt_scan_for_sentinel`) | shared (`_finalize_lazy_read_attrs`); same VRT divergences as the eager VRT path |
@@ -138,11 +138,11 @@ now and that the call-site comments justify.
 The TIFF write contract is the inverse of the read contract: validate the
 DataArray, resolve transform / CRS / nodata from the attrs, lay out the
 output, encode, and emit bytes. Steps 4 and 5 (decode, orientation) have no
-write analogue; `to_geotiff` and `write_geotiff_gpu` always emit
+write analogue; `to_geotiff` and `_write_geotiff_gpu` always emit
 Orientation = 1 and rely on the writer assembler (`_writer.write`) for
 photometric handling.
 
-| Step | `to_geotiff` (CPU eager / dask) | `write_geotiff_gpu` | `write_vrt` |
+| Step | `to_geotiff` (CPU eager / dask) | `_write_geotiff_gpu` | `build_vrt` |
 | ---- | ------------------------------- | ------------------- | ----------- |
 | 1. source / kwarg validation | shared (`_validate_tile_size_arg`, `_validate_3d_writer_dims`, `_validate_writer_spatial_shape`, `_validate_nodata_arg`, `_validate_no_rotated_affine`); duplicated inline compression / `compression_level` / `cog` / `overview_levels` / `bigtiff` / `streaming_buffer_bytes` / `max_z_error` / `photometric` / `allow_internal_only_jpeg` / `allow_experimental_codecs` value rejections | shared (`_validate_tile_size_arg`, `_validate_3d_writer_dims`, `_validate_writer_spatial_shape`, `_validate_nodata_arg`, `_validate_no_rotated_affine`); duplicated inline GPU-specific kwarg rejections (`predictor`, `compression`, `cog`, etc.) | shared (`_validate_nodata_arg`); duplicated inline `path` / `vrt_path` shim, `crs` / `crs_wkt` shim, source path validation |
 | 2. metadata parse | N/A (no source to parse; reads attrs off the DataArray) | N/A | duplicated (reads geokeys from the first source file to inherit CRS / nodata; lives in `_vrt.write_vrt`) |

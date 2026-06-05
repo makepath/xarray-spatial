@@ -39,12 +39,9 @@ the read and write paths:
        :class:`xarray.DataArray` for single-band input and a 3D one for
        multi-band input. The binary file-like form is restricted to the
        eager numpy reader; dask, GPU, VRT, and remote-URL paths require
-       a string.
-   * - :func:`xrspatial.geotiff.read_vrt`
-     - Dedicated entry point for reading a GDAL ``.vrt`` mosaic over a
-       set of GeoTIFF sources. Tier: ``advanced``. The VRT path honours
-       a documented subset of the GDAL VRT schema; unsupported features
-       raise ``VRTUnsupportedError`` or
+       a string. A ``.vrt`` source reads a GDAL mosaic (tier:
+       ``advanced``) over a documented subset of the GDAL VRT schema;
+       unsupported features raise ``VRTUnsupportedError`` or
        :class:`xrspatial.geotiff.UnsupportedGeoTIFFFeatureError` at
        graph-build time rather than producing wrong pixels. Both error
        classes live in :mod:`xrspatial.geotiff._errors`.
@@ -53,13 +50,13 @@ the read and write paths:
        Cloud-optimized GeoTIFF layout. Pass ``allow_experimental_codecs=True``
        to opt into ``lerc``, ``jpeg2000`` / ``j2k``, or ``lz4``; pass
        ``allow_internal_only_jpeg=True`` to opt into the
-       internal-only ``jpeg`` codec.
-   * - :func:`xrspatial.geotiff.write_geotiff_gpu`
-     - GPU writer. Tier: ``experimental``. Use the CPU writer for
-       anything you intend to round-trip through external tools.
-   * - :func:`xrspatial.geotiff.write_vrt`
-     - Emit a GDAL ``.vrt`` over local GeoTIFF sources. Tier:
-       ``advanced``.
+       internal-only ``jpeg`` codec. Pass ``gpu=True`` (or pass
+       CuPy-backed data) for the GPU writer (tier: ``experimental``);
+       use the CPU path for anything you round-trip through external
+       tools.
+   * - :func:`xrspatial.geotiff.build_vrt`
+     - Emit a GDAL ``.vrt`` over a list of existing local GeoTIFF
+       sources. Tier: ``advanced``.
 
 A dask-backed read is just ``open_geotiff(source, chunks=...)`` -- there
 is no separate ``read_geotiff_dask`` name on the public surface. The
