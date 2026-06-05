@@ -33,8 +33,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (_header, open_geotiff, _read_geotiff_dask, to_geotiff,
-                               _write_geotiff_gpu)
+from xrspatial.geotiff import (_header, _read_geotiff_dask, _write_geotiff_gpu, open_geotiff,
+                               to_geotiff)
 from xrspatial.geotiff._coords import coords_to_transform
 from xrspatial.geotiff._dtypes import LONG, SHORT
 from xrspatial.geotiff._header import (MAX_PIXEL_ARRAY_COUNT, TAG_BITS_PER_SAMPLE, TAG_COLORMAP,

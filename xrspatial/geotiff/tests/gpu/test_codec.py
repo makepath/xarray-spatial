@@ -110,7 +110,7 @@ def test_gpu_write_roundtrip_after_batched_compress_1712(compression):
     """GPU compress path round-trips uncorrupted for deflate + zstd."""
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, _write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu, open_geotiff
 
     rng = np.random.default_rng(seed=1712)
     arr_cpu = rng.random((512, 512), dtype=np.float32)
@@ -138,7 +138,7 @@ def test_gpu_write_zero_tile_edge_case_1712():
     """A 0-tile compress returns an empty list without indexing into None."""
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, _write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu, open_geotiff
 
     arr_gpu = cupy.zeros((32, 32), dtype=cupy.float32)
     darr = xr.DataArray(arr_gpu, dims=["y", "x"])
@@ -1783,7 +1783,7 @@ class TestErrorMessageStable_1933:
     """The GPU error wording matches the eager/dask wording."""
 
     def test_gpu_error_message_matches_eager(self, tmp_path):
-        from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
         arr = np.arange(64, dtype=np.uint32).reshape(8, 8)
         path = tmp_path / "pred3_uint32_msg.tif"

@@ -31,9 +31,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (RemoteStableSourcesOnlyError,
-                               VRTStableSourcesOnlyError, open_geotiff,
-                               to_geotiff)
+from xrspatial.geotiff import (RemoteStableSourcesOnlyError, VRTStableSourcesOnlyError,
+                               open_geotiff, to_geotiff)
 from xrspatial.geotiff.tests._helpers.tiff_builders import make_minimal_tiff
 
 fsspec = pytest.importorskip("fsspec")

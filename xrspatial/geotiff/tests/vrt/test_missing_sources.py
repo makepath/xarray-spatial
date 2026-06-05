@@ -33,7 +33,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, _read_vrt, to_geotiff
+from xrspatial.geotiff import GeoTIFFFallbackWarning, _read_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._vrt import read_vrt as _internal_read_vrt
 
 PRESENT_FILL = 7.0

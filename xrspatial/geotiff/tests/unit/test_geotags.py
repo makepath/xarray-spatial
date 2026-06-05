@@ -253,8 +253,6 @@ def _build_tiff_with_transformation_tag(matrix_16: tuple) -> bytes:
     No ModelPixelScale or ModelTiepoint -- the reader has to use the
     transformation tag.
     """
-    import struct
-
     bo = '<'
     width, height = 2, 2
     pixels = np.zeros((height, width), dtype=np.uint8)
@@ -405,8 +403,6 @@ def _build_tiff_with_tiepoint_only(tiepoint_6: tuple) -> bytes:
     pixel_height is stored as -sy, so the resulting transform has
     pixel_width == 1.0 and pixel_height == -1.0.
     """
-    import struct
-
     bo = '<'
     width, height = 2, 2
     pixels = np.zeros((height, width), dtype=np.uint8)
@@ -829,5 +825,3 @@ def test_open_geotiff_accepts_consistent_geographic(tmp_path):
     da = open_geotiff(str(path))
     assert da.shape == (4, 4)
     assert da.attrs.get('crs') == 4326
-
-

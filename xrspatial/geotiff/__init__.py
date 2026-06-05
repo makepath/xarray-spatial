@@ -987,8 +987,7 @@ def open_geotiff(source: str | BinaryIO, *,
     # that kwarg conflict is reported -- the tier rejection wins, which
     # matches refusing the unsupported source before validating kwargs
     # that would not be honoured anyway.
-    from ._validation import _validate_stable_only_remote
-    from ._validation import _validate_stable_only_vrt
+    from ._validation import _validate_stable_only_remote, _validate_stable_only_vrt
     if _is_vrt_source:
         _validate_stable_only_vrt(
             source,

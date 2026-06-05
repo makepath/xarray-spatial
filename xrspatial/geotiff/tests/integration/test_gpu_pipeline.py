@@ -80,7 +80,7 @@ def test_open_geotiff_gpu_chunks_int_round_trip(tmp_path):
 
 def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
     """`_read_geotiff_gpu(chunks=(rh, cw))` accepts tuple chunk specs."""
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff, to_geotiff
 
     rng = np.random.RandomState(11)
     arr = rng.randint(0, 60_000, (192, 256)).astype(np.uint16)

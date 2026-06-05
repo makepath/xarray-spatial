@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, RemoteStableSourcesOnlyError,
-                               open_geotiff, _read_geotiff_dask, _read_geotiff_gpu)
+                               _read_geotiff_dask, _read_geotiff_gpu, open_geotiff)
 from xrspatial.geotiff.tests._helpers.tiff_builders import make_minimal_tiff
 
 fsspec = pytest.importorskip("fsspec")

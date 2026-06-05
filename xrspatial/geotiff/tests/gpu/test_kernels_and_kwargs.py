@@ -3078,7 +3078,7 @@ class TestErrorMessageParity_1929:
     """
 
     def test_gpu_vs_cpu_message_matches(self, tmp_path):
-        from xrspatial.geotiff import to_geotiff, _write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu, to_geotiff
 
         out_cpu = str(tmp_path / "cpu_msg_1929.tif")
         out_gpu = str(tmp_path / "gpu_msg_1929.tif")
@@ -3121,7 +3121,7 @@ class TestKwargDefaultParity_1929:
     """
 
     def test_default_is_false_on_all_writers(self):
-        from xrspatial.geotiff import to_geotiff, _write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu, to_geotiff
         from xrspatial.geotiff._writers.eager import _write_vrt_tiled
 
         for fn in (to_geotiff, _write_geotiff_gpu, _write_vrt_tiled):

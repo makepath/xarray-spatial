@@ -34,9 +34,11 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.geotiff import _read_vrt
 from xrspatial.geotiff import _vrt as _vrt_module
+from xrspatial.geotiff import _write_geotiff_gpu
 from xrspatial.geotiff import _writer as writer_mod
-from xrspatial.geotiff import open_geotiff, _read_vrt, to_geotiff, _write_geotiff_gpu, build_vrt
+from xrspatial.geotiff import build_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, parse_header, parse_ifd
@@ -1106,7 +1108,7 @@ def test_writer_trio_all_accept_crs_kwarg():
     output extension never has to special-case the kwarg name."""
     import inspect
 
-    from xrspatial.geotiff import to_geotiff, _write_geotiff_gpu, build_vrt
+    from xrspatial.geotiff import _write_geotiff_gpu, build_vrt, to_geotiff
 
     for fn in (to_geotiff, _write_geotiff_gpu, build_vrt):
         sig = inspect.signature(fn)

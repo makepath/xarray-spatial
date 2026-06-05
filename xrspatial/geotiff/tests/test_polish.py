@@ -23,7 +23,7 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import _read_geotiff_dask, to_geotiff, build_vrt
+from xrspatial.geotiff import _read_geotiff_dask, build_vrt, to_geotiff
 from xrspatial.geotiff._reader import _MmapCache, read_to_array
 from xrspatial.geotiff._writer import _MAX_OVERVIEW_LEVELS, write
 

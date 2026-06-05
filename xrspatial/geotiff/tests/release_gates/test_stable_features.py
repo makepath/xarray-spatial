@@ -73,8 +73,8 @@ _requires_rasterio_and_dask = pytest.mark.skipif(
     ),
 )
 
-from xrspatial.geotiff import (SUPPORTED_FEATURES, UnsafeURLError, open_geotiff,  # noqa: E402
-                               _read_geotiff_dask, to_geotiff)
+from xrspatial.geotiff import (SUPPORTED_FEATURES, UnsafeURLError, _read_geotiff_dask,  # noqa: E402
+                               open_geotiff, to_geotiff)
 from xrspatial.geotiff._compression import (COMPRESSION_DEFLATE, COMPRESSION_LZW,  # noqa: E402
                                             COMPRESSION_NONE, COMPRESSION_PACKBITS,
                                             COMPRESSION_ZSTD)

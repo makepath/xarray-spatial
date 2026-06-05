@@ -20,7 +20,7 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, _read_vrt
+from xrspatial.geotiff import GeoTIFFFallbackWarning, _read_vrt, open_geotiff
 from xrspatial.geotiff._errors import InvalidIntegerNodataError, RotatedTransformError
 
 # Reuse the existing hand-rolled TIFF builders so this suite shares one

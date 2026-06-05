@@ -515,8 +515,8 @@ def test_overhead_matches_actual_emitted_size_via_writer_1905(tmp_path):
 import inspect  # noqa: E402
 import re  # noqa: E402
 
-from xrspatial.geotiff import to_geotiff as _to_geotiff_1683  # noqa: E402
 from xrspatial.geotiff import _write_geotiff_gpu as _write_geotiff_gpu_1683  # noqa: E402
+from xrspatial.geotiff import to_geotiff as _to_geotiff_1683  # noqa: E402
 
 
 def _documented_params_1683(fn) -> list[str]:

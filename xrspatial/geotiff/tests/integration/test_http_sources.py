@@ -21,11 +21,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import UnsafeURLError
+from xrspatial.geotiff import UnsafeURLError, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import _sources as _sources_mod
-from xrspatial.geotiff import (open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
-                               to_geotiff, _write_geotiff_gpu, build_vrt)
+from xrspatial.geotiff import _write_geotiff_gpu, build_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._reader import (_FULL_IMAGE_BUDGET_HEADER_SLACK, INITIAL_HTTP_HEADER_BYTES,

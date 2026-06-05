@@ -90,7 +90,7 @@ def multi_band_tiff_1605(tmp_path):
 def test_read_geotiff_gpu_window_matches_eager_1605(single_band_tiff_1605):
     """Direct call: GPU window slice matches CPU eager window slice."""
     path, source_arr = single_band_tiff_1605
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
     window = (2, 4, 12, 14)
 
@@ -126,7 +126,7 @@ def test_open_geotiff_gpu_window_no_longer_silently_dropped_1605(
 def test_read_geotiff_gpu_band_selection_1605(multi_band_tiff_1605):
     """Direct call: band=k returns the kth band as a 2D DataArray."""
     path, source_arr = multi_band_tiff_1605
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
     cpu = open_geotiff(path, band=1)
     gpu = _read_geotiff_gpu(path, band=1)
@@ -158,7 +158,7 @@ def test_open_geotiff_gpu_band_no_longer_silently_dropped_1605(
 def test_read_geotiff_gpu_window_and_band_1605(multi_band_tiff_1605):
     """window + band combine cleanly."""
     path, source_arr = multi_band_tiff_1605
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
     window = (1, 2, 11, 17)
     cpu = open_geotiff(path, window=window, band=0)
@@ -529,7 +529,7 @@ def test_stripped_max_pixels_cap_is_enforced_1732():
 def test_stripped_window_returns_only_window_1732():
     """Windowed read on a stripped file returns the window-sized array
     with coords and transform that match the window origin."""
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(64, 96)).astype(np.uint8)
@@ -1105,7 +1105,7 @@ def _attrs_subset_2324(da):
 
 def test_sidecar_without_geokeys_attrs_match_cpu_vs_dask_2324(tmp_path):
     """Baseline: CPU eager and dask agree on inherited georef."""
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask, open_geotiff
 
     from ..integration.test_sidecar import _write_pair
 
@@ -1135,7 +1135,7 @@ def test_sidecar_without_geokeys_attrs_match_cpu_vs_dask_2324(tmp_path):
 @_gpu_only
 def test_sidecar_without_geokeys_gpu_matches_cpu_2324(tmp_path):
     """GPU eager georef matches CPU / dask."""
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
     from ..integration.test_sidecar import _write_pair
 
@@ -1161,7 +1161,7 @@ def test_sidecar_without_geokeys_gpu_matches_cpu_2324(tmp_path):
 @_gpu_only
 def test_sidecar_with_own_geokeys_gpu_matches_cpu_2324(tmp_path):
     """GPU path routes a sidecar-owned georef payload to sidecar bytes."""
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
     from ..integration.test_sidecar import _write_pair
 
@@ -1268,7 +1268,7 @@ def test_http_url_returns_cupy_matching_cpu_2161(small_tif_bytes_2161,
     """HTTP URLs route through the CPU decode + GPU upload helper."""
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
     payload, arr_ref, _local = small_tif_bytes_2161
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
@@ -1298,7 +1298,7 @@ def test_memory_fsspec_uri_returns_cupy_matching_cpu_2161(
     fsspec = pytest.importorskip("fsspec")
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu, open_geotiff
 
     payload, arr_ref, _local = small_tif_bytes_2161
     fs = fsspec.filesystem("memory")

@@ -47,7 +47,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff, _write_geotiff_gpu
+from xrspatial.geotiff import GeoTIFFFallbackWarning, _write_geotiff_gpu, open_geotiff, to_geotiff
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, TAG_SAMPLE_FORMAT, parse_header
 
 tifffile = pytest.importorskip("tifffile")

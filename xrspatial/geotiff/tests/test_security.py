@@ -134,6 +134,7 @@ class TestDimensionGuard:
         """The suggested chunk side fits under max_pixels for the given
         band count and never exceeds 1024."""
         from xrspatial.geotiff._layout import _suggest_chunk_side
+
         # Default budget: capped at 1024.
         assert _suggest_chunk_side(1_000_000_000, 1) == 1024
         # Tight budget: 100 pixels, 1 band -> side 10.
@@ -148,6 +149,7 @@ class TestDimensionGuard:
     def test_gb_hint_helper_rounds_to_two_decimals(self):
         """_gb_hint formats bytes/pixel * count as a ~X.XX GB string."""
         from xrspatial.geotiff._layout import _gb_hint
+
         # No dtype: 1 billion pixels * 4 bytes (float32 default) ->
         # 4.00 GB hint, matching MAX_PIXELS_DEFAULT's docstring.
         assert _gb_hint(1_000_000_000) == "~4.00 GB at 4 bytes/pixel"

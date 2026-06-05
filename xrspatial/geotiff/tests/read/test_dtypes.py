@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, _read_geotiff_dask, to_geotiff
+from xrspatial.geotiff import _read_geotiff_dask, open_geotiff, to_geotiff
 from xrspatial.geotiff._dtypes import (SAMPLE_FORMAT_FLOAT, SAMPLE_FORMAT_INT, SAMPLE_FORMAT_UINT,
                                        tiff_dtype_to_numpy, tiff_storage_dtype)
 

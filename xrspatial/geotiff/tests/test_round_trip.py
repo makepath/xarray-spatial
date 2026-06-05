@@ -56,7 +56,7 @@ import xarray as xr
 from hypothesis import HealthCheck, assume, event, given, settings
 from hypothesis import strategies as st
 
-from xrspatial.geotiff import open_geotiff, to_geotiff, build_vrt
+from xrspatial.geotiff import build_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._geotags import _NO_GEOREF_KEY, GeoTransform
 from xrspatial.geotiff._writer import write
 
