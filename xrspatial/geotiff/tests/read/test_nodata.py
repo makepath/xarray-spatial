@@ -399,7 +399,7 @@ def test_eager_mask_nodata_false_reports_false(tmp_path):
     path = str(tmp_path / "tmp_2092_eager_unmasked.tif")
     _make_float_raster_with_nodata_2092(path)
 
-    out = open_geotiff(path, mask_nodata=False)
+    out = open_geotiff(path, masked=False)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is False, (
         f"buffer holds literal -9999 pixels but attrs say "
@@ -415,7 +415,7 @@ def test_eager_mask_nodata_true_reports_true(tmp_path):
     path = str(tmp_path / "tmp_2092_eager_masked.tif")
     _make_float_raster_with_nodata_2092(path)
 
-    out = open_geotiff(path)  # mask_nodata defaults to True
+    out = open_geotiff(path, masked=True)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is True
     # -9999 replaced with NaN.
@@ -440,7 +440,7 @@ def test_eager_int_file_mask_nodata_true_no_match_reports_false(tmp_path):
     path = str(tmp_path / "tmp_2092_int_oor_sentinel.tif")
     to_geotiff(da, path)
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     assert out.attrs.get('nodata') == -9999
     # No pixel matched, no cast, buffer stays uint16.
     assert out.dtype.kind == 'u'
@@ -463,7 +463,7 @@ def test_eager_explicit_float_dtype_mask_off_reports_false(tmp_path):
     path = str(tmp_path / "tmp_2092_eager_int_to_float_unmasked.tif")
     to_geotiff(da, path)
 
-    out = open_geotiff(path, mask_nodata=False, dtype=np.float64)
+    out = open_geotiff(path, masked=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
     # The literal 30 is still in the float buffer (cast, not masked).
@@ -559,7 +559,7 @@ def test_vrt_int_source_mask_nodata_false_reports_false(tmp_path):
         "tmp_2092_vrt_src.tif",
         "tmp_2092_vrt_unmasked.vrt",
     )
-    out = open_geotiff(vrt, mask_nodata=False)
+    out = open_geotiff(vrt, masked=False)
     assert out.dtype.kind == 'i', f"expected int dtype, got {out.dtype}"
     assert out.attrs.get('masked_nodata') is False
     # The literal sentinel is still in the buffer.
@@ -576,7 +576,7 @@ def test_vrt_int_source_mask_nodata_true_reports_true(tmp_path):
         "tmp_2092_vrt_src2.tif",
         "tmp_2092_vrt_masked.vrt",
     )
-    out = open_geotiff(vrt)  # mask_nodata defaults to True
+    out = open_geotiff(vrt, masked=True)
     assert out.dtype == np.float64, (
         f"expected float64 promotion, got {out.dtype}")
     assert out.attrs.get('masked_nodata') is True
@@ -597,7 +597,7 @@ def test_vrt_int_source_mask_off_with_float_cast_reports_false(tmp_path):
         "tmp_2092_vrt_src_cast.tif",
         "tmp_2092_vrt_unmasked_cast.vrt",
     )
-    out = open_geotiff(vrt, mask_nodata=False, dtype=np.float64)
+    out = open_geotiff(vrt, masked=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
     # The literal 30 is still in the float buffer (cast, not masked).
@@ -672,7 +672,7 @@ def test_eager_float_sentinel_present_masked(tmp_path):
     nodata_pixels_present=True, nodata_dtype_cast absent."""
     path = str(tmp_path / "tmp_2135_eager_float_present.tif")
     _make_float_raster_2135(path)
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     assert out.attrs.get('masked_nodata') is True
     assert out.attrs.get('nodata_pixels_present') is True
     assert 'nodata_dtype_cast' not in out.attrs
@@ -683,7 +683,7 @@ def test_eager_float_sentinel_absent_masked(tmp_path):
     nodata_pixels_present=False."""
     path = str(tmp_path / "tmp_2135_eager_float_absent.tif")
     _make_float_raster_2135(path, plant_sentinel=False)
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     assert out.attrs.get('masked_nodata') is True
     assert out.attrs.get('nodata_pixels_present') is False
 
@@ -693,7 +693,7 @@ def test_eager_float_sentinel_present_unmasked(tmp_path):
     masking branch skipped but presence scan still runs."""
     path = str(tmp_path / "tmp_2135_eager_float_present_unmasked.tif")
     _make_float_raster_2135(path)
-    out = open_geotiff(path, mask_nodata=False)
+    out = open_geotiff(path, masked=False)
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_pixels_present') is True
 
@@ -703,7 +703,7 @@ def test_eager_int_sentinel_present(tmp_path):
     promotion fires, nodata_pixels_present=True."""
     path = str(tmp_path / "tmp_2135_eager_int_present.tif")
     _make_int_raster_2135(path)
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is True
     assert out.attrs.get('nodata_pixels_present') is True
@@ -720,7 +720,7 @@ def test_eager_int_out_of_range_sentinel(tmp_path):
     )
     path = str(tmp_path / "tmp_2135_eager_int_oor.tif")
     to_geotiff(da, path)
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     assert out.attrs.get('nodata') == -9999
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_pixels_present') is False
@@ -732,7 +732,7 @@ def test_eager_int_sentinel_present_unmasked(tmp_path):
     nodata_pixels_present=True from the no-mask scan branch."""
     path = str(tmp_path / "tmp_2135_eager_int_present_unmasked.tif")
     _make_int_raster_2135(path)
-    out = open_geotiff(path, mask_nodata=False)
+    out = open_geotiff(path, masked=False)
     assert out.dtype.kind == 'i'
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_pixels_present') is True
@@ -743,7 +743,7 @@ def test_eager_dtype_cast_records_target(tmp_path):
     """``dtype=`` kwarg surfaces as nodata_dtype_cast."""
     path = str(tmp_path / "tmp_2135_eager_dtype_cast.tif")
     _make_int_raster_2135(path)
-    out = open_geotiff(path, mask_nodata=False, dtype=np.float64)
+    out = open_geotiff(path, masked=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_dtype_cast') == 'float64'
@@ -841,7 +841,7 @@ def test_vrt_int_sentinel_present_masked(tmp_path):
     vrt = _write_int_vrt_2135(
         tmp_path, "tmp_2135_vrt_src.tif", "tmp_2135_vrt_present.vrt",
     )
-    out = open_geotiff(vrt)
+    out = open_geotiff(vrt, masked=True)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is True
     assert out.attrs.get('nodata_pixels_present') is True
@@ -855,7 +855,7 @@ def test_vrt_int_sentinel_absent_masked(tmp_path):
         "tmp_2135_vrt_absent.vrt",
         plant_sentinel=False,
     )
-    out = open_geotiff(vrt)
+    out = open_geotiff(vrt, masked=True)
     assert out.dtype.kind == 'i'  # no promotion
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_pixels_present') is False
@@ -867,7 +867,7 @@ def test_vrt_int_unmasked_still_scans(tmp_path):
         tmp_path, "tmp_2135_vrt_src_unmasked.tif",
         "tmp_2135_vrt_unmasked.vrt",
     )
-    out = open_geotiff(vrt, mask_nodata=False)
+    out = open_geotiff(vrt, masked=False)
     assert out.dtype.kind == 'i'
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_pixels_present') is True
@@ -879,7 +879,7 @@ def test_vrt_dtype_cast_records_target(tmp_path):
         tmp_path, "tmp_2135_vrt_src_cast.tif",
         "tmp_2135_vrt_cast.vrt",
     )
-    out = open_geotiff(vrt, mask_nodata=False, dtype=np.float64)
+    out = open_geotiff(vrt, masked=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_dtype_cast') == 'float64'
@@ -1037,7 +1037,7 @@ def test_open_geotiff_eager_int_nodata_finite_still_masks(tmp_path):
     """Regression guard: in-range finite sentinel still masks correctly."""
     # 30 is one of the pixel values; using it as a sentinel masks one pixel.
     path = _build_uint16_tiff_1774('30', tmp_path)
-    da = open_geotiff(path)
+    da = open_geotiff(path, masked=True)
     # uint16 + in-range sentinel hit promotes to float64 with NaN
     assert da.dtype == np.float64
     assert np.isnan(da.values[1, 0])
@@ -1204,7 +1204,7 @@ def test_float_sentinel_strip_tiff_read(tmp_path):
     to_geotiff(da, path, nodata=-9999.0, tiled=False,
                compression='deflate')
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     expected_mask = (src == np.float32(-9999.0))
     np.testing.assert_array_equal(np.isnan(out.data), expected_mask)
     finite = ~expected_mask
@@ -1221,7 +1221,7 @@ def test_float_sentinel_tiled_tiff_read(tmp_path):
     to_geotiff(da, path, nodata=-9999.0, tiled=True, tile_size=16,
                compression='deflate')
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     expected_mask = (src == np.float32(-9999.0))
     np.testing.assert_array_equal(np.isnan(out.data), expected_mask)
     finite = ~expected_mask
@@ -1237,7 +1237,7 @@ def test_uint16_sentinel_tiled_tiff_read(tmp_path):
     to_geotiff(da, path, nodata=65535, tiled=True, tile_size=16,
                compression='deflate')
 
-    out = open_geotiff(path)
+    out = open_geotiff(path, masked=True)
     assert out.dtype.kind == 'f'
     expected_mask = (src == 65535)
     np.testing.assert_array_equal(np.isnan(out.data), expected_mask)
@@ -1261,7 +1261,7 @@ def test_repeat_reads_independent(tmp_path):
                       attrs={'crs': 4326, 'nodata': -9999.0})
     to_geotiff(da, path, nodata=-9999.0, compression='deflate')
 
-    first = open_geotiff(path)
+    first = open_geotiff(path, masked=True)
     expected_mask = (src == np.float32(-9999.0))
     np.testing.assert_array_equal(np.isnan(first.data), expected_mask)
 
@@ -1270,7 +1270,7 @@ def test_repeat_reads_independent(tmp_path):
     first.data[1, 1] = np.nan
     first.data[2, 2] = 12345.0
 
-    second = open_geotiff(path)
+    second = open_geotiff(path, masked=True)
     np.testing.assert_array_equal(np.isnan(second.data), expected_mask)
     finite = ~expected_mask
     np.testing.assert_allclose(second.data[finite], src[finite])
@@ -1290,7 +1290,7 @@ def test_dask_chunked_float_sentinel_read(tmp_path):
     to_geotiff(da, path, nodata=-9999.0, tiled=True, tile_size=16,
                compression='deflate')
 
-    out = open_geotiff(path, chunks=16)
+    out = open_geotiff(path, chunks=16, masked=True)
     materialised = out.compute().data
     expected_mask = (src == np.float32(-9999.0))
     np.testing.assert_array_equal(np.isnan(materialised), expected_mask)
@@ -1307,7 +1307,7 @@ def test_dask_chunked_uint16_sentinel_read(tmp_path):
     to_geotiff(da, path, nodata=65535, tiled=True, tile_size=16,
                compression='deflate')
 
-    out = open_geotiff(path, chunks=16)
+    out = open_geotiff(path, chunks=16, masked=True)
     materialised = out.compute().data
     assert materialised.dtype.kind == 'f'
     expected_mask = (src == 65535)
@@ -1903,7 +1903,7 @@ def oor_tif(tmp_path):
 
 class TestIntegerSentinelParity:
     def test_eager_masks_int_sentinel_to_nan(self, int_tif):
-        da = open_geotiff(int_tif)
+        da = open_geotiff(int_tif, masked=True)
         # int sentinel auto-promotes to float when at least one pixel
         # matches, leaving NaN where the sentinel was.
         assert da.dtype.kind == "f"
@@ -1912,7 +1912,7 @@ class TestIntegerSentinelParity:
         assert da.attrs["masked_nodata"] is True
 
     def test_dask_matches_eager(self, int_tif):
-        eager = open_geotiff(int_tif)
+        eager = open_geotiff(int_tif, masked=True)
         lazy = read_geotiff_dask(int_tif, chunks=2)
         # Same on-disk sentinel propagated.
         assert lazy.attrs["nodata"] == eager.attrs["nodata"]
@@ -1926,7 +1926,7 @@ class TestIntegerSentinelParity:
     def test_gpu_matches_eager(self, int_tif):
         from xrspatial.geotiff import read_geotiff_gpu
 
-        eager = open_geotiff(int_tif)
+        eager = open_geotiff(int_tif, masked=True)
         gpu = read_geotiff_gpu(int_tif)
         assert gpu.attrs["nodata"] == eager.attrs["nodata"]
         np.testing.assert_array_equal(
@@ -1936,14 +1936,14 @@ class TestIntegerSentinelParity:
 
 class TestFloatSentinelParity:
     def test_eager(self, float_tif):
-        da = open_geotiff(float_tif)
+        da = open_geotiff(float_tif, masked=True)
         assert da.dtype == np.float32
         assert np.isnan(da.data[0, 2])
         assert da.attrs["nodata"] == -9999.0
         assert da.attrs["masked_nodata"] is True
 
     def test_dask(self, float_tif):
-        eager = open_geotiff(float_tif)
+        eager = open_geotiff(float_tif, masked=True)
         lazy = read_geotiff_dask(float_tif, chunks=2)
         np.testing.assert_array_equal(
             np.isnan(eager.data), np.isnan(lazy.compute().data),
@@ -1954,7 +1954,7 @@ class TestFloatSentinelParity:
     def test_gpu(self, float_tif):
         from xrspatial.geotiff import read_geotiff_gpu
 
-        eager = open_geotiff(float_tif)
+        eager = open_geotiff(float_tif, masked=True)
         gpu = read_geotiff_gpu(float_tif)
         np.testing.assert_array_equal(
             np.isnan(eager.data), np.isnan(gpu.data.get()),
@@ -2026,7 +2026,7 @@ class TestMinIsWhiteSentinelInversion:
     def test_eager_masks_inverted_sentinel(self, tmp_path):
         path = str(tmp_path / "miw_2226.tif")
         self._build(path)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         # The MinIsWhite writer pre-inverts both pixels AND the sentinel
         # (see ``_writer._invert_nodata_for_miniswhite``), so the on-disk
         # GDAL_NODATA tag stores 245 = 255 - 10. The reader's MinIsWhite
@@ -2042,7 +2042,7 @@ class TestMinIsWhiteSentinelInversion:
     def test_dask_matches_eager(self, tmp_path):
         path = str(tmp_path / "miw_dask_2226.tif")
         self._build(path)
-        eager = open_geotiff(path)
+        eager = open_geotiff(path, masked=True)
         lazy = read_geotiff_dask(path, chunks=2)
         np.testing.assert_array_equal(
             np.isnan(eager.data), np.isnan(lazy.compute().data),
@@ -2083,7 +2083,7 @@ class TestMinIsWhiteSentinelInversion:
 
 class TestMaskNodataFalseParity:
     def test_eager_keeps_literal_sentinel(self, int_tif):
-        da = open_geotiff(int_tif, mask_nodata=False)
+        da = open_geotiff(int_tif, masked=False)
         # Buffer keeps integer dtype + literal sentinel pixel (255).
         assert da.dtype == np.uint8
         assert int(da.data[0, 2]) == 255
@@ -2193,7 +2193,7 @@ class TestWriterRestoreParity:
         to_geotiff(da, path, nodata=-9999.0)
         # Read back with mask_nodata=False so we can see the literal
         # on-disk byte value the restore step planted.
-        readback = open_geotiff(path, mask_nodata=False)
+        readback = open_geotiff(path, masked=False)
         assert readback.data[0, 1] == -9999.0
 
     def test_masked_nodata_false_attr_blocks_restore(self, tmp_path):
@@ -2215,7 +2215,7 @@ class TestWriterRestoreParity:
             attrs={"nodata": -9999.0, "masked_nodata": False},
         )
         to_geotiff(da, path)
-        readback = open_geotiff(path, mask_nodata=False)
+        readback = open_geotiff(path, masked=False)
         # Restore step skipped, so the NaN survives as on-disk NaN.
         assert np.isnan(readback.data[0, 1])
 
@@ -2236,7 +2236,7 @@ class TestWriterRestoreParity:
             dims=("y", "x"),
         )
         to_geotiff(da, path, nodata=-9999.0, gpu=True)
-        readback = open_geotiff(path, mask_nodata=False)
+        readback = open_geotiff(path, masked=False)
         assert readback.data[0, 1] == -9999.0
 
 
@@ -2422,7 +2422,7 @@ class TestEagerNumpy:
         """Float source + declared sentinel -> nodata set, masked_nodata=True."""
         path = str(tmp_path / "tnss1988_float_sentinel.tif")
         _write_float_tiff_1988(path, with_sentinel=True)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.attrs["nodata"] == _SENTINEL_1988
         assert da.attrs["masked_nodata"] is True
         # The literal sentinel must have been replaced with NaN.
@@ -2442,7 +2442,7 @@ class TestEagerNumpy:
         """Int source + sentinel hit -> nodata set, masked_nodata=True (promoted)."""
         path = str(tmp_path / "tnss1988_int_hit.tif")
         _write_int_tiff_1988(path, with_sentinel_hit=True)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.attrs["nodata"] == 65535
         # Eager numpy promotes integer to float64 on the first hit.
         assert da.dtype.kind == "f"
@@ -2460,7 +2460,7 @@ class TestEagerNumpy:
         """
         path = str(tmp_path / "tnss1988_int_no_hit.tif")
         _write_int_tiff_1988(path, with_sentinel_hit=False)
-        da = open_geotiff(path)
+        da = open_geotiff(path, masked=True)
         assert da.attrs["nodata"] == 65535
         assert da.dtype.kind in ("u", "i")
         assert da.attrs["masked_nodata"] is False
@@ -2878,7 +2878,7 @@ class TestWriterRoundTripEager:
         src = tmp_path / "test_1988_round_trip_src.tif"
         _write_float_tiff_1988(str(src), with_sentinel=True)
 
-        da = open_geotiff(str(src))
+        da = open_geotiff(str(src), masked=True)
         assert da.attrs["masked_nodata"] is True
         # The reader promoted the sentinel value to NaN.
         arr_in = np.asarray(da.data)
@@ -3300,7 +3300,7 @@ def test_open_geotiff_int_finite_nodata_unaffected(tmp_path):
     validator must only reject non-finite / fractional sentinels.
     """
     path = _build_uint16_tiff('30', tmp_path)
-    da = open_geotiff(path)
+    da = open_geotiff(path, masked=True)
     # 30 matches a real pixel; the sentinel-to-NaN promotion fires.
     assert da.dtype == np.float64
     assert np.isnan(da.values[1, 0])
