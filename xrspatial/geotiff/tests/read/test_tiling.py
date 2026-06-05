@@ -33,8 +33,9 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import _decode as _decode_mod
+from xrspatial.geotiff import _read_geotiff_gpu
 from xrspatial.geotiff import _reader as _reader_mod
-from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu, to_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import COMPRESSION_NONE, unpack_bits
 from xrspatial.geotiff._dtypes import (resolve_bits_per_sample, resolve_sample_format,
                                        tiff_dtype_to_numpy)

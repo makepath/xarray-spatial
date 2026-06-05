@@ -36,7 +36,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff
+from xrspatial.geotiff import _read_geotiff_dask, _read_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_CRS_ONLY, GEOREF_STATUS_FULL,
                                       GEOREF_STATUS_NONE, GEOREF_STATUS_ROTATED_DROPPED,
                                       GEOREF_STATUS_TRANSFORM_ONLY)

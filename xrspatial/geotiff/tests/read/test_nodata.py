@@ -33,7 +33,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, InvalidIntegerNodataError,
-                               open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff)
+                               _read_geotiff_dask, _read_vrt, open_geotiff, to_geotiff)
 from xrspatial.geotiff._attrs import _finalize_lazy_read_attrs, _validate_read_geo_info
 from xrspatial.geotiff._backends import _gpu_helpers
 from xrspatial.geotiff._errors import MixedBandMetadataError

@@ -62,9 +62,9 @@ import xarray as xr
 
 import xrspatial.geotiff as g
 import xrspatial.geotiff._compression as comp_mod
-from xrspatial.geotiff import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _wkt_to_epsg,
-                               open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
-                               to_geotiff, _write_geotiff_gpu, build_vrt)
+from xrspatial.geotiff import (GeoTIFFFallbackWarning, _geotiff_strict_mode, _read_geotiff_dask,
+                               _read_geotiff_gpu, _read_vrt, _wkt_to_epsg, _write_geotiff_gpu,
+                               build_vrt, open_geotiff, to_geotiff)
 from xrspatial.geotiff._attrs import (_COMPRESSION_TAG_TO_NAME, _validate_read_codec_optin,
                                       _validate_write_rich_tag_optin)
 from xrspatial.geotiff._compression import (_HAVE_LIBDEFLATE, COMPRESSION_DEFLATE, COMPRESSION_LZ4,

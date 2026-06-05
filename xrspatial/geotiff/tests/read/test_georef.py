@@ -40,8 +40,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (NonUniformCoordsError, _coords_to_transform, _transform_from_attr,
-                               open_geotiff, _read_vrt, to_geotiff, _write_geotiff_gpu)
+from xrspatial.geotiff import (NonUniformCoordsError, _coords_to_transform, _read_vrt,
+                               _transform_from_attr, _write_geotiff_gpu, open_geotiff, to_geotiff)
 from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GEOREF_STATUS_CRS_ONLY,
                                       GEOREF_STATUS_FULL, GEOREF_STATUS_NONE,
                                       GEOREF_STATUS_ROTATED_DROPPED, GEOREF_STATUS_TRANSFORM_ONLY,

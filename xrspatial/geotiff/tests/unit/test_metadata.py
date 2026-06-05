@@ -21,15 +21,14 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from .._geotiff_fixtures import write_minimal_tiff
-
 import xrspatial.geotiff as geotiff_pkg
 from xrspatial.geotiff import (ConflictingCRSError, GeoTIFFAmbiguousMetadataError,
-                               MixedBandMetadataError, _runtime)
+                               MixedBandMetadataError, _read_geotiff_dask, _read_vrt, _runtime)
 from xrspatial.geotiff import _validation as _validation_mod
-from xrspatial.geotiff import open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff
-from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata, _resolve_nodata_attr,
-                                      attrs_to_metadata, geo_info_to_metadata, metadata_to_attrs)
+from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff._attrs import (_ATTRS_CONTRACT_VERSION, GeoTIFFMetadata,
+                                      _resolve_nodata_attr, attrs_to_metadata, geo_info_to_metadata,
+                                      metadata_to_attrs)
 from xrspatial.geotiff._errors import (ConflictingNodataError, InvalidCRSCodeError,
                                        NonUniformCoordsError, RotatedTransformError,
                                        UnparseableCRSError)
@@ -46,6 +45,8 @@ from xrspatial.geotiff._validation import (_check_read_rotated_transform,
                                            unregister_write_metadata_check, validate_read_metadata,
                                            validate_write_metadata)
 from xrspatial.geotiff._writer import write
+
+from .._geotiff_fixtures import write_minimal_tiff
 
 # =============================================================================
 # Section: Ambiguous metadata hooks
@@ -1443,7 +1444,6 @@ def _da(*, coords=None, attrs=None, shape=(4, 4)):
 
 
 def _write_minimal_tiff_with_wkt(path: str, wkt: str) -> None:
-    ascii_buf = bytearray((wkt + '|').encode('ascii'))
     gkd = [1, 1, 0, 1, 1026, 34737, len(wkt) + 1, 0]
     write_minimal_tiff(path, geokeys=gkd, geo_ascii=wkt)
 

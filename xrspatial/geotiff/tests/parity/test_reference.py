@@ -27,8 +27,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, to_geotiff,
-                               _write_geotiff_gpu)
+from xrspatial.geotiff import (_read_geotiff_dask, _read_geotiff_gpu, _write_geotiff_gpu,
+                               open_geotiff, to_geotiff)
 
 from .._helpers.markers import requires_gpu
 

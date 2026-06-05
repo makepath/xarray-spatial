@@ -35,9 +35,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (SUPPORTED_FEATURES, build_vrt, open_geotiff, to_geotiff,
-                               _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
-                               _write_geotiff_gpu)
+from xrspatial.geotiff import (SUPPORTED_FEATURES, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
+                               _write_geotiff_gpu, build_vrt, open_geotiff, to_geotiff)
 
 from .._helpers.markers import requires_gpu
 

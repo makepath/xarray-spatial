@@ -33,7 +33,7 @@ import pytest
 pytest.importorskip("yaml")
 rasterio = pytest.importorskip("rasterio")
 
-from xrspatial.geotiff import open_geotiff, build_vrt  # noqa: E402
+from xrspatial.geotiff import build_vrt, open_geotiff  # noqa: E402
 
 # Golden-corpus fixtures span every codec/tier, including the
 # experimental and internal-only ones. Opting in here lets the parity

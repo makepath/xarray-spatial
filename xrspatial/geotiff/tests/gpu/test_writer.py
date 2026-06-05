@@ -44,8 +44,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (GeoTIFFFallbackWarning, _gpu_decode, open_geotiff, to_geotiff,
-                               _write_geotiff_gpu)
+from xrspatial.geotiff import (GeoTIFFFallbackWarning, _gpu_decode, _write_geotiff_gpu,
+                               open_geotiff, to_geotiff)
 from xrspatial.geotiff._compression import JPEG2000_AVAILABLE, LERC_AVAILABLE, LZ4_AVAILABLE
 from xrspatial.geotiff._geotags import GeoTransform, _epsg_to_wkt
 from xrspatial.geotiff._header import parse_header, parse_ifd

@@ -49,8 +49,8 @@ import xarray as xr
 from xrspatial.geotiff import (SUPPORTED_FEATURES, GeoTIFFAmbiguousMetadataError,
                                GeoTIFFFallbackWarning, RotatedTransformError,
                                UnsupportedGeoTIFFFeatureError, VRTStableSourcesOnlyError,
-                               open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff,
-                               _write_geotiff_gpu)
+                               _read_geotiff_dask, _read_vrt, _write_geotiff_gpu, open_geotiff,
+                               to_geotiff)
 from xrspatial.geotiff._attrs import _VALID_COMPRESSIONS
 from xrspatial.geotiff._compression import (packbits_compress, packbits_decompress, zstd_compress,
                                             zstd_decompress)
