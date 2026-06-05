@@ -19,7 +19,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff
-from xrspatial.geotiff import write_vrt as _write_vrt_1810
+from xrspatial.geotiff import build_vrt as _write_vrt_1810
 from xrspatial.geotiff._dtypes import tiff_dtype_to_numpy
 from xrspatial.geotiff._geotags import RASTER_PIXEL_IS_POINT, TAG_GEO_ASCII_PARAMS, extract_geo_info
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
@@ -101,7 +101,7 @@ class TestBandValidationBackendParity:
 
     def test_negative_band(self, multiband_tiff_path):
         """Both paths raise the same error for ``band=-1``."""
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
         from xrspatial.geotiff._reader import read_to_array
 
         path, _ = multiband_tiff_path
@@ -109,14 +109,14 @@ class TestBandValidationBackendParity:
         with pytest.raises(IndexError) as eager_exc:
             read_to_array(path, band=-1)
         with pytest.raises(IndexError) as dask_exc:
-            read_geotiff_dask(path, chunks=4, band=-1)
+            _read_geotiff_dask(path, chunks=4, band=-1)
 
         assert "band=-1 out of range" in str(eager_exc.value)
         assert "band=-1 out of range" in str(dask_exc.value)
 
     def test_band_equal_to_samples(self, multiband_tiff_path):
         """Both paths agree on the off-by-one rejection."""
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
         from xrspatial.geotiff._reader import read_to_array
 
         path, _ = multiband_tiff_path
@@ -124,7 +124,7 @@ class TestBandValidationBackendParity:
         with pytest.raises(IndexError) as eager_exc:
             read_to_array(path, band=3)
         with pytest.raises(IndexError) as dask_exc:
-            read_geotiff_dask(path, chunks=4, band=3)
+            _read_geotiff_dask(path, chunks=4, band=3)
 
         assert "band=3 out of range" in str(eager_exc.value)
         assert "band=3 out of range" in str(dask_exc.value)
@@ -135,7 +135,7 @@ class TestBandValidationBackendParity:
 # =============================================================================
 #
 # ``open_geotiff`` must accept ``missing_sources`` and forward it to
-# ``read_vrt`` when the source is a VRT. ``read_vrt`` exposes a
+# ``_read_vrt`` when the source is a VRT. ``_read_vrt`` exposes a
 # ``missing_sources='warn'|'raise'`` policy kwarg; the documented
 # dispatcher entry point ``open_geotiff`` must expose it too rather than
 # silently dropping the backend kwarg.
@@ -961,7 +961,7 @@ def test_is_file_like_requires_tell():
 
 
 class TestWriteGeotiffGpuBytesIO:
-    """Regression coverage for ``write_geotiff_gpu`` file-like behaviour.
+    """Regression coverage for ``_write_geotiff_gpu`` file-like behaviour.
 
     ``to_geotiff(gpu=True, ...)`` always rejects BytesIO destinations paired
     with ``cog=True`` (the auto-dispatch path's existing guard). The explicit
@@ -980,11 +980,11 @@ class TestWriteGeotiffGpuBytesIO:
             coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
             attrs={'crs': 4326},
         )
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         buf = io.BytesIO()
         with pytest.raises(ValueError, match='cog=True'):
-            write_geotiff_gpu(da, buf, cog=True)
+            _write_geotiff_gpu(da, buf, cog=True)
 
     @_gpu_only
     def test_cog_with_bytesio_error_matches_to_geotiff_1652(self):
@@ -998,10 +998,10 @@ class TestWriteGeotiffGpuBytesIO:
             coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
             attrs={'crs': 4326},
         )
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         # to_geotiff's canonical message; mirrored verbatim in
-        # write_geotiff_gpu's gate.
+        # _write_geotiff_gpu's gate.
         expected = (
             "cog=True is not supported for file-like destinations. "
             "Pass a string path or write to BytesIO without cog=True."
@@ -1009,7 +1009,7 @@ class TestWriteGeotiffGpuBytesIO:
 
         buf = io.BytesIO()
         with pytest.raises(ValueError) as exc_info:
-            write_geotiff_gpu(da, buf, cog=True)
+            _write_geotiff_gpu(da, buf, cog=True)
         assert str(exc_info.value) == expected
 
         # And the CPU writer raises the same string for parity.
@@ -1028,10 +1028,10 @@ class TestWriteGeotiffGpuBytesIO:
             coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
             attrs={'crs': 4326},
         )
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         with pytest.raises(TypeError, match="path must be a str"):
-            write_geotiff_gpu(da, 42)  # int is neither str nor file-like
+            _write_geotiff_gpu(da, 42)  # int is neither str nor file-like
 
     @_gpu_only
     def test_non_cog_bytesio_still_works_1652(self):
@@ -1043,12 +1043,12 @@ class TestWriteGeotiffGpuBytesIO:
             coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
             attrs={'crs': 4326},
         )
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         buf = io.BytesIO()
         # Non-cog file-like write is still supported on the explicit GPU
         # writer; only cog=True is gated.
-        write_geotiff_gpu(da, buf)
+        _write_geotiff_gpu(da, buf)
         assert len(buf.getvalue()) > 0
 
         # Verify it round-trips through open_geotiff

@@ -6,7 +6,7 @@ through the dask path: ``open_geotiff(str(path), chunks=32)``. The
 oracle pulls the candidate's pixels via ``.compute()`` under the hood
 (``_candidate_pixels`` is dask-aware), so the comparison machinery is
 the same. This exercises the windowed-decode plumbing inside
-``read_geotiff_dask``: any divergence between the eager and dask reads
+``_read_geotiff_dask``: any divergence between the eager and dask reads
 shows up here.
 
 The skip / xfail taxonomy is intentionally identical to the eager

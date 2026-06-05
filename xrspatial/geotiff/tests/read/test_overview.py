@@ -10,7 +10,7 @@ Covers three concerns:
   the reduction factor, across all four backends.
 * ``overview_level`` type checks fire up front (and before unrelated
   source / chunk / GPU-policy errors) on ``open_geotiff``,
-  ``read_geotiff_dask``, and ``read_geotiff_gpu``.
+  ``_read_geotiff_dask``, and ``_read_geotiff_gpu``.
 """
 from __future__ import annotations
 
@@ -679,7 +679,7 @@ def test_overview_level_typeerror_names_value(cog_with_overview_2074):
 # =========================================================================
 #
 # ``open_geotiff`` has an up-front guard. The direct backends
-# (``read_geotiff_dask``, ``read_geotiff_gpu``) reach the same selector
+# (``_read_geotiff_dask``, ``_read_geotiff_gpu``) reach the same selector
 # but only after source coercion, chunk validation, and (on the GPU path)
 # ``on_gpu_failure`` resolution. This section mirrors the type-validation
 # tests against the two direct backends and asserts ordering: the
@@ -710,84 +710,84 @@ def cog_with_overview_2160(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# read_geotiff_dask
+# _read_geotiff_dask
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("value", [True, False])
 def test_dask_overview_level_bool_raises_typeerror(cog_with_overview_2160, value):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_dask(path, overview_level=value)
+        _read_geotiff_dask(path, overview_level=value)
 
 
 def test_dask_overview_level_str_raises_typeerror(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="str"):
-        read_geotiff_dask(path, overview_level="0")
+        _read_geotiff_dask(path, overview_level="0")
 
 
 def test_dask_overview_level_float_raises_typeerror(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="float"):
-        read_geotiff_dask(path, overview_level=1.0)
+        _read_geotiff_dask(path, overview_level=1.0)
 
 
 def test_dask_overview_level_zero_succeeds(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, arr = cog_with_overview_2160
-    result = read_geotiff_dask(path, overview_level=0)
+    result = _read_geotiff_dask(path, overview_level=0)
     assert result.shape == arr.shape
 
 
 def test_dask_overview_level_one_succeeds(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, arr = cog_with_overview_2160
-    result = read_geotiff_dask(path, overview_level=1)
+    result = _read_geotiff_dask(path, overview_level=1)
     assert result.shape == (arr.shape[0] // 2, arr.shape[1] // 2)
 
 
 def test_dask_overview_level_none_succeeds(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, arr = cog_with_overview_2160
-    result = read_geotiff_dask(path, overview_level=None)
+    result = _read_geotiff_dask(path, overview_level=None)
     assert result.shape == arr.shape
 
 
 @pytest.mark.parametrize("value", [np.int64(0), np.int32(0)])
 def test_dask_overview_level_numpy_int_zero_succeeds(cog_with_overview_2160, value):
     """``np.int64`` / ``np.int32`` should be accepted like Python ints."""
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, arr = cog_with_overview_2160
-    result = read_geotiff_dask(path, overview_level=value)
+    result = _read_geotiff_dask(path, overview_level=value)
     assert result.shape == arr.shape
 
 
 @pytest.mark.parametrize("value", [np.int64(1), np.int32(1)])
 def test_dask_overview_level_numpy_int_one_succeeds(cog_with_overview_2160, value):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, arr = cog_with_overview_2160
-    result = read_geotiff_dask(path, overview_level=value)
+    result = _read_geotiff_dask(path, overview_level=value)
     assert result.shape == (arr.shape[0] // 2, arr.shape[1] // 2)
 
 
 def test_dask_overview_level_typeerror_names_value(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError) as exc_info:
-        read_geotiff_dask(path, overview_level="not-an-int")
+        _read_geotiff_dask(path, overview_level="not-an-int")
     msg = str(exc_info.value)
     assert "str" in msg
     assert "not-an-int" in msg
@@ -799,28 +799,28 @@ def test_dask_overview_level_typeerror_names_value(cog_with_overview_2160):
 
 def test_dask_overview_level_check_runs_before_source_coercion():
     """Bad source + bad overview_level should report overview_level first."""
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_dask("/nonexistent/path-2160.tif", overview_level=True)
+        _read_geotiff_dask("/nonexistent/path-2160.tif", overview_level=True)
 
 
 def test_dask_overview_level_check_runs_before_chunks_validation(
         cog_with_overview_2160):
     """Bad chunks + bad overview_level should report overview_level first."""
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_dask(path, chunks=0, overview_level=True)
+        _read_geotiff_dask(path, chunks=0, overview_level=True)
 
 
 # ---------------------------------------------------------------------------
-# read_geotiff_gpu
+# _read_geotiff_gpu
 # ---------------------------------------------------------------------------
 #
 # These tests must not import cupy. The validator runs at the top of
-# ``read_geotiff_gpu`` before the cupy import, so the bad-input cases
+# ``_read_geotiff_gpu`` before the cupy import, so the bad-input cases
 # raise ``TypeError`` on a CPU-only machine. The "succeeds" cases that
 # actually need a GPU stay gated on cupy via ``importorskip``.
 
@@ -828,35 +828,35 @@ def test_dask_overview_level_check_runs_before_chunks_validation(
 @pytest.mark.parametrize("value", [True, False])
 def test_gpu_overview_level_bool_raises_typeerror_no_cupy(
         cog_with_overview_2160, value):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_gpu(path, overview_level=value)
+        _read_geotiff_gpu(path, overview_level=value)
 
 
 def test_gpu_overview_level_str_raises_typeerror_no_cupy(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="str"):
-        read_geotiff_gpu(path, overview_level="0")
+        _read_geotiff_gpu(path, overview_level="0")
 
 
 def test_gpu_overview_level_float_raises_typeerror_no_cupy(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="float"):
-        read_geotiff_gpu(path, overview_level=1.0)
+        _read_geotiff_gpu(path, overview_level=1.0)
 
 
 def test_gpu_overview_level_typeerror_names_value_no_cupy(cog_with_overview_2160):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError) as exc_info:
-        read_geotiff_gpu(path, overview_level="not-an-int")
+        _read_geotiff_gpu(path, overview_level="not-an-int")
     msg = str(exc_info.value)
     assert "str" in msg
     assert "not-an-int" in msg
@@ -864,20 +864,20 @@ def test_gpu_overview_level_typeerror_names_value_no_cupy(cog_with_overview_2160
 
 def test_gpu_overview_level_check_runs_before_source_coercion():
     """Bad source + bad overview_level should report overview_level first."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_gpu("/nonexistent/path-2160.tif", overview_level=True)
+        _read_geotiff_gpu("/nonexistent/path-2160.tif", overview_level=True)
 
 
 def test_gpu_overview_level_check_runs_before_chunks_validation(
         cog_with_overview_2160):
     """Bad chunks + bad overview_level should report overview_level first."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_gpu(path, chunks=0, overview_level=True)
+        _read_geotiff_gpu(path, chunks=0, overview_level=True)
 
 
 def test_gpu_overview_level_check_runs_before_on_gpu_failure_validation(
@@ -890,26 +890,26 @@ def test_gpu_overview_level_check_runs_before_on_gpu_failure_validation(
     ``on_gpu_failure`` and a bad ``overview_level`` would get the
     ValueError from the policy check, masking the real type bug.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_gpu(path, on_gpu_failure="bogus", overview_level=True)
+        _read_geotiff_gpu(path, on_gpu_failure="bogus", overview_level=True)
 
 
 def test_gpu_overview_level_check_runs_before_chunked_dispatch(
         cog_with_overview_2160):
     """``chunks=`` routes through ``_read_geotiff_gpu_chunked``; the
-    validator at the top of ``read_geotiff_gpu`` must fire before that
+    validator at the top of ``_read_geotiff_gpu`` must fire before that
     branch, otherwise a bad ``overview_level`` would only surface via
-    the inner ``read_geotiff_dask`` call (which now also validates,
+    the inner ``_read_geotiff_dask`` call (which now also validates,
     but the contract is that the outer entry point reports it first).
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = cog_with_overview_2160
     with pytest.raises(TypeError, match="bool"):
-        read_geotiff_gpu(path, chunks=32, overview_level=True)
+        _read_geotiff_gpu(path, chunks=32, overview_level=True)
 
 # ===========================================================================
 # ngjit 2x2 overview kernels parity (#2413)

@@ -7,11 +7,11 @@ Covers:
   ``georef_status``) parity, sidecar-vs-inline-overview attrs, and the
   windowed coord / transform shift.
 * Cross-backend parity for the VRT finalization pipeline: VRT eager vs
-  ``open_geotiff`` and VRT chunked vs ``read_geotiff_dask`` for the five
+  ``open_geotiff`` and VRT chunked vs ``_read_geotiff_dask`` for the five
   canonical georef states, ``band_nodata='first'`` per-band attrs,
   ``dtype=`` no-sentinel branch, ``missing_sources='warn'`` vrt_holes,
   and eager/chunked internal parity.
-* Backend / parameter coverage for ``read_vrt``: the GPU and dask+GPU
+* Backend / parameter coverage for ``_read_vrt``: the GPU and dask+GPU
   decode paths, ``dtype=`` / ``name=`` kwargs, and the file-like +
   backend-kwarg rejection on ``open_geotiff``.
 
@@ -36,7 +36,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt, to_geotiff
+from xrspatial.geotiff import open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff
 from xrspatial.geotiff._attrs import (GEOREF_STATUS_CRS_ONLY, GEOREF_STATUS_FULL,
                                       GEOREF_STATUS_NONE, GEOREF_STATUS_ROTATED_DROPPED,
                                       GEOREF_STATUS_TRANSFORM_ONLY)
@@ -646,7 +646,7 @@ def test_vrt_eager_full_matches_open_geotiff(tmp_path):
     canonical helper-stamped attrs as the underlying TIFF read."""
     tiff, vrt = _make_full_pair(tmp_path, 'full_2180')
     tiff_attrs = _shared_canonical_attrs(dict(open_geotiff(tiff).attrs))
-    vrt_attrs = _shared_canonical_attrs(dict(read_vrt(vrt).attrs))
+    vrt_attrs = _shared_canonical_attrs(dict(_read_vrt(vrt).attrs))
     assert tiff_attrs == vrt_attrs, (
         f"TIFF/VRT attrs diverged:\n"
         f"  tiff only: {set(tiff_attrs) - set(vrt_attrs)}\n"
@@ -655,7 +655,7 @@ def test_vrt_eager_full_matches_open_geotiff(tmp_path):
         f"{[k for k in set(tiff_attrs) & set(vrt_attrs) if tiff_attrs[k] != vrt_attrs[k]]}"
     )
     full_tiff_attrs = dict(open_geotiff(tiff).attrs)
-    full_vrt_attrs = dict(read_vrt(vrt).attrs)
+    full_vrt_attrs = dict(_read_vrt(vrt).attrs)
     assert full_tiff_attrs['crs'] == full_vrt_attrs['crs'] == 4326
     assert len(full_tiff_attrs['transform']) == 6
     assert len(full_vrt_attrs['transform']) == 6
@@ -664,7 +664,7 @@ def test_vrt_eager_full_matches_open_geotiff(tmp_path):
 def test_vrt_eager_transform_only_matches_open_geotiff(tmp_path):
     tiff, vrt = _make_transform_only_pair(tmp_path, 'tonly_2180')
     tiff_attrs = _shared_canonical_attrs(dict(open_geotiff(tiff).attrs))
-    vrt_attrs = _shared_canonical_attrs(dict(read_vrt(vrt).attrs))
+    vrt_attrs = _shared_canonical_attrs(dict(_read_vrt(vrt).attrs))
     assert tiff_attrs == vrt_attrs
     assert tiff_attrs['georef_status'] == GEOREF_STATUS_TRANSFORM_ONLY
 
@@ -672,7 +672,7 @@ def test_vrt_eager_transform_only_matches_open_geotiff(tmp_path):
 def test_vrt_eager_crs_only_matches_open_geotiff(tmp_path):
     tiff, vrt = _make_crs_only_pair(tmp_path, 'crsonly_2180')
     tiff_attrs = _shared_canonical_attrs(dict(open_geotiff(tiff).attrs))
-    vrt_attrs = _shared_canonical_attrs(dict(read_vrt(vrt).attrs))
+    vrt_attrs = _shared_canonical_attrs(dict(_read_vrt(vrt).attrs))
     assert tiff_attrs == vrt_attrs
     assert tiff_attrs['georef_status'] == GEOREF_STATUS_CRS_ONLY
 
@@ -680,7 +680,7 @@ def test_vrt_eager_crs_only_matches_open_geotiff(tmp_path):
 def test_vrt_eager_none_matches_open_geotiff(tmp_path):
     tiff, vrt = _make_none_pair(tmp_path, 'none_2180')
     tiff_attrs = _shared_canonical_attrs(dict(open_geotiff(tiff).attrs))
-    vrt_attrs = _shared_canonical_attrs(dict(read_vrt(vrt).attrs))
+    vrt_attrs = _shared_canonical_attrs(dict(_read_vrt(vrt).attrs))
     assert tiff_attrs == vrt_attrs
     assert tiff_attrs['georef_status'] == GEOREF_STATUS_NONE
 
@@ -690,7 +690,7 @@ def test_vrt_eager_rotated_dropped_matches_open_geotiff(tmp_path):
     in ``rotated_dropped`` and the helper drops crs / transform / crs_wkt
     while emitting ``rotated_affine`` plus the no-georef marker."""
     _, vrt = _make_rotated_pair(tmp_path, 'rot_2180')
-    attrs = dict(read_vrt(vrt, allow_rotated=True).attrs)
+    attrs = dict(_read_vrt(vrt, allow_rotated=True).attrs)
     assert attrs['georef_status'] == GEOREF_STATUS_ROTATED_DROPPED
     assert attrs.get(_NO_GEOREF_KEY) is True
     assert 'rotated_affine' in attrs
@@ -702,10 +702,10 @@ def test_vrt_eager_rotated_dropped_matches_open_geotiff(tmp_path):
 def test_vrt_chunked_full_matches_dask(tmp_path):
     tiff, vrt = _make_full_pair(tmp_path, 'full_chunked_2180')
     tiff_attrs = _shared_canonical_attrs(
-        dict(read_geotiff_dask(tiff, chunks=2).attrs)
+        dict(_read_geotiff_dask(tiff, chunks=2).attrs)
     )
     vrt_attrs = _shared_canonical_attrs(
-        dict(read_vrt(vrt, chunks=2).attrs)
+        dict(_read_vrt(vrt, chunks=2).attrs)
     )
     assert tiff_attrs == vrt_attrs
 
@@ -713,10 +713,10 @@ def test_vrt_chunked_full_matches_dask(tmp_path):
 def test_vrt_chunked_transform_only_matches_dask(tmp_path):
     tiff, vrt = _make_transform_only_pair(tmp_path, 'tonly_chunked_2180')
     tiff_attrs = _shared_canonical_attrs(
-        dict(read_geotiff_dask(tiff, chunks=2).attrs)
+        dict(_read_geotiff_dask(tiff, chunks=2).attrs)
     )
     vrt_attrs = _shared_canonical_attrs(
-        dict(read_vrt(vrt, chunks=2).attrs)
+        dict(_read_vrt(vrt, chunks=2).attrs)
     )
     assert tiff_attrs == vrt_attrs
 
@@ -724,10 +724,10 @@ def test_vrt_chunked_transform_only_matches_dask(tmp_path):
 def test_vrt_chunked_crs_only_matches_dask(tmp_path):
     tiff, vrt = _make_crs_only_pair(tmp_path, 'crsonly_chunked_2180')
     tiff_attrs = _shared_canonical_attrs(
-        dict(read_geotiff_dask(tiff, chunks=2).attrs)
+        dict(_read_geotiff_dask(tiff, chunks=2).attrs)
     )
     vrt_attrs = _shared_canonical_attrs(
-        dict(read_vrt(vrt, chunks=2).attrs)
+        dict(_read_vrt(vrt, chunks=2).attrs)
     )
     assert tiff_attrs == vrt_attrs
 
@@ -735,10 +735,10 @@ def test_vrt_chunked_crs_only_matches_dask(tmp_path):
 def test_vrt_chunked_none_matches_dask(tmp_path):
     tiff, vrt = _make_none_pair(tmp_path, 'none_chunked_2180')
     tiff_attrs = _shared_canonical_attrs(
-        dict(read_geotiff_dask(tiff, chunks=2).attrs)
+        dict(_read_geotiff_dask(tiff, chunks=2).attrs)
     )
     vrt_attrs = _shared_canonical_attrs(
-        dict(read_vrt(vrt, chunks=2).attrs)
+        dict(_read_vrt(vrt, chunks=2).attrs)
     )
     assert tiff_attrs == vrt_attrs
 
@@ -749,7 +749,7 @@ def test_vrt_eager_none_synthesizes_pixel_coords(tmp_path):
     no-georef read instead of dropping coords entirely."""
     tiff, vrt = _make_none_pair(tmp_path, 'none_coords_2818')
     ref = open_geotiff(tiff)
-    vrt_da = read_vrt(vrt)
+    vrt_da = _read_vrt(vrt)
     assert ref.attrs['georef_status'] == GEOREF_STATUS_NONE
     assert vrt_da.attrs['georef_status'] == GEOREF_STATUS_NONE
     assert 'x' in vrt_da.coords and 'y' in vrt_da.coords
@@ -766,8 +766,8 @@ def test_vrt_chunked_none_synthesizes_pixel_coords(tmp_path):
     synthesise the same integer x/y pixel coords as the non-VRT dask
     no-georef read rather than dropping coords entirely."""
     tiff, vrt = _make_none_pair(tmp_path, 'none_coords_chunked_2818')
-    ref = read_geotiff_dask(tiff, chunks=2)
-    vrt_da = read_vrt(vrt, chunks=2)
+    ref = _read_geotiff_dask(tiff, chunks=2)
+    vrt_da = _read_vrt(vrt, chunks=2)
     assert ref.attrs['georef_status'] == GEOREF_STATUS_NONE
     assert vrt_da.attrs['georef_status'] == GEOREF_STATUS_NONE
     assert 'x' in vrt_da.coords and 'y' in vrt_da.coords
@@ -786,8 +786,8 @@ def test_vrt_none_windowed_synthesizes_offset_pixel_coords(tmp_path):
     tiff, vrt = _make_none_pair(tmp_path, 'none_coords_win_2818')
     window = (1, 2, 4, 4)
     ref = open_geotiff(tiff, window=window)
-    eager = read_vrt(vrt, window=window)
-    chunked = read_vrt(vrt, window=window, chunks=2)
+    eager = _read_vrt(vrt, window=window)
+    chunked = _read_vrt(vrt, window=window, chunks=2)
     for label, actual in (('eager', eager), ('chunked', chunked)):
         assert 'x' in actual.coords and 'y' in actual.coords, label
         np.testing.assert_array_equal(
@@ -800,7 +800,7 @@ def test_vrt_none_windowed_synthesizes_offset_pixel_coords(tmp_path):
 
 def test_vrt_chunked_rotated_dropped(tmp_path):
     _, vrt = _make_rotated_pair(tmp_path, 'rot_chunked_2180')
-    attrs = dict(read_vrt(vrt, allow_rotated=True, chunks=2).attrs)
+    attrs = dict(_read_vrt(vrt, allow_rotated=True, chunks=2).attrs)
     assert attrs['georef_status'] == GEOREF_STATUS_ROTATED_DROPPED
     assert attrs.get(_NO_GEOREF_KEY) is True
     assert 'rotated_affine' in attrs
@@ -845,7 +845,7 @@ def test_band_nodata_first_band_attrs(tmp_path):
     """``band=1`` with ``band_nodata='first'`` surfaces band 1's sentinel
     on attrs and masks against it."""
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path, band=1, band_nodata='first')
+    r = _read_vrt(vrt_path, band=1, band_nodata='first')
     assert r.attrs['nodata'] == 65000.0
     assert r.attrs['masked_nodata'] is True
     assert np.isnan(r.values[1, 1])
@@ -855,7 +855,7 @@ def test_band_nodata_first_band_attrs(tmp_path):
 def test_band_nodata_chunked_first_band_attrs(tmp_path):
     """The chunked path threads the same per-band sentinel onto attrs."""
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path, band=1, band_nodata='first', chunks=2)
+    r = _read_vrt(vrt_path, band=1, band_nodata='first', chunks=2)
     assert r.attrs['nodata'] == 65000.0
     assert r.attrs['masked_nodata'] is True
     assert 'nodata_pixels_present' not in r.attrs
@@ -879,7 +879,7 @@ def test_dtype_cast_no_sentinel_omits_attr_eager(tmp_path):
     """Eager VRT with ``dtype=`` and no declared sentinel:
     ``nodata_dtype_cast`` stays absent."""
     vrt = _make_no_sentinel_vrt(tmp_path, 'no_sentinel_eager_2180')
-    r = read_vrt(vrt, dtype=np.float64)
+    r = _read_vrt(vrt, dtype=np.float64)
     assert r.dtype == np.float64
     assert 'nodata' not in r.attrs
     assert 'masked_nodata' not in r.attrs
@@ -890,7 +890,7 @@ def test_dtype_cast_no_sentinel_omits_attr_chunked(tmp_path):
     """Chunked VRT with ``dtype=`` and no declared sentinel: same
     ``nodata_dtype_cast`` pop as the eager branch."""
     vrt = _make_no_sentinel_vrt(tmp_path, 'no_sentinel_chunked_2180')
-    r = read_vrt(vrt, dtype=np.float64, chunks=2)
+    r = _read_vrt(vrt, dtype=np.float64, chunks=2)
     assert r.dtype == np.float64
     assert 'nodata' not in r.attrs
     assert 'masked_nodata' not in r.attrs
@@ -927,7 +927,7 @@ def test_missing_sources_eager_surfaces_vrt_holes(tmp_path):
         f.write(vrt_xml)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        r = read_vrt(vrt_path, missing_sources='warn')
+        r = _read_vrt(vrt_path, missing_sources='warn')
     assert 'vrt_holes' in r.attrs
     holes = r.attrs['vrt_holes']
     assert isinstance(holes, list) and len(holes) >= 1
@@ -966,7 +966,7 @@ def test_missing_sources_chunked_surfaces_vrt_holes(tmp_path):
 </VRTDataset>"""
     with open(vrt_path, 'w') as f:
         f.write(vrt_xml)
-    r = read_vrt(vrt_path, missing_sources='warn', chunks=2)
+    r = _read_vrt(vrt_path, missing_sources='warn', chunks=2)
     assert 'vrt_holes' in r.attrs
     holes = r.attrs['vrt_holes']
     assert isinstance(holes, list) and len(holes) >= 1
@@ -998,7 +998,7 @@ def test_georef_status_eager_parity(tmp_path, pair_factory, expected_status,
     ``georef_status``."""
     tiff, vrt = pair_factory(tmp_path, f'georef_eager_{expected_status}')
     kwargs = {'allow_rotated': True} if allow_rotated else {}
-    vrt_status = read_vrt(vrt, **kwargs).attrs.get('georef_status')
+    vrt_status = _read_vrt(vrt, **kwargs).attrs.get('georef_status')
     assert vrt_status == expected_status
     if not allow_rotated:
         tiff_status = open_geotiff(tiff, **kwargs).attrs.get('georef_status')
@@ -1013,10 +1013,10 @@ def test_georef_status_chunked_parity(tmp_path, pair_factory, expected_status,
     """VRT chunked and non-VRT chunked agree on ``georef_status``."""
     tiff, vrt = pair_factory(tmp_path, f'georef_chunked_{expected_status}')
     kwargs = {'allow_rotated': True} if allow_rotated else {}
-    vrt_status = read_vrt(vrt, chunks=2, **kwargs).attrs.get('georef_status')
+    vrt_status = _read_vrt(vrt, chunks=2, **kwargs).attrs.get('georef_status')
     assert vrt_status == expected_status
     if not allow_rotated:
-        tiff_status = read_geotiff_dask(
+        tiff_status = _read_geotiff_dask(
             tiff, chunks=2, **kwargs
         ).attrs.get('georef_status')
         assert tiff_status == expected_status
@@ -1039,18 +1039,18 @@ def test_vrt_eager_chunked_internal_parity(tmp_path, pair_factory,
     canonical attrs (modulo the lazy ``nodata_pixels_present`` carve-out)."""
     _, vrt = pair_factory(tmp_path, 'internal_parity_2180')
     kwargs = {'allow_rotated': True} if allow_rotated else {}
-    eager_attrs = dict(read_vrt(vrt, **kwargs).attrs)
-    chunked_attrs = dict(read_vrt(vrt, chunks=2, **kwargs).attrs)
+    eager_attrs = dict(_read_vrt(vrt, **kwargs).attrs)
+    chunked_attrs = dict(_read_vrt(vrt, chunks=2, **kwargs).attrs)
     eager_attrs.pop('nodata_pixels_present', None)
     chunked_attrs.pop('nodata_pixels_present', None)
     assert eager_attrs == chunked_attrs
 
 
 # ===========================================================================
-# read_vrt backend / parameter coverage
+# _read_vrt backend / parameter coverage
 # ===========================================================================
 #
-# Covers the GPU and dask+GPU decode paths the read_vrt body handles, the
+# Covers the GPU and dask+GPU decode paths the _read_vrt body handles, the
 # ``dtype=`` / ``name=`` kwargs, and the open_geotiff file-like +
 # backend-kwarg rejection.
 
@@ -1068,27 +1068,27 @@ def single_tile_vrt(tmp_path):
 
 @_gpu_only
 class TestReadVrtGpuBackend:
-    """``read_vrt(gpu=True)`` returns a CuPy-backed DataArray."""
+    """``_read_vrt(gpu=True)`` returns a CuPy-backed DataArray."""
 
     def test_read_vrt_gpu_returns_cupy(self, single_tile_vrt):
         import cupy
 
         vrt_path, arr = single_tile_vrt
-        da = read_vrt(vrt_path, gpu=True)
+        da = _read_vrt(vrt_path, gpu=True)
         assert isinstance(da.data, cupy.ndarray), (
             f"expected cupy.ndarray, got {type(da.data).__name__}"
         )
         np.testing.assert_array_equal(da.data.get(), arr)
 
     def test_read_vrt_gpu_chunks_returns_dask_cupy(self, single_tile_vrt):
-        """``read_vrt(gpu=True, chunks=N)`` is the dask+cupy VRT entry
+        """``_read_vrt(gpu=True, chunks=N)`` is the dask+cupy VRT entry
         point; the trailing ``result.chunk(...)`` block wraps the cupy
         backing without falling back to numpy."""
         import cupy
         import dask.array as da_mod
 
         vrt_path, arr = single_tile_vrt
-        result = read_vrt(vrt_path, gpu=True, chunks=2)
+        result = _read_vrt(vrt_path, gpu=True, chunks=2)
 
         assert isinstance(result.data, da_mod.Array), (
             f"expected dask Array, got {type(result.data).__name__}"
@@ -1105,7 +1105,7 @@ class TestReadVrtGpuBackend:
         np.testing.assert_array_equal(computed.data.get(), arr)
 
     def test_open_geotiff_vrt_gpu_routes_through(self, single_tile_vrt):
-        """``open_geotiff('.vrt', gpu=True)`` dispatches to ``read_vrt``
+        """``open_geotiff('.vrt', gpu=True)`` dispatches to ``_read_vrt``
         and surfaces the cupy data unchanged."""
         import cupy
 
@@ -1132,12 +1132,12 @@ class TestReadVrtGpuBackend:
 
 
 class TestReadVrtDtypeKwarg:
-    """``read_vrt(dtype=...)`` casts after decode and validates the cast."""
+    """``_read_vrt(dtype=...)`` casts after decode and validates the cast."""
 
     def test_safe_widening_cast(self, single_tile_vrt):
         """float32 -> float64 is permitted; values survive bit-for-bit."""
         vrt_path, arr = single_tile_vrt
-        da = read_vrt(vrt_path, dtype='float64')
+        da = _read_vrt(vrt_path, dtype='float64')
         assert da.dtype == np.float64
         np.testing.assert_array_equal(da.values, arr.astype(np.float64))
 
@@ -1145,20 +1145,20 @@ class TestReadVrtDtypeKwarg:
         """Float-to-int is lossy and refused with a descriptive error."""
         vrt_path, _ = single_tile_vrt
         with pytest.raises(ValueError, match="Cannot cast float"):
-            read_vrt(vrt_path, dtype='int32')
+            _read_vrt(vrt_path, dtype='int32')
 
 
 class TestReadVrtNameKwarg:
-    """``read_vrt(name='custom')`` overrides the file-stem derivation."""
+    """``_read_vrt(name='custom')`` overrides the file-stem derivation."""
 
     def test_explicit_name_used(self, single_tile_vrt):
         vrt_path, _ = single_tile_vrt
-        da = read_vrt(vrt_path, name='custom_name')
+        da = _read_vrt(vrt_path, name='custom_name')
         assert da.name == 'custom_name'
 
     def test_default_name_from_stem(self, single_tile_vrt):
         vrt_path, _ = single_tile_vrt
-        da = read_vrt(vrt_path)
+        da = _read_vrt(vrt_path)
         assert da.name == os.path.splitext(os.path.basename(vrt_path))[0]
 
 

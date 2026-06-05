@@ -8,13 +8,13 @@ Sections:
 * ``masked_nodata`` attr honours ``mask_nodata`` kwarg
 * Per-band ``<NoDataValue>`` selection
 * SimpleSource ``<NODATA>0</NODATA>`` survives the falsy-zero bug
-* Integer-with-nodata promotion through ``read_vrt``
+* Integer-with-nodata promotion through ``_read_vrt``
 * ``mask_nodata=False`` preserves float sentinels
 * Tile-level metadata parity for VRT tiled writes
 * VRT XML parsed once on the chunked path
-* ``write_vrt`` escapes XML special characters
-* XML size cap on eager ``read_vrt``
-* XML size cap on chunked ``read_vrt``
+* ``build_vrt`` escapes XML special characters
+* XML size cap on eager ``_read_vrt``
+* XML size cap on chunked ``_read_vrt``
 * VRT metadata parity across backends
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (GeoTIFFFallbackWarning, MixedBandMetadataError, open_geotiff,
-                               read_geotiff_dask, read_vrt, to_geotiff, write_vrt)
+                               _read_geotiff_dask, _read_vrt, to_geotiff, build_vrt)
 from xrspatial.geotiff._attrs import GEOREF_STATUS_FULL, GEOREF_STATUS_TRANSFORM_ONLY
 from xrspatial.geotiff._errors import VRTUnsupportedError
 from xrspatial.geotiff._geotags import GeoTransform
@@ -99,7 +99,7 @@ def test_skipped_source_records_vrt_holes_attr(holes_attr_clear_strict_env, tmp_
     _holes_attr_write_vrt_with_missing_source(vrt_path, missing_src)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', GeoTIFFFallbackWarning)
-        da = read_vrt(str(vrt_path), missing_sources='warn')
+        da = _read_vrt(str(vrt_path), missing_sources='warn')
     assert np.issubdtype(da.dtype, np.integer)
     assert (da.values == 0).all()
     assert 'vrt_holes' in da.attrs
@@ -143,7 +143,7 @@ def test_no_holes_attr_when_all_sources_read(holes_attr_clear_strict_env, tmp_pa
     )
     with warnings.catch_warnings():
         warnings.simplefilter('error', GeoTIFFFallbackWarning)
-        da = read_vrt(str(vrt_path))
+        da = _read_vrt(str(vrt_path))
     assert 'vrt_holes' not in da.attrs
 
 
@@ -161,7 +161,7 @@ def test_strict_mode_still_raises(holes_attr_set_strict_env, tmp_path):
     missing_src = f'{tmp_path}/does_not_exist_1734_strict.tif'
     _holes_attr_write_vrt_with_missing_source(vrt_path, missing_src)
     with pytest.raises(FileNotFoundError, match='does_not_exist_1734_strict.tif'):
-        read_vrt(str(vrt_path))
+        _read_vrt(str(vrt_path))
 
 
 def test_warning_mentions_how_to_detect_holes(holes_attr_clear_strict_env, tmp_path):
@@ -173,7 +173,7 @@ def test_warning_mentions_how_to_detect_holes(holes_attr_clear_strict_env, tmp_p
     _holes_attr_write_vrt_with_missing_source(vrt_path, missing_src)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        read_vrt(str(vrt_path), missing_sources='warn')
+        _read_vrt(str(vrt_path), missing_sources='warn')
     fallback = [x for x in w if issubclass(x.category, GeoTIFFFallbackWarning)]
     assert fallback, 'expected at least one GeoTIFFFallbackWarning'
     msg = ' '.join((str(x.message) for x in fallback))
@@ -260,7 +260,7 @@ def test_vrt_chunked_float_source_mask_off_reports_false(tmp_path):
     """Chunked VRT path (``chunks=`` triggers ``_read_vrt_chunked``)
     + float source + ``mask_nodata=False`` must report False."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src.tif', 'tmp_2159_chunked_unmasked.vrt')  # noqa: E501
-    out = read_geotiff_dask(vrt, chunks=2, mask_nodata=False)
+    out = _read_geotiff_dask(vrt, chunks=2, mask_nodata=False)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is False, f"chunked VRT path: caller opted out of masking but attrs say masked_nodata = {out.attrs.get('masked_nodata')!r}"  # noqa: E501
 
@@ -268,7 +268,7 @@ def test_vrt_chunked_float_source_mask_off_reports_false(tmp_path):
 def test_vrt_chunked_float_source_mask_on_reports_true(tmp_path):
     """Canonical direction on the chunked path: masking on, attr True."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src_masked.tif', 'tmp_2159_chunked_masked.vrt')  # noqa: E501
-    out = read_geotiff_dask(vrt, chunks=2)
+    out = _read_geotiff_dask(vrt, chunks=2)
     assert out.attrs.get('nodata') == -9999.0
     assert out.attrs.get('masked_nodata') is True
 
@@ -279,7 +279,7 @@ def test_vrt_chunked_int_source_mask_off_reports_false(tmp_path):
     earlier in the function is itself gated on ``mask_nodata``.
     The attr says False under both the old and the new rule."""
     vrt = _masked_nodata_attr_write_int_vrt(tmp_path, 'tmp_2159_chunked_int_src.tif', 'tmp_2159_chunked_int_unmasked.vrt')  # noqa: E501
-    out = read_geotiff_dask(vrt, chunks=2, mask_nodata=False)
+    out = _read_geotiff_dask(vrt, chunks=2, mask_nodata=False)
     assert out.dtype.kind == 'i'
     assert out.attrs.get('masked_nodata') is False
 
@@ -289,7 +289,7 @@ def test_vrt_chunked_float_source_mask_off_with_cast_reports_false(tmp_path):
     cast. Same logic as the eager equivalent: caller opted out of
     masking, attr is False even though the lazy graph dtype is float."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_chunked_float_src_cast.tif', 'tmp_2159_chunked_unmasked_cast.vrt')  # noqa: E501
-    out = read_geotiff_dask(vrt, chunks=2, mask_nodata=False, dtype=np.float64)
+    out = _read_geotiff_dask(vrt, chunks=2, mask_nodata=False, dtype=np.float64)
     assert out.dtype == np.float64
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_dtype_cast') == 'float64'
@@ -302,7 +302,7 @@ def test_vrt_attr_matches_dask_backend_under_mask_off(tmp_path):
     ``_attrs._set_nodata_attrs`` calls out."""
     vrt = _masked_nodata_attr_write_float_vrt(tmp_path, 'tmp_2159_xbackend_src.tif', 'tmp_2159_xbackend.vrt')  # noqa: E501
     eager = open_geotiff(vrt, masked=False, dtype=np.float64)
-    chunked = read_geotiff_dask(vrt, chunks=2, mask_nodata=False, dtype=np.float64)
+    chunked = _read_geotiff_dask(vrt, chunks=2, mask_nodata=False, dtype=np.float64)
     assert eager.attrs.get('masked_nodata') is False
     assert chunked.attrs.get('masked_nodata') is False
     assert eager.attrs.get('masked_nodata') == chunked.attrs.get('masked_nodata')
@@ -342,7 +342,7 @@ def test_read_vrt_band0_uses_band0_nodata(tmp_path):
     at the call site that the test is exercising the legacy behaviour.
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path, band=0, band_nodata='first')
+    r = _read_vrt(vrt_path, band=0, band_nodata='first')
     assert r.dtype == np.float64
     assert r.attrs.get('nodata') == 65535.0
     assert np.isnan(r.values[1, 1])
@@ -356,7 +356,7 @@ def test_read_vrt_band1_uses_band1_nodata(tmp_path):
     [9,65000]] and attrs['nodata']=65535.
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path, band=1, band_nodata='first')
+    r = _read_vrt(vrt_path, band=1, band_nodata='first')
     assert r.dtype == np.float64, 'band=1 read kept uint16 dtype; per-band nodata regression.'
     assert r.attrs.get('nodata') == 65000.0, f"attrs['nodata'] was {r.attrs.get('nodata')}, expected 65000 from band 1's <NoDataValue>."  # noqa: E501
     assert np.isnan(r.values[1, 1]), "band 1's sentinel pixel was not NaN-masked; promotion ran against the wrong sentinel."  # noqa: E501
@@ -373,7 +373,7 @@ def test_read_vrt_no_band_keeps_band0_nodata_attr(tmp_path):
     "first band wins" contract for multi-band reads.
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
-    r = read_vrt(vrt_path, band_nodata='first')
+    r = _read_vrt(vrt_path, band_nodata='first')
     assert r.attrs.get('nodata') == 65535.0
 
 
@@ -385,7 +385,7 @@ def test_read_vrt_negative_band_raises(tmp_path):
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
     with pytest.raises(ValueError, match='band'):
-        read_vrt(vrt_path, band=-1)
+        _read_vrt(vrt_path, band=-1)
 
 
 def test_read_vrt_out_of_range_band_raises(tmp_path):
@@ -395,7 +395,7 @@ def test_read_vrt_out_of_range_band_raises(tmp_path):
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
     with pytest.raises(ValueError, match='out of range'):
-        read_vrt(vrt_path, band=5, band_nodata='first')
+        _read_vrt(vrt_path, band=5, band_nodata='first')
 
 
 def test_read_vrt_non_integer_band_raises(tmp_path):
@@ -405,9 +405,9 @@ def test_read_vrt_non_integer_band_raises(tmp_path):
     """
     vrt_path = _band_nodata_write_two_band_per_band_nodata_vrt(tmp_path)
     with pytest.raises(ValueError, match='band'):
-        read_vrt(vrt_path, band='1')
+        _read_vrt(vrt_path, band='1')
     with pytest.raises(ValueError, match='band'):
-        read_vrt(vrt_path, band=True)
+        _read_vrt(vrt_path, band=True)
 
 
 # ---------------------------------------------------------------------------
@@ -508,8 +508,8 @@ def test_vrt_uint16_nodata_promotes_to_float64(tmp_path):
     assert eager.dtype == np.float64
     assert np.isnan(eager.values[1, 0])
     vrt_path = str(tmp_path / 'src_1564.vrt')
-    write_vrt(vrt_path, [tif])
-    via_vrt = read_vrt(vrt_path)
+    build_vrt(vrt_path, [tif])
+    via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.float64, f'VRT integer-with-nodata should promote to float64; got {via_vrt.dtype}'  # noqa: E501
     assert np.isnan(via_vrt.values[1, 0]), f'VRT sentinel pixel should be NaN; got {via_vrt.values[1, 0]} (literal sentinel survived)'  # noqa: E501
     assert via_vrt.attrs.get('nodata') == 65535.0
@@ -522,8 +522,8 @@ def test_vrt_uint16_no_nodata_keeps_dtype(tmp_path):
     tif = str(tmp_path / 'src_no_nodata_1564.tif')
     to_geotiff(da, tif, compression='none')
     vrt_path = str(tmp_path / 'src_no_nodata_1564.vrt')
-    write_vrt(vrt_path, [tif])
-    via_vrt = read_vrt(vrt_path)
+    build_vrt(vrt_path, [tif])
+    via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.uint16
     np.testing.assert_array_equal(via_vrt.values, arr)
 
@@ -536,8 +536,8 @@ def test_vrt_float_nodata_still_masks(tmp_path):
     tif = str(tmp_path / 'srcf_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=-9999.0)
     vrt_path = str(tmp_path / 'srcf_1564.vrt')
-    write_vrt(vrt_path, [tif])
-    via_vrt = read_vrt(vrt_path)
+    build_vrt(vrt_path, [tif])
+    via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.float32
     assert np.isnan(via_vrt.values[0, 2])
     assert np.isnan(via_vrt.values[1, 1])
@@ -546,7 +546,7 @@ def test_vrt_float_nodata_still_masks(tmp_path):
 def _int_nodata_rewrite_vrt_nodata(vrt_path, new_nodata_text):
     """Rewrite the <NoDataValue> element of an existing VRT to a literal
     string so we can exercise fractional / out-of-range cases without
-    going through ``write_vrt`` (which only accepts numeric values)."""
+    going through ``build_vrt`` (which only accepts numeric values)."""
     with open(vrt_path, 'r') as f:
         xml = f.read()
     import re
@@ -564,9 +564,9 @@ def test_vrt_fractional_nodata_is_not_masked(tmp_path):
     tif = str(tmp_path / 'frac_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=1)
     vrt_path = str(tmp_path / 'frac_1564.vrt')
-    write_vrt(vrt_path, [tif])
+    build_vrt(vrt_path, [tif])
     _int_nodata_rewrite_vrt_nodata(vrt_path, '1.9')
-    via_vrt = read_vrt(vrt_path)
+    via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.uint16, f'Fractional NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype}, pixel @[0,0]={via_vrt.values[0, 0]})'  # noqa: E501
     np.testing.assert_array_equal(via_vrt.values, arr)
 
@@ -579,9 +579,9 @@ def test_vrt_out_of_range_nodata_is_not_masked(tmp_path):
     tif = str(tmp_path / 'oor_1564.tif')
     to_geotiff(da, tif, compression='none', nodata=0)
     vrt_path = str(tmp_path / 'oor_1564.vrt')
-    write_vrt(vrt_path, [tif])
+    build_vrt(vrt_path, [tif])
     _int_nodata_rewrite_vrt_nodata(vrt_path, '-1')
-    via_vrt = read_vrt(vrt_path)
+    via_vrt = _read_vrt(vrt_path)
     assert via_vrt.dtype == np.uint16, f'Out-of-range NoDataValue must not trigger integer masking (got dtype {via_vrt.dtype})'  # noqa: E501
     np.testing.assert_array_equal(via_vrt.values, arr)
 
@@ -593,7 +593,7 @@ def test_vrt_open_geotiff_parity_uint16_nodata(tmp_path):
     _int_nodata_write_uint16_with_nodata_tif(tif, sentinel=65535)
     direct = open_geotiff(tif)
     vrt_path = str(tmp_path / 'parity_1564.vrt')
-    write_vrt(vrt_path, [tif])
+    build_vrt(vrt_path, [tif])
     via_vrt = open_geotiff(vrt_path)
     assert direct.dtype == via_vrt.dtype
     np.testing.assert_array_equal(np.isnan(direct.values), np.isnan(via_vrt.values), err_msg='VRT route should NaN-mask the same pixels as direct read')  # noqa: E501
@@ -649,7 +649,7 @@ def test_default_mask_nodata_true_rewrites_float_sentinel(tmp_path):
     """
     src, _ = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
-    r = read_vrt(vrt)
+    r = _read_vrt(vrt)
     assert r.dtype == np.float32
     assert np.isnan(r.values[1, 1])
     assert np.isnan(r.values[2, 1])
@@ -668,7 +668,7 @@ def test_eager_mask_nodata_false_preserves_float_sentinel(tmp_path):
     """
     src, original = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
-    r = read_vrt(vrt, mask_nodata=False)
+    r = _read_vrt(vrt, mask_nodata=False)
     assert r.dtype == np.float32
     assert not np.isnan(r.values).any()
     assert r.values[1, 1] == np.float32(-9999.0)
@@ -688,7 +688,7 @@ def test_chunked_mask_nodata_false_preserves_float_sentinel(tmp_path):
     """
     src, original = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
-    r = read_vrt(vrt, chunks=2, mask_nodata=False)
+    r = _read_vrt(vrt, chunks=2, mask_nodata=False)
     assert r.dtype == np.float32
     computed = r.compute()
     assert not np.isnan(computed.values).any()
@@ -709,8 +709,8 @@ def test_eager_and_chunked_agree_under_mask_nodata_false(tmp_path):
     """
     src, _ = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
-    eager = read_vrt(vrt, mask_nodata=False)
-    chunked = read_vrt(vrt, chunks=2, mask_nodata=False).compute()
+    eager = _read_vrt(vrt, mask_nodata=False)
+    chunked = _read_vrt(vrt, chunks=2, mask_nodata=False).compute()
     np.testing.assert_array_equal(eager.values, chunked.values)
     assert eager.attrs.get('masked_nodata') == chunked.attrs.get('masked_nodata')
 
@@ -724,7 +724,7 @@ def test_mask_nodata_false_float64_fractional_sentinel(tmp_path):
     """
     src, original = _mask_nodata_float_write_float64_with_fractional_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float64', -9999.25, filename='float64_2158.vrt', shape=(2, 2))  # noqa: E501
-    r = read_vrt(vrt, mask_nodata=False)
+    r = _read_vrt(vrt, mask_nodata=False)
     assert r.dtype == np.float64
     assert r.values[1, 0] == -9999.25
     np.testing.assert_array_equal(r.values, original)
@@ -740,8 +740,8 @@ def test_masked_vs_unmasked_differ_only_at_sentinels(tmp_path):
     """
     src, _ = _mask_nodata_float_write_float32_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', -9999.0)
-    masked = read_vrt(vrt).values
-    unmasked = read_vrt(vrt, mask_nodata=False).values
+    masked = _read_vrt(vrt).values
+    unmasked = _read_vrt(vrt, mask_nodata=False).values
     nan_positions = np.isnan(masked)
     sentinel_positions = unmasked == np.float32(-9999.0)
     np.testing.assert_array_equal(nan_positions, sentinel_positions)
@@ -775,7 +775,7 @@ def test_int_source_float_vrt_mask_nodata_false_keeps_literal(tmp_path):
     """
     src, _ = _mask_nodata_float_write_uint16_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_2158.vrt', shape=(2, 2))  # noqa: E501
-    r = read_vrt(vrt, mask_nodata=False)
+    r = _read_vrt(vrt, mask_nodata=False)
     assert r.dtype == np.float32
     assert not np.isnan(r.values).any()
     assert r.values[1, 1] == np.float32(65535.0)
@@ -793,7 +793,7 @@ def test_int_source_float_vrt_default_still_promotes(tmp_path):
     """
     src, _ = _mask_nodata_float_write_uint16_with_sentinel(tmp_path)
     vrt = _mask_nodata_float_build_vrt(tmp_path, src, 'Float32', 65535, filename='int_float_default_2158.vrt', shape=(2, 2))  # noqa: E501
-    r = read_vrt(vrt)
+    r = _read_vrt(vrt)
     assert r.dtype == np.float32
     assert np.isnan(r.values[1, 1])
     assert r.values[0, 0] == 1.0
@@ -985,7 +985,7 @@ def test_chunked_path_parses_xml_once(monkeypatch, single_parse_two_by_two_vrt_1
         counter['parses'] += 1
         return real_parse(*args, **kwargs)
     monkeypatch.setattr(vrt_module, 'parse_vrt', counting_parse)
-    result = read_vrt(vrt_path, chunks=(64, 64))
+    result = _read_vrt(vrt_path, chunks=(64, 64))
     assert counter['parses'] == 1, f"expected 1 parse during construction, got {counter['parses']}"
     computed = result.compute()
     assert counter['parses'] == 1, f"expected 1 parse total (construction only); got {counter['parses']} -- per-chunk tasks are still reparsing"  # noqa: E501
@@ -1009,7 +1009,7 @@ def test_chunked_path_reads_xml_file_once(monkeypatch, single_parse_two_by_two_v
         counter['reads'] += 1
         return real_read_xml(*args, **kwargs)
     monkeypatch.setattr(vrt_module, '_read_vrt_xml', counting_read_xml)
-    result = read_vrt(vrt_path, chunks=(64, 64))
+    result = _read_vrt(vrt_path, chunks=(64, 64))
     assert counter['reads'] == 1, f"expected 1 XML file read during construction, got {counter['reads']}"  # noqa: E501
     result.compute()
     assert counter['reads'] == 1, f"expected 1 XML file read total; got {counter['reads']} -- per-chunk tasks are still re-opening the .vrt file"  # noqa: E501
@@ -1046,8 +1046,8 @@ def test_chunked_matches_eager_after_refactor(single_parse_two_by_two_vrt_1825):
     regression in either call site would surface here.
     """
     vrt_path, original = single_parse_two_by_two_vrt_1825
-    eager = read_vrt(vrt_path)
-    chunked = read_vrt(vrt_path, chunks=(64, 64)).compute()
+    eager = _read_vrt(vrt_path)
+    chunked = _read_vrt(vrt_path, chunks=(64, 64)).compute()
     assert eager.dtype == chunked.dtype
     np.testing.assert_array_equal(eager.values, chunked.values)
     np.testing.assert_array_equal(eager.values, original)
@@ -1070,7 +1070,7 @@ def test_no_path_containment_revalidation_per_chunk(monkeypatch, single_parse_tw
         parse_calls['n'] += 1
         return real_parse(*args, **kwargs)
     monkeypatch.setattr(vrt_module, 'parse_vrt', counting_parse)
-    result = read_vrt(vrt_path, chunks=(64, 64))
+    result = _read_vrt(vrt_path, chunks=(64, 64))
     parses_after_construction = parse_calls['n']
     da_arr = result.data
     if isinstance(da_arr, da.Array):
@@ -1080,10 +1080,10 @@ def test_no_path_containment_revalidation_per_chunk(monkeypatch, single_parse_tw
 
 
 def test_parsed_kwarg_does_not_mutate_caller_holes(single_parse_single_tile_vrt_1825):
-    """``read_vrt(parsed=...)`` must not mutate the caller's ``holes``.
+    """``_read_vrt(parsed=...)`` must not mutate the caller's ``holes``.
 
     The chunked dispatcher threads a single parsed ``VRTDataset`` into
-    every per-chunk task. ``read_vrt`` appends skipped-source records to
+    every per-chunk task. ``_read_vrt`` appends skipped-source records to
     ``vrt.holes`` when a backing file is missing; without a defensive
     copy the appends would land on the dispatcher's shared object and
     leak across tasks (racy under the threaded scheduler, and
@@ -1110,7 +1110,7 @@ def test_parsed_kwarg_does_not_mutate_caller_holes(single_parse_single_tile_vrt_
 
 
 # ---------------------------------------------------------------------------
-# write_vrt escapes XML special chars
+# build_vrt escapes XML special chars
 # ---------------------------------------------------------------------------
 
 
@@ -1127,7 +1127,7 @@ def xml_escape_sample_tif(tmp_path):
 
 
 def test_crs_wkt_with_xml_special_chars_round_trips(xml_escape_sample_tif, tmp_path):
-    """A WKT containing ``& < > " '`` must round-trip through write_vrt /
+    """A WKT containing ``& < > " '`` must round-trip through build_vrt /
     parse_vrt unchanged (the entities are escaped on the way out and
     decoded on the way in)."""
     nasty_wkt = 'GEOGCS["spec & <chars> with "quotes" and \'apostrophes\'"]'
@@ -1174,7 +1174,7 @@ def test_source_filename_with_ampersand_round_trips(tmp_path):
 
 
 def test_written_vrt_is_well_formed_xml(xml_escape_sample_tif, tmp_path):
-    """Sanity check: the bytes written by write_vrt always parse cleanly
+    """Sanity check: the bytes written by build_vrt always parse cleanly
     as XML, even when crs_wkt carries every XML predefined entity."""
     nasty = '< & > " \''
     vrt_path = str(tmp_path / 'wf.vrt')
@@ -1185,7 +1185,7 @@ def test_written_vrt_is_well_formed_xml(xml_escape_sample_tif, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# XML size cap on eager read_vrt
+# XML size cap on eager _read_vrt
 # ---------------------------------------------------------------------------
 
 
@@ -1251,7 +1251,7 @@ def test_invalid_cap_raises_value_error(tmp_path, monkeypatch, bad_value):
 
 
 # ---------------------------------------------------------------------------
-# XML size cap on chunked read_vrt
+# XML size cap on chunked _read_vrt
 # ---------------------------------------------------------------------------
 
 
@@ -1274,13 +1274,13 @@ def _xml_size_cap_chunked_write_vrt(td: str, *, pad_bytes: int = 0) -> str:
 
 
 def test_chunked_read_vrt_honors_xml_cap(tmp_path, monkeypatch):
-    """``read_vrt(chunks=...)`` rejects oversized VRT XML."""
+    """``_read_vrt(chunks=...)`` rejects oversized VRT XML."""
     td = str(tmp_path)
     _xml_size_cap_chunked_write_source(td)
     monkeypatch.setenv('XRSPATIAL_VRT_MAX_XML_BYTES', '1024')
     vrt_path = _xml_size_cap_chunked_write_vrt(td, pad_bytes=4096)
     with pytest.raises(ValueError) as exc_info:
-        read_vrt(vrt_path, chunks=10)
+        _read_vrt(vrt_path, chunks=10)
     msg = str(exc_info.value)
     assert 'XRSPATIAL_VRT_MAX_XML_BYTES' in msg
     assert '1,024' in msg
@@ -1291,7 +1291,7 @@ def test_chunked_read_vrt_under_default_cap(tmp_path):
     td = str(tmp_path)
     _xml_size_cap_chunked_write_source(td)
     vrt_path = _xml_size_cap_chunked_write_vrt(td)
-    arr = read_vrt(vrt_path, chunks=10)
+    arr = _read_vrt(vrt_path, chunks=10)
     assert arr.shape == (10, 10)
     assert arr.dtype == np.uint8
 
@@ -1302,7 +1302,7 @@ def test_chunked_read_vrt_raised_cap_allows_padded(tmp_path, monkeypatch):
     _xml_size_cap_chunked_write_source(td)
     vrt_path = _xml_size_cap_chunked_write_vrt(td, pad_bytes=4096)
     monkeypatch.setenv('XRSPATIAL_VRT_MAX_XML_BYTES', str(1024 * 1024))
-    arr = read_vrt(vrt_path, chunks=10)
+    arr = _read_vrt(vrt_path, chunks=10)
     assert arr.shape == (10, 10)
 
 
@@ -1400,14 +1400,14 @@ def _metadata_parity_read_dask_chunks_2(vrt_path: str):
 
 
 def _metadata_parity_read_gpu_eager(vrt_path: str):
-    """GPU eager via ``read_vrt(gpu=True)``.
+    """GPU eager via ``_read_vrt(gpu=True)``.
 
     ``open_geotiff(..., gpu=True)`` rejects ``.vrt`` sources up front
-    (the dispatcher routes ``.vrt`` to ``read_vrt`` and ``read_vrt``
+    (the dispatcher routes ``.vrt`` to ``_read_vrt`` and ``_read_vrt``
     owns the ``gpu`` kwarg, see ``_backends/vrt.py``). Use the direct
     entry point here so the GPU eager path is exercised.
     """
-    return read_vrt(vrt_path, gpu=True)
+    return _read_vrt(vrt_path, gpu=True)
 
 
 _BACKENDS = [pytest.param('numpy', _metadata_parity_read_eager_numpy, id='numpy'), pytest.param('dask', _metadata_parity_read_dask, id='dask'), pytest.param('gpu', _metadata_parity_read_gpu_eager, id='gpu', marks=requires_gpu)]  # noqa: E501
@@ -1594,7 +1594,7 @@ def test_mixed_crs_vrt_does_not_silently_flatten(tmp_path):
     """
     vrt = _metadata_parity_write_mixed_crs_vrt(tmp_path)
     with pytest.raises(VRTUnsupportedError):
-        read_vrt(vrt)
+        _read_vrt(vrt)
 
 
 def _metadata_parity_write_mixed_nodata_vrt(tmp_path: pathlib.Path) -> str:
@@ -1643,7 +1643,7 @@ def test_mixed_nodata_vrt_opt_in_first_succeeds(tmp_path):
     is the legacy behaviour callers may explicitly want.
     """
     vrt = _metadata_parity_write_mixed_nodata_vrt(tmp_path)
-    result = read_vrt(vrt, band_nodata='first')
+    result = _read_vrt(vrt, band_nodata='first')
     assert result.shape == (2, 2, 2)
 
 
@@ -1677,7 +1677,7 @@ def test_unsupported_resample_alg_raises(tmp_path):
     """
     vrt = _metadata_parity_write_unsupported_resample_vrt(tmp_path)
     with pytest.raises((NotImplementedError, VRTUnsupportedError), match='Bilinear'):
-        read_vrt(vrt)
+        _read_vrt(vrt)
 
 
 def _metadata_parity_write_bad_srcrect_vrt(tmp_path: pathlib.Path, *, x_size: int = -50) -> str:
@@ -1702,7 +1702,7 @@ def test_negative_srcrect_size_rejected(tmp_path):
     """
     vrt = _metadata_parity_write_bad_srcrect_vrt(tmp_path, x_size=-50)
     with pytest.raises((ValueError, VRTUnsupportedError), match='SrcRect.*negative'):
-        read_vrt(vrt)
+        _read_vrt(vrt)
 
 
 def _metadata_parity_write_bad_dstrect_vrt(tmp_path: pathlib.Path, *, x_size: int = -10) -> str:
@@ -1734,7 +1734,7 @@ def test_negative_dstrect_size_rejected(tmp_path):
     """
     vrt = _metadata_parity_write_bad_dstrect_vrt(tmp_path, x_size=-10)
     with pytest.raises((ValueError, VRTUnsupportedError), match='DstRect.*negative'):
-        read_vrt(vrt)
+        _read_vrt(vrt)
 
 
 def _metadata_parity_write_missing_source_vrt(tmp_path: pathlib.Path, *, name: str = 'tmp_2321_missing.vrt') -> str:  # noqa: E501
@@ -1757,7 +1757,7 @@ def test_missing_sources_raise_eager(tmp_path):
     must abort the read up front on the eager path."""
     vrt = _metadata_parity_write_missing_source_vrt(tmp_path, name='tmp_2321_miss_eager.vrt')
     with pytest.raises((OSError, ValueError, FileNotFoundError)):
-        read_vrt(vrt)
+        _read_vrt(vrt)
 
 
 def test_missing_sources_raise_dask(tmp_path):
@@ -1779,7 +1779,7 @@ def test_missing_sources_warn_records_holes(tmp_path):
     The lenient path must emit ``GeoTIFFFallbackWarning`` and populate
     ``attrs['vrt_holes']`` so callers branching on the attr can detect
     a partial mosaic. This is the documented contract;
-    the test pins it via the public ``read_vrt`` entry point so a
+    the test pins it via the public ``_read_vrt`` entry point so a
     regression in the warn-policy attr emission surfaces.
 
     The public API exposes ``'warn'`` as the lenient option (``'skip'``
@@ -1788,7 +1788,7 @@ def test_missing_sources_warn_records_holes(tmp_path):
     """
     vrt = _metadata_parity_write_missing_source_vrt(tmp_path, name='tmp_2321_miss_warn.vrt')
     with pytest.warns(GeoTIFFFallbackWarning, match='could not be read'):
-        result = read_vrt(vrt, missing_sources='warn')
+        result = _read_vrt(vrt, missing_sources='warn')
     assert 'vrt_holes' in result.attrs, "missing_sources='warn' did not stamp attrs['vrt_holes']"
     holes = result.attrs['vrt_holes']
     assert len(holes) == 1

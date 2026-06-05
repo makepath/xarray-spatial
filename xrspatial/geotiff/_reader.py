@@ -2,9 +2,9 @@
 
 This module is private to :mod:`xrspatial.geotiff`. The supported public
 read entry points are :func:`xrspatial.geotiff.open_geotiff`,
-:func:`xrspatial.geotiff.read_geotiff_gpu`,
-:func:`xrspatial.geotiff.read_geotiff_dask`, and
-:func:`xrspatial.geotiff.read_vrt`. Direct callers of the helpers
+:func:`xrspatial.geotiff._read_geotiff_gpu`,
+:func:`xrspatial.geotiff._read_geotiff_dask`, and
+:func:`xrspatial.geotiff._read_vrt`. Direct callers of the helpers
 defined here bypass the DataArray-level work that the public wrappers
 perform (ambiguous-metadata fail-closed, nodata-to-NaN promotion,
 ``masked_nodata`` attr, ``transform`` / ``crs`` attrs population) and
@@ -308,7 +308,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # decode. A windowed read against a non-default orientation has
         # ambiguous semantics (does the window refer to file pixels or
         # display pixels?) so we reject that combo rather than guess.
-        # ``read_geotiff_dask`` chunks the file by issuing windowed reads,
+        # ``_read_geotiff_dask`` chunks the file by issuing windowed reads,
         # so this check also rejects ``chunks=`` for non-default
         # orientation; the error mentions both so the failure is easy to
         # diagnose if it surfaces under dask.
@@ -327,7 +327,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # mismatches caller-built coord arrays in ``open_geotiff`` and
         # surfaces as an opaque ``CoordinateValidationError``. Raising
         # here matches the dask path's pre-flight validator (see
-        # ``read_geotiff_dask`` in ``__init__.py``) so all backends
+        # ``_read_geotiff_dask`` in ``__init__.py``) so all backends
         # agree on the contract. Reuses the IFD already parsed above,
         # so callers pay no extra metadata-parse cost (file-like
         # sources are read once instead of twice).
@@ -345,7 +345,7 @@ def _read_to_array(source, *, window=None, overview_level: int | None = None,
         # via numpy negative indexing and ``band>=samples_per_pixel``
         # leaks a raw numpy ``IndexError`` with the internal slice
         # shape. Mirrors the dask path's pre-flight validator (see
-        # ``read_geotiff_dask`` in ``__init__.py``), the GPU path, and
+        # ``_read_geotiff_dask`` in ``__init__.py``), the GPU path, and
         # the HTTP path (``_read_cog_http`` above) so all backends agree
         # on the contract: 0-based non-negative index only.
         ifd_samples = ifd.samples_per_pixel

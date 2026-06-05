@@ -1,6 +1,6 @@
 """Generic writer paths.
 
-Covers the eager ``to_geotiff`` / ``write_geotiff_gpu`` / ``write_vrt``
+Covers the eager ``to_geotiff`` / ``_write_geotiff_gpu`` / ``build_vrt``
 surface: round-trip basics, dtype x compression matrix, kwarg order
 and return-path contracts, the uncompressed-tiled no-dead-alloc gate,
 the writer layout monkeypatch contract, and the VRT writer surface
@@ -36,13 +36,13 @@ import xarray as xr
 
 from xrspatial.geotiff import _vrt as _vrt_module
 from xrspatial.geotiff import _writer as writer_mod
-from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_geotiff_gpu, write_vrt
+from xrspatial.geotiff import open_geotiff, _read_vrt, to_geotiff, _write_geotiff_gpu, build_vrt
 from xrspatial.geotiff._compression import COMPRESSION_NONE
 from xrspatial.geotiff._geotags import GeoTransform
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, parse_header, parse_ifd
 from xrspatial.geotiff._reader import _read_to_array, read_to_array
 from xrspatial.geotiff._validation import _validate_3d_writer_dims
-# ``write_vrt`` here is the private internal binding, aliased so it does
+# ``build_vrt`` here is the private internal binding, aliased so it does
 # not shadow the public re-export above. The only section that needs
 # the private form is the writer-source-compat fold (see PR
 # description for the why).
@@ -396,7 +396,7 @@ def test_write_to_readonly_dir_raises_oserror(tmp_path):
 # -------------------------------------------------------------------------
 
 def test_writer_kwarg_order_matches_to_geotiff():
-    """``write_geotiff_gpu`` lists its kwargs in the same order as
+    """``_write_geotiff_gpu`` lists its kwargs in the same order as
     ``to_geotiff``, modulo the ``gpu`` kwarg the GPU writer omits.
 
     Both signatures use keyword-only kwargs so positional callers are
@@ -404,9 +404,9 @@ def test_writer_kwarg_order_matches_to_geotiff():
     docs, and any caller that inspects ``inspect.signature``.
     """
     eager_params = list(inspect.signature(to_geotiff).parameters)
-    gpu_params = list(inspect.signature(write_geotiff_gpu).parameters)
+    gpu_params = list(inspect.signature(_write_geotiff_gpu).parameters)
 
-    # to_geotiff has ``gpu`` (auto-dispatch flag); write_geotiff_gpu does
+    # to_geotiff has ``gpu`` (auto-dispatch flag); _write_geotiff_gpu does
     # not. Drop it from the comparison instead of asserting on the
     # missing kwarg directly, so unrelated future additions to either
     # signature still surface here.
@@ -415,10 +415,10 @@ def test_writer_kwarg_order_matches_to_geotiff():
     eager_params_no_gpu = [p for p in eager_params if p != 'gpu']
 
     assert gpu_params == eager_params_no_gpu, (
-        "write_geotiff_gpu and to_geotiff kwarg order diverged.\n"
+        "_write_geotiff_gpu and to_geotiff kwarg order diverged.\n"
         f"  to_geotiff (with 'gpu' removed): {eager_params_no_gpu}\n"
-        f"  write_geotiff_gpu:               {gpu_params}\n"
-        "Reorder write_geotiff_gpu to match to_geotiff (see #1922)."
+        f"  _write_geotiff_gpu:               {gpu_params}\n"
+        "Reorder _write_geotiff_gpu to match to_geotiff (see #1922)."
     )
 
 
@@ -426,12 +426,12 @@ def test_writer_kwarg_defaults_match_to_geotiff():
     """The kwargs both writers share also have identical defaults.
 
     A surprise-free dispatch ``to_geotiff(..., gpu=True)`` requires
-    ``write_geotiff_gpu`` to default the same way for every kwarg the
+    ``_write_geotiff_gpu`` to default the same way for every kwarg the
     auto-dispatch entry point forwards (``allow_internal_only_jpeg`` was
     added to satisfy that contract; this test pins the broader parity).
     """
     eager_sig = inspect.signature(to_geotiff)
-    gpu_sig = inspect.signature(write_geotiff_gpu)
+    gpu_sig = inspect.signature(_write_geotiff_gpu)
 
     shared = set(eager_sig.parameters) & set(gpu_sig.parameters)
     # ``data`` and ``path`` are required positionals with no default;
@@ -443,7 +443,7 @@ def test_writer_kwarg_defaults_match_to_geotiff():
         if ed != gd:
             mismatches.append((name, ed, gd))
     assert not mismatches, (
-        "write_geotiff_gpu and to_geotiff disagree on defaults: "
+        "_write_geotiff_gpu and to_geotiff disagree on defaults: "
         f"{mismatches}"
     )
 
@@ -525,12 +525,12 @@ def test_to_geotiff_dask_streaming_returns_path(tmp_path):
 
 
 def test_write_vrt_returns_string_path(tmp_path):
-    """``write_vrt`` (already conformant) keeps returning the str path."""
+    """``build_vrt`` (already conformant) keeps returning the str path."""
     # Create a source tif first.
     src = tmp_path / "src.tif"
     to_geotiff(_small_da(), str(src))
     vrt_path = tmp_path / "out.vrt"
-    rv = write_vrt(str(vrt_path), [str(src)])
+    rv = build_vrt(str(vrt_path), [str(src)])
     assert isinstance(rv, str)
     assert rv == str(vrt_path)
     assert os.path.exists(rv)
@@ -551,7 +551,7 @@ def test_write_geotiff_gpu_returns_string_path(tmp_path):
         attrs={"crs": 4326},
     )
     out = tmp_path / "test_1938_gpu.tif"
-    rv = write_geotiff_gpu(da, str(out))
+    rv = _write_geotiff_gpu(da, str(out))
     assert isinstance(rv, str)
     assert rv == str(out)
     assert os.path.exists(rv)
@@ -565,8 +565,8 @@ def test_writer_signatures_declare_path_return():
     """
     expected = {
         to_geotiff: "str | BinaryIO",
-        write_geotiff_gpu: "str | BinaryIO",
-        write_vrt: "str",
+        _write_geotiff_gpu: "str | BinaryIO",
+        build_vrt: "str",
     }
     for fn, expected_ann in expected.items():
         sig = inspect.signature(fn)
@@ -579,7 +579,7 @@ def test_writer_signatures_declare_path_return():
 def test_writer_returns_are_not_none(tmp_path):
     """None of the public writers may go back to returning ``None``."""
     # Use the ``tmp_path`` fixture (not ``tempfile.TemporaryDirectory``)
-    # because ``write_vrt`` reads each source through the module-level
+    # because ``build_vrt`` reads each source through the module-level
     # ``_MmapCache`` in ``_reader.py``, which keeps the file handle and
     # mmap of ``src.tif`` open after ``_FileSource.close()`` so repeated
     # reads of the same file stay cheap. On Windows that cached handle
@@ -594,7 +594,7 @@ def test_writer_returns_are_not_none(tmp_path):
     assert rv is not None
     src = str(tmp_path / "src.tif")
     to_geotiff(da, src)
-    vrt_rv = write_vrt(str(tmp_path / "m.vrt"), [src])
+    vrt_rv = build_vrt(str(tmp_path / "m.vrt"), [src])
     assert vrt_rv is not None
 
 
@@ -771,7 +771,7 @@ def test_assemble_tiff_resolves_helper_through_writer_module(
 
 
 # -------------------------------------------------------------------------
-# Section: write_vrt path kwarg contract
+# Section: build_vrt path kwarg contract
 # -------------------------------------------------------------------------
 
 def _build_source_tif(tmp_path, name='src.tif'):
@@ -788,14 +788,14 @@ def _build_source_tif(tmp_path, name='src.tif'):
 
 
 def test_write_vrt_signature_first_arg_is_path():
-    """Signature parity with to_geotiff / write_geotiff_gpu.
+    """Signature parity with to_geotiff / _write_geotiff_gpu.
 
     The api-consistency sweep cares specifically about
     ``inspect.signature``: IDE autocomplete, mypy, and Sphinx-rendered
     docs all read the same source. Pinning the first param name here
     catches any future re-rename that re-introduces the drift.
     """
-    sig = inspect.signature(write_vrt)
+    sig = inspect.signature(build_vrt)
     params = list(sig.parameters)
     # ``path`` is the new canonical name, ``source_files`` follows.
     # ``vrt_path`` is kept as a keyword-only deprecated alias.
@@ -808,9 +808,9 @@ def test_write_vrt_signature_first_arg_is_path():
 
 
 def test_write_vrt_positional_path_works(tmp_path):
-    """Positional ``write_vrt(path, sources)`` is unchanged.
+    """Positional ``build_vrt(path, sources)`` is unchanged.
 
-    Existing callers ``write_vrt(some_path, sources)`` keep working
+    Existing callers ``build_vrt(some_path, sources)`` keep working
     after the rename because the new ``path`` parameter sits where
     ``vrt_path`` used to be. No deprecation warning should fire.
     """
@@ -818,24 +818,24 @@ def test_write_vrt_positional_path_works(tmp_path):
     out = str(tmp_path / 'out.vrt')
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
-        result = write_vrt(out, [src])
+        result = build_vrt(out, [src])
     assert result == out
     assert os.path.exists(out)
 
 
 def test_write_vrt_path_kwarg_works(tmp_path):
-    """Keyword ``write_vrt(path=..., source_files=...)`` works.
+    """Keyword ``build_vrt(path=..., source_files=...)`` works.
 
     A caller who passes everything by keyword (no positional args)
     previously could not reach the function because the ``path`` kwarg
     did not exist; this is the path-symmetric counterpart to the existing
-    ``write_vrt(vrt_path=...)`` test below.
+    ``build_vrt(vrt_path=...)`` test below.
     """
     src = _build_source_tif(tmp_path)
     out = str(tmp_path / 'out.vrt')
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
-        result = write_vrt(path=out, source_files=[src])
+        result = build_vrt(path=out, source_files=[src])
     assert result == out
     assert os.path.exists(out)
 
@@ -850,7 +850,7 @@ def test_write_vrt_vrt_path_kwarg_emits_deprecation_warning(tmp_path):
     src = _build_source_tif(tmp_path)
     out = str(tmp_path / 'out.vrt')
     with pytest.warns(DeprecationWarning, match='vrt_path'):
-        result = write_vrt(vrt_path=out, source_files=[src])
+        result = build_vrt(vrt_path=out, source_files=[src])
     assert result == out
     assert os.path.exists(out)
 
@@ -859,13 +859,13 @@ def test_write_vrt_path_and_vrt_path_together_raises(tmp_path):
     """Both names supplied is ambiguous; refuse to pick one.
 
     Mirrors the ``crs`` / ``crs_wkt`` rule documented in the existing
-    write_vrt source: passing both is rejected with TypeError
+    build_vrt source: passing both is rejected with TypeError
     regardless of whether the two values happen to match.
     """
     src = _build_source_tif(tmp_path)
     out = str(tmp_path / 'out.vrt')
     with pytest.raises(TypeError, match="path.*vrt_path"):
-        write_vrt(path=out, vrt_path=out, source_files=[src])
+        build_vrt(path=out, vrt_path=out, source_files=[src])
 
 
 def test_write_vrt_no_path_raises(tmp_path):
@@ -879,11 +879,11 @@ def test_write_vrt_no_path_raises(tmp_path):
     """
     src = _build_source_tif(tmp_path)
     with pytest.raises(TypeError, match='path'):
-        write_vrt(source_files=[src])
+        build_vrt(source_files=[src])
 
 
 def test_write_vrt_explicit_path_none_raises(tmp_path):
-    """``write_vrt(path=None, ...)`` is rejected with TypeError.
+    """``build_vrt(path=None, ...)`` is rejected with TypeError.
 
     The sentinel-default pattern distinguishes "caller
     passed nothing" (sentinel) from "caller passed None explicitly".
@@ -893,11 +893,11 @@ def test_write_vrt_explicit_path_none_raises(tmp_path):
     """
     src = _build_source_tif(tmp_path)
     with pytest.raises(TypeError, match="'path'.*None"):
-        write_vrt(path=None, source_files=[src])
+        build_vrt(path=None, source_files=[src])
 
 
 def test_write_vrt_positional_none_raises(tmp_path):
-    """Positional ``write_vrt(None, sources)`` is rejected with TypeError.
+    """Positional ``build_vrt(None, sources)`` is rejected with TypeError.
 
     Same rationale as the keyword case: an explicit positional ``None``
     is rejected up front instead of crashing deep in
@@ -907,7 +907,7 @@ def test_write_vrt_positional_none_raises(tmp_path):
     """
     src = _build_source_tif(tmp_path)
     with pytest.raises(TypeError, match="'path'.*None"):
-        write_vrt(None, [src])
+        build_vrt(None, [src])
 
 
 def test_write_vrt_first_arg_name_matches_writer_trio():
@@ -922,10 +922,10 @@ def test_write_vrt_first_arg_name_matches_writer_trio():
         inspect.signature(to_geotiff).parameters
     )[1]  # data, path -> index 1
     gpu_first = list(
-        inspect.signature(write_geotiff_gpu).parameters
+        inspect.signature(_write_geotiff_gpu).parameters
     )[1]
     vrt_first = list(
-        inspect.signature(write_vrt).parameters
+        inspect.signature(build_vrt).parameters
     )[0]  # path, source_files -> index 0
     assert eager_first == 'path'
     assert gpu_first == 'path'
@@ -943,20 +943,20 @@ def test_write_vrt_path_round_trip_matches_old(tmp_path):
     out_new = str(tmp_path / 'out_new.vrt')
     out_old = str(tmp_path / 'out_old.vrt')
 
-    write_vrt(out_new, [src])
+    build_vrt(out_new, [src])
     with warnings.catch_warnings():
         # ignore the deprecation; we still need the legacy path to
         # produce a byte-identical mosaic.
         warnings.simplefilter('ignore', DeprecationWarning)
-        write_vrt(vrt_path=out_old, source_files=[src])
+        build_vrt(vrt_path=out_old, source_files=[src])
 
-    a_new = read_vrt(out_new)
-    a_old = read_vrt(out_old)
+    a_new = _read_vrt(out_new)
+    a_old = _read_vrt(out_old)
     np.testing.assert_array_equal(np.asarray(a_new), np.asarray(a_old))
 
 
 # -------------------------------------------------------------------------
-# Section: write_vrt CRS propagation
+# Section: build_vrt CRS propagation
 # -------------------------------------------------------------------------
 
 
@@ -967,18 +967,18 @@ def test_write_vrt_accepts_crs_kwarg():
     """``crs`` is in the signature and defaults to ``None``."""
     import inspect
 
-    sig = inspect.signature(write_vrt)
+    sig = inspect.signature(build_vrt)
     assert 'crs' in sig.parameters
     assert sig.parameters['crs'].default is None
 
 
 def test_write_vrt_crs_annotation_matches_writer_trio():
     """``crs`` is annotated ``int | str | None``, identical to
-    ``to_geotiff(..., crs=...)`` and ``write_geotiff_gpu(..., crs=...)``.
+    ``to_geotiff(..., crs=...)`` and ``_write_geotiff_gpu(..., crs=...)``.
     """
     import inspect
 
-    sig = inspect.signature(write_vrt)
+    sig = inspect.signature(build_vrt)
     ann = str(sig.parameters['crs'].annotation)
     assert ann == 'int | str | None'
 
@@ -991,18 +991,18 @@ def test_write_vrt_crs_epsg_int_writes_wkt_to_xml(tmp_path):
 
     The current implementation forwards the WKT to ``_vrt.write_vrt``,
     which interpolates it into the <SRS> XML node. Reading the file
-    back with ``read_vrt`` must therefore produce
+    back with ``_read_vrt`` must therefore produce
     ``attrs['crs'] == 4326`` (because ``_wkt_to_epsg`` round-trips
     EPSG:4326's WKT cleanly).
     """
     src = _build_source_tif(tmp_path, 'epsg_int.tif')
     vrt_path = str(tmp_path / 'epsg_int.vrt')
 
-    out = write_vrt(vrt_path, [src], crs=4326)
+    out = build_vrt(vrt_path, [src], crs=4326)
     assert out == vrt_path
     assert os.path.exists(vrt_path)
 
-    da = read_vrt(vrt_path)
+    da = _read_vrt(vrt_path)
     assert da.attrs.get('crs') == 4326
 
 
@@ -1016,9 +1016,9 @@ def test_write_vrt_crs_wkt_string(tmp_path):
 
     wkt = CRS.from_epsg(4326).to_wkt()
 
-    out = write_vrt(vrt_path, [src], crs=wkt)
+    out = build_vrt(vrt_path, [src], crs=wkt)
     assert out == vrt_path
-    da = read_vrt(vrt_path)
+    da = _read_vrt(vrt_path)
     # WKT round-trips back to EPSG:4326 via _wkt_to_epsg
     assert da.attrs.get('crs') == 4326
 
@@ -1030,9 +1030,9 @@ def test_write_vrt_crs_none_falls_through(tmp_path):
 
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
-        out = write_vrt(vrt_path, [src], crs=None)
+        out = build_vrt(vrt_path, [src], crs=None)
     assert out == vrt_path
-    da = read_vrt(vrt_path)
+    da = _read_vrt(vrt_path)
     # The source TIFF was written with EPSG:4326; VRT inherits it.
     assert da.attrs.get('crs') == 4326
 
@@ -1046,7 +1046,7 @@ def test_write_vrt_no_crs_kwarg_no_warning(tmp_path):
 
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
-        write_vrt(vrt_path, [src])  # neither kwarg supplied
+        build_vrt(vrt_path, [src])  # neither kwarg supplied
     assert os.path.exists(vrt_path)
 
 
@@ -1064,9 +1064,9 @@ def test_write_vrt_crs_wkt_deprecated_warns(tmp_path):
     wkt = CRS.from_epsg(4326).to_wkt()
 
     with pytest.warns(DeprecationWarning, match='crs_wkt'):
-        out = write_vrt(vrt_path, [src], crs_wkt=wkt)
+        out = build_vrt(vrt_path, [src], crs_wkt=wkt)
     assert out == vrt_path
-    da = read_vrt(vrt_path)
+    da = _read_vrt(vrt_path)
     assert da.attrs.get('crs') == 4326
 
 
@@ -1078,7 +1078,7 @@ def test_write_vrt_crs_wkt_none_still_warns(tmp_path):
     vrt_path = str(tmp_path / 'depr_none.vrt')
 
     with pytest.warns(DeprecationWarning, match='crs_wkt'):
-        write_vrt(vrt_path, [src], crs_wkt=None)
+        build_vrt(vrt_path, [src], crs_wkt=None)
     assert os.path.exists(vrt_path)
 
 
@@ -1094,7 +1094,7 @@ def test_write_vrt_both_crs_and_crs_wkt_rejected(tmp_path):
     wkt = CRS.from_epsg(4326).to_wkt()
 
     with pytest.raises(TypeError, match='crs.*crs_wkt'):
-        write_vrt(vrt_path, [src], crs=4326, crs_wkt=wkt)
+        build_vrt(vrt_path, [src], crs=4326, crs_wkt=wkt)
 
 
 # --- Cross-writer parity: same kwarg name on all three writers ---
@@ -1106,9 +1106,9 @@ def test_writer_trio_all_accept_crs_kwarg():
     output extension never has to special-case the kwarg name."""
     import inspect
 
-    from xrspatial.geotiff import to_geotiff, write_geotiff_gpu, write_vrt
+    from xrspatial.geotiff import to_geotiff, _write_geotiff_gpu, build_vrt
 
-    for fn in (to_geotiff, write_geotiff_gpu, write_vrt):
+    for fn in (to_geotiff, _write_geotiff_gpu, build_vrt):
         sig = inspect.signature(fn)
         assert 'crs' in sig.parameters, f"{fn.__name__} missing crs kwarg"
         assert (
@@ -1126,7 +1126,7 @@ def test_write_vrt_crs_invalid_type_rejected(tmp_path):
     vrt_path = str(tmp_path / 'bad_type.vrt')
 
     with pytest.raises(TypeError, match='crs must be'):
-        write_vrt(vrt_path, [src], crs=[4326])
+        build_vrt(vrt_path, [src], crs=[4326])
 
 
 def test_write_vrt_crs_unparseable_string_rejected(tmp_path):
@@ -1137,11 +1137,11 @@ def test_write_vrt_crs_unparseable_string_rejected(tmp_path):
     vrt_path = str(tmp_path / 'bad_str.vrt')
 
     with pytest.raises(ValueError, match='Could not parse crs'):
-        write_vrt(vrt_path, [src], crs='not-a-real-crs-string')
+        build_vrt(vrt_path, [src], crs='not-a-real-crs-string')
 
 
 # -------------------------------------------------------------------------
-# Section: write_vrt bool nodata
+# Section: build_vrt bool nodata
 # -------------------------------------------------------------------------
 
 @pytest.fixture
@@ -1153,14 +1153,14 @@ def uint8_da():
 
 @pytest.fixture
 def src_geotiff(uint8_da, tmp_path):
-    """A real on-disk source GeoTIFF that write_vrt can point at."""
+    """A real on-disk source GeoTIFF that build_vrt can point at."""
     path = str(tmp_path / "src_1921.tif")
     to_geotiff(uint8_da, path)
     return path
 
 
 # ---------------------------------------------------------------------------
-# write_vrt: bool nodata rejection
+# build_vrt: bool nodata rejection
 # ---------------------------------------------------------------------------
 
 
@@ -1169,15 +1169,15 @@ def src_geotiff(uint8_da, tmp_path):
     [True, False, np.bool_(True), np.bool_(False)],
 )
 def test_write_vrt_rejects_bool_nodata(src_geotiff, tmp_path, bad):
-    """``write_vrt`` raises ``TypeError`` for any bool nodata.
+    """``build_vrt`` raises ``TypeError`` for any bool nodata.
 
-    The public ``write_vrt`` wrapper routes
+    The public ``build_vrt`` wrapper routes
     through ``_validate_nodata_arg`` and adds a defense-in-depth check
     inside the internal ``_vrt.write_vrt``.
     """
     vrt_path = str(tmp_path / "out_1921_bad.vrt")
     with pytest.raises(TypeError, match="nodata must be numeric"):
-        write_vrt(vrt_path, [src_geotiff], nodata=bad)
+        build_vrt(vrt_path, [src_geotiff], nodata=bad)
 
 
 @pytest.mark.parametrize(
@@ -1208,7 +1208,7 @@ def test_write_vrt_internal_rejects_bool_nodata(src_geotiff, tmp_path, bad):
 def test_write_vrt_accepts_numeric_nodata(src_geotiff, tmp_path, good):
     """Numeric sentinels go through unchanged: the fix must not over-reject."""
     vrt_path = str(tmp_path / f"out_1921_numeric_{good!r}.vrt")
-    write_vrt(vrt_path, [src_geotiff], nodata=good)
+    build_vrt(vrt_path, [src_geotiff], nodata=good)
     with open(vrt_path) as f:
         content = f.read()
     # The exact format of the emitted nodata string is implementation
@@ -1220,12 +1220,12 @@ def test_write_vrt_accepts_numeric_nodata(src_geotiff, tmp_path, good):
 def test_write_vrt_accepts_none_nodata(src_geotiff, tmp_path):
     """``nodata=None`` is the documented default and must keep working."""
     vrt_path = str(tmp_path / "out_1921_none.vrt")
-    write_vrt(vrt_path, [src_geotiff], nodata=None)
+    build_vrt(vrt_path, [src_geotiff], nodata=None)
     assert os.path.exists(vrt_path)
 
 
 # ---------------------------------------------------------------------------
-# write_geotiff_gpu: defense-in-depth parity
+# _write_geotiff_gpu: defense-in-depth parity
 # ---------------------------------------------------------------------------
 
 
@@ -1235,7 +1235,7 @@ def test_write_vrt_accepts_none_nodata(src_geotiff, tmp_path):
     [True, False, np.bool_(True), np.bool_(False)],
 )
 def test_write_geotiff_gpu_rejects_bool_nodata(uint8_da, tmp_path, bad):
-    """Direct ``write_geotiff_gpu`` call rejects bool nodata.
+    """Direct ``_write_geotiff_gpu`` call rejects bool nodata.
 
     The top-of-function ``_validate_nodata_arg`` call
     fires first; the deeper ``build_geo_tags`` guard is a second line
@@ -1243,10 +1243,10 @@ def test_write_geotiff_gpu_rejects_bool_nodata(uint8_da, tmp_path, bad):
     top-of-function call surfaces here, not deep inside the geotag
     builder.
     """
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
     path = str(tmp_path / "gpu_1921_bad.tif")
     with pytest.raises(TypeError, match="nodata must be numeric"):
-        write_geotiff_gpu(uint8_da, path, nodata=bad)
+        _write_geotiff_gpu(uint8_da, path, nodata=bad)
 
 
 @requires_gpu
@@ -1263,7 +1263,7 @@ def test_to_geotiff_gpu_dispatch_rejects_bool_nodata(uint8_da, tmp_path):
 
 
 # -------------------------------------------------------------------------
-# Section: write_vrt int nodata
+# Section: build_vrt int nodata
 # -------------------------------------------------------------------------
 
 def _nodata_annotation(fn):
@@ -1273,7 +1273,7 @@ def _nodata_annotation(fn):
 
 def test_write_vrt_public_nodata_accepts_int_annotation():
     """The public wrapper widens the annotation to include int."""
-    ann = _nodata_annotation(write_vrt)
+    ann = _nodata_annotation(build_vrt)
     # Allow either typing.Union[float, int, None] or float | int | None.
     if isinstance(ann, str):
         # Forward-referenced string annotation (rare here; defensive).
@@ -1322,7 +1322,7 @@ def test_write_vrt_int_nodata_round_trips(tmp_path):
     vrt_path = tmp_path / "mosaic.vrt"
     # Passing an int sentinel must not raise; the surface should match
     # to_geotiff's "float, int, or None" contract.
-    write_vrt(str(vrt_path), [str(tif_path)], nodata=65535)
+    build_vrt(str(vrt_path), [str(tif_path)], nodata=65535)
 
     # Confirm the int round-trips through the parser back into a VRT band.
     parsed = _vrt_module.parse_vrt(
@@ -2120,12 +2120,12 @@ def test_dask_streaming_rejects_ambiguous_3d(tmp_path, dims, shape):
 ])
 def test_gpu_writer_rejects_ambiguous_3d(tmp_path, dims, shape):
     """GPU writer raises ValueError on ambiguous 3D dim names."""
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     da = _make_da_1812(dims, shape, backend="cupy")
     out_path = tmp_path / f"tmp_1812_gpu_{'_'.join(dims)}.tif"
     with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
-        write_geotiff_gpu(da, str(out_path), crs=4326)
+        _write_geotiff_gpu(da, str(out_path), crs=4326)
 
 
 @pytest.mark.parametrize("dims, shape", _HAPPY_3D_INPUTS_1812)
@@ -2216,13 +2216,13 @@ def test_gpu_writer_happy_path_still_works(tmp_path):
     """GPU writer's existing happy paths (band-first and band-last) survive."""
     import cupy
 
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     arr_bf = cupy.arange(3 * 4 * 5, dtype=cupy.uint8).reshape(3, 4, 5)
     da_bf = xr.DataArray(arr_bf, dims=("band", "y", "x"),
                          attrs={"crs": "EPSG:4326"})
     p_bf = tmp_path / "tmp_1812_gpu_bf.tif"
-    write_geotiff_gpu(da_bf, str(p_bf), crs=4326)
+    _write_geotiff_gpu(da_bf, str(p_bf), crs=4326)
     out_bf = open_geotiff(str(p_bf))
     assert out_bf.shape == (4, 5, 3)
 
@@ -2230,7 +2230,7 @@ def test_gpu_writer_happy_path_still_works(tmp_path):
     da_bl = xr.DataArray(arr_bl, dims=("y", "x", "band"),
                          attrs={"crs": "EPSG:4326"})
     p_bl = tmp_path / "tmp_1812_gpu_bl.tif"
-    write_geotiff_gpu(da_bl, str(p_bl), crs=4326)
+    _write_geotiff_gpu(da_bl, str(p_bl), crs=4326)
     out_bl = open_geotiff(str(p_bl))
     assert out_bl.shape == (4, 5, 3)
 
@@ -2381,19 +2381,19 @@ def test_to_geotiff_rejects_empty_numpy(tmp_path, shape):
 
 @requires_gpu
 def test_write_geotiff_gpu_rejects_empty(tmp_path):
-    """``write_geotiff_gpu`` is a public entry point and does not go
+    """``_write_geotiff_gpu`` is a public entry point and does not go
     through ``to_geotiff``; make sure the empty-shape guard fires there
     too."""
     import cupy as cp
 
-    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+    from xrspatial.geotiff._writers.gpu import _write_geotiff_gpu
 
     arr = cp.zeros((0, 5), dtype=cp.float32)
     out = tmp_path / "tmp_2075_empty_gpu_0x5.tif"
     with pytest.raises(ValueError) as excinfo:
-        write_geotiff_gpu(arr, str(out))
+        _write_geotiff_gpu(arr, str(out))
     msg = str(excinfo.value)
-    assert "write_geotiff_gpu" in msg
+    assert "_write_geotiff_gpu" in msg
     assert "height=0" in msg
     assert not out.exists()
 
@@ -2478,7 +2478,7 @@ def test_write_band_last_zero_bands_direct(tmp_path):
     # assertion fails if the wrong entry point fires (every message
     # also contains the substring "write" further on, so an `in`
     # check would not distinguish ``write`` from ``write_streaming``
-    # or ``write_geotiff_gpu``).
+    # or ``_write_geotiff_gpu``).
     # The array-level entry point was renamed from ``write`` to
     # ``_write`` to mark it as module-private. ``write`` is
     # kept as a backward-compatible alias, so the entry-point token in
@@ -2512,7 +2512,7 @@ def test_write_geotiff_gpu_rejects_zero_bands(tmp_path):
     guard must fire there too without dispatching any GPU work."""
     import cupy as cp
 
-    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+    from xrspatial.geotiff._writers.gpu import _write_geotiff_gpu
 
     arr = xr.DataArray(
         cp.zeros((0, 5, 5), dtype=cp.uint8),
@@ -2520,9 +2520,9 @@ def test_write_geotiff_gpu_rejects_zero_bands(tmp_path):
     )
     out = tmp_path / "tmp_2095_zerobands_gpu.tif"
     with pytest.raises(ValueError) as excinfo:
-        write_geotiff_gpu(arr, str(out))
+        _write_geotiff_gpu(arr, str(out))
     msg = str(excinfo.value)
-    assert msg.startswith("write_geotiff_gpu cannot write")
+    assert msg.startswith("_write_geotiff_gpu cannot write")
     assert "0 bands" in msg or "no bands" in msg.lower()
     assert not out.exists()
 

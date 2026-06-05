@@ -71,7 +71,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff, write_vrt
+from xrspatial.geotiff import open_geotiff, _read_vrt, to_geotiff, build_vrt
 from xrspatial.geotiff._attrs import _finalize_eager_read, _finalize_lazy_read_attrs
 from xrspatial.geotiff._errors import RotatedTransformError, UnparseableCRSError
 
@@ -407,7 +407,7 @@ def _build_vrt_mosaic(dir_path: Path, target: Path) -> Path:
         p = dir_path / f"{target.stem}_tile_{c}.tif"
         to_geotiff(da, str(p), compression="none", tiled=False)
         tile_paths.append(str(p))
-    write_vrt(str(target), tile_paths, relative=False, crs=4326)
+    build_vrt(str(target), tile_paths, relative=False, crs=4326)
     return target
 
 
@@ -716,8 +716,8 @@ def assert_parity(
 
     Run against an already-read DataArray rather than re-opening here so
     the same helper applies to both ``open_geotiff(path, **kwargs)`` and
-    the explicit ``read_geotiff_dask`` / ``read_geotiff_gpu`` /
-    ``read_vrt`` entry points. ``ref`` is the eager-numpy read of the
+    the explicit ``_read_geotiff_dask`` / ``_read_geotiff_gpu`` /
+    ``_read_vrt`` entry points. ``ref`` is the eager-numpy read of the
     same fixture, used as the reference for the
     pixel array, coord values, dims, and transform tuple.
 
@@ -1179,7 +1179,7 @@ def _fp_read_vrt_eager(path: pathlib.Path, fixture_id: str) -> xr.DataArray:
         shutil.copy2(path, local_src)
     vrt_path = cache_dir / f"{fixture_id}.vrt"
     if not vrt_path.exists():
-        write_vrt(str(vrt_path), [str(local_src)])
+        build_vrt(str(vrt_path), [str(local_src)])
     return open_geotiff(str(vrt_path), **_FP_OPTIN)
 
 
@@ -1807,7 +1807,7 @@ def _ap_open_dask_gpu(path):
 
 
 def _ap_open_vrt(path, meta):
-    """Wrap the TIFF in a single-source VRT and read via ``read_vrt``.
+    """Wrap the TIFF in a single-source VRT and read via ``_read_vrt``.
 
     GDAL GeoTransform XML expects the upper-left CORNER as origin while
     ``_ap_coord_array`` uses center-based coords, so the corner is
@@ -1849,7 +1849,7 @@ def _ap_open_vrt(path, meta):
     )
     with open(vrt_path, 'w') as f:
         f.write(xml)
-    return read_vrt(vrt_path)
+    return _read_vrt(vrt_path)
 
 
 _AP_BACKENDS = (

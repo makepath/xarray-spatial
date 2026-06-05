@@ -33,7 +33,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (GeoTIFFAmbiguousMetadataError, InvalidIntegerNodataError,
-                               open_geotiff, read_geotiff_dask, read_vrt, to_geotiff)
+                               open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff)
 from xrspatial.geotiff._attrs import _finalize_lazy_read_attrs, _validate_read_geo_info
 from xrspatial.geotiff._backends import _gpu_helpers
 from xrspatial.geotiff._errors import MixedBandMetadataError
@@ -352,10 +352,10 @@ def test_no_nodata_attrs_means_no_tag(tmp_path, arr_with_sentinel_1582):
 ])
 def test_gpu_writer_resolves_alias(tmp_path, arr_with_sentinel_1582,
                                    attr_key, attr_value):
-    """The GPU write path (write_geotiff_gpu) honours the same aliases."""
+    """The GPU write path (_write_geotiff_gpu) honours the same aliases."""
     import cupy
 
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     da = xr.DataArray(
         cupy.asarray(arr_with_sentinel_1582),
@@ -365,7 +365,7 @@ def test_gpu_writer_resolves_alias(tmp_path, arr_with_sentinel_1582,
         attrs={"crs": 4326, attr_key: attr_value},
     )
     out = str(tmp_path / f"gpu_{attr_key}.tif")
-    write_geotiff_gpu(da, out, compression="none")
+    _write_geotiff_gpu(da, out, compression="none")
 
     rd = open_geotiff(out)
     assert rd.attrs.get("nodata") == _SENTINEL_1582
@@ -474,7 +474,7 @@ def test_dask_mask_nodata_false_reports_false(tmp_path):
     path = str(tmp_path / "tmp_2092_dask_unmasked.tif")
     _make_float_raster_with_nodata_2092(path)
 
-    out = read_geotiff_dask(path, chunks=2, mask_nodata=False)
+    out = _read_geotiff_dask(path, chunks=2, mask_nodata=False)
     assert out.attrs.get('masked_nodata') is False
     computed = out.values
     assert -9999.0 in computed
@@ -484,7 +484,7 @@ def test_dask_mask_nodata_true_reports_true(tmp_path):
     path = str(tmp_path / "tmp_2092_dask_masked.tif")
     _make_float_raster_with_nodata_2092(path)
 
-    out = read_geotiff_dask(path, chunks=2)
+    out = _read_geotiff_dask(path, chunks=2)
     assert out.attrs.get('masked_nodata') is True
     computed = out.values
     assert np.isnan(computed).sum() == 2
@@ -505,7 +505,7 @@ def test_dask_explicit_float_dtype_mask_off_reports_false(tmp_path):
     path = str(tmp_path / "tmp_2092_dask_int_to_float_unmasked.tif")
     to_geotiff(da, path)
 
-    out = read_geotiff_dask(
+    out = _read_geotiff_dask(
         path, chunks=2, mask_nodata=False, dtype=np.float64,
     )
     assert out.dtype == np.float64
@@ -606,23 +606,23 @@ def test_vrt_int_source_mask_off_with_float_cast_reports_false(tmp_path):
 
 @_gpu_only
 def test_gpu_mask_nodata_false_reports_false(tmp_path):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = str(tmp_path / "tmp_2092_gpu_unmasked.tif")
     _make_float_raster_with_nodata_2092(path)
 
-    out = read_geotiff_gpu(path, mask_nodata=False)
+    out = _read_geotiff_gpu(path, mask_nodata=False)
     assert out.attrs.get('masked_nodata') is False
 
 
 @_gpu_only
 def test_gpu_mask_nodata_true_reports_true(tmp_path):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = str(tmp_path / "tmp_2092_gpu_masked.tif")
     _make_float_raster_with_nodata_2092(path)
 
-    out = read_geotiff_gpu(path)
+    out = _read_geotiff_gpu(path)
     assert out.attrs.get('masked_nodata') is True
 
 
@@ -782,7 +782,7 @@ def test_dask_leaves_pixels_present_unset(tmp_path):
     ``nodata_pixels_present`` stays unset by design."""
     path = str(tmp_path / "tmp_2135_dask_present.tif")
     _make_float_raster_2135(path)
-    out = read_geotiff_dask(path, chunks=2)
+    out = _read_geotiff_dask(path, chunks=2)
     assert out.attrs.get('masked_nodata') is True
     assert 'nodata_pixels_present' not in out.attrs
 
@@ -791,7 +791,7 @@ def test_dask_dtype_cast_records_target(tmp_path):
     """Dask path emits ``nodata_dtype_cast`` when caller passes dtype=."""
     path = str(tmp_path / "tmp_2135_dask_cast.tif")
     _make_int_raster_2135(path)
-    out = read_geotiff_dask(
+    out = _read_geotiff_dask(
         path, chunks=2, mask_nodata=False, dtype=np.float64,
     )
     assert out.attrs.get('masked_nodata') is False
@@ -803,7 +803,7 @@ def test_dask_no_dtype_cast_attr_absent(tmp_path):
     """Dask path without dtype=: nodata_dtype_cast absent."""
     path = str(tmp_path / "tmp_2135_dask_no_cast.tif")
     _make_float_raster_2135(path)
-    out = read_geotiff_dask(path, chunks=2)
+    out = _read_geotiff_dask(path, chunks=2)
     assert 'nodata_dtype_cast' not in out.attrs
 
 
@@ -888,22 +888,22 @@ def test_vrt_dtype_cast_records_target(tmp_path):
 
 @_gpu_only
 def test_gpu_float_sentinel_present_masked(tmp_path):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = str(tmp_path / "tmp_2135_gpu_float_present.tif")
     _make_float_raster_2135(path)
-    out = read_geotiff_gpu(path)
+    out = _read_geotiff_gpu(path)
     assert out.attrs.get('masked_nodata') is True
     assert out.attrs.get('nodata_pixels_present') is True
 
 
 @_gpu_only
 def test_gpu_int_sentinel_absent(tmp_path):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = str(tmp_path / "tmp_2135_gpu_int_absent.tif")
     _make_int_raster_2135(path, plant_sentinel=False)
-    out = read_geotiff_gpu(path)
+    out = _read_geotiff_gpu(path)
     # No sentinel pixel: helper short-circuits, buffer stays int.
     assert out.attrs.get('masked_nodata') is False
     assert out.attrs.get('nodata_pixels_present') is False
@@ -911,11 +911,11 @@ def test_gpu_int_sentinel_absent(tmp_path):
 
 @_gpu_only
 def test_gpu_dtype_cast_records_target(tmp_path):
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = str(tmp_path / "tmp_2135_gpu_cast.tif")
     _make_int_raster_2135(path)
-    out = read_geotiff_gpu(path, mask_nodata=False, dtype=np.float64)
+    out = _read_geotiff_gpu(path, mask_nodata=False, dtype=np.float64)
     assert out.attrs.get('nodata_dtype_cast') == 'float64'
 
 
@@ -1050,7 +1050,7 @@ def test_read_geotiff_dask_int_nodata_nan(tmp_path):
     ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774('nan', tmp_path)
-    da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
+    da = _read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     # effective_dtype stays uint16 because the sentinel is non-finite
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.compute().values, [[10, 20], [30, 40]])
@@ -1063,7 +1063,7 @@ def test_read_geotiff_dask_int_nodata_inf(tmp_path):
     ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774('inf', tmp_path)
-    da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
+    da = _read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.compute().values, [[10, 20], [30, 40]])
     assert np.isinf(da.attrs['nodata'])
@@ -1145,7 +1145,7 @@ def test_read_geotiff_dask_int_nodata_fractional_noop(tmp_path):
     ``allow_invalid_nodata`` opt-in.
     """
     path = _build_uint16_tiff_1774('30.5', tmp_path)
-    da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
+    da = _read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     # effective_dtype stays uint16 because the sentinel is fractional
     assert da.dtype == np.uint16
     computed = da.compute().values
@@ -1913,7 +1913,7 @@ class TestIntegerSentinelParity:
 
     def test_dask_matches_eager(self, int_tif):
         eager = open_geotiff(int_tif, masked=True)
-        lazy = read_geotiff_dask(int_tif, chunks=2)
+        lazy = _read_geotiff_dask(int_tif, chunks=2)
         # Same on-disk sentinel propagated.
         assert lazy.attrs["nodata"] == eager.attrs["nodata"]
         # Same lifecycle decision: dask graph promoted to float64.
@@ -1924,10 +1924,10 @@ class TestIntegerSentinelParity:
 
     @_gpu_only
     def test_gpu_matches_eager(self, int_tif):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         eager = open_geotiff(int_tif, masked=True)
-        gpu = read_geotiff_gpu(int_tif)
+        gpu = _read_geotiff_gpu(int_tif)
         assert gpu.attrs["nodata"] == eager.attrs["nodata"]
         np.testing.assert_array_equal(
             np.isnan(eager.data), np.isnan(gpu.data.get()),
@@ -1944,7 +1944,7 @@ class TestFloatSentinelParity:
 
     def test_dask(self, float_tif):
         eager = open_geotiff(float_tif, masked=True)
-        lazy = read_geotiff_dask(float_tif, chunks=2)
+        lazy = _read_geotiff_dask(float_tif, chunks=2)
         np.testing.assert_array_equal(
             np.isnan(eager.data), np.isnan(lazy.compute().data),
         )
@@ -1952,10 +1952,10 @@ class TestFloatSentinelParity:
 
     @_gpu_only
     def test_gpu(self, float_tif):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         eager = open_geotiff(float_tif, masked=True)
-        gpu = read_geotiff_gpu(float_tif)
+        gpu = _read_geotiff_gpu(float_tif)
         np.testing.assert_array_equal(
             np.isnan(eager.data), np.isnan(gpu.data.get()),
         )
@@ -1971,7 +1971,7 @@ class TestNaNSentinelParity:
         assert np.isnan(da.attrs["nodata"])
 
     def test_dask_matches(self, nan_tif):
-        lazy = read_geotiff_dask(nan_tif, chunks=2)
+        lazy = _read_geotiff_dask(nan_tif, chunks=2)
         out = lazy.compute()
         # Source had no NaN pixels planted, so the float buffer carries
         # the original values.
@@ -1989,7 +1989,7 @@ class TestOutOfRangeSentinelParity:
 
     def test_dask_matches(self, oor_tif):
         eager = open_geotiff(oor_tif)
-        lazy = read_geotiff_dask(oor_tif, chunks=2)
+        lazy = _read_geotiff_dask(oor_tif, chunks=2)
         assert lazy.dtype == eager.dtype
         np.testing.assert_array_equal(
             eager.data, lazy.compute().data,
@@ -2043,7 +2043,7 @@ class TestMinIsWhiteSentinelInversion:
         path = str(tmp_path / "miw_dask_2226.tif")
         self._build(path)
         eager = open_geotiff(path, masked=True)
-        lazy = read_geotiff_dask(path, chunks=2)
+        lazy = _read_geotiff_dask(path, chunks=2)
         np.testing.assert_array_equal(
             np.isnan(eager.data), np.isnan(lazy.compute().data),
         )
@@ -2091,7 +2091,7 @@ class TestMaskNodataFalseParity:
         assert da.attrs["masked_nodata"] is False
 
     def test_dask_keeps_literal_sentinel(self, int_tif):
-        lazy = read_geotiff_dask(int_tif, chunks=2, mask_nodata=False)
+        lazy = _read_geotiff_dask(int_tif, chunks=2, mask_nodata=False)
         out = lazy.compute()
         assert out.dtype == np.uint8
         assert int(out.data[0, 2]) == 255
@@ -2099,9 +2099,9 @@ class TestMaskNodataFalseParity:
 
     @_gpu_only
     def test_gpu_keeps_literal_sentinel(self, int_tif):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
-        gpu = read_geotiff_gpu(int_tif, mask_nodata=False)
+        gpu = _read_geotiff_gpu(int_tif, mask_nodata=False)
         host = gpu.data.get()
         assert host.dtype == np.uint8
         assert int(host[0, 2]) == 255
@@ -2115,7 +2115,7 @@ class TestExplicitDtypeRequestParity:
         assert da.attrs.get("nodata_dtype_cast") == "float64"
 
     def test_dask_records_dtype_cast(self, int_tif):
-        lazy = read_geotiff_dask(int_tif, chunks=2, dtype="float64")
+        lazy = _read_geotiff_dask(int_tif, chunks=2, dtype="float64")
         assert lazy.dtype == np.float64
         assert lazy.attrs.get("nodata_dtype_cast") == "float64"
 
@@ -2158,12 +2158,12 @@ def simple_vrt(tmp_path):
 
 class TestVRTEagerParity:
     def test_vrt_masks_sentinel_to_nan(self, simple_vrt):
-        da = read_vrt(simple_vrt)
+        da = _read_vrt(simple_vrt)
         assert da.dtype.kind == "f"
         assert np.isnan(da.data[0, 2])
 
     def test_vrt_mask_nodata_false_keeps_literal(self, simple_vrt):
-        da = read_vrt(simple_vrt, mask_nodata=False)
+        da = _read_vrt(simple_vrt, mask_nodata=False)
         # Literal -9999 survives in the float buffer.
         assert da.data[0, 2] == -9999.0
         assert da.attrs.get("masked_nodata") is False
@@ -2467,19 +2467,19 @@ class TestEagerNumpy:
 
 
 class TestDaskNumpy:
-    """``read_geotiff_dask`` (lazy dask + numpy backend)."""
+    """``_read_geotiff_dask`` (lazy dask + numpy backend)."""
 
     def test_float_source_with_sentinel(self, tmp_path):
         path = str(tmp_path / "tnss1988_dask_float_sentinel.tif")
         _write_float_tiff_1988(path, with_sentinel=True)
-        da = read_geotiff_dask(path, chunks=2)
+        da = _read_geotiff_dask(path, chunks=2)
         assert da.attrs["nodata"] == _SENTINEL_1988
         assert da.attrs["masked_nodata"] is True
 
     def test_float_source_without_sentinel(self, tmp_path):
         path = str(tmp_path / "tnss1988_dask_float_no_sentinel.tif")
         _write_float_tiff_1988(path, with_sentinel=False)
-        da = read_geotiff_dask(path, chunks=2)
+        da = _read_geotiff_dask(path, chunks=2)
         assert "nodata" not in da.attrs
         assert "masked_nodata" not in da.attrs
 
@@ -2494,7 +2494,7 @@ class TestDaskNumpy:
         """
         path = str(tmp_path / "tnss1988_dask_int_in_range.tif")
         _write_int_tiff_1988(path, with_sentinel_hit=False)
-        da = read_geotiff_dask(path, chunks=2)
+        da = _read_geotiff_dask(path, chunks=2)
         assert da.attrs["nodata"] == 65535
         assert da.dtype.kind == "f"
         assert da.attrs["masked_nodata"] is True
@@ -2510,7 +2510,7 @@ class TestDaskNumpy:
         """
         path = str(tmp_path / "tnss1988_dask_int_oor.tif")
         _build_uint16_with_out_of_range_nodata_1988(path)
-        da = read_geotiff_dask(path, chunks=2)
+        da = _read_geotiff_dask(path, chunks=2)
         assert da.attrs["nodata"] == -9999
         assert da.dtype.kind == "u"
         assert da.attrs["masked_nodata"] is False
@@ -2551,7 +2551,7 @@ def _build_vrt_1988(tmp_path, source_path, vrt_dtype, nodata_value,
 
 
 class TestVRTEager:
-    """``read_vrt`` (eager path) honours the split-attrs contract."""
+    """``_read_vrt`` (eager path) honours the split-attrs contract."""
 
     def test_float32_vrt_int_source_with_hit(self, tmp_path):
         """Float-typed VRT over int source with sentinel hit -> masked_nodata=True."""
@@ -2561,7 +2561,7 @@ class TestVRTEager:
         )
         vrt = _build_vrt_1988(tmp_path, src, "Float32", 65535,
                               filename="tnss1988_vrt_hit.vrt")
-        r = read_vrt(vrt)
+        r = _read_vrt(vrt)
         assert r.attrs["nodata"] == 65535.0
         assert r.dtype.kind == "f"
         assert r.attrs["masked_nodata"] is True
@@ -2580,7 +2580,7 @@ class TestVRTEager:
         )
         vrt = _build_vrt_1988(tmp_path, src, "UInt16", 65535,
                               filename="tnss1988_vrt_nohit.vrt")
-        r = read_vrt(vrt)
+        r = _read_vrt(vrt)
         assert r.attrs["nodata"] == 65535.0
         assert r.dtype.kind in ("u", "i")
         assert r.attrs["masked_nodata"] is False
@@ -2606,13 +2606,13 @@ class TestVRTEager:
         vrt = str(tmp_path / "tnss1988_vrt_no_nd.vrt")
         with open(vrt, "w") as f:
             f.write(vrt_xml)
-        r = read_vrt(vrt)
+        r = _read_vrt(vrt)
         assert "nodata" not in r.attrs
         assert "masked_nodata" not in r.attrs
 
 
 class TestVRTChunked:
-    """``read_vrt(..., chunks=N)`` honours the split-attrs contract."""
+    """``_read_vrt(..., chunks=N)`` honours the split-attrs contract."""
 
     def test_chunked_int_source_in_range_sentinel(self, tmp_path):
         """Chunked VRT declares float64 for in-range int sentinel -> masked_nodata=True."""
@@ -2622,7 +2622,7 @@ class TestVRTChunked:
         )
         vrt = _build_vrt_1988(tmp_path, src, "UInt16", 65535,
                               filename="tnss1988_vrt_chunked.vrt")
-        r = read_vrt(vrt, chunks=2)
+        r = _read_vrt(vrt, chunks=2)
         assert r.attrs["nodata"] == 65535.0
         # Chunked path promotes to float64 declared dtype.
         assert r.dtype == np.float64
@@ -2631,14 +2631,14 @@ class TestVRTChunked:
 
 @_gpu_only
 class TestGPU:
-    """``read_geotiff_gpu`` honours the split-attrs contract."""
+    """``_read_geotiff_gpu`` honours the split-attrs contract."""
 
     def test_int_source_with_hit(self, tmp_path):
         """Int source + sentinel hit on GPU -> masked_nodata=True (float)."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = str(tmp_path / "tnss1988_gpu_int_hit.tif")
         _write_int_tiff_1988(path, with_sentinel_hit=True)
-        da = read_geotiff_gpu(path)
+        da = _read_geotiff_gpu(path)
         assert da.attrs["nodata"] == 65535
         assert np.dtype(str(da.dtype)).kind == "f"
         assert da.attrs["masked_nodata"] is True
@@ -2649,20 +2649,20 @@ class TestGPU:
         Mirrors the eager-numpy contract: GPU masking only promotes int
         to float64 when at least one sentinel pixel is found.
         """
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = str(tmp_path / "tnss1988_gpu_int_nohit.tif")
         _write_int_tiff_1988(path, with_sentinel_hit=False)
-        da = read_geotiff_gpu(path)
+        da = _read_geotiff_gpu(path)
         assert da.attrs["nodata"] == 65535
         assert np.dtype(str(da.dtype)).kind in ("u", "i")
         assert da.attrs["masked_nodata"] is False
 
     def test_dask_gpu_in_range_sentinel(self, tmp_path):
         """Dask+GPU declares float64 graph for in-range int sentinel."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = str(tmp_path / "tnss1988_gpu_dask_int.tif")
         _write_int_tiff_1988(path, with_sentinel_hit=False)
-        da = read_geotiff_gpu(path, chunks=2)
+        da = _read_geotiff_gpu(path, chunks=2)
         assert da.attrs["nodata"] == 65535
         assert np.dtype(str(da.dtype)).kind == "f"
         assert da.attrs["masked_nodata"] is True
@@ -3110,7 +3110,7 @@ class TestWriterGPU:
         rasterio = pytest.importorskip("rasterio")
         import cupy
 
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         path = tmp_path / "test_1988_writer_gpu_unmasked.tif"
         arr_np = np.array(
@@ -3130,7 +3130,7 @@ class TestWriterGPU:
                 "masked_nodata": False,
             },
         )
-        write_geotiff_gpu(da, str(path), compression="none")
+        _write_geotiff_gpu(da, str(path), compression="none")
 
         with rasterio.open(str(path)) as ds:
             on_disk = ds.read(1)
@@ -3142,7 +3142,7 @@ class TestWriterGPU:
         rasterio = pytest.importorskip("rasterio")
         import cupy
 
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         path = tmp_path / "test_1988_writer_gpu_masked.tif"
         arr_np = np.array(
@@ -3162,7 +3162,7 @@ class TestWriterGPU:
                 "masked_nodata": True,
             },
         )
-        write_geotiff_gpu(da, str(path), compression="none")
+        _write_geotiff_gpu(da, str(path), compression="none")
 
         with rasterio.open(str(path)) as ds:
             on_disk = ds.read(1)
@@ -3252,7 +3252,7 @@ def test_read_geotiff_dask_int_nodata_nan_rejected_by_default(tmp_path):
     """Dask path raises at graph-build time, before any chunk task fires."""
     path = _build_uint16_tiff('nan', tmp_path)
     with pytest.raises(InvalidIntegerNodataError):
-        read_geotiff_dask(path, chunks=2)
+        _read_geotiff_dask(path, chunks=2)
 
 
 def test_read_geotiff_dask_int_nodata_fractional_rejected_by_default(
@@ -3261,7 +3261,7 @@ def test_read_geotiff_dask_int_nodata_fractional_rejected_by_default(
     """Dask path raises at graph-build time for fractional int sentinels."""
     path = _build_uint16_tiff('30.5', tmp_path)
     with pytest.raises(InvalidIntegerNodataError):
-        read_geotiff_dask(path, chunks=2)
+        _read_geotiff_dask(path, chunks=2)
 
 
 # ----------------------------------------------------------------------
@@ -3325,7 +3325,7 @@ def test_open_geotiff_opt_in_restores_noop_eager(tmp_path, nodata_str):
 def test_read_geotiff_dask_opt_in_restores_noop(tmp_path, nodata_str):
     """``allow_invalid_nodata=True`` keeps the pre-2441 no-op for dask."""
     path = _build_uint16_tiff(nodata_str, tmp_path)
-    da = read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
+    da = _read_geotiff_dask(path, chunks=2, allow_invalid_nodata=True)
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.compute().values, [[10, 20], [30, 40]])
 
@@ -3338,11 +3338,11 @@ def test_read_geotiff_dask_opt_in_restores_noop(tmp_path, nodata_str):
 @_gpu_only
 def test_read_geotiff_gpu_int_nodata_nan_rejected_by_default(tmp_path):
     """GPU read entry point raises before kicking off the device decode."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = _build_uint16_tiff('nan', tmp_path)
     with pytest.raises(InvalidIntegerNodataError):
-        read_geotiff_gpu(path)
+        _read_geotiff_gpu(path)
 
 
 @_gpu_only
@@ -3350,10 +3350,10 @@ def test_read_geotiff_gpu_int_nodata_opt_in_restores_noop(tmp_path):
     """GPU opt-in keeps the no-op (sentinel cannot match any uint16 pixel)."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = _build_uint16_tiff('nan', tmp_path)
-    da = read_geotiff_gpu(path, allow_invalid_nodata=True)
+    da = _read_geotiff_gpu(path, allow_invalid_nodata=True)
     # Buffer stays uint16 on the device.
     assert da.dtype == cupy.uint16
     arr = da.data.get()
@@ -3365,8 +3365,8 @@ def test_read_geotiff_gpu_chunked_int_nodata_rejected_by_default(tmp_path):
     """dask+cupy backend rejects at metadata parse, before any chunk task
     is scheduled. Closes the four-backend matrix explicitly.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path = _build_uint16_tiff('nan', tmp_path)
     with pytest.raises(InvalidIntegerNodataError):
-        read_geotiff_gpu(path, chunks=2)
+        _read_geotiff_gpu(path, chunks=2)

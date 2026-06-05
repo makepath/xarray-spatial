@@ -456,7 +456,7 @@ def test_gpu_predictor2_int8_matches_cpu(tmp_path, tiled):
     """
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = _signed_int8_grid(32, 48) if tiled else _signed_int8_grid()
     path = tmp_path / f"pred2_int8_{'tiled' if tiled else 'stripped'}_gpu.tif"
@@ -468,7 +468,7 @@ def test_gpu_predictor2_int8_matches_cpu(tmp_path, tiled):
     cpu, _ = read_to_array(str(path))
     np.testing.assert_array_equal(cpu, arr)
 
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.int8
     np.testing.assert_array_equal(gpu_da.data.get(), cpu)
@@ -1198,9 +1198,9 @@ class TestEagerReadRejectsMalformedFile:
         path = tmp_path / "pred3_uint32_dask.tif"
         path.write_bytes(_build_predictor3_uint32_tiff(arr))
 
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
         with pytest.raises(ValueError, match="Predictor=3"):
-            read_geotiff_dask(str(path), chunks=64)
+            _read_geotiff_dask(str(path), chunks=64)
 
 
 # ===========================================================================

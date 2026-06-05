@@ -34,7 +34,7 @@ import xarray as xr
 
 from xrspatial.geotiff import _decode as _decode_mod
 from xrspatial.geotiff import _reader as _reader_mod
-from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
+from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu, to_geotiff
 from xrspatial.geotiff._compression import COMPRESSION_NONE, unpack_bits
 from xrspatial.geotiff._dtypes import (resolve_bits_per_sample, resolve_sample_format,
                                        tiff_dtype_to_numpy)
@@ -193,7 +193,7 @@ class TestGpuTileByteCap:
         monkeypatch.setenv("XRSPATIAL_COG_MAX_TILE_BYTES", str(1024 * 1024))
 
         with pytest.raises(ValueError, match="TileByteCount"):
-            read_geotiff_gpu(path)
+            _read_geotiff_gpu(path)
 
     @_gpu_only
     def test_error_message_names_value_and_cap(self, tmp_path, monkeypatch):
@@ -202,7 +202,7 @@ class TestGpuTileByteCap:
         monkeypatch.setenv("XRSPATIAL_COG_MAX_TILE_BYTES", str(1024))
 
         with pytest.raises(ValueError) as excinfo:
-            read_geotiff_gpu(path)
+            _read_geotiff_gpu(path)
         msg = str(excinfo.value)
         assert "52,428,800" in msg or "52428800" in msg
         assert "1,024" in msg or "1024" in msg
@@ -216,7 +216,7 @@ class TestGpuTileByteCap:
         path = str(tmp_path / "normal_gpu.tif")
         to_geotiff(da, path, tile_size=32, compression="deflate")
 
-        result = read_geotiff_gpu(path)
+        result = _read_geotiff_gpu(path)
         np.testing.assert_array_equal(result.data.get(), arr)
 
     @_gpu_only
@@ -228,7 +228,7 @@ class TestGpuTileByteCap:
             "XRSPATIAL_COG_MAX_TILE_BYTES", str(64 * 1024 * 1024))
 
         try:
-            read_geotiff_gpu(path)
+            _read_geotiff_gpu(path)
         except Exception as exc:
             assert "exceeds the per-tile safety cap" not in str(exc), (
                 "cap loop fired despite the env override lifting the cap"
@@ -246,7 +246,7 @@ class TestGpuChunkedTileByteCap:
             "XRSPATIAL_COG_MAX_TILE_BYTES", str(1024 * 1024))
 
         with pytest.raises(ValueError, match="TileByteCount"):
-            read_geotiff_gpu(path, chunks=32)
+            _read_geotiff_gpu(path, chunks=32)
 
 
 # ---------------------------------------------------------------------------
@@ -1121,7 +1121,7 @@ def test_planar_multiband_gpu_matches_cpu(
     path = os.path.join(str(tmp_path), "planar_gpu_2429.tif")
     _write_planar_matrix_tiff(path, data, planar=planar, tiled=tiled)
     cpu = np.asarray(open_geotiff(path).data)
-    gpu_da = read_geotiff_gpu(path)
+    gpu_da = _read_geotiff_gpu(path)
 
     assert gpu_da.dims == ("y", "x", "band")
     assert gpu_da.shape == (height, width, bands)
@@ -1165,7 +1165,7 @@ def test_planar_singleband_gpu(tiled, tmp_path):
     if tiled:
         kwargs["tile"] = (32, 32)
     tifffile.imwrite(path, data, **kwargs)
-    out = read_geotiff_gpu(path)
+    out = _read_geotiff_gpu(path)
     assert out.dims == ("y", "x")
     assert out.shape == (48, 80)
     np.testing.assert_array_equal(out.data.get(), data)

@@ -31,7 +31,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import read_vrt, to_geotiff
+from xrspatial.geotiff import _read_vrt, to_geotiff
 from xrspatial.geotiff._reader import PixelSafetyLimitError, read_to_array
 from xrspatial.geotiff._vrt import _resample_nearest
 from xrspatial.geotiff._vrt import read_vrt as _dstrect_cap_read_vrt_internal
@@ -447,7 +447,7 @@ def test_per_source_cap_error_includes_gb_hint(monkeypatch):
     duration of the read. That keeps the test honest about which
     branch's format string is being asserted.
     """
-    # ``read_vrt`` imports ``_check_dimensions`` from ``_reader`` at
+    # ``_read_vrt`` imports ``_check_dimensions`` from ``_reader`` at
     # call time, so patching the reader module's binding takes effect
     # on the next call.
     from xrspatial.geotiff import _reader as reader_mod
@@ -758,7 +758,7 @@ def test_tiny_vrt_with_huge_srcrect_now_reads_minimally(tmp_path):
         f'  </VRTRasterBand>\n'
         f'</VRTDataset>\n'
     )
-    arr = read_vrt(str(vrt), max_pixels=1)
+    arr = _read_vrt(str(vrt), max_pixels=1)
     assert arr.shape == (1, 1)
 
 
@@ -786,7 +786,7 @@ def test_source_cap_still_fires_when_sub_window_exceeds_budget(tmp_path):
         f'</VRTDataset>\n'
     )
     with pytest.raises(ValueError, match='exceed|safety limit'):
-        read_vrt(str(vrt), max_pixels=4)
+        _read_vrt(str(vrt), max_pixels=4)
 
 
 # ---------------------------------------------------------------------------
@@ -853,14 +853,14 @@ def lazy_chunks_multiband_vrt():
 
 
 def test_chunks_builds_dask_array_with_multiple_blocks(lazy_chunks_two_by_two_vrt):
-    """``read_vrt(chunks=(N,N))`` returns a dask-backed DataArray
+    """``_read_vrt(chunks=(N,N))`` returns a dask-backed DataArray
     whose underlying array has more than one chunk along each spatial
     axis. Before the fix the array was numpy-backed under
     ``result.chunk()``, so this asserts the new lazy graph is in
     play.
     """
     vrt_path, _ = lazy_chunks_two_by_two_vrt
-    result = read_vrt(vrt_path, chunks=(64, 64))
+    result = _read_vrt(vrt_path, chunks=(64, 64))
     assert isinstance(result.data, da.Array), f'expected dask Array, got {type(result.data).__name__}'  # noqa: E501
     assert result.data.numblocks == (4, 4), f'expected 4x4 blocks, got {result.data.numblocks}'
 
@@ -878,7 +878,7 @@ def test_chunks_is_lazy_does_not_call_internal_reader(monkeypatch, lazy_chunks_t
         counter['calls'] += 1
         return real_read(*args, **kwargs)
     monkeypatch.setattr(vrt_module, 'read_vrt', counting_read)
-    result = read_vrt(vrt_path, chunks=(64, 64))
+    result = _read_vrt(vrt_path, chunks=(64, 64))
     assert counter['calls'] == 0, f"_read_vrt_internal called {counter['calls']} times before .compute(); the chunked path leaked an eager decode"  # noqa: E501
     computed = result.compute()
     assert counter['calls'] == 16, f"expected 16 per-chunk decodes after compute, got {counter['calls']}"  # noqa: E501
@@ -887,8 +887,8 @@ def test_chunks_is_lazy_does_not_call_internal_reader(monkeypatch, lazy_chunks_t
 
 def test_chunked_compute_matches_eager(lazy_chunks_two_by_two_vrt):
     vrt_path, _ = lazy_chunks_two_by_two_vrt
-    eager = read_vrt(vrt_path)
-    chunked = read_vrt(vrt_path, chunks=(64, 64)).compute()
+    eager = _read_vrt(vrt_path)
+    chunked = _read_vrt(vrt_path, chunks=(64, 64)).compute()
     assert eager.shape == chunked.shape
     assert np.array_equal(eager.values, chunked.values), 'chunked compute diverged from eager read'
     np.testing.assert_array_equal(eager['x'].values, chunked['x'].values)
@@ -903,8 +903,8 @@ def test_chunked_single_tile_matches_eager(lazy_chunks_single_tile_vrt):
     same single source.
     """
     vrt_path, _ = lazy_chunks_single_tile_vrt
-    eager = read_vrt(vrt_path)
-    chunked = read_vrt(vrt_path, chunks=(32, 32)).compute()
+    eager = _read_vrt(vrt_path)
+    chunked = _read_vrt(vrt_path, chunks=(32, 32)).compute()
     assert np.array_equal(eager.values, chunked.values)
 
 
@@ -915,7 +915,7 @@ def test_chunks_task_cap_raises(lazy_chunks_two_by_two_vrt):
     """
     vrt_path, _ = lazy_chunks_two_by_two_vrt
     with pytest.raises(ValueError, match='chunks=.*task'):
-        read_vrt(vrt_path, chunks=(1, 1))
+        _read_vrt(vrt_path, chunks=(1, 1))
 
 
 def test_window_plus_chunks_matches_eager(lazy_chunks_two_by_two_vrt):
@@ -925,8 +925,8 @@ def test_window_plus_chunks_matches_eager(lazy_chunks_two_by_two_vrt):
     """
     vrt_path, _ = lazy_chunks_two_by_two_vrt
     window = (32, 48, 160, 192)
-    eager = read_vrt(vrt_path, window=window)
-    chunked = read_vrt(vrt_path, window=window, chunks=(64, 64))
+    eager = _read_vrt(vrt_path, window=window)
+    chunked = _read_vrt(vrt_path, window=window, chunks=(64, 64))
     assert isinstance(chunked.data, da.Array)
     assert chunked.data.numblocks == (2, 3), f'expected (2, 3) numblocks over the window, got {chunked.data.numblocks}'  # noqa: E501
     computed = chunked.compute()
@@ -936,13 +936,13 @@ def test_window_plus_chunks_matches_eager(lazy_chunks_two_by_two_vrt):
 
 @pytest.mark.skipif(not _HAS_GPU, reason='cupy + CUDA required')
 def test_gpu_plus_chunks_returns_dask_on_cupy(lazy_chunks_two_by_two_vrt):
-    """``read_vrt(gpu=True, chunks=...)`` must build a dask graph whose
+    """``_read_vrt(gpu=True, chunks=...)`` must build a dask graph whose
     blocks are cupy-backed (not numpy that gets cupy-wrapped at
     compute time on the host).
     """
     import cupy
     vrt_path, _ = lazy_chunks_two_by_two_vrt
-    result = read_vrt(vrt_path, gpu=True, chunks=(64, 64))
+    result = _read_vrt(vrt_path, gpu=True, chunks=(64, 64))
     assert isinstance(result.data, da.Array)
     assert isinstance(result.data._meta, cupy.ndarray), f'expected cupy _meta, got {type(result.data._meta).__module__}.{type(result.data._meta).__name__}'  # noqa: E501
     computed = result.compute()
@@ -954,7 +954,7 @@ def test_multiband_plus_chunks_preserves_band_dim(lazy_chunks_multiband_vrt):
     every block and the assembled DataArray.
     """
     vrt_path, src = lazy_chunks_multiband_vrt
-    result = read_vrt(vrt_path, chunks=(32, 32))
+    result = _read_vrt(vrt_path, chunks=(32, 32))
     assert isinstance(result.data, da.Array)
     assert result.dims == ('y', 'x', 'band')
     assert result.shape == (64, 64, 3)
@@ -990,7 +990,7 @@ def test_chunked_propagates_vrt_holes_when_source_missing(lazy_chunks_two_by_two
     os.unlink(tile_files[0])
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', GeoTIFFFallbackWarning)
-        result = read_vrt(vrt_path, chunks=(64, 64), missing_sources='warn')
+        result = _read_vrt(vrt_path, chunks=(64, 64), missing_sources='warn')
     assert 'vrt_holes' in result.attrs, 'chunked path dropped vrt_holes contract from #1734'
     holes = result.attrs['vrt_holes']
     assert isinstance(holes, list) and len(holes) >= 1
@@ -1005,7 +1005,7 @@ def test_chunked_no_vrt_holes_attr_when_complete(lazy_chunks_two_by_two_vrt):
     ``attrs['vrt_holes']`` (eager parity: empty hole list is omitted).
     """
     vrt_path, _ = lazy_chunks_two_by_two_vrt
-    result = read_vrt(vrt_path, chunks=(64, 64))
+    result = _read_vrt(vrt_path, chunks=(64, 64))
     assert 'vrt_holes' not in result.attrs
 
 
@@ -1025,7 +1025,7 @@ def test_chunked_integer_no_nodata_keeps_source_dtype():
     to_geotiff(raster, tile_path)
     vrt_path = os.path.join(td, 'mosaic.vrt')
     _write_vrt_internal(vrt_path, [tile_path])
-    result = read_vrt(vrt_path, chunks=(32, 32))
+    result = _read_vrt(vrt_path, chunks=(32, 32))
     assert result.dtype == np.uint16, f'expected uint16 (source dtype), got {result.dtype}; chunked path promoted to float64 despite no declared nodata'  # noqa: E501
     computed = result.compute()
     assert computed.dtype == np.uint16
@@ -1090,7 +1090,7 @@ def test_vrt_chunked_dataset_is_shared_graph_input(tmp_path):
     """
     from xrspatial.geotiff._vrt import VRTDataset
     vrt_path, n_sources = _chunked_shared_dataset_make_tile_vrt(str(tmp_path), n_tiles_per_side=4)
-    result = read_vrt(vrt_path, chunks=32)
+    result = _read_vrt(vrt_path, chunks=32)
     graph = result.__dask_graph__()
     assert n_sources == 16, 'fixture build sanity check'
     chunk_task_count = 0
@@ -1115,8 +1115,8 @@ def test_vrt_chunked_dataset_is_shared_graph_input(tmp_path):
 def test_vrt_chunked_decode_unchanged_after_shared_wrap(tmp_path):
     """The shared-Delayed wrap must not change decoded pixel values."""
     vrt_path, _ = _chunked_shared_dataset_make_tile_vrt(str(tmp_path), n_tiles_per_side=3)
-    eager = read_vrt(vrt_path)
-    chunked = read_vrt(vrt_path, chunks=32).compute()
+    eager = _read_vrt(vrt_path)
+    chunked = _read_vrt(vrt_path, chunks=32).compute()
     np.testing.assert_array_equal(np.asarray(eager), np.asarray(chunked))
 
 
@@ -1124,7 +1124,7 @@ def test_vrt_chunked_band_kwarg_still_validates(tmp_path):
     """Wrapping the dataset must not change band validation behaviour."""
     vrt_path, _ = _chunked_shared_dataset_make_tile_vrt(str(tmp_path), n_tiles_per_side=2)
     with pytest.raises(ValueError):
-        read_vrt(vrt_path, chunks=32, band=5)
+        _read_vrt(vrt_path, chunks=32, band=5)
 
 
 # ---------------------------------------------------------------------------
@@ -1201,11 +1201,11 @@ def test_vrt_tiled_threaded_write_is_deterministic():
 #
 # Two further windowed / chunked read paths this module covers:
 #
-# * read_vrt(chunks=...) lazy-window construction: chunk layout
+# * _read_vrt(chunks=...) lazy-window construction: chunk layout
 #   matches eager values, build does not decode sources, and an
 #   excessive task count is rejected.
-# * read_geotiff_dask('.vrt') kwarg forwarding: the direct dask
-#   entry point forwards window / band / max_pixels through to read_vrt.
+# * _read_geotiff_dask('.vrt') kwarg forwarding: the direct dask
+#   entry point forwards window / band / max_pixels through to _read_vrt.
 
 
 def _vrttail_write_single_band_vrt(vrt_path, source_name):
@@ -1257,8 +1257,8 @@ class TestVrtTailLazyChunks:
         vrt = tmp_path / "tmp_1798_source.vrt"
         _vrttail_write_single_band_vrt(vrt, os.path.basename(src))
 
-        eager = read_vrt(str(vrt))
-        lazy = read_vrt(str(vrt), chunks=2)
+        eager = _read_vrt(str(vrt))
+        lazy = _read_vrt(str(vrt), chunks=2)
 
         assert lazy.data.chunks == ((2, 2), (2, 2, 2))
         np.testing.assert_array_equal(lazy.compute().values, eager.values)
@@ -1276,7 +1276,7 @@ class TestVrtTailLazyChunks:
         _vrttail_write_single_band_vrt(vrt, "missing.tif")
 
         with warnings.catch_warnings(record=True) as caught:
-            lazy = read_vrt(str(vrt), chunks=2, missing_sources="warn")
+            lazy = _read_vrt(str(vrt), chunks=2, missing_sources="warn")
 
         assert caught == []
         assert hasattr(lazy.data, 'compute')
@@ -1289,14 +1289,14 @@ class TestVrtTailLazyChunks:
             '</VRTDataset>\n'
         )
         with pytest.raises(ValueError, match="task cap"):
-            read_vrt(str(vrt), chunks=1, max_pixels=20_000_000_000)
+            _read_vrt(str(vrt), chunks=1, max_pixels=20_000_000_000)
 
 
 class TestVrtTailDirectDaskKwargs:
-    """read_geotiff_dask('.vrt') forwards VRT kwargs."""
+    """_read_geotiff_dask('.vrt') forwards VRT kwargs."""
 
     def test_forwards_window_and_band(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
 
         arr = np.arange(4 * 6 * 2, dtype=np.float32).reshape(4, 6, 2)
         src = tmp_path / "tmp_1797_source.tif"
@@ -1304,14 +1304,14 @@ class TestVrtTailDirectDaskKwargs:
         vrt = tmp_path / "tmp_1797_source.vrt"
         _vrttail_write_multi_band_vrt(vrt, os.path.basename(src), bands=2)
 
-        got = read_geotiff_dask(
+        got = _read_geotiff_dask(
             str(vrt), chunks=2, window=(1, 2, 4, 6), band=1,
         )
         assert got.shape == (3, 4)
         np.testing.assert_array_equal(got.values, arr[1:4, 2:6, 1])
 
     def test_forwards_max_pixels(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
 
         arr = np.arange(24, dtype=np.float32).reshape(4, 6)
         src = tmp_path / "tmp_1797_source_cap.tif"
@@ -1320,4 +1320,4 @@ class TestVrtTailDirectDaskKwargs:
         _vrttail_write_single_band_vrt(vrt, os.path.basename(src))
 
         with pytest.raises(ValueError, match="exceed"):
-            read_geotiff_dask(str(vrt), chunks=2, max_pixels=10)
+            _read_geotiff_dask(str(vrt), chunks=2, max_pixels=10)

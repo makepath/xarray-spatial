@@ -1979,7 +1979,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         the first source's per-band nodata is used. Integer sentinels
         (e.g. ``65535`` for uint16, ``-9999`` for int32) are accepted
         so the surface lines up with the ``nodata`` kwarg on
-        ``to_geotiff`` and ``write_geotiff_gpu``.
+        ``to_geotiff`` and ``_write_geotiff_gpu``.
 
     Returns
     -------

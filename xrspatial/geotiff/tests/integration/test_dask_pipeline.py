@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask, to_geotiff
+from xrspatial.geotiff import open_geotiff, _read_geotiff_dask, to_geotiff
 from xrspatial.geotiff._writer import write
 
 # ----------------------------------------------------------
@@ -43,12 +43,12 @@ def test_chunk_smaller_than_tile(tmp_path, _arr_64x96_dask_chunk_tile_misalignme
     is off by one row or column, the computed value will differ from
     the source.
     """
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path = tmp_path / "tiled_misalign_small.tif"
     _write_tiled_dask_chunk_tile_misalignment(path, _arr_64x96_dask_chunk_tile_misalignment, tile=16)  # noqa: E501
 
-    da_arr = read_geotiff_dask(str(path), chunks=11)
+    da_arr = _read_geotiff_dask(str(path), chunks=11)
     assert isinstance(da_arr.data, dask_array_dask_chunk_tile_misalignment.Array)
     # 11 < 16: every tile is dispersed across at least 2 chunks.
     assert da_arr.data.chunksize[:2] == (11, 11)
@@ -63,12 +63,12 @@ def test_chunk_larger_than_tile_nonmultiple(tmp_path, _arr_64x96_dask_chunk_tile
     the nearest tile boundary, the chunk shape comes out wrong; if it
     rounds up, the values shift.
     """
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path = tmp_path / "tiled_misalign_large.tif"
     _write_tiled_dask_chunk_tile_misalignment(path, _arr_64x96_dask_chunk_tile_misalignment, tile=16)  # noqa: E501
 
-    da_arr = read_geotiff_dask(str(path), chunks=23)
+    da_arr = _read_geotiff_dask(str(path), chunks=23)
     assert isinstance(da_arr.data, dask_array_dask_chunk_tile_misalignment.Array)
     assert da_arr.data.chunksize[:2] == (23, 23)
     np.testing.assert_array_equal(da_arr.compute().values, _arr_64x96_dask_chunk_tile_misalignment)
@@ -81,7 +81,7 @@ def test_chunk_tuple_doubly_unaligned(tmp_path):
     final column chunk both crop, and neither chunk dimension is
     aligned with the tile grid. This is the corner-cell case.
     """
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     rng = np.random.RandomState(0xDCED)
     arr = rng.randint(0, 256, size=(50, 70), dtype=np.uint8)
@@ -89,7 +89,7 @@ def test_chunk_tuple_doubly_unaligned(tmp_path):
     path = tmp_path / "tiled_corner_misalign.tif"
     _write_tiled_dask_chunk_tile_misalignment(path, arr, tile=16)
 
-    da_arr = read_geotiff_dask(str(path), chunks=(17, 19))
+    da_arr = _read_geotiff_dask(str(path), chunks=(17, 19))
     assert da_arr.shape == (50, 70)
     # Last block in each axis is the trimmed remainder.
     block_h = da_arr.data.chunks[0]
@@ -263,8 +263,8 @@ def test_default_max_pixels_guard_does_not_fire_up_front(tmp_path):
     _write_oversized_dask_max_pixels_default_guard(path, h=side, w=side)
     # The graph builds; the up-front guard is gone. Chunk-level decode
     # may still fail when a task actually runs, but that is a separate
-    # path. ``read_geotiff_dask(...)`` itself returns a DataArray.
-    da = read_geotiff_dask(str(path))
+    # path. ``_read_geotiff_dask(...)`` itself returns a DataArray.
+    da = _read_geotiff_dask(str(path))
     assert da.shape == (side, side)
 
 
@@ -279,7 +279,7 @@ def test_explicit_max_pixels_enforced_per_chunk(tmp_path):
         str(path), arr, tile=(16, 16),
         photometric="minisblack", compression="none")
     # 32x32 chunk = 1024 pixels; cap is 100. Graph builds, compute fails.
-    da = read_geotiff_dask(str(path), chunks=32, max_pixels=100)
+    da = _read_geotiff_dask(str(path), chunks=32, max_pixels=100)
     with pytest.raises(ValueError, match="exceed the safety limit"):
         da.compute()
 
@@ -291,7 +291,7 @@ def test_small_region_unaffected(tmp_path):
     tifffile_dask_max_pixels_default_guard.imwrite(
         str(path), arr, tile=(16, 16),
         photometric="minisblack", compression="none")
-    da = read_geotiff_dask(str(path), chunks=8)
+    da = _read_geotiff_dask(str(path), chunks=8)
     np.testing.assert_array_equal(da.compute().values, arr)
 
 # ----------------------------------------------------------
@@ -383,13 +383,13 @@ def test_astype_skipped_when_dtypes_match(float32_no_nodata_tif_dask_no_op_astyp
         captured.append(tracked)
         return tracked, meta
 
-    # ``read_geotiff_dask``'s per-chunk worker calls the alias
+    # ``_read_geotiff_dask``'s per-chunk worker calls the alias
     # ``_read_to_array`` bound in ``xrspatial.geotiff._backends.dask``.
     # Patch that binding; patching ``_reader.read_to_array`` would not
     # affect the already-imported alias.
     monkeypatch.setattr(gt, '_read_to_array', wrapped_r2a)
 
-    dk = read_geotiff_dask(path, chunks=4)
+    dk = _read_geotiff_dask(path, chunks=4)
     dk.compute()
 
     assert captured, "read_to_array was not invoked"
@@ -406,7 +406,7 @@ def test_astype_skipped_when_dtypes_match(float32_no_nodata_tif_dask_no_op_astyp
 def test_caller_supplied_dtype_still_casts(float32_no_nodata_tif_dask_no_op_astype):
     """Explicit ``dtype=float64`` still triggers the cast."""
     path, _ = float32_no_nodata_tif_dask_no_op_astype
-    dk = read_geotiff_dask(path, dtype=np.float64, chunks=4)
+    dk = _read_geotiff_dask(path, dtype=np.float64, chunks=4)
     assert dk.dtype == np.float64
     out = dk.compute()
     assert out.dtype == np.float64
@@ -441,21 +441,21 @@ def _write_cog_with_overviews_dask_overview_level(path: str, data: np.ndarray) -
 
 def test_dask_overview_level_zero_matches_full_res(tmp_path):
     """``overview_level=0`` returns full resolution (the base IFD)."""
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     rng = np.random.RandomState(0xD0E)
     arr = rng.randint(0, 256, size=(128, 192), dtype=np.uint8)
     path = str(tmp_path / "cog_dask_ov.tif")
     _write_cog_with_overviews_dask_overview_level(path, arr)
 
-    da_arr = read_geotiff_dask(path, chunks=32, overview_level=0)
+    da_arr = _read_geotiff_dask(path, chunks=32, overview_level=0)
     assert da_arr.shape == arr.shape
     np.testing.assert_array_equal(da_arr.compute().values, arr)
 
 
 def test_dask_overview_level_one_returns_half_res(tmp_path):
     """``overview_level=1`` materialises the half-resolution overview."""
-    from xrspatial.geotiff import open_geotiff, read_geotiff_dask
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_dask
 
     rng = np.random.RandomState(0xD0E)
     arr = rng.randint(0, 256, size=(128, 192), dtype=np.uint8)
@@ -466,7 +466,7 @@ def test_dask_overview_level_one_returns_half_res(tmp_path):
     # pull the same bytes from the same IFD.
     eager = open_geotiff(path, overview_level=1)
 
-    da_arr = read_geotiff_dask(path, chunks=16, overview_level=1)
+    da_arr = _read_geotiff_dask(path, chunks=16, overview_level=1)
     assert da_arr.shape == eager.shape, (
         f"dask returned {da_arr.shape} but eager returned {eager.shape} "
         "at overview_level=1"
@@ -477,7 +477,7 @@ def test_dask_overview_level_one_returns_half_res(tmp_path):
 
 def test_dask_overview_level_two_returns_quarter_res(tmp_path):
     """``overview_level=2`` materialises the quarter-resolution overview."""
-    from xrspatial.geotiff import open_geotiff, read_geotiff_dask
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_dask
 
     rng = np.random.RandomState(0xD0E)
     arr = rng.randint(0, 256, size=(128, 192), dtype=np.uint8)
@@ -486,21 +486,21 @@ def test_dask_overview_level_two_returns_quarter_res(tmp_path):
 
     eager = open_geotiff(path, overview_level=2)
 
-    da_arr = read_geotiff_dask(path, chunks=8, overview_level=2)
+    da_arr = _read_geotiff_dask(path, chunks=8, overview_level=2)
     assert da_arr.shape == eager.shape
     np.testing.assert_array_equal(da_arr.compute().values, eager.values)
 
 
 def test_dask_overview_level_none_returns_full_res(tmp_path):
     """``overview_level=None`` keeps default behaviour: full resolution."""
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     rng = np.random.RandomState(0xD0E)
     arr = rng.randint(0, 256, size=(128, 192), dtype=np.uint8)
     path = str(tmp_path / "cog_dask_ov_none.tif")
     _write_cog_with_overviews_dask_overview_level(path, arr)
 
-    da_arr = read_geotiff_dask(path, chunks=32, overview_level=None)
+    da_arr = _read_geotiff_dask(path, chunks=32, overview_level=None)
     assert da_arr.shape == arr.shape
     np.testing.assert_array_equal(da_arr.compute().values, arr)
 
@@ -551,8 +551,8 @@ def _make_data_dask_planar_multiband(bands: int, height: int, width: int, dtype)
 def test_dask_planar_multiband_matches_numpy(
     tmp_path, planar, tiled, bands, dtype
 ):
-    """``read_geotiff_dask`` returns ``(y, x, band)`` matching the source."""
-    from xrspatial.geotiff import read_geotiff_dask
+    """``_read_geotiff_dask`` returns ``(y, x, band)`` matching the source."""
+    from xrspatial.geotiff import _read_geotiff_dask
 
     height, width = 96, 128
     data = _make_data_dask_planar_multiband(bands, height, width, dtype)
@@ -565,7 +565,7 @@ def test_dask_planar_multiband_matches_numpy(
                  f"b{bands}_{np.dtype(dtype).name}.tif")
     _write_planar_tiff_dask_planar_multiband(path, data, planar=planar, tiled=tiled)
 
-    da_arr = read_geotiff_dask(path, chunks=32)
+    da_arr = _read_geotiff_dask(path, chunks=32)
 
     assert isinstance(da_arr.data, dask_array_dask_planar_multiband.Array), (
         f"expected dask Array, got {type(da_arr.data).__name__}"
@@ -582,7 +582,7 @@ def test_dask_planar_multiband_matches_numpy(
 
 def test_dask_planar_separate_chunks_tuple(tmp_path):
     """Tuple chunks ``(ch_h, ch_w)`` honoured; band axis stays single chunk."""
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
 
     bands, height, width = 3, 80, 120
     data = _make_data_dask_planar_multiband(bands, height, width, np.uint8)
@@ -591,9 +591,9 @@ def test_dask_planar_separate_chunks_tuple(tmp_path):
     path = str(tmp_path / "dask_planar_chunktuple.tif")
     _write_planar_tiff_dask_planar_multiband(path, data, planar="separate", tiled=True)
 
-    da_arr = read_geotiff_dask(path, chunks=(40, 60))
+    da_arr = _read_geotiff_dask(path, chunks=(40, 60))
 
-    # ``read_geotiff_dask`` builds row-major chunks of (ch_h, ch_w, n_bands).
+    # ``_read_geotiff_dask`` builds row-major chunks of (ch_h, ch_w, n_bands).
     # With height=80, width=120, chunks=(40, 60) the expected layout is
     # 2 row blocks x 2 col blocks x 1 band block.
     assert da_arr.data.chunksize[:2] == (40, 60)

@@ -5,7 +5,7 @@ Covers:
 * The ``dtype=`` kwarg on ``open_geotiff`` (eager + dask, float -> float
   / int -> int casts, float -> int rejection).
 * IEEE half-precision auto-promotion to float32 on read (eager + dask).
-* The same float16 promotion on ``read_geotiff_gpu`` and
+* The same float16 promotion on ``_read_geotiff_gpu`` and
   ``open_geotiff(gpu=True)``.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask, to_geotiff
+from xrspatial.geotiff import open_geotiff, _read_geotiff_dask, to_geotiff
 from xrspatial.geotiff._dtypes import (SAMPLE_FORMAT_FLOAT, SAMPLE_FORMAT_INT, SAMPLE_FORMAT_UINT,
                                        tiff_dtype_to_numpy, tiff_storage_dtype)
 
@@ -247,7 +247,7 @@ class TestEagerFloat16Read:
 
     def test_open_geotiff_dask_returns_float32(self, float16_tif):
         path, arr = float16_tif
-        result = read_geotiff_dask(str(path), chunks=2)
+        result = _read_geotiff_dask(str(path), chunks=2)
         assert result.dtype == np.float32
         np.testing.assert_array_equal(
             result.compute().values, arr.astype(np.float32))
@@ -310,16 +310,16 @@ class TestFloat16RegressionGuards:
 
 
 class TestEagerGPUReadFloat16:
-    """``read_geotiff_gpu`` returns float32 for stripped float16 input."""
+    """``_read_geotiff_gpu`` returns float32 for stripped float16 input."""
 
     @_gpu_only
     def test_read_geotiff_gpu_stripped_returns_float32(
         self, float16_stripped_tif
     ):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, arr = float16_stripped_tif
-        result = read_geotiff_gpu(str(path))
+        result = _read_geotiff_gpu(str(path))
         assert result.dtype == np.float32, (
             f"GPU read of float16 must return float32, got {result.dtype}"
         )
@@ -330,10 +330,10 @@ class TestEagerGPUReadFloat16:
     def test_read_geotiff_gpu_tiled_returns_float32(
         self, float16_tiled_tif
     ):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, arr = float16_tiled_tif
-        result = read_geotiff_gpu(str(path))
+        result = _read_geotiff_gpu(str(path))
         assert result.dtype == np.float32
         np.testing.assert_array_equal(
             result.data.get(), arr.astype(np.float32))
@@ -342,10 +342,10 @@ class TestEagerGPUReadFloat16:
     def test_read_geotiff_gpu_tiled_uncompressed_returns_float32(
         self, float16_tiled_uncompressed_tif
     ):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, arr = float16_tiled_uncompressed_tif
-        result = read_geotiff_gpu(str(path))
+        result = _read_geotiff_gpu(str(path))
         assert result.dtype == np.float32
         np.testing.assert_array_equal(
             result.data.get(), arr.astype(np.float32))
@@ -365,10 +365,10 @@ class TestGPUWindowedFloat16:
 
     @_gpu_only
     def test_read_geotiff_gpu_windowed_stripped(self, float16_stripped_tif):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, arr = float16_stripped_tif
-        result = read_geotiff_gpu(str(path), window=(0, 0, 2, 2))
+        result = _read_geotiff_gpu(str(path), window=(0, 0, 2, 2))
         assert result.dtype == np.float32
         assert result.shape == (2, 2)
         np.testing.assert_array_equal(
@@ -376,10 +376,10 @@ class TestGPUWindowedFloat16:
 
     @_gpu_only
     def test_read_geotiff_gpu_windowed_tiled(self, float16_tiled_tif):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, arr = float16_tiled_tif
-        result = read_geotiff_gpu(str(path), window=(0, 0, 8, 8))
+        result = _read_geotiff_gpu(str(path), window=(0, 0, 8, 8))
         assert result.dtype == np.float32
         assert result.shape == (8, 8)
         np.testing.assert_array_equal(
@@ -402,11 +402,11 @@ class TestDaskGPUFloat16:
 
     @_gpu_only
     def test_read_geotiff_gpu_chunks_kwarg_float16(self, float16_tiled_tif):
-        """``read_geotiff_gpu(chunks=)`` also routes correctly."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        """``_read_geotiff_gpu(chunks=)`` also routes correctly."""
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, arr = float16_tiled_tif
-        result = read_geotiff_gpu(str(path), chunks=8)
+        result = _read_geotiff_gpu(str(path), chunks=8)
         assert result.dtype == np.float32
         computed = result.compute()
         np.testing.assert_array_equal(
@@ -500,7 +500,7 @@ class TestBackendParityFloat16:
     @_gpu_only
     def test_dask_numpy_equals_dask_gpu(self, float16_tiled_tif):
         path, _ = float16_tiled_tif
-        dask_cpu = read_geotiff_dask(str(path), chunks=8).compute()
+        dask_cpu = _read_geotiff_dask(str(path), chunks=8).compute()
         dask_gpu = open_geotiff(str(path), chunks=8, gpu=True).compute()
 
         np.testing.assert_array_equal(
@@ -515,14 +515,14 @@ class TestPredictor3Float16GPU:
         tifffile = pytest.importorskip("tifffile")
         pytest.importorskip("imagecodecs")  # required for predictor=3
 
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         arr = np.linspace(-1.0, 1.0, 16).astype(np.float16).reshape(4, 4)
         path = tmp_path / "pred3_f16.tif"
         tifffile.imwrite(
             str(path), arr, predictor=3, compression="deflate")
 
-        result = read_geotiff_gpu(str(path))
+        result = _read_geotiff_gpu(str(path))
         assert result.dtype == np.float32
         np.testing.assert_array_equal(
             result.data.get(), arr.astype(np.float32))

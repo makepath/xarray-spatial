@@ -514,7 +514,7 @@ _cupy_spec = pytest.importorskip("cupy", reason="GPU writer needs cupy")
 def test_write_geotiff_gpu_numpy_int_crs_roundtrips_2082(tmp_path):
     import cupy
 
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
     arr = cupy.zeros((4, 4), dtype=cupy.float32)
     da = xr.DataArray(
         arr,
@@ -522,7 +522,7 @@ def test_write_geotiff_gpu_numpy_int_crs_roundtrips_2082(tmp_path):
         dims=('y', 'x'),
     )
     path = str(tmp_path / "tmp_2082_gpu.tif")
-    write_geotiff_gpu(da, path, crs=np.int64(4326))
+    _write_geotiff_gpu(da, path, crs=np.int64(4326))
     out = open_geotiff(path)
     assert out.attrs.get('crs') == 4326
 

@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt, to_geotiff, write_vrt
+from xrspatial.geotiff import open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff, build_vrt
 from xrspatial.geotiff._attrs import _resolve_nodata_attr
 from xrspatial.geotiff._geotags import GeoTransform, _parse_nodata_str, build_geo_tags
 from xrspatial.geotiff._reader import _int_nodata_in_range, _resolve_masked_fill
@@ -152,13 +152,13 @@ def test_to_geotiff_vrt_rejects_bool_nodata(tmp_path):
 def test_write_geotiff_gpu_rejects_bool_nodata(tmp_path):
     import cupy
 
-    from xrspatial.geotiff import write_geotiff_gpu
+    from xrspatial.geotiff import _write_geotiff_gpu
 
     da_cpu = _nan_square()
     da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
     out = str(tmp_path / "tmp_1973_bool_gpu.tif")
     with pytest.raises(TypeError, match="nodata must be numeric"):
-        write_geotiff_gpu(da_gpu, out, nodata=True)
+        _write_geotiff_gpu(da_gpu, out, nodata=True)
 
 
 # --- All-non-numeric ``attrs['nodatavals']`` warn-and-fall-through ----------
@@ -413,7 +413,7 @@ class TestReadGeotiffDask:
         da_in = xr.DataArray(arr, dims=("y", "x"))
         path = os.path.join(str(tmp_path), "t.tif")
         to_geotiff(da_in, path, nodata=2**64 - 1)
-        out = read_geotiff_dask(path, chunks=16).compute()
+        out = _read_geotiff_dask(path, chunks=16).compute()
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
         assert out.values[1, 1] == 100.0
@@ -424,14 +424,14 @@ class TestReadGeotiffDask:
         da_in = xr.DataArray(arr, dims=("y", "x"))
         path = os.path.join(str(tmp_path), "t.tif")
         to_geotiff(da_in, path, nodata=2**63 - 1)
-        out = read_geotiff_dask(path, chunks=16).compute()
+        out = _read_geotiff_dask(path, chunks=16).compute()
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
 
 
 class TestVrtRoundTrip:
-    """write_vrt -> read_vrt round-trip -- the path that surfaced the bug
-    in the wild (write_vrt stringifies geo_info.nodata into XML)."""
+    """write_vrt -> _read_vrt round-trip -- the path that surfaced the bug
+    in the wild (build_vrt stringifies geo_info.nodata into XML)."""
 
     def test_uint64_max_round_trip_via_vrt(self, tmp_path):
         arr = np.full((16, 16), 100, dtype=np.uint64)
@@ -441,7 +441,7 @@ class TestVrtRoundTrip:
         to_geotiff(da_in, tif_path, nodata=2**64 - 1)
 
         vrt_path = os.path.join(str(tmp_path), "t.vrt")
-        write_vrt(vrt_path, [tif_path])
+        build_vrt(vrt_path, [tif_path])
 
         # The VRT XML should carry the integer string literal, not a
         # scientific-notation float that loses one ULP at the dtype max.
@@ -449,7 +449,7 @@ class TestVrtRoundTrip:
             xml = f.read()
         assert "<NoDataValue>18446744073709551615</NoDataValue>" in xml
 
-        out = read_vrt(vrt_path)
+        out = _read_vrt(vrt_path)
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
         assert out.values[1, 1] == 100.0
@@ -463,13 +463,13 @@ class TestVrtRoundTrip:
         to_geotiff(da_in, tif_path, nodata=2**63 - 1)
 
         vrt_path = os.path.join(str(tmp_path), "t.vrt")
-        write_vrt(vrt_path, [tif_path])
+        build_vrt(vrt_path, [tif_path])
 
         with open(vrt_path) as f:
             xml = f.read()
         assert "<NoDataValue>9223372036854775807</NoDataValue>" in xml
 
-        out = read_vrt(vrt_path)
+        out = _read_vrt(vrt_path)
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
         assert out.values[1, 1] == 100.0
@@ -478,7 +478,7 @@ class TestVrtRoundTrip:
 class TestGpuPathParity:
     @requires_gpu
     def test_uint64_max_masked_via_gpu(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         arr = np.full((16, 16), 100, dtype=np.uint64)
         arr[0, 0] = 2**64 - 1
@@ -486,7 +486,7 @@ class TestGpuPathParity:
         path = os.path.join(str(tmp_path), "t.tif")
         to_geotiff(da_in, path, nodata=2**64 - 1)
 
-        gpu_da = read_geotiff_gpu(path)
+        gpu_da = _read_geotiff_gpu(path)
         host = gpu_da.data.get()
         assert host.dtype == np.float64
         assert np.isnan(host[0, 0])
@@ -555,7 +555,7 @@ def test_read_geotiff_dask_uint16_negative_nodata_graph(
         uint16_neg_nodata_tif):
     """The dask graph-construction path no longer crashes."""
     path, _ = uint16_neg_nodata_tif
-    result = read_geotiff_dask(path, chunks=2)
+    result = _read_geotiff_dask(path, chunks=2)
     # No promotion to float64 -- sentinel is unrepresentable so masking
     # would be a no-op anyway.
     assert result.dtype == np.uint16
@@ -567,7 +567,7 @@ def test_read_geotiff_dask_uint16_negative_nodata_compute(
         uint16_neg_nodata_tif):
     """Dask compute returns the file's pixels unchanged."""
     path, expected = uint16_neg_nodata_tif
-    result = read_geotiff_dask(path, chunks=2).compute()
+    result = _read_geotiff_dask(path, chunks=2).compute()
     assert result.dtype == np.uint16
     np.testing.assert_array_equal(result.values, expected)
 
@@ -747,7 +747,7 @@ def test_dtype_cast_preservation_uint8(tmp_path):
 def test_dask_path_mask_nodata_false(uint16_with_matching_sentinel):
     """The dask path honours the kwarg too: integer source dtype survives.
 
-    Without this, ``read_geotiff_dask`` would still promote the dask
+    Without this, ``_read_geotiff_dask`` would still promote the dask
     graph dtype to float64 and force the per-chunk cast.
     """
     path, arr = uint16_with_matching_sentinel

@@ -9,7 +9,7 @@ Covers the validator-side VRT surface:
 * end-to-end negative coverage (warped, nested, mixed CRS, mixed dtype,
   mixed band count, mask, resample alg) through both public entry
   points.
-* narrowed-``except`` contract in ``read_vrt`` for source-read failures
+* narrowed-``except`` contract in ``_read_vrt`` for source-read failures
   (warn-and-continue vs propagate) under default and
   ``XRSPATIAL_GEOTIFF_STRICT=1`` modes.
 * path-traversal rejection in ``parse_vrt`` / ``_read_vrt_internal``
@@ -35,7 +35,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff
-from xrspatial.geotiff._backends.vrt import read_vrt as _package_read_vrt
+from xrspatial.geotiff._backends.vrt import _read_vrt as _package_read_vrt
 from xrspatial.geotiff._errors import (GeoTIFFAmbiguousMetadataError, MixedBandMetadataError,
                                        RotatedTransformError, UnparseableCRSError,
                                        UnsupportedGeoTIFFFeatureError, VRTUnsupportedError)
@@ -44,10 +44,10 @@ from xrspatial.geotiff._vrt import read_vrt as _internal_read_vrt
 from xrspatial.geotiff._vrt_validation import validate_parsed_vrt, validate_vrt_capability
 from xrspatial.geotiff._writer import write
 
-# ``xrspatial.geotiff.read_vrt`` (re-exported from the package init) is the
-# same callable as ``_backends.vrt.read_vrt``; the parametrise IDs below
-# label the backend-module path as the "package" entry point because that
-# is what the public alias resolves to.
+# ``_backends.vrt._read_vrt`` is the private VRT reader that ``open_geotiff``
+# dispatches to for ``.vrt`` sources; the parametrise IDs below label the
+# backend-module path as the "package" entry point because that is what the
+# dispatcher resolves to.
 
 
 # ---------------------------------------------------------------------------
@@ -489,8 +489,8 @@ def test_nested_vrt_uppercase_extension_rejected(tmp_path):
 @pytest.mark.parametrize(
     "reader",
     [
-        pytest.param(_package_read_vrt, id="entry[package-read_vrt]"),
-        pytest.param(_internal_read_vrt, id="entry[internal-read_vrt]"),
+        pytest.param(_package_read_vrt, id="entry[package-_read_vrt]"),
+        pytest.param(_internal_read_vrt, id="entry[internal-_read_vrt]"),
         pytest.param(open_geotiff, id="entry[open_geotiff]"),
     ],
 )
@@ -565,8 +565,8 @@ def test_warp_options_rejected_at_parse(tmp_path, xml, scope):
 @pytest.mark.parametrize(
     "reader",
     [
-        pytest.param(_package_read_vrt, id="entry[package-read_vrt]"),
-        pytest.param(_internal_read_vrt, id="entry[internal-read_vrt]"),
+        pytest.param(_package_read_vrt, id="entry[package-_read_vrt]"),
+        pytest.param(_internal_read_vrt, id="entry[internal-_read_vrt]"),
     ],
 )
 def test_warp_options_dataset_rejected_via_entry_points(tmp_path, reader):
@@ -681,8 +681,8 @@ def test_use_mask_band_non_canonical_truthy_accepted(tmp_path, flag):
 @pytest.mark.parametrize(
     "reader",
     [
-        pytest.param(_package_read_vrt, id="entry[package-read_vrt]"),
-        pytest.param(_internal_read_vrt, id="entry[internal-read_vrt]"),
+        pytest.param(_package_read_vrt, id="entry[package-_read_vrt]"),
+        pytest.param(_internal_read_vrt, id="entry[internal-_read_vrt]"),
     ],
 )
 def test_use_mask_band_rejected_via_entry_points(tmp_path, reader):
@@ -720,7 +720,7 @@ def test_per_source_mask_band_message_names_source(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Entry-point parity: ``read_vrt`` (package) and ``open_geotiff`` produce
+# Entry-point parity: ``_read_vrt`` (package) and ``open_geotiff`` produce
 # the same typed exception with the same message for the same bad input.
 # ---------------------------------------------------------------------------
 
@@ -818,7 +818,7 @@ def test_mixed_source_band_count_rejected(tmp_path):
 @pytest.mark.parametrize(
     "reader",
     [
-        pytest.param(_package_read_vrt, id="entry[package-read_vrt]"),
+        pytest.param(_package_read_vrt, id="entry[package-_read_vrt]"),
         pytest.param(open_geotiff, id="entry[open_geotiff]"),
     ],
 )
@@ -1103,7 +1103,7 @@ def test_supported_simple_vrt_round_trips_via_open_geotiff(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Reader-error narrowing: ``read_vrt`` historically ``except Exception``-ed
+# Reader-error narrowing: ``_read_vrt`` historically ``except Exception``-ed
 # every source read, swallowing real bugs. The catch is now
 # narrowed to I/O / parse / codec-decode errors only.
 #
@@ -1152,7 +1152,7 @@ def _write_simple_vrt(tmp_path, src_path, *, name: str | None = None):
 def _patch_read_to_array(monkeypatch, exc):
     """Make ``_reader.read_to_array`` raise ``exc`` on every call.
 
-    ``read_vrt`` does a local ``from ._reader import read_to_array``
+    ``_read_vrt`` does a local ``from ._reader import read_to_array``
     inside the function body, so patching the source attribute is
     enough -- the import picks up the stub at call time."""
     from xrspatial.geotiff import _reader
@@ -1210,7 +1210,7 @@ def test_narrow_except_io_or_parse_warns_in_default_mode(
     """I/O and parse failures warn-and-continue when
     ``missing_sources='warn'`` is opted in. The warning message names
     the source and the underlying exception type."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     src_path = tmp_path / f"src_{_uniq('narrow')}.tif"
     src_path.write_bytes(b'placeholder')
@@ -1220,7 +1220,7 @@ def test_narrow_except_io_or_parse_warns_in_default_mode(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path), missing_sources='warn')
+        da = _read_vrt(str(vrt_path), missing_sources='warn')
 
     assert da.shape == (4, 4)
     fallback = [
@@ -1240,7 +1240,7 @@ def test_narrow_except_io_or_parse_reraises_in_strict_mode(
     set_strict_env, monkeypatch, tmp_path, exc, _expected_type_name,
 ):
     """Strict mode re-raises all I/O / parse / codec-decode failures."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     src_path = tmp_path / f"src_{_uniq('strict')}.tif"
     src_path.write_bytes(b'placeholder')
@@ -1249,7 +1249,7 @@ def test_narrow_except_io_or_parse_reraises_in_strict_mode(
     _patch_read_to_array(monkeypatch, exc)
 
     with pytest.raises(type(exc)):
-        read_vrt(str(vrt_path))
+        _read_vrt(str(vrt_path))
 
 
 @pytest.mark.parametrize(
@@ -1265,7 +1265,7 @@ def test_narrow_except_bug_classes_propagate_in_default_mode(
     """Non-I/O bugs (``RuntimeError`` here as a stand-in, plus
     ``MemoryError``) must propagate even in default mode -- they are
     real failures, not "unreadable source" cases."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     src_path = tmp_path / f"src_{_uniq('bug')}.tif"
     src_path.write_bytes(b'placeholder')
@@ -1274,7 +1274,7 @@ def test_narrow_except_bug_classes_propagate_in_default_mode(
     _patch_read_to_array(monkeypatch, exc)
 
     with pytest.raises(type(exc)):
-        read_vrt(str(vrt_path))
+        _read_vrt(str(vrt_path))
 
 
 def test_narrow_except_runtime_error_propagates_in_strict_mode(
@@ -1282,7 +1282,7 @@ def test_narrow_except_runtime_error_propagates_in_strict_mode(
 ):
     """Strict mode propagates non-I/O bugs too (double-checks the
     runtime-error case under the strict flag)."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     src_path = tmp_path / f"src_{_uniq('bug_strict')}.tif"
     src_path.write_bytes(b'placeholder')
@@ -1291,7 +1291,7 @@ def test_narrow_except_runtime_error_propagates_in_strict_mode(
     _patch_read_to_array(monkeypatch, RuntimeError("synthetic strict"))
 
     with pytest.raises(RuntimeError, match='synthetic strict'):
-        read_vrt(str(vrt_path))
+        _read_vrt(str(vrt_path))
 
 
 @pytest.mark.skipif(not _has_zstandard(),
@@ -1304,7 +1304,7 @@ def test_narrow_except_zstd_error_warns_in_default_mode(
     single corrupt ZSTD tile does not abort the whole mosaic."""
     from zstandard import ZstdError
 
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     src_path = tmp_path / f"src_{_uniq('zstd')}.tif"
     src_path.write_bytes(b'placeholder')
@@ -1314,7 +1314,7 @@ def test_narrow_except_zstd_error_warns_in_default_mode(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path), missing_sources='warn')
+        da = _read_vrt(str(vrt_path), missing_sources='warn')
 
     assert da.shape == (4, 4)
     fallback = [
@@ -1333,7 +1333,7 @@ def test_narrow_except_zstd_error_reraises_in_strict_mode(
 ):
     from zstandard import ZstdError
 
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     src_path = tmp_path / f"src_{_uniq('zstd_strict')}.tif"
     src_path.write_bytes(b'placeholder')
@@ -1342,7 +1342,7 @@ def test_narrow_except_zstd_error_reraises_in_strict_mode(
     _patch_read_to_array(monkeypatch, ZstdError("synthetic zstd strict"))
 
     with pytest.raises(ZstdError, match='synthetic zstd strict'):
-        read_vrt(str(vrt_path))
+        _read_vrt(str(vrt_path))
 
 
 # ---------------------------------------------------------------------------
@@ -1739,7 +1739,7 @@ class TestSrcRectRejection:
 # ---------------------------------------------------------------------------
 #
 # ``open_geotiff`` documents ``overview_level`` and ``on_gpu_failure`` but
-# the VRT dispatch branch routes to ``read_vrt`` whose signature accepts
+# the VRT dispatch branch routes to ``_read_vrt`` whose signature accepts
 # neither, so the kwargs were silently dropped. The fix refuses the
 # unsupported combinations up front.
 
@@ -1771,9 +1771,9 @@ def _kwarg_drop_small_vrt(tmp_path):
     tile_b = tmp_path / "tile_b.tif"
     to_geotiff(da_b, str(tile_b))
 
-    from xrspatial.geotiff import write_vrt
+    from xrspatial.geotiff import build_vrt
     vrt_path = tmp_path / "mosaic.vrt"
-    write_vrt(str(vrt_path), [str(tile_a), str(tile_b)])
+    build_vrt(str(vrt_path), [str(tile_a), str(tile_b)])
     return str(vrt_path)
 
 
@@ -1806,7 +1806,7 @@ class TestOpenGeotiffVrtKwargRejection:
 
     def test_without_unsupported_kwargs_still_works(self, _kwarg_drop_small_vrt):
         """The previously-accepted kwargs still flow through to
-        ``read_vrt``."""
+        ``_read_vrt``."""
         da = open_geotiff(_kwarg_drop_small_vrt)
         assert da.shape == (4, 8)
 

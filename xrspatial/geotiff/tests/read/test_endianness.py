@@ -1,6 +1,6 @@
 """Big-endian / little-endian GeoTIFF reader paths.
 
-Big-endian multi-byte TIFFs read via ``read_geotiff_gpu`` once crashed
+Big-endian multi-byte TIFFs read via ``_read_geotiff_gpu`` once crashed
 inside the GPU decode pipeline because ``cupy.ndarray`` does not expose
 ``byteswap()``. The dispatcher caught the error and silently fell back to
 CPU, so results stayed correct but the GPU fast path was lost. These
@@ -29,7 +29,7 @@ def test_read_geotiff_gpu_big_endian_multibyte(tmp_path, dtype):
     import cupy
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
     rng = np.random.RandomState(20260507)
@@ -50,7 +50,7 @@ def test_read_geotiff_gpu_big_endian_multibyte(tmp_path, dtype):
         f"CPU baseline drifted from native dtype: got {cpu.dtype}"
     )
 
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
 
     assert isinstance(gpu_da.data, cupy.ndarray), (
         "expected cupy-backed DataArray, got "
@@ -75,7 +75,7 @@ def test_read_geotiff_gpu_big_endian_uncompressed(tmp_path):
     import cupy
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     rng = np.random.RandomState(20260507)
     arr = rng.randint(0, 60000, size=(32, 48), dtype=np.uint16)
@@ -85,7 +85,7 @@ def test_read_geotiff_gpu_big_endian_uncompressed(tmp_path):
         str(path), arr, byteorder=">", compression=None, tile=(16, 16),
     )
 
-    gpu_da = read_geotiff_gpu(str(path))
+    gpu_da = _read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray), (
         "expected cupy-backed DataArray; GPU path may have fallen back"
     )

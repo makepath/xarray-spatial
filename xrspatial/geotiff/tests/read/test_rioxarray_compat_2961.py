@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, to_geotiff, write_vrt
+from xrspatial.geotiff import build_vrt, open_geotiff, to_geotiff
 from xrspatial.geotiff._runtime import GeoTIFFFallbackWarning
 
 
@@ -226,13 +226,13 @@ def test_parse_coordinates_false_gpu_rejected(tmp_path):
 
 def test_mask_and_scale_vrt_rejected(tmp_path):
     src = _int_sentinel_tiff(str(tmp_path / "t2961_gate_vrt_src.tif"))
-    vrt = write_vrt(str(tmp_path / "t2961_gate.vrt"), source_files=[src])
+    vrt = build_vrt(str(tmp_path / "t2961_gate.vrt"), source_files=[src])
     with pytest.raises(ValueError, match="mask_and_scale.*.vrt"):
         open_geotiff(vrt, mask_and_scale=True)
 
 
 def test_parse_coordinates_false_vrt_rejected(tmp_path):
     src = _int_sentinel_tiff(str(tmp_path / "t2961_gate_vrt_pc_src.tif"))
-    vrt = write_vrt(str(tmp_path / "t2961_gate_pc.vrt"), source_files=[src])
+    vrt = build_vrt(str(tmp_path / "t2961_gate_pc.vrt"), source_files=[src])
     with pytest.raises(ValueError, match="parse_coordinates=False.*.vrt"):
         open_geotiff(vrt, parse_coordinates=False)
