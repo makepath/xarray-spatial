@@ -79,8 +79,8 @@ def test_open_geotiff_gpu_chunks_int_round_trip(tmp_path):
 
 
 def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
-    """`read_geotiff_gpu(chunks=(rh, cw))` accepts tuple chunk specs."""
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
+    """`_read_geotiff_gpu(chunks=(rh, cw))` accepts tuple chunk specs."""
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(11)
     arr = rng.randint(0, 60_000, (192, 256)).astype(np.uint16)
@@ -89,7 +89,7 @@ def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
 
     eager = np.asarray(open_geotiff(path).data)
 
-    da_arr = read_geotiff_gpu(path, chunks=(96, 128))
+    da_arr = _read_geotiff_gpu(path, chunks=(96, 128))
 
     computed = _assert_dask_cupy_dask_cupy_combined(
         da_arr,
@@ -104,7 +104,7 @@ def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
 def test_open_geotiff_gpu_chunks_multiband(tmp_path):
     """Combined backend round-trips a 3-band tiled raster.
 
-    Multi-band exercises the planar-config branch in `read_geotiff_gpu`
+    Multi-band exercises the planar-config branch in `_read_geotiff_gpu`
     that the chunks=None path also walks; without this, a planar-related
     refactor could leave the chunked path with a stale shape.
     """

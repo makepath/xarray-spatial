@@ -1,4 +1,4 @@
-"""GPU-only helpers consumed by ``read_geotiff_gpu`` and the GPU write path.
+"""GPU-only helpers consumed by ``_read_geotiff_gpu`` and the GPU write path.
 
 Lazy-imports cupy at call time so the module imports cleanly on
 numpy-only environments. Every public entry point that touches GPU
@@ -105,7 +105,7 @@ def _gpu_decode_single_band_tiles(
     invoke those kernels once per band with ``samples=1`` and stack the
     resulting 2-D arrays into ``(H, W, samples)`` afterwards.
 
-    Mirrors the two-stage GPU pipeline in ``read_geotiff_gpu`` -- GDS
+    Mirrors the two-stage GPU pipeline in ``_read_geotiff_gpu`` -- GDS
     first, then CPU-extracted-tiles GPU decode. ``lazy_data`` is a
     zero-arg callable that returns the full file bytes; it caches its
     result so the first band that needs the stage-2 fallback pays the
@@ -135,7 +135,7 @@ def _gpu_decode_single_band_tiles(
         if gpu == 'strict' or _geotiff_strict_mode():
             raise
         warnings.warn(
-            f"read_geotiff_gpu: GPU decode failed "
+            f"_read_geotiff_gpu: GPU decode failed "
             f"({type(e).__name__}: {e}); falling back to CPU.",
             RuntimeWarning,
             stacklevel=3,
@@ -159,7 +159,7 @@ def _gpu_decode_single_band_tiles(
             if gpu == 'strict' or _geotiff_strict_mode():
                 raise
             warnings.warn(
-                f"read_geotiff_gpu: GPU decode failed "
+                f"_read_geotiff_gpu: GPU decode failed "
                 f"({type(e).__name__}: {e}); falling back to CPU.",
                 RuntimeWarning,
                 stacklevel=3,
@@ -225,7 +225,7 @@ def _apply_orientation_geo_info(geo_info, orientation: int,
                                 file_h: int, file_w: int):
     """Mirror the transform updates `_reader.read_to_array` does post-flip.
 
-    Centralised so both ``read_to_array`` (CPU) and ``read_geotiff_gpu``
+    Centralised so both ``read_to_array`` (CPU) and ``_read_geotiff_gpu``
     (this module) update the GeoTransform consistently. Operates only
     on ``geo_info.transform``; the rest of the GeoInfo struct stays as
     parsed.
@@ -287,8 +287,8 @@ def _apply_orientation_geo_info(geo_info, orientation: int,
 def _gpu_apply_window_band(arr_gpu, geo_info, *, window, band):
     """Slice a fully-decoded GPU array down to a window and/or band.
 
-    Used by ``read_geotiff_gpu`` to keep the public surface in line with
-    ``open_geotiff`` and ``read_geotiff_dask``: callers can pass ``window``
+    Used by ``_read_geotiff_gpu`` to keep the public surface in line with
+    ``open_geotiff`` and ``_read_geotiff_dask``: callers can pass ``window``
     and ``band``, and the returned DataArray covers exactly that subset.
 
     The current implementation slices on device after the full-image GPU

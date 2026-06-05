@@ -479,7 +479,7 @@ def _validate_write_rich_tag_optin(
     if allow_experimental_codecs:
         return
     # Round-trip exemption: a DataArray that came from
-    # ``open_geotiff`` / ``read_geotiff_dask`` / ``read_geotiff_gpu``
+    # ``open_geotiff`` / ``_read_geotiff_dask`` / ``_read_geotiff_gpu``
     # carries the contract marker. Writing it back is the canonical
     # round-trip and should not require a new flag.
     #
@@ -1216,7 +1216,7 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     ``window`` is a ``(r0, c0, r1, c1)`` tuple for windowed reads; when
     set, the emitted ``attrs['transform']`` shifts the origin to the
     window's top-left. The eager path and the dask path (which threads
-    ``window=`` through ``read_geotiff_dask``) both pass
+    ``window=`` through ``_read_geotiff_dask``) both pass
     the outer window through this helper so the resulting DataArray
     advertises the windowed transform. The GPU path does not currently
     expose a windowed read, so it passes ``window=None``.
@@ -1400,7 +1400,7 @@ def _extract_rich_tags(attrs: dict) -> dict:
     """Extract the rich-tag set forwarded by the writers to ``write(...)``.
 
     Centralises the bookkeeping shared by :func:`to_geotiff`,
-    :func:`_write_vrt_tiled`, and :func:`write_geotiff_gpu`:
+    :func:`_write_vrt_tiled`, and :func:`_write_geotiff_gpu`:
 
     * ``raster_type`` -- mapped from ``attrs['raster_type']`` ('point'
       becomes :data:`RASTER_PIXEL_IS_POINT`; everything else stays

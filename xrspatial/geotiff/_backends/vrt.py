@@ -1,9 +1,9 @@
-"""VRT read backend: ``read_vrt`` and its dask helpers.
+"""VRT read backend: ``_read_vrt`` and its dask helpers.
 
 The XML parsing, source-path containment, per-source decode, and
 integer-sentinel masking live in ``xrspatial/geotiff/_vrt.py``; this
 module holds only the orchestration that picks among the eager, dask,
-and GPU paths exposed through the public ``read_vrt`` entry point.
+and GPU paths exposed through the public ``_read_vrt`` entry point.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .._validation import (_gdal_geotransform_to_affine_tuple, _validate_chunks_
                            _validate_dispatch_kwargs, _validate_dtype_cast)
 
 # Hard cap on the per-VRT chunk task count. Matches the
-# ``_MAX_DASK_CHUNKS`` value used by ``read_geotiff_dask`` so the two
+# ``_MAX_DASK_CHUNKS`` value used by ``_read_geotiff_dask`` so the two
 # entry points refuse the same scheduler-busting chunk grids.
 _MAX_VRT_DASK_CHUNKS = 50_000
 
@@ -112,7 +112,7 @@ def _vrt_to_synthetic_geo_info(vrt) -> GeoInfo:
     )
 
 
-def read_vrt(source: str, *,
+def _read_vrt(source: str, *,
              dtype: str | np.dtype | None = None,
              window: tuple | None = None,
              overview_level: int | None = None,
@@ -202,13 +202,13 @@ def read_vrt(source: str, *,
         [advanced] Maximum allowed pixel count
         (width * height * samples) for the assembled VRT region. None
         uses the reader default (~1 billion). Matches ``open_geotiff``
-        / ``read_geotiff_dask`` / ``read_geotiff_gpu``.
+        / ``_read_geotiff_dask`` / ``_read_geotiff_gpu``.
     missing_sources : {'raise', 'warn'}, default 'raise'
         [advanced] Policy for unreadable source files referenced by
         the VRT.
         ``'raise'`` (the default) fails immediately on an
         unreadable backing source so a partial mosaic never surfaces
-        silently. This matches the internal ``_vrt.read_vrt`` default
+        silently. This matches the internal ``_vrt._read_vrt`` default
         and the rest of the geotiff module's up-front rejection of
         malformed input. Both the eager and chunked dispatchers raise
         at construction time when the static missing-source sweep
@@ -262,7 +262,7 @@ def read_vrt(source: str, *,
         ``open_geotiff`` for the full description.
     stable_only : bool, default False
         [advanced] Read-side opt-in for stable-tier sources only. When
-        ``True``, ``read_vrt`` raises :class:`VRTStableSourcesOnlyError`
+        ``True``, ``_read_vrt`` raises :class:`VRTStableSourcesOnlyError`
         before any pixel decode because ``reader.vrt`` itself sits at
         the ``advanced`` tier in :data:`SUPPORTED_FEATURES` and VRT
         child sources can declare any codec the GeoTIFF reader supports
@@ -290,7 +290,7 @@ def read_vrt(source: str, *,
         [internal-only] Accepted for cross-backend signature symmetry
         only. VRT reads do not go through the GPU decoder pipeline, so
         passing this kwarg raises ``ValueError`` at dispatch. See
-        ``read_geotiff_gpu`` for the kwarg's meaning on the GPU
+        ``_read_geotiff_gpu`` for the kwarg's meaning on the GPU
         reader.
     max_cloud_bytes : int or None, optional
         [internal-only] Accepted for cross-backend signature symmetry
@@ -341,12 +341,12 @@ def read_vrt(source: str, *,
     Safe usage. Mosaic two compatible tiles and read with the
     fail-closed defaults:
 
-    >>> from xrspatial.geotiff import open_geotiff, write_vrt
-    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    >>> from xrspatial.geotiff import open_geotiff, build_vrt
+    >>> vrt_path = build_vrt(  # doctest: +SKIP
     ...     'mosaic.vrt',
     ...     source_files=['tile_west.tif', 'tile_east.tif'],
     ... )
-    >>> da = read_vrt(vrt_path)  # doctest: +SKIP
+    >>> da = _read_vrt(vrt_path)  # doctest: +SKIP
 
     Intentionally raises. A VRT whose source tiles disagree on their
     per-band nodata sentinels is rejected by the default
@@ -354,7 +354,7 @@ def read_vrt(source: str, *,
 
     >>> from xrspatial.geotiff import MixedBandMetadataError
     >>> try:  # doctest: +SKIP
-    ...     read_vrt('mixed_nodata.vrt')
+    ...     _read_vrt('mixed_nodata.vrt')
     ... except MixedBandMetadataError:
     ...     pass  # pass band_nodata='first' to opt back into the
     ...           # legacy flatten-to-band-0 semantics, or fix the
@@ -385,14 +385,14 @@ def read_vrt(source: str, *,
 
     # Shared dispatcher-kwarg validator so direct callers see the same
     # rejections as ``open_geotiff``. For
-    # ``read_vrt`` the helper rejects ``on_gpu_failure`` (VRT reads do
+    # ``_read_vrt`` the helper rejects ``on_gpu_failure`` (VRT reads do
     # not go through a GPU decoder pipeline), ``max_cloud_bytes`` (the
     # VRT reader does not consume the cloud-byte budget),
     # and validates ``overview_level``'s type. ``missing_sources`` and
     # ``band_nodata`` are legitimate VRT kwargs so the helper's
     # VRT-only guard is a no-op here. ``gpu=False`` is passed so that
     # an explicit ``on_gpu_failure`` is rejected regardless of the
-    # ``read_vrt(gpu=)`` output-device kwarg.
+    # ``_read_vrt(gpu=)`` output-device kwarg.
     _validate_dispatch_kwargs(
         source=source,
         gpu=False,
@@ -404,7 +404,7 @@ def read_vrt(source: str, *,
         max_cloud_bytes=max_cloud_bytes,
     )
 
-    # ``overview_level`` is not consumed by ``read_vrt`` (the VRT XML
+    # ``overview_level`` is not consumed by ``_read_vrt`` (the VRT XML
     # references its own source files; overview selection would need to
     # apply to each one). ``overview_level=0`` matches the documented
     # "full resolution" default, so treat it as a no-op. Mirrors the
@@ -419,7 +419,7 @@ def read_vrt(source: str, *,
             "to open_geotiff on a .tif source, or drop the kwarg.")
 
     # Reject non-positive chunk sizes up front so the VRT dask path
-    # surfaces the same error as ``read_geotiff_dask``. Without
+    # surfaces the same error as ``_read_geotiff_dask``. Without
     # this check ``chunks=0`` raised ``ZeroDivisionError`` deep in dask
     # and ``chunks=-1`` was silently accepted. ``chunks=None`` is the
     # default (eager read), so allow it through here.
@@ -614,7 +614,7 @@ def read_vrt(source: str, *,
     # sentinel, the integer-promotion block below would mask against
     # band 0's sentinel, and band N's actual nodata pixels would
     # survive as literal integers. ``band`` has
-    # already been validated by ``_vrt.read_vrt`` as
+    # already been validated by ``_vrt._read_vrt`` as
     # 0 <= band < len(vrt.bands), so a simple lookup is safe here.
     #
     # Documented divergence: per-band sentinel selection cannot ride
@@ -774,7 +774,7 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
     Called by ``dask.delayed`` from :func:`_read_vrt_chunked`. The
     function reads only the destination window via the existing VRT
     internal reader, applies the same integer-sentinel masking the
-    eager :func:`read_vrt` does post-decode, casts to the dtype the
+    eager :func:`_read_vrt` does post-decode, casts to the dtype the
     dask graph declared up front, and optionally moves the block to
     the GPU.
 
@@ -790,7 +790,7 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
 
     ``allow_rotated`` / ``allow_invalid_nodata`` are forwarded to the
     internal reader so the per-source GeoTIFF read in each task honors
-    the opt-ins the caller set on the public ``read_vrt`` boundary,
+    the opt-ins the caller set on the public ``_read_vrt`` boundary,
     matching the eager path.
     """
     from .._vrt import _apply_integer_sentinel_mask
@@ -842,7 +842,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
                       mask_nodata: bool = True):
-    """Lazy ``read_vrt`` dispatch when ``chunks=`` is set.
+    """Lazy ``_read_vrt`` dispatch when ``chunks=`` is set.
 
     Parses the VRT XML once to recover the extent, CRS, GeoTransform,
     and per-band metadata, then builds a dask graph with one task per
@@ -895,7 +895,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
 
     # Centralised VRT capability validator. Run at graph
     # build time so capability mismatches surface here, not inside a
-    # per-chunk decode task. ``read_vrt(..., chunks=)`` previously let
+    # per-chunk decode task. ``_read_vrt(..., chunks=)`` previously let
     # unsupported features ride through the graph build and raised
     # deep in a ``compute()`` chunk function (an opaque user
     # experience); the validator moves the rejection back to where the
@@ -952,8 +952,8 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     )
 
     # Up-front pixel-count guard against the windowed extent. Mirrors
-    # the eager ``_vrt.read_vrt`` (which calls ``_check_dimensions`` on
-    # the full output shape) and ``read_geotiff_dask`` (which guards
+    # the eager ``_vrt._read_vrt`` (which calls ``_check_dimensions`` on
+    # the full output shape) and ``_read_geotiff_dask`` (which guards
     # ``full_h * full_w * eff_bands`` before scheduling any task). Each
     # chunk task additionally re-checks via ``max_pixels`` through the
     # internal reader, but catching an oversized request up front saves
@@ -970,7 +970,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         ch_h, ch_w = chunks
 
     # Refuse chunk grids that would build more tasks than the scheduler
-    # can hold without OOMing the driver. ``read_geotiff_dask`` uses the
+    # can hold without OOMing the driver. ``_read_geotiff_dask`` uses the
     # same cap with the same suggestion logic (see the
     # ``_MAX_DASK_CHUNKS`` guard upstream).
     n_chunks = ((full_h + ch_h - 1) // ch_h) * ((full_w + ch_w - 1) // ch_w)
@@ -979,7 +979,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         suggested_h = int(math.ceil(ch_h * scale))
         suggested_w = int(math.ceil(ch_w * scale))
         raise ValueError(
-            f"read_vrt: chunks=({ch_h}, {ch_w}) on a "
+            f"_read_vrt: chunks=({ch_h}, {ch_w}) on a "
             f"{full_h}x{full_w} VRT region would produce {n_chunks:,} "
             f"dask tasks, exceeding the {_MAX_VRT_DASK_CHUNKS:,}-task "
             f"cap. Pass a larger chunks=... value explicitly (e.g. "
@@ -1107,7 +1107,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         final_dtype = declared_dtype
 
     # Coordinates: derive from the VRT GeoTransform and the windowed
-    # extent. Mirrors the eager branch in ``read_vrt`` so chunked and
+    # extent. Mirrors the eager branch in ``_read_vrt`` so chunked and
     # eager reads share the same x/y arrays.
     gt = vrt.geo_transform
     _vrt_is_rotated = (
@@ -1212,7 +1212,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                 })
 
     # Fail-fast for ``missing_sources='raise'`` (the public default).
-    # The docstring at the top of ``read_vrt`` promises that
+    # The docstring at the top of ``_read_vrt`` promises that
     # ``'raise'`` "fails immediately on an unreadable backing source so a
     # partial mosaic never surfaces silently". Without this guard the
     # chunked path constructs a delayed graph whose tasks each raise

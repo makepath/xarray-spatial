@@ -78,7 +78,7 @@ def _check_gpu_memory(required_bytes: int, what: str = "tile buffer") -> None:
             f"but only {free:,} bytes free on device (cap is "
             f"{_GPU_FREE_MEMORY_FRACTION:.0%} of free = {budget:,} "
             "bytes). Consider reading the file in chunks via "
-            "read_geotiff_dask(..., chunks=...) or freeing GPU memory "
+            "_read_geotiff_dask(..., chunks=...) or freeing GPU memory "
             "with cupy.get_default_memory_pool().free_all_blocks()."
         )
 

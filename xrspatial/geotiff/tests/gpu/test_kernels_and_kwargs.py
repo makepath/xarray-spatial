@@ -14,13 +14,13 @@ host.
 Sections (in source-file order):
 
 * ``test_gpu_cuda_preflight_1903.py`` -- CUDA preflight in
-  ``read_geotiff_gpu``.
+  ``_read_geotiff_gpu``.
 * ``test_gpu_kwarg_rename_1560.py`` -- ``gpu=`` -> ``on_gpu_failure=``
   rename with deprecation shim.
 * ``test_gpu_strict_fallback_1516.py`` -- ``gpu='auto'`` warns +
   fallbacks; ``gpu='strict'`` re-raises.
 * ``test_gpu_fallback_forwards_kwargs_2238.py`` -- CPU-fallback sites
-  in ``read_geotiff_gpu`` forward caller kwargs.
+  in ``_read_geotiff_gpu`` forward caller kwargs.
 * ``test_kvikio_batched_pread_1688.py`` -- single-allocation batched
   pread in ``_try_kvikio_read_tiles``.
 * ``test_gds_chunked_gpu_parity_1896.py`` -- bool-band rejection and
@@ -58,7 +58,7 @@ _CUPY_AVAILABLE = importlib.util.find_spec("cupy") is not None
 
 
 # =====================================================================
-# Section 1903 -- CUDA preflight in ``read_geotiff_gpu``.
+# Section 1903 -- CUDA preflight in ``_read_geotiff_gpu``.
 # =====================================================================
 #
 # When CuPy imports but the CUDA driver is
@@ -131,14 +131,14 @@ def test_preflight_returns_silently_when_device_present_1903(monkeypatch):
 
 
 def test_read_geotiff_gpu_preflight_surface_1903(monkeypatch, tmp_path):
-    """End-to-end: read_geotiff_gpu raises before touching any IFDs.
+    """End-to-end: _read_geotiff_gpu raises before touching any IFDs.
 
     Build a real TIFF so the function gets past the file-source setup,
     then verify the CUDA preflight RuntimeError surfaces from the
     public entry point rather than from a deep cupy.asarray() call.
     """
     from xrspatial.geotiff import to_geotiff
-    from xrspatial.geotiff._backends.gpu import read_geotiff_gpu
+    from xrspatial.geotiff._backends.gpu import _read_geotiff_gpu
 
     da = xr.DataArray(
         np.arange(16, dtype=np.float32).reshape(4, 4),
@@ -161,7 +161,7 @@ def test_read_geotiff_gpu_preflight_surface_1903(monkeypatch, tmp_path):
     _install_cupy_stub_1903(monkeypatch, get_device_count=_raise)
 
     with pytest.raises(RuntimeError, match="CUDA runtime is not usable"):
-        read_geotiff_gpu(path)
+        _read_geotiff_gpu(path)
 
 
 @pytest.mark.skipif(
@@ -170,7 +170,7 @@ def test_read_geotiff_gpu_preflight_surface_1903(monkeypatch, tmp_path):
 )
 def test_preflight_when_real_cupy_present_1903(monkeypatch):
     """When cupy is really installed, monkeypatching the runtime symbol
-    works the same way -- the import in read_geotiff_gpu finds the
+    works the same way -- the import in _read_geotiff_gpu finds the
     patched attribute."""
     import cupy
 
@@ -191,37 +191,37 @@ def test_preflight_when_real_cupy_present_1903(monkeypatch):
 # Section 1560 -- ``gpu=`` -> ``on_gpu_failure=`` rename
 # =====================================================================
 #
-# ``read_geotiff_gpu`` previously took a ``gpu={'auto','strict'}`` kwarg
+# ``_read_geotiff_gpu`` previously took a ``gpu={'auto','strict'}`` kwarg
 # that controlled GPU-failure policy, sharing a name with the boolean
-# ``gpu=`` kwarg on ``open_geotiff`` / ``to_geotiff`` / ``read_vrt``.
-# Calling ``read_geotiff_gpu(path, gpu=True)`` -- the mental model after
+# ``gpu=`` kwarg on ``open_geotiff`` / ``to_geotiff`` / ``_read_vrt``.
+# Calling ``_read_geotiff_gpu(path, gpu=True)`` -- the mental model after
 # using ``open_geotiff(path, gpu=True)`` -- raised the unhelpful
 # ``ValueError: gpu must be 'auto' or 'strict', got True``.
 #
 # The fix renames the kwarg to ``on_gpu_failure`` and keeps ``gpu=`` as
 # a deprecation shim. These tests exercise the validation path only,
-# which fires before the ``cupy`` import inside ``read_geotiff_gpu``;
+# which fires before the ``cupy`` import inside ``_read_geotiff_gpu``;
 # no GPU runtime needed.
 
 
 def test_on_gpu_failure_invalid_value_raises_value_error_1560():
     """Bad ``on_gpu_failure`` value still raises ``ValueError``."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with pytest.raises(ValueError, match="on_gpu_failure must be"):
-        read_geotiff_gpu("/nonexistent.tif", on_gpu_failure='loose')
+        _read_geotiff_gpu("/nonexistent.tif", on_gpu_failure='loose')
 
 
 def test_gpu_alias_emits_deprecation_warning_1560():
     """Old ``gpu=`` kwarg still routes through, with a DeprecationWarning."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with warnings.catch_warnings(record=True) as records:
         warnings.simplefilter("always")
         # Pass an invalid sentinel so we don't have to mock the full GPU
         # pipeline; ValueError fires after the deprecation handler runs.
         with pytest.raises(ValueError, match="on_gpu_failure must be"):
-            read_geotiff_gpu("/nonexistent.tif", gpu='loose')
+            _read_geotiff_gpu("/nonexistent.tif", gpu='loose')
 
     deprecations = [
         r for r in records if issubclass(r.category, DeprecationWarning)
@@ -241,7 +241,7 @@ def test_gpu_alias_accepts_old_values_without_validation_error_1560(
     on broken-CUDA hosts and the test fails for an environmental
     reason that has nothing to do with the alias logic under test.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     # Install a stub cupy whose preflight passes; the call should then
     # reach the file-read stage and raise ``FileNotFoundError``. This
@@ -255,7 +255,7 @@ def test_gpu_alias_accepts_old_values_without_validation_error_1560(
         with pytest.raises(
                 (FileNotFoundError, OSError, ValueError)
         ) as exc_info:
-            read_geotiff_gpu("/nonexistent.tif", gpu='strict')
+            _read_geotiff_gpu("/nonexistent.tif", gpu='strict')
 
     # The validation ValueError carries our exact message; a generic
     # file-read failure is fine because it means validation passed.
@@ -265,10 +265,10 @@ def test_gpu_alias_accepts_old_values_without_validation_error_1560(
 
 def test_passing_both_raises_type_error_1560():
     """Mixing the new and deprecated names is ambiguous; refuse."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with pytest.raises(TypeError, match="pass either 'on_gpu_failure' or"):
-        read_geotiff_gpu(
+        _read_geotiff_gpu(
             "/nonexistent.tif",
             on_gpu_failure='strict',
             gpu='auto',
@@ -288,10 +288,10 @@ def test_passing_both_raises_regardless_of_values_1560(
     case where the caller passes the default value explicitly alongside
     the deprecated alias.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with pytest.raises(TypeError, match="pass either 'on_gpu_failure' or"):
-        read_geotiff_gpu(
+        _read_geotiff_gpu(
             "/nonexistent.tif",
             on_gpu_failure=on_gpu_failure_val,
             gpu=gpu_val,
@@ -304,19 +304,19 @@ def test_gpu_alias_bool_no_longer_misleading_value_error_1560():
     'strict', got True``. The new error explicitly names
     ``on_gpu_failure`` so the rename is discoverable from the traceback.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         with pytest.raises(ValueError, match="on_gpu_failure must be"):
-            read_geotiff_gpu("/nonexistent.tif", gpu=True)
+            _read_geotiff_gpu("/nonexistent.tif", gpu=True)
 
 
 # =====================================================================
 # Section 1516 -- ``gpu='auto'`` warns + falls back; ``'strict'`` raises
 # =====================================================================
 #
-# ``read_geotiff_gpu`` previously wrapped the GPU decode in a too-broad
+# ``_read_geotiff_gpu`` previously wrapped the GPU decode in a too-broad
 # ``try/except Exception: pass`` that silently swallowed any failure
 # and fell through to the CPU path. Real GPU regressions (an
 # ``AttributeError``, for one) lived undetected because the user-visible result
@@ -347,7 +347,7 @@ def _cuda_actually_available_1516() -> bool:
 
     cupy may be importable on a machine without a working CUDA runtime
     (no driver, no device, ROCm-only, etc.). The CPU-fallback branch in
-    ``read_geotiff_gpu`` calls ``cupy.asarray`` which would then fail at
+    ``_read_geotiff_gpu`` calls ``cupy.asarray`` which would then fail at
     allocation time. Treat that case the same as cupy-not-installed.
     """
     try:
@@ -385,7 +385,7 @@ def _ensure_cupy_stub_1516() -> bool:
     cuda_mod = types.ModuleType('cupy.cuda')
     cuda_mod.is_available = lambda: False
 
-    # Pre-flight check in ``read_geotiff_gpu`` calls
+    # Pre-flight check in ``_read_geotiff_gpu`` calls
     # ``cupy.cuda.runtime.getDeviceCount()`` to surface a clean
     # ``RuntimeError`` for broken-driver setups. Tests in this section
     # want to exercise the downstream simulated-failure paths, so the
@@ -469,7 +469,7 @@ def test_default_mode_warns_on_gpu_failure_1516(tiled_tiff_path_1516, monkeypatc
     """Default ``gpu='auto'`` warns and falls back to the CPU result."""
     inserted_stub = _ensure_cupy_stub_1516()
     try:
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, expected = tiled_tiff_path_1516
 
@@ -477,7 +477,7 @@ def test_default_mode_warns_on_gpu_failure_1516(tiled_tiff_path_1516, monkeypatc
         _patch_gpu_decode_to_raise_1516(monkeypatch, synthetic)
 
         with pytest.warns(RuntimeWarning, match="GPU decode failed"):
-            result = read_geotiff_gpu(path)
+            result = _read_geotiff_gpu(path)
 
         # Fallback returned the CPU-decoded data. Real cupy arrays
         # expose ``.get()`` to copy back to host; the numpy stub returns
@@ -495,7 +495,7 @@ def test_strict_mode_reraises_1516(tiled_tiff_path_1516, monkeypatch):
     """``gpu='strict'`` re-raises the original GPU exception."""
     inserted_stub = _ensure_cupy_stub_1516()
     try:
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = tiled_tiff_path_1516
 
@@ -503,7 +503,7 @@ def test_strict_mode_reraises_1516(tiled_tiff_path_1516, monkeypatch):
         _patch_gpu_decode_to_raise_1516(monkeypatch, synthetic)
 
         with pytest.raises(RuntimeError, match="simulated GPU failure"):
-            read_geotiff_gpu(path, gpu='strict')
+            _read_geotiff_gpu(path, gpu='strict')
     finally:
         if inserted_stub:
             _restore_cupy_1516()
@@ -520,7 +520,7 @@ def test_strict_mode_reraises_second_stage_1516(
     """
     inserted_stub = _ensure_cupy_stub_1516()
     try:
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = tiled_tiff_path_1516
 
@@ -529,7 +529,7 @@ def test_strict_mode_reraises_second_stage_1516(
 
         with pytest.raises(RuntimeError,
                            match="simulated second-stage GPU failure"):
-            read_geotiff_gpu(path, gpu='strict')
+            _read_geotiff_gpu(path, gpu='strict')
     finally:
         if inserted_stub:
             _restore_cupy_1516()
@@ -546,7 +546,7 @@ def test_default_mode_warns_on_second_stage_failure_1516(
     """
     inserted_stub = _ensure_cupy_stub_1516()
     try:
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, expected = tiled_tiff_path_1516
 
@@ -555,7 +555,7 @@ def test_default_mode_warns_on_second_stage_failure_1516(
 
         with warnings.catch_warnings(record=True) as records:
             warnings.simplefilter("always")
-            result = read_geotiff_gpu(path)
+            result = _read_geotiff_gpu(path)
 
         gpu_warnings = [
             w for w in records
@@ -580,7 +580,7 @@ def test_invalid_gpu_kwarg_rejected_1516(tiled_tiff_path_1516):
     """An unknown ``gpu=`` value raises ``ValueError`` with a clear message."""
     inserted_stub = _ensure_cupy_stub_1516()
     try:
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path, _ = tiled_tiff_path_1516
 
@@ -591,7 +591,7 @@ def test_invalid_gpu_kwarg_rejected_1516(tiled_tiff_path_1516):
                            match="on_gpu_failure must be 'auto' or 'strict'"):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
-                read_geotiff_gpu(path, gpu='loose')
+                _read_geotiff_gpu(path, gpu='loose')
     finally:
         if inserted_stub:
             _restore_cupy_1516()
@@ -601,7 +601,7 @@ def test_invalid_gpu_kwarg_rejected_1516(tiled_tiff_path_1516):
 # Section 2238 -- CPU-fallback sites forward caller kwargs
 # =====================================================================
 #
-# ``read_geotiff_gpu`` has four CPU-fallback call sites to
+# ``_read_geotiff_gpu`` has four CPU-fallback call sites to
 # ``_read_to_array``:
 # - the stripped-layout branch
 # - the planar=2 per-band stage-2 fallback
@@ -743,7 +743,7 @@ def test_stripped_fallback_forwards_allow_rotated_2238(tmp_path, monkeypatch):
     behaviour; this one pins the kwarg-forwarding contract via a
     recorder so a later refactor cannot silently drop the kwarg again.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gpu_backend
     from xrspatial.geotiff._geotags import TAG_MODEL_TRANSFORMATION
 
@@ -780,7 +780,7 @@ def test_stripped_fallback_forwards_allow_rotated_2238(tmp_path, monkeypatch):
     wrapper, seen = _make_kwarg_recorder_2238()
     monkeypatch.setattr(gpu_backend, '_read_to_array', wrapper, raising=True)
 
-    da = read_geotiff_gpu(str(src), allow_rotated=True)
+    da = _read_geotiff_gpu(str(src), allow_rotated=True)
 
     assert len(seen) == 1, f"expected one fallback call, got {len(seen)}"
     assert seen[0].get('allow_rotated') is True, (
@@ -792,7 +792,7 @@ def test_stripped_fallback_forwards_allow_rotated_2238(tmp_path, monkeypatch):
 @_gpu_only
 def test_sparse_tile_fallback_forwards_all_kwargs_2238(tmp_path, monkeypatch):
     """Sparse-tile fallback hands every caller kwarg to ``_read_to_array``."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gpu_backend
 
     src = tmp_path / "2238_sparse_rotated.tif"
@@ -807,7 +807,7 @@ def test_sparse_tile_fallback_forwards_all_kwargs_2238(tmp_path, monkeypatch):
     requested_window = (0, 0, 16, 16)
     requested_max_pixels = 10_000
 
-    da = read_geotiff_gpu(
+    da = _read_geotiff_gpu(
         str(src),
         allow_rotated=True,
         window=requested_window,
@@ -841,7 +841,7 @@ def test_sparse_tile_fallback_forwards_all_kwargs_2238(tmp_path, monkeypatch):
 def test_gpu_decode_failure_fallback_forwards_all_kwargs_2238(
         tmp_path, monkeypatch):
     """``gpu_decode_tiles`` failure routes through fallback with kwargs."""
-    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu
+    from xrspatial.geotiff import _gpu_decode, _read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gpu_backend
 
     src = tmp_path / "2238_decode_fail.tif"
@@ -867,7 +867,7 @@ def test_gpu_decode_failure_fallback_forwards_all_kwargs_2238(
     requested_window = (0, 0, 16, 16)
     requested_max_pixels = 5_000
 
-    da = read_geotiff_gpu(
+    da = _read_geotiff_gpu(
         str(src),
         allow_rotated=True,
         window=requested_window,
@@ -907,7 +907,7 @@ def test_planar2_fallback_forwards_all_kwargs_2238(tmp_path, monkeypatch):
     """
     tifffile = pytest.importorskip("tifffile")
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gpu_backend
 
     src = tmp_path / "2238_planar2.tif"
@@ -933,7 +933,7 @@ def test_planar2_fallback_forwards_all_kwargs_2238(tmp_path, monkeypatch):
 
     requested_max_pixels = 50_000
 
-    da = read_geotiff_gpu(
+    da = _read_geotiff_gpu(
         str(src),
         max_pixels=requested_max_pixels,
     )
@@ -971,7 +971,7 @@ def test_decode_failure_fallback_applies_window_band_2238(
     """
     tifffile = pytest.importorskip("tifffile")
 
-    from xrspatial.geotiff import _gpu_decode, read_geotiff_gpu
+    from xrspatial.geotiff import _gpu_decode, _read_geotiff_gpu
 
     src = tmp_path / "2238_windowed_fallback.tif"
     bands, h, w = 3, 64, 64
@@ -999,7 +999,7 @@ def test_decode_failure_fallback_applies_window_band_2238(
     requested_window = (8, 4, 40, 36)
     requested_band = 1
 
-    da = read_geotiff_gpu(
+    da = _read_geotiff_gpu(
         str(src),
         window=requested_window,
         band=requested_band,
@@ -1576,7 +1576,7 @@ def test_gds_chunked_lerc_mask_matches_eager_1896(
     The eager GPU path resolves and forwards ``masked_fill``; this
     test pins the chunked path to the same behaviour.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._backends.gpu import _read_geotiff_gpu_chunked_gds
     from xrspatial.geotiff._writer import write
 
@@ -1594,7 +1594,7 @@ def test_gds_chunked_lerc_mask_matches_eager_1896(
     write(arr, path, compression="lerc", tiled=True, tile_size=8,
           nodata=float("nan"))
 
-    eager = read_geotiff_gpu(
+    eager = _read_geotiff_gpu(
         path, on_gpu_failure='strict',
         allow_experimental_codecs=True,
     ).data.get()
@@ -1625,7 +1625,7 @@ def test_gds_chunked_lerc_mask_matches_eager_1896(
 def test_gds_chunked_lerc_mask_sentinel_nodata_1896(
         tmp_path, lerc_writer_with_mask_1896):
     """Sentinel nodata (-9999) on float LERC: chunked path matches eager."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._backends.gpu import _read_geotiff_gpu_chunked_gds
     from xrspatial.geotiff._writer import write
 
@@ -1643,7 +1643,7 @@ def test_gds_chunked_lerc_mask_sentinel_nodata_1896(
     write(arr, path, compression="lerc", tiled=True, tile_size=8,
           nodata=-9999.0)
 
-    eager = read_geotiff_gpu(
+    eager = _read_geotiff_gpu(
         path, on_gpu_failure='strict',
         allow_experimental_codecs=True,
     ).data.get()
@@ -1867,13 +1867,13 @@ def _write_stripped_gpu(path, arr, orientation, extra=None):
 @pytest.mark.parametrize("orientation", _ORIENTATIONS_GPU)
 def test_gpu_tiled_matches_cpu_orientation(tmp_path, orientation):
     """Tiled GPU read of every orientation matches the spec-remapped buffer."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
     path = tmp_path / f"gpu_orient_{orientation}.tif"
     _write_tiled_gpu(path, arr, orientation)
 
-    da = read_geotiff_gpu(str(path))
+    da = _read_geotiff_gpu(str(path))
     expected = _expected_for_orientation_gpu(arr, orientation)
     np.testing.assert_array_equal(da.data.get(), expected)
 
@@ -1883,13 +1883,13 @@ def test_gpu_tiled_matches_cpu_orientation(tmp_path, orientation):
 @pytest.mark.parametrize("orientation", _ORIENTATIONS_GPU)
 def test_gpu_stripped_matches_cpu_orientation(tmp_path, orientation):
     """Stripped GPU read also applies orientation (via CPU fallback path)."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(64, dtype=np.uint8).reshape(8, 8)
     path = tmp_path / f"gpu_strip_orient_{orientation}.tif"
     _write_stripped_gpu(path, arr, orientation)
 
-    da = read_geotiff_gpu(str(path))
+    da = _read_geotiff_gpu(str(path))
     expected = _expected_for_orientation_gpu(arr, orientation)
     np.testing.assert_array_equal(da.data.get(), expected)
 
@@ -1901,7 +1901,7 @@ def test_gpu_3band_tiled_matches_cpu_orientation(tmp_path, orientation):
     """3-band tiled (planar=2) read also applies orientation per band."""
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     rgb = np.arange(3 * 16 * 16, dtype=np.uint8).reshape(3, 16, 16)
     path = tmp_path / f"gpu_rgb_orient_{orientation}.tif"
@@ -1910,7 +1910,7 @@ def test_gpu_3band_tiled_matches_cpu_orientation(tmp_path, orientation):
         extratags=[(274, 'H', 1, orientation, True)],
     )
 
-    da = read_geotiff_gpu(str(path))
+    da = _read_geotiff_gpu(str(path))
     stored = np.transpose(rgb, (1, 2, 0))
     expected = _expected_for_orientation_gpu(stored, orientation)
     np.testing.assert_array_equal(da.data.get(), expected)
@@ -1921,7 +1921,7 @@ def test_gpu_3band_tiled_matches_cpu_orientation(tmp_path, orientation):
 @pytest.mark.parametrize("orientation", [2, 3, 4])
 def test_gpu_orient_2_3_4_coords_track_pixel_flip(tmp_path, orientation):
     """For mirror-flip orientations, GPU coord array also flips."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
     path = tmp_path / f"gpu_orient_geo_{orientation}.tif"
@@ -1940,7 +1940,7 @@ def test_gpu_orient_2_3_4_coords_track_pixel_flip(tmp_path, orientation):
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        da = read_geotiff_gpu(str(path))
+        da = _read_geotiff_gpu(str(path))
 
     targets = [
         (100.5, 49.5, 0),
@@ -1962,13 +1962,13 @@ def test_gpu_default_orientation_unchanged(tmp_path):
     """Files without Orientation tag still decode unchanged on GPU."""
     import tifffile
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
     path = tmp_path / "gpu_no_orient.tif"
     tifffile.imwrite(str(path), arr, tile=(16, 16))
 
-    da = read_geotiff_gpu(str(path))
+    da = _read_geotiff_gpu(str(path))
     np.testing.assert_array_equal(da.data.get(), arr)
 
 
@@ -1979,10 +1979,10 @@ def test_gpu_orientation_5_to_8_raise_on_georef(tmp_path, orientation):
     """GPU reader refuses georef'd files with axis-swap orientations.
 
     Mirrors the CPU behaviour added for issue #1765.
-    ``read_geotiff_gpu`` used to warn and return silently wrong x/y
+    ``_read_geotiff_gpu`` used to warn and return silently wrong x/y
     coords for these cases.
     """
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
     path = tmp_path / f"gpu_orient_georef_raise_1765_{orientation}.tif"
@@ -2000,7 +2000,7 @@ def test_gpu_orientation_5_to_8_raise_on_georef(tmp_path, orientation):
     )
 
     with pytest.raises(NotImplementedError, match=str(orientation)):
-        read_geotiff_gpu(str(path))
+        _read_geotiff_gpu(str(path))
 
 
 @_gpu_only
@@ -2008,7 +2008,7 @@ def test_gpu_orientation_5_to_8_raise_on_georef(tmp_path, orientation):
 @pytest.mark.parametrize("orientation", [5, 6, 7, 8])
 def test_gpu_orientation_5_to_8_transform_only_raises(tmp_path, orientation):
     """``has_georef`` without CRS still triggers the raise on GPU."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
     path = tmp_path / f"gpu_orient_transform_only_1765_{orientation}.tif"
@@ -2021,7 +2021,7 @@ def test_gpu_orientation_5_to_8_transform_only_raises(tmp_path, orientation):
     )
 
     with pytest.raises(NotImplementedError, match=str(orientation)):
-        read_geotiff_gpu(str(path))
+        _read_geotiff_gpu(str(path))
 
 
 @_gpu_only
@@ -2029,13 +2029,13 @@ def test_gpu_orientation_5_to_8_transform_only_raises(tmp_path, orientation):
 @pytest.mark.parametrize("orientation", [5, 6, 7, 8])
 def test_gpu_orientation_5_to_8_no_georef_still_swaps(tmp_path, orientation):
     """Without any geo tags, GPU orientation 5-8 still swaps axes."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
     path = tmp_path / f"gpu_orient_no_geo_1765_{orientation}.tif"
     _write_tiled_gpu(path, arr, orientation)
 
-    da = read_geotiff_gpu(str(path))
+    da = _read_geotiff_gpu(str(path))
     expected = _expected_for_orientation_gpu(arr, orientation)
     assert da.data.shape == expected.shape
     np.testing.assert_array_equal(da.data.get(), expected)
@@ -2046,10 +2046,10 @@ def test_gpu_orientation_5_to_8_no_georef_still_swaps(tmp_path, orientation):
 # =====================================================================
 #
 # ``tile_size`` validation on ``to_geotiff`` and ``chunks`` validation
-# on ``read_geotiff_dask`` landed first. The matching kwargs
+# on ``_read_geotiff_dask`` landed first. The matching kwargs
 # on three sibling entry points were left unchecked:
-# - ``write_geotiff_gpu(tile_size=)``
-# - ``read_geotiff_gpu(chunks=)`` / ``read_vrt(chunks=)``
+# - ``_write_geotiff_gpu(tile_size=)``
+# - ``_read_geotiff_gpu(chunks=)`` / ``_read_vrt(chunks=)``
 #
 # The fix factors the shared validators ``_validate_tile_size_arg`` and
 # ``_validate_chunks_arg`` and calls them up front from each entry
@@ -2074,17 +2074,17 @@ def _make_tif_1776(tmp_path) -> str:
 
 def _make_vrt_1776(tmp_path) -> str:
     """Write a 10x10 GeoTIFF plus a single-source VRT and return the .vrt path."""
-    from xrspatial.geotiff import write_vrt
+    from xrspatial.geotiff import build_vrt
 
     tif = _make_tif_1776(tmp_path)
     vrt = os.path.join(str(tmp_path), 'src_1776.vrt')
-    write_vrt(vrt, [tif])
+    build_vrt(vrt, [tif])
     return vrt
 
 
 @_gpu_only
 class TestWriteGeotiffGpuTileSize_1776:
-    """Mirror ``test_size_param_validation_1752`` for ``write_geotiff_gpu``."""
+    """Mirror ``test_size_param_validation_1752`` for ``_write_geotiff_gpu``."""
 
     @pytest.fixture
     def gpu_da(self):
@@ -2093,206 +2093,206 @@ class TestWriteGeotiffGpuTileSize_1776:
         return xr.DataArray(cupy.asarray(arr), dims=['y', 'x'])
 
     def test_tile_size_zero_raises(self, gpu_da, tmp_path):
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
         out = os.path.join(str(tmp_path), 'out_1776.tif')
         with pytest.raises(ValueError, match='tile_size'):
-            write_geotiff_gpu(gpu_da, out, tile_size=0)
+            _write_geotiff_gpu(gpu_da, out, tile_size=0)
 
     def test_tile_size_negative_raises(self, gpu_da, tmp_path):
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
         out = os.path.join(str(tmp_path), 'out_1776.tif')
         with pytest.raises(ValueError, match='tile_size'):
-            write_geotiff_gpu(gpu_da, out, tile_size=-1)
+            _write_geotiff_gpu(gpu_da, out, tile_size=-1)
 
     def test_tile_size_float_raises(self, gpu_da, tmp_path):
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
         out = os.path.join(str(tmp_path), 'out_1776.tif')
         with pytest.raises(ValueError, match='tile_size'):
-            write_geotiff_gpu(gpu_da, out, tile_size=256.0)
+            _write_geotiff_gpu(gpu_da, out, tile_size=256.0)
 
     def test_tile_size_bool_true_raises(self, gpu_da, tmp_path):
         """``tile_size=True`` is an int subclass that used to silently
         write a 1x1-tile file. Reject it with a clear ValueError."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
         out = os.path.join(str(tmp_path), 'out_1776.tif')
         with pytest.raises(ValueError, match='tile_size'):
-            write_geotiff_gpu(gpu_da, out, tile_size=True)
+            _write_geotiff_gpu(gpu_da, out, tile_size=True)
 
     def test_tile_size_bool_false_raises(self, gpu_da, tmp_path):
         """``tile_size=False`` was the worst case: ``False == 0`` slipped
         through the integer check and hit ZeroDivisionError downstream."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
         out = os.path.join(str(tmp_path), 'out_1776.tif')
         with pytest.raises(ValueError, match='tile_size'):
-            write_geotiff_gpu(gpu_da, out, tile_size=False)
+            _write_geotiff_gpu(gpu_da, out, tile_size=False)
 
     def test_tile_size_positive_works(self, gpu_da, tmp_path):
         """tile_size=16 still round-trips."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
         out = os.path.join(str(tmp_path), 'out_1776.tif')
-        write_geotiff_gpu(gpu_da, out, tile_size=16)
+        _write_geotiff_gpu(gpu_da, out, tile_size=16)
         assert os.path.exists(out)
 
     def test_tile_size_numpy_int_scalar_works(self, gpu_da, tmp_path):
         """``np.int64(N)`` is accepted."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
         out = os.path.join(str(tmp_path), 'out_1776.tif')
-        write_geotiff_gpu(gpu_da, out, tile_size=np.int64(256))
+        _write_geotiff_gpu(gpu_da, out, tile_size=np.int64(256))
         assert os.path.exists(out)
 
 
 @_gpu_only
 class TestReadGeotiffGpuChunks_1776:
-    """Mirror ``test_size_param_validation_1752`` for ``read_geotiff_gpu``."""
+    """Mirror ``test_size_param_validation_1752`` for ``_read_geotiff_gpu``."""
 
     def test_chunks_zero_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks=0)
+            _read_geotiff_gpu(path, chunks=0)
 
     def test_chunks_negative_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks=-1)
+            _read_geotiff_gpu(path, chunks=-1)
 
     def test_chunks_tuple_zero_row_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks=(0, 256))
+            _read_geotiff_gpu(path, chunks=(0, 256))
 
     def test_chunks_tuple_negative_col_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks=(256, -1))
+            _read_geotiff_gpu(path, chunks=(256, -1))
 
     def test_chunks_tuple_wrong_length_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks=(64, 64, 64))
+            _read_geotiff_gpu(path, chunks=(64, 64, 64))
 
     def test_chunks_bool_raises(self, tmp_path):
         """``chunks=True``/``False`` are int subclasses that used to slip
         through. Reject them with the same error as a non-int scalar."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks=True)
+            _read_geotiff_gpu(path, chunks=True)
 
     def test_chunks_non_int_raises(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks='256')
+            _read_geotiff_gpu(path, chunks='256')
 
     def test_chunks_tuple_float_raises(self, tmp_path):
         """Tuple entries that aren't int should reject too."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_gpu(path, chunks=(64, 64.5))
+            _read_geotiff_gpu(path, chunks=(64, 64.5))
 
     def test_positive_int_chunks_works(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
-        r = read_geotiff_gpu(path, chunks=64)
+        r = _read_geotiff_gpu(path, chunks=64)
         assert r.shape == (10, 10)
 
     def test_positive_tuple_chunks_works(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
-        r = read_geotiff_gpu(path, chunks=(4, 8))
+        r = _read_geotiff_gpu(path, chunks=(4, 8))
         assert r.shape == (10, 10)
 
     def test_numpy_int_scalar_chunks_works(self, tmp_path):
         """``np.int64(N)`` scalar chunk size is accepted."""
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
         path = _make_tif_1776(tmp_path)
-        r = read_geotiff_gpu(path, chunks=np.int64(64))
+        r = _read_geotiff_gpu(path, chunks=np.int64(64))
         assert r.shape == (10, 10)
 
 
 class TestReadVrtChunks_1776:
     """Same matrix as ``TestReadGeotiffGpuChunks_1776`` but for the VRT
-    entry point. Runs without CUDA because ``read_vrt(chunks=)``
+    entry point. Runs without CUDA because ``_read_vrt(chunks=)``
     returns a Dask-backed numpy DataArray; no GPU is required.
     """
 
     def test_chunks_zero_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks=0)
+            _read_vrt(vrt, chunks=0)
 
     def test_chunks_negative_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks=-1)
+            _read_vrt(vrt, chunks=-1)
 
     def test_chunks_tuple_zero_row_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks=(0, 256))
+            _read_vrt(vrt, chunks=(0, 256))
 
     def test_chunks_tuple_negative_col_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks=(256, -1))
+            _read_vrt(vrt, chunks=(256, -1))
 
     def test_chunks_tuple_wrong_length_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks=(64, 64, 64))
+            _read_vrt(vrt, chunks=(64, 64, 64))
 
     def test_chunks_bool_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks=True)
+            _read_vrt(vrt, chunks=True)
 
     def test_chunks_non_int_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks='256')
+            _read_vrt(vrt, chunks='256')
 
     def test_chunks_tuple_float_raises(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_vrt(vrt, chunks=(64, 64.5))
+            _read_vrt(vrt, chunks=(64, 64.5))
 
     def test_positive_int_chunks_works(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
-        r = read_vrt(vrt, chunks=64)
+        r = _read_vrt(vrt, chunks=64)
         assert r.shape == (10, 10)
 
     def test_positive_tuple_chunks_works(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
-        r = read_vrt(vrt, chunks=(4, 8))
+        r = _read_vrt(vrt, chunks=(4, 8))
         assert r.shape == (10, 10)
 
     def test_numpy_int_scalar_chunks_works(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         vrt = _make_vrt_1776(tmp_path)
-        r = read_vrt(vrt, chunks=np.int64(64))
+        r = _read_vrt(vrt, chunks=np.int64(64))
         assert r.shape == (10, 10)
 
 
 @_gpu_only
 class TestOpenGeotiffGpuChunksDispatch_1776:
     """``open_geotiff(gpu=True, chunks=X)`` routes through
-    ``read_geotiff_gpu``; pin that the validation propagates through
+    ``_read_geotiff_gpu``; pin that the validation propagates through
     the dispatcher.
     """
 
@@ -2317,7 +2317,7 @@ class TestOpenGeotiffGpuChunksDispatch_1776:
 
 class TestToGeotiffGpuTileSizeAlreadyChecked_1776:
     """``to_geotiff(gpu=True, tile_size=0)`` was already validated by
-    #1752's CPU-side check before dispatching to ``write_geotiff_gpu``.
+    #1752's CPU-side check before dispatching to ``_write_geotiff_gpu``.
     """
 
     @_gpu_only
@@ -2342,10 +2342,10 @@ class TestNoDoubleValidationSideEffects_1776:
 
     def test_read_geotiff_gpu_chunks_numpy_int_no_side_effect(
             self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path = _make_tif_1776(tmp_path)
-        r = read_geotiff_gpu(path, chunks=np.int64(64))
+        r = _read_geotiff_gpu(path, chunks=np.int64(64))
         assert r.shape == (10, 10)
         out = r.data
         if hasattr(out, 'compute'):
@@ -2353,34 +2353,34 @@ class TestNoDoubleValidationSideEffects_1776:
 
 
 class TestChunksNoneAcrossEntryPoints_1776:
-    """``read_geotiff_gpu`` and ``read_vrt`` default to ``chunks=None``
+    """``_read_geotiff_gpu`` and ``_read_vrt`` default to ``chunks=None``
     (eager read), so the factored ``_validate_chunks_arg`` must let
-    ``None`` through for them. ``read_geotiff_dask`` does not accept
+    ``None`` through for them. ``_read_geotiff_dask`` does not accept
     ``None`` -- its chunk-unpacking math would otherwise fail with a
     confusing ``TypeError`` instead of a parameter-named ``ValueError``.
     """
 
     def test_read_geotiff_dask_chunks_none_raises_value_error(
             self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
 
         path = _make_tif_1776(tmp_path)
         with pytest.raises(ValueError, match='chunks'):
-            read_geotiff_dask(path, chunks=None)
+            _read_geotiff_dask(path, chunks=None)
 
     def test_read_vrt_chunks_none_returns_eager(self, tmp_path):
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
 
         vrt = _make_vrt_1776(tmp_path)
-        r = read_vrt(vrt, chunks=None)
+        r = _read_vrt(vrt, chunks=None)
         assert r.shape == (10, 10)
 
     @_gpu_only
     def test_read_geotiff_gpu_chunks_none_returns_eager(self, tmp_path):
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import _read_geotiff_gpu
 
         path = _make_tif_1776(tmp_path)
-        r = read_geotiff_gpu(path, chunks=None)
+        r = _read_geotiff_gpu(path, chunks=None)
         assert r.shape == (10, 10)
 
 
@@ -2390,8 +2390,8 @@ class TestChunksNoneAcrossEntryPoints_1776:
 #
 # The ``mask_nodata`` kwarg is wired through every
 # public reader entry point in ``xrspatial.geotiff``
-# (``open_geotiff``, ``read_geotiff_gpu``, ``read_geotiff_dask``,
-# ``read_vrt``). The original test module
+# (``open_geotiff``, ``_read_geotiff_gpu``, ``_read_geotiff_dask``,
+# ``_read_vrt``). The original test module
 # ``test_mask_nodata_kwarg_2052.py`` only exercises eager-numpy and
 # dask+numpy; this section closes the GPU, dask+GPU, and VRT (eager +
 # dask) gap.
@@ -2426,7 +2426,7 @@ def uint16_with_matching_sentinel_2052(tmp_path):
 @pytest.fixture
 def uint16_vrt_with_matching_sentinel_2052(tmp_path):
     """A single-source VRT wrapping the uint16 fixture above."""
-    from xrspatial.geotiff import write_vrt
+    from xrspatial.geotiff import build_vrt
     from xrspatial.geotiff._writer import write
 
     arr = np.array(
@@ -2440,18 +2440,18 @@ def uint16_vrt_with_matching_sentinel_2052(tmp_path):
     write(arr, tif_path, nodata=0, compression="none", tiled=False)
 
     vrt_path = str(tmp_path / "uint16_match_2052.vrt")
-    write_vrt(vrt_path, [tif_path])
+    build_vrt(vrt_path, [tif_path])
     return vrt_path, arr
 
 
 @_gpu_only
 def test_read_geotiff_gpu_mask_nodata_false_preserves_uint16_2052(
         uint16_with_matching_sentinel_2052):
-    """``read_geotiff_gpu(mask_nodata=False)`` keeps the uint16 dtype."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    """``_read_geotiff_gpu(mask_nodata=False)`` keeps the uint16 dtype."""
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, arr = uint16_with_matching_sentinel_2052
-    da = read_geotiff_gpu(path, mask_nodata=False)
+    da = _read_geotiff_gpu(path, mask_nodata=False)
 
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.data.get(), arr)
@@ -2464,10 +2464,10 @@ def test_read_geotiff_gpu_default_mask_nodata_true_still_promotes_2052(
     """The GPU default is unchanged: ``mask_nodata=True`` promotes."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = uint16_with_matching_sentinel_2052
-    da = read_geotiff_gpu(path)
+    da = _read_geotiff_gpu(path)
 
     assert da.dtype == np.float64
     nan_count = int(cupy.isnan(da.data).sum().get())
@@ -2493,10 +2493,10 @@ def test_open_geotiff_gpu_mask_nodata_false_threads_through_2052(
 def test_read_geotiff_gpu_dtype_uint16_with_mask_nodata_false_2052(
         uint16_with_matching_sentinel_2052):
     """``dtype="uint16"`` works on the GPU branch when the opt-out is set."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, arr = uint16_with_matching_sentinel_2052
-    da = read_geotiff_gpu(path, dtype="uint16", mask_nodata=False)
+    da = _read_geotiff_gpu(path, dtype="uint16", mask_nodata=False)
 
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.data.get(), arr)
@@ -2505,11 +2505,11 @@ def test_read_geotiff_gpu_dtype_uint16_with_mask_nodata_false_2052(
 @_gpu_only
 def test_read_geotiff_gpu_dask_mask_nodata_false_preserves_uint16_2052(
         uint16_with_matching_sentinel_2052):
-    """``read_geotiff_gpu(chunks=..., mask_nodata=False)`` keeps uint16."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    """``_read_geotiff_gpu(chunks=..., mask_nodata=False)`` keeps uint16."""
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, arr = uint16_with_matching_sentinel_2052
-    da = read_geotiff_gpu(path, chunks=2, mask_nodata=False)
+    da = _read_geotiff_gpu(path, chunks=2, mask_nodata=False)
 
     assert da.dtype == np.uint16
 
@@ -2524,10 +2524,10 @@ def test_read_geotiff_gpu_dask_default_mask_nodata_true_still_promotes_2052(
     """The dask+GPU default still promotes the graph dtype to float64."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     path, _ = uint16_with_matching_sentinel_2052
-    da = read_geotiff_gpu(path, chunks=2)
+    da = _read_geotiff_gpu(path, chunks=2)
 
     assert da.dtype == np.float64
     computed = da.compute()
@@ -2553,12 +2553,12 @@ def test_open_geotiff_dask_gpu_mask_nodata_false_threads_through_2052(
 
 def test_read_vrt_mask_nodata_false_preserves_uint16_2052(
         uint16_vrt_with_matching_sentinel_2052):
-    """``read_vrt(mask_nodata=False)`` keeps the uint16 dtype on the
+    """``_read_vrt(mask_nodata=False)`` keeps the uint16 dtype on the
     eager VRT path."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     vrt_path, arr = uint16_vrt_with_matching_sentinel_2052
-    da = read_vrt(vrt_path, mask_nodata=False)
+    da = _read_vrt(vrt_path, mask_nodata=False)
 
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(np.asarray(da.values), arr)
@@ -2568,10 +2568,10 @@ def test_read_vrt_mask_nodata_false_preserves_uint16_2052(
 def test_read_vrt_default_mask_nodata_true_still_promotes_2052(
         uint16_vrt_with_matching_sentinel_2052):
     """The VRT default unchanged: ``mask_nodata=True`` promotes."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     vrt_path, _ = uint16_vrt_with_matching_sentinel_2052
-    da = read_vrt(vrt_path)
+    da = _read_vrt(vrt_path)
 
     assert da.dtype == np.float64
     assert int(np.isnan(da.values).sum()) == len(_SENTINEL_POS_2052)
@@ -2593,10 +2593,10 @@ def test_open_geotiff_vrt_mask_nodata_false_threads_through_2052(
 def test_read_vrt_dtype_uint16_with_mask_nodata_false_2052(
         uint16_vrt_with_matching_sentinel_2052):
     """``dtype="uint16"`` works on the VRT path with the opt-out."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     vrt_path, arr = uint16_vrt_with_matching_sentinel_2052
-    da = read_vrt(vrt_path, dtype="uint16", mask_nodata=False)
+    da = _read_vrt(vrt_path, dtype="uint16", mask_nodata=False)
 
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(np.asarray(da.values), arr)
@@ -2604,12 +2604,12 @@ def test_read_vrt_dtype_uint16_with_mask_nodata_false_2052(
 
 def test_read_vrt_chunked_mask_nodata_false_preserves_uint16_2052(
         uint16_vrt_with_matching_sentinel_2052):
-    """``read_vrt(chunks=..., mask_nodata=False)`` keeps uint16 on
+    """``_read_vrt(chunks=..., mask_nodata=False)`` keeps uint16 on
     the dask+VRT path."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     vrt_path, arr = uint16_vrt_with_matching_sentinel_2052
-    da = read_vrt(vrt_path, chunks=2, mask_nodata=False)
+    da = _read_vrt(vrt_path, chunks=2, mask_nodata=False)
 
     assert da.dtype == np.uint16
     computed = da.compute()
@@ -2620,10 +2620,10 @@ def test_read_vrt_chunked_mask_nodata_false_preserves_uint16_2052(
 def test_read_vrt_chunked_default_mask_nodata_true_still_promotes_2052(
         uint16_vrt_with_matching_sentinel_2052):
     """The chunked-VRT default still promotes to float64."""
-    from xrspatial.geotiff import read_vrt
+    from xrspatial.geotiff import _read_vrt
 
     vrt_path, _ = uint16_vrt_with_matching_sentinel_2052
-    da = read_vrt(vrt_path, chunks=2)
+    da = _read_vrt(vrt_path, chunks=2)
 
     assert da.dtype == np.float64
     computed = da.compute()
@@ -2715,11 +2715,11 @@ def test_cross_backend_parity_eager_vrt_2052(
 
 def test_read_geotiff_dask_direct_mask_nodata_false_2052(
         uint16_with_matching_sentinel_2052):
-    """The direct ``read_geotiff_dask`` entry point also accepts the kwarg."""
-    from xrspatial.geotiff import read_geotiff_dask
+    """The direct ``_read_geotiff_dask`` entry point also accepts the kwarg."""
+    from xrspatial.geotiff import _read_geotiff_dask
 
     path, arr = uint16_with_matching_sentinel_2052
-    da = read_geotiff_dask(path, chunks=2, mask_nodata=False)
+    da = _read_geotiff_dask(path, chunks=2, mask_nodata=False)
 
     assert da.dtype == np.uint16
     np.testing.assert_array_equal(da.compute().values, arr)
@@ -2731,9 +2731,9 @@ def test_read_geotiff_dask_direct_mask_nodata_false_2052(
 #
 # ``open_geotiff(gpu=True)`` used to silently drop the
 # ``on_gpu_failure`` kwarg: the dispatcher did not declare it and the
-# GPU branch did not forward it to ``read_geotiff_gpu``. Callers that
+# GPU branch did not forward it to ``_read_geotiff_gpu``. Callers that
 # wanted strict GPU failure semantics had to bypass ``open_geotiff``
-# entirely and call ``read_geotiff_gpu`` directly, defeating the
+# entirely and call ``_read_geotiff_gpu`` directly, defeating the
 # dispatcher.
 
 
@@ -2851,9 +2851,9 @@ def test_open_geotiff_gpu_rejects_invalid_on_gpu_failure_1615(
 def test_invalid_on_gpu_failure_reaches_gpu_validator_on_cpu_1615(
         small_tiff_path_1615):
     """Even on a CPU-only host, the kwarg should reach
-    ``read_geotiff_gpu``.
+    ``_read_geotiff_gpu``.
 
-    Without GPU hardware, ``read_geotiff_gpu`` raises ``ImportError``
+    Without GPU hardware, ``_read_geotiff_gpu`` raises ``ImportError``
     (no cupy) or runs through to the actual decode. The kwarg
     validator runs before the cupy import, so an invalid value
     surfaces deterministically in both environments. This pins the
@@ -2871,7 +2871,7 @@ def test_invalid_on_gpu_failure_reaches_gpu_validator_on_cpu_1615(
 # =====================================================================
 #
 # ``_validate_crs_fallback`` wires ``allow_unparseable_crs`` into
-# ``to_geotiff``, ``write_geotiff_gpu``, and the ``to_geotiff(gpu=True)``
+# ``to_geotiff``, ``_write_geotiff_gpu``, and the ``to_geotiff(gpu=True)``
 # dispatcher. ``test_crs_fail_closed_1929`` only exercises the eager
 # CPU writer; this section closes the GPU and dispatcher gap.
 
@@ -2900,36 +2900,36 @@ def _make_cpu_da_1929() -> xr.DataArray:
 
 @_gpu_only
 class TestWriteGeotiffGpuFailClosed_1929:
-    """``write_geotiff_gpu`` refuses to land an unvalidatable CRS by default."""
+    """``_write_geotiff_gpu`` refuses to land an unvalidatable CRS by default."""
 
     def test_garbage_string_kwarg_raises(self, tmp_path):
         """A free-form non-WKT, non-PROJ string raises by default."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         out = str(tmp_path / "gpu_garbage_kwarg_1929.tif")
         with pytest.warns(Warning):
             with pytest.raises(ValueError, match="GTCitationGeoKey"):
-                write_geotiff_gpu(
+                _write_geotiff_gpu(
                     _make_gpu_da_1929(), out, crs="absolute-garbage")
 
     def test_garbage_string_attr_raises(self, tmp_path):
         """Same guard fires when garbage arrives via ``attrs['crs']``."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         out = str(tmp_path / "gpu_garbage_attr_1929.tif")
         da = _make_gpu_da_1929()
         da.attrs["crs"] = "still-garbage"
         with pytest.warns(Warning):
             with pytest.raises(ValueError, match="GTCitationGeoKey"):
-                write_geotiff_gpu(da, out)
+                _write_geotiff_gpu(da, out)
 
     def test_opt_in_allows_garbage(self, tmp_path):
         """``allow_unparseable_crs=True`` restores the citation-only write."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         out = str(tmp_path / "gpu_optin_1929.tif")
         with pytest.warns(Warning):
-            write_geotiff_gpu(
+            _write_geotiff_gpu(
                 _make_gpu_da_1929(),
                 out,
                 crs="absolute-garbage",
@@ -2939,12 +2939,12 @@ class TestWriteGeotiffGpuFailClosed_1929:
 
     def test_message_recommends_alternatives(self, tmp_path):
         """The error message points to the four recovery options."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         out = str(tmp_path / "gpu_msg_check_1929.tif")
         with pytest.warns(Warning):
             with pytest.raises(ValueError) as exc:
-                write_geotiff_gpu(_make_gpu_da_1929(), out, crs="bogus")
+                _write_geotiff_gpu(_make_gpu_da_1929(), out, crs="bogus")
         msg = str(exc.value)
         assert "EPSG" in msg
         assert "WKT" in msg
@@ -2952,15 +2952,15 @@ class TestWriteGeotiffGpuFailClosed_1929:
 
     def test_epsg_int_unchanged(self, tmp_path):
         """An int EPSG kwarg never reaches the fallback path."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         out = str(tmp_path / "gpu_epsg_int_1929.tif")
-        write_geotiff_gpu(_make_gpu_da_1929(), out, crs=4326)
+        _write_geotiff_gpu(_make_gpu_da_1929(), out, crs=4326)
         assert os.path.exists(out)
 
     def test_valid_wkt_unchanged(self, tmp_path):
         """A WKT-shaped string is accepted by the structural check."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         out = str(tmp_path / "gpu_wkt_shaped_1929.tif")
         wkt = (
@@ -2968,15 +2968,15 @@ class TestWriteGeotiffGpuFailClosed_1929:
             "6378137,298.257223563]],PRIMEM[\"Greenwich\",0],"
             "UNIT[\"degree\",0.0174532925199433]]"
         )
-        write_geotiff_gpu(_make_gpu_da_1929(), out, crs=wkt)
+        _write_geotiff_gpu(_make_gpu_da_1929(), out, crs=wkt)
         assert os.path.exists(out)
 
     def test_no_crs_at_all_unchanged(self, tmp_path):
         """No CRS supplied means no GTCitationGeoKey."""
-        from xrspatial.geotiff import write_geotiff_gpu
+        from xrspatial.geotiff import _write_geotiff_gpu
 
         out = str(tmp_path / "gpu_no_crs_1929.tif")
-        write_geotiff_gpu(_make_gpu_da_1929(), out)
+        _write_geotiff_gpu(_make_gpu_da_1929(), out)
         assert os.path.exists(out)
 
 
@@ -2986,17 +2986,17 @@ class TestToGeotiffGpuDispatcherFailClosed_1929:
 
     @staticmethod
     def _install_gpu_spy(monkeypatch):
-        """Wrap ``write_geotiff_gpu`` so the dispatcher entry is recorded."""
+        """Wrap ``_write_geotiff_gpu`` so the dispatcher entry is recorded."""
         from xrspatial.geotiff._writers import eager as _eager
 
-        real = _eager.write_geotiff_gpu
+        real = _eager._write_geotiff_gpu
         calls = []
 
         def _spy(*args, **kwargs):
             calls.append((args, kwargs))
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(_eager, "write_geotiff_gpu", _spy)
+        monkeypatch.setattr(_eager, "_write_geotiff_gpu", _spy)
         return calls
 
     def test_dispatcher_garbage_raises_with_cupy_input(
@@ -3078,7 +3078,7 @@ class TestErrorMessageParity_1929:
     """
 
     def test_gpu_vs_cpu_message_matches(self, tmp_path):
-        from xrspatial.geotiff import to_geotiff, write_geotiff_gpu
+        from xrspatial.geotiff import to_geotiff, _write_geotiff_gpu
 
         out_cpu = str(tmp_path / "cpu_msg_1929.tif")
         out_gpu = str(tmp_path / "gpu_msg_1929.tif")
@@ -3089,7 +3089,7 @@ class TestErrorMessageParity_1929:
                 to_geotiff(
                     _make_cpu_da_1929(), out_cpu, crs="absolute-garbage")
             with pytest.raises(ValueError) as exc_gpu:
-                write_geotiff_gpu(
+                _write_geotiff_gpu(
                     _make_gpu_da_1929(), out_gpu, crs="absolute-garbage")
 
         msg_cpu = str(exc_cpu.value)
@@ -3121,10 +3121,10 @@ class TestKwargDefaultParity_1929:
     """
 
     def test_default_is_false_on_all_writers(self):
-        from xrspatial.geotiff import to_geotiff, write_geotiff_gpu
+        from xrspatial.geotiff import to_geotiff, _write_geotiff_gpu
         from xrspatial.geotiff._writers.eager import _write_vrt_tiled
 
-        for fn in (to_geotiff, write_geotiff_gpu, _write_vrt_tiled):
+        for fn in (to_geotiff, _write_geotiff_gpu, _write_vrt_tiled):
             sig = inspect.signature(fn)
             param = sig.parameters.get("allow_unparseable_crs")
             assert param is not None, (

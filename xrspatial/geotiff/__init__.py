@@ -5,31 +5,27 @@ No GDAL dependency -- uses only numpy, numba, xarray, and the standard library.
 Public API
 ----------
 open_geotiff(source, ...)
-    Read a GeoTIFF, COG, or VRT file to an xarray.DataArray. Auto-dispatches
-    to the GPU, dask, or numpy backend based on the ``gpu`` and ``chunks``
-    kwargs.
-read_geotiff_gpu(source, ...)
-    GPU-only read returning a CuPy-backed DataArray. ``open_geotiff(...,
-    gpu=True)`` calls this internally; use the explicit name when you want
-    the strict-mode failure semantics (``on_gpu_failure='strict'``) or want
-    to bypass auto-dispatch.
-read_geotiff_dask(source, ...)
-    Dask-only read returning a windowed lazy DataArray. ``open_geotiff(...,
-    chunks=N)`` calls this internally.
-read_vrt(source, ...)
-    Read a GDAL Virtual Raster Table (.vrt). ``open_geotiff`` routes ``.vrt``
-    paths here automatically; the explicit entry point is useful for
-    callers that already know they have a VRT.
+    Read a GeoTIFF, COG, or VRT file to an xarray.DataArray. The backend is
+    chosen from the parameters: ``gpu=True`` returns a CuPy-backed array,
+    ``chunks=N`` returns a windowed lazy dask array, a ``.vrt`` source reads
+    a GDAL Virtual Raster Table, and the default is an eager numpy read.
 to_geotiff(data, path, ...)
-    Write an xarray.DataArray as a GeoTIFF or COG. Auto-dispatches to GPU
-    when the data is CuPy-backed.
-write_geotiff_gpu(data, path, ...)
-    GPU-only writer using nvCOMP. ``to_geotiff(..., gpu=True)`` calls this
-    internally.
-write_vrt(path, source_files, ...)
-    Generate a VRT mosaic XML from a list of GeoTIFF files. ``vrt_path``
-    is kept as a deprecated alias for ``path``; passing both ``path`` and
-    ``vrt_path`` raises ``TypeError``.
+    Write an xarray.DataArray as a GeoTIFF or COG. The backend is chosen
+    from the data and parameters: CuPy-backed data or ``gpu=True`` writes
+    through the GPU (nvCOMP) path, a ``.vrt`` output path writes a directory
+    of tiled GeoTIFFs plus a VRT index, and the default is an eager CPU
+    write.
+build_vrt(path, source_files, ...)
+    Generate a VRT mosaic XML from a list of existing GeoTIFF files. This
+    is the one read/write helper that does not fold into ``to_geotiff``
+    because it has no DataArray to write -- it indexes files that already
+    exist. ``vrt_path`` is kept as a deprecated alias for ``path``; passing
+    both ``path`` and ``vrt_path`` raises ``TypeError``.
+
+The backend functions ``_read_geotiff_gpu``, ``_read_geotiff_dask``,
+``_read_vrt``, and ``_write_geotiff_gpu`` are private. ``open_geotiff`` and
+``to_geotiff`` dispatch to them; import them directly from their backend
+modules only if you need to bypass auto-dispatch.
 """
 from __future__ import annotations
 
@@ -57,9 +53,9 @@ from ._attrs import (_LEVEL_RANGES, _VALID_COMPRESSIONS, GEOREF_STATUS_CRS_ONLY,
 # Re-export only; called by xrspatial/geotiff/tests/test_nodata_*.py.
 from ._backends._gpu_helpers import _apply_nodata_mask_gpu  # noqa: F401
 from ._backends._gpu_helpers import _is_gpu_data  # noqa: F401
-from ._backends.dask import read_geotiff_dask
-from ._backends.gpu import read_geotiff_gpu
-from ._backends.vrt import read_vrt
+from ._backends.dask import _read_geotiff_dask
+from ._backends.gpu import _read_geotiff_gpu
+from ._backends.vrt import _read_vrt
 from ._coords import _BAND_DIM_NAMES  # noqa: F401
 from ._coords import coords_from_pixel_geometry as _coords_from_pixel_geometry  # noqa: F401
 from ._coords import coords_to_transform as _coords_to_transform  # noqa: F401
@@ -93,8 +89,8 @@ from ._validation import (_validate_3d_writer_dims, _validate_chunks_arg,  # noq
 # the handful of internal call sites that need it.
 from ._writers.eager import _write_single_tile  # noqa: F401
 from ._writers.eager import to_geotiff
-from ._writers.gpu import write_geotiff_gpu
-from ._writers.vrt import write_vrt
+from ._writers.gpu import _write_geotiff_gpu
+from ._writers.vrt import build_vrt
 
 # All names below are part of the supported public API. ``plot_geotiff``
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
@@ -125,13 +121,9 @@ __all__ = [
     'UnsafeURLError',
     'UnsupportedGeoTIFFFeatureError',
     'VRTStableSourcesOnlyError',
+    'build_vrt',
     'open_geotiff',
-    'read_geotiff_gpu',
-    'read_geotiff_dask',
-    'read_vrt',
     'to_geotiff',
-    'write_geotiff_gpu',
-    'write_vrt',
 ]
 
 
@@ -633,26 +625,26 @@ def open_geotiff(source: str | BinaryIO, *,
         or a ``.vrt`` source raises ``ValueError`` because those
         backends do not apply the cloud-byte budget.
     on_gpu_failure : {'auto', 'strict'}, optional
-        [experimental] Forwarded to ``read_geotiff_gpu`` when
+        [experimental] Forwarded to ``_read_geotiff_gpu`` when
         ``gpu=True``. Controls whether GPU decode failures fall back
         to CPU (``'auto'``, default) or re-raise the original exception
         (``'strict'``). Passing this kwarg with ``gpu=False`` raises
         ``ValueError`` because the policy only applies to the GPU
-        pipeline. See ``read_geotiff_gpu`` for the full description.
+        pipeline. See ``_read_geotiff_gpu`` for the full description.
     missing_sources : {'raise', 'warn'}, optional
         [advanced] VRT mosaics can return partial output under
         ``missing_sources='warn'`` when a backing source is unreadable;
         the ``attrs['vrt_holes']`` entry records which sources were
         skipped so downstream code can detect the partial mosaic.
-        Forwarded to ``read_vrt`` when the source is a ``.vrt`` file.
+        Forwarded to ``_read_vrt`` when the source is a ``.vrt`` file.
         When the caller does not pass this kwarg, the public
-        ``read_vrt`` default applies (``'raise'``).
+        ``_read_vrt`` default applies (``'raise'``).
         ``'raise'`` fails immediately on an unreadable backing source.
         ``'warn'`` is the opt-in lenient mode: emit
         ``GeoTIFFFallbackWarning``, record ``attrs['vrt_holes']``, and
         return a partial mosaic. Passing this kwarg with a non-VRT
         source raises ``ValueError`` because the policy only applies to
-        the VRT pipeline. See ``read_vrt`` for the full description.
+        the VRT pipeline. See ``_read_vrt`` for the full description.
     band_nodata : {'first', None}, optional
         [advanced] VRT-only. Opt-out for the fail-closed check that
         rejects VRT sources whose bands declare disagreeing per-band
@@ -697,7 +689,7 @@ def open_geotiff(source: str | BinaryIO, *,
         rotated rasters can recover the mapping. The
         contract is read-only -- writes must either reproject onto an
         axis-aligned grid first, or pass ``drop_rotation=True`` to
-        ``to_geotiff`` / ``write_geotiff_gpu`` to accept the loss; the
+        ``to_geotiff`` / ``_write_geotiff_gpu`` to accept the loss; the
         ``ModelTransformationTag`` emit path is tracked separately.
     allow_unparseable_crs : bool, default False
         [advanced] Read-side opt-in for CRS strings that pyproj cannot
@@ -706,7 +698,7 @@ def open_geotiff(source: str | BinaryIO, *,
         ``UnparseableCRSError`` instead of landing in ``attrs['crs_wkt']``
         verbatim. Set to ``True`` to keep the permissive
         behaviour where the citation field passes through unchanged.
-        Matches the same kwarg on ``to_geotiff`` / ``write_geotiff_gpu``
+        Matches the same kwarg on ``to_geotiff`` / ``_write_geotiff_gpu``
         so a value the reader accepted can survive a round-trip.
     allow_invalid_nodata : bool, default False
         [advanced] Read-side opt-in for integer-dtype sources whose
@@ -793,8 +785,8 @@ def open_geotiff(source: str | BinaryIO, *,
     Safe VRT usage. Mosaic two compatible tiles and read with the
     fail-closed defaults:
 
-    >>> from xrspatial.geotiff import open_geotiff, write_vrt
-    >>> vrt_path = write_vrt(  # doctest: +SKIP
+    >>> from xrspatial.geotiff import open_geotiff, build_vrt
+    >>> vrt_path = build_vrt(  # doctest: +SKIP
     ...     'mosaic.vrt',
     ...     source_files=['tile_west.tif', 'tile_east.tif'],
     ... )
@@ -818,7 +810,7 @@ def open_geotiff(source: str | BinaryIO, *,
 
     # All dispatcher-level kwarg rejection lives in
     # ``_validate_dispatch_kwargs`` so the three direct backends
-    # (``read_geotiff_dask``, ``read_geotiff_gpu``, ``read_vrt``)
+    # (``_read_geotiff_dask``, ``_read_geotiff_gpu``, ``_read_vrt``)
     # surface the same errors when called directly. The single call
     # runs ``_validate_overview_level_arg``, the ``on_gpu_failure``
     # GPU-only guard, the ``missing_sources`` VRT-only guard, the
@@ -850,7 +842,7 @@ def open_geotiff(source: str | BinaryIO, *,
     # VRT parse before it is refused. ``_validate_stable_only_remote``
     # documents exactly this ordering contract ("before any range GET or
     # decode work"). ``_validate_stable_only_vrt`` is the matching gate
-    # for ``.vrt`` sources; ``read_vrt`` runs it again on the direct-call
+    # for ``.vrt`` sources; ``_read_vrt`` runs it again on the direct-call
     # path, so this is defence in depth, not the only gate. Each helper is
     # a no-op for the wrong source type, but branching keeps the intent
     # obvious. Running ahead of the bbox block also puts this gate ahead
@@ -897,7 +889,7 @@ def open_geotiff(source: str | BinaryIO, *,
 
     # VRT files (string paths only -- VRT XML references other files on disk)
     if _is_vrt_source:
-        # ``read_vrt`` does not accept ``overview_level`` (the VRT XML
+        # ``_read_vrt`` does not accept ``overview_level`` (the VRT XML
         # references its own source files; overview selection would need
         # to apply to each one). Silently dropping the kwarg is the same
         # class of bug the dask and GPU dispatchers already guard against,
@@ -916,8 +908,8 @@ def open_geotiff(source: str | BinaryIO, *,
                 "overview_level is not supported for VRT sources. "
                 "VRT references its own source files; pass overview_level "
                 "to open_geotiff on a .tif source, or drop the kwarg.")
-        # ``on_gpu_failure`` only routes through ``read_geotiff_gpu``.
-        # ``read_vrt`` has no analogous failure policy, so any value the
+        # ``on_gpu_failure`` only routes through ``_read_geotiff_gpu``.
+        # ``_read_vrt`` has no analogous failure policy, so any value the
         # caller supplied alongside a VRT source would be silently lost.
         # The ``gpu=False`` branch is already rejected above; this catches
         # the ``gpu=True, source.endswith('.vrt')`` case the earlier check
@@ -926,12 +918,12 @@ def open_geotiff(source: str | BinaryIO, *,
             raise ValueError(
                 "on_gpu_failure is not supported for VRT sources. "
                 "VRT reads do not go through the GPU decoder pipeline; "
-                "drop the kwarg or call read_geotiff_gpu directly on a "
+                "drop the kwarg or call _read_geotiff_gpu directly on a "
                 ".tif source.")
         vrt_kwargs = {}
         if missing_sources_passed:
             vrt_kwargs['missing_sources'] = missing_sources
-        return read_vrt(source, dtype=dtype, window=window, band=band,
+        return _read_vrt(source, dtype=dtype, window=window, band=band,
                         name=name, chunks=chunks, gpu=gpu,
                         max_pixels=max_pixels,
                         allow_rotated=allow_rotated,
@@ -954,7 +946,7 @@ def open_geotiff(source: str | BinaryIO, *,
         gpu_kwargs = {}
         if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL:
             gpu_kwargs['on_gpu_failure'] = on_gpu_failure
-        return read_geotiff_gpu(source, dtype=dtype,
+        return _read_geotiff_gpu(source, dtype=dtype,
                                 overview_level=overview_level,
                                 window=window, band=band,
                                 name=name, chunks=chunks,
@@ -972,7 +964,7 @@ def open_geotiff(source: str | BinaryIO, *,
 
     # Dask path (CPU)
     if chunks is not None:
-        return read_geotiff_dask(source, dtype=dtype, chunks=chunks,
+        return _read_geotiff_dask(source, dtype=dtype, chunks=chunks,
                                  overview_level=overview_level,
                                  window=window, band=band,
                                  max_pixels=max_pixels, name=name,
@@ -995,7 +987,7 @@ def open_geotiff(source: str | BinaryIO, *,
     # ``read_to_array`` validates ``window`` against the selected IFD's
     # extent and raises ``ValueError`` for out-of-bounds windows with
     # the same message format as the dask path's pre-flight validator
-    # in :func:`read_geotiff_dask`. That keeps the two backends in sync
+    # in :func:`_read_geotiff_dask`. That keeps the two backends in sync
     # on the contract without forcing a second metadata parse here.
     arr, geo_info = _read_to_array(
         source, window=window,

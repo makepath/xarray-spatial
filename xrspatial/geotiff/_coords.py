@@ -99,7 +99,7 @@ class GeorefResolution:
     applied_no_georef_marker: bool = False
 
 
-# Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
+# Names of dims that ``to_geotiff`` / ``_write_geotiff_gpu`` treat as the
 # non-spatial band axis. Used both to remap ``(band, y, x)`` inputs to
 # ``(y, x, band)`` before writing and to skip the band axis when inferring
 # a GeoTransform from coords (see :func:`coords_to_transform`).
@@ -145,7 +145,7 @@ def _has_no_georef_marker(da: Any) -> bool:
     should not be treated as truthy and silently drop a transform.
 
     Inputs that are not xarray DataArrays (e.g. a raw ``numpy.ndarray``
-    or ``cupy.ndarray`` passed directly to ``write_geotiff_gpu``) carry
+    or ``cupy.ndarray`` passed directly to ``_write_geotiff_gpu``) carry
     no attrs and therefore no marker; return ``False`` rather than
     raise so callers can use this as a plain predicate.
     """

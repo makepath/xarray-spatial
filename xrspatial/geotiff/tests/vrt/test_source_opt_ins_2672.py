@@ -1,6 +1,6 @@
 """VRT source-read opt-in forwarding (issue #2672).
 
-``read_vrt`` accepts ``allow_rotated`` and ``allow_invalid_nodata`` and
+``_read_vrt`` accepts ``allow_rotated`` and ``allow_invalid_nodata`` and
 documents them as opt-ins, but until issue #2672 the eager and chunked
 paths only forwarded the codec flags to the per-source GeoTIFF read. A
 caller who passed ``allow_rotated=True`` or ``allow_invalid_nodata=True``
@@ -20,7 +20,7 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, read_vrt
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, _read_vrt
 from xrspatial.geotiff._errors import InvalidIntegerNodataError, RotatedTransformError
 
 # Reuse the existing hand-rolled TIFF builders so this suite shares one
@@ -76,12 +76,12 @@ def _invalid_nodata_source_vrt(tmp_path) -> str:
 def test_eager_invalid_nodata_rejected_without_opt_in(tmp_path):
     vrt = _invalid_nodata_source_vrt(tmp_path)
     with pytest.raises(InvalidIntegerNodataError):
-        read_vrt(vrt)
+        _read_vrt(vrt)
 
 
 def test_eager_invalid_nodata_accepted_with_opt_in(tmp_path):
     vrt = _invalid_nodata_source_vrt(tmp_path)
-    da = read_vrt(vrt, allow_invalid_nodata=True)
+    da = _read_vrt(vrt, allow_invalid_nodata=True)
     # NaN sentinel can't match any uint16 pixel, so the dtype survives
     # and the literal pixels come through unmasked.
     assert da.dtype == np.uint16
@@ -110,12 +110,12 @@ def test_chunked_invalid_nodata_accepted_with_opt_in(tmp_path):
 def test_eager_rotated_source_rejected_without_opt_in(tmp_path):
     vrt = _rotated_source_vrt(tmp_path)
     with pytest.raises(RotatedTransformError):
-        read_vrt(vrt)
+        _read_vrt(vrt)
 
 
 def test_eager_rotated_source_accepted_with_opt_in(tmp_path):
     vrt = _rotated_source_vrt(tmp_path)
-    da = read_vrt(vrt, allow_rotated=True)
+    da = _read_vrt(vrt, allow_rotated=True)
     # The source pixel grid is read without the georef assumption.
     np.testing.assert_array_equal(da.values, [[10, 20], [30, 40]])
 
@@ -153,14 +153,14 @@ def test_missing_sources_warn_opt_in_avoids_false_hole(tmp_path):
     # hole and emits the fallback warning.
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        da_hole = read_vrt(vrt, missing_sources='warn')
+        da_hole = _read_vrt(vrt, missing_sources='warn')
     assert any(issubclass(w.category, GeoTIFFFallbackWarning) for w in caught)
     assert da_hole.attrs.get('vrt_holes')
 
     # With the opt-in forwarded, the source reads and no hole is recorded.
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        da_ok = read_vrt(
+        da_ok = _read_vrt(
             vrt, missing_sources='warn', allow_invalid_nodata=True)
     assert not any(
         issubclass(w.category, GeoTIFFFallbackWarning) for w in caught)

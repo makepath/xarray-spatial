@@ -2,7 +2,7 @@
 
 The helpers stay private to :mod:`xrspatial.geotiff`; public callers go
 through :func:`xrspatial.geotiff.open_geotiff` /
-:func:`xrspatial.geotiff.read_geotiff_dask`.
+:func:`xrspatial.geotiff._read_geotiff_dask`.
 
 Monkeypatch contract
 --------------------
@@ -111,7 +111,7 @@ def _parse_cog_http_meta(
     (lazy per-IFD reads); the cap exists to bound a malformed-file blast
     radius rather than to constrain valid pyramids.
 
-    Pulled out of :func:`_read_cog_http` so :func:`read_geotiff_dask`
+    Pulled out of :func:`_read_cog_http` so :func:`_read_geotiff_dask`
     can parse metadata once per graph rather than once per chunk task
     (each delayed task used to fire its own 16 KB header GET).
 
@@ -778,7 +778,7 @@ def _fetch_decode_cog_http_tiles(
     """Fetch and decode the tiles of a tiled COG over HTTP.
 
     Pulled out of :func:`_read_cog_http` so that callers with
-    pre-parsed metadata (notably :func:`read_geotiff_dask`) can reuse a
+    pre-parsed metadata (notably :func:`_read_geotiff_dask`) can reuse a
     single IFD parse across many tile-fetch calls. When *window* is
     given, only tiles intersecting the window are fetched + decoded;
     the result is sized to the (clamped) window rather than the full

@@ -24,8 +24,8 @@ import xarray as xr
 from xrspatial.geotiff import UnsafeURLError
 from xrspatial.geotiff import _reader as _reader_mod
 from xrspatial.geotiff import _sources as _sources_mod
-from xrspatial.geotiff import (open_geotiff, read_geotiff_dask, read_geotiff_gpu, read_vrt,
-                               to_geotiff, write_geotiff_gpu, write_vrt)
+from xrspatial.geotiff import (open_geotiff, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
+                               to_geotiff, _write_geotiff_gpu, build_vrt)
 from xrspatial.geotiff._errors import RotatedTransformError
 from xrspatial.geotiff._header import parse_all_ifds, parse_header
 from xrspatial.geotiff._reader import (_FULL_IMAGE_BUDGET_HEADER_SLACK, INITIAL_HTTP_HEADER_BYTES,
@@ -688,14 +688,14 @@ def test_read_cog_http_perf_with_mock_rtt(small_cog_bytes_http_cog_coalesce, mon
 
 
 # ---------------------------------------------------------------------------
-# read_geotiff_dask: IFD parsing call count and correctness
+# _read_geotiff_dask: IFD parsing call count and correctness
 # ---------------------------------------------------------------------------
 
 def test_dask_local_correctness(small_cog_bytes_http_cog_coalesce):
     """Dask read of a local COG must equal the eager read bit-for-bit."""
     _, expected, path = small_cog_bytes_http_cog_coalesce
     eager = open_geotiff(path)
-    lazy = read_geotiff_dask(path, chunks=16).compute()
+    lazy = _read_geotiff_dask(path, chunks=16).compute()
     np.testing.assert_array_equal(np.asarray(eager), np.asarray(lazy))
     np.testing.assert_array_equal(np.asarray(eager), expected)
 
@@ -716,7 +716,7 @@ def test_dask_http_parses_ifds_once(small_cog_bytes_http_cog_coalesce, monkeypat
 
     # 16x16 chunks on 64x64 -> 16 chunks. Without P5 each chunk would
     # spawn its own _HTTPSource and fire its own (0, 16384) GET.
-    da_arr = read_geotiff_dask('http://mock/cog.tif', chunks=16).compute()
+    da_arr = _read_geotiff_dask('http://mock/cog.tif', chunks=16).compute()
     np.testing.assert_array_equal(np.asarray(da_arr), expected)
 
     # Count "header" GETs across every _HTTPSource instance the read
@@ -1123,7 +1123,7 @@ def test_dask_read_parses_ifds_once_across_chunks(
     # 256x256 image; 32x32 chunks -> 64 chunks. If header parsing happens
     # per chunk task we should see ~64 header GETs. The contract says
     # at most one.
-    da_arr = read_geotiff_dask('http://mock/cog.tif', chunks=32)
+    da_arr = _read_geotiff_dask('http://mock/cog.tif', chunks=32)
     n_chunks = da_arr.data.npartitions
     assert n_chunks >= 16, (
         f"expected >=16 chunks to make the count assertion meaningful, "
@@ -1166,7 +1166,7 @@ def test_dask_header_gets_independent_of_chunk_count(
             return s
 
         monkeypatch.setattr(_reader_mod, '_HTTPSource', _fake)
-        out = read_geotiff_dask('http://mock/cog.tif', chunks=chunks).compute()
+        out = _read_geotiff_dask('http://mock/cog.tif', chunks=chunks).compute()
         np.testing.assert_array_equal(np.asarray(out), expected)
         return sum(
             1
@@ -1634,7 +1634,7 @@ def test_http_dask_rotated_default_raises(tmp_path, monkeypatch):
 def test_http_dask_rotated_allow_rotated_reads(tmp_path, monkeypatch):
     """``allow_rotated=True`` over HTTP+dask reads the pixel grid.
 
-    A regression where ``read_geotiff_dask`` did not forward the kwarg
+    A regression where ``_read_geotiff_dask`` did not forward the kwarg
     to ``_parse_cog_http_meta`` would raise ``NotImplementedError``.
     """
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
@@ -5969,13 +5969,13 @@ class TestDaskBackendUppercaseDispatch_2323:
         return seen, _Sentinel
 
     def test_uppercase_url_constructs_http_source(self, monkeypatch):
-        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+        from xrspatial.geotiff._backends.dask import _read_geotiff_dask
 
         seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
 
         url = f'HTTP://example.com/x_dask_{_ISSUE_2323}.tif'
         with pytest.raises(_Sentinel, match="_HTTPSource"):
-            read_geotiff_dask(url)
+            _read_geotiff_dask(url)
 
         assert seen['http'] == 1, (
             "uppercase URL did not reach _HTTPSource; "
@@ -5986,13 +5986,13 @@ class TestDaskBackendUppercaseDispatch_2323:
         assert seen['url'] == url
 
     def test_lowercase_url_still_constructs_http_source(self, monkeypatch):
-        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+        from xrspatial.geotiff._backends.dask import _read_geotiff_dask
 
         seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
 
         url = f'http://example.com/x_dask_{_ISSUE_2323}.tif'
         with pytest.raises(_Sentinel, match="_HTTPSource"):
-            read_geotiff_dask(url)
+            _read_geotiff_dask(url)
 
         assert seen['http'] == 1
         assert seen['cloud'] == 0
@@ -6001,13 +6001,13 @@ class TestDaskBackendUppercaseDispatch_2323:
             self, monkeypatch):
         # Counter-check: a real fsspec URI (uppercase scheme too) must
         # still go to the cloud branch.
-        from xrspatial.geotiff._backends.dask import read_geotiff_dask
+        from xrspatial.geotiff._backends.dask import _read_geotiff_dask
 
         seen, _Sentinel = self._stub_dask_http_path(monkeypatch)
 
         url = f'S3://bucket/x_dask_{_ISSUE_2323}.tif'
         with pytest.raises(_Sentinel, match="_CloudSource"):
-            read_geotiff_dask(url)
+            _read_geotiff_dask(url)
 
         assert seen['cloud'] == 1
         assert seen['http'] == 0
@@ -6043,7 +6043,7 @@ def _build_vrt_2026_05_15(tmp_path):
     """Build a 1-source VRT mosaic referencing a small local GeoTIFF."""
     src = _build_local_tif_2026_05_15(tmp_path, name='vrt_src.tif')
     vrt = str(tmp_path / 'mosaic.vrt')
-    write_vrt(vrt, [src])
+    build_vrt(vrt, [src])
     return vrt, src
 
 
@@ -6112,7 +6112,7 @@ def test_dispatcher_dask_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
     """``chunks=N`` with ``max_cloud_bytes=...`` raises ValueError.
 
     The kwarg is only consumed on the eager non-VRT path; the dask
-    branch (``read_geotiff_dask``) never references it.
+    branch (``_read_geotiff_dask``) never references it.
     """
     path = _build_local_tif_2026_05_15(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
@@ -6122,7 +6122,7 @@ def test_dispatcher_dask_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
 def test_dispatcher_vrt_path_rejects_max_cloud_bytes_2026_05_15(tmp_path):
     """``.vrt`` source with ``max_cloud_bytes=...`` raises ValueError.
 
-    The kwarg is only consumed on the eager non-VRT path; ``read_vrt``
+    The kwarg is only consumed on the eager non-VRT path; ``_read_vrt``
     never references it.
     """
     vrt, _src = _build_vrt_2026_05_15(tmp_path)
@@ -6224,12 +6224,12 @@ def test_explicit_none_max_cloud_bytes_rejected_on_vrt_path_2026_05_15(
 # ----------------------------------------------------------
 _PUBLIC_ENTRY_POINTS_2106 = (
     open_geotiff,
-    read_geotiff_gpu,
-    read_geotiff_dask,
-    read_vrt,
+    _read_geotiff_gpu,
+    _read_geotiff_dask,
+    _read_vrt,
     to_geotiff,
-    write_geotiff_gpu,
-    write_vrt,
+    _write_geotiff_gpu,
+    build_vrt,
 )
 
 

@@ -6,14 +6,14 @@ the reader quartet stay consistent with each other and with the docs.
 Three sections, each a former top-level file:
 
 Section 1 -- Writer signature / docstring parity
-    ``write_vrt`` exposes its documented kwargs through an explicit
-    signature (no ``**kwargs`` catch-all), ``write_geotiff_gpu`` lists
+    ``build_vrt`` exposes its documented kwargs through an explicit
+    signature (no ``**kwargs`` catch-all), ``_write_geotiff_gpu`` lists
     ``'cubic'`` in its ``overview_resampling`` docstring, and its
     ``data`` parameter carries the same type hint as ``to_geotiff``.
 
 Section 2 -- Read entry-point docstring/param parity
-    Every signature kwarg on ``open_geotiff`` / ``read_geotiff_dask`` /
-    ``read_geotiff_gpu`` / ``read_vrt`` has a matching numpy-style
+    Every signature kwarg on ``open_geotiff`` / ``_read_geotiff_dask`` /
+    ``_read_geotiff_gpu`` / ``_read_vrt`` has a matching numpy-style
     Parameters entry, and every Parameters entry maps to a real kwarg.
 
 Section 3 -- Release-contract tier parity
@@ -35,8 +35,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (SUPPORTED_FEATURES, open_geotiff, read_geotiff_dask,
-                               read_geotiff_gpu, read_vrt, to_geotiff, write_geotiff_gpu, write_vrt)
+from xrspatial.geotiff import (SUPPORTED_FEATURES, open_geotiff, _read_geotiff_dask,
+                               _read_geotiff_gpu, _read_vrt, to_geotiff, _write_geotiff_gpu, build_vrt)
 
 from .._helpers.markers import requires_gpu
 
@@ -45,24 +45,24 @@ from .._helpers.markers import requires_gpu
 # ===========================================================================
 #
 # Three drifts this section guards against:
-# ``write_vrt`` swallowed every kwarg into ``**kwargs`` so the documented
+# ``build_vrt`` swallowed every kwarg into ``**kwargs`` so the documented
 # ``relative`` / ``crs`` / ``nodata`` were invisible to ``inspect.signature``;
-# ``write_geotiff_gpu``'s ``overview_resampling`` docstring omitted
-# ``'cubic'``; and ``write_geotiff_gpu(data, ...)`` lacked the type hint
+# ``_write_geotiff_gpu``'s ``overview_resampling`` docstring omitted
+# ``'cubic'``; and ``_write_geotiff_gpu(data, ...)`` lacked the type hint
 # ``to_geotiff(data, ...)`` carries.
 
 
 def test_write_vrt_signature_exposes_documented_kwargs():
-    """``inspect.signature(write_vrt)`` reports the four accepted kwargs.
+    """``inspect.signature(build_vrt)`` reports the four accepted kwargs.
 
     When the public wrapper used ``**kwargs``, ``inspect.signature``
     only saw ``vrt_path`` and ``source_files``. ``crs`` was added for
-    parity with ``to_geotiff`` / ``write_geotiff_gpu`` while keeping the
+    parity with ``to_geotiff`` / ``_write_geotiff_gpu`` while keeping the
     historic ``crs_wkt`` as a deprecated alias (sentinel default so the
     deprecation shim can tell "user passed nothing" from "user passed
     crs_wkt=None").
     """
-    sig = inspect.signature(write_vrt)
+    sig = inspect.signature(build_vrt)
     params = sig.parameters
     assert 'relative' in params
     assert 'crs' in params  # canonical kwarg
@@ -70,7 +70,7 @@ def test_write_vrt_signature_exposes_documented_kwargs():
     assert 'nodata' in params
     assert params['relative'].default is True
     # ``crs`` is the new canonical kwarg; default None means "pick from
-    # the first source", matching to_geotiff / write_geotiff_gpu.
+    # the first source", matching to_geotiff / _write_geotiff_gpu.
     assert params['crs'].default is None
     # ``crs_wkt`` carries a sentinel default so the deprecation shim
     # can distinguish "user passed nothing" (no warning) from "user
@@ -99,7 +99,7 @@ def test_write_vrt_unknown_kwarg_rejected_at_public_level(tmp_path):
     to_geotiff(da, tif_path)
 
     with pytest.raises(TypeError, match='typo_kwarg'):
-        write_vrt(str(tmp_path / 't.vrt'), [tif_path], typo_kwarg=1)
+        build_vrt(str(tmp_path / 't.vrt'), [tif_path], typo_kwarg=1)
 
 
 def test_write_vrt_accepts_documented_kwargs(tmp_path):
@@ -118,7 +118,7 @@ def test_write_vrt_accepts_documented_kwargs(tmp_path):
     to_geotiff(da, tif_path)
 
     vrt_path = str(tmp_path / 't.vrt')
-    out = write_vrt(
+    out = build_vrt(
         vrt_path, [tif_path],
         relative=False, crs=None, nodata=-9999.0,
     )
@@ -130,7 +130,7 @@ def test_write_geotiff_gpu_docstring_lists_cubic():
     """``overview_resampling`` docstring includes ``'cubic'`` so it
     matches ``to_geotiff`` and the underlying ``make_overview_gpu``.
     """
-    doc = write_geotiff_gpu.__doc__
+    doc = _write_geotiff_gpu.__doc__
     assert doc is not None
     # Find the overview_resampling block
     assert 'overview_resampling' in doc
@@ -149,7 +149,7 @@ def test_write_geotiff_gpu_data_has_type_hint():
     and the test suite exercises that path (e.g.
     ``test_backend_kwarg_parity_1561.py`` passes a numpy ``dummy``).
     """
-    sig = inspect.signature(write_geotiff_gpu)
+    sig = inspect.signature(_write_geotiff_gpu)
     data_param = sig.parameters['data']
     assert data_param.annotation is not inspect.Parameter.empty
     # The annotation is a forward reference under ``from __future__ import
@@ -177,7 +177,7 @@ def test_write_geotiff_gpu_cubic_overview_round_trip(tmp_path):
         coords={'y': np.arange(256.0, 0, -1), 'x': np.arange(256.0)},
     )
     path = str(tmp_path / 'cog.tif')
-    write_geotiff_gpu(
+    _write_geotiff_gpu(
         da_gpu, path,
         cog=True, tile_size=64, overview_resampling='cubic',
     )
@@ -198,9 +198,9 @@ def test_write_geotiff_gpu_cubic_overview_round_trip(tmp_path):
 
 READ_ENTRY_POINTS = (
     open_geotiff,
-    read_geotiff_dask,
-    read_geotiff_gpu,
-    read_vrt,
+    _read_geotiff_dask,
+    _read_geotiff_gpu,
+    _read_vrt,
 )
 
 

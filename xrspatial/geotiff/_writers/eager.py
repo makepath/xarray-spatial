@@ -4,7 +4,7 @@ Holds ``to_geotiff`` (the public eager writer),
 ``_write_single_tile`` (per-tile worker used by ``_write_vrt_tiled``),
 and ``_write_vrt_tiled`` (the deprecated ``vrt_tiled=True`` path on
 ``to_geotiff``). Companion modules ``_writers/gpu.py`` and
-``_writers/vrt.py`` hold the GPU writer and the public ``write_vrt``;
+``_writers/vrt.py`` hold the GPU writer and the public ``build_vrt``;
 ``to_geotiff`` dispatches to them when the caller asks for a GPU
 output or a ``.vrt`` path.
 """
@@ -39,7 +39,7 @@ from .._validation import (_validate_3d_writer_dims, _validate_gpu_arg,
                            _validate_tile_size_arg, _validate_writer_spatial_shape,
                            validate_write_metadata)
 from .._writer import _COG_REQUIRES_TILED_MSG, write
-from .gpu import write_geotiff_gpu
+from .gpu import _write_geotiff_gpu
 
 
 def to_geotiff(data: xr.DataArray | np.ndarray,
@@ -226,7 +226,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         speak classic TIFF cannot open the output. Force BigTIFF
         (64-bit offsets). None (default) auto-promotes when the
         estimated file size would exceed the classic-TIFF 4 GB limit.
-        Matches the same kwarg on ``write_geotiff_gpu``.
+        Matches the same kwarg on ``_write_geotiff_gpu``.
     gpu : bool or None
         [experimental] Requires cupy + numba CUDA, plus the optional
         nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
@@ -295,7 +295,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         internal-only JPEG path keeps its own dedicated
         ``allow_internal_only_jpeg`` flag because internal-only is a
         stricter tier than experimental. The kwarg is forwarded
-        unchanged to ``write_geotiff_gpu`` on the GPU dispatch path.
+        unchanged to ``_write_geotiff_gpu`` on the GPU dispatch path.
     allow_internal_only_jpeg : bool
         [internal-only] Opt in to the ``compression='jpeg'`` encode
         path (default ``False``). The encoder writes self-contained
@@ -307,7 +307,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         the flag set, the write proceeds and a
         ``GeoTIFFFallbackWarning`` is emitted at call time. Without
         the flag, ``compression='jpeg'`` raises ``ValueError``. The
-        kwarg is forwarded unchanged to ``write_geotiff_gpu`` on the
+        kwarg is forwarded unchanged to ``_write_geotiff_gpu`` on the
         GPU dispatch path so callers can reach the same experimental
         encode via ``to_geotiff(..., gpu=True)``.
     allow_unparseable_crs : bool
@@ -342,7 +342,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     str or binary file-like
         The ``path`` argument (a string for filesystem paths, the
         file-like object for BytesIO destinations). Returning the path
-        lines up with ``write_vrt`` and lets callers chain a write into
+        lines up with ``build_vrt`` and lets callers chain a write into
         a read without round-tripping through a variable; existing
         callers that discarded the previous ``None`` return are
         unaffected.
@@ -398,7 +398,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # non-positive tile_size with cog=True drove the overview loop
     # into a hang once oh, ow halved to 0. Validate
     # tile_size whenever either path will consume it: tiled output OR
-    # COG overview generation. Shared with write_geotiff_gpu via
+    # COG overview generation. Shared with _write_geotiff_gpu via
     # _validate_tile_size_arg so both writers keep identical validation.
     if tiled or cog:
         _validate_tile_size_arg(tile_size)
@@ -511,7 +511,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # reader round-trips because Pillow re-decodes the JFIF stream
         # directly, masking the interop break. Refuse the write by
         # default and surface the same ``allow_internal_only_jpeg=True``
-        # opt-in that ``write_geotiff_gpu`` already accepts, so the
+        # opt-in that ``_write_geotiff_gpu`` already accepts, so the
         # auto-dispatch entry point can reach the experimental
         # internal-reader-only path the explicit GPU entry point
         # exposes.
@@ -525,7 +525,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 "opt in to the experimental internal-reader-only path "
                 "(issue #1845).")
         # The JPEG opt-in warning is emitted below once we know the
-        # dispatch decision: ``write_geotiff_gpu`` emits its own warning
+        # dispatch decision: ``_write_geotiff_gpu`` emits its own warning
         # on the GPU path, so emitting here would double-warn callers
         # of ``to_geotiff(gpu=True, compression='jpeg',
         # allow_internal_only_jpeg=True)``.
@@ -539,7 +539,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # so callers learn the opt-in name from the rejection message
         # and can fix the call site in one line. The opt-in warning is
         # emitted below once the GPU dispatch decision is known so the
-        # GPU path does not double-warn (``write_geotiff_gpu`` emits its
+        # GPU path does not double-warn (``_write_geotiff_gpu`` emits its
         # own warning on the GPU path).
         if (compression.lower() in _EXPERIMENTAL_CODECS
                 and not allow_experimental_codecs):
@@ -581,7 +581,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         isinstance(path, str) and path.lower().endswith('.vrt'))
 
     # Resolve GPU dispatch up front so the JPEG opt-in warning fires
-    # exactly once. ``write_geotiff_gpu`` emits its own warning on the
+    # exactly once. ``_write_geotiff_gpu`` emits its own warning on the
     # GPU path; emitting here as well would double-warn callers of
     # ``to_geotiff(gpu=True, compression='jpeg',
     # allow_internal_only_jpeg=True)``. VRT and CPU paths receive the
@@ -604,7 +604,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         )
     # Tier 3 experimental-codec opt-in warning. Mirrors the JPEG
     # flag's "warn once, after dispatch is resolved" shape:
-    # ``write_geotiff_gpu`` emits its own warning on the GPU path with
+    # ``_write_geotiff_gpu`` emits its own warning on the GPU path with
     # a backend-specific caveat, so the CPU dispatcher only warns when
     # the write is staying on CPU.
     if (isinstance(compression, str)
@@ -699,12 +699,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          drop_rotation=drop_rotation)
         return path
 
-    # Dispatch to write_geotiff_gpu when GPU was selected (explicit
+    # Dispatch to _write_geotiff_gpu when GPU was selected (explicit
     # ``gpu=True`` or auto-detected CuPy data). ``auto_detected_gpu``
     # and ``use_gpu`` were computed above to gate the JPEG opt-in
     # warning; reuse them so the call sites stay in sync.
     if use_gpu and _path_is_file_like:
-        # write_geotiff_gpu's nvCOMP path materialises tile parts and then
+        # _write_geotiff_gpu's nvCOMP path materialises tile parts and then
         # calls _write_bytes(path), which would write at the buffer's
         # current cursor without truncating. More importantly, the GPU
         # path was never tested with file-like destinations; refuse rather
@@ -727,7 +727,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 "tiled=False is not supported on the GPU writer. "
                 "Pass gpu=False or omit tiled=False.")
         try:
-            write_geotiff_gpu(
+            _write_geotiff_gpu(
                 data, path, crs=crs, nodata=nodata,
                 compression=compression,
                 compression_level=compression_level,
@@ -747,7 +747,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             )
             return path
         except ImportError as e:
-            # ``write_geotiff_gpu`` raises ImportError when cupy itself
+            # ``_write_geotiff_gpu`` raises ImportError when cupy itself
             # can't be imported. nvCOMP absence doesn't surface here:
             # ``_try_nvcomp_from_device_bufs`` returns None when the
             # library can't load, and the writer drops to CPU
@@ -1246,7 +1246,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                         wkt_fallback = wkt
         if nodata is None:
             # Use the same alias-aware resolver that to_geotiff /
-            # write_geotiff_gpu apply so a rioxarray-style DataArray
+            # _write_geotiff_gpu apply so a rioxarray-style DataArray
             # (``attrs['nodatavals']``) or a CF-style one
             # (``attrs['_FillValue']``) round-trips through ``.vrt``
             # the same way it does through ``.tif``. Using

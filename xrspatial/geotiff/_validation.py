@@ -1,8 +1,8 @@
 """Input validators shared by the geotiff entry points.
 
 Pure leaves over numpy dtypes and Python primitives. Called from
-``to_geotiff``, ``read_geotiff_dask``, ``read_geotiff_gpu``,
-``read_vrt``, and ``write_geotiff_gpu`` so the rejection rules
+``to_geotiff``, ``_read_geotiff_dask``, ``_read_geotiff_gpu``,
+``_read_vrt``, and ``_write_geotiff_gpu`` so the rejection rules
 (non-positive chunks, lossy float-to-int casts, ambiguous 3D dim
 layouts, tile-size multiples of 16, etc.) stay in lockstep across
 every backend.
@@ -155,7 +155,7 @@ def _validate_writer_spatial_shape(shape, dims=None,
     (consistent with the writer's pre-moveaxis layout invariant), so
     pass ``dims`` for DataArray inputs to avoid mis-naming the axis.
     ``entry_point`` is the function name used in the error message so
-    direct callers of ``write`` / ``write_streaming`` / ``write_geotiff_gpu``
+    direct callers of ``write`` / ``write_streaming`` / ``_write_geotiff_gpu``
     see the function they actually invoked.
 
     Also rejects 3D inputs whose band/sample axis is zero.
@@ -236,7 +236,7 @@ def _validate_tile_size(tile_size) -> None:
     """Validate ``tile_size`` for the tiled GeoTIFF writers.
 
     Shared by ``to_geotiff`` (when ``tiled=True``) and
-    ``write_geotiff_gpu`` (always tiled) so the accepted types, the
+    ``_write_geotiff_gpu`` (always tiled) so the accepted types, the
     non-positive rejection, and the multiple-of-16 hint stay in lockstep.
     The tiled writer computes the tile grid as
     ``math.ceil(width / tile_size)``; ``tile_size=0`` hits
@@ -273,12 +273,12 @@ def _validate_tile_size(tile_size) -> None:
 def _validate_chunks_arg(chunks, *, allow_none=False):
     """Validate the ``chunks`` kwarg shared across the dask read entry points.
 
-    Centralises the rejection rule that ``read_geotiff_dask`` already
-    runs so ``read_geotiff_gpu`` and ``read_vrt`` can share the same
+    Centralises the rejection rule that ``_read_geotiff_dask`` already
+    runs so ``_read_geotiff_gpu`` and ``_read_vrt`` can share the same
     error format. With ``allow_none=True`` a ``None`` value passes
     through unchanged (used by entry points whose default is
-    ``chunks=None``, e.g. ``read_geotiff_gpu`` and ``read_vrt``).
-    With ``allow_none=False`` (default, matches ``read_geotiff_dask``)
+    ``chunks=None``, e.g. ``_read_geotiff_gpu`` and ``_read_vrt``).
+    With ``allow_none=False`` (default, matches ``_read_geotiff_dask``)
     a ``None`` is rejected with the same ``ValueError`` format as any
     other non-int / non-tuple value, so callers see a clear
     parameter-named error instead of a downstream ``TypeError`` from
@@ -289,7 +289,7 @@ def _validate_chunks_arg(chunks, *, allow_none=False):
     check. Returns the coerced int when given an ``np.integer`` scalar
     so downstream ``isinstance(chunks, int)`` checks stay accurate.
 
-    Mirrors the chunks-validation in ``read_geotiff_dask``; extends it
+    Mirrors the chunks-validation in ``_read_geotiff_dask``; extends it
     to the GPU read and VRT read entry points.
     """
     if chunks is None:
@@ -328,7 +328,7 @@ def _validate_tile_size_arg(tile_size):
     """Validate the ``tile_size`` kwarg for the tiled writer entry points.
 
     Wrapper kept for backwards internal compatibility; delegates to
-    ``_validate_tile_size`` so to_geotiff/write_geotiff_gpu share one
+    ``_validate_tile_size`` so to_geotiff/_write_geotiff_gpu share one
     validation path (positive int + multiple-of-16 for tiled output).
     """
     _validate_tile_size(tile_size)
@@ -402,11 +402,11 @@ def _validate_dispatch_kwargs(
     """Validate dispatcher-level kwargs across the GeoTIFF read entry points.
 
     Holds the kwarg-rejection rules that ``open_geotiff`` used to run
-    inline so the three direct backends (``read_geotiff_dask``,
-    ``read_geotiff_gpu``, ``read_vrt``) get the same validation when
+    inline so the three direct backends (``_read_geotiff_dask``,
+    ``_read_geotiff_gpu``, ``_read_vrt``) get the same validation when
     called directly. Before this helper, a caller who passed
-    ``max_cloud_bytes`` straight to ``read_geotiff_dask`` (or
-    ``band_nodata`` to ``read_geotiff_gpu``) got no error at all because
+    ``max_cloud_bytes`` straight to ``_read_geotiff_dask`` (or
+    ``band_nodata`` to ``_read_geotiff_gpu``) got no error at all because
     the kwarg either silently dropped or raised an unrelated
     ``TypeError`` from the signature.
 
@@ -439,12 +439,12 @@ def _validate_dispatch_kwargs(
         a ``.vrt`` extension via ``isinstance(source, str)``.
     gpu : bool
         True when the call routes through the GPU pipeline (either
-        ``open_geotiff(gpu=True)`` or a direct ``read_geotiff_gpu``).
+        ``open_geotiff(gpu=True)`` or a direct ``_read_geotiff_gpu``).
         This is the dispatch bool, type-checked via
         ``_validate_gpu_arg``. Not to be confused with
-        ``read_geotiff_gpu``'s own deprecated ``gpu='strict'/'auto'/
+        ``_read_geotiff_gpu``'s own deprecated ``gpu='strict'/'auto'/
         'loose'`` string parameter (the legacy ``on_gpu_failure``
-        alias), which never reaches this helper -- ``read_geotiff_gpu``
+        alias), which never reaches this helper -- ``_read_geotiff_gpu``
         passes a literal ``True`` here.
     chunks : int, tuple, or None
         Caller's ``chunks=`` value. ``None`` means eager.
@@ -864,7 +864,7 @@ def _validate_no_rotated_affine(attrs, *, drop_rotation: bool,
         mapping will be lost on write; the check returns silently.
     entry_point : str
         Name of the calling writer for the error message (``to_geotiff``,
-        ``write_geotiff_gpu``). Lets the two writers surface the same
+        ``_write_geotiff_gpu``). Lets the two writers surface the same
         wording while still naming the opt-in correctly for either entry
         point.
     """
@@ -998,7 +998,7 @@ def validate_write_metadata(context: Mapping[str, Any] | None = None) -> None:
     """Run all registered write-side ambiguous-metadata checks.
 
     Mirror of ``validate_read_metadata`` for ``to_geotiff`` /
-    ``write_geotiff_gpu`` / ``write_vrt``. See that docstring for the
+    ``_write_geotiff_gpu`` / ``build_vrt``. See that docstring for the
     context-schema convention and the no-op-when-empty guarantee.
     """
     if not _WRITE_METADATA_CHECKS:
@@ -1532,8 +1532,8 @@ def _same_nodata(a: float, b: float) -> bool:
 
 
 # Callers that still want the legacy flatten-to-first-band behaviour
-# pass ``band_nodata='first'`` to ``read_vrt`` / ``open_geotiff`` /
-# ``read_geotiff_dask``; the explicit opt-in surfaces the per-band
+# pass ``band_nodata='first'`` to ``_read_vrt`` / ``open_geotiff`` /
+# ``_read_geotiff_dask``; the explicit opt-in surfaces the per-band
 # ambiguity at the call site instead of papering over it silently.
 register_read_metadata_check(_check_read_mixed_band_metadata)
 

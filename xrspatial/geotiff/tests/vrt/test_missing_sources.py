@@ -18,7 +18,7 @@ Also covers:
 
 * Internal ``_vrt.read_vrt`` entry point default-raise + explicit-warn
   + ``XRSPATIAL_GEOTIFF_STRICT=1`` override.
-* Public ``read_vrt`` / ``open_geotiff('.vrt')`` default-raise +
+* Public ``_read_vrt`` / ``open_geotiff('.vrt')`` default-raise +
   explicit-warn.
 * Chunked-path missing-source policy: ``vrt_holes`` at build,
   raise-at-build, per-task compute warnings, window / band scoping,
@@ -33,7 +33,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, read_vrt, to_geotiff
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, _read_vrt, to_geotiff
 from xrspatial.geotiff._vrt import read_vrt as _internal_read_vrt
 
 PRESENT_FILL = 7.0
@@ -118,11 +118,11 @@ def _write_partial_float_vrt(tmp_path) -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 def _eager_reader(source, **kwargs):
-    return read_vrt(source, **kwargs)
+    return _read_vrt(source, **kwargs)
 
 
 def _dask_reader(source, **kwargs):
-    # ``open_geotiff`` routes ``.vrt`` to ``read_vrt`` and forwards
+    # ``open_geotiff`` routes ``.vrt`` to ``_read_vrt`` and forwards
     # ``chunks=`` / ``missing_sources=`` unchanged. Using a small chunk
     # size keeps the partial mosaic split across multiple tasks so the
     # lazy path is genuinely exercised.
@@ -164,7 +164,7 @@ class TestDefaultPolicyRaises:
         disk."""
         vrt = _write_byte_missing_vrt(tmp_path)
         with pytest.raises((OSError, ValueError)):
-            read_vrt(vrt)
+            _read_vrt(vrt)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +186,7 @@ class TestExplicitRaisePolicy:
     def test_eager_byte_explicit_raise(self, tmp_path):
         vrt = _write_byte_missing_vrt(tmp_path)
         with pytest.raises((OSError, ValueError)):
-            read_vrt(vrt, missing_sources="raise")
+            _read_vrt(vrt, missing_sources="raise")
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
         with pytest.warns(
             GeoTIFFFallbackWarning, match="missing_source.tif",
         ):
-            da = read_vrt(vrt_path, missing_sources="warn")
+            da = _read_vrt(vrt_path, missing_sources="warn")
 
         assert "vrt_holes" in da.attrs
         sources = [h["source"] for h in da.attrs["vrt_holes"]]
@@ -264,7 +264,7 @@ class TestWarnPolicyEmitsWarningAndFillsNodata:
         populated even when there is no present half."""
         vrt = _write_byte_missing_vrt(tmp_path)
         with pytest.warns(GeoTIFFFallbackWarning, match="could not be read"):
-            da = read_vrt(vrt, missing_sources="warn")
+            da = _read_vrt(vrt, missing_sources="warn")
         assert "vrt_holes" in da.attrs
         assert da.attrs["vrt_holes"][0]["source"].endswith("missing.tif")
 
@@ -312,14 +312,14 @@ class TestInvalidPolicyRejected:
         path stays exercised."""
         vrt = _write_byte_missing_vrt(tmp_path)
         with pytest.raises(ValueError, match="missing_sources"):
-            read_vrt(vrt, missing_sources="ignore")
+            _read_vrt(vrt, missing_sources="ignore")
 
 
 # ===========================================================================
 # Internal ``_vrt.read_vrt`` entry point (was
 # test_vrt_missing_sources_default_raise_1843.py).
 #
-# The public matrix above exercises the package-level ``read_vrt`` /
+# The public matrix above exercises the package-level ``_read_vrt`` /
 # ``open_geotiff`` surface. These cases pin the internal
 # ``xrspatial.geotiff._vrt.read_vrt`` entry point directly, including the
 # ``XRSPATIAL_GEOTIFF_STRICT=1`` module-wide override that wins over a
@@ -389,7 +389,7 @@ class TestInternalEntryPointMissingSources:
 
 
 # ===========================================================================
-# Public default ``missing_sources='raise'`` on read_vrt + open_geotiff
+# Public default ``missing_sources='raise'`` on _read_vrt + open_geotiff
 #
 # Pins that the public wrapper's default matches the internal
 # ``_vrt.read_vrt`` default rather than silently overriding it with the
@@ -414,10 +414,10 @@ def _write_public_missing_source_vrt(path):
 
 
 class TestPublicDefaultMissingSources:
-    """Public ``read_vrt`` / ``open_geotiff('.vrt')`` default to ``'raise'``."""
+    """Public ``_read_vrt`` / ``open_geotiff('.vrt')`` default to ``'raise'``."""
 
     def test_public_read_vrt_default_raises(self, tmp_path):
-        """Public ``read_vrt`` with no ``missing_sources`` kwarg must raise.
+        """Public ``_read_vrt`` with no ``missing_sources`` kwarg must raise.
 
         The default is aligned to the internal ``_vrt.read_vrt`` default
         of ``'raise'`` so the unreadable source halts the call instead of
@@ -426,15 +426,15 @@ class TestPublicDefaultMissingSources:
         vrt = tmp_path / "tmp_1860_public_default_raise.vrt"
         _write_public_missing_source_vrt(vrt)
         with pytest.raises((OSError, ValueError)):
-            read_vrt(str(vrt))
+            _read_vrt(str(vrt))
 
     def test_open_geotiff_vrt_default_raises(self, tmp_path):
         """``open_geotiff(vrt_path)`` with no ``missing_sources`` kwarg must
         raise on an unreadable backing source.
 
-        ``open_geotiff`` forwards ``missing_sources`` to ``read_vrt`` only
+        ``open_geotiff`` forwards ``missing_sources`` to ``_read_vrt`` only
         when the caller passed it explicitly; otherwise the public
-        ``read_vrt`` default applies.
+        ``_read_vrt`` default applies.
         """
         vrt = tmp_path / "tmp_1860_open_geotiff_default_raise.vrt"
         _write_public_missing_source_vrt(vrt)
@@ -445,11 +445,11 @@ class TestPublicDefaultMissingSources:
         self, tmp_path,
     ):
         """``missing_sources='warn'`` is still the escape hatch for partial
-        mosaics on the public ``read_vrt`` API."""
+        mosaics on the public ``_read_vrt`` API."""
         vrt = tmp_path / "tmp_1860_public_explicit_warn.vrt"
         _write_public_missing_source_vrt(vrt)
         with pytest.warns(GeoTIFFFallbackWarning, match="could not be read"):
-            da = read_vrt(str(vrt), missing_sources='warn')
+            da = _read_vrt(str(vrt), missing_sources='warn')
         assert 'vrt_holes' in da.attrs
         assert da.attrs['vrt_holes'][0]['source'].endswith('missing_1860.tif')
 
@@ -515,11 +515,11 @@ def _chunked_make_partial_vrt(tmp_path) -> tuple[str, str]:
 
 
 class TestChunkedMissingSourcesWarn:
-    """``read_vrt(chunks=N, missing_sources='warn')`` records holes at build."""
+    """``_read_vrt(chunks=N, missing_sources='warn')`` records holes at build."""
 
     def test_vrt_holes_populated_at_build(self, tmp_path):
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
-        result = read_vrt(vrt_path, chunks=4, missing_sources="warn")
+        result = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
         assert "vrt_holes" in result.attrs, (
             "Chunked path must populate vrt_holes at build time so "
             "callers can detect partial mosaics without forcing a compute."
@@ -535,7 +535,7 @@ class TestChunkedMissingSourcesWarn:
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = read_vrt(vrt_path, chunks=4, missing_sources="warn")
+            result = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
             computed = result.compute()
         messages = [str(w.message) for w in caught
                     if isinstance(w.message, GeoTIFFFallbackWarning)]
@@ -551,13 +551,13 @@ class TestChunkedMissingSourcesWarn:
     def test_chunks_tuple_form(self, tmp_path):
         """Tuple ``chunks=(h, w)`` threads through identically."""
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
-        result = read_vrt(vrt_path, chunks=(2, 4), missing_sources="warn")
+        result = _read_vrt(vrt_path, chunks=(2, 4), missing_sources="warn")
         assert "vrt_holes" in result.attrs
         assert len(result.attrs["vrt_holes"]) == 1
 
 
 class TestChunkedMissingSourcesRaiseSmoke:
-    """``read_vrt(chunks=N, missing_sources='raise')`` fails at build.
+    """``_read_vrt(chunks=N, missing_sources='raise')`` fails at build.
 
     The detailed raise-at-build matrix (window / band scoping, multi-source
     preview, strict env) lives in the 2265 section below; this keeps the
@@ -567,17 +567,17 @@ class TestChunkedMissingSourcesRaiseSmoke:
     def test_build_raises_immediately(self, tmp_path):
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError, match="missing.tif"):
-            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, missing_sources="raise")
 
     def test_build_raise_message_mentions_policy_kwarg(self, tmp_path):
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError) as excinfo:
-            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, missing_sources="raise")
         assert "missing_sources='warn'" in str(excinfo.value)
 
     def test_window_past_missing_succeeds_under_raise(self, tmp_path):
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
-        result = read_vrt(
+        result = _read_vrt(
             vrt_path, chunks=4, window=(0, 0, 4, 4),
             missing_sources="raise",
         )
@@ -592,7 +592,7 @@ class TestChunkedMissingSourcesRaiseSmoke:
         multiband cases in the 2265 section below."""
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError):
-            read_vrt(vrt_path, chunks=4, band=0, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, band=0, missing_sources="raise")
 
 
 class TestChunkedMissingSourcesDefault:
@@ -601,7 +601,7 @@ class TestChunkedMissingSourcesDefault:
     def test_chunked_default_raises_at_build(self, tmp_path):
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError, match="missing.tif"):
-            read_vrt(vrt_path, chunks=4)
+            _read_vrt(vrt_path, chunks=4)
 
 
 class TestChunkedMissingSourcesValidation:
@@ -610,14 +610,14 @@ class TestChunkedMissingSourcesValidation:
     def test_invalid_policy_raises_at_build(self, tmp_path):
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
         with pytest.raises(ValueError, match="missing_sources"):
-            read_vrt(vrt_path, chunks=4, missing_sources="ignore")
+            _read_vrt(vrt_path, chunks=4, missing_sources="ignore")
 
     def test_invalid_policy_raises_without_chunks_too(self, tmp_path):
         """The eager path also rejects the bad value; callers see the same
         error whether or not they pass ``chunks=``."""
         vrt_path, _ = _chunked_make_partial_vrt(str(tmp_path))
         with pytest.raises(ValueError, match="missing_sources"):
-            read_vrt(vrt_path, missing_sources="ignore")
+            _read_vrt(vrt_path, missing_sources="ignore")
 
 
 # ===========================================================================
@@ -741,21 +741,21 @@ class TestRaiseAtBuild:
     def test_build_raises_immediately(self, tmp_path):
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError, match="missing_2265_h"):
-            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, missing_sources="raise")
 
     def test_default_raises_at_build(self, tmp_path):
         """The public default is ``'raise'`` so dropping the kwarg hits
         the same fast-fail path."""
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError):
-            read_vrt(vrt_path, chunks=4)
+            _read_vrt(vrt_path, chunks=4)
 
     def test_error_message_mentions_opt_in(self, tmp_path):
         """The exception text tells the caller how to opt into the lenient
         path."""
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError) as excinfo:
-            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, missing_sources="raise")
         msg = str(excinfo.value)
         assert "missing_sources='warn'" in msg
         assert "partial mosaic" in msg
@@ -766,7 +766,7 @@ class TestRaiseAtBuildWindowScoping:
 
     def test_window_past_missing_does_not_raise(self, tmp_path):
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
-        result = read_vrt(
+        result = _read_vrt(
             vrt_path, chunks=4, window=(0, 0, 4, 4),
             missing_sources="raise",
         )
@@ -778,7 +778,7 @@ class TestRaiseAtBuildWindowScoping:
     def test_window_intersecting_missing_raises(self, tmp_path):
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError):
-            read_vrt(
+            _read_vrt(
                 vrt_path, chunks=4, window=(0, 4, 4, 8),
                 missing_sources="raise",
             )
@@ -791,7 +791,7 @@ class TestRaiseAtBuildBandScoping:
         """``band=1`` reads band 2 only; band 1's missing source is
         irrelevant to the graph, so the build must not raise."""
         vrt_path = _raise_make_multiband_partial_vrt(str(tmp_path))
-        result = read_vrt(
+        result = _read_vrt(
             vrt_path, chunks=4, band=1, missing_sources="raise",
         )
         computed = result.compute()
@@ -802,12 +802,12 @@ class TestRaiseAtBuildBandScoping:
     def test_band_select_on_missing_band_raises(self, tmp_path):
         vrt_path = _raise_make_multiband_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError):
-            read_vrt(vrt_path, chunks=4, band=0, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, band=0, missing_sources="raise")
 
     def test_no_band_restriction_raises(self, tmp_path):
         vrt_path = _raise_make_multiband_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError):
-            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, missing_sources="raise")
 
 
 class TestRaiseAtBuildWarnPreserved:
@@ -815,7 +815,7 @@ class TestRaiseAtBuildWarnPreserved:
 
     def test_warn_records_holes_at_build(self, tmp_path):
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
-        result = read_vrt(vrt_path, chunks=4, missing_sources="warn")
+        result = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
         assert "vrt_holes" in result.attrs
         assert len(result.attrs["vrt_holes"]) == 1
         assert result.attrs["vrt_holes"][0]["source"].endswith(
@@ -826,7 +826,7 @@ class TestRaiseAtBuildWarnPreserved:
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = read_vrt(vrt_path, chunks=4, missing_sources="warn")
+            result = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
             computed = result.compute()
         messages = [str(w.message) for w in caught
                     if isinstance(w.message, GeoTIFFFallbackWarning)]
@@ -845,7 +845,7 @@ class TestRaiseAtBuildMultipleMissingSources:
         """All missing sources fit in the preview (n=2 <= preview cap)."""
         vrt_path = _raise_make_multi_missing_vrt(str(tmp_path), n_missing=2)
         with pytest.raises(FileNotFoundError) as excinfo:
-            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, missing_sources="raise")
         msg = str(excinfo.value)
         assert "missing_2265_multi_0" in msg
         assert "missing_2265_multi_1" in msg
@@ -857,7 +857,7 @@ class TestRaiseAtBuildMultipleMissingSources:
         n = 5
         vrt_path = _raise_make_multi_missing_vrt(str(tmp_path), n_missing=n)
         with pytest.raises(FileNotFoundError) as excinfo:
-            read_vrt(vrt_path, chunks=4, missing_sources="raise")
+            _read_vrt(vrt_path, chunks=4, missing_sources="raise")
         msg = str(excinfo.value)
         assert "missing_2265_multi_0" in msg
         assert f"missing_2265_multi_{n - 1}" not in msg
@@ -872,11 +872,11 @@ class TestRaiseAtBuildStrictMode:
         monkeypatch.setenv("XRSPATIAL_GEOTIFF_STRICT", "1")
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
         with pytest.raises(FileNotFoundError):
-            read_vrt(vrt_path, chunks=4, missing_sources="warn")
+            _read_vrt(vrt_path, chunks=4, missing_sources="warn")
 
     def test_strict_off_warn_still_warns(self, tmp_path, monkeypatch):
         """Without strict mode, ``'warn'`` keeps warning."""
         monkeypatch.delenv("XRSPATIAL_GEOTIFF_STRICT", raising=False)
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
-        result = read_vrt(vrt_path, chunks=4, missing_sources="warn")
+        result = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
         assert "vrt_holes" in result.attrs

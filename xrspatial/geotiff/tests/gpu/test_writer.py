@@ -29,7 +29,7 @@ The per-file ``_gpu_only`` / ``_gpu_available`` helpers are replaced
 with the shared ``requires_gpu`` marker from ``_helpers/markers.py``
 (aliased ``_gpu_only`` for brevity in this module). The CuPy-aware
 ``test_to_geotiff_gpu_fallback_1674.py`` tests never required a real
-GPU (they monkeypatch ``write_geotiff_gpu``); they keep running on
+GPU (they monkeypatch ``_write_geotiff_gpu``); they keep running on
 non-GPU hosts as before.
 """
 from __future__ import annotations
@@ -45,7 +45,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (GeoTIFFFallbackWarning, _gpu_decode, open_geotiff, to_geotiff,
-                               write_geotiff_gpu)
+                               _write_geotiff_gpu)
 from xrspatial.geotiff._compression import JPEG2000_AVAILABLE, LERC_AVAILABLE, LZ4_AVAILABLE
 from xrspatial.geotiff._geotags import GeoTransform, _epsg_to_wkt
 from xrspatial.geotiff._header import parse_header, parse_ifd
@@ -107,7 +107,7 @@ def test_crs_wkt_only_attr_round_trips(tmp_path):
         attrs={'crs_wkt': wkt},
     )
     out = str(tmp_path / 'crs_wkt_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     # The WKT should resolve back to EPSG 4326 on read.
@@ -128,7 +128,7 @@ def test_image_description_round_trips_via_gpu_writer(tmp_path):
         attrs={'crs': 4326, 'image_description': 'gpu-attr-test-1563'},
     )
     out = str(tmp_path / 'desc_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     assert rd.attrs.get('image_description') == 'gpu-attr-test-1563'
@@ -151,7 +151,7 @@ def test_extra_samples_single_band_writer_compat(tmp_path):
         attrs={'crs': 4326, 'extra_samples': [1]},
     )
     out = str(tmp_path / 'es_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     assert rd.attrs.get('crs') == 4326
@@ -175,7 +175,7 @@ def test_extra_samples_round_trips_multiband_via_gpu_writer(tmp_path):
         attrs={'crs': 4326},
     )
     out = str(tmp_path / 'es_multi_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     es = rd.attrs.get('extra_samples')
@@ -206,7 +206,7 @@ def test_colormap_round_trips_via_gpu_writer(tmp_path):
         attrs={'crs': 4326, 'colormap': palette},
     )
     out = str(tmp_path / 'cmap_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     rd_cmap = rd.attrs.get('colormap')
@@ -236,7 +236,7 @@ def test_extra_tags_custom_tag_round_trips_via_gpu_writer(tmp_path):
     out = str(tmp_path / 'extra_tags_1563.tif')
     # Rich-tag extra_tags is an experimental write surface. Opt in on
     # both write and read sides for the round-trip.
-    write_geotiff_gpu(da_gpu, out, compression='none',
+    _write_geotiff_gpu(da_gpu, out, compression='none',
                       allow_experimental_codecs=True)
 
     rd = open_geotiff(out)
@@ -272,7 +272,7 @@ def test_resolution_tags_round_trip_via_gpu_writer(tmp_path):
         },
     )
     out = str(tmp_path / 'res_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     assert rd.attrs.get('x_resolution') == pytest.approx(300.0, rel=0.01), (
@@ -299,7 +299,7 @@ def test_gdal_metadata_round_trips_via_gpu_writer(tmp_path):
                                  'CUSTOM_KEY': 'val_1563'}},
     )
     out = str(tmp_path / 'gdal_meta_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     meta = rd.attrs.get('gdal_metadata') or {}
@@ -312,7 +312,7 @@ def test_gdal_metadata_round_trips_via_gpu_writer(tmp_path):
 @_gpu_only
 def test_transform_attr_round_trip_bit_stable(tmp_path):
     """Reading a file with a fractional pixel size, then writing it back
-    through ``write_geotiff_gpu`` must preserve ``attrs['transform']``
+    through ``_write_geotiff_gpu`` must preserve ``attrs['transform']``
     bit-for-bit (the CPU writer guarantees this; the GPU writer used to
     drop the attr and recompute from coords, which drifts).
     """
@@ -330,7 +330,7 @@ def test_transform_attr_round_trip_bit_stable(tmp_path):
 
     da_gpu = open_geotiff(src, gpu=True)
     out = str(tmp_path / 'frac_out_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     after = open_geotiff(out)
     assert after.attrs['transform'] == eager_in.attrs['transform'], (
@@ -353,7 +353,7 @@ def test_no_data_attr_still_round_trips_after_fix(tmp_path):
         attrs={'crs': 4326, 'nodata': -9999.0, 'raster_type': 'point'},
     )
     out = str(tmp_path / 'nodata_1563.tif')
-    write_geotiff_gpu(da_gpu, out, compression='none')
+    _write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
     assert rd.attrs.get('nodata') == -9999.0
@@ -369,7 +369,7 @@ def test_no_data_attr_still_round_trips_after_fix(tmp_path):
 @pytest.mark.parametrize("band_dim_name", ["band", "bands", "channel"])
 def test_band_first_layout_written_correctly_via_write_geotiff_gpu(
         tmp_path, band_dim_name):
-    """Direct call to write_geotiff_gpu with a (band, y, x) CuPy
+    """Direct call to _write_geotiff_gpu with a (band, y, x) CuPy
     DataArray must produce the same file dimensions as the CPU writer
     would (height=y, width=x, samples=band).
     """
@@ -388,7 +388,7 @@ def test_band_first_layout_written_correctly_via_write_geotiff_gpu(
     )
 
     out = str(tmp_path / f"band_first_1580_{band_dim_name}.tif")
-    write_geotiff_gpu(da, out, compression="none")
+    _write_geotiff_gpu(da, out, compression="none")
 
     rd = open_geotiff(out)
     assert rd.sizes["y"] == 16, (
@@ -455,7 +455,7 @@ def test_yxbands_layout_unchanged(tmp_path):
     )
 
     out = str(tmp_path / "yxb_1580.tif")
-    write_geotiff_gpu(da, out, compression="none")
+    _write_geotiff_gpu(da, out, compression="none")
 
     rd = open_geotiff(out)
     assert rd.sizes == {"y": 8, "x": 12, "band": 2}
@@ -490,7 +490,7 @@ def test_gpu_band_first_matches_cpu_byte_for_byte_on_pixel_values(tmp_path):
     cpu_path = str(tmp_path / "band_first_1580_cpu.tif")
     gpu_path = str(tmp_path / "band_first_1580_gpu.tif")
     to_geotiff(da_cpu, cpu_path, compression="none", gpu=False)
-    write_geotiff_gpu(da_gpu, gpu_path, compression="none")
+    _write_geotiff_gpu(da_gpu, gpu_path, compression="none")
 
     cpu_rd = open_geotiff(cpu_path).values
     gpu_rd = open_geotiff(gpu_path).values
@@ -606,7 +606,7 @@ def test_write_geotiff_gpu_zstd_roundtrip(tmp_path):
     da, arr = _make_int_da()
     path = str(tmp_path / "zstd_roundtrip.tif")
 
-    write_geotiff_gpu(da, path, compression='zstd')
+    _write_geotiff_gpu(da, path, compression='zstd')
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -633,8 +633,8 @@ def test_write_geotiff_gpu_zstd_default_matches_explicit(tmp_path):
     default_path = str(tmp_path / "default.tif")
     explicit_path = str(tmp_path / "explicit_zstd.tif")
 
-    write_geotiff_gpu(da, default_path)
-    write_geotiff_gpu(da, explicit_path, compression='zstd')
+    _write_geotiff_gpu(da, default_path)
+    _write_geotiff_gpu(da, explicit_path, compression='zstd')
 
     assert _read_compression_tag(default_path) == _COMPRESSION_TAGS['zstd']
     assert _read_compression_tag(explicit_path) == _COMPRESSION_TAGS['zstd']
@@ -661,7 +661,7 @@ def test_write_geotiff_gpu_jpeg_rgb_roundtrip(tmp_path):
     # The JPEG encode path is opt-in. The writer also emits a
     # GeoTIFFFallbackWarning, which is the documented contract.
     with pytest.warns(Warning):
-        write_geotiff_gpu(
+        _write_geotiff_gpu(
             da, path, compression='jpeg',
             allow_internal_only_jpeg=True,
         )
@@ -689,7 +689,7 @@ def test_write_geotiff_gpu_jpeg_uint8_single_band_roundtrip(tmp_path):
 
     # Opt-in flag required; warning fires.
     with pytest.warns(Warning):
-        write_geotiff_gpu(
+        _write_geotiff_gpu(
             da, path, compression='jpeg',
             allow_internal_only_jpeg=True,
         )
@@ -721,7 +721,7 @@ def test_write_geotiff_gpu_jpeg_uses_nvjpeg_when_available(tmp_path,
 
     # Opt-in flag required; warning fires.
     with pytest.warns(Warning):
-        write_geotiff_gpu(
+        _write_geotiff_gpu(
             da, path, compression='jpeg',
             allow_internal_only_jpeg=True,
         )
@@ -748,7 +748,7 @@ def test_write_geotiff_gpu_compression_tag(tmp_path, compression):
     da, _ = _make_int_da()
     path = str(tmp_path / f"compression_tag_{compression}.tif")
 
-    write_geotiff_gpu(da, path, compression=compression)
+    _write_geotiff_gpu(da, path, compression=compression)
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS[compression]
 
@@ -761,7 +761,7 @@ def test_write_geotiff_gpu_jpeg_compression_tag(tmp_path):
 
     # Opt-in flag required; warning fires.
     with pytest.warns(Warning):
-        write_geotiff_gpu(
+        _write_geotiff_gpu(
             da, path, compression='jpeg',
             allow_internal_only_jpeg=True,
         )
@@ -781,7 +781,7 @@ def test_write_geotiff_gpu_deflate_roundtrip(tmp_path):
     da, arr = _make_int_da()
     path = str(tmp_path / "deflate_plain.tif")
 
-    write_geotiff_gpu(da, path, compression='deflate')
+    _write_geotiff_gpu(da, path, compression='deflate')
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -799,7 +799,7 @@ def test_write_geotiff_gpu_none_roundtrip(tmp_path):
     da, arr = _make_int_da()
     path = str(tmp_path / "none_plain.tif")
 
-    write_geotiff_gpu(da, path, compression='none')
+    _write_geotiff_gpu(da, path, compression='none')
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -820,7 +820,7 @@ def test_write_geotiff_gpu_lossless_codecs_agree(tmp_path):
         for codec in ('none', 'deflate', 'zstd')
     }
     for codec, path in paths.items():
-        write_geotiff_gpu(da, path, compression=codec)
+        _write_geotiff_gpu(da, path, compression=codec)
 
     reads = {codec: open_geotiff(path).values for codec, path in paths.items()}
 
@@ -886,7 +886,7 @@ def test_write_geotiff_gpu_lzw_roundtrip(tmp_path):
     da, arr = _make_int_da_small()
     path = str(tmp_path / "lzw_roundtrip.tif")
 
-    write_geotiff_gpu(da, path, compression='lzw')
+    _write_geotiff_gpu(da, path, compression='lzw')
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -899,7 +899,7 @@ def test_write_geotiff_gpu_lzw_compression_tag(tmp_path):
     da, _ = _make_int_da_small()
     path = str(tmp_path / "lzw_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='lzw')
+    _write_geotiff_gpu(da, path, compression='lzw')
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['lzw']
 
@@ -910,7 +910,7 @@ def test_write_geotiff_gpu_packbits_roundtrip(tmp_path):
     da, arr = _make_int_da_small()
     path = str(tmp_path / "packbits_roundtrip.tif")
 
-    write_geotiff_gpu(da, path, compression='packbits')
+    _write_geotiff_gpu(da, path, compression='packbits')
 
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
@@ -923,7 +923,7 @@ def test_write_geotiff_gpu_packbits_compression_tag(tmp_path):
     da, _ = _make_int_da_small()
     path = str(tmp_path / "packbits_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='packbits')
+    _write_geotiff_gpu(da, path, compression='packbits')
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['packbits']
 
@@ -942,7 +942,7 @@ def test_write_geotiff_gpu_lz4_roundtrip(tmp_path):
     da, arr = _make_int_da_small()
     path = str(tmp_path / "lz4_roundtrip.tif")
 
-    write_geotiff_gpu(da, path, compression='lz4', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='lz4', allow_experimental_codecs=True)
 
     out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
@@ -956,7 +956,7 @@ def test_write_geotiff_gpu_lz4_compression_tag(tmp_path):
     da, _ = _make_int_da_small()
     path = str(tmp_path / "lz4_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='lz4', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='lz4', allow_experimental_codecs=True)
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['lz4']
 
@@ -976,7 +976,7 @@ def test_write_geotiff_gpu_lerc_float_lossless_roundtrip(tmp_path):
     da, arr = _make_float_da_small(dtype=np.float32)
     path = str(tmp_path / "lerc_float.tif")
 
-    write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
     out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
@@ -996,7 +996,7 @@ def test_write_geotiff_gpu_lerc_int_roundtrip(tmp_path):
     da, arr = _make_int_da_small(dtype=np.uint16)
     path = str(tmp_path / "lerc_int.tif")
 
-    write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
     out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
@@ -1010,7 +1010,7 @@ def test_write_geotiff_gpu_lerc_compression_tag(tmp_path):
     da, _ = _make_float_da_small()
     path = str(tmp_path / "lerc_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='lerc', allow_experimental_codecs=True)
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['lerc']
 
@@ -1033,7 +1033,7 @@ def test_write_geotiff_gpu_jpeg2000_uint8_lossless_roundtrip(tmp_path):
     da, arr = _make_int_da_small(dtype=np.uint8)
     path = str(tmp_path / "j2k_uint8.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
     out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
@@ -1054,7 +1054,7 @@ def test_write_geotiff_gpu_jpeg2000_rgb_roundtrip(tmp_path):
     da, arr = _make_uint8_rgb_da_small()
     path = str(tmp_path / "j2k_rgb.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
     out = open_geotiff(path, allow_experimental_codecs=True)
     np.testing.assert_array_equal(out.values, arr)
@@ -1075,8 +1075,8 @@ def test_write_geotiff_gpu_j2k_alias_matches_jpeg2000(tmp_path):
     j2k_path = str(tmp_path / "alias_j2k.tif")
     jpeg2k_path = str(tmp_path / "alias_jpeg2000.tif")
 
-    write_geotiff_gpu(da, j2k_path, compression='j2k', allow_experimental_codecs=True)
-    write_geotiff_gpu(da, jpeg2k_path, compression='jpeg2000', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, j2k_path, compression='j2k', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, jpeg2k_path, compression='jpeg2000', allow_experimental_codecs=True)
 
     assert _read_compression_tag(j2k_path) == _COMPRESSION_TAGS['j2k']
     assert _read_compression_tag(jpeg2k_path) == _COMPRESSION_TAGS['jpeg2000']
@@ -1095,7 +1095,7 @@ def test_write_geotiff_gpu_jpeg2000_compression_tag(tmp_path):
     da, _ = _make_int_da_small(dtype=np.uint8)
     path = str(tmp_path / "j2k_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
+    _write_geotiff_gpu(da, path, compression='jpeg2000', allow_experimental_codecs=True)
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['jpeg2000']
 
@@ -1127,7 +1127,7 @@ def test_write_geotiff_gpu_cpu_parity_lossless(tmp_path, compression):
     gpu_path = str(tmp_path / f"gpu_{compression}.tif")
     cpu_path = str(tmp_path / f"cpu_{compression}.tif")
 
-    write_geotiff_gpu(da, gpu_path, compression=compression)
+    _write_geotiff_gpu(da, gpu_path, compression=compression)
 
     # Build a CPU DataArray with the same input. to_geotiff(gpu=False)
     # writes through the matching CPU codec branch.
@@ -1155,7 +1155,7 @@ def test_to_geotiff_gpu_true_dispatches_through_fallback_codec(
     succeed (rather than rejecting the codec at the dispatch layer).
 
     ``to_geotiff`` rejects ``compression='jpeg'`` outright and forwards
-    everything else to ``write_geotiff_gpu`` when ``gpu=True``. The
+    everything else to ``_write_geotiff_gpu`` when ``gpu=True``. The
     GPU writer documents the CPU-fallback codecs as accepted, so the
     auto-dispatch path must round-trip them too. A regression that
     added a fallback-codec rejection in the dispatch (a la jpeg)
@@ -1198,7 +1198,7 @@ def test_gpu_writer_substitutes_nan_with_sentinel(tmp_path):
     da = xr.DataArray(cp.asarray(arr.copy()), dims=['y', 'x'],
                       coords={'y': y, 'x': x})
     p = str(tmp_path / "gpu_nan_sentinel.tif")
-    write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
+    _write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
 
     raw, _ = read_to_array(p)
     # The raw decoded bytes should contain the sentinel, not NaN.
@@ -1225,7 +1225,7 @@ def test_gpu_and_cpu_writers_byte_equivalent_on_nan_input(tmp_path):
     p_cpu = str(tmp_path / "cpu.tif")
     p_gpu = str(tmp_path / "gpu.tif")
     to_geotiff(da_cpu, p_cpu, crs=4326, nodata=-9999)
-    write_geotiff_gpu(da_gpu, p_gpu, crs=4326, nodata=-9999)
+    _write_geotiff_gpu(da_gpu, p_gpu, crs=4326, nodata=-9999)
 
     raw_cpu, _ = read_to_array(p_cpu)
     raw_gpu, _ = read_to_array(p_gpu)
@@ -1244,7 +1244,7 @@ def test_gpu_writer_preserves_caller_cupy_buffer(tmp_path):
     da = xr.DataArray(cp_arr, dims=['y', 'x'], coords={'y': y, 'x': x})
 
     p = str(tmp_path / "gpu_preserve.tif")
-    write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
+    _write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
 
     after = cp.asnumpy(cp_arr)
     # NaNs must still be present at the original locations.
@@ -1268,7 +1268,7 @@ def test_gpu_writer_no_rewrite_when_no_nans(tmp_path):
     da = xr.DataArray(cp.asarray(arr.copy()), dims=['y', 'x'],
                       coords={'y': y, 'x': x})
     p = str(tmp_path / "gpu_no_nans.tif")
-    write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
+    _write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
 
     raw, _ = read_to_array(p)
     assert np.array_equal(raw, arr)
@@ -1284,7 +1284,7 @@ def test_gpu_writer_nan_nodata_skips_substitution(tmp_path):
     da = xr.DataArray(cp.asarray(arr.copy()), dims=['y', 'x'],
                       coords={'y': y, 'x': x})
     p = str(tmp_path / "gpu_nan_sentinel_nan.tif")
-    write_geotiff_gpu(da, p, crs=4326, nodata=float('nan'))
+    _write_geotiff_gpu(da, p, crs=4326, nodata=float('nan'))
 
     raw, _ = read_to_array(p)
     # NaN pixels remain NaN; finite pixels remain finite.
@@ -1315,7 +1315,7 @@ def test_gpu_writer_external_reader_sees_correct_nodata_mask(tmp_path):
     # ship without ZSTD codec support and would fail this round-trip
     # for environment reasons unrelated to the nodata mask under test.
     to_geotiff(da_cpu, p_cpu, crs=4326, nodata=-9999, compression='deflate')
-    write_geotiff_gpu(
+    _write_geotiff_gpu(
         da_gpu, p_gpu, crs=4326, nodata=-9999, compression='deflate')
 
     with rasterio.open(p_cpu) as src:
@@ -1343,7 +1343,7 @@ def test_gpu_writer_multiband_nan_substitution(tmp_path):
                       coords={'y': y, 'x': x, 'band': np.arange(b)})
 
     p = str(tmp_path / "gpu_mb.tif")
-    write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
+    _write_geotiff_gpu(da, p, crs=4326, nodata=-9999)
 
     raw, _ = read_to_array(p)
     nan_locations = np.isnan(arr)
@@ -1395,7 +1395,7 @@ def test_gpu_writer_overview_loop_uses_putmask_1948():
     src = src_path.read_text()
     # The overview loop should call cupy.putmask, not current.copy() + indexed write.
     assert "cupy.putmask(" in src, (
-        "write_geotiff_gpu overview loop should use cupy.putmask "
+        "_write_geotiff_gpu overview loop should use cupy.putmask "
         "for the in-place NaN->sentinel rewrite (issue #1948)."
     )
     # Confirm the in-place pattern is the one inside the overview branch,
@@ -1448,7 +1448,7 @@ def test_gpu_writer_cog_overview_sentinel_roundtrip_1948():
 
     with tempfile.TemporaryDirectory() as td:
         path = os.path.join(td, "tmp_1948_cog.tif")
-        write_geotiff_gpu(
+        _write_geotiff_gpu(
             da, path, compression="deflate", tile_size=256,
             cog=True, overview_levels=[2, 4],
         )
@@ -1606,7 +1606,7 @@ def test_block_reduce_2d_gpu_mode_dtype_preserved(dtype):
 
 @_gpu_only
 def test_write_geotiff_gpu_cog_overview_resampling_mode(tmp_path):
-    """``write_geotiff_gpu(cog=True, overview_resampling='mode')`` writes
+    """``_write_geotiff_gpu(cog=True, overview_resampling='mode')`` writes
     a COG whose level-1 overview matches the closed-form 2x2 mode
     reduction.
 
@@ -1622,7 +1622,7 @@ def test_write_geotiff_gpu_cog_overview_resampling_mode(tmp_path):
         coords={'y': np.arange(4.0, 0, -1), 'x': np.arange(4.0)},
     )
     p = str(tmp_path / 'cog_mode_gpu_1740.tif')
-    write_geotiff_gpu(
+    _write_geotiff_gpu(
         da, p, cog=True, compression='deflate', tiled=True,
         tile_size=16, overview_levels=[2],
         overview_resampling='mode',
@@ -1642,7 +1642,7 @@ def test_write_geotiff_gpu_cog_overview_resampling_mode(tmp_path):
 def test_to_geotiff_gpu_cog_overview_resampling_mode(tmp_path):
     """``to_geotiff(gpu=True, cog=True, overview_resampling='mode')``
     threads through to the GPU writer and produces the same overview as
-    the explicit ``write_geotiff_gpu`` call."""
+    the explicit ``_write_geotiff_gpu`` call."""
     import cupy
 
     arr = _mode_4x4_uint8()
@@ -1736,7 +1736,7 @@ def test_write_geotiff_gpu_compression_level_in_range_accepted(
     p = str(tmp_path / f'level_in_{compression}_{in_range_level}_1740.tif')
 
     # Must not raise.
-    write_geotiff_gpu(
+    _write_geotiff_gpu(
         da, p, compression=compression,
         compression_level=in_range_level,
         tile_size=32,
@@ -1771,7 +1771,7 @@ def test_write_geotiff_gpu_compression_level_out_of_range_accepted(
     p = str(tmp_path / f'level_oor_{compression}_{oor_level}_1740.tif')
 
     # Must not raise -- the GPU writer ignores the level.
-    write_geotiff_gpu(
+    _write_geotiff_gpu(
         da, p, compression=compression,
         compression_level=oor_level,
         tile_size=32,
@@ -1786,7 +1786,7 @@ def test_write_geotiff_gpu_compression_level_out_of_range_accepted(
 @_gpu_only
 def test_to_geotiff_gpu_compression_level_out_of_range_accepted(tmp_path):
     """``to_geotiff(gpu=True, compression_level=X)`` threads the kwarg
-    through to ``write_geotiff_gpu`` and must not raise on an out-of-range
+    through to ``_write_geotiff_gpu`` and must not raise on an out-of-range
     value (the GPU writer ignores it).
 
     Without this test the dispatcher could be rewritten to validate
@@ -1832,7 +1832,7 @@ def test_to_geotiff_cpu_compression_level_out_of_range_raises(tmp_path):
 # Section 8: to_geotiff(gpu=True) fallback contract
 # (was test_to_geotiff_gpu_fallback_1674.py)
 #
-# These tests monkeypatch ``write_geotiff_gpu`` so they do not need a
+# These tests monkeypatch ``_write_geotiff_gpu`` so they do not need a
 # real GPU; they exercise the CPU dispatcher's exception classification.
 # ===========================================================================
 
@@ -1865,10 +1865,10 @@ def cpu_data():
 
 
 def _patch_gpu_writer_to_raise(monkeypatch, exc):
-    """Replace ``write_geotiff_gpu`` (as resolved by ``to_geotiff``) with a
+    """Replace ``_write_geotiff_gpu`` (as resolved by ``to_geotiff``) with a
     stub that raises ``exc``.
 
-    ``to_geotiff`` calls ``write_geotiff_gpu`` directly inside its own
+    ``to_geotiff`` calls ``_write_geotiff_gpu`` directly inside its own
     defining module (``_writers.eager``), so the patch targets the
     module-level name there. Patching ``xrspatial.geotiff``
     would only update the package re-export and would not intercept the
@@ -1879,7 +1879,7 @@ def _patch_gpu_writer_to_raise(monkeypatch, exc):
     def _boom(*args, **kwargs):
         raise exc
 
-    monkeypatch.setattr(g, 'write_geotiff_gpu', _boom, raising=True)
+    monkeypatch.setattr(g, '_write_geotiff_gpu', _boom, raising=True)
 
 
 def test_runtime_error_without_gpu_signal_propagates(

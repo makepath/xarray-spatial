@@ -1,9 +1,9 @@
-"""Dask read backend: ``read_geotiff_dask`` and ``_delayed_read_window``.
+"""Dask read backend: ``_read_geotiff_dask`` and ``_delayed_read_window``.
 
-``read_vrt`` is statically imported from the sibling ``.vrt`` module.
+``_read_vrt`` is statically imported from the sibling ``.vrt`` module.
 ``_read_geo_info`` still lives in ``__init__.py`` and is lazy-imported
-inside ``read_geotiff_dask``'s body to avoid a circular import
-(``__init__.py`` re-exports ``read_geotiff_dask`` from here).
+inside ``_read_geotiff_dask``'s body to avoid a circular import
+(``__init__.py`` re-exports ``_read_geotiff_dask`` from here).
 """
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ from .._reader import _MAX_CLOUD_BYTES_SENTINEL
 from .._reader import read_to_array as _read_to_array
 from .._runtime import _MISSING_SOURCES_SENTINEL, _ON_GPU_FAILURE_SENTINEL
 from .._validation import _validate_chunks_arg, _validate_dispatch_kwargs, _validate_dtype_cast
-from .vrt import read_vrt
+from .vrt import _read_vrt
 
 
-def read_geotiff_dask(source: str, *,
+def _read_geotiff_dask(source: str, *,
                       dtype: str | np.dtype | None = None,
                       window: tuple | None = None,
                       overview_level: int | None = None,
@@ -95,7 +95,7 @@ def read_geotiff_dask(source: str, *,
     band_nodata : {'first', None}, optional
         [advanced] VRT-only opt-out for the fail-closed
         mixed-band-metadata check. Forwarded
-        verbatim to ``read_vrt`` when the source is a ``.vrt`` file.
+        verbatim to ``_read_vrt`` when the source is a ``.vrt`` file.
         Passing it with a non-VRT GeoTIFF source raises ``ValueError``.
     mask_nodata : bool, default True
         [stable] If True, replace the nodata sentinel with NaN per
@@ -127,7 +127,7 @@ def read_geotiff_dask(source: str, *,
         ``open_geotiff`` for the full description.
     stable_only : bool, default False
         [advanced] Read-side opt-in that restricts the read to the
-        stable-tier local-file path. Forwarded to ``read_vrt`` when the
+        stable-tier local-file path. Forwarded to ``_read_vrt`` when the
         source ends in ``.vrt`` so the rejection fires at graph-build
         time. Advanced-tier sources (VRT, and HTTP / fsspec sources
         such as ``http(s)://`` or ``s3://``) are rejected; only a
@@ -148,12 +148,12 @@ def read_geotiff_dask(source: str, *,
     on_gpu_failure : str, optional
         [internal-only] Accepted for cross-backend signature symmetry
         only. The dask path runs CPU decoders, so passing this kwarg
-        raises ``ValueError`` at dispatch. See ``read_geotiff_gpu`` for
+        raises ``ValueError`` at dispatch. See ``_read_geotiff_gpu`` for
         the kwarg's meaning on the GPU reader.
     missing_sources : {'raise', 'warn'}, optional
-        [advanced] VRT-only. Forwarded to ``read_vrt`` when the source
+        [advanced] VRT-only. Forwarded to ``_read_vrt`` when the source
         ends in ``.vrt``; otherwise raises ``ValueError`` at dispatch.
-        See ``read_vrt`` for the full description.
+        See ``_read_vrt`` for the full description.
     max_cloud_bytes : int or None, optional
         [internal-only] Accepted for cross-backend signature symmetry
         only. The dask reader uses bounded range GETs and does not
@@ -196,7 +196,7 @@ def read_geotiff_dask(source: str, *,
     # Reject non-positive chunk sizes up front. ``chunks=0`` and negative
     # values otherwise propagate into dask chunk math (``range(0, N, 0)``
     # ValueError, or empty chunk grids) with no indication that ``chunks``
-    # was the problem. Shared with ``read_geotiff_gpu`` / ``read_vrt`` via
+    # was the problem. Shared with ``_read_geotiff_gpu`` / ``_read_vrt`` via
     # ``_validate_chunks_arg`` so all three entry points emit the same
     # error format. ``allow_none=False`` (the default)
     # rejects ``chunks=None`` with the same ValueError; this entry point
@@ -204,16 +204,16 @@ def read_geotiff_dask(source: str, *,
     # would otherwise fail with a confusing TypeError.
     chunks = _validate_chunks_arg(chunks)
 
-    # ``open_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
-    # reaching here, so this branch is only hit when ``read_geotiff_dask``
+    # ``open_geotiff`` already routes ``.vrt`` to ``_read_vrt`` before
+    # reaching here, so this branch is only hit when ``_read_geotiff_dask``
     # is called directly with a VRT path. Keep it as a defensive fallback
     # rather than letting the windowed-read path try to parse VRT XML as
-    # TIFF bytes. ``read_vrt`` is the single source of truth for VRT.
+    # TIFF bytes. ``_read_vrt`` is the single source of truth for VRT.
     if isinstance(source, str) and source.lower().endswith('.vrt'):
         vrt_kwargs = {}
         if missing_sources is not _MISSING_SOURCES_SENTINEL:
             vrt_kwargs['missing_sources'] = missing_sources
-        return read_vrt(
+        return _read_vrt(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
             allow_rotated=allow_rotated,
@@ -228,10 +228,10 @@ def read_geotiff_dask(source: str, *,
         )
 
     # ``open_geotiff`` gates ``stable_only=True`` for remote sources before
-    # dispatching here, but ``read_geotiff_dask`` is also a direct entry
+    # dispatching here, but ``_read_geotiff_dask`` is also a direct entry
     # point. Apply the same gate so a direct caller cannot read an
     # advanced-tier HTTP / fsspec source under ``stable_only=True``. The VRT
-    # branch above already forwards ``stable_only`` to ``read_vrt``.
+    # branch above already forwards ``stable_only`` to ``_read_vrt``.
     from .._validation import _validate_stable_only_remote
     _validate_stable_only_remote(
         source,
@@ -354,7 +354,7 @@ def read_geotiff_dask(source: str, *,
         geo_info._ifd_compression = http_ifd.compression
     else:
         # Metadata-only read: O(1) memory via mmap, no pixel decompression.
-        # Lazy import for the same circular-import reason as ``read_vrt``
+        # Lazy import for the same circular-import reason as ``_read_vrt``
         # above: ``_read_geo_info`` still lives in ``xrspatial.geotiff``.
         from .. import _read_geo_info
         geo_info, full_h, full_w, file_dtype, n_bands = _read_geo_info(
@@ -380,7 +380,7 @@ def read_geotiff_dask(source: str, *,
             _compression_tag,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
-            entry_point="read_geotiff_dask",
+            entry_point="_read_geotiff_dask",
         )
 
     # Centralize the nodata lifecycle in one value object.
@@ -532,7 +532,7 @@ def read_geotiff_dask(source: str, *,
         suggested_h = int(math.ceil(ch_h * scale))
         suggested_w = int(math.ceil(ch_w * scale))
         raise ValueError(
-            f"read_geotiff_dask: chunks=({ch_h}, {ch_w}) on a "
+            f"_read_geotiff_dask: chunks=({ch_h}, {ch_w}) on a "
             f"{full_h}x{full_w} image would produce {n_chunks:,} dask "
             f"tasks, exceeding the {_MAX_DASK_CHUNKS:,}-task cap. Pass a "
             f"larger chunks=... value explicitly (e.g. chunks="
@@ -633,7 +633,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
     """Dask-delayed function to read a single window.
 
     *http_meta_key* is an optional ``Delayed[(TIFFHeader, IFD)]`` parsed
-    once by :func:`read_geotiff_dask` and wrapped via ``dask.delayed``.
+    once by :func:`_read_geotiff_dask` and wrapped via ``dask.delayed``.
     Passing it as a function argument (rather than a closure capture)
     makes the metadata a single graph input that all window tasks
     depend on, so distributed/process schedulers serialise it once

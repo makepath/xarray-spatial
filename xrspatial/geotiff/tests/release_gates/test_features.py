@@ -14,7 +14,7 @@ the release-gate suite:
   documented promotions and demotions stay pinned).
 * Tier-aware codec gate on the writer (Tier 3
   ``allow_experimental_codecs``; Tier 4 ``allow_internal_only_jpeg``);
-  ``to_geotiff`` and ``write_geotiff_gpu`` signature pins.
+  ``to_geotiff`` and ``_write_geotiff_gpu`` signature pins.
 * Typed-error refusals at the VRT parser and the eager writer for
   unsupported feature combinations (warped VRTs, derived raster bands,
   kernel-filtered sources, mixed per-source nodata, rotated transforms,
@@ -49,8 +49,8 @@ import xarray as xr
 from xrspatial.geotiff import (SUPPORTED_FEATURES, GeoTIFFAmbiguousMetadataError,
                                GeoTIFFFallbackWarning, RotatedTransformError,
                                UnsupportedGeoTIFFFeatureError, VRTStableSourcesOnlyError,
-                               open_geotiff, read_geotiff_dask, read_vrt, to_geotiff,
-                               write_geotiff_gpu)
+                               open_geotiff, _read_geotiff_dask, _read_vrt, to_geotiff,
+                               _write_geotiff_gpu)
 from xrspatial.geotiff._attrs import _VALID_COMPRESSIONS
 from xrspatial.geotiff._compression import (packbits_compress, packbits_decompress, zstd_compress,
                                             zstd_decompress)
@@ -619,8 +619,8 @@ class TestFixesBatch:
         np.testing.assert_array_almost_equal(result.values, 3.14, decimal=2)
 
     def test_vrt_write_and_read_back(self, tmp_path):
-        """write_vrt generates a valid VRT that reads back correctly."""
-        from xrspatial.geotiff import write_vrt
+        """build_vrt generates a valid VRT that reads back correctly."""
+        from xrspatial.geotiff import build_vrt
         from xrspatial.geotiff._geotags import GeoTransform
 
         # Write two tiles with known geo transforms
@@ -638,7 +638,7 @@ class TestFixesBatch:
         write(right, rpath, geo_transform=gt_right, compression='none', tiled=False)
 
         vrt_path = str(tmp_path / 'mosaic.vrt')
-        write_vrt(vrt_path, [lpath, rpath])
+        build_vrt(vrt_path, [lpath, rpath])
 
         da = open_geotiff(vrt_path)
         assert da.shape == (4, 8)
@@ -646,8 +646,8 @@ class TestFixesBatch:
         np.testing.assert_array_equal(da.values[:, 4:], right)
 
     def test_dask_vrt(self, tmp_path):
-        """read_geotiff_dask handles VRT files."""
-        from xrspatial.geotiff import read_geotiff_dask
+        """_read_geotiff_dask handles VRT files."""
+        from xrspatial.geotiff import _read_geotiff_dask
 
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         tile_path = str(tmp_path / 'tile.tif')
@@ -670,7 +670,7 @@ class TestFixesBatch:
             f.write(vrt_xml)
 
         import dask.array as da
-        result = read_geotiff_dask(vrt_path, chunks=2)
+        result = _read_geotiff_dask(vrt_path, chunks=2)
         assert isinstance(result.data, da.Array)
         computed = result.compute()
         np.testing.assert_array_equal(computed.values, arr)
@@ -842,7 +842,7 @@ class TestVRT:
 
     def test_read_vrt_function(self, tmp_path):
         """read_vrt() works directly."""
-        from xrspatial.geotiff import read_vrt
+        from xrspatial.geotiff import _read_vrt
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         tile_path = self._write_tile(tmp_path, 'tile.tif', arr)
 
@@ -852,7 +852,7 @@ class TestVRT:
             width=4, height=4,
         )
 
-        da = read_vrt(vrt_path)
+        da = _read_vrt(vrt_path)
         assert da.name == 'mosaic'
         np.testing.assert_array_equal(da.values, arr)
 
@@ -950,7 +950,7 @@ class TestVRT:
     def test_vrt_pixel_is_point_no_half_pixel_shift(self, tmp_path):
         """VRT with AREA_OR_POINT=Point does not apply a half-pixel shift.
 
-        Before the fix, ``read_vrt`` always added ``(c + 0.5) * res``
+        Before the fix, ``_read_vrt`` always added ``(c + 0.5) * res``
         to the GeoTransform origin, even when the VRT advertised
         Point registration.  That shifted coords by half a cell in
         world space on any Point-tagged VRT.
@@ -1110,7 +1110,7 @@ class TestCloudStorage:
         fs.rm('/roundtrip.tif')
 
     def test_dask_path_fsspec_uri_1749(self, tmp_path):
-        """read_geotiff_dask supports fsspec URIs.
+        """_read_geotiff_dask supports fsspec URIs.
 
         The eager path already routed through _CloudSource via
         _read_to_array. The dask path's _read_geo_info used plain
@@ -2741,16 +2741,16 @@ class TestPlanarConfig:
 class TestDaskReads:
 
     def test_dask_basic(self, tmp_path):
-        """read_geotiff_dask returns a dask-backed DataArray."""
+        """_read_geotiff_dask returns a dask-backed DataArray."""
         import dask.array as da
 
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
 
         arr = np.arange(256, dtype=np.float32).reshape(16, 16)
         path = str(tmp_path / 'dask_test.tif')
         write(arr, path, compression='none', tiled=False)
 
-        result = read_geotiff_dask(path, chunks=8)
+        result = _read_geotiff_dask(path, chunks=8)
         assert isinstance(result.data, da.Array)
         assert result.shape == (16, 16)
 
@@ -2760,7 +2760,7 @@ class TestDaskReads:
 
     def test_dask_coords(self, tmp_path):
         """Dask read preserves coordinates and CRS."""
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
         from xrspatial.geotiff._geotags import GeoTransform
 
         arr = np.ones((8, 8), dtype=np.float32)
@@ -2769,21 +2769,21 @@ class TestDaskReads:
         write(arr, path, geo_transform=gt, crs_epsg=4326,
               compression='none', tiled=False)
 
-        result = read_geotiff_dask(path, chunks=4)
+        result = _read_geotiff_dask(path, chunks=4)
         assert result.attrs['crs'] == 4326
         assert len(result.coords['y']) == 8
         assert len(result.coords['x']) == 8
 
     def test_dask_nodata(self, tmp_path):
         """Nodata masking applied per-chunk."""
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
 
         arr = np.array([[1.0, -9999.0], [-9999.0, 2.0],
                         [3.0, 4.0], [5.0, -9999.0]], dtype=np.float32)
         path = str(tmp_path / 'dask_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=-9999.0)
 
-        result = read_geotiff_dask(path, chunks=2)
+        result = _read_geotiff_dask(path, chunks=2)
         computed = result.compute()
         assert np.isnan(computed.values[0, 1])
         assert np.isnan(computed.values[1, 0])
@@ -2791,13 +2791,13 @@ class TestDaskReads:
 
     def test_dask_chunk_tuple(self, tmp_path):
         """Chunks as (row, col) tuple."""
-        from xrspatial.geotiff import read_geotiff_dask
+        from xrspatial.geotiff import _read_geotiff_dask
 
         arr = np.arange(200, dtype=np.float32).reshape(10, 20)
         path = str(tmp_path / 'dask_tuple.tif')
         write(arr, path, compression='deflate', tiled=False)
 
-        result = read_geotiff_dask(path, chunks=(5, 10))
+        result = _read_geotiff_dask(path, chunks=(5, 10))
         computed = result.compute()
         np.testing.assert_array_equal(computed.values, arr)
 
@@ -2870,13 +2870,14 @@ class TestPublicAPI:
             # Tiered feature inventory exposed alongside the writer's
             # ``allow_experimental_codecs`` opt-in.
             'SUPPORTED_FEATURES',
+            # Read/write surface consolidated on the two dispatchers
+            # (open_geotiff / to_geotiff) plus the VRT-mosaic builder.
+            # The backend functions (_read_geotiff_gpu, _read_geotiff_dask,
+            # _read_vrt, _write_geotiff_gpu) are private; the dispatchers
+            # route to them from their kwargs.
+            'build_vrt',
             'open_geotiff',
-            'read_geotiff_gpu',
-            'read_geotiff_dask',
-            'read_vrt',
             'to_geotiff',
-            'write_geotiff_gpu',
-            'write_vrt',
         }
         assert set(g.__all__) == expected
 
@@ -3140,11 +3141,11 @@ def test_to_geotiff_signature_has_allow_experimental_codecs():
 
 
 def test_write_geotiff_gpu_signature_has_allow_experimental_codecs():
-    """``write_geotiff_gpu`` carries the same kwarg with the same
+    """``_write_geotiff_gpu`` carries the same kwarg with the same
     default, so the two writers expose a consistent surface and the
     auto-dispatch path forwards a single value to either.
     """
-    params = inspect.signature(write_geotiff_gpu).parameters
+    params = inspect.signature(_write_geotiff_gpu).parameters
     assert 'allow_experimental_codecs' in params
     assert params['allow_experimental_codecs'].default is False
 
@@ -3223,7 +3224,7 @@ def test_experimental_codec_opt_in_emits_warning(tmp_path, codec):
         "the codec carries no cross-backend parity claim.")
     # Exactly one warning per call. Pinning the count catches the
     # double-warn regression where the CPU dispatcher fires the
-    # warning and then ``write_geotiff_gpu`` fires it again on the GPU
+    # warning and then ``_write_geotiff_gpu`` fires it again on the GPU
     # dispatch path; the CPU dispatcher gates its warning on
     # ``not use_gpu`` to keep this invariant on the GPU path too.
     assert len(fallback) == 1, (
@@ -3298,7 +3299,7 @@ def test_pansharpened_vrt_subclass_rejected_at_parse():
 
     The subClass check covers every GDAL VRT subclass uniformly, not
     just the warped one. Pin the pansharpened case so a caller who
-    points read_vrt at a pansharpened VRT sees the same actionable
+    points _read_vrt at a pansharpened VRT sees the same actionable
     failure rather than silently mis-reading.
     """
     xml = (
@@ -3313,7 +3314,7 @@ def test_derived_rasterband_subclass_rejected_at_parse():
     """A ``<VRTRasterBand subClass="VRTDerivedRasterBand">`` is rejected.
 
     Derived raster bands declare a pixel-function expression evaluated
-    over the sources. read_vrt has no pixel-function evaluator and
+    over the sources. _read_vrt has no pixel-function evaluator and
     would drop straight to the simple-source path, producing wrong
     output. Pin the typed error and the band number in the message.
     """
@@ -3415,7 +3416,7 @@ def test_dataset_level_gcplist_rejected_at_parse():
     """A dataset-level ``<GCPList>`` (ground-control points) is rejected.
 
     GCPList signals a non-axis-aligned georeferencing model that
-    read_vrt cannot honour. Pin the rejection so a future refactor
+    _read_vrt cannot honour. Pin the rejection so a future refactor
     cannot regress to the silent no-op pre-#2349 behaviour.
     """
     xml = (
@@ -3432,7 +3433,7 @@ def test_overview_list_band_child_still_passes(tmp_path):
     """``<OverviewList>`` and ``<Overview>`` band children are informational.
 
     GDAL emits these on VRTs whose source GeoTIFFs carry external
-    overviews. read_vrt does not consume VRT-level overview
+    overviews. _read_vrt does not consume VRT-level overview
     declarations (the source-side reader handles overviews via
     ``overview_level=``), so the elements were and remain
     no-ops. Pin the allow-list so the catch-all "unknown element"
@@ -3663,7 +3664,7 @@ def test_vrt_with_skewed_geotransform_rejected(tmp_path):
 
     The GDAL GeoTransform skew terms (positions 2 and 4 in the
     GDAL ordering) flag a warped / reprojection VRT or a rotated
-    source. read_vrt has no resampler for the warped case; pin the
+    source. _read_vrt has no resampler for the warped case; pin the
     existing typed error so a future refactor cannot regress to the
     silent no-georef fallback.
     """
@@ -3765,17 +3766,17 @@ def test_open_geotiff_vrt_stable_only_with_experimental_unlock(tmp_path):
 
 
 def test_read_vrt_stable_only_rejected_by_default(tmp_path):
-    """Direct ``read_vrt(stable_only=True)`` raises the typed error too."""
+    """Direct ``_read_vrt(stable_only=True)`` raises the typed error too."""
     path = _write_minimal_vrt(tmp_path, "read_vrt_direct")
     with pytest.raises(VRTStableSourcesOnlyError):
-        read_vrt(path, stable_only=True)
+        _read_vrt(path, stable_only=True)
 
 
 def test_read_geotiff_dask_vrt_stable_only_rejected(tmp_path):
-    """``read_geotiff_dask`` forwards the kwarg to ``read_vrt`` for VRT sources."""
+    """``_read_geotiff_dask`` forwards the kwarg to ``_read_vrt`` for VRT sources."""
     path = _write_minimal_vrt(tmp_path, "read_dask_vrt")
     with pytest.raises(VRTStableSourcesOnlyError):
-        read_geotiff_dask(path, stable_only=True)
+        _read_geotiff_dask(path, stable_only=True)
 
 
 def test_vrt_stable_only_error_is_geotiff_ambiguous_metadata_error():
@@ -3798,4 +3799,4 @@ def test_read_vrt_stable_only_no_op_on_default(tmp_path):
     """
     path = _write_minimal_vrt(tmp_path, "read_vrt_default")
     with pytest.raises(VRTUnsupportedError):
-        read_vrt(path)
+        _read_vrt(path)

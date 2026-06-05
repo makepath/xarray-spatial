@@ -8,15 +8,15 @@ in one place.
 
 Sections, by the behaviour they pin:
 
-- ``read_geotiff_gpu(..., window=..., band=...)`` kwarg forwarding
+- ``_read_geotiff_gpu(..., window=..., band=...)`` kwarg forwarding
 - ``stripped multiband`` -- 3-D ``(y, x, band)`` reads via the stripped fallback
 - stripped no-georef windowed coord parity
 - stripped fallback forwards ``max_pixels`` / ``window`` / ``band``
 - GPU read nodata promotion + ``attrs['nodata']``
-- ``write_geotiff_gpu`` rejects MinIsWhite on band-first single-band
-- ``read_geotiff_gpu(chunks=...)`` is a real out-of-core dask graph
+- ``_write_geotiff_gpu`` rejects MinIsWhite on band-first single-band
+- ``_read_geotiff_gpu(chunks=...)`` is a real out-of-core dask graph
 - sidecar overview-inheritance georef parity across backends
-- ``read_geotiff_gpu`` accepts HTTP / fsspec URLs on the eager path
+- ``_read_geotiff_gpu`` accepts HTTP / fsspec URLs on the eager path
 - GDS chunked path casts each chunk to the declared dtype
 
 Markers come from ``_helpers/markers.py``. Every test carries
@@ -90,12 +90,12 @@ def multi_band_tiff_1605(tmp_path):
 def test_read_geotiff_gpu_window_matches_eager_1605(single_band_tiff_1605):
     """Direct call: GPU window slice matches CPU eager window slice."""
     path, source_arr = single_band_tiff_1605
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
     window = (2, 4, 12, 14)
 
     cpu = open_geotiff(path, window=window)
-    gpu = read_geotiff_gpu(path, window=window)
+    gpu = _read_geotiff_gpu(path, window=window)
 
     assert gpu.shape == cpu.shape == (10, 10)
     np.testing.assert_array_equal(gpu.data.get(), cpu.data)
@@ -126,10 +126,10 @@ def test_open_geotiff_gpu_window_no_longer_silently_dropped_1605(
 def test_read_geotiff_gpu_band_selection_1605(multi_band_tiff_1605):
     """Direct call: band=k returns the kth band as a 2D DataArray."""
     path, source_arr = multi_band_tiff_1605
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
     cpu = open_geotiff(path, band=1)
-    gpu = read_geotiff_gpu(path, band=1)
+    gpu = _read_geotiff_gpu(path, band=1)
 
     assert gpu.shape == cpu.shape == (16, 20)
     assert gpu.ndim == 2
@@ -158,11 +158,11 @@ def test_open_geotiff_gpu_band_no_longer_silently_dropped_1605(
 def test_read_geotiff_gpu_window_and_band_1605(multi_band_tiff_1605):
     """window + band combine cleanly."""
     path, source_arr = multi_band_tiff_1605
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
     window = (1, 2, 11, 17)
     cpu = open_geotiff(path, window=window, band=0)
-    gpu = read_geotiff_gpu(path, window=window, band=0)
+    gpu = _read_geotiff_gpu(path, window=window, band=0)
 
     assert gpu.shape == cpu.shape == (10, 15)
     assert gpu.ndim == 2
@@ -173,16 +173,16 @@ def test_read_geotiff_gpu_window_and_band_1605(multi_band_tiff_1605):
 def test_read_geotiff_gpu_window_bounds_validation_1605(single_band_tiff_1605):
     """Out-of-bounds window raises ValueError, mirroring the dask path."""
     path, _ = single_band_tiff_1605
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with pytest.raises(ValueError, match="outside the source extent"):
-        read_geotiff_gpu(path, window=(0, 0, 100, 100))
+        _read_geotiff_gpu(path, window=(0, 0, 100, 100))
 
     with pytest.raises(ValueError, match="non-positive size"):
-        read_geotiff_gpu(path, window=(5, 0, 5, 10))
+        _read_geotiff_gpu(path, window=(5, 0, 5, 10))
 
     with pytest.raises(ValueError, match="must be a 4-tuple"):
-        read_geotiff_gpu(path, window=(0, 0, 5))
+        _read_geotiff_gpu(path, window=(0, 0, 5))
 
 
 @_gpu_only
@@ -191,13 +191,13 @@ def test_read_geotiff_gpu_band_bounds_validation_1605(
     """Out-of-range band raises IndexError."""
     multi_path, _ = multi_band_tiff_1605
     single_path, _ = single_band_tiff_1605
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     with pytest.raises(IndexError, match="out of range"):
-        read_geotiff_gpu(multi_path, band=10)
+        _read_geotiff_gpu(multi_path, band=10)
 
     with pytest.raises(IndexError, match="single-band file"):
-        read_geotiff_gpu(single_path, band=1)
+        _read_geotiff_gpu(single_path, band=1)
 
 
 @_gpu_only
@@ -211,7 +211,7 @@ def test_read_geotiff_gpu_window_rejected_on_nondefault_orientation_1605(
     tifffile.
     """
     tifffile = pytest.importorskip("tifffile")
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)
     path = tmp_path / "orient2_stripped_1605.tif"
@@ -222,7 +222,7 @@ def test_read_geotiff_gpu_window_rejected_on_nondefault_orientation_1605(
     )
 
     with pytest.raises(ValueError, match=r"Orientation tag \(274\) is 2"):
-        read_geotiff_gpu(str(path), window=(0, 0, 8, 10))
+        _read_geotiff_gpu(str(path), window=(0, 0, 8, 10))
 
 
 @_gpu_only
@@ -237,14 +237,14 @@ def test_read_geotiff_gpu_stripped_chunks_produces_dask_1605(tmp_path):
     tifffile = pytest.importorskip("tifffile")
     import dask.array as dask_array
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)
     path = tmp_path / "stripped_chunks_1605.tif"
     # No ``tile=`` argument -> stripped layout. Orientation defaults to 1.
     tifffile.imwrite(str(path), arr)
 
-    result = read_geotiff_gpu(str(path), chunks=8)
+    result = _read_geotiff_gpu(str(path), chunks=8)
 
     # The result should be Dask-backed; .data is a dask Array wrapping CuPy.
     assert isinstance(result.data, dask_array.Array), \
@@ -264,13 +264,13 @@ def test_read_geotiff_gpu_stripped_chunks_tuple_1605(tmp_path):
     tifffile = pytest.importorskip("tifffile")
     import dask.array as dask_array
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)
     path = tmp_path / "stripped_chunks_tuple_1605.tif"
     tifffile.imwrite(str(path), arr)
 
-    result = read_geotiff_gpu(str(path), chunks=(4, 10))
+    result = _read_geotiff_gpu(str(path), chunks=(4, 10))
     assert isinstance(result.data, dask_array.Array)
     assert result.chunks == ((4, 4, 4, 4), (10, 10))
 
@@ -282,7 +282,7 @@ def test_read_geotiff_gpu_stripped_chunks_tuple_1605(tmp_path):
 @_gpu_only
 def test_stripped_3band_uint8_stripped_multiband():
     """3-band uint8 stripped TIFF reads as (y, x, band)."""
-    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260508)
     data = rng.randint(0, 200, size=(64, 96, 3)).astype(np.uint8)
@@ -291,7 +291,7 @@ def test_stripped_3band_uint8_stripped_multiband():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'wt.tif')
         to_geotiff(da, p, tiled=False)
-        out = read_geotiff_gpu(p)
+        out = _read_geotiff_gpu(p)
         assert out.dims == ('y', 'x', 'band')
         assert out.shape == (64, 96, 3)
         np.testing.assert_array_equal(out.data.get(), data)
@@ -300,7 +300,7 @@ def test_stripped_3band_uint8_stripped_multiband():
 @_gpu_only
 def test_stripped_2band_uint16_stripped_multiband():
     """2-band uint16 stripped TIFF reads as (y, x, band)."""
-    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260508)
     data = rng.randint(0, 60000, size=(48, 80, 2)).astype(np.uint16)
@@ -309,7 +309,7 @@ def test_stripped_2band_uint16_stripped_multiband():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'wt2.tif')
         to_geotiff(da, p, tiled=False)
-        out = read_geotiff_gpu(p)
+        out = _read_geotiff_gpu(p)
         assert out.dims == ('y', 'x', 'band')
         assert out.shape == (48, 80, 2)
         assert out.data.dtype == np.dtype(np.uint16)
@@ -319,7 +319,7 @@ def test_stripped_2band_uint16_stripped_multiband():
 @_gpu_only
 def test_stripped_singleband_still_2d_stripped_multiband():
     """Single-band stripped TIFF still produces a 2-D (y, x) DataArray."""
-    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260508)
     data = rng.randint(0, 200, size=(40, 60)).astype(np.uint8)
@@ -328,7 +328,7 @@ def test_stripped_singleband_still_2d_stripped_multiband():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'wt1.tif')
         to_geotiff(da, p, tiled=False)
-        out = read_geotiff_gpu(p)
+        out = _read_geotiff_gpu(p)
         assert out.dims == ('y', 'x')
         assert out.shape == (40, 60)
         np.testing.assert_array_equal(out.data.get(), data)
@@ -511,7 +511,7 @@ class TestStrippedGpuWindowedGeorefStillWorks1753:
 @_gpu_only
 def test_stripped_max_pixels_cap_is_enforced_1732():
     """max_pixels smaller than the file must raise before full decode."""
-    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(64, 96)).astype(np.uint8)
@@ -522,14 +522,14 @@ def test_stripped_max_pixels_cap_is_enforced_1732():
         to_geotiff(da, p, tiled=False)
         # 64 * 96 = 6144 pixels; cap at 1000 must reject.
         with pytest.raises(ValueError, match="max_pixels|pixel"):
-            read_geotiff_gpu(p, max_pixels=1000)
+            _read_geotiff_gpu(p, max_pixels=1000)
 
 
 @_gpu_only
 def test_stripped_window_returns_only_window_1732():
     """Windowed read on a stripped file returns the window-sized array
     with coords and transform that match the window origin."""
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(64, 96)).astype(np.uint8)
@@ -547,7 +547,7 @@ def test_stripped_window_returns_only_window_1732():
         p = os.path.join(d, 'tmp_1732_win.tif')
         to_geotiff(da, p, tiled=False)
         win = (8, 16, 40, 80)  # 32x64 window
-        out = read_geotiff_gpu(p, window=win)
+        out = _read_geotiff_gpu(p, window=win)
         assert out.shape == (32, 64)
         np.testing.assert_array_equal(out.data.get(), data[8:40, 16:80])
 
@@ -565,7 +565,7 @@ def test_stripped_window_returns_only_window_1732():
 def test_stripped_band_selection_returns_2d_1732():
     """Selecting band=1 on a 3-band stripped file returns a 2D array
     matching the requested band."""
-    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(48, 80, 3)).astype(np.uint8)
@@ -574,7 +574,7 @@ def test_stripped_band_selection_returns_2d_1732():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'tmp_1732_band.tif')
         to_geotiff(da, p, tiled=False)
-        out = read_geotiff_gpu(p, band=1)
+        out = _read_geotiff_gpu(p, band=1)
         assert out.dims == ('y', 'x')
         assert out.shape == (48, 80)
         np.testing.assert_array_equal(out.data.get(), data[:, :, 1])
@@ -583,7 +583,7 @@ def test_stripped_band_selection_returns_2d_1732():
 @_gpu_only
 def test_stripped_window_plus_band_1732():
     """Windowed read with band selection composes correctly."""
-    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _read_geotiff_gpu, to_geotiff
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(48, 80, 3)).astype(np.uint8)
@@ -593,7 +593,7 @@ def test_stripped_window_plus_band_1732():
         p = os.path.join(d, 'tmp_1732_wb.tif')
         to_geotiff(da, p, tiled=False)
         win = (4, 8, 36, 72)  # 32x64
-        out = read_geotiff_gpu(p, window=win, band=2)
+        out = _read_geotiff_gpu(p, window=win, band=2)
         assert out.dims == ('y', 'x')
         assert out.shape == (32, 64)
         np.testing.assert_array_equal(
@@ -759,7 +759,7 @@ def test_gpu_int16_negative_nodata_1542(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Section: write_geotiff_gpu rejects MinIsWhite (band-first guard)
+# Section: _write_geotiff_gpu rejects MinIsWhite (band-first guard)
 #
 # The last test in this section
 # (``test_samples_hint_band_first_without_gpu_2097``) is CPU-only by design:
@@ -774,13 +774,13 @@ def test_band_first_single_band_miniswhite_rejected_2097(tmp_path):
     must raise ``NotImplementedError`` on the GPU writer."""
     import cupy as cp
 
-    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+    from xrspatial.geotiff._writers.gpu import _write_geotiff_gpu
 
     arr = cp.zeros((1, 4, 8), dtype=cp.uint8)
     da = xr.DataArray(arr, dims=("band", "y", "x"))
     out = tmp_path / "tmp_2097_miniswhite_band_first.tif"
     with pytest.raises(NotImplementedError, match="miniswhite"):
-        write_geotiff_gpu(da, str(out), photometric="miniswhite")
+        _write_geotiff_gpu(da, str(out), photometric="miniswhite")
     assert not out.exists()
 
 
@@ -789,13 +789,13 @@ def test_band_last_single_band_miniswhite_still_rejected_2097(tmp_path):
     """The pre-existing band-last single-band rejection must still fire."""
     import cupy as cp
 
-    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+    from xrspatial.geotiff._writers.gpu import _write_geotiff_gpu
 
     arr = cp.zeros((4, 8, 1), dtype=cp.uint8)
     da = xr.DataArray(arr, dims=("y", "x", "band"))
     out = tmp_path / "tmp_2097_miniswhite_band_last.tif"
     with pytest.raises(NotImplementedError, match="miniswhite"):
-        write_geotiff_gpu(da, str(out), photometric="miniswhite")
+        _write_geotiff_gpu(da, str(out), photometric="miniswhite")
     assert not out.exists()
 
 
@@ -804,13 +804,13 @@ def test_2d_single_band_miniswhite_still_rejected_2097(tmp_path):
     """2D inputs are the simplest single-band case."""
     import cupy as cp
 
-    from xrspatial.geotiff._writers.gpu import write_geotiff_gpu
+    from xrspatial.geotiff._writers.gpu import _write_geotiff_gpu
 
     arr = cp.zeros((4, 8), dtype=cp.uint8)
     da = xr.DataArray(arr, dims=("y", "x"))
     out = tmp_path / "tmp_2097_miniswhite_2d.tif"
     with pytest.raises(NotImplementedError, match="miniswhite"):
-        write_geotiff_gpu(da, str(out), photometric="miniswhite")
+        _write_geotiff_gpu(da, str(out), photometric="miniswhite")
     assert not out.exists()
 
 
@@ -844,7 +844,7 @@ def test_samples_hint_band_first_without_gpu_2097():
 
 
 # ---------------------------------------------------------------------------
-# Section: read_geotiff_gpu(chunks=...) out-of-core dask pipeline
+# Section: _read_geotiff_gpu(chunks=...) out-of-core dask pipeline
 # ---------------------------------------------------------------------------
 
 def _kvikio_available_1876() -> bool:
@@ -894,9 +894,9 @@ def test_read_geotiff_gpu_chunks_yields_dask_cupy_chunks_1876(
     import cupy
     import dask.array as da_mod
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
-    result = read_geotiff_gpu(small_raster_path_1876, chunks=8)
+    result = _read_geotiff_gpu(small_raster_path_1876, chunks=8)
 
     assert isinstance(result.data, da_mod.Array), (
         f"expected dask Array, got {type(result.data).__name__}"
@@ -917,10 +917,10 @@ def test_read_geotiff_gpu_chunks_values_match_eager_1876(
     """Lazy chunked result must equal the eager GPU result element-wise."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
-    eager = read_geotiff_gpu(small_raster_path_1876)
-    chunked = read_geotiff_gpu(small_raster_path_1876, chunks=8)
+    eager = _read_geotiff_gpu(small_raster_path_1876)
+    chunked = _read_geotiff_gpu(small_raster_path_1876, chunks=8)
 
     eager_np = cupy.asnumpy(eager.data)
     chunked_np = cupy.asnumpy(chunked.compute().data)
@@ -933,9 +933,9 @@ def test_read_geotiff_gpu_no_chunks_returns_eager_cupy_1876(
     """``chunks=None`` keeps the eager GPU decode path."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
-    result = read_geotiff_gpu(small_raster_path_1876)
+    result = _read_geotiff_gpu(small_raster_path_1876)
 
     assert isinstance(result.data, cupy.ndarray)
 
@@ -959,9 +959,9 @@ def test_open_geotiff_gpu_chunks_propagates_to_dask_1876(
 def test_read_geotiff_gpu_chunks_preserves_attrs_1876(
         small_raster_path_1876):
     """Geo attrs (transform, crs) must survive the dask path."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
-    result = read_geotiff_gpu(small_raster_path_1876, chunks=8)
+    result = _read_geotiff_gpu(small_raster_path_1876, chunks=8)
     assert 'transform' in result.attrs
     assert 'crs' in result.attrs
 
@@ -972,8 +972,8 @@ def test_read_geotiff_gpu_chunks_uses_gds_path_when_available_1876(
         small_raster_path_1876, monkeypatch):
     """When kvikio is installed and the file qualifies, each chunk task
     must call the direct disk->GPU decoder rather than detouring through
-    ``read_geotiff_dask``."""
-    from xrspatial.geotiff import read_geotiff_gpu
+    ``_read_geotiff_dask``."""
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gtmod
 
     direct_calls = {'n': 0}
@@ -985,7 +985,7 @@ def test_read_geotiff_gpu_chunks_uses_gds_path_when_available_1876(
 
     monkeypatch.setattr(gtmod, '_decode_window_gpu_direct', _spy)
 
-    result = read_geotiff_gpu(small_raster_path_1876, chunks=8)
+    result = _read_geotiff_gpu(small_raster_path_1876, chunks=8)
     result.compute()
 
     assert direct_calls['n'] == 16, (
@@ -1000,10 +1000,10 @@ def test_read_geotiff_gpu_chunks_window_subset_1876(small_raster_path_1876):
     on the eager path."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
-    eager = read_geotiff_gpu(small_raster_path_1876, window=(4, 4, 24, 28))
-    chunked = read_geotiff_gpu(small_raster_path_1876, chunks=8,
+    eager = _read_geotiff_gpu(small_raster_path_1876, window=(4, 4, 24, 28))
+    chunked = _read_geotiff_gpu(small_raster_path_1876, chunks=8,
                                window=(4, 4, 24, 28))
 
     eager_np = cupy.asnumpy(eager.data)
@@ -1018,14 +1018,14 @@ def test_read_geotiff_gpu_chunks_multi_band_1876(multi_band_path_1876):
     import cupy
     import dask.array as da_mod
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
-    result = read_geotiff_gpu(multi_band_path_1876, chunks=16)
+    result = _read_geotiff_gpu(multi_band_path_1876, chunks=16)
     assert isinstance(result.data, da_mod.Array)
     assert isinstance(result.data._meta, cupy.ndarray)
     assert result.sizes['band'] == 3
 
-    eager = read_geotiff_gpu(multi_band_path_1876)
+    eager = _read_geotiff_gpu(multi_band_path_1876)
     eager_np = cupy.asnumpy(eager.data)
     chunked_np = cupy.asnumpy(result.compute().data)
     np.testing.assert_allclose(eager_np, chunked_np, rtol=1e-5)
@@ -1037,13 +1037,13 @@ def test_read_geotiff_gpu_chunks_single_band_selection_1876(
     """``band=k`` collapses to a 2D Dask+CuPy DataArray."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
-    result = read_geotiff_gpu(multi_band_path_1876, chunks=16, band=1)
+    result = _read_geotiff_gpu(multi_band_path_1876, chunks=16, band=1)
     assert result.ndim == 2
     assert isinstance(result.data._meta, cupy.ndarray)
 
-    eager = read_geotiff_gpu(multi_band_path_1876, band=1)
+    eager = _read_geotiff_gpu(multi_band_path_1876, band=1)
     eager_np = cupy.asnumpy(eager.data)
     chunked_np = cupy.asnumpy(result.compute().data)
     np.testing.assert_allclose(eager_np, chunked_np, rtol=1e-5)
@@ -1058,7 +1058,7 @@ def test_read_geotiff_gpu_chunks_fallback_when_kvikio_absent_1876(
 
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
     from xrspatial.geotiff._backends import gpu as gtmod
 
     original_find_spec = _ilu.find_spec
@@ -1079,12 +1079,12 @@ def test_read_geotiff_gpu_chunks_fallback_when_kvikio_absent_1876(
 
     monkeypatch.setattr(gtmod, '_decode_window_gpu_direct', _spy)
 
-    result = read_geotiff_gpu(small_raster_path_1876, chunks=8)
+    result = _read_geotiff_gpu(small_raster_path_1876, chunks=8)
     computed = result.compute()
     assert direct_calls['n'] == 0
     assert isinstance(computed.data, cupy.ndarray)
 
-    eager = read_geotiff_gpu(small_raster_path_1876)
+    eager = _read_geotiff_gpu(small_raster_path_1876)
     np.testing.assert_array_equal(
         cupy.asnumpy(eager.data), cupy.asnumpy(computed.data),
     )
@@ -1105,7 +1105,7 @@ def _attrs_subset_2324(da):
 
 def test_sidecar_without_geokeys_attrs_match_cpu_vs_dask_2324(tmp_path):
     """Baseline: CPU eager and dask agree on inherited georef."""
-    from xrspatial.geotiff import open_geotiff, read_geotiff_dask
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_dask
 
     from ..integration.test_sidecar import _write_pair
 
@@ -1121,7 +1121,7 @@ def test_sidecar_without_geokeys_attrs_match_cpu_vs_dask_2324(tmp_path):
     )
 
     cpu = open_geotiff(str(base), overview_level=1)
-    dsk = read_geotiff_dask(str(base), overview_level=1, chunks=2)
+    dsk = _read_geotiff_dask(str(base), overview_level=1, chunks=2)
 
     assert _attrs_subset_2324(cpu) == _attrs_subset_2324(dsk)
     t = cpu.attrs["transform"]
@@ -1135,7 +1135,7 @@ def test_sidecar_without_geokeys_attrs_match_cpu_vs_dask_2324(tmp_path):
 @_gpu_only
 def test_sidecar_without_geokeys_gpu_matches_cpu_2324(tmp_path):
     """GPU eager georef matches CPU / dask."""
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
     from ..integration.test_sidecar import _write_pair
 
@@ -1151,7 +1151,7 @@ def test_sidecar_without_geokeys_gpu_matches_cpu_2324(tmp_path):
     )
 
     cpu = open_geotiff(str(base), overview_level=1)
-    gpu = read_geotiff_gpu(str(base), overview_level=1)
+    gpu = _read_geotiff_gpu(str(base), overview_level=1)
 
     assert _attrs_subset_2324(gpu) == _attrs_subset_2324(cpu)
     np.testing.assert_array_equal(np.asarray(gpu.data.get()),
@@ -1161,7 +1161,7 @@ def test_sidecar_without_geokeys_gpu_matches_cpu_2324(tmp_path):
 @_gpu_only
 def test_sidecar_with_own_geokeys_gpu_matches_cpu_2324(tmp_path):
     """GPU path routes a sidecar-owned georef payload to sidecar bytes."""
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
     from ..integration.test_sidecar import _write_pair
 
@@ -1177,7 +1177,7 @@ def test_sidecar_with_own_geokeys_gpu_matches_cpu_2324(tmp_path):
     )
 
     cpu = open_geotiff(str(base), overview_level=1)
-    gpu = read_geotiff_gpu(str(base), overview_level=1)
+    gpu = _read_geotiff_gpu(str(base), overview_level=1)
 
     assert _attrs_subset_2324(gpu) == _attrs_subset_2324(cpu)
     t = gpu.attrs["transform"]
@@ -1189,7 +1189,7 @@ def test_sidecar_with_own_geokeys_gpu_matches_cpu_2324(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Section: read_geotiff_gpu accepts HTTP / fsspec URLs (eager)
+# Section: _read_geotiff_gpu accepts HTTP / fsspec URLs (eager)
 # ---------------------------------------------------------------------------
 
 class _RangeHandler2161(http.server.BaseHTTPRequestHandler):
@@ -1247,14 +1247,14 @@ def small_tif_bytes_2161(tmp_path):
 
 @_gpu_only
 def test_local_path_still_returns_cupy_2161(small_tif_bytes_2161):
-    """``read_geotiff_gpu(local.tif)`` must still take the disk-based
+    """``_read_geotiff_gpu(local.tif)`` must still take the disk-based
     eager path and return a CuPy-backed DataArray."""
     import cupy
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     _payload, arr_ref, local = small_tif_bytes_2161
-    da = read_geotiff_gpu(local)
+    da = _read_geotiff_gpu(local)
     assert isinstance(da.data, cupy.ndarray), (
         f"Local path no longer returns CuPy array (got {type(da.data)})"
     )
@@ -1268,7 +1268,7 @@ def test_http_url_returns_cupy_matching_cpu_2161(small_tif_bytes_2161,
     """HTTP URLs route through the CPU decode + GPU upload helper."""
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
     payload, arr_ref, _local = small_tif_bytes_2161
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
@@ -1277,7 +1277,7 @@ def test_http_url_returns_cupy_matching_cpu_2161(small_tif_bytes_2161,
     try:
         url = f'http://127.0.0.1:{port}/eager_2161.tif'
         da_cpu = open_geotiff(url)
-        da_gpu_direct = read_geotiff_gpu(url)
+        da_gpu_direct = _read_geotiff_gpu(url)
         da_gpu_open = open_geotiff(url, gpu=True)
     finally:
         httpd.shutdown()
@@ -1298,7 +1298,7 @@ def test_memory_fsspec_uri_returns_cupy_matching_cpu_2161(
     fsspec = pytest.importorskip("fsspec")
     import cupy
 
-    from xrspatial.geotiff import open_geotiff, read_geotiff_gpu
+    from xrspatial.geotiff import open_geotiff, _read_geotiff_gpu
 
     payload, arr_ref, _local = small_tif_bytes_2161
     fs = fsspec.filesystem("memory")
@@ -1307,7 +1307,7 @@ def test_memory_fsspec_uri_returns_cupy_matching_cpu_2161(
     try:
         url = f"memory://{mem_path}"
         da_cpu = open_geotiff(url)
-        da_gpu_direct = read_geotiff_gpu(url)
+        da_gpu_direct = _read_geotiff_gpu(url)
         da_gpu_open = open_geotiff(url, gpu=True)
     finally:
         try:
@@ -1328,7 +1328,7 @@ def test_unreachable_http_url_does_not_raise_filenotfound_2161(monkeypatch):
     """A bad URL no longer surfaces as a bare ``FileNotFoundError``."""
     import socket
 
-    from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _read_geotiff_gpu
 
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
     s = socket.socket()
@@ -1338,7 +1338,7 @@ def test_unreachable_http_url_does_not_raise_filenotfound_2161(monkeypatch):
 
     url = f'http://127.0.0.1:{port}/nope_2161.tif'
     with pytest.raises(Exception) as excinfo:
-        read_geotiff_gpu(url)
+        _read_geotiff_gpu(url)
 
     err = excinfo.value
     assert not (
@@ -1469,10 +1469,10 @@ def test_chunked_gpu_declared_dtype_matches_computed_1909(
 def test_chunked_gpu_dtype_matches_cpu_dask_1909(
         uint16_no_sentinel_path_1909):
     """The dask+cupy declared dtype must match the dask+numpy path."""
-    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff import _read_geotiff_dask
     from xrspatial.geotiff._backends.gpu import _read_geotiff_gpu_chunked_gds
 
-    cpu = read_geotiff_dask(uint16_no_sentinel_path_1909, chunks=4)
+    cpu = _read_geotiff_dask(uint16_no_sentinel_path_1909, chunks=4)
     ifd, geo_info, header = _parse_for_gds_1909(uint16_no_sentinel_path_1909)
     gpu = _read_geotiff_gpu_chunked_gds(
         uint16_no_sentinel_path_1909, ifd, geo_info, header,

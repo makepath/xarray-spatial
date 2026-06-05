@@ -23,7 +23,7 @@ Section 1 -- ``MinIsWhite`` read/write semantics
 
 Section 2 -- ``allow_internal_only_jpeg`` API tier acceptance
     The CPU dispatcher ``to_geotiff`` exposes the same opt-in flag the
-    GPU writer ``write_geotiff_gpu`` does, so callers on the auto-
+    GPU writer ``_write_geotiff_gpu`` does, so callers on the auto-
     dispatch path can reach the experimental internal-reader-only JPEG
     encode. The tests pin signature parity, the default-rejection
     message, the opt-in warning + round-trip, and the GPU dispatch
@@ -47,7 +47,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff, write_geotiff_gpu
+from xrspatial.geotiff import GeoTIFFFallbackWarning, open_geotiff, to_geotiff, _write_geotiff_gpu
 from xrspatial.geotiff._header import TAG_PHOTOMETRIC, TAG_SAMPLE_FORMAT, parse_header
 
 tifffile = pytest.importorskip("tifffile")
@@ -362,7 +362,7 @@ def test_gpu_sparse_tile_miniswhite_nodata_zero(tmp_path):
     Build a tiled MinIsWhite uint8 raster with ``GDAL_NODATA=0``, then
     patch the first tile's TileOffsets/TileByteCounts to 0 so the read
     routes through the sparse-tile CPU-fallback branch of
-    ``read_geotiff_gpu``. Pre-fix this branch discarded
+    ``_read_geotiff_gpu``. Pre-fix this branch discarded
     ``_mask_nodata`` and masked against the original sentinel.
     """
     stored = np.zeros((32, 32), dtype=np.uint8)
@@ -682,11 +682,11 @@ def _make_rgb_uint8_da() -> xr.DataArray:
 def test_to_geotiff_signature_has_allow_internal_only_jpeg():
     """``to_geotiff`` must expose ``allow_internal_only_jpeg`` so callers
     on the auto-dispatch path can reach the same opt-in
-    ``write_geotiff_gpu`` exposes."""
+    ``_write_geotiff_gpu`` exposes."""
     params = inspect.signature(to_geotiff).parameters
     assert "allow_internal_only_jpeg" in params, (
         "to_geotiff must accept allow_internal_only_jpeg for parity "
-        "with write_geotiff_gpu."
+        "with _write_geotiff_gpu."
     )
     assert params["allow_internal_only_jpeg"].default is False
 
@@ -697,7 +697,7 @@ def test_to_geotiff_and_gpu_writer_share_kwarg_default():
     eager_default = inspect.signature(
         to_geotiff).parameters["allow_internal_only_jpeg"].default
     gpu_default = inspect.signature(
-        write_geotiff_gpu).parameters["allow_internal_only_jpeg"].default
+        _write_geotiff_gpu).parameters["allow_internal_only_jpeg"].default
     assert eager_default == gpu_default == False  # noqa: E712
 
 
@@ -767,7 +767,7 @@ def test_to_geotiff_non_jpeg_unaffected_by_flag(tmp_path):
 def test_to_geotiff_gpu_dispatch_forwards_allow_internal_only_jpeg(
         tmp_path, monkeypatch):
     """``to_geotiff(gpu=True, allow_internal_only_jpeg=True)`` forwards
-    the kwarg into ``write_geotiff_gpu``. Without this the GPU writer
+    the kwarg into ``_write_geotiff_gpu``. Without this the GPU writer
     would refuse the encode after the CPU dispatcher accepted it."""
     captured: dict = {}
 
@@ -779,7 +779,7 @@ def test_to_geotiff_gpu_dispatch_forwards_allow_internal_only_jpeg(
             f.write(b'')
 
     monkeypatch.setattr(
-        'xrspatial.geotiff._writers.eager.write_geotiff_gpu',
+        'xrspatial.geotiff._writers.eager._write_geotiff_gpu',
         _fake_write_geotiff_gpu,
     )
 
@@ -793,11 +793,11 @@ def test_to_geotiff_gpu_dispatch_forwards_allow_internal_only_jpeg(
     )
 
     assert 'kwargs' in captured, (
-        "to_geotiff must dispatch to write_geotiff_gpu when gpu=True"
+        "to_geotiff must dispatch to _write_geotiff_gpu when gpu=True"
     )
     assert captured['kwargs'].get('allow_internal_only_jpeg') is True, (
         "to_geotiff must forward allow_internal_only_jpeg unchanged "
-        "into write_geotiff_gpu."
+        "into _write_geotiff_gpu."
     )
     assert captured['kwargs'].get('compression') == 'jpeg'
 
@@ -813,7 +813,7 @@ def test_to_geotiff_gpu_dispatch_emits_single_jpeg_opt_in_warning(
         if kwargs.get('compression') == 'jpeg' and kwargs.get(
                 'allow_internal_only_jpeg'):
             _warnings.warn(
-                "write_geotiff_gpu jpeg opt-in (stub).",
+                "_write_geotiff_gpu jpeg opt-in (stub).",
                 GeoTIFFFallbackWarning,
                 stacklevel=2,
             )
@@ -821,7 +821,7 @@ def test_to_geotiff_gpu_dispatch_emits_single_jpeg_opt_in_warning(
             f.write(b'')
 
     monkeypatch.setattr(
-        'xrspatial.geotiff._writers.eager.write_geotiff_gpu',
+        'xrspatial.geotiff._writers.eager._write_geotiff_gpu',
         _fake_write_geotiff_gpu,
     )
 

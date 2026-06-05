@@ -1,6 +1,6 @@
 """GPU writer entry point.
 
-Holds ``write_geotiff_gpu``, which compresses tiles on the device via
+Holds ``_write_geotiff_gpu``, which compresses tiles on the device via
 nvCOMP (when available) and falls back to the
 eager CPU writer when nvCOMP is missing or the device path raises
 under ``on_gpu_failure='auto'``.
@@ -36,7 +36,7 @@ def _compute_gpu_samples_hint(data) -> int:
     """Return the band count using the same convention the GPU writer's
     band-first -> band-last remap uses.
 
-    The remap below in ``write_geotiff_gpu`` moves bands from
+    The remap below in ``_write_geotiff_gpu`` moves bands from
     ``shape[0]`` to ``shape[2]`` for band-first DataArrays. The
     MinIsWhite single-band guard runs *before* that remap, so reading
     ``data.shape[2]`` blindly would treat a band-first ``(1, H, W)``
@@ -58,7 +58,7 @@ def _compute_gpu_samples_hint(data) -> int:
     return int(data.shape[2])
 
 
-def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
+def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       path: str | BinaryIO, *,
                       crs: int | str | None = None,
                       nodata: float | int | None = None,
@@ -175,7 +175,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         [experimental] Tile size in pixels (default 256). Must be a
         positive multiple of 16; this is a TIFF 6 spec requirement on
         TileWidth and TileLength for broad reader compatibility.
-        ``write_geotiff_gpu`` is always tiled, so the check fires for
+        ``_write_geotiff_gpu`` is always tiled, so the check fires for
         every call.
     predictor : bool or int
         [experimental] TIFF predictor. ``False``/``0``/``1`` -> none,
@@ -261,7 +261,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     str or binary file-like
         The ``path`` argument (a string for filesystem paths, the
         file-like object for BytesIO destinations). Returning the path
-        mirrors ``to_geotiff`` and ``write_vrt`` so callers can handle
+        mirrors ``to_geotiff`` and ``build_vrt`` so callers can handle
         the three writers uniformly.
 
     Raises
@@ -276,7 +276,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     """
     if not tiled:
         raise ValueError(
-            "write_geotiff_gpu requires tiled=True. nvCOMP batch "
+            "_write_geotiff_gpu requires tiled=True. nvCOMP batch "
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
@@ -303,7 +303,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             and compression.lower() == 'jpeg'
             and allow_internal_only_jpeg):
         warnings.warn(
-            "write_geotiff_gpu(compression='jpeg', "
+            "_write_geotiff_gpu(compression='jpeg', "
             "allow_internal_only_jpeg=True) writes JFIF tiles without "
             "the TIFF JPEGTables tag (347); the file decodes through "
             "xrspatial but may fail in libtiff, GDAL, or rasterio. "
@@ -334,7 +334,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         if (_gpu_codec in _EXPERIMENTAL_CODECS
                 and allow_experimental_codecs):
             warnings.warn(
-                f"write_geotiff_gpu(compression={compression!r}, "
+                f"_write_geotiff_gpu(compression={compression!r}, "
                 "allow_experimental_codecs=True): experimental codec, "
                 "GPU encode path is not byte-identical to the CPU writer "
                 "(different backend libraries). See issue #2137.",
@@ -360,29 +360,29 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "Move the array to host memory and call to_geotiff with "
             "gpu=False, or write with photometric='minisblack' / "
             "'auto'.")
-    # write_geotiff_gpu is always tiled, so validate tile_size here and
+    # _write_geotiff_gpu is always tiled, so validate tile_size here and
     # keep parity with the public to_geotiff entry point.
     _validate_tile_size_arg(tile_size)
     _validate_nodata_arg(nodata)
 
     # Refuse to silently drop ``attrs['rotated_affine']``. Mirror the
     # gate ``to_geotiff`` runs upstream so direct callers of
-    # ``write_geotiff_gpu`` get the same rejection.
+    # ``_write_geotiff_gpu`` get the same rejection.
     _drop_rotation_attrs = getattr(data, 'attrs', None) or {}
     _validate_no_rotated_affine(
         _drop_rotation_attrs,
         drop_rotation=drop_rotation,
-        entry_point="write_geotiff_gpu",
+        entry_point="_write_geotiff_gpu",
     )
 
-    # Reject empty spatial shapes. ``write_geotiff_gpu`` is a public
+    # Reject empty spatial shapes. ``_write_geotiff_gpu`` is a public
     # entry point and direct callers (with cupy.ndarray or raw
     # numpy) do not flow through ``to_geotiff``'s guard, so check here
     # before any GPU work starts.
     _validate_writer_spatial_shape(
         getattr(data, 'shape', None),
         getattr(data, 'dims', None),
-        entry_point="write_geotiff_gpu",
+        entry_point="_write_geotiff_gpu",
     )
 
     # Reject ``gdal_metadata_xml`` / ``extra_tags`` pass-through writes
@@ -393,7 +393,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _validate_write_rich_tag_optin(
         _attrs_for_optin,
         allow_experimental_codecs=allow_experimental_codecs,
-        entry_point="write_geotiff_gpu",
+        entry_point="_write_geotiff_gpu",
     )
 
     # Ambiguous-metadata checks; mirrors ``to_geotiff`` so the GPU
