@@ -24,8 +24,9 @@ build_vrt(path, source_files, ...)
 
 The backend functions ``_read_geotiff_gpu``, ``_read_geotiff_dask``,
 ``_read_vrt``, and ``_write_geotiff_gpu`` are private. ``open_geotiff`` and
-``to_geotiff`` dispatch to them; import them directly from their backend
-modules only if you need to bypass auto-dispatch.
+``to_geotiff`` dispatch to them. They are bound on the package
+(``xrspatial.geotiff._read_geotiff_gpu``) and also importable from their
+backend modules; reach for them only to bypass auto-dispatch.
 """
 from __future__ import annotations
 
