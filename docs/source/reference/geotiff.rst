@@ -510,6 +510,20 @@ integer bands without a sentinel). ``XRSPATIAL_GEOTIFF_STRICT=1``
 forces the raise in ``'warn'`` mode too, so CI environments can enforce
 fail-fast behavior globally.
 
+Under chunked dispatch (``chunks=`` set), ``attrs['vrt_holes']`` records
+statically-detectable missing-file holes only (#2989). A source file
+that exists but fails to decode at compute time -- corrupt, truncated,
+or a codec error -- reads as a hole in the per-chunk worker and emits a
+:class:`xrspatial.geotiff.GeoTIFFFallbackWarning` then, but cannot be
+reduced back onto the parent DataArray's ``attrs['vrt_holes']`` without
+eagerly decoding every source (which would defeat lazy reading). So the
+chunked ``attrs['vrt_holes']`` is a lower bound, not the eager reader's
+exhaustive list. The chunked ``'warn'`` path emits one
+``GeoTIFFFallbackWarning`` up front when the requested window touches any
+existing source, so do not treat the absence of ``attrs['vrt_holes']``
+as proof of a complete mosaic. Use ``missing_sources='raise'`` to fail
+closed if you need a hard guarantee.
+
 BigTIFF COG (issue #2303)
 =========================
 
