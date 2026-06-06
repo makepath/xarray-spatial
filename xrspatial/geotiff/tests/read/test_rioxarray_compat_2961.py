@@ -15,8 +15,8 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (
-    _build_vrt, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
-    open_geotiff, to_geotiff)
+    MixedBandMetadataError, _build_vrt, _read_geotiff_dask,
+    _read_geotiff_gpu, _read_vrt, open_geotiff, to_geotiff)
 from xrspatial.geotiff._runtime import GeoTIFFFallbackWarning
 from xrspatial.geotiff.tests._helpers.markers import requires_gpu
 
@@ -299,3 +299,99 @@ def test_parse_coordinates_false_vrt_rejected(tmp_path):
     vrt = _build_vrt(str(tmp_path / "t2961_gate_pc.vrt"), source_files=[src])
     with pytest.raises(ValueError, match="parse_coordinates=False.*.vrt"):
         open_geotiff(vrt, parse_coordinates=False)
+
+
+# ---------------------------------------------------------------------------
+# mask_and_scale per-band SCALE/OFFSET (#2988)
+# ---------------------------------------------------------------------------
+
+def _per_band_scale_tiff(path, scales, offsets):
+    """3x4 multi-band float raster with per-band SCALE/OFFSET metadata.
+
+    ``scales`` / ``offsets`` are per-band lists; the raw band ``b`` is filled
+    with the constant ``b + 1`` so the expected scaled value is easy to assert.
+    """
+    n = len(scales)
+    arr = np.empty((3, 4, n), dtype=np.float32)
+    for b in range(n):
+        arr[:, :, b] = b + 1
+    meta = {}
+    for b, (s, o) in enumerate(zip(scales, offsets)):
+        meta[("SCALE", b)] = str(s)
+        meta[("OFFSET", b)] = str(o)
+    da = xr.DataArray(
+        arr,
+        dims=("y", "x", "band"),
+        coords={
+            "y": [0.5, 1.5, 2.5],
+            "x": [0.5, 1.5, 2.5, 3.5],
+            "band": list(range(n)),
+        },
+        attrs={"crs": 4326, "gdal_metadata": meta},
+    )
+    to_geotiff(da, path)
+    return path
+
+
+def test_mask_and_scale_mixed_per_band_eager_raises(tmp_path):
+    """Differing per-band scale + no band selection -> MixedBandMetadataError."""
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t2988_mixed_eager.tif"),
+        scales=[2.0, 4.0, 8.0], offsets=[0.0, 0.0, 0.0])
+    with pytest.raises(MixedBandMetadataError, match="per-band SCALE"):
+        open_geotiff(path, mask_and_scale=True)
+
+
+def test_mask_and_scale_mixed_per_band_offset_raises(tmp_path):
+    """Differing per-band OFFSET is rejected even when SCALE agrees."""
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t2988_mixed_offset.tif"),
+        scales=[2.0, 2.0, 2.0], offsets=[1.0, 5.0, 9.0])
+    with pytest.raises(MixedBandMetadataError, match="per-band OFFSET"):
+        open_geotiff(path, mask_and_scale=True)
+
+
+def test_mask_and_scale_mixed_per_band_dask_raises(tmp_path):
+    """The dask path rejects the same source at graph-build time."""
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t2988_mixed_dask.tif"),
+        scales=[2.0, 4.0, 8.0], offsets=[0.0, 0.0, 0.0])
+    with pytest.raises(MixedBandMetadataError, match="per-band SCALE"):
+        open_geotiff(path, mask_and_scale=True, chunks=2)
+
+
+def test_mask_and_scale_band_selects_own_scale(tmp_path):
+    """Selecting a band applies that band's scale/offset, no error."""
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t2988_band_sel.tif"),
+        scales=[2.0, 4.0, 8.0], offsets=[1.0, 5.0, 9.0])
+    # band 1: raw value 2, scale 4, offset 5 -> 2 * 4 + 5 = 13.
+    out = open_geotiff(path, mask_and_scale=True, band=1)
+    assert out.attrs.get("scale_factor") == 4.0
+    assert out.attrs.get("add_offset") == 5.0
+    np.testing.assert_array_equal(out.data, np.full((3, 4), 13.0))
+
+
+def test_mask_and_scale_band_select_dask_matches_eager(tmp_path):
+    """band= scaling agrees between eager and dask paths."""
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t2988_band_dask.tif"),
+        scales=[2.0, 4.0, 8.0], offsets=[1.0, 5.0, 9.0])
+    eager = open_geotiff(path, mask_and_scale=True, band=2)
+    lazy = open_geotiff(path, mask_and_scale=True, band=2, chunks=2)
+    np.testing.assert_array_equal(eager.data, lazy.compute().data)
+    assert lazy.attrs.get("scale_factor") == 8.0
+
+
+def test_mask_and_scale_uniform_per_band_applies(tmp_path):
+    """Per-band values that agree across bands apply to the whole array."""
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t2988_uniform.tif"),
+        scales=[3.0, 3.0, 3.0], offsets=[2.0, 2.0, 2.0])
+    out = open_geotiff(path, mask_and_scale=True)
+    assert out.attrs.get("scale_factor") == 3.0
+    assert out.attrs.get("add_offset") == 2.0
+    # band b raw value (b + 1) * 3 + 2.
+    expected = np.stack(
+        [np.full((3, 4), (b + 1) * 3.0 + 2.0) for b in range(3)], axis=-1)
+    np.testing.assert_array_equal(out.data, expected)
