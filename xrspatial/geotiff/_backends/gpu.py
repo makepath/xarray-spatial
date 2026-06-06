@@ -72,7 +72,7 @@ def _read_geotiff_gpu(source: str, *,
                       allow_experimental_codecs: bool = False,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
-                      mask_nodata: bool = True,
+                      mask_nodata: bool = False,
                       gpu: str = _GPU_DEPRECATED_SENTINEL,
                       ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
@@ -180,14 +180,15 @@ def _read_geotiff_gpu(source: str, *,
         with values ``'auto'`` / ``'strict'`` and was easy to confuse
         with the boolean ``gpu=`` kwarg on ``open_geotiff`` /
         ``to_geotiff`` / ``_read_vrt``.
-    mask_nodata : bool, default True
+    mask_nodata : bool, default False
         [experimental] If True, replace the nodata sentinel with NaN
         (integer rasters get promoted to ``float64`` first). If False,
         keep the source dtype and leave the raw sentinel in the data.
-        ``attrs['nodata']`` carries the sentinel either way. Pass
-        ``mask_nodata=False`` together with ``dtype=<integer>`` to
-        preserve an integer source dtype on a file with a matching
-        sentinel.
+        ``attrs['nodata']`` carries the sentinel either way. The default
+        matches ``open_geotiff`` (unmasked, rioxarray-compatible): a bare
+        ``_read_geotiff_gpu(path)`` keeps the source dtype and the raw
+        sentinel. Pass ``mask_nodata=True`` to restore the
+        promote-to-NaN behaviour.
     allow_rotated : bool, default False
         [experimental] Read-side opt-in for rotated / sheared
         ``ModelTransformationTag`` files. Forwarded through both GPU

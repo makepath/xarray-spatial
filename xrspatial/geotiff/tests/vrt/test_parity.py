@@ -845,7 +845,7 @@ def test_band_nodata_first_band_attrs(tmp_path):
     """``band=1`` with ``band_nodata='first'`` surfaces band 1's sentinel
     on attrs and masks against it."""
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = _read_vrt(vrt_path, band=1, band_nodata='first')
+    r = _read_vrt(vrt_path, band=1, band_nodata='first', mask_nodata=True)
     assert r.attrs['nodata'] == 65000.0
     assert r.attrs['masked_nodata'] is True
     assert np.isnan(r.values[1, 1])
@@ -855,7 +855,8 @@ def test_band_nodata_first_band_attrs(tmp_path):
 def test_band_nodata_chunked_first_band_attrs(tmp_path):
     """The chunked path threads the same per-band sentinel onto attrs."""
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
-    r = _read_vrt(vrt_path, band=1, band_nodata='first', chunks=2)
+    r = _read_vrt(vrt_path, band=1, band_nodata='first', chunks=2,
+                  mask_nodata=True)
     assert r.attrs['nodata'] == 65000.0
     assert r.attrs['masked_nodata'] is True
     assert 'nodata_pixels_present' not in r.attrs

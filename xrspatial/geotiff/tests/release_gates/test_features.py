@@ -2783,7 +2783,7 @@ class TestDaskReads:
         path = str(tmp_path / 'dask_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=-9999.0)
 
-        result = _read_geotiff_dask(path, chunks=2)
+        result = _read_geotiff_dask(path, chunks=2, mask_nodata=True)
         computed = result.compute()
         assert np.isnan(computed.values[0, 1])
         assert np.isnan(computed.values[1, 0])

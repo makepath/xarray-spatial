@@ -14,8 +14,11 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import _build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import (
+    _build_vrt, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
+    open_geotiff, to_geotiff)
 from xrspatial.geotiff._runtime import GeoTIFFFallbackWarning
+from xrspatial.geotiff.tests._helpers.markers import requires_gpu
 
 
 def _int_sentinel_tiff(path, sentinel=255):
@@ -62,6 +65,66 @@ def test_default_does_not_mask(tmp_path):
     assert out.attrs.get("masked_nodata") is False
     # The raw sentinel is still on attrs either way.
     assert out.attrs.get("nodata") == 255
+
+
+# ---------------------------------------------------------------------------
+# direct backend defaults match open_geotiff's unmasked default (#2976)
+#
+# The three direct backend entry points (_read_geotiff_dask,
+# _read_geotiff_gpu, _read_vrt) used to default to mask_nodata=True while
+# open_geotiff defaults to masked=False. A bare backend call therefore
+# returned a different dtype + NaN-substituted values than the public path.
+# These tests pin the backends to the public unmasked default.
+# ---------------------------------------------------------------------------
+
+def test_read_geotiff_dask_default_matches_open_geotiff_2976(tmp_path):
+    """Bare ``_read_geotiff_dask`` keeps the source dtype and sentinel,
+    matching ``open_geotiff(path, chunks=...)``."""
+    path = _int_sentinel_tiff(str(tmp_path / "t2976_dask.tif"))
+    public = open_geotiff(path, chunks=2).compute()
+    direct = _read_geotiff_dask(path, chunks=2).compute()
+
+    assert direct.dtype == public.dtype == np.uint8
+    assert (direct.data == 255).any()
+    assert not np.isnan(direct.data.astype(float)).any()
+    assert direct.attrs.get("masked_nodata") is False
+    assert direct.attrs.get("nodata") == public.attrs.get("nodata") == 255
+    np.testing.assert_array_equal(direct.data, public.data)
+
+
+def test_read_vrt_default_matches_open_geotiff_2976(tmp_path):
+    """Bare ``_read_vrt`` keeps the source dtype and sentinel, matching
+    ``open_geotiff(<vrt>)``."""
+    src = _int_sentinel_tiff(str(tmp_path / "t2976_vrt_src.tif"))
+    vrt = _build_vrt(str(tmp_path / "t2976.vrt"), source_files=[src])
+    public = open_geotiff(vrt)
+    direct = _read_vrt(vrt)
+
+    assert direct.dtype == public.dtype == np.uint8
+    assert (np.asarray(direct.values) == 255).any()
+    assert not np.isnan(np.asarray(direct.values, dtype=float)).any()
+    assert direct.attrs.get("masked_nodata") is False
+    assert direct.attrs.get("nodata") == public.attrs.get("nodata") == 255
+    np.testing.assert_array_equal(
+        np.asarray(direct.values), np.asarray(public.values))
+
+
+@requires_gpu
+def test_read_geotiff_gpu_default_matches_open_geotiff_2976(tmp_path):
+    """Bare ``_read_geotiff_gpu`` keeps the source dtype and sentinel,
+    matching ``open_geotiff(path, gpu=True)``."""
+    path = _int_sentinel_tiff(str(tmp_path / "t2976_gpu.tif"))
+    public = open_geotiff(path, gpu=True)
+    direct = _read_geotiff_gpu(path)
+
+    assert direct.dtype == public.dtype == np.uint8
+    direct_np = direct.data.get()
+    public_np = public.data.get()
+    assert (direct_np == 255).any()
+    assert not np.isnan(direct_np.astype(float)).any()
+    assert direct.attrs.get("masked_nodata") is False
+    assert direct.attrs.get("nodata") == public.attrs.get("nodata") == 255
+    np.testing.assert_array_equal(direct_np, public_np)
 
 
 def test_masked_true_promotes_and_masks(tmp_path):

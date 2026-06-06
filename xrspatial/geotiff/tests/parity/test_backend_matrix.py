@@ -1849,7 +1849,7 @@ def _ap_open_vrt(path, meta):
     )
     with open(vrt_path, 'w') as f:
         f.write(xml)
-    return _read_vrt(vrt_path)
+    return _read_vrt(vrt_path, mask_nodata=True)
 
 
 _AP_BACKENDS = (

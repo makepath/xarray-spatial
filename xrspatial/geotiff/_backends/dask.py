@@ -40,7 +40,7 @@ def _read_geotiff_dask(source: str, *,
                        allow_experimental_codecs: bool = False,
                        allow_internal_only_jpeg: bool = False,
                        band_nodata: str | None = None,
-                       mask_nodata: bool = True,
+                       mask_nodata: bool = False,
                        mask_and_scale: bool = False,
                        parse_coordinates: bool = True) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
@@ -99,14 +99,15 @@ def _read_geotiff_dask(source: str, *,
         mixed-band-metadata check. Forwarded
         verbatim to ``_read_vrt`` when the source is a ``.vrt`` file.
         Passing it with a non-VRT GeoTIFF source raises ``ValueError``.
-    mask_nodata : bool, default True
+    mask_nodata : bool, default False
         [stable] If True, replace the nodata sentinel with NaN per
         chunk (integer rasters get promoted to ``float64``). If False,
         skip the sentinel-to-NaN step so the source dtype survives.
         The raw sentinel is still carried on ``attrs['nodata']``
-        either way. Pass ``mask_nodata=False`` together with
-        ``dtype=<integer>`` to keep an integer source dtype; the
-        default promotes to ``float64`` and the cast then raises.
+        either way. The default matches ``open_geotiff`` (unmasked,
+        rioxarray-compatible): a bare ``_read_geotiff_dask(path)`` keeps
+        the source dtype and leaves the sentinel pixels untouched. Pass
+        ``mask_nodata=True`` to restore the promote-to-NaN behaviour.
     mask_and_scale : bool, default False
         [advanced] If True, apply the source's GDAL ``SCALE`` / ``OFFSET``
         (``data * scale + offset``) lazily on the assembled dask array and

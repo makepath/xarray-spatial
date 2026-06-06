@@ -413,7 +413,7 @@ class TestReadGeotiffDask:
         da_in = xr.DataArray(arr, dims=("y", "x"))
         path = os.path.join(str(tmp_path), "t.tif")
         to_geotiff(da_in, path, nodata=2**64 - 1)
-        out = _read_geotiff_dask(path, chunks=16).compute()
+        out = _read_geotiff_dask(path, chunks=16, mask_nodata=True).compute()
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
         assert out.values[1, 1] == 100.0
@@ -424,7 +424,7 @@ class TestReadGeotiffDask:
         da_in = xr.DataArray(arr, dims=("y", "x"))
         path = os.path.join(str(tmp_path), "t.tif")
         to_geotiff(da_in, path, nodata=2**63 - 1)
-        out = _read_geotiff_dask(path, chunks=16).compute()
+        out = _read_geotiff_dask(path, chunks=16, mask_nodata=True).compute()
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
 
@@ -449,7 +449,7 @@ class TestVrtRoundTrip:
             xml = f.read()
         assert "<NoDataValue>18446744073709551615</NoDataValue>" in xml
 
-        out = _read_vrt(vrt_path)
+        out = _read_vrt(vrt_path, mask_nodata=True)
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
         assert out.values[1, 1] == 100.0
@@ -469,7 +469,7 @@ class TestVrtRoundTrip:
             xml = f.read()
         assert "<NoDataValue>9223372036854775807</NoDataValue>" in xml
 
-        out = _read_vrt(vrt_path)
+        out = _read_vrt(vrt_path, mask_nodata=True)
         assert out.dtype == np.float64
         assert np.isnan(out.values[0, 0])
         assert out.values[1, 1] == 100.0
@@ -486,7 +486,7 @@ class TestGpuPathParity:
         path = os.path.join(str(tmp_path), "t.tif")
         to_geotiff(da_in, path, nodata=2**64 - 1)
 
-        gpu_da = _read_geotiff_gpu(path)
+        gpu_da = _read_geotiff_gpu(path, mask_nodata=True)
         host = gpu_da.data.get()
         assert host.dtype == np.float64
         assert np.isnan(host[0, 0])
