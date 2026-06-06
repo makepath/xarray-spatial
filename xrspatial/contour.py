@@ -562,6 +562,49 @@ def _remove_duplicate_segments(seg_rows, seg_cols):
     return seg_rows[keep], seg_cols[keep]
 
 
+def _deduplicate_lines(results):
+    """Remove duplicate polylines from contour results.
+
+    Two lines are considered duplicates when they share the same level
+    and the same set of vertex pairs (order-independent).
+
+    Parameters
+    ----------
+    results : list of (float, ndarray)
+        Contour lines grouped by level.
+
+    Returns
+    -------
+    list of (float, ndarray)
+        Deduplicated contour lines.
+    """
+    if not results:
+        return results
+
+    from collections import defaultdict
+    by_level = defaultdict(list)
+    for level, coords in results:
+        by_level[level].append(coords)
+
+    DECIMALS = 10
+    deduped = []
+    for level in sorted(by_level.keys()):
+        lines = by_level[level]
+        seen = set()
+        for coords in lines:
+            rounded = tuple(
+                sorted(
+                    (round(coords[i, 0], DECIMALS), round(coords[i, 1], DECIMALS))
+                    for i in range(len(coords))
+                )
+            )
+            if rounded not in seen:
+                seen.add(rounded)
+                deduped.append((level, coords))
+
+    return deduped
+
+
 def _to_geopandas(results, crs=None):
     """Convert contour results to a GeoDataFrame."""
     try:
@@ -742,6 +785,8 @@ def contours(
         out[:, 1] = np.interp(coords[:, 1], x_idx, x_coords)
         transformed.append((level, out))
     results = transformed
+
+    results = _deduplicate_lines(results)
 
     if return_type == "numpy":
         return results
