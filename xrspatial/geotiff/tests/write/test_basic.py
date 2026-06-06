@@ -1982,6 +1982,88 @@ class TestCrsEpsgBoolPushdown:
             _write_streaming(arr, out, crs_epsg=True)
 
 
+class TestTileSizePushdown:
+    """The array-level writers used to under-enforce ``tile_size``:
+    ``_write_streaming`` skipped the check entirely (``tile_size=0`` hit a
+    bare ``ZeroDivisionError`` in the ``math.ceil(width / tw)`` layout
+    math) and ``_write`` only checked positivity under ``cog=True``. Both
+    now reject the crash-inducing cases (non-int, non-positive) on any
+    path that consumes ``tile_size``.
+
+    The multiple-of-16 TIFF spec rule is deliberately NOT enforced here:
+    the array-level writer is the lower-level tool, and the in-repo reader
+    plus the existing COG/round-trip tests use small spec-noncompliant
+    tiles (4, 8). That policy stays at the public ``to_geotiff`` boundary
+    (issue #2997)."""
+
+    @pytest.mark.parametrize("tile_size", [0, -1, 256.0])
+    def test_write_tiled_rejects_bad_tile_size(self, tmp_path, tile_size):
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / f"tmp_2997_write_tiled_{tile_size}.tif")
+        with pytest.raises(ValueError, match="tile_size"):
+            _write(arr, out, tiled=True, tile_size=tile_size)
+
+    @pytest.mark.parametrize("tile_size", [0, -1, 256.0])
+    def test_write_streaming_rejects_bad_tile_size(self, tmp_path,
+                                                   tile_size):
+        arr = dsk.from_array(_make_uint8_band_2138(), chunks=(16, 16))
+        out = str(tmp_path / f"tmp_2997_stream_tiled_{tile_size}.tif")
+        with pytest.raises(ValueError, match="tile_size"):
+            _write_streaming(arr, out, tiled=True, tile_size=tile_size)
+
+    def test_write_cog_rejects_zero_tile_size(self, tmp_path):
+        """``cog=True`` consumes ``tile_size`` for tiling and overview
+        generation; a non-positive value must still be rejected."""
+        arr = _make_uint8_band_2138(shape=(64, 64))
+        out = str(tmp_path / "tmp_2997_write_cog_0.tif")
+        with pytest.raises(ValueError, match="tile_size"):
+            _write(arr, out, tiled=True, cog=True, tile_size=0)
+
+    def test_write_tiled_allows_non_multiple_of_16(self, tmp_path):
+        """The array-level writer keeps accepting small spec-noncompliant
+        tiles; the multiple-of-16 rule is a public-boundary policy."""
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2997_write_tiled_17.tif")
+        _write(arr, out, tiled=True, tile_size=17)
+        assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    def test_write_streaming_allows_non_multiple_of_16(self, tmp_path):
+        arr = dsk.from_array(_make_uint8_band_2138(), chunks=(16, 16))
+        out = str(tmp_path / "tmp_2997_stream_tiled_17.tif")
+        _write_streaming(arr, out, tiled=True, tile_size=17)
+        assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    def test_write_strip_ignores_tile_size(self, tmp_path):
+        """``tiled=False`` does not consume ``tile_size``; the gate must
+        not fire there."""
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2997_write_strip_0.tif")
+        _write(arr, out, tiled=False, tile_size=0)
+        assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    def test_write_streaming_strip_ignores_tile_size(self, tmp_path):
+        arr = dsk.from_array(_make_uint8_band_2138(), chunks=(16, 16))
+        out = str(tmp_path / "tmp_2997_stream_strip_0.tif")
+        _write_streaming(arr, out, tiled=False, tile_size=0)
+        assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    def test_write_tiled_valid_tile_size_writes(self, tmp_path):
+        arr = _make_uint8_band_2138()
+        out = str(tmp_path / "tmp_2997_write_tiled_16.tif")
+        _write(arr, out, tiled=True, tile_size=16)
+        assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    def test_public_path_still_enforces_multiple_of_16(self, tmp_path):
+        """Guard against accidentally loosening the public boundary: the
+        multiple-of-16 rule must still fire from ``to_geotiff``."""
+        import xarray as xr
+        arr = _make_uint8_band_2138()
+        da = xr.DataArray(arr, dims=["y", "x"])
+        out = str(tmp_path / "tmp_2997_public_17.tif")
+        with pytest.raises(ValueError, match=r"multiple of 16"):
+            to_geotiff(da, out, tiled=True, tile_size=17)
+
+
 class TestNanToSentinelDefensiveCopy:
     """``to_geotiff`` rewrites NaN pixels to the nodata sentinel via
     ``arr.copy()`` so the caller's buffer is never mutated. Direct
