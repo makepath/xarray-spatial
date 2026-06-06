@@ -635,7 +635,7 @@ def _read_geotiff_dask(source: str, *,
     if mask_and_scale:
         from .._attrs import _extract_scale_offset
         scale, offset = _extract_scale_offset(
-            getattr(geo_info, 'gdal_metadata', None))
+            getattr(geo_info, 'gdal_metadata', None), band=band)
         if scale != 1.0 or offset != 0.0:
             dask_arr = dask_arr * scale + offset
             attrs['scale_factor'] = scale
