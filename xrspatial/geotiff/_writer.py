@@ -550,11 +550,14 @@ def _write(data: np.ndarray, path: str, *,
             # identically.
             #
             # Defense in depth: require a positive tile_size
-            # before entering the halving loop. The public ``to_geotiff``
-            # entry point already validates tile_size when either tiled or
-            # cog is true, but ``write()`` is also reachable from internal
-            # callers; without this guard a non-positive tile_size leaves
-            # the ``oh > tile_size`` termination condition permanently true
+            # before entering the halving loop. The top-of-``_write``
+            # ``if tiled or cog`` gate (and the public ``to_geotiff``
+            # entry point) already reject a non-positive tile_size before
+            # reaching here, so this branch is unreachable at runtime.
+            # It is kept deliberately as the loop-side defense pinned by
+            # ``test_inner_overview_loop_guard_message_is_pinned`` (#2311):
+            # without this guard a non-positive tile_size leaves the
+            # ``oh > tile_size`` termination condition permanently true
             # while the inner ``oh > 0`` guard suppresses appends, so the
             # loop spins forever.
             if (not isinstance(tile_size, (int, np.integer))
