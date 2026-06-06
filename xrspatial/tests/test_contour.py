@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from collections import defaultdict
+
 from xrspatial.contour import contours, _contours_numpy, _stitch_segments
 from xrspatial.tests.general_checks import (
     create_test_raster,
@@ -961,7 +963,6 @@ def _assert_no_duplicate_lines(result):
     rounded to 10 decimals). Two lines at the same level are duplicates if they
     have the same set of canonical segments.
     """
-    from collections import defaultdict
     by_level = defaultdict(list)
     DECIMALS = 10
     for level, coords in result:
@@ -1121,3 +1122,33 @@ class TestDegenerateExactLevel:
                 f"Duplicate geometry in GeoDataFrame at level {row.level}"
             )
             seen.add(geom_key)
+
+
+class TestDeduplicateLines:
+
+    def test_deduplicate_lines_removes_exact_duplicates(self):
+        """_deduplicate_lines removes identical polylines at the same level."""
+        from xrspatial.contour import _deduplicate_lines
+        coords = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        results = [(1.0, coords.copy()), (1.0, coords.copy())]
+        deduped = _deduplicate_lines(results)
+        assert len(deduped) == 1
+        assert deduped[0][0] == 1.0
+        np.testing.assert_allclose(deduped[0][1], coords)
+
+    def test_deduplicate_lines_keeps_different_levels(self):
+        """_deduplicate_lines keeps lines at different levels even with same geometry."""
+        from xrspatial.contour import _deduplicate_lines
+        coords = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        results = [(1.0, coords.copy()), (2.0, coords.copy())]
+        deduped = _deduplicate_lines(results)
+        assert len(deduped) == 2
+
+    def test_deduplicate_lines_removes_reverse_duplicates(self):
+        """_deduplicate_lines removes polylines that trace the same segments in reverse."""
+        from xrspatial.contour import _deduplicate_lines
+        fwd = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        rev = np.array([[2.0, 0.0], [1.0, 1.0], [0.0, 0.0]])
+        results = [(1.0, fwd.copy()), (1.0, rev.copy())]
+        deduped = _deduplicate_lines(results)
+        assert len(deduped) == 1
