@@ -1580,6 +1580,10 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     as if no scaling were declared.
     """
     scale, offset = 1.0, 0.0
+    # Check ``malformed`` before the empty-dict short-circuit below: an
+    # unparseable payload yields ``gdal_metadata == {}``, so a guard that
+    # returned the identity default on an empty dict first would silence
+    # the rejection. Keep this check at the top.
     if malformed:
         raise MalformedScaleOffsetError(
             "GDAL_METADATA XML is malformed and could not be parsed. "
