@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from collections import defaultdict
+
 from xrspatial.contour import contours, _contours_numpy, _stitch_segments
 from xrspatial.tests.general_checks import (
     create_test_raster,
@@ -954,6 +956,32 @@ def _assert_no_degenerate_geopandas(gdf):
         assert geom.is_valid, f"invalid geometry: {geom.wkt}"
 
 
+def _assert_no_duplicate_lines(result):
+    """Assert that no two contour lines share the same geometry at the same level.
+
+    Each polyline is decomposed into canonical segments (smaller endpoint first,
+    rounded to 10 decimals). Two lines at the same level are duplicates if they
+    have the same set of canonical segments.
+    """
+    by_level = defaultdict(list)
+    DECIMALS = 10
+    for level, coords in result:
+        segs = []
+        for i in range(len(coords) - 1):
+            p0 = (round(coords[i, 0], DECIMALS), round(coords[i, 1], DECIMALS))
+            p1 = (round(coords[i + 1, 0], DECIMALS), round(coords[i + 1, 1], DECIMALS))
+            segs.append((min(p0, p1), max(p0, p1)))
+        by_level[level].append(tuple(sorted(segs)))
+
+    for level, line_signatures in by_level.items():
+        seen = set()
+        for sig in line_signatures:
+            assert sig not in seen, (
+                f"Duplicate contour line at level {level}"
+            )
+            seen.add(sig)
+
+
 class TestDegenerateExactLevel:
     """A corner exactly equal to the level must not poison the output.
 
@@ -1032,3 +1060,95 @@ class TestDegenerateExactLevel:
         gdf = contours(agg, levels=[2.5], return_type="geopandas")
         assert len(gdf) > 0
         _assert_no_degenerate_geopandas(gdf)
+
+    def test_plateau_no_duplicate_geometries(self):
+        """A flat interior plateau must not produce duplicate contour lines.
+
+        Regression for #2790: when a plateau's interior cells all equal the
+        contour level, overlapping chunk boundaries (dask) or saddle-case
+        disambiguation (numpy) can emit the same polyline twice.
+        """
+        data = np.array([
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ], dtype=float)
+        np_agg = create_test_raster(data, backend='numpy')
+        np_result = contours(np_agg, levels=[1.0])
+
+        # All returned lines must be geometrically unique.
+        _assert_no_duplicate_lines(np_result)
+
+    @dask_array_available
+    def test_plateau_no_duplicate_geometries_dask(self):
+        """Same plateau test with dask backend.
+
+        Regression for #2790: overlapping chunk boundaries can emit
+        duplicate polylines that must be deduplicated.
+        """
+        data = np.array([
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ], dtype=float)
+        dk_agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+        dk_result = contours(dk_agg, levels=[1.0])
+
+        _assert_no_duplicate_lines(dk_result)
+
+    def test_plateau_no_duplicate_geometries_geopandas(self):
+        """Verify no duplicate geometries in GeoDataFrame output.
+
+        Regression for #2790: deduplication must apply before
+        GeoDataFrame construction.
+        """
+        pytest.importorskip("geopandas")
+        data = np.array([
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ], dtype=float)
+        np_agg = create_test_raster(data, backend='numpy')
+        gdf = contours(np_agg, levels=[1.0], return_type="geopandas")
+
+        # Each row's geometry must be unique.
+        seen = set()
+        for _, row in gdf.iterrows():
+            geom_key = tuple(round(v, 10) for c in row.geometry.coords for v in c)
+            assert geom_key not in seen, (
+                f"Duplicate geometry in GeoDataFrame at level {row.level}"
+            )
+            seen.add(geom_key)
+
+
+class TestDeduplicateLines:
+
+    def test_deduplicate_lines_removes_exact_duplicates(self):
+        """_deduplicate_lines removes identical polylines at the same level."""
+        from xrspatial.contour import _deduplicate_lines
+        coords = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        results = [(1.0, coords.copy()), (1.0, coords.copy())]
+        deduped = _deduplicate_lines(results)
+        assert len(deduped) == 1
+        assert deduped[0][0] == 1.0
+        np.testing.assert_allclose(deduped[0][1], coords)
+
+    def test_deduplicate_lines_keeps_different_levels(self):
+        """_deduplicate_lines keeps lines at different levels even with same geometry."""
+        from xrspatial.contour import _deduplicate_lines
+        coords = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        results = [(1.0, coords.copy()), (2.0, coords.copy())]
+        deduped = _deduplicate_lines(results)
+        assert len(deduped) == 2
+
+    def test_deduplicate_lines_removes_reverse_duplicates(self):
+        """_deduplicate_lines removes polylines that trace the same segments in reverse."""
+        from xrspatial.contour import _deduplicate_lines
+        fwd = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        rev = np.array([[2.0, 0.0], [1.0, 1.0], [0.0, 0.0]])
+        results = [(1.0, fwd.copy()), (1.0, rev.copy())]
+        deduped = _deduplicate_lines(results)
+        assert len(deduped) == 1

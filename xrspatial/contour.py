@@ -9,6 +9,7 @@
 # levels, making it well suited to Dask chunking and GPU execution.
 
 import warnings
+from collections import defaultdict
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -505,7 +506,6 @@ def _deduplicate_by_level(results):
     if not results:
         return results
 
-    from collections import defaultdict
     by_level = defaultdict(list)
     for level, coords in results:
         by_level[level].append(coords)
@@ -560,6 +560,50 @@ def _remove_duplicate_segments(seg_rows, seg_cols):
             keep.append(i)
 
     return seg_rows[keep], seg_cols[keep]
+
+
+def _deduplicate_lines(results):
+    """Remove duplicate polylines from contour results.
+
+    Two lines are considered duplicates when they share the same level
+    and the same set of canonical segments. Each segment is represented
+    as a tuple of its endpoints with the smaller endpoint first (rounded
+    to 10 decimals), making the comparison direction-independent.
+
+    Parameters
+    ----------
+    results : list of (float, ndarray)
+        Contour lines grouped by level.
+
+    Returns
+    -------
+    list of (float, ndarray)
+        Deduplicated contour lines.
+    """
+    if not results:
+        return results
+
+    by_level = defaultdict(list)
+    for level, coords in results:
+        by_level[level].append(coords)
+
+    DECIMALS = 10
+    deduped = []
+    for level in sorted(by_level.keys()):
+        lines = by_level[level]
+        seen = set()
+        for coords in lines:
+            segs = []
+            for i in range(len(coords) - 1):
+                p0 = (round(coords[i, 0], DECIMALS), round(coords[i, 1], DECIMALS))
+                p1 = (round(coords[i + 1, 0], DECIMALS), round(coords[i + 1, 1], DECIMALS))
+                segs.append((min(p0, p1), max(p0, p1)))
+            signature = tuple(sorted(segs))
+            if signature not in seen:
+                seen.add(signature)
+                deduped.append((level, coords))
+
+    return deduped
 
 
 def _to_geopandas(results, crs=None):
@@ -728,6 +772,8 @@ def contours(
         dask_cupy_func=_contours_dask_cupy,
     )
     results = mapper(agg)(agg.data, levels)
+
+    results = _deduplicate_lines(results)
 
     # Transform from array indices to the DataArray's coordinate values.
     y_coords = agg.coords[agg.dims[0]].values
