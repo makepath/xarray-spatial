@@ -67,7 +67,7 @@ from ._coords import \
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDTagError,
                       GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, InvalidCRSCodeError,
-                      InvalidIntegerNodataError, MixedBandMetadataError,
+                      InvalidIntegerNodataError, MalformedScaleOffsetError, MixedBandMetadataError,
                       NonRepresentableEPSGCRSError, NonUniformCoordsError,
                       RemoteStableSourcesOnlyError, RotatedTransformError, UnknownCRSModelTypeError,
                       UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
@@ -116,6 +116,7 @@ __all__ = [
     'InconsistentGeoKeysError',
     'InvalidCRSCodeError',
     'InvalidIntegerNodataError',
+    'MalformedScaleOffsetError',
     'MixedBandMetadataError',
     'NonRepresentableEPSGCRSError',
     'NonUniformCoordsError',
@@ -688,9 +689,10 @@ def open_geotiff(source: str | BinaryIO, *,
         (``masked=False``); note that earlier xrspatial releases masked
         by default (``mask_nodata=True``), so a bare ``open_geotiff(path)``
         no longer promotes the sentinel to NaN. Pass ``masked=True`` and
-        ``dtype=<integer>`` together and the read raises ``ValueError``
-        once the sentinel matches a pixel, because the float64 promotion
-        then makes the integer cast lossy.
+        ``dtype=<integer>`` together on a source with a maskable sentinel
+        and the read raises ``ValueError``, because the unconditional
+        float64 promotion (issue #2990) makes the integer cast lossy
+        whether or not a sentinel pixel is present.
     mask_nodata : bool
         [deprecated] Deprecated alias of ``masked``; emits a
         ``DeprecationWarning``. Passing both ``masked`` and ``mask_nodata``
@@ -844,9 +846,12 @@ def open_geotiff(source: str | BinaryIO, *,
     passing ``dtype=<integer>`` as well is not enough to keep an integer
     dtype: the sentinel-to-NaN promotion runs first and the subsequent
     integer cast then raises ``ValueError`` (float-to-int is lossy in a
-    way users rarely intend). When the file has no in-range sentinel
-    match, the promotion is skipped and ``dtype=<integer>`` works either
-    way.
+    way users rarely intend). The promotion runs whenever the sentinel is
+    maskable (finite, integer, in-range), whether or not any pixel matches
+    it, so the eager and dask paths return the same float64 dtype for the
+    same input (issue #2990). A sentinel that cannot match (out-of-range,
+    non-finite, or fractional) leaves the source dtype, so
+    ``dtype=<integer>`` works in that case.
 
     Examples
     --------

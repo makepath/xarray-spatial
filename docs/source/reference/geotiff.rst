@@ -201,6 +201,13 @@ this section is the brief.
   nodata sentinels raises ``MixedBandMetadataError`` by default. Pass
   ``band_nodata='first'`` to opt back into the legacy flatten-to-band-0
   behaviour; see ``xrspatial/geotiff/tests/vrt/test_metadata.py``.
+* Malformed scale/offset. Under ``mask_and_scale=True`` the read applies
+  the source's ``SCALE`` / ``OFFSET`` from ``GDAL_METADATA``. A key that
+  is present but does not parse as a float (for example ``SCALE="abc"``)
+  raises ``MalformedScaleOffsetError`` (a ``GeoTIFFAmbiguousMetadataError``
+  subclass) rather than falling back to the 1.0 / 0.0 default and reading
+  the raw pixels as clean. An absent key keeps the identity default; see
+  ``xrspatial/geotiff/tests/read/test_rioxarray_compat_2961.py``.
 
 The lifecycle is locked end-to-end by
 ``xrspatial/geotiff/tests/read/test_nodata.py``.
@@ -509,6 +516,20 @@ returned with holes left as the band's nodata sentinel (or zero on
 integer bands without a sentinel). ``XRSPATIAL_GEOTIFF_STRICT=1``
 forces the raise in ``'warn'`` mode too, so CI environments can enforce
 fail-fast behavior globally.
+
+Under chunked dispatch (``chunks=`` set), ``attrs['vrt_holes']`` records
+statically-detectable missing-file holes only (#2989). A source file
+that exists but fails to decode at compute time -- corrupt, truncated,
+or a codec error -- reads as a hole in the per-chunk worker and emits a
+:class:`xrspatial.geotiff.GeoTIFFFallbackWarning` then, but cannot be
+reduced back onto the parent DataArray's ``attrs['vrt_holes']`` without
+eagerly decoding every source (which would defeat lazy reading). So the
+chunked ``attrs['vrt_holes']`` is a lower bound, not the eager reader's
+exhaustive list. The chunked ``'warn'`` path emits one
+``GeoTIFFFallbackWarning`` up front when the requested window touches any
+existing source, so do not treat the absence of ``attrs['vrt_holes']``
+as proof of a complete mosaic. Use ``missing_sources='raise'`` to fail
+closed if you need a hard guarantee.
 
 BigTIFF COG (issue #2303)
 =========================

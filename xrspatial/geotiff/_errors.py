@@ -22,7 +22,8 @@ Hierarchy::
         ├── MixedBandMetadataError
         ├── ConflictingCRSError
         ├── ConflictingNodataError
-        └── InconsistentGeoKeysError
+        ├── InconsistentGeoKeysError
+        └── MalformedScaleOffsetError
 """
 from __future__ import annotations
 
@@ -191,6 +192,26 @@ class InvalidIntegerNodataError(GeoTIFFAmbiguousMetadataError):
     """
 
 
+class MalformedScaleOffsetError(GeoTIFFAmbiguousMetadataError):
+    """A present SCALE / OFFSET item cannot be parsed as a float.
+
+    Raised under ``mask_and_scale=True`` when the source's GDAL_METADATA
+    carries a ``SCALE`` or ``OFFSET`` item whose value does not parse as
+    a float (for example ``SCALE="abc"``). ``mask_and_scale`` asks the
+    reader to honour the scale / offset metadata, so a malformed value
+    that would otherwise fall back to the 1.0 / 0.0 default is rejected
+    rather than silently dropped -- the raw, unscaled pixels would
+    otherwise flow downstream and the file would look clean.
+
+    An absent key is not an error: a source that declares no scale /
+    offset is read with the 1.0 / 0.0 identity transform as before.
+
+    Subclasses :class:`GeoTIFFAmbiguousMetadataError` (and therefore
+    ``ValueError``) so existing ``except ValueError`` callers keep
+    catching the case.
+    """
+
+
 class VRTStableSourcesOnlyError(GeoTIFFAmbiguousMetadataError):
     """VRT source opened under ``stable_only=True``.
 
@@ -324,6 +345,7 @@ __all__ = [
     "InconsistentGeoKeysError",
     "InvalidCRSCodeError",
     "InvalidIntegerNodataError",
+    "MalformedScaleOffsetError",
     "MixedBandMetadataError",
     "NonRepresentableEPSGCRSError",
     "NonUniformCoordsError",

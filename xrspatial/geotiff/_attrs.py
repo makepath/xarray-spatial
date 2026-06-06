@@ -58,7 +58,12 @@ Canonical (xrspatial owns these; round-trip stable):
   the in-memory array is float dtype and the reader's sentinel-to-NaN
   step ran; ``False`` iff the array still carries the literal integer
   sentinel. Only emitted when ``nodata`` is set; absence is the
-  "no declared sentinel" signal. See ``_set_nodata_attrs``.
+  "no declared sentinel" signal. See ``_set_nodata_attrs``. The flag
+  tracks whether masking ran, not whether any sentinel pixel matched:
+  a masked read of a maskable integer source promotes to float and sets
+  ``True`` even when zero pixels match, so the eager and dask paths agree
+  for the same input (issue #2990). Use ``nodata_pixels_present`` for the
+  did-any-pixel-match question.
 - ``nodata_pixels_present`` (#2135): bool, only emitted when
   ``nodata`` is set and the backend computed the answer cheaply.
   True iff the read window contained at least one pixel matching the
@@ -164,7 +169,8 @@ import xarray as xr
 from ._coords import coords_from_geo_info as _coords_from_geo_info
 from ._coords import resolve_georef as _resolve_georef
 from ._coords import transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry
-from ._errors import ConflictingNodataError, _distinct_per_band_nodatavals_msg
+from ._errors import (ConflictingNodataError, MalformedScaleOffsetError,
+                      _distinct_per_band_nodatavals_msg)
 from ._geotags import (_NO_GEOREF_KEY, GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_MODEL_TYPE,
                        GEOKEY_PROJECTED_CS_TYPE, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT)
 
@@ -1452,11 +1458,14 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
 
     Mirrors the inline block in ``open_geotiff`` so the eager helper can
     share one implementation. Returns ``(arr, nodata_pixels_present)``
-    where ``arr`` may have been promoted from an integer dtype to float64
-    when the sentinel matched at least one pixel, and
-    ``nodata_pixels_present`` is the bool used to populate
-    ``attrs['nodata_pixels_present']``. ``None`` means "no scan was
-    appropriate for this dtype / sentinel combination."
+    where ``arr`` is promoted from an integer dtype to float64 whenever
+    ``mask_nodata`` is set and the sentinel is maskable (finite, integer,
+    in-range), independent of whether any pixel matches. This matches the
+    dask path (which declares float64 up front from the same gate) and
+    rioxarray's ``masked=True`` (issue #2990). ``nodata_pixels_present``
+    is the bool used to populate ``attrs['nodata_pixels_present']``;
+    ``None`` means "no scan was appropriate for this dtype / sentinel
+    combination."
 
     The sentinel is taken as the ``mask_sentinel`` parameter rather than
     being read from ``geo_info``. Three GPU eager sites derive it three
@@ -1491,10 +1500,23 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
                 nodata_int = int(mask_sentinel)
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
-                    mask = arr == arr.dtype.type(nodata_int)
+                    # Promote to float64 whenever the sentinel is
+                    # maskable, independent of whether any pixel matches.
+                    # The dask path declares float64 up front from the
+                    # same finite/integer/in-range gate (see
+                    # ``_read_geotiff_dask``'s ``sentinel_fits_buffer``
+                    # branch), and rioxarray's ``masked=True`` always
+                    # promotes an integer source to float. Gating the
+                    # promotion on a matching pixel made the eager output
+                    # diverge (uint16 + ``masked_nodata=False``) from the
+                    # lazy output (float64 + ``masked_nodata=True``) for
+                    # the same file when no sentinel pixel was present
+                    # (issue #2990). ``nodata_pixels_present`` still
+                    # records whether a pixel matched.
+                    arr = arr.astype(np.float64)
+                    mask = arr == np.float64(nodata_int)
                     nodata_pixels_present = bool(mask.any())
                     if nodata_pixels_present:
-                        arr = arr.astype(np.float64)
                         arr[mask] = np.nan
                 else:
                     nodata_pixels_present = False
@@ -1545,18 +1567,32 @@ def _extract_scale_offset(gdal_metadata, band=None):
       one of them silently corrupts the other bands, so this raises
       :class:`MixedBandMetadataError`. Uniform per-band values (or a single
       band's worth) are returned unchanged.
+
+    Raises :class:`MalformedScaleOffsetError` when a ``SCALE`` or ``OFFSET``
+    item is present but does not parse as a float. An absent key keeps the
+    1.0 / 0.0 identity default.
     """
     scale, offset = 1.0, 0.0
     if not gdal_metadata:
         return scale, offset
 
+    def _coerce(name, raw):
+        # A key that is present but unparseable is rejected -- ``mask_and_scale``
+        # asked us to honour the metadata, so a malformed value must not be
+        # silently dropped and the raw pixels read as if clean.
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            raise MalformedScaleOffsetError(
+                f"GDAL_METADATA {name} is not a number: {raw!r}. "
+                "mask_and_scale=True cannot honour a malformed "
+                f"{name}."
+            ) from None
+
     def _resolve(name, default):
         # Dataset-level value applies to every band uniformly.
         if name in gdal_metadata:
-            try:
-                return float(gdal_metadata[name])
-            except (TypeError, ValueError):
-                return default
+            return _coerce(name, gdal_metadata[name])
 
         per_band = {
             key[1]: val
@@ -1566,20 +1602,14 @@ def _extract_scale_offset(gdal_metadata, band=None):
         if not per_band:
             return default
 
-        def _coerce(v):
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return default
-
         if band is not None:
             # A specific band was selected upstream, so use its value
             # (or the default when that band carries none).
             if band not in per_band:
                 return default
-            return _coerce(per_band[band])
+            return _coerce(name, per_band[band])
 
-        coerced = [_coerce(per_band[i]) for i in sorted(per_band)]
+        coerced = [_coerce(name, per_band[i]) for i in sorted(per_band)]
         distinct = sorted(set(coerced))
         if len(distinct) > 1:
             from ._errors import MixedBandMetadataError
@@ -1706,11 +1736,13 @@ def _finalize_eager_read(
         dtype_cast_attr = target.name
 
     # Stamp the nodata lifecycle attrs. ``masked`` is True iff
-    # the caller opted into masking AND the final buffer dtype is float,
-    # mirroring the existing call sites (the integer promotion above
-    # only runs when the sentinel matched at least one pixel, so an
-    # ``int`` buffer + ``mask_nodata=True`` here means "no pixels were
-    # masked" rather than "masking was disabled").
+    # the caller opted into masking AND the final buffer dtype is float.
+    # ``_apply_eager_nodata_mask`` promotes a maskable integer source to
+    # float64 whenever masking is on (issue #2990), so an ``int`` buffer +
+    # ``mask_nodata=True`` here means the sentinel was unmaskable
+    # (out-of-range / non-finite / fractional) and could never match, not
+    # that masking was disabled. Either way ``masked`` is correctly False
+    # because the literal sentinel still occupies its integer slot.
     _set_nodata_attrs(
         attrs, nodata,
         masked=(effective_mask and np.dtype(str(arr.dtype)).kind == 'f'),

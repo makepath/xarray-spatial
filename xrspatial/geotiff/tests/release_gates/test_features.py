@@ -2830,6 +2830,10 @@ class TestPublicAPI:
             # GDAL_NODATA against an integer source dtype, replacing the
             # legacy silent no-op.
             'InvalidIntegerNodataError',
+            # Read-side fail-closed on a present-but-unparseable SCALE /
+            # OFFSET under mask_and_scale, replacing the legacy silent
+            # fall-back to the 1.0 / 0.0 default (issue #2987).
+            'MalformedScaleOffsetError',
             'MixedBandMetadataError',
             # Writer rejects compound EPSG codes that cannot be
             # represented in a single GeographicType / ProjectedCSType
