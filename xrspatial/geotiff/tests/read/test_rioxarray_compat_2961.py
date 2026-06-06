@@ -14,9 +14,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    _build_vrt, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
-    open_geotiff, to_geotiff)
+from xrspatial.geotiff import (MalformedScaleOffsetError, _build_vrt, _read_geotiff_dask,
+                               _read_geotiff_gpu, _read_vrt, open_geotiff, to_geotiff)
 from xrspatial.geotiff._runtime import GeoTIFFFallbackWarning
 from xrspatial.geotiff.tests._helpers.markers import requires_gpu
 
@@ -218,6 +217,54 @@ def test_mask_and_scale_int_dtype_raises(tmp_path):
     path = _scale_offset_tiff(str(tmp_path / "t2961_ms_int.tif"))
     with pytest.raises(ValueError):
         open_geotiff(path, mask_and_scale=True, dtype="uint8")
+
+
+# ---------------------------------------------------------------------------
+# malformed SCALE/OFFSET rejection (#2987)
+# ---------------------------------------------------------------------------
+
+def _malformed_scale_tiff(path, scale="abc", offset="0"):
+    """uint8 raster carrying an unparseable SCALE/OFFSET in GDAL_METADATA."""
+    data = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8)
+    da = xr.DataArray(
+        data,
+        dims=("y", "x"),
+        coords={"y": [0.5, 1.5], "x": [0.5, 1.5, 2.5]},
+        attrs={
+            "crs": 4326,
+            "gdal_metadata": {"SCALE": scale, "OFFSET": offset},
+        },
+    )
+    to_geotiff(da, path)
+    return path
+
+
+def test_mask_and_scale_malformed_scale_raises(tmp_path):
+    """A present-but-unparseable SCALE fails closed under mask_and_scale."""
+    path = _malformed_scale_tiff(str(tmp_path / "t2987_bad_scale.tif"))
+    with pytest.raises(MalformedScaleOffsetError, match="SCALE"):
+        open_geotiff(path, mask_and_scale=True)
+
+
+def test_mask_and_scale_malformed_offset_raises(tmp_path):
+    path = _malformed_scale_tiff(
+        str(tmp_path / "t2987_bad_offset.tif"), scale="1", offset="xyz")
+    with pytest.raises(MalformedScaleOffsetError, match="OFFSET"):
+        open_geotiff(path, mask_and_scale=True)
+
+
+def test_mask_and_scale_malformed_scale_dask_raises(tmp_path):
+    path = _malformed_scale_tiff(str(tmp_path / "t2987_bad_scale_dask.tif"))
+    with pytest.raises(MalformedScaleOffsetError, match="SCALE"):
+        open_geotiff(path, mask_and_scale=True, chunks=2)
+
+
+def test_malformed_scale_ignored_without_mask_and_scale(tmp_path):
+    """Without mask_and_scale the metadata is never read, so no rejection."""
+    path = _malformed_scale_tiff(str(tmp_path / "t2987_no_ms.tif"))
+    out = open_geotiff(path)
+    assert out.dtype == np.uint8
+    np.testing.assert_array_equal(out.data, [[1, 2, 3], [4, 5, 6]])
 
 
 # ---------------------------------------------------------------------------
