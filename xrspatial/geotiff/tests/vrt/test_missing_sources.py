@@ -880,3 +880,153 @@ class TestRaiseAtBuildStrictMode:
         vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
         result = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
         assert "vrt_holes" in result.attrs
+
+
+# ===========================================================================
+# Chunked decode-time holes are under-reported in attrs['vrt_holes'] (#2989).
+#
+# The chunked path's parse-time ``os.path.exists`` sweep only records
+# missing-file holes. A source that exists on disk but fails to decode
+# (corrupt / truncated / codec error) reads as a hole at compute time and
+# is warned from the per-chunk worker, but cannot be reduced back onto the
+# parent DataArray's ``attrs['vrt_holes']``. Recording it would require an
+# eager decode of every source, defeating lazy reading. The chunked
+# ``'warn'`` path emits a build-time heads-up warning so callers do not
+# treat ``attrs['vrt_holes']`` as a completeness check.
+# ===========================================================================
+
+
+def _make_corrupt_source_vrt_2989(tmp_path: str) -> tuple[str, str, str]:
+    """2-source VRT ``[ present | corrupt ]`` laid out 4x8.
+
+    Both ``<SourceFilename>`` paths exist on disk, so the parse-time
+    ``os.path.exists`` sweep finds no holes. The right tile is a present
+    GeoTIFF whose body has been overwritten with garbage so it fails to
+    decode at compute time.
+
+    Returns ``(vrt_path, present_src, corrupt_src)``.
+    """
+    present = _raise_write_present_source(
+        tmp_path, "src_2989_present.tif", 7.0,
+    )
+    corrupt = _raise_write_present_source(
+        tmp_path, "src_2989_corrupt.tif", 9.0,
+    )
+    # Keep the TIFF header (first 8 bytes) so path/format sniffing still
+    # treats it as a TIFF, then clobber the rest so the IFD / tile decode
+    # raises one of the caught (OSError, ValueError, struct.error, codec)
+    # families inside the per-source read.
+    with open(corrupt, "r+b") as f:
+        head = f.read(8)
+        f.seek(0)
+        f.truncate()
+        f.write(head)
+        f.write(b"\x00" * 64)
+
+    vrt_path = os.path.join(tmp_path, "partial_2989_corrupt.vrt")
+    with open(vrt_path, "w") as f:
+        f.write(
+            '<VRTDataset rasterXSize="8" rasterYSize="4">\n'
+            '<GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n'
+            '<VRTRasterBand dataType="Float32" band="1">\n'
+            '<SimpleSource>\n'
+            f'<SourceFilename relativeToVRT="0">{present}</SourceFilename>\n'
+            '<SourceBand>1</SourceBand>\n'
+            '<SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            '<DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            '</SimpleSource>\n'
+            '<SimpleSource>\n'
+            f'<SourceFilename relativeToVRT="0">{corrupt}</SourceFilename>\n'
+            '<SourceBand>1</SourceBand>\n'
+            '<SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            '<DstRect xOff="4" yOff="0" xSize="4" ySize="4"/>\n'
+            '</SimpleSource>\n'
+            '</VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+    return vrt_path, present, corrupt
+
+
+class TestChunkedDecodeTimeHoleHeadsUp:
+    """Chunked ``'warn'`` build-time heads-up about decode-time holes."""
+
+    def test_corrupt_source_absent_from_vrt_holes_at_build(self, tmp_path):
+        """A present-but-corrupt source is not recorded in
+        ``attrs['vrt_holes']`` at build (it passes ``os.path.exists``)."""
+        vrt_path, _, corrupt = _make_corrupt_source_vrt_2989(str(tmp_path))
+        with pytest.warns(GeoTIFFFallbackWarning):
+            da = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
+        holes = da.attrs.get("vrt_holes", [])
+        assert all(
+            not h["source"].endswith("src_2989_corrupt.tif") for h in holes
+        ), (
+            "corrupt-but-existing source must not appear in the build-time "
+            "attrs['vrt_holes'] (it passes the os.path.exists sweep)"
+        )
+
+    def test_build_time_heads_up_warning_fires(self, tmp_path):
+        """The chunked ``'warn'`` path warns up front that
+        ``attrs['vrt_holes']`` excludes decode-time holes."""
+        vrt_path, _, _ = _make_corrupt_source_vrt_2989(str(tmp_path))
+        with pytest.warns(
+            GeoTIFFFallbackWarning,
+            match="statically-detectable",
+        ):
+            _read_vrt(vrt_path, chunks=4, missing_sources="warn")
+
+    def test_compute_time_warning_for_corrupt_source(self, tmp_path):
+        """Computing the chunk over the corrupt tile warns at decode."""
+        vrt_path, _, corrupt = _make_corrupt_source_vrt_2989(str(tmp_path))
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            da = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
+        with pytest.warns(GeoTIFFFallbackWarning) as record:
+            da.compute()
+        msgs = [str(w.message) for w in record]
+        assert any("src_2989_corrupt.tif" in m for m in msgs), (
+            "the per-chunk decode of a corrupt source must warn at "
+            f"compute time; got {msgs!r}"
+        )
+
+    def test_no_heads_up_when_all_sources_missing(self, tmp_path):
+        """When no in-window source exists on disk, nothing can decode-fail,
+        so the heads-up warning is suppressed (only the missing-file holes
+        are recorded in attrs)."""
+        vrt_path = _raise_make_horizontal_partial_vrt(str(tmp_path))
+        # The present tile makes one in-window source exist, so the
+        # heads-up should still fire here; pin that it does, then pin the
+        # all-missing case below where it should not.
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            da = _read_vrt(vrt_path, chunks=4, missing_sources="warn")
+        assert "vrt_holes" in da.attrs
+
+        all_missing = os.path.join(str(tmp_path), "all_missing_2989.vrt")
+        with open(all_missing, "w") as f:
+            f.write(
+                '<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+                '<GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>\n'
+                '<VRTRasterBand dataType="Float32" band="1">\n'
+                '<SimpleSource>\n'
+                '<SourceFilename relativeToVRT="0">'
+                f'{os.path.join(str(tmp_path), "gone_2989.tif")}'
+                '</SourceFilename>\n'
+                '<SourceBand>1</SourceBand>\n'
+                '<SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+                '<DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+                '</SimpleSource>\n'
+                '</VRTRasterBand>\n'
+                '</VRTDataset>\n'
+            )
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            _read_vrt(all_missing, chunks=2, missing_sources="warn")
+        heads_up = [
+            w for w in rec
+            if isinstance(w.message, GeoTIFFFallbackWarning)
+            and "statically-detectable" in str(w.message)
+        ]
+        assert not heads_up, (
+            "no in-window source exists on disk, so nothing can "
+            "decode-fail and the heads-up warning must be suppressed"
+        )
