@@ -2186,7 +2186,9 @@ def test_write_geotiff_gpu_degenerate_round_trip(
 
 @_gpu_only
 @pytest.mark.parametrize("shape_id", list(_DEGENERATE_GPU_SHAPES))
-def test_to_geotiff_dask_gpu_degenerate_round_trip(tmp_path, shape_id):
+@pytest.mark.parametrize("compression", ["none", "deflate"])
+def test_to_geotiff_dask_gpu_degenerate_round_trip(
+        tmp_path, shape_id, compression):
     """``to_geotiff(gpu=True)`` over a dask+cupy DataArray round-trips
     1x1 / 1xN / Nx1 rasters through the dask+gpu write path."""
     import cupy
@@ -2205,9 +2207,9 @@ def test_to_geotiff_dask_gpu_degenerate_round_trip(tmp_path, shape_id):
         },
         attrs=_degenerate_attrs(height),
     )
-    path = str(tmp_path / f"dask_gpu_degen_2984_{shape_id}.tif")
+    path = str(tmp_path / f"dask_gpu_degen_2984_{shape_id}_{compression}.tif")
 
-    to_geotiff(da, path, gpu=True, compression="none")
+    to_geotiff(da, path, gpu=True, compression=compression)
 
     out = open_geotiff(path)
     assert out.shape == (height, width)
