@@ -1549,46 +1549,81 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
     return arr, nodata_pixels_present
 
 
-def _extract_scale_offset(gdal_metadata):
+def _extract_scale_offset(gdal_metadata, band=None):
     """Pull SCALE / OFFSET from parsed GDAL_METADATA for ``mask_and_scale``.
 
     Returns ``(scale, offset)`` floats, defaulting to ``(1.0, 0.0)`` when the
     source carries no scale / offset. GDAL stores these in the GDAL_METADATA
     XML either as dataset-level ``SCALE`` / ``OFFSET`` items or per-band items
-    keyed ``(name, band_index)`` by :func:`_parse_gdal_metadata`. Dataset-level
-    values are preferred; band 0's per-band values are the fallback. A single
-    pair is applied to the whole array, so a source with differing per-band
-    scale / offset is read with band 0's values (documented limitation).
+    keyed ``(name, band_index)`` by :func:`_parse_gdal_metadata`.
 
-    Raises :class:`MalformedScaleOffsetError` when a ``SCALE`` or
-    ``OFFSET`` item is present but does not parse as a float. An absent
-    key keeps the 1.0 / 0.0 identity default.
+    Dataset-level values apply uniformly to the whole array and always win.
+    Failing those, the per-band values are used:
+
+    * When ``band`` selects a single band, that band's per-band value is used
+      (or the default when that band carries none).
+    * When ``band`` is ``None`` the full array is returned, so a single pair
+      has to cover every band. If the per-band values disagree, applying any
+      one of them silently corrupts the other bands, so this raises
+      :class:`MixedBandMetadataError`. Uniform per-band values (or a single
+      band's worth) are returned unchanged.
+
+    Raises :class:`MalformedScaleOffsetError` when a ``SCALE`` or ``OFFSET``
+    item is present but does not parse as a float. An absent key keeps the
+    1.0 / 0.0 identity default.
     """
     scale, offset = 1.0, 0.0
     if not gdal_metadata:
         return scale, offset
 
-    def _num(label, keys, default):
-        # A key being absent is legitimate (the source carries no
-        # scale / offset): fall back to the identity default. A key that
-        # is present but unparseable is rejected -- ``mask_and_scale``
-        # asked us to honour the metadata, so a malformed value must not
-        # be silently dropped and the raw pixels read as if clean.
-        for k in keys:
-            if k in gdal_metadata:
-                raw = gdal_metadata[k]
-                try:
-                    return float(raw)
-                except (TypeError, ValueError):
-                    raise MalformedScaleOffsetError(
-                        f"GDAL_METADATA {label} is not a number: {raw!r}. "
-                        "mask_and_scale=True cannot honour a malformed "
-                        f"{label}."
-                    ) from None
-        return default
+    def _coerce(name, raw):
+        # A key that is present but unparseable is rejected -- ``mask_and_scale``
+        # asked us to honour the metadata, so a malformed value must not be
+        # silently dropped and the raw pixels read as if clean.
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            raise MalformedScaleOffsetError(
+                f"GDAL_METADATA {name} is not a number: {raw!r}. "
+                "mask_and_scale=True cannot honour a malformed "
+                f"{name}."
+            ) from None
 
-    scale = _num('SCALE', ['SCALE', ('SCALE', 0)], 1.0)
-    offset = _num('OFFSET', ['OFFSET', ('OFFSET', 0)], 0.0)
+    def _resolve(name, default):
+        # Dataset-level value applies to every band uniformly.
+        if name in gdal_metadata:
+            return _coerce(name, gdal_metadata[name])
+
+        per_band = {
+            key[1]: val
+            for key, val in gdal_metadata.items()
+            if isinstance(key, tuple) and len(key) == 2 and key[0] == name
+        }
+        if not per_band:
+            return default
+
+        if band is not None:
+            # A specific band was selected upstream, so use its value
+            # (or the default when that band carries none).
+            if band not in per_band:
+                return default
+            return _coerce(name, per_band[band])
+
+        coerced = [_coerce(name, per_band[i]) for i in sorted(per_band)]
+        distinct = sorted(set(coerced))
+        if len(distinct) > 1:
+            from ._errors import MixedBandMetadataError
+            raise MixedBandMetadataError(
+                f"mask_and_scale=True but the source declares distinct "
+                f"per-band {name} values {distinct!r}. Applying one band's "
+                f"{name} to the whole array would silently corrupt the other "
+                f"bands. Select a single band with band= to read it with its "
+                f"own {name}, or drop mask_and_scale."
+            )
+        return distinct[0]
+
+    scale = _resolve('SCALE', 1.0)
+    offset = _resolve('OFFSET', 0.0)
     return scale, offset
 
 
@@ -1607,6 +1642,7 @@ def _finalize_eager_read(
     attrs_in: dict | None = None,
     mask_and_scale: bool = False,
     parse_coordinates: bool = True,
+    band: int | None = None,
 ):
     """Validate, populate attrs, mask, cast, and build an eager DataArray.
 
@@ -1679,7 +1715,7 @@ def _finalize_eager_read(
     # mask path raises (scaling promotes to float).
     if mask_and_scale:
         scale, offset = _extract_scale_offset(
-            getattr(geo_info, 'gdal_metadata', None))
+            getattr(geo_info, 'gdal_metadata', None), band=band)
         if scale != 1.0 or offset != 0.0:
             if arr.dtype.kind != 'f':
                 arr = arr.astype(np.float64)

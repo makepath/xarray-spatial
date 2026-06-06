@@ -704,10 +704,13 @@ def open_geotiff(source: str | BinaryIO, *,
         sentinel to NaN as well (matching rioxarray's ``open_rasterio``).
         The applied values are recorded on ``attrs['scale_factor']`` /
         ``attrs['add_offset']``. A source without scale / offset metadata
-        is a no-op. A single scale / offset pair is applied to the whole
-        array; a source with differing per-band values is read with band
-        0's. Supported on the CPU eager and dask paths; combining it with
-        ``gpu=True`` or a ``.vrt`` source raises ``ValueError``.
+        is a no-op. A dataset-level scale / offset, or per-band values that
+        agree across bands, applies to the whole array. A source whose
+        per-band scale / offset differ raises ``MixedBandMetadataError``
+        unless ``band=`` selects a single band, in which case that band's
+        scale / offset is applied. Supported on the CPU eager and dask
+        paths; combining it with ``gpu=True`` or a ``.vrt`` source raises
+        ``ValueError``.
         Round-trip caveat: the source's ``SCALE`` / ``OFFSET`` tags stay on
         ``attrs['gdal_metadata']`` / ``attrs['gdal_metadata_xml']`` after the
         read, so writing a ``mask_and_scale=True`` result back out with
@@ -1169,6 +1172,7 @@ def open_geotiff(source: str | BinaryIO, *,
         allow_unparseable_crs=allow_unparseable_crs,
         mask_and_scale=mask_and_scale,
         parse_coordinates=parse_coordinates,
+        band=band,
     )
 
 
