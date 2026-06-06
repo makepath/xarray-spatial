@@ -85,13 +85,18 @@ write.
        ``_resolve_nodata_attr``.
    * - ``masked_nodata``
      - bool
-     - Paired with ``nodata``. ``True`` when the reader actually
-       replaced sentinel pixels with NaN (so the buffer is NaN-aware);
-       ``False`` when the array still carries the literal sentinel
-       values, including the case where the array is float dtype
-       because the caller passed ``masked=False`` (the default) together
-       with ``dtype=float...``. Only set when ``nodata`` is set; absence
-       means no declared sentinel. See issue #2092.
+     - Paired with ``nodata``. ``True`` when the reader ran the
+       sentinel-to-NaN step so the buffer is NaN-aware; ``False`` when
+       the array still carries the literal sentinel values, including the
+       case where the array is float dtype because the caller passed
+       ``masked=False`` (the default) together with ``dtype=float...``.
+       The flag tracks whether masking ran, not whether any sentinel
+       pixel matched: a masked read of a maskable integer source promotes
+       to float and sets ``True`` even when zero pixels match, so the
+       eager and dask paths agree for the same input (issue #2990). Use
+       ``nodata_pixels_present`` for the did-any-pixel-match question.
+       Only set when ``nodata`` is set; absence means no declared
+       sentinel. See issue #2092.
    * - ``nodata_pixels_present``
      - bool
      - Paired with ``nodata``. ``True`` iff the read window contained

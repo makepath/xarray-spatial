@@ -2449,21 +2449,23 @@ class TestEagerNumpy:
         assert da.attrs["masked_nodata"] is True
         assert np.isnan(da.values).sum() == 2
 
-    def test_int_source_no_hit_keeps_sentinel(self, tmp_path):
-        """Int source + sentinel declared but no hit -> nodata set, masked_nodata=False.
+    def test_int_source_no_hit_promotes_to_float(self, tmp_path):
+        """Int source + in-range sentinel, no hit -> float64, masked_nodata=True.
 
-        The eager numpy path only promotes integer arrays to float on
-        the first sentinel hit. When the sentinel is in-range but never
-        matches a pixel, the array stays at the source integer dtype
-        and ``masked_nodata`` is False so downstream code knows the
-        literal sentinel is still in-band.
+        When ``masked=True`` and the sentinel is in-range, the eager
+        numpy path promotes the integer array to float64 even when no
+        pixel matches the sentinel. This matches the dask path (which
+        declares float64 up front) and rioxarray's ``masked=True``, both
+        of which promote unconditionally. ``nodata_pixels_present``
+        records that no pixel matched (issue #2990).
         """
         path = str(tmp_path / "tnss1988_int_no_hit.tif")
         _write_int_tiff_1988(path, with_sentinel_hit=False)
         da = open_geotiff(path, masked=True)
         assert da.attrs["nodata"] == 65535
-        assert da.dtype.kind in ("u", "i")
-        assert da.attrs["masked_nodata"] is False
+        assert da.dtype.kind == "f"
+        assert da.attrs["masked_nodata"] is True
+        assert da.attrs["nodata_pixels_present"] is False
 
 
 class TestDaskNumpy:
@@ -2514,6 +2516,60 @@ class TestDaskNumpy:
         assert da.attrs["nodata"] == -9999
         assert da.dtype.kind == "u"
         assert da.attrs["masked_nodata"] is False
+
+
+class TestEagerLazyMaskParity2990:
+    """Eager and lazy paths agree on dtype and masked_nodata (issue #2990).
+
+    The lazy dask path declares float64 up front from the in-range
+    integer-sentinel gate and stamps ``masked_nodata=True`` before any
+    chunk decodes. The eager path used to gate the float promotion on a
+    matching sentinel pixel, so a uint16 source with an in-range sentinel
+    but no matching pixel came back uint16 with ``masked_nodata=False``
+    from the eager reader and float64 with ``masked_nodata=True`` from the
+    dask reader. These tests pin the two paths to the same answer.
+    """
+
+    def test_no_hit_eager_matches_dask(self, tmp_path):
+        path = str(tmp_path / "t2990_no_hit.tif")
+        _write_int_tiff_1988(path, with_sentinel_hit=False)
+        eager = open_geotiff(path, masked=True)
+        lazy = _read_geotiff_dask(path, chunks=2, mask_nodata=True)
+        assert eager.dtype == lazy.dtype == np.float64
+        assert eager.attrs["masked_nodata"] is True
+        assert lazy.attrs["masked_nodata"] is True
+        # Eager scans the buffer, so it can report the presence bool; the
+        # lazy path leaves it absent per the documented dask contract.
+        assert eager.attrs["nodata_pixels_present"] is False
+
+    def test_hit_eager_matches_dask(self, tmp_path):
+        path = str(tmp_path / "t2990_hit.tif")
+        _write_int_tiff_1988(path, with_sentinel_hit=True)
+        eager = open_geotiff(path, masked=True)
+        lazy = _read_geotiff_dask(path, chunks=2, mask_nodata=True)
+        assert eager.dtype == lazy.dtype == np.float64
+        assert eager.attrs["masked_nodata"] is True
+        assert lazy.attrs["masked_nodata"] is True
+        assert eager.attrs["nodata_pixels_present"] is True
+        # The masked pixel materialises to NaN on both paths.
+        assert bool(np.isnan(eager.values).any())
+        assert bool(np.isnan(np.asarray(lazy)).any())
+
+    def test_out_of_range_keeps_int_on_both(self, tmp_path):
+        """Out-of-range sentinel cannot match: both paths stay integer.
+
+        The promotion gate (finite + integer + in-range) is unchanged, so
+        an unmatchable sentinel leaves the source dtype and reports
+        ``masked_nodata=False`` on both paths.
+        """
+        path = str(tmp_path / "t2990_oor.tif")
+        _build_uint16_with_out_of_range_nodata_1988(path)
+        eager = open_geotiff(path, masked=True)
+        lazy = _read_geotiff_dask(path, chunks=2, mask_nodata=True)
+        assert eager.dtype.kind == "u"
+        assert lazy.dtype.kind == "u"
+        assert eager.attrs["masked_nodata"] is False
+        assert lazy.attrs["masked_nodata"] is False
 
 
 def _write_uint16_vrt_source_1988(tmp_path, *, sentinel_hit: bool,
