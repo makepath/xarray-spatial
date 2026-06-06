@@ -1,10 +1,16 @@
 """Tests for the .xrs xarray accessors."""
 
+import inspect
+
 import numpy as np
 import pytest
 import xarray as xr
 
 import xrspatial  # noqa: F401 — triggers accessor registration
+from xrspatial.accessor import (
+    XrsSpatialDataArrayAccessor,
+    XrsSpatialDatasetAccessor,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -396,3 +402,99 @@ def test_ds_plot_without_matplotlib_raises(monkeypatch, elevation):
     monkeypatch.setitem(sys.modules, 'matplotlib.pyplot', None)
     with pytest.raises(ImportError, match=r"xarray-spatial\[plot\]"):
         ds.xrs.plot()
+
+
+# ---------------------------------------------------------------------------
+# 9. help() — standalone docstrings surfaced on accessor methods (#2981)
+# ---------------------------------------------------------------------------
+
+# The hydrology unified wrappers carry only this generic dispatcher stub; the
+# accessor must surface the documented *_d8 variant docs instead.
+_GENERIC_HYDRO_DOC = 'Map routing algorithm names'
+
+
+@pytest.mark.parametrize('method_name, source', [
+    ('slope', 'slope'),
+    ('aspect', 'aspect'),
+    ('hillshade', 'hillshade'),
+    ('curvature', 'curvature'),
+    ('focal_mean', 'mean'),            # method name differs from function
+    ('ndvi', 'ndvi'),
+    ('fill', 'fill_d8'),              # hydro wrapper -> documented d8 variant
+    ('watershed', 'watershed_d8'),
+])
+def test_accessor_docstring_matches_source(method_name, source):
+    func = getattr(xrspatial, source)
+    method = getattr(XrsSpatialDataArrayAccessor, method_name)
+    assert inspect.getdoc(method), f'{method_name} has no docstring'
+    assert inspect.getdoc(method) == inspect.getdoc(func)
+
+
+def test_help_text_surfaces_on_instance(elevation):
+    """help(da.xrs.slope) sees the same docstring as help(slope)."""
+    from xrspatial import slope
+    assert inspect.getdoc(elevation.xrs.slope) == inspect.getdoc(slope)
+
+
+def test_handwritten_method_docs_preserved():
+    """Methods with their own docstrings are not overwritten."""
+    assert XrsSpatialDataArrayAccessor.plot.__doc__.lstrip().startswith(
+        'Plot the DataArray'
+    )
+    assert XrsSpatialDataArrayAccessor.to_geotiff.__doc__.lstrip().startswith(
+        'Write this DataArray'
+    )
+
+
+@pytest.mark.parametrize(
+    'cls', [XrsSpatialDataArrayAccessor, XrsSpatialDatasetAccessor]
+)
+def test_every_public_method_documented(cls):
+    """Drift guard: every public accessor method has a useful docstring."""
+    undocumented = []
+    for name, member in vars(cls).items():
+        if name.startswith('_') or not callable(member):
+            continue
+        doc = (member.__doc__ or '').strip()
+        if not doc or doc.startswith(_GENERIC_HYDRO_DOC):
+            undocumented.append(name)
+    assert not undocumented, f'methods lacking a useful docstring: {undocumented}'
+
+
+# ---------------------------------------------------------------------------
+# 10. Hydrology accessor methods import and run (regression for #2981)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('method_name', [
+    'fill', 'flow_direction', 'flow_accumulation', 'sink', 'basin', 'flow_length',
+])
+def test_hydro_accessor_matches_direct(method_name, elevation):
+    """Single-input hydro accessor methods match the standalone function."""
+    func = getattr(xrspatial, method_name)
+    expected = func(elevation)
+    result = getattr(elevation.xrs, method_name)()
+    xr.testing.assert_identical(result, expected)
+
+
+_ALL_HYDRO_METHODS = [
+    'flow_direction', 'flow_direction_dinf', 'flow_direction_mfd',
+    'flow_accumulation', 'flow_accumulation_mfd', 'watershed', 'basin', 'basins',
+    'sink', 'fill', 'stream_order', 'stream_link', 'snap_pour_point',
+    'flow_path', 'flow_length', 'twi', 'hand',
+]
+
+
+@pytest.mark.parametrize('method_name', _ALL_HYDRO_METHODS)
+def test_hydro_accessor_delegation_resolves(method_name, elevation):
+    """The lazy import no longer points at a removed per-algorithm module.
+
+    Methods needing extra positional args raise TypeError (or another
+    runtime error) once the import succeeds; only a ModuleNotFoundError
+    means the delegation is still broken.
+    """
+    try:
+        getattr(elevation.xrs, method_name)()
+    except ModuleNotFoundError as exc:  # pragma: no cover - the bug we fixed
+        pytest.fail(f'{method_name} delegation still broken: {exc}')
+    except Exception:
+        pass  # any non-import error proves the import path resolved

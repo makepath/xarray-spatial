@@ -352,71 +352,71 @@ class XrsSpatialDataArrayAccessor:
     # ---- Hydrology ----
 
     def flow_direction(self, **kwargs):
-        from .flow_direction import flow_direction
+        from .hydro import flow_direction
         return flow_direction(self._obj, **kwargs)
 
     def flow_direction_dinf(self, **kwargs):
-        from .flow_direction_dinf import flow_direction_dinf
+        from .hydro import flow_direction_dinf
         return flow_direction_dinf(self._obj, **kwargs)
 
     def flow_direction_mfd(self, **kwargs):
-        from .flow_direction_mfd import flow_direction_mfd
+        from .hydro import flow_direction_mfd
         return flow_direction_mfd(self._obj, **kwargs)
 
     def flow_accumulation(self, **kwargs):
-        from .flow_accumulation import flow_accumulation
+        from .hydro import flow_accumulation
         return flow_accumulation(self._obj, **kwargs)
 
     def flow_accumulation_mfd(self, **kwargs):
-        from .flow_accumulation_mfd import flow_accumulation_mfd
+        from .hydro import flow_accumulation_mfd
         return flow_accumulation_mfd(self._obj, **kwargs)
 
     def watershed(self, pour_points, **kwargs):
-        from .watershed import watershed
+        from .hydro import watershed
         return watershed(self._obj, pour_points, **kwargs)
 
     def basin(self, **kwargs):
-        from .basin import basin
+        from .hydro import basin
         return basin(self._obj, **kwargs)
 
     def basins(self, **kwargs):
-        from .watershed import basins
+        from .hydro import basins
         return basins(self._obj, **kwargs)
 
     def sink(self, **kwargs):
-        from .sink import sink
+        from .hydro import sink
         return sink(self._obj, **kwargs)
 
     def fill(self, **kwargs):
-        from .fill import fill
+        from .hydro import fill
         return fill(self._obj, **kwargs)
 
     def stream_order(self, flow_accum, **kwargs):
-        from .stream_order import stream_order
+        from .hydro import stream_order
         return stream_order(self._obj, flow_accum, **kwargs)
 
     def stream_link(self, flow_accum, **kwargs):
-        from .stream_link import stream_link
+        from .hydro import stream_link
         return stream_link(self._obj, flow_accum, **kwargs)
 
     def snap_pour_point(self, pour_points, **kwargs):
-        from .snap_pour_point import snap_pour_point
+        from .hydro import snap_pour_point
         return snap_pour_point(self._obj, pour_points, **kwargs)
 
     def flow_path(self, start_points, **kwargs):
-        from .flow_path import flow_path
+        from .hydro import flow_path
         return flow_path(self._obj, start_points, **kwargs)
 
     def flow_length(self, **kwargs):
-        from .flow_length import flow_length
+        from .hydro import flow_length
         return flow_length(self._obj, **kwargs)
 
     def twi(self, slope_agg, **kwargs):
-        from .twi import twi
+        from .hydro import twi
         return twi(self._obj, slope_agg, **kwargs)
 
     def hand(self, flow_accum, elevation, **kwargs):
-        from .hand import hand
+        from .hydro import hand
         return hand(self._obj, flow_accum, elevation, **kwargs)
 
     # ---- Flood ----
@@ -964,71 +964,71 @@ class XrsSpatialDatasetAccessor:
     # ---- Hydrology ----
 
     def flow_direction(self, **kwargs):
-        from .flow_direction import flow_direction
+        from .hydro import flow_direction
         return flow_direction(self._obj, **kwargs)
 
     def flow_direction_dinf(self, **kwargs):
-        from .flow_direction_dinf import flow_direction_dinf
+        from .hydro import flow_direction_dinf
         return flow_direction_dinf(self._obj, **kwargs)
 
     def flow_direction_mfd(self, **kwargs):
-        from .flow_direction_mfd import flow_direction_mfd
+        from .hydro import flow_direction_mfd
         return flow_direction_mfd(self._obj, **kwargs)
 
     def flow_accumulation(self, **kwargs):
-        from .flow_accumulation import flow_accumulation
+        from .hydro import flow_accumulation
         return flow_accumulation(self._obj, **kwargs)
 
     def flow_accumulation_mfd(self, **kwargs):
-        from .flow_accumulation_mfd import flow_accumulation_mfd
+        from .hydro import flow_accumulation_mfd
         return flow_accumulation_mfd(self._obj, **kwargs)
 
     def watershed(self, pour_points, **kwargs):
-        from .watershed import watershed
+        from .hydro import watershed
         return watershed(self._obj, pour_points, **kwargs)
 
     def basin(self, **kwargs):
-        from .basin import basin
+        from .hydro import basin
         return basin(self._obj, **kwargs)
 
     def basins(self, **kwargs):
-        from .watershed import basins
+        from .hydro import basins
         return basins(self._obj, **kwargs)
 
     def sink(self, **kwargs):
-        from .sink import sink
+        from .hydro import sink
         return sink(self._obj, **kwargs)
 
     def fill(self, **kwargs):
-        from .fill import fill
+        from .hydro import fill
         return fill(self._obj, **kwargs)
 
     def stream_order(self, flow_accum, **kwargs):
-        from .stream_order import stream_order
+        from .hydro import stream_order
         return stream_order(self._obj, flow_accum, **kwargs)
 
     def stream_link(self, flow_accum, **kwargs):
-        from .stream_link import stream_link
+        from .hydro import stream_link
         return stream_link(self._obj, flow_accum, **kwargs)
 
     def snap_pour_point(self, pour_points, **kwargs):
-        from .snap_pour_point import snap_pour_point
+        from .hydro import snap_pour_point
         return snap_pour_point(self._obj, pour_points, **kwargs)
 
     def flow_path(self, start_points, **kwargs):
-        from .flow_path import flow_path
+        from .hydro import flow_path
         return flow_path(self._obj, start_points, **kwargs)
 
     def flow_length(self, **kwargs):
-        from .flow_length import flow_length
+        from .hydro import flow_length
         return flow_length(self._obj, **kwargs)
 
     def twi(self, slope_agg, **kwargs):
-        from .twi import twi
+        from .hydro import twi
         return twi(self._obj, slope_agg, **kwargs)
 
     def hand(self, flow_accum, elevation, **kwargs):
-        from .hand import hand
+        from .hydro import hand
         return hand(self._obj, flow_accum, elevation, **kwargs)
 
     # ---- Flood ----
@@ -1333,3 +1333,61 @@ class XrsSpatialDatasetAccessor:
     def rechunk_no_shuffle(self, **kwargs):
         from .utils import rechunk_no_shuffle
         return rechunk_no_shuffle(self._obj, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Surface standalone-function docstrings on accessor methods so that, e.g.,
+# ``help(da.xrs.slope)`` shows the same documentation as ``help(slope)``.
+# ---------------------------------------------------------------------------
+
+# Accessor method name -> name of the standalone function (in the top-level
+# ``xrspatial`` namespace) whose docstring should be surfaced. Only needed
+# when the method name differs from the function name, or when the direct
+# delegate's docstring is a generic dispatcher: the hydrology unified wrappers
+# route by ``routing=`` and carry only a stub docstring, so their help text is
+# taken from the documented default-algorithm (``*_d8``) variants instead.
+_DOC_SOURCE_OVERRIDES = {
+    'focal_mean': 'mean',
+    'zonal_hypsometric_integral': 'hypsometric_integral',
+    'fill': 'fill_d8',
+    'flow_direction': 'flow_direction_d8',
+    'flow_accumulation': 'flow_accumulation_d8',
+    'basin': 'basin_d8',
+    'basins': 'basins_d8',
+    'watershed': 'watershed_d8',
+    'snap_pour_point': 'snap_pour_point_d8',
+    'flow_path': 'flow_path_d8',
+    'flow_length': 'flow_length_d8',
+    'sink': 'sink_d8',
+    'stream_link': 'stream_link_d8',
+    'stream_order': 'stream_order_d8',
+    'twi': 'twi_d8',
+    'hand': 'hand_d8',
+}
+
+
+def _delegated_doc(method_name):
+    """Return the docstring to surface for an accessor method, or None."""
+    if method_name == 'min_observable_height':
+        from .experimental.min_observable_height import min_observable_height
+        return min_observable_height.__doc__
+    import xrspatial
+    source_name = _DOC_SOURCE_OVERRIDES.get(method_name, method_name)
+    func = getattr(xrspatial, source_name, None)
+    return func.__doc__ if func is not None else None
+
+
+def _attach_delegated_docs(cls):
+    for name, member in vars(cls).items():
+        if name.startswith('_') or not callable(member) or member.__doc__:
+            continue
+        try:
+            doc = _delegated_doc(name)
+        except Exception:
+            continue
+        if doc:
+            member.__doc__ = doc
+
+
+_attach_delegated_docs(XrsSpatialDataArrayAccessor)
+_attach_delegated_docs(XrsSpatialDatasetAccessor)
