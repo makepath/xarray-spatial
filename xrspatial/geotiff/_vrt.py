@@ -1893,7 +1893,7 @@ def _check_no_mixed_georef(sources_meta: list[dict]) -> None:
     Refuse rather than emit a mosaic that mislocates the tile.
 
     The all-georeferenced and all-non-georeferenced cases both pass:
-    build_vrt emits a ``<GeoTransform>`` only when every source is
+    write_vrt emits a ``<GeoTransform>`` only when every source is
     georeferenced, so the all-non-georeferenced VRT preserves
     ``georef_status='none'`` on read.
     """
@@ -2085,7 +2085,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
 
     # Enforce the docstring contract: every source must agree with the
     # first on pixel size, sample format + bits-per-sample (i.e. dtype),
-    # band count, and CRS WKT. Without this, build_vrt would silently
+    # band count, and CRS WKT. Without this, write_vrt would silently
     # produce a syntactically valid VRT that misplaces or mis-types data
     # downstream.
     #

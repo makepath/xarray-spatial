@@ -5,7 +5,7 @@ Covers:
 * early ``compression`` validation in ``to_geotiff``
 * read dispatch leaves ``_read_geotiff_dask`` with a defensive
   ``.vrt`` fallback that delegates to ``_read_vrt``
-* ``build_vrt`` docstring lists kwargs (rejects unknown ones)
+* ``_build_vrt`` docstring lists kwargs (rejects unknown ones)
 * predictor doc covers True/2 equivalence and 3=fp
 * ``tile_size`` warns when ``tiled=False`` and non-default
 * mmap cache eviction (LRU + env var override)
@@ -23,7 +23,7 @@ import warnings
 import numpy as np
 import pytest
 
-from xrspatial.geotiff import _read_geotiff_dask, build_vrt, to_geotiff
+from xrspatial.geotiff import _build_vrt, _read_geotiff_dask, to_geotiff
 from xrspatial.geotiff._reader import _MmapCache, read_to_array
 from xrspatial.geotiff._writer import _MAX_OVERVIEW_LEVELS, write
 
@@ -63,7 +63,7 @@ class TestC2ReadDispatch:
     def test_read_geotiff_dask_handles_vrt_directly(self, tmp_path):
         # Build a 2-tile VRT and confirm _read_geotiff_dask routes to the
         # VRT reader without trying to parse XML as TIFF.
-        from xrspatial.geotiff import build_vrt as wv
+        from xrspatial.geotiff import _build_vrt as wv
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         a_path = str(tmp_path / 'a_1488.tif')
         b_path = str(tmp_path / 'b_1488.tif')
@@ -80,7 +80,7 @@ class TestC2ReadDispatch:
 
 
 # ---------------------------------------------------------------------------
-# build_vrt kwargs documented
+# _build_vrt kwargs documented
 # ---------------------------------------------------------------------------
 
 class TestC5WriteVrtKwargs:
@@ -93,8 +93,8 @@ class TestC5WriteVrtKwargs:
         # canonical name (``crs_wkt`` is the deprecated alias); pass
         # ``crs=None`` instead of the deprecated alias to avoid the
         # DeprecationWarning the alias now emits.
-        build_vrt(vrt_path, [a_path], relative=False, crs=None,
-                  nodata=-9999.0)
+        _build_vrt(vrt_path, [a_path], relative=False, crs=None,
+                   nodata=-9999.0)
         assert os.path.exists(vrt_path)
 
     def test_unknown_kwarg_raises_typeerror(self, tmp_path):
@@ -103,14 +103,14 @@ class TestC5WriteVrtKwargs:
         write(arr, a_path, compression='none')
         vrt_path = str(tmp_path / 'mosaic_c5b_1488.vrt')
         with pytest.raises(TypeError):
-            build_vrt(vrt_path, [a_path], not_a_real_kwarg=True)
+            _build_vrt(vrt_path, [a_path], not_a_real_kwarg=True)
 
     def test_docstring_lists_kwargs(self):
         # Defensive: the docstring is the contract here -- guard
         # against future regressions.
-        assert 'relative' in build_vrt.__doc__
-        assert 'crs_wkt' in build_vrt.__doc__
-        assert 'nodata' in build_vrt.__doc__
+        assert 'relative' in _build_vrt.__doc__
+        assert 'crs_wkt' in _build_vrt.__doc__
+        assert 'nodata' in _build_vrt.__doc__
 
 
 # ---------------------------------------------------------------------------

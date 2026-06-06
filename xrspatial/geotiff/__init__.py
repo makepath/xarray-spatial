@@ -15,12 +15,10 @@ to_geotiff(data, path, ...)
     through the GPU (nvCOMP) path, a ``.vrt`` output path writes a directory
     of tiled GeoTIFFs plus a VRT index, and the default is an eager CPU
     write.
-build_vrt(path, source_files, ...)
-    Generate a VRT mosaic XML from a list of existing GeoTIFF files. This
-    is the one read/write helper that does not fold into ``to_geotiff``
-    because it has no DataArray to write -- it indexes files that already
-    exist. ``vrt_path`` is kept as a deprecated alias for ``path``; passing
-    both ``path`` and ``vrt_path`` raises ``TypeError``.
+
+VRT mosaics are written by passing a ``.vrt`` path to ``to_geotiff``; the
+underlying index emitter (``_build_vrt``) is internal and not part of the
+public surface.
 
 The backend functions ``_read_geotiff_gpu``, ``_read_geotiff_dask``,
 ``_read_vrt``, and ``_write_geotiff_gpu`` are private. ``open_geotiff`` and
@@ -95,7 +93,10 @@ from ._writers.eager import to_geotiff
 # resolves for tests that monkeypatch it and callers bypassing auto-dispatch.
 # ``to_geotiff`` reaches it via ``_writers.eager``; not called here directly.
 from ._writers.gpu import _write_geotiff_gpu  # noqa: F401
-from ._writers.vrt import build_vrt
+# Re-export only: the internal VRT-index emitter. ``to_geotiff``'s ``.vrt``
+# path reaches it via ``_writers.eager``; bound here so tests and internal
+# callers can import ``xrspatial.geotiff._build_vrt``. Not public API.
+from ._writers.vrt import _build_vrt  # noqa: F401
 
 # All names below are part of the supported public API. ``plot_geotiff``
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
@@ -126,7 +127,6 @@ __all__ = [
     'UnsafeURLError',
     'UnsupportedGeoTIFFFeatureError',
     'VRTStableSourcesOnlyError',
-    'build_vrt',
     'open_geotiff',
     'to_geotiff',
 ]
@@ -847,15 +847,12 @@ def open_geotiff(source: str | BinaryIO, *,
 
     Examples
     --------
-    Safe VRT usage. Mosaic two compatible tiles and read with the
-    fail-closed defaults:
+    Safe VRT usage. Write a ``.vrt`` mosaic with ``to_geotiff`` and read
+    it back with the fail-closed defaults:
 
-    >>> from xrspatial.geotiff import open_geotiff, build_vrt
-    >>> vrt_path = build_vrt(  # doctest: +SKIP
-    ...     'mosaic.vrt',
-    ...     source_files=['tile_west.tif', 'tile_east.tif'],
-    ... )
-    >>> da = open_geotiff(vrt_path)  # doctest: +SKIP
+    >>> from xrspatial.geotiff import open_geotiff, to_geotiff
+    >>> to_geotiff(data, 'mosaic.vrt')  # doctest: +SKIP
+    >>> da = open_geotiff('mosaic.vrt')  # doctest: +SKIP
 
     Intentionally raises. A VRT whose source tiles disagree on their
     per-band nodata sentinels is rejected by the default

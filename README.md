@@ -162,15 +162,14 @@ VRT is supported as a conservative advanced feature for simple GeoTIFF mosaics, 
 | Name | Description | NumPy | Dask | CuPy GPU | Dask+CuPy GPU | Cloud |
 |:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
 | [open_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅ | ✅ | 🧪 | 🧪 | 🔼 |
-| [to_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅ | ✅ | 🧪 | 🧪 | 🔼 |
-| [build_vrt](xrspatial/geotiff/__init__.py) | Generate VRT mosaic from existing GeoTIFFs | 🔼 |  |  |  |  |
+| [to_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG / VRT | ✅ | ✅ | 🧪 | 🧪 | 🔼 |
 
 `open_geotiff` and `to_geotiff` select the backend from their parameters
 (`gpu=`, `chunks=`, `.vrt` path); GPU read/write is reached with `gpu=True`,
 not a separate function:
 
 ```python
-from xrspatial.geotiff import build_vrt, open_geotiff, to_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 
 open_geotiff('dem.tif')                              # NumPy
 open_geotiff('dem.tif', chunks=512)                  # Dask
@@ -187,7 +186,7 @@ to_geotiff(data, 'cog.tif', cog=True)                # COG with auto overviews
 to_geotiff(data, 'cog.tif', cog=True,                # COG with explicit levels
            overview_levels=[2, 4, 8],
            overview_resampling='nearest')
-build_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # mosaic existing tiles
+to_geotiff(data, 'mosaic.vrt')                       # write a tiled VRT mosaic
 
 open_geotiff('dem.tif', dtype='float32')             # half memory
 open_geotiff('dem.tif', dtype='float32', chunks=512) # Dask + half memory

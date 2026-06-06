@@ -619,8 +619,8 @@ class TestFixesBatch:
         np.testing.assert_array_almost_equal(result.values, 3.14, decimal=2)
 
     def test_vrt_write_and_read_back(self, tmp_path):
-        """build_vrt generates a valid VRT that reads back correctly."""
-        from xrspatial.geotiff import build_vrt
+        """_build_vrt generates a valid VRT that reads back correctly."""
+        from xrspatial.geotiff import _build_vrt
         from xrspatial.geotiff._geotags import GeoTransform
 
         # Write two tiles with known geo transforms
@@ -638,7 +638,7 @@ class TestFixesBatch:
         write(right, rpath, geo_transform=gt_right, compression='none', tiled=False)
 
         vrt_path = str(tmp_path / 'mosaic.vrt')
-        build_vrt(vrt_path, [lpath, rpath])
+        _build_vrt(vrt_path, [lpath, rpath])
 
         da = open_geotiff(vrt_path)
         assert da.shape == (4, 8)
@@ -2871,11 +2871,11 @@ class TestPublicAPI:
             # ``allow_experimental_codecs`` opt-in.
             'SUPPORTED_FEATURES',
             # Read/write surface consolidated on the two dispatchers
-            # (open_geotiff / to_geotiff) plus the VRT-mosaic builder.
-            # The backend functions (_read_geotiff_gpu, _read_geotiff_dask,
-            # _read_vrt, _write_geotiff_gpu) are private; the dispatchers
-            # route to them from their kwargs.
-            'build_vrt',
+            # (open_geotiff / to_geotiff). The backend functions
+            # (_read_geotiff_gpu, _read_geotiff_dask, _read_vrt,
+            # _write_geotiff_gpu) and the VRT-index emitter (_build_vrt)
+            # are private; the dispatchers route to them from their kwargs
+            # and the ``.vrt`` output path (issue #2974).
             'open_geotiff',
             'to_geotiff',
         }

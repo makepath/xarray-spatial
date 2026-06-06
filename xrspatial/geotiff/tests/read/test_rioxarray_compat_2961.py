@@ -15,7 +15,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (
-    _read_geotiff_dask, _read_geotiff_gpu, _read_vrt, build_vrt,
+    _build_vrt, _read_geotiff_dask, _read_geotiff_gpu, _read_vrt,
     open_geotiff, to_geotiff)
 from xrspatial.geotiff._runtime import GeoTIFFFallbackWarning
 from xrspatial.geotiff.tests._helpers.markers import requires_gpu
@@ -96,7 +96,7 @@ def test_read_vrt_default_matches_open_geotiff_2976(tmp_path):
     """Bare ``_read_vrt`` keeps the source dtype and sentinel, matching
     ``open_geotiff(<vrt>)``."""
     src = _int_sentinel_tiff(str(tmp_path / "t2976_vrt_src.tif"))
-    vrt = build_vrt(str(tmp_path / "t2976.vrt"), source_files=[src])
+    vrt = _build_vrt(str(tmp_path / "t2976.vrt"), source_files=[src])
     public = open_geotiff(vrt)
     direct = _read_vrt(vrt)
 
@@ -289,13 +289,13 @@ def test_parse_coordinates_false_gpu_rejected(tmp_path):
 
 def test_mask_and_scale_vrt_rejected(tmp_path):
     src = _int_sentinel_tiff(str(tmp_path / "t2961_gate_vrt_src.tif"))
-    vrt = build_vrt(str(tmp_path / "t2961_gate.vrt"), source_files=[src])
+    vrt = _build_vrt(str(tmp_path / "t2961_gate.vrt"), source_files=[src])
     with pytest.raises(ValueError, match="mask_and_scale.*.vrt"):
         open_geotiff(vrt, mask_and_scale=True)
 
 
 def test_parse_coordinates_false_vrt_rejected(tmp_path):
     src = _int_sentinel_tiff(str(tmp_path / "t2961_gate_vrt_pc_src.tif"))
-    vrt = build_vrt(str(tmp_path / "t2961_gate_pc.vrt"), source_files=[src])
+    vrt = _build_vrt(str(tmp_path / "t2961_gate_pc.vrt"), source_files=[src])
     with pytest.raises(ValueError, match="parse_coordinates=False.*.vrt"):
         open_geotiff(vrt, parse_coordinates=False)

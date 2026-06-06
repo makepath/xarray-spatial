@@ -342,8 +342,8 @@ def _read_vrt(source: str, *,
     Safe usage. Mosaic two compatible tiles and read with the
     fail-closed defaults:
 
-    >>> from xrspatial.geotiff import open_geotiff, build_vrt
-    >>> vrt_path = build_vrt(  # doctest: +SKIP
+    >>> from xrspatial.geotiff import _build_vrt
+    >>> vrt_path = _build_vrt(  # doctest: +SKIP
     ...     'mosaic.vrt',
     ...     source_files=['tile_west.tif', 'tile_east.tif'],
     ... )

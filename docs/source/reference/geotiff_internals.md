@@ -28,7 +28,7 @@ public API. Files referenced live under `xrspatial/geotiff/`.
 | -------------------- | --------------------------------- | ---------------------- |
 | `to_geotiff`         | `xrspatial/geotiff/_writers/eager.py` | NumPy / Dask DataArray (auto-dispatches to GPU when input is CuPy-backed) |
 | `_write_geotiff_gpu`  | `xrspatial/geotiff/_writers/gpu.py`   | CuPy DataArray |
-| `build_vrt`          | `xrspatial/geotiff/_writers/vrt.py`   | list of GeoTIFF paths (XML emitter) |
+| `_build_vrt`         | `xrspatial/geotiff/_writers/vrt.py`   | list of GeoTIFF paths (XML emitter; internal, reached by `to_geotiff`'s `.vrt` path) |
 
 ## Contract steps
 
@@ -142,7 +142,7 @@ write analogue; `to_geotiff` and `_write_geotiff_gpu` always emit
 Orientation = 1 and rely on the writer assembler (`_writer.write`) for
 photometric handling.
 
-| Step | `to_geotiff` (CPU eager / dask) | `_write_geotiff_gpu` | `build_vrt` |
+| Step | `to_geotiff` (CPU eager / dask) | `_write_geotiff_gpu` | `_build_vrt` |
 | ---- | ------------------------------- | ------------------- | ----------- |
 | 1. source / kwarg validation | shared (`_validate_tile_size_arg`, `_validate_3d_writer_dims`, `_validate_writer_spatial_shape`, `_validate_nodata_arg`, `_validate_no_rotated_affine`); duplicated inline compression / `compression_level` / `cog` / `overview_levels` / `bigtiff` / `streaming_buffer_bytes` / `max_z_error` / `photometric` / `allow_internal_only_jpeg` / `allow_experimental_codecs` value rejections | shared (`_validate_tile_size_arg`, `_validate_3d_writer_dims`, `_validate_writer_spatial_shape`, `_validate_nodata_arg`, `_validate_no_rotated_affine`); duplicated inline GPU-specific kwarg rejections (`predictor`, `compression`, `cog`, etc.) | shared (`_validate_nodata_arg`); duplicated inline `path` / `vrt_path` shim, `crs` / `crs_wkt` shim, source path validation |
 | 2. metadata parse | N/A (no source to parse; reads attrs off the DataArray) | N/A | duplicated (reads geokeys from the first source file to inherit CRS / nodata; lives in `_vrt.write_vrt`) |

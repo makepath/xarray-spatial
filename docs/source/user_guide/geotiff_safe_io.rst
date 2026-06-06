@@ -54,9 +54,6 @@ the read and write paths:
        CuPy-backed data) for the GPU writer (tier: ``experimental``);
        use the CPU path for anything you round-trip through external
        tools.
-   * - :func:`xrspatial.geotiff.build_vrt`
-     - Emit a GDAL ``.vrt`` over a list of existing local GeoTIFF
-       sources. Tier: ``advanced``.
 
 A dask-backed read is just ``open_geotiff(source, chunks=...)`` -- there
 is no separate ``read_geotiff_dask`` name on the public surface. The

@@ -998,7 +998,7 @@ def validate_write_metadata(context: Mapping[str, Any] | None = None) -> None:
     """Run all registered write-side ambiguous-metadata checks.
 
     Mirror of ``validate_read_metadata`` for ``to_geotiff`` /
-    ``_write_geotiff_gpu`` / ``build_vrt``. See that docstring for the
+    ``_write_geotiff_gpu`` / ``_build_vrt``. See that docstring for the
     context-schema convention and the no-op-when-empty guarantee.
     """
     if not _WRITE_METADATA_CHECKS:
