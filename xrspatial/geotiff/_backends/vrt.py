@@ -1186,7 +1186,14 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # Empty list is omitted so the attr only appears when a hole is
     # actually present. Each entry mirrors the eager schema:
     # ``{'source', 'band', 'dst_rect', 'error'}``.
+    # ``decode_capable`` (issue #2989) tracks whether any in-window source
+    # exists on disk. A present source can still fail to decode at compute
+    # time, and that decode-time hole cannot be reduced back onto this
+    # parent DataArray's ``attrs['vrt_holes']`` (see the lenient-path
+    # heads-up warning below). It is set in this same pass so we walk the
+    # source list once rather than re-scanning it just to compute the flag.
     chunked_holes: list[dict] = []
+    decode_capable = False
     for band_idx, vrt_band in enumerate(vrt.bands):
         # When ``band`` is restricted, the per-chunk decode never touches
         # bands outside the selection, so a missing source on an
@@ -1202,23 +1209,24 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
         if band is not None and band_idx != band:
             continue
         for src in vrt_band.sources:
-            if not _os.path.exists(src.filename):
-                # Skip holes that fall entirely outside the requested
-                # window. Each chunk task only decodes sources that
-                # intersect its destination rect, so a missing source
-                # outside the window never gets touched and the eager
-                # path with the same window would also not raise.
-                # ``win_r0/win_c0`` are the row/col origin of the
-                # requested window in the VRT's destination coordinate
-                # space and ``full_h/full_w`` are its size.
-                dst = src.dst_rect
-                if not (
-                    dst.x_off + dst.x_size > win_c0
-                    and dst.x_off < win_c0 + full_w
-                    and dst.y_off + dst.y_size > win_r0
-                    and dst.y_off < win_r0 + full_h
-                ):
-                    continue
+            # Skip sources that fall entirely outside the requested
+            # window. Each chunk task only decodes sources that intersect
+            # its destination rect, so a source outside the window never
+            # gets touched -- it can neither be a reachable hole nor a
+            # decode-capable tile. ``win_r0/win_c0`` are the row/col origin
+            # of the requested window in the VRT's destination coordinate
+            # space and ``full_h/full_w`` are its size.
+            dst = src.dst_rect
+            if not (
+                dst.x_off + dst.x_size > win_c0
+                and dst.x_off < win_c0 + full_w
+                and dst.y_off + dst.y_size > win_r0
+                and dst.y_off < win_r0 + full_h
+            ):
+                continue
+            if _os.path.exists(src.filename):
+                decode_capable = True
+            else:
                 chunked_holes.append({
                     'source': src.filename,
                     'band': vrt_band.band_num,
@@ -1284,45 +1292,27 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     # ``GeoTIFFFallbackWarning`` up front whenever the requested window
     # touches a source whose file exists (i.e. one that could fail at
     # decode time) so the caller learns the attr is not authoritative
-    # before they compute. Suppressed when no in-window source exists on
-    # disk (nothing can decode-fail) so the warning only fires when the
-    # gap is reachable.
-    if missing_sources == 'warn':
-        decode_capable = False
-        for band_idx, vrt_band in enumerate(vrt.bands):
-            if band is not None and band_idx != band:
-                continue
-            for src in vrt_band.sources:
-                dst = src.dst_rect
-                if not (
-                    dst.x_off + dst.x_size > win_c0
-                    and dst.x_off < win_c0 + full_w
-                    and dst.y_off + dst.y_size > win_r0
-                    and dst.y_off < win_r0 + full_h
-                ):
-                    continue
-                if _os.path.exists(src.filename):
-                    decode_capable = True
-                    break
-            if decode_capable:
-                break
-        if decode_capable:
-            import warnings
+    # before they compute. ``decode_capable`` was computed in the static
+    # sweep above. It is False when no in-window source exists on disk
+    # (nothing can decode-fail), which suppresses the warning so it only
+    # fires when the gap is reachable.
+    if missing_sources == 'warn' and decode_capable:
+        import warnings
 
-            from .._runtime import GeoTIFFFallbackWarning
-            warnings.warn(
-                "Chunked VRT read under missing_sources='warn': "
-                "attrs['vrt_holes'] lists only statically-detectable "
-                "missing-file holes. A source file that exists but fails "
-                "to decode at compute time (corrupt / truncated / codec "
-                "error) surfaces as a per-chunk GeoTIFFFallbackWarning "
-                "and will NOT appear in attrs['vrt_holes']. Do not treat "
-                "the absence of attrs['vrt_holes'] as proof of a complete "
-                "mosaic; watch the compute-time warning stream or set "
-                "missing_sources='raise' to fail closed.",
-                GeoTIFFFallbackWarning,
-                stacklevel=2,
-            )
+        from .._runtime import GeoTIFFFallbackWarning
+        warnings.warn(
+            "Chunked VRT read under missing_sources='warn': "
+            "attrs['vrt_holes'] lists only statically-detectable "
+            "missing-file holes. A source file that exists but fails "
+            "to decode at compute time (corrupt / truncated / codec "
+            "error) surfaces as a per-chunk GeoTIFFFallbackWarning "
+            "and will NOT appear in attrs['vrt_holes']. Do not treat "
+            "the absence of attrs['vrt_holes'] as proof of a complete "
+            "mosaic; watch the compute-time warning stream or set "
+            "missing_sources='raise' to fail closed.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
 
     # Route attrs assembly through
     # ``_finalize_lazy_read_attrs`` so the VRT chunked path shares the
