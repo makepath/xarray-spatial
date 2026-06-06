@@ -1117,7 +1117,7 @@ class TestDegenerateExactLevel:
         # Each row's geometry must be unique.
         seen = set()
         for _, row in gdf.iterrows():
-            geom_key = tuple(round(c, 10) for c in row.geometry.coords)
+            geom_key = tuple(round(v, 10) for c in row.geometry.coords for v in c)
             assert geom_key not in seen, (
                 f"Duplicate geometry in GeoDataFrame at level {row.level}"
             )
