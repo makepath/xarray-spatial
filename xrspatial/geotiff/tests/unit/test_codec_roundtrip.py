@@ -1355,3 +1355,37 @@ def test_write_geotiff_gpu_accepts_cpu_fallback_codecs(tmp_path, codec):
         f"_write_geotiff_gpu(compression={codec!r}) failed to write a file"
     )
     assert os.path.getsize(path) > 0
+
+
+class TestDispatcherErrorBranches:
+    """Error branches of the ``compress``/``decompress`` dispatchers (#2995).
+
+    The byte-stream ``compress()`` entry point cannot encode the block
+    codecs (JPEG / JPEG2000 / LERC) because they need width / height /
+    samples, so it rejects them with a redirect message. Both dispatchers
+    reject unknown tags via their ``else`` branch. These guards had no
+    test before #2995.
+    """
+
+    # An arbitrary tag value that is not any defined COMPRESSION_* constant.
+    UNSUPPORTED_TAG = 99999
+
+    def test_compress_rejects_jpeg(self):
+        with pytest.raises(ValueError, match="Use jpeg_compress"):
+            compress(b"\x00" * 16, COMPRESSION_JPEG)
+
+    def test_compress_rejects_jpeg2000(self):
+        with pytest.raises(ValueError, match="Use jpeg2000_compress"):
+            compress(b"\x00" * 16, COMPRESSION_JPEG2000)
+
+    def test_compress_rejects_lerc(self):
+        with pytest.raises(ValueError, match="Use lerc_compress"):
+            compress(b"\x00" * 16, COMPRESSION_LERC)
+
+    def test_compress_rejects_unknown_tag(self):
+        with pytest.raises(ValueError, match="Unsupported compression type"):
+            compress(b"\x00" * 16, self.UNSUPPORTED_TAG)
+
+    def test_decompress_rejects_unknown_tag(self):
+        with pytest.raises(ValueError, match="Unsupported compression type"):
+            decompress(b"\x00" * 16, self.UNSUPPORTED_TAG)
