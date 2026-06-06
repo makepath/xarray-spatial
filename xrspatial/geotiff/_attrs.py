@@ -164,7 +164,8 @@ import xarray as xr
 from ._coords import coords_from_geo_info as _coords_from_geo_info
 from ._coords import resolve_georef as _resolve_georef
 from ._coords import transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry
-from ._errors import ConflictingNodataError, _distinct_per_band_nodatavals_msg
+from ._errors import (ConflictingNodataError, MalformedScaleOffsetError,
+                      _distinct_per_band_nodatavals_msg)
 from ._geotags import (_NO_GEOREF_KEY, GEOKEY_GEOGRAPHIC_TYPE, GEOKEY_MODEL_TYPE,
                        GEOKEY_PROJECTED_CS_TYPE, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT)
 
@@ -1537,22 +1538,36 @@ def _extract_scale_offset(gdal_metadata):
     values are preferred; band 0's per-band values are the fallback. A single
     pair is applied to the whole array, so a source with differing per-band
     scale / offset is read with band 0's values (documented limitation).
+
+    Raises :class:`MalformedScaleOffsetError` when a ``SCALE`` or
+    ``OFFSET`` item is present but does not parse as a float. An absent
+    key keeps the 1.0 / 0.0 identity default.
     """
     scale, offset = 1.0, 0.0
     if not gdal_metadata:
         return scale, offset
 
-    def _num(keys, default):
+    def _num(label, keys, default):
+        # A key being absent is legitimate (the source carries no
+        # scale / offset): fall back to the identity default. A key that
+        # is present but unparseable is rejected -- ``mask_and_scale``
+        # asked us to honour the metadata, so a malformed value must not
+        # be silently dropped and the raw pixels read as if clean.
         for k in keys:
             if k in gdal_metadata:
+                raw = gdal_metadata[k]
                 try:
-                    return float(gdal_metadata[k])
+                    return float(raw)
                 except (TypeError, ValueError):
-                    return default
+                    raise MalformedScaleOffsetError(
+                        f"GDAL_METADATA {label} is not a number: {raw!r}. "
+                        "mask_and_scale=True cannot honour a malformed "
+                        f"{label}."
+                    ) from None
         return default
 
-    scale = _num(['SCALE', ('SCALE', 0)], 1.0)
-    offset = _num(['OFFSET', ('OFFSET', 0)], 0.0)
+    scale = _num('SCALE', ['SCALE', ('SCALE', 0)], 1.0)
+    offset = _num('OFFSET', ['OFFSET', ('OFFSET', 0)], 0.0)
     return scale, offset
 
 

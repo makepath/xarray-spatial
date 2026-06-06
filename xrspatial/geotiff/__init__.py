@@ -67,7 +67,8 @@ from ._coords import \
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg  # noqa: F401
 from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDTagError,
                       GeoTIFFAmbiguousMetadataError, InconsistentGeoKeysError, InvalidCRSCodeError,
-                      InvalidIntegerNodataError, MixedBandMetadataError,
+                      InvalidIntegerNodataError, MalformedScaleOffsetError,
+                      MixedBandMetadataError,
                       NonRepresentableEPSGCRSError, NonUniformCoordsError,
                       RemoteStableSourcesOnlyError, RotatedTransformError, UnknownCRSModelTypeError,
                       UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
@@ -116,6 +117,7 @@ __all__ = [
     'InconsistentGeoKeysError',
     'InvalidCRSCodeError',
     'InvalidIntegerNodataError',
+    'MalformedScaleOffsetError',
     'MixedBandMetadataError',
     'NonRepresentableEPSGCRSError',
     'NonUniformCoordsError',
