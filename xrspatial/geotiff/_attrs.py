@@ -1539,7 +1539,7 @@ def _extract_scale_offset(gdal_metadata, band=None):
     Failing those, the per-band values are used:
 
     * When ``band`` selects a single band, that band's per-band value is used
-      (falling back to the dataset-level value, then the default).
+      (or the default when that band carries none).
     * When ``band`` is ``None`` the full array is returned, so a single pair
       has to cover every band. If the per-band values disagree, applying any
       one of them silently corrupts the other bands, so this raises
@@ -1550,11 +1550,11 @@ def _extract_scale_offset(gdal_metadata, band=None):
     if not gdal_metadata:
         return scale, offset
 
-    def _resolve(name, dataset_key, default):
+    def _resolve(name, default):
         # Dataset-level value applies to every band uniformly.
-        if dataset_key in gdal_metadata:
+        if name in gdal_metadata:
             try:
-                return float(gdal_metadata[dataset_key])
+                return float(gdal_metadata[name])
             except (TypeError, ValueError):
                 return default
 
@@ -1592,8 +1592,8 @@ def _extract_scale_offset(gdal_metadata, band=None):
             )
         return distinct[0]
 
-    scale = _resolve('SCALE', 'SCALE', 1.0)
-    offset = _resolve('OFFSET', 'OFFSET', 0.0)
+    scale = _resolve('SCALE', 1.0)
+    offset = _resolve('OFFSET', 0.0)
     return scale, offset
 
 
