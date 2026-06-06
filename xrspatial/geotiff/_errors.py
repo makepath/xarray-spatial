@@ -22,7 +22,8 @@ Hierarchy::
         ├── MixedBandMetadataError
         ├── ConflictingCRSError
         ├── ConflictingNodataError
-        └── InconsistentGeoKeysError
+        ├── InconsistentGeoKeysError
+        └── MalformedScaleOffsetError
 """
 from __future__ import annotations
 
