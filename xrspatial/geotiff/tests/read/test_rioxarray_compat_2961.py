@@ -269,6 +269,55 @@ def test_malformed_scale_ignored_without_mask_and_scale(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# malformed GDAL_METADATA XML rejection (#2998)
+# ---------------------------------------------------------------------------
+
+def _malformed_xml_tiff(path):
+    """uint8 raster whose GDAL_METADATA tag holds non-well-formed XML.
+
+    The writer escapes every SCALE/OFFSET value it serialises, so a
+    malformed payload has to be injected through the raw
+    ``gdal_metadata_xml`` writer kwarg (gated behind the rich-tag opt-in).
+    The unclosed ``<Item>`` makes ``ET.fromstring`` raise ``ParseError``.
+    """
+    data = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8)
+    da = xr.DataArray(
+        data,
+        dims=("y", "x"),
+        coords={"y": [0.5, 1.5], "x": [0.5, 1.5, 2.5]},
+        attrs={
+            "crs": 4326,
+            "gdal_metadata_xml": (
+                '<GDALMetadata><Item name="SCALE">2.0</GDALMetadata>'
+            ),
+        },
+    )
+    to_geotiff(da, path, allow_experimental_codecs=True)
+    return path
+
+
+def test_mask_and_scale_malformed_xml_raises(tmp_path):
+    """Malformed GDAL_METADATA XML fails closed under mask_and_scale."""
+    path = _malformed_xml_tiff(str(tmp_path / "t2998_bad_xml.tif"))
+    with pytest.raises(MalformedScaleOffsetError, match="XML"):
+        open_geotiff(path, mask_and_scale=True)
+
+
+def test_mask_and_scale_malformed_xml_dask_raises(tmp_path):
+    path = _malformed_xml_tiff(str(tmp_path / "t2998_bad_xml_dask.tif"))
+    with pytest.raises(MalformedScaleOffsetError, match="XML"):
+        open_geotiff(path, mask_and_scale=True, chunks=2)
+
+
+def test_malformed_xml_ignored_without_mask_and_scale(tmp_path):
+    """Without mask_and_scale the XML is never parsed for scale/offset."""
+    path = _malformed_xml_tiff(str(tmp_path / "t2998_no_ms.tif"))
+    out = open_geotiff(path)
+    assert out.dtype == np.uint8
+    np.testing.assert_array_equal(out.data, [[1, 2, 3], [4, 5, 6]])
+
+
+# ---------------------------------------------------------------------------
 # parse_coordinates
 # ---------------------------------------------------------------------------
 

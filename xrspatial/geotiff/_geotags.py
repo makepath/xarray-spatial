@@ -173,6 +173,11 @@ class GeoInfo:
     # and {(name, band): value} for per-band items.  Raw XML also kept.
     gdal_metadata: dict | None = None
     gdal_metadata_xml: str | None = None
+    # True when ``gdal_metadata_xml`` was present but did not parse as
+    # well-formed XML. ``mask_and_scale`` reads use this to fail closed
+    # instead of silently treating the unparseable metadata as "no
+    # scale / offset" and reading the raw pixels.
+    gdal_metadata_malformed: bool = False
     # Extra TIFF tags not managed by the writer (pass-through on round-trip)
     # List of (tag_id, type_id, count, raw_value) tuples.
     extra_tags: list | None = None
@@ -185,16 +190,23 @@ class GeoInfo:
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
 
 
-def _parse_gdal_metadata(xml_str: str) -> dict:
-    """Parse GDALMetadata XML into a flat dict.
+def _parse_gdal_metadata_strict(xml_str: str) -> tuple[dict, bool]:
+    """Parse GDALMetadata XML, reporting whether the payload was malformed.
 
-    Dataset-level items are stored as ``{name: value}``.
-    Per-band items are stored as ``{(name, band_int): value}``.
+    Returns ``(result, malformed)``. ``result`` is the flat dict described
+    by :func:`_parse_gdal_metadata`. ``malformed`` is ``True`` when the
+    payload could not be parsed as XML (an :class:`xml.etree.ElementTree.
+    ParseError`), so a caller honouring the metadata (``mask_and_scale``)
+    can fail closed instead of reading the raw pixels as if no scale /
+    offset were declared. A DOCTYPE rejection (billion-laughs guard) does
+    NOT set the flag: that payload is dropped on purpose and the read
+    proceeds without the non-essential metadata.
     """
     import xml.etree.ElementTree as ET
 
     from ._safe_xml import safe_fromstring
     result = {}
+    malformed = False
     try:
         # GDALMetadata XML rides inside TIFF tag 42112; a crafted file
         # can carry a billion-laughs payload there, so refuse DOCTYPEs
@@ -208,12 +220,31 @@ def _parse_gdal_metadata(xml_str: str) -> dict:
                 result[(name, int(sample))] = text
             else:
                 result[name] = text
-    except (ET.ParseError, ValueError):
+    except ET.ParseError:
+        # The payload is present but is not well-formed XML. We still
+        # return an empty dict so reads that ignore GDAL_METADATA keep
+        # working, but we flag the failure so ``mask_and_scale`` can
+        # reject it rather than silently reading unscaled pixels.
+        malformed = True
+    except ValueError:
         # ValueError surfaces from safe_fromstring when the payload
         # carries a DOCTYPE. GDALMetadata is non-essential metadata, so
-        # we silently drop it rather than failing the whole read --
-        # matches the existing ParseError fallback.
+        # we silently drop it rather than failing the whole read.
         pass
+    return result, malformed
+
+
+def _parse_gdal_metadata(xml_str: str) -> dict:
+    """Parse GDALMetadata XML into a flat dict.
+
+    Dataset-level items are stored as ``{name: value}``.
+    Per-band items are stored as ``{(name, band_int): value}``.
+
+    Malformed or DOCTYPE-bearing payloads are dropped, returning ``{}``.
+    Callers that need to distinguish a malformed payload from an absent
+    one use :func:`_parse_gdal_metadata_strict`.
+    """
+    result, _ = _parse_gdal_metadata_strict(xml_str)
     return result
 
 
@@ -995,9 +1026,11 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
 
     # Parse GDALMetadata XML (tag 42112)
     gdal_metadata = None
+    gdal_metadata_malformed = False
     gdal_metadata_xml = ifd.gdal_metadata
     if gdal_metadata_xml is not None:
-        gdal_metadata = _parse_gdal_metadata(gdal_metadata_xml)
+        gdal_metadata, gdal_metadata_malformed = _parse_gdal_metadata_strict(
+            gdal_metadata_xml)
 
     # Extract palette colormap (Photometric=3, tag 320)
     colormap = None
@@ -1106,6 +1139,7 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         crs_wkt=crs_wkt,
         gdal_metadata=gdal_metadata,
         gdal_metadata_xml=gdal_metadata_xml,
+        gdal_metadata_malformed=gdal_metadata_malformed,
         extra_tags=extra_tags,
         image_description=image_description,
         extra_samples=extra_samples,
@@ -1288,6 +1322,7 @@ def extract_geo_info_with_overview_inheritance(
     if (info.gdal_metadata_xml is None
             and base_info.gdal_metadata_xml is not None):
         info.gdal_metadata_xml = base_info.gdal_metadata_xml
+        info.gdal_metadata_malformed = base_info.gdal_metadata_malformed
     if info.x_resolution is None and base_info.x_resolution is not None:
         info.x_resolution = base_info.x_resolution
     if info.y_resolution is None and base_info.y_resolution is not None:

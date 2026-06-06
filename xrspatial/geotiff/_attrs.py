@@ -1549,7 +1549,7 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
     return arr, nodata_pixels_present
 
 
-def _extract_scale_offset(gdal_metadata, band=None):
+def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     """Pull SCALE / OFFSET from parsed GDAL_METADATA for ``mask_and_scale``.
 
     Returns ``(scale, offset)`` floats, defaulting to ``(1.0, 0.0)`` when the
@@ -1571,8 +1571,22 @@ def _extract_scale_offset(gdal_metadata, band=None):
     Raises :class:`MalformedScaleOffsetError` when a ``SCALE`` or ``OFFSET``
     item is present but does not parse as a float. An absent key keeps the
     1.0 / 0.0 identity default.
+
+    ``malformed=True`` signals that the source carried a GDAL_METADATA XML
+    payload that did not parse (see :func:`_parse_gdal_metadata_strict`).
+    Because the unparseable payload could have declared a scale / offset
+    that is now lost, ``mask_and_scale`` fails closed with a
+    :class:`MalformedScaleOffsetError` rather than reading the raw pixels
+    as if no scaling were declared.
     """
     scale, offset = 1.0, 0.0
+    if malformed:
+        raise MalformedScaleOffsetError(
+            "GDAL_METADATA XML is malformed and could not be parsed. "
+            "mask_and_scale=True cannot honour the scale / offset it may "
+            "declare, so the read is refused rather than returning raw, "
+            "unscaled pixels."
+        )
     if not gdal_metadata:
         return scale, offset
 
@@ -1715,7 +1729,8 @@ def _finalize_eager_read(
     # mask path raises (scaling promotes to float).
     if mask_and_scale:
         scale, offset = _extract_scale_offset(
-            getattr(geo_info, 'gdal_metadata', None), band=band)
+            getattr(geo_info, 'gdal_metadata', None), band=band,
+            malformed=getattr(geo_info, 'gdal_metadata_malformed', False))
         if scale != 1.0 or offset != 0.0:
             if arr.dtype.kind != 'f':
                 arr = arr.astype(np.float64)
