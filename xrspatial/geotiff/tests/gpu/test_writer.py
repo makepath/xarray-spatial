@@ -1512,6 +1512,38 @@ def test_gpu_writer_overview_uses_make_overview_gpu_fresh_buffer_1948():
         )
 
 
+@_gpu_only
+@pytest.mark.parametrize("shape", [(64, 64), (33, 65), (128, 128)])
+@pytest.mark.parametrize("method", ["mean", "min", "max", "median"])
+def test_gpu_overview_reduce_byte_matches_cpu_2983(shape, method):
+    """GPU ``_block_reduce_2d_gpu`` matches the CPU reducer byte-for-byte.
+
+    The GPU writer documents byte parity with the CPU writer for
+    overviews. ``mean`` on float32 used to diverge because
+    ``cupy.nanmean`` accumulated in float32 while the CPU kernel
+    accumulates in float64 (issue #2983); the GPU mean now passes
+    ``dtype=cupy.float64`` so both downcast a float64 accumulator to
+    float32 on store. ``min`` / ``max`` / ``median`` are exact and were
+    already byte-identical; they ride along to guard against regressions.
+    """
+    import cupy
+
+    from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
+
+    h, w = shape
+    rng = np.random.default_rng(2983)
+    arr = (rng.standard_normal((h, w)).astype(np.float32) * 1000.0)
+
+    cpu = _block_reduce_2d(arr, method)
+    gpu = _block_reduce_2d_gpu(cupy.asarray(arr), method).get()
+
+    assert cpu.dtype == gpu.dtype == np.float32
+    assert cpu.tobytes() == gpu.tobytes(), (
+        f"GPU overview {method!r} diverges from CPU on float32 "
+        f"{shape}: {(cpu != gpu).sum()} of {cpu.size} pixels differ"
+    )
+
+
 # ===========================================================================
 # Section 7: overview_resampling='mode' + compression_level kwarg
 # (was test_gpu_writer_overview_mode_and_compression_level_1740.py)

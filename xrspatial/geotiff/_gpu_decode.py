@@ -3251,7 +3251,16 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
                         mask, cupy.float64('nan'), blocks)
 
     if method == 'mean':
-        result = cupy.nanmean(blocks, axis=(1, 3))
+        # Accumulate the block mean in float64 then downcast on the final
+        # ``astype(arr2d.dtype)`` below, matching the CPU kernel
+        # (``_reduce2x2_mean`` in ``_overview_kernels``) which sums into a
+        # float64 Python accumulator. Without ``dtype=cupy.float64`` a
+        # float32 ``blocks`` array makes ``cupy.nanmean`` accumulate in
+        # float32, so the GPU and CPU writers emit different overview bytes
+        # for float32 rasters (the GPU writer documents byte parity with
+        # the CPU writer). float64 input already accumulates in float64 on
+        # both paths, so this only changes the float32 result.
+        result = cupy.nanmean(blocks, axis=(1, 3), dtype=cupy.float64)
     elif method == 'min':
         result = cupy.nanmin(blocks, axis=(1, 3))
     elif method == 'max':
