@@ -2118,3 +2118,97 @@ def test_explicit_gpu_false_then_true_uses_explicit_template(
     text = str(fallback_warnings[0].message)
     assert 'to_geotiff(gpu=True)' in text
     assert 'Data is on the GPU' not in text
+
+
+# ---------------------------------------------------------------------------
+# Degenerate-shape GPU writes (#2984)
+#
+# The read side already covers 1x1 / 1xN / Nx1 sources on all four
+# backends (read/test_degenerate_shapes.py) and the dask streaming
+# writer covers them (integration/test_dask_pipeline.py). The GPU write
+# path was the gap: the smallest shape elsewhere in this file is 2x2.
+#
+# A single-pixel dimension stresses the GPU tile-padding and encode
+# kernels. The transform is supplied explicitly via attrs['transform']
+# because the writer cannot infer a pixel size from a single-element
+# coord axis (rasterio 6-tuple (px, 0, ox, 0, py, oy)).
+# ---------------------------------------------------------------------------
+
+_DEGENERATE_GPU_SHAPES = {
+    "1x1": np.array([[42.0]], dtype=np.float32),
+    "1xN": np.arange(10, dtype=np.float32).reshape(1, 10),
+    "Nx1": np.arange(10, dtype=np.float32).reshape(10, 1),
+}
+
+
+def _degenerate_attrs(height):
+    """Explicit unit-pixel transform + CRS for a degenerate raster."""
+    return {
+        "crs": 4326,
+        # Unit pixels, origin at the (0, height) edge: x centres at
+        # 0..width-1, y centres descending height-1..0.
+        "transform": (1.0, 0.0, -0.5, 0.0, -1.0, height - 0.5),
+    }
+
+
+@_gpu_only
+@pytest.mark.parametrize("shape_id", list(_DEGENERATE_GPU_SHAPES))
+@pytest.mark.parametrize("compression", ["none", "deflate"])
+def test_write_geotiff_gpu_degenerate_round_trip(
+        tmp_path, shape_id, compression):
+    """``_write_geotiff_gpu`` round-trips 1x1 / 1xN / Nx1 rasters.
+
+    A single-pixel dimension drives the GPU tile assembly with a tile
+    smaller than the kernel's natural tile size; this pins that the
+    encode path handles the padding and emits a readable file.
+    """
+    import cupy
+
+    arr = _DEGENERATE_GPU_SHAPES[shape_id]
+    height, width = arr.shape
+    da = xr.DataArray(
+        cupy.asarray(arr),
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(height - 1, -1, -1, dtype=np.float64),
+            "x": np.arange(width, dtype=np.float64),
+        },
+        attrs=_degenerate_attrs(height),
+    )
+    path = str(tmp_path / f"gpu_degen_2984_{shape_id}_{compression}.tif")
+
+    _write_geotiff_gpu(da, path, compression=compression)
+
+    out = open_geotiff(path)
+    assert out.shape == (height, width)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+@pytest.mark.parametrize("shape_id", list(_DEGENERATE_GPU_SHAPES))
+def test_to_geotiff_dask_gpu_degenerate_round_trip(tmp_path, shape_id):
+    """``to_geotiff(gpu=True)`` over a dask+cupy DataArray round-trips
+    1x1 / 1xN / Nx1 rasters through the dask+gpu write path."""
+    import cupy
+    import dask.array as dca
+
+    arr = _DEGENERATE_GPU_SHAPES[shape_id]
+    height, width = arr.shape
+    chunked = dca.from_array(
+        cupy.asarray(arr), chunks=(max(1, height), max(1, width)))
+    da = xr.DataArray(
+        chunked,
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(height - 1, -1, -1, dtype=np.float64),
+            "x": np.arange(width, dtype=np.float64),
+        },
+        attrs=_degenerate_attrs(height),
+    )
+    path = str(tmp_path / f"dask_gpu_degen_2984_{shape_id}.tif")
+
+    to_geotiff(da, path, gpu=True, compression="none")
+
+    out = open_geotiff(path)
+    assert out.shape == (height, width)
+    np.testing.assert_array_equal(out.values, arr)
