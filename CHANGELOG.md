@@ -2,6 +2,38 @@
 -----------
 
 
+### Version 0.10.5 - 2026-06-06
+
+#### New features
+- add Kilo CLI command definitions (#3003)
+
+#### Bug fixes and improvements
+- contours: add geometry deduplication (#2790) (#3001)
+- geotiff: cover compress()/decompress() dispatcher error branches (#2995) (#2996)
+- geotiff: fail closed on malformed GDAL_METADATA XML under mask_and_scale (#2999)
+- geotiff: enforce tile_size positivity in array-level writers (#2997) (#3000)
+- geotiff: reject mixed per-band SCALE/OFFSET under mask_and_scale (#2988) (#2993)
+- geotiff: promote int to float on masked read regardless of sentinel hit (#2990) (#2994)
+- geotiff: reject malformed SCALE/OFFSET under mask_and_scale (#2992)
+- vrt: surface chunked decode-time hole gap under missing_sources='warn' (#2989) (#2991)
+- geotiff: cover GPU writer degenerate shapes (1x1/1xN/Nx1) (#2986)
+- geotiff: accumulate GPU overview mean in float64 for CPU byte parity (#2983) (#2985)
+- accessor: surface standalone docstrings on .xrs methods; fix broken hydro delegations (#2982)
+- geotiff: align direct backend mask_nodata default with open_geotiff (#2976) (#2980)
+- vrt: privatize build_vrt; route to_geotiff's VRT path through it (#2979)
+- geotiff: reject non-string compression at the to_geotiff boundary (#2975) (#2977)
+- geotiff: cover degenerate-shape reads on dask and GPU backends (#2973)
+- geotiff: fix flake8/isort style drift in tests and two source imports (#2970) (#2972)
+- vrt: stop build_vrt fabricating a GeoTransform for non-georeferenced sources (#2966) (#2971)
+- geotiff: clean up VRT staging dir on early validation failures (#2964) (#2968)
+- geotiff: write VRT index atomically via temp-then-rename (#2965) (#2967)
+- geotiff: align open_geotiff parameters with rioxarray's open_rasterio (#2961) (#2963)
+- geotiff: consolidate public API on open_geotiff / to_geotiff (#2962)
+
+#### Contributors
+- Thanks to @brendancol and @Melissari1997 for their contributions to this release.
+
+
 ### Version 0.10.4 - 2026-06-04
 
 #### Bug fixes and improvements
