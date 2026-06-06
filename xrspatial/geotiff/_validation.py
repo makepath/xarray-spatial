@@ -232,7 +232,8 @@ def _validate_dtype_cast(source_dtype, target_dtype):
             f"Cast explicitly after reading if you really want this.")
 
 
-def _validate_tile_size(tile_size) -> None:
+def _validate_tile_size(tile_size, *, require_multiple_of_16: bool = True
+                        ) -> None:
     """Validate ``tile_size`` for the tiled GeoTIFF writers.
 
     Shared by ``to_geotiff`` (when ``tiled=True``) and
@@ -246,6 +247,15 @@ def _validate_tile_size(tile_size) -> None:
     for broad interoperability with libtiff / GDAL strict readers; a
     value like 17 would otherwise round-trip through the in-repo
     reader but be rejected elsewhere.
+
+    ``require_multiple_of_16`` defaults to ``True`` for the public
+    boundary (``to_geotiff`` / ``_write_geotiff_gpu``), which enforces
+    spec interop. The array-level private writers (``_write`` /
+    ``_write_streaming``) pass ``False``: they still reject the
+    crash-inducing cases (non-int, non-positive) but allow the small
+    spec-noncompliant tile sizes that the in-repo reader round-trips
+    and that the internal tests rely on. The multiple-of-16 policy
+    stays at the public boundary (issue #2997).
     """
     if not isinstance(tile_size, (int, np.integer)) or isinstance(
             tile_size, bool):
@@ -255,7 +265,7 @@ def _validate_tile_size(tile_size) -> None:
     if tile_size <= 0:
         raise ValueError(
             f"tile_size must be a positive int, got tile_size={tile_size}.")
-    if tile_size % 16 != 0:
+    if require_multiple_of_16 and tile_size % 16 != 0:
         lower = (int(tile_size) // 16) * 16
         upper = lower + 16
         # ``lower`` is 0 for tile_size < 16; suppress it from the hint
@@ -324,14 +334,19 @@ def _validate_chunks_arg(chunks, *, allow_none=False):
         f"(type {type(chunks).__name__}).")
 
 
-def _validate_tile_size_arg(tile_size):
+def _validate_tile_size_arg(tile_size, *,
+                            require_multiple_of_16: bool = True):
     """Validate the ``tile_size`` kwarg for the tiled writer entry points.
 
     Wrapper kept for backwards internal compatibility; delegates to
     ``_validate_tile_size`` so to_geotiff/_write_geotiff_gpu share one
     validation path (positive int + multiple-of-16 for tiled output).
+    Pass ``require_multiple_of_16=False`` from the array-level private
+    writers, which enforce only the crash-inducing positivity/type rules
+    (issue #2997).
     """
-    _validate_tile_size(tile_size)
+    _validate_tile_size(
+        tile_size, require_multiple_of_16=require_multiple_of_16)
 
 
 def _validate_overview_level_arg(overview_level) -> None:

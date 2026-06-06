@@ -421,23 +421,21 @@ def _write(data: np.ndarray, path: str, *,
         entry_point="_write",
     )
 
-    # Defense in depth for the COG auto-overview hang.
-    # ``to_geotiff`` already rejects non-positive tile_size when either
-    # tiled or cog is true, but ``_write`` is a public-ish array-level
-    # entry point reached from the GPU CPU-fallback path and downstream
-    # code that imports it directly. Without the gate, a non-positive
-    # tile_size with ``cog=True`` hits ``ZeroDivisionError`` in
-    # ``_write_tiled`` (tiled=True path) or the infinite auto-overview
-    # halving loop (tiled=False path). Convert both to a typed
-    # ValueError up front so callers see one actionable failure mode
-    # instead of two divergent ones.
-    if cog and (not isinstance(tile_size, (int, np.integer))
-                or isinstance(tile_size, bool)
-                or tile_size <= 0):
-        raise ValueError(
-            f"tile_size must be a positive int for cog=True (consumed by "
-            f"tile encoding and auto-overview generation), got "
-            f"tile_size={tile_size!r}.")
+    # Push down the tile_size positivity/type contract. ``_write`` is a
+    # public-ish array-level entry point reached from the GPU
+    # CPU-fallback path and downstream code that imports it directly,
+    # so the gate has to run here. Without it a non-positive tile_size
+    # hits ``ZeroDivisionError`` in ``_write_tiled`` (tiled=True) or the
+    # auto-overview halving loop (cog=True). Validate whenever either
+    # path will consume tile_size, matching the public wrapper's
+    # ``tiled or cog`` gate. The multiple-of-16 spec rule stays at the
+    # public ``to_geotiff`` boundary: the array-level writer is the
+    # sharper tool that the in-repo reader and the internal tests use
+    # with small spec-noncompliant tiles, so pass
+    # ``require_multiple_of_16=False`` here (issue #2997).
+    if tiled or cog:
+        from ._validation import _validate_tile_size_arg
+        _validate_tile_size_arg(tile_size, require_multiple_of_16=False)
 
     # Auto-promote ``float16`` and ``bool_`` before the dtype mapper.
     # ``to_geotiff`` already does this upstream; the
@@ -761,6 +759,19 @@ def _write_streaming(dask_data, path: str, *,
         allow_unparseable_crs=allow_unparseable_crs,
         entry_point="_write_streaming",
     )
+
+    # Push down the tile_size positivity/type contract. The streaming
+    # layout block below computes ``math.ceil(width / tw)`` with
+    # ``tw = tile_size``, so ``tile_size=0`` raises a bare
+    # ``ZeroDivisionError``. ``to_geotiff`` validates this upstream, so
+    # it is a no-op on that path; the gate matters for direct callers of
+    # ``_write_streaming``. Only the tiled layout consumes tile_size (the
+    # strip path ignores it). As with ``_write``, the multiple-of-16 spec
+    # rule stays at the public boundary, so pass
+    # ``require_multiple_of_16=False`` (issue #2997).
+    if tiled:
+        from ._validation import _validate_tile_size_arg
+        _validate_tile_size_arg(tile_size, require_multiple_of_16=False)
 
     height, width = dask_data.shape[:2]
     samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
