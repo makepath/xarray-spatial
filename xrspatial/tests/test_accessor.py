@@ -1,10 +1,16 @@
 """Tests for the .xrs xarray accessors."""
 
+import inspect
+
 import numpy as np
 import pytest
 import xarray as xr
 
 import xrspatial  # noqa: F401 — triggers accessor registration
+from xrspatial.accessor import (
+    XrsSpatialDataArrayAccessor,
+    XrsSpatialDatasetAccessor,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -401,13 +407,6 @@ def test_ds_plot_without_matplotlib_raises(monkeypatch, elevation):
 # ---------------------------------------------------------------------------
 # 9. help() — standalone docstrings surfaced on accessor methods (#2981)
 # ---------------------------------------------------------------------------
-
-import inspect  # noqa: E402
-
-from xrspatial.accessor import (  # noqa: E402
-    XrsSpatialDataArrayAccessor,
-    XrsSpatialDatasetAccessor,
-)
 
 # The hydrology unified wrappers carry only this generic dispatcher stub; the
 # accessor must surface the documented *_d8 variant docs instead.

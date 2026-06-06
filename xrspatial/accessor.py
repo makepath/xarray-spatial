@@ -1373,7 +1373,8 @@ def _delegated_doc(method_name):
         return min_observable_height.__doc__
     import xrspatial
     source_name = _DOC_SOURCE_OVERRIDES.get(method_name, method_name)
-    return getattr(getattr(xrspatial, source_name, None), '__doc__', None)
+    func = getattr(xrspatial, source_name, None)
+    return func.__doc__ if func is not None else None
 
 
 def _attach_delegated_docs(cls):
@@ -1388,5 +1389,5 @@ def _attach_delegated_docs(cls):
             member.__doc__ = doc
 
 
-for _cls in (XrsSpatialDataArrayAccessor, XrsSpatialDatasetAccessor):
-    _attach_delegated_docs(_cls)
+_attach_delegated_docs(XrsSpatialDataArrayAccessor)
+_attach_delegated_docs(XrsSpatialDatasetAccessor)
