@@ -1333,3 +1333,60 @@ class XrsSpatialDatasetAccessor:
     def rechunk_no_shuffle(self, **kwargs):
         from .utils import rechunk_no_shuffle
         return rechunk_no_shuffle(self._obj, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Surface standalone-function docstrings on accessor methods so that, e.g.,
+# ``help(da.xrs.slope)`` shows the same documentation as ``help(slope)``.
+# ---------------------------------------------------------------------------
+
+# Accessor method name -> name of the standalone function (in the top-level
+# ``xrspatial`` namespace) whose docstring should be surfaced. Only needed
+# when the method name differs from the function name, or when the direct
+# delegate's docstring is a generic dispatcher: the hydrology unified wrappers
+# route by ``routing=`` and carry only a stub docstring, so their help text is
+# taken from the documented default-algorithm (``*_d8``) variants instead.
+_DOC_SOURCE_OVERRIDES = {
+    'focal_mean': 'mean',
+    'zonal_hypsometric_integral': 'hypsometric_integral',
+    'fill': 'fill_d8',
+    'flow_direction': 'flow_direction_d8',
+    'flow_accumulation': 'flow_accumulation_d8',
+    'basin': 'basin_d8',
+    'basins': 'basins_d8',
+    'watershed': 'watershed_d8',
+    'snap_pour_point': 'snap_pour_point_d8',
+    'flow_path': 'flow_path_d8',
+    'flow_length': 'flow_length_d8',
+    'sink': 'sink_d8',
+    'stream_link': 'stream_link_d8',
+    'stream_order': 'stream_order_d8',
+    'twi': 'twi_d8',
+    'hand': 'hand_d8',
+}
+
+
+def _delegated_doc(method_name):
+    """Return the docstring to surface for an accessor method, or None."""
+    if method_name == 'min_observable_height':
+        from .experimental.min_observable_height import min_observable_height
+        return min_observable_height.__doc__
+    import xrspatial
+    source_name = _DOC_SOURCE_OVERRIDES.get(method_name, method_name)
+    return getattr(getattr(xrspatial, source_name, None), '__doc__', None)
+
+
+def _attach_delegated_docs(cls):
+    for name, member in vars(cls).items():
+        if name.startswith('_') or not callable(member) or member.__doc__:
+            continue
+        try:
+            doc = _delegated_doc(name)
+        except Exception:
+            continue
+        if doc:
+            member.__doc__ = doc
+
+
+for _cls in (XrsSpatialDataArrayAccessor, XrsSpatialDatasetAccessor):
+    _attach_delegated_docs(_cls)
