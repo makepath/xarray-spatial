@@ -563,6 +563,104 @@ class TestStreamingBufferBudget:
         result = open_geotiff(path).values
         np.testing.assert_array_almost_equal(result, arr, decimal=10)
 
+    def test_overlap_source_respects_buffer_3007(self, tmp_path, monkeypatch):
+        """A map_overlap source must not pull far more than the buffer.
+
+        Slicing one tile-row out of a ``slope`` (map_overlap, depth 1)
+        result materialises every source chunk-row the band touches plus
+        a one-chunk halo. When the source chunks are taller than the tile
+        the old budget -- sized from the output tile height -- left the
+        whole tile-row in a single segment and the compute pulled several
+        times the buffer. Bound peak source bytes per compute (#3007).
+        """
+        import dask.array as da
+
+        from xrspatial import slope
+
+        height, width, chunk = 1024, 8192, 512  # chunks taller than tile=256
+        base = da.random.random(
+            (height, width), chunks=(chunk, chunk)).astype('float32')
+
+        materialized = []  # bytes of each source chunk as dask pulls it
+
+        def _record(block):
+            materialized.append(block.nbytes)
+            return block
+
+        base = base.map_blocks(_record, dtype='float32')
+        y = np.linspace(40.0, 39.0, height)
+        x = np.linspace(-105.0, -104.0, width)
+        lazy = slope(xr.DataArray(base, dims=['y', 'x'],
+                                  coords={'y': y, 'x': x}))
+
+        peak = {'bytes': 0}
+        orig_compute = da.Array.compute
+
+        def spy_compute(self, *args, **kwargs):
+            before = sum(materialized)
+            result = orig_compute(self, *args, **kwargs)
+            peak['bytes'] = max(peak['bytes'], sum(materialized) - before)
+            return result
+
+        monkeypatch.setattr(da.Array, 'compute', spy_compute)
+
+        buf = 8 * 1024 * 1024  # 8 MB
+        path = str(tmp_path / 'overlap_budget_3007.tif')
+        to_geotiff(lazy, path, compression='zstd',
+                   streaming_buffer_bytes=buf)
+
+        # streaming_buffer_bytes is a soft cap; the column halo of the 2D
+        # overlap adds a bounded couple of source chunk-columns on top of
+        # the row budget. Allow 2x slack. The unfixed writer pulled ~4x
+        # (one full-width 2-chunk-row band == 32 MB) and trips this.
+        assert peak['bytes'] <= 2 * buf, (
+            f"peak source bytes {peak['bytes']} exceeded 2x buffer {buf}")
+
+    def test_overlap_source_roundtrip_small_buffer_3007(self, tmp_path):
+        """slope() of a tall-chunk wide raster round-trips under a tight cap.
+
+        Exercises the source-aware segmentation end to end: the lazy
+        slope written with a small buffer must match the eager slope
+        (#3007).
+        """
+        import dask.array as da
+
+        from xrspatial import slope
+
+        height, width, chunk = 768, 4096, 512
+        rng = np.random.default_rng(3007)
+        npdata = rng.random((height, width)).astype('float32')
+        y = np.linspace(40.0, 39.0, height)
+        x = np.linspace(-105.0, -104.0, width)
+
+        eager = slope(xr.DataArray(npdata, dims=['y', 'x'],
+                                   coords={'y': y, 'x': x}))
+        base = da.from_array(npdata, chunks=(chunk, chunk))
+        lazy = slope(xr.DataArray(base, dims=['y', 'x'],
+                                  coords={'y': y, 'x': x}))
+
+        path = str(tmp_path / 'overlap_roundtrip_3007.tif')
+        to_geotiff(lazy, path, compression='zstd',
+                   streaming_buffer_bytes=4 * 1024 * 1024)
+
+        back = open_geotiff(path).values
+        np.testing.assert_allclose(back, eager.values,
+                                   rtol=1e-5, atol=1e-5, equal_nan=True)
+
+
+def test_max_streaming_row_span_3007():
+    """The row-span helper accounts for the source chunk grid + halo."""
+    from xrspatial.geotiff._writer import _max_streaming_row_span
+
+    # A 256-tall band landing in a 512-tall chunk pulls the neighbour
+    # chunk-row too -> 1024 source rows.
+    assert _max_streaming_row_span((512, 512), 256, 1024) == 1024
+    # Uniform 256 chunks: a middle band touches three chunk-rows (its own
+    # plus one halo each side).
+    assert _max_streaming_row_span((256, 256, 256, 256), 256, 1024) == 768
+    # A single chunk-row spanning the whole height has no neighbour.
+    assert _max_streaming_row_span((256,), 256, 256) == 256
+
 
 # -------------------------------------------------------------------------
 # Section: parallel per-tile streaming compress (P4)
