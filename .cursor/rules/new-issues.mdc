@@ -1,6 +1,6 @@
 ---
 description: "Audit the README feature matrix, identify gaps, and file GitHub issues for the best candidates"
-globs: "README.md"
+alwaysApply: true
 ---
 
 # New Issues: Feature Gap Analysis and Issue Creation

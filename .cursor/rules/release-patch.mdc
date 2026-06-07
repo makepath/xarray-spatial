@@ -1,6 +1,6 @@
 ---
 description: "Cut a patch version release (X.Y.Z+1). Follow every step in order."
-globs: ""
+alwaysApply: true
 ---
 
 # Release Patch: Execute Patch Release Workflow

@@ -20,10 +20,10 @@ Take a prompt describing an enhancement, bug, or suggestion and drive it through
 The main checkout MUST remain on `main`. All implementation happens inside a dedicated worktree.
 
 ```bash
-git worktree add .kilo/worktrees/issue-<NUMBER> -b issue-<NUMBER>
+git worktree add .worktrees/issue-<NUMBER> -b issue-<NUMBER>
 ```
 
-Verify isolation: worktree path ends in `.kilo/worktrees/issue-<NUMBER>`, branch is `issue-<NUMBER>`, main checkout is still on `main`.
+Verify isolation: worktree path ends in `.worktrees/issue-<NUMBER>`, branch is `issue-<NUMBER>`, main checkout is still on `main`.
 
 ## Step 3 -- Implement the Change
 

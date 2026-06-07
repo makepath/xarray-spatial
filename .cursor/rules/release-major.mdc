@@ -1,6 +1,6 @@
 ---
 description: "Cut a major version release (X.0.0). Follow every step in order."
-globs: ""
+alwaysApply: true
 ---
 
 # Release Major: Execute Major Release Workflow

@@ -1,6 +1,6 @@
 ---
 description: "Cut a minor version release (X.Y.0). Follow every step in order."
-globs: ""
+alwaysApply: true
 ---
 
 # Release Minor: Execute Minor Release Workflow

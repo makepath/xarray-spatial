@@ -1,6 +1,6 @@
 ---
 description: "Scan open pull requests and report the ones that are ready to merge"
-globs: "*.py"
+alwaysApply: true
 ---
 
 # Ready to Merge: Surface PRs Safe to Merge

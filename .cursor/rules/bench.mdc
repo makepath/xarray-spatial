@@ -1,6 +1,6 @@
 ---
 description: "Run ASV benchmarks for the current branch against main and report regressions and improvements"
-globs: "*.py"
+globs: "benchmarks/**/*.py"
 ---
 
 # Bench: Local Performance Comparison
