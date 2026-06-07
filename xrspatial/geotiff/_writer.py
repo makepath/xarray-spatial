@@ -1068,8 +1068,11 @@ def _write_streaming(dask_data, path: str, *,
                 # the budget from that row span so a tall-chunk wide raster
                 # cannot blow past streaming_buffer_bytes (#3007). The column
                 # halo adds a bounded couple of source chunk-columns on top;
-                # streaming_buffer_bytes stays a soft cap. Falls back to the
-                # tile height for numpy-from-dask or unknown-chunk arrays.
+                # streaming_buffer_bytes stays a soft cap. A non-overlap read
+                # carries no halo, so this is intentionally conservative for
+                # it -- it may segment one step early, which only costs an
+                # extra compute call near the cap. Falls back to the tile
+                # height for numpy-from-dask or unknown-chunk arrays.
                 materialized_h = th
                 row_chunks = getattr(dask_data, 'chunks', None)
                 if row_chunks:
