@@ -361,6 +361,35 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="Invalid return_type"):
             contours(agg, levels=[0.5], return_type="bad")
 
+    @dask_array_available
+    def test_invalid_return_type_no_dask_compute(self, monkeypatch):
+        """An invalid return_type on a Dask input must raise before any
+        compute, nanmin/nanmax, or backend dispatch (#2788).
+        """
+        import dask
+        import dask.array as da
+
+        data = _make_ramp(ny=5, nx=6)
+        agg = create_test_raster(data, backend='dask+numpy', chunks=(3, 3))
+
+        # Wrap dask compute to detect if it is ever called.
+        compute_called = False
+        _original_compute = dask.compute
+
+        def spy_compute(*args, **kwargs):
+            nonlocal compute_called
+            compute_called = True
+            return _original_compute(*args, **kwargs)
+
+        monkeypatch.setattr(dask, 'compute', spy_compute)
+
+        with pytest.raises(ValueError, match="Invalid return_type"):
+            contours(agg, levels=[2.5], return_type="bogus")
+
+        assert not compute_called, (
+            "dask.compute was called before the invalid return_type raise"
+        )
+
     def test_valid_return_types_accepted(self):
         """The two valid return_type values still work."""
         data = _make_ramp(ny=5, nx=6)

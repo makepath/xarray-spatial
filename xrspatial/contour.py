@@ -791,13 +791,4 @@ def contours(
 
     if return_type == "numpy":
         return results
-    elif return_type == "geopandas":
-        crs = _detect_raster_crs(agg)
-        return _to_geopandas(results, crs=crs)
-    else:
-        # Unreachable: return_type is validated at the top of the function.
-        # Kept as a defensive guard.
-        raise ValueError(
-            f"Invalid return_type '{return_type}'. "
-            "Allowed values are 'numpy' and 'geopandas'."
-        )
+    return _to_geopandas(results, crs=_detect_raster_crs(agg))
