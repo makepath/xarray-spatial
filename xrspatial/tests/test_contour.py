@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pytest
 import xarray as xr
@@ -122,7 +123,6 @@ class TestNaNHandling:
 
     def test_all_nan_auto_levels_no_warning(self):
         """All-NaN raster with auto levels must not emit RuntimeWarning (#2795)."""
-        import warnings
         data = np.full((4, 4), np.nan, dtype=np.float64)
         agg = create_test_raster(data, backend='numpy')
         with warnings.catch_warnings(record=True) as w:
@@ -138,7 +138,6 @@ class TestNaNHandling:
     @dask_array_available
     def test_all_nan_auto_levels_no_warning_dask(self):
         """All-NaN dask raster with auto levels must not emit RuntimeWarning (#2795)."""
-        import warnings
         data = np.full((4, 4), np.nan, dtype=np.float64)
         agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
         with warnings.catch_warnings(record=True) as w:
@@ -154,7 +153,6 @@ class TestNaNHandling:
     @cuda_and_cupy_available
     def test_all_nan_auto_levels_no_warning_cupy(self):
         """All-NaN cupy raster with auto levels must not emit RuntimeWarning (#2795)."""
-        import warnings
         data = np.full((4, 4), np.nan, dtype=np.float64)
         agg = create_test_raster(data, backend='cupy')
         with warnings.catch_warnings(record=True) as w:
@@ -171,7 +169,6 @@ class TestNaNHandling:
     @cuda_and_cupy_available
     def test_all_nan_auto_levels_no_warning_dask_cupy(self):
         """All-NaN dask+cupy raster with auto levels must not emit RuntimeWarning (#2795)."""
-        import warnings
         data = np.full((4, 4), np.nan, dtype=np.float64)
         agg = create_test_raster(data, backend='dask+cupy', chunks=(2, 2))
         with warnings.catch_warnings(record=True) as w:
