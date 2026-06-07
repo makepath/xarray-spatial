@@ -1463,14 +1463,17 @@ def test_http_chunked_open_rejects_overview_past_sidecar(
 
 
 # ---------------------------------------------------------------------------
-# Defensive: ``discover_remote_sidecar`` swallows ``load_sidecar``
-# failures (parse error, garbage bytes, transient network) and returns
-# the unchanged base IFD list with ``sidecar=None``. The
-# ``CloudSizeLimitError`` budget breach is the one exception that
-# re-raises so a caller-set ceiling stays observable.
+# Defensive: ``discover_remote_sidecar`` routes ``load_sidecar``
+# failures (parse error, garbage bytes, transient network) through the
+# shared ``handle_sidecar_parse_failure`` policy that the eager
+# local/fsspec readers use. A malformed sidecar warns and falls back to
+# the unchanged base IFD list with ``sidecar=None``; an explicit
+# ``overview_level`` only the sidecar could serve re-raises the parse
+# error. The ``CloudSizeLimitError`` budget breach still re-raises so a
+# caller-set ceiling stays observable. Issue #3022.
 # ---------------------------------------------------------------------------
 def test_discover_remote_sidecar_falls_back_when_load_fails(monkeypatch):
-    """A probe that succeeds but a load that raises returns base-only."""
+    """A probe that succeeds but a load that raises warns and returns base-only."""
     from xrspatial.geotiff import _sidecar
     from xrspatial.geotiff._sidecar import discover_remote_sidecar
 
@@ -1484,12 +1487,38 @@ def test_discover_remote_sidecar_falls_back_when_load_fails(monkeypatch):
     monkeypatch.setattr(_sidecar, "load_sidecar", _exploding_load)
 
     sentinel_ifds = [object(), object()]
-    merged, sidecar, sidecar_ifd_ids = discover_remote_sidecar(
-        "http://example/x.tif", sentinel_ifds,
-    )
+    with pytest.warns(RuntimeWarning, match="x.tif.ovr"):
+        merged, sidecar, sidecar_ifd_ids = discover_remote_sidecar(
+            "http://example/x.tif", sentinel_ifds,
+        )
     assert merged == list(sentinel_ifds)
     assert sidecar is None
     assert sidecar_ifd_ids == set()
+
+
+def test_discover_remote_sidecar_surfaces_parse_error_for_sidecar_level(
+        monkeypatch):
+    """An explicit overview_level the base file can't serve re-raises the cause."""
+    from xrspatial.geotiff import _sidecar
+    from xrspatial.geotiff._sidecar import discover_remote_sidecar
+
+    monkeypatch.setattr(
+        _sidecar, "find_sidecar", lambda _src: "http://example/x.tif.ovr"
+    )
+
+    def _exploding_load(_path, **_kw):
+        raise RuntimeError("sidecar bytes did not parse")
+
+    monkeypatch.setattr(_sidecar, "load_sidecar", _exploding_load)
+
+    # Base file has a single IFD (level 0); level 1 can only come from the
+    # sidecar, so the parse failure must surface rather than degrade.
+    with pytest.raises(ValueError, match="x.tif.ovr") as excinfo:
+        discover_remote_sidecar(
+            "http://example/x.tif", [object()], overview_level=1,
+        )
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "did not parse" in str(excinfo.value.__cause__)
 
 
 def test_discover_remote_sidecar_propagates_cloud_size_limit(monkeypatch):

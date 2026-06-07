@@ -236,7 +236,8 @@ def _parse_cog_http_meta(
     if source_path is not None:
         from ._sidecar import discover_remote_sidecar
         ifds, sidecar, sidecar_ifd_ids = discover_remote_sidecar(
-            source_path, ifds, max_cloud_bytes=max_cloud_bytes,
+            source_path, ifds, overview_level=overview_level,
+            max_cloud_bytes=max_cloud_bytes,
         )
 
     ifd = select_overview_ifd(ifds, overview_level)
