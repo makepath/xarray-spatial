@@ -1852,3 +1852,137 @@ def test_parse_cog_http_meta_returns_sidecar_header(tmp_path, monkeypatch,
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# ---------------------------------------------------------------------------
+# Section: sidecar_geokeys_remote
+#
+# Remote analog of ``test_sidecar_with_own_geokeys_wins_eager`` (issue
+# #3023). The local eager / metadata readers thread a ``sidecar_origin``
+# mapping into ``extract_geo_info_with_overview_inheritance``; the
+# HTTP / fsspec path in ``_cog_http.py`` now threads the same mapping so
+# the two surfaces stay symmetric. These tests pin the observable
+# contract on every remote read path: when the selected overview IFD
+# lives in a sidecar that declares its own GeoKeys, the sidecar's
+# transform and CRS win over the base file's. ``_write_pair`` builds a
+# base + geokey-bearing sidecar whose georef differs from the base.
+# ---------------------------------------------------------------------------
+_GEOKEY_BASE_GEO_3023 = dict(origin_x=100.0, origin_y=200.0,
+                             pixel_w=10.0, pixel_h=-10.0, epsg=4326)
+_GEOKEY_SIDE_GEO_3023 = dict(origin_x=500.0, origin_y=800.0,
+                             pixel_w=2.5, pixel_h=-2.5, epsg=3857)
+
+
+def _assert_sidecar_geokeys_won_3023(da):
+    """Sidecar georef (transform + CRS) wins over the base file's."""
+    t = da.attrs["transform"]
+    assert t[0] == pytest.approx(2.5)
+    assert t[2] == pytest.approx(500.0)
+    assert t[4] == pytest.approx(-2.5)
+    assert t[5] == pytest.approx(800.0)
+    assert da.attrs.get("crs") == 3857
+
+
+@requires_loopback
+def test_http_eager_sidecar_with_own_geokeys_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+    base_path, sidecar_path = _write_pair(
+        tmp_path, base_geo=_GEOKEY_BASE_GEO_3023,
+        sidecar_geo=_GEOKEY_SIDE_GEO_3023, sidecar_has_geokeys=True)
+    payloads = {
+        "/x.tif": base_path.read_bytes(),
+        "/x.tif.ovr": sidecar_path.read_bytes(),
+    }
+    httpd, port = _start_range_http_server_2314(payloads)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif"
+        da = open_geotiff(url, overview_level=1)
+        _assert_sidecar_geokeys_won_3023(da)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@requires_loopback
+def test_http_chunked_sidecar_with_own_geokeys_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+    base_path, sidecar_path = _write_pair(
+        tmp_path, base_geo=_GEOKEY_BASE_GEO_3023,
+        sidecar_geo=_GEOKEY_SIDE_GEO_3023, sidecar_has_geokeys=True)
+    payloads = {
+        "/x.tif": base_path.read_bytes(),
+        "/x.tif.ovr": sidecar_path.read_bytes(),
+    }
+    httpd, port = _start_range_http_server_2314(payloads)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif"
+        # ``chunks`` drives the dask metadata path through
+        # ``_parse_cog_http_meta``; its ``geo_info`` is what coords are
+        # built from, so a wrong byte source surfaces in the attrs here.
+        da = open_geotiff(url, overview_level=1, chunks=16)
+        _assert_sidecar_geokeys_won_3023(da)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_fsspec_chunked_sidecar_with_own_geokeys_wins(tmp_path):
+    fsspec = pytest.importorskip("fsspec")
+    base_path, sidecar_path = _write_pair(
+        tmp_path, base_geo=_GEOKEY_BASE_GEO_3023,
+        sidecar_geo=_GEOKEY_SIDE_GEO_3023, sidecar_has_geokeys=True)
+    fs = fsspec.filesystem("memory")
+    # memory:// is process-global; collide-proof the key.
+    key = f"issue3023-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    base_uri = f"memory://{key}/x.tif"
+    side_uri = base_uri + ".ovr"
+    fs.pipe_file(base_uri.replace("memory://", ""), base_path.read_bytes())
+    fs.pipe_file(side_uri.replace("memory://", ""), sidecar_path.read_bytes())
+    try:
+        da = open_geotiff(base_uri, overview_level=1, chunks=16)
+        _assert_sidecar_geokeys_won_3023(da)
+    finally:
+        for p in (base_uri, side_uri):
+            try:
+                fs.rm_file(p.replace("memory://", ""))
+            except Exception:
+                pass
+
+
+@requires_loopback
+def test_parse_cog_http_meta_geo_info_honours_sidecar_geokeys(
+        tmp_path, monkeypatch):
+    """``_parse_cog_http_meta`` returns sidecar-derived geo_info directly."""
+    monkeypatch.setenv("XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS", "1")
+    from xrspatial.geotiff._cog_http import _parse_cog_http_meta
+    from xrspatial.geotiff._reader import _HTTPSource
+    from xrspatial.geotiff._sidecar import close_sidecar
+    base_path, sidecar_path = _write_pair(
+        tmp_path, base_geo=_GEOKEY_BASE_GEO_3023,
+        sidecar_geo=_GEOKEY_SIDE_GEO_3023, sidecar_has_geokeys=True)
+    payloads = {
+        "/x.tif": base_path.read_bytes(),
+        "/x.tif.ovr": sidecar_path.read_bytes(),
+    }
+    httpd, port = _start_range_http_server_2314(payloads)
+    try:
+        url = f"http://127.0.0.1:{port}/x.tif"
+        src = _HTTPSource(url)
+        try:
+            _, _, geo_info, _, sidecar_meta = _parse_cog_http_meta(
+                src, overview_level=1, source_path=url, return_sidecar=True)
+        finally:
+            src.close()
+        sidecar, _, used = sidecar_meta
+        try:
+            assert used is True
+            assert geo_info.transform.origin_x == pytest.approx(500.0)
+            assert geo_info.transform.origin_y == pytest.approx(800.0)
+            assert geo_info.transform.pixel_width == pytest.approx(2.5)
+            assert geo_info.transform.pixel_height == pytest.approx(-2.5)
+            assert geo_info.crs_epsg == 3857
+        finally:
+            close_sidecar(sidecar)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

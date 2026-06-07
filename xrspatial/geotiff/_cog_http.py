@@ -250,15 +250,25 @@ def _parse_cog_http_meta(
     # typically carry no out-of-line geokeys and inherit from level-0
     # (which sits in the base buffer).
     #
-    # The ``sidecar_origin`` kwarg used by the eager local / fsspec
-    # paths is intentionally not threaded here; the HTTP / dask
-    # sidecar-byte-order case is handled separately. When that lands,
-    # this call should pick up the same mapping so an HTTP sidecar with
-    # its own geokeys is parsed against the sidecar bytes too.
+    # Map the sidecar's IFDs to their own (bytes, byte_order) so a
+    # sidecar that declares its own geokeys is parsed against the
+    # sidecar bytes, not the base file's. Sidecar IFDs without geokeys
+    # still inherit from the base level-0 via the overview path. This
+    # mirrors the ``georef_origin`` mapping the eager local / fsspec
+    # reader builds in ``_reader.py``; without it a big-endian ``.ovr``
+    # with its own georef (or any sidecar whose byte order differs from
+    # the base file) is read with the wrong byte source and returns
+    # corrupt georeferencing.
+    georef_origin = (
+        {id(sc_ifd): (sidecar.data, sidecar.header.byte_order)
+         for sc_ifd in sidecar.ifds}
+        if sidecar is not None else None
+    )
     geo_info = extract_geo_info_with_overview_inheritance(
         ifd, ifds, header_bytes, header.byte_order,
         allow_rotated=allow_rotated,
-        allow_invalid_nodata=allow_invalid_nodata)
+        allow_invalid_nodata=allow_invalid_nodata,
+        sidecar_origin=georef_origin)
     # When the chosen IFD lives in the sidecar, return the sidecar's own
     # ``TIFFHeader`` so the per-chunk / eager decode step sees the byte
     # order of the file the bytes actually came from. A big-endian
