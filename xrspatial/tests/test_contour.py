@@ -529,6 +529,73 @@ class TestBackendEquivalence:
 
 
 # ---------------------------------------------------------------------------
+# Integer dtype: NaN halo regression (issue #3020)
+# ---------------------------------------------------------------------------
+
+class TestIntegerDtypeCollar:
+    """boundary=np.nan can't fill an integer halo, so dask used to leave a
+    border collar that numpy never produced.  These guard the float cast in
+    _overlap_for_contours.
+    """
+
+    def _collect_segments(self, results):
+        return TestBackendEquivalence._collect_segments(self, results)
+
+    def _int_ramp(self, ny=20, nx=20):
+        # Edge columns straddle the levels, so any phantom halo crossing
+        # shows up as a frame around the raster.
+        return np.tile(np.arange(nx), (ny, 1)).astype(np.int32)
+
+    @dask_array_available
+    def test_int_dask_equals_numpy(self):
+        data = self._int_ramp()
+        levels = [5.0, 10.0, 15.0]
+        np_agg = create_test_raster(data, backend='numpy')
+        dk_agg = create_test_raster(data, backend='dask+numpy', chunks=(7, 7))
+
+        np_segs = self._collect_segments(contours(np_agg, levels=levels))
+        dk_segs = self._collect_segments(contours(dk_agg, levels=levels))
+
+        assert set(np_segs.keys()) == set(dk_segs.keys())
+        for lvl in np_segs:
+            assert np_segs[lvl] == dk_segs[lvl], (
+                f"Integer dask result diverges from numpy at level {lvl}")
+
+    @dask_array_available
+    def test_int_dask_no_border_collar(self):
+        # A vertical ramp at these levels is a set of straight vertical lines.
+        # A collar would push the bounding box out to the raster edges and
+        # inflate the total length.
+        pytest.importorskip("geopandas")
+        data = self._int_ramp()
+        levels = [5.0, 10.0, 15.0]
+        np_agg = create_test_raster(data, backend='numpy')
+        dk_agg = create_test_raster(data, backend='dask+numpy', chunks=(7, 7))
+
+        g_np = contours(np_agg, levels=levels, return_type='geopandas')
+        g_dk = contours(dk_agg, levels=levels, return_type='geopandas')
+
+        assert g_dk.length.sum() == pytest.approx(g_np.length.sum())
+        np.testing.assert_allclose(g_dk.total_bounds, g_np.total_bounds)
+
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_int_dask_cupy_equals_numpy(self):
+        data = self._int_ramp()
+        levels = [5.0, 10.0, 15.0]
+        np_agg = create_test_raster(data, backend='numpy')
+        dc_agg = create_test_raster(data, backend='dask+cupy', chunks=(7, 7))
+
+        np_segs = self._collect_segments(contours(np_agg, levels=levels))
+        dc_segs = self._collect_segments(contours(dc_agg, levels=levels))
+
+        assert set(np_segs.keys()) == set(dc_segs.keys())
+        for lvl in np_segs:
+            assert np_segs[lvl] == dc_segs[lvl], (
+                f"Integer dask+cupy result diverges from numpy at level {lvl}")
+
+
+# ---------------------------------------------------------------------------
 # Return type: GeoDataFrame
 # ---------------------------------------------------------------------------
 
