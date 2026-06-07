@@ -99,10 +99,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     codec and options).
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
-    at a time, without materialising the full array into RAM.  Peak
-    memory is roughly ``tile_size * width * bytes_per_sample``.  COG
-    output (``cog=True``) still materialises because overviews need the
-    full array.
+    at a time, without materialising the full array into RAM. The
+    per-compute budget is sized from the source chunk geometry, so a
+    ``map_overlap`` source (e.g. ``slope`` / ``aspect``) chunked taller
+    than the tile stays within ``streaming_buffer_bytes`` instead of
+    pulling several source chunk-rows at once (#3007). COG output
+    (``cog=True``) still materialises because overviews need the full
+    array.
 
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
