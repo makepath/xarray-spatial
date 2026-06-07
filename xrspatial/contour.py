@@ -400,6 +400,21 @@ def _contours_cupy(data, levels):
     return _contours_numpy(cpu_data, levels)
 
 
+def _overlap_for_contours(data):
+    """Add a NaN 1-cell halo to a dask array for marching squares.
+
+    ``boundary=np.nan`` only produces real NaN on float dtypes.  On an
+    integer array NaN can't be stored, so dask fills the halo with the
+    integer minimum, which ``np.isfinite`` accepts.  Those phantom cells
+    then emit spurious crossings that stitch into a border collar (see
+    issue #3020).  Cast non-float input to float64 first so the halo is
+    real NaN, matching the numpy backend which casts in ``_contours_numpy``.
+    """
+    if data.dtype.kind != 'f':
+        data = data.astype(np.float64)
+    return da.overlap.overlap(data, depth={0: 1, 1: 1}, boundary=np.nan)
+
+
 def _contours_dask(data, levels):
     """Dask backend: process each chunk with 1-cell overlap, then merge.
 
@@ -410,7 +425,7 @@ def _contours_dask(data, levels):
     if da is None:
         raise ImportError("Dask is required for chunked contour extraction")
 
-    padded = da.overlap.overlap(data, depth={0: 1, 1: 1}, boundary=np.nan)
+    padded = _overlap_for_contours(data)
     orig_row_chunks = data.chunks[0]
     orig_col_chunks = data.chunks[1]
     padded_blocks = padded.to_delayed()
@@ -445,7 +460,7 @@ def _contours_dask_cupy(data, levels):
     if da is None:
         raise ImportError("Dask is required for chunked contour extraction")
 
-    padded = da.overlap.overlap(data, depth={0: 1, 1: 1}, boundary=np.nan)
+    padded = _overlap_for_contours(data)
     orig_row_chunks = data.chunks[0]
     orig_col_chunks = data.chunks[1]
     padded_blocks = padded.to_delayed()
