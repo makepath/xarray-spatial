@@ -1,0 +1,52 @@
+---
+description: "Create a new xarray-spatial user guide notebook or refactor an existing one into the established structure"
+globs: "*.ipynb"
+---
+
+# User Guide Notebook: Create or Refactor
+
+Create a new xarray-spatial user guide notebook, or refactor an existing one.
+
+## Notebook structure
+
+Every user guide notebook follows this cell sequence:
+1. Title + subtitle (h1: "Xarray-Spatial {module}: {tools}")
+2. "What you'll build" section with preview image and nav links
+3. Imports (numpy, pandas, xarray, matplotlib, xrspatial)
+4. Data section (generate or load data once, reused everywhere)
+5. Individual analysis sections (markdown intro + code cell + optional result description + optional GIS alert box)
+6. References section with real URLs
+
+## Code conventions
+
+- Use `xr.DataArray.plot.imshow()` for everything. No raw `ax.imshow(data.values)`.
+- Overlay pattern: base layer + overlay with alpha, legend via matplotlib.patches.Patch.
+- Standard figure size: figsize=(10, 7.5).
+- Never pair red and green. Use orange/blue, orange/purple, or red/blue.
+- For risk/heat maps: use `inferno` colormap.
+- Generate or load data exactly once. Reuse the same array.
+- Use `xarray.where()` for filtering/masking.
+
+## GIS alert boxes
+
+After each section, evaluate whether it needs a GIS caveat. Use Jupyter's built-in alert styling:
+- alert-warning (yellow): caveats, gotchas
+- alert-info (blue): tips, suggestions
+- alert-danger (red): things that will silently give wrong results
+
+Common topics: map projection, 2D vs 3D distance, resolution and units, edge effects, coordinate order.
+
+## File organization
+
+- Preview images go in `examples/user_guide/images/`.
+- One notebook per topic. Self-contained: own imports, own data generation.
+
+## Refactoring checklist
+
+1. Replace any `ax.imshow(data.values, ...)` with `data.plot.imshow(ax=ax, ...)`.
+2. Consolidate data generation to a single call.
+3. Add legends to all overlay plots.
+4. Fix any red/green color pairings.
+5. Add GIS alert boxes for relevant caveats.
+6. Restructure cells to match the section pattern.
+7. Verify the notebook executes: `jupyter nbconvert --execute`.

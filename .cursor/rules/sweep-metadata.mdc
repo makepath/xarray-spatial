@@ -1,0 +1,34 @@
+---
+description: "Audit xrspatial modules for metadata propagation bugs: attrs, coords, dim names, dtype, nodata"
+globs: "*.py"
+---
+
+# Sweep Metadata: Metadata Propagation Audit
+
+Audit xrspatial modules for metadata propagation bugs. Spatial libs lose CRS/transform silently and the result looks correct but is wrong.
+
+## Categories to audit
+
+1. **attrs preservation**: result DataArray having empty attrs when input had attrs, silently dropping res/crs/transform/nodatavals, reading attrs for math but not re-emitting on output, attrs propagated for eager path but lost on dask path.
+
+2. **coords preservation**: result having integer-index coords when input had georeferenced coords, coordinate values stale by half-a-pixel after resampling, coord dtype changing silently, extra coords from input dropped on output.
+
+3. **dim names and order**: output dim order differing from input without documentation, output having fewer/more dims than input, function assuming hardcoded dim names and mis-aligning with alternative names, dask backend preserving dims while numpy does not.
+
+4. **dtype and nodata semantics**: reading nodatavals for input mask but not propagating to output, output dtype hardcoded to float64 when input was uint8, NaN used as nodata sentinel but output dtype is integer, _FillValue attr present on input but not on output.
+
+5. **backend-inconsistent metadata**: numpy and cupy backends emitting attrs differently, dask path metadata computed from chunk-local stats not global stats, only one of four backends preserving attrs, result name inconsistent across backends.
+
+## Process
+
+1. Read the module files, utils.py, and general_checks.py.
+2. Audit for the 5 categories. Only flag issues actually present.
+3. For each issue, assign severity and note exact file:line.
+4. If any CRITICAL, HIGH, or MEDIUM issue found, fix it end-to-end.
+5. Update the state CSV file.
+
+## General rules
+
+- Only flag real metadata propagation issues.
+- Verify by reading the function end-to-end: does input attrs/coords/dims get propagated to returned DataArray?
+- Check ALL backends, not just numpy.
