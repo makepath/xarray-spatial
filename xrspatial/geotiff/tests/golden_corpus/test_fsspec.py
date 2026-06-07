@@ -84,13 +84,7 @@ _FSSPEC_SKIPS: dict[str, str] = {}
 # xrspatial reader. The base-IFD parity check still runs; the
 # overview-level loop driven by ``candidate_factory`` is skipped for
 # these ids. See the eager module for the rationale.
-_OVERVIEW_READER_GAPS: dict[str, str] = {
-    "overview_external_ovr_uint16": (
-        "External .ovr sidecar reader is not implemented in xrspatial. "
-        "The base IFD still parity-checks; the overview levels live in "
-        "a sibling .tif.ovr that the reader does not open."
-    ),
-}
+_OVERVIEW_READER_GAPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
@@ -202,6 +196,18 @@ def test_fsspec_parity(manifest_entry: dict, memory_fs_clean) -> None:
     with open(path, "rb") as f:
         payload = f.read()
     url = _serve_via_memory(payload, fixture_id)
+
+    # When the fixture ships a sibling ``.tif.ovr`` sidecar, push it
+    # into the memory filesystem under the matching URL so the reader's
+    # fsspec sidecar discovery (``_probe_fsspec`` -> ``load_sidecar``)
+    # can resolve the external overview levels. Without this the memory
+    # filesystem holds only the base ``.tif`` and ``overview_level>=1``
+    # fails as out of range, which is a test-harness gap rather than a
+    # reader limitation.
+    sidecar_path = path.parent / f"{path.name}.ovr"
+    if sidecar_path.exists():
+        with open(sidecar_path, "rb") as f:
+            memory_fs_clean.pipe(f"/corpus/{fixture_id}.tif.ovr", f.read())
 
     candidate = open_geotiff(url, **_OPTIN)
     # When the fixture carries pyramid overviews, hand the oracle a
