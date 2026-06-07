@@ -84,13 +84,7 @@ _FSSPEC_SKIPS: dict[str, str] = {}
 # xrspatial reader. The base-IFD parity check still runs; the
 # overview-level loop driven by ``candidate_factory`` is skipped for
 # these ids. See the eager module for the rationale.
-_OVERVIEW_READER_GAPS: dict[str, str] = {
-    "overview_external_ovr_uint16": (
-        "External .ovr sidecar reader is not implemented in xrspatial. "
-        "The base IFD still parity-checks; the overview levels live in "
-        "a sibling .tif.ovr that the reader does not open."
-    ),
-}
+_OVERVIEW_READER_GAPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (
@@ -152,6 +146,13 @@ def _serve_via_memory(payload: bytes, fixture_id: str) -> str:
     Returns the ``memory:///corpus/<fixture_id>.tif`` URL the reader
     should open. The three-slash form is required: ``memory://`` writes
     must use a path beginning with ``/`` or fsspec rejects them.
+
+    When the fixture ships a sibling ``.tif.ovr`` sidecar on disk, push
+    it under the matching ``.tif.ovr`` URL so the reader's fsspec
+    sidecar discovery (``_probe_fsspec`` -> ``load_sidecar``) can resolve
+    the external overview levels. Without it the memory filesystem holds
+    only the base ``.tif`` and ``overview_level>=1`` fails as out of
+    range, which is a test-harness gap rather than a reader limitation.
     """
     fs = fsspec.filesystem("memory")
     url = f"memory:///corpus/{fixture_id}.tif"
@@ -159,6 +160,9 @@ def _serve_via_memory(payload: bytes, fixture_id: str) -> str:
     # filesystems; ``test_cloud_read_byte_limit_1928.py`` uses the
     # same pattern.
     fs.pipe(f"/corpus/{fixture_id}.tif", payload)
+    sidecar_path = FIXTURES_DIR / f"{fixture_id}.tif.ovr"
+    if sidecar_path.exists():
+        fs.pipe(f"/corpus/{fixture_id}.tif.ovr", sidecar_path.read_bytes())
     return url
 
 
