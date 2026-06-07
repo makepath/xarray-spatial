@@ -146,6 +146,13 @@ def _serve_via_memory(payload: bytes, fixture_id: str) -> str:
     Returns the ``memory:///corpus/<fixture_id>.tif`` URL the reader
     should open. The three-slash form is required: ``memory://`` writes
     must use a path beginning with ``/`` or fsspec rejects them.
+
+    When the fixture ships a sibling ``.tif.ovr`` sidecar on disk, push
+    it under the matching ``.tif.ovr`` URL so the reader's fsspec
+    sidecar discovery (``_probe_fsspec`` -> ``load_sidecar``) can resolve
+    the external overview levels. Without it the memory filesystem holds
+    only the base ``.tif`` and ``overview_level>=1`` fails as out of
+    range, which is a test-harness gap rather than a reader limitation.
     """
     fs = fsspec.filesystem("memory")
     url = f"memory:///corpus/{fixture_id}.tif"
@@ -153,6 +160,9 @@ def _serve_via_memory(payload: bytes, fixture_id: str) -> str:
     # filesystems; ``test_cloud_read_byte_limit_1928.py`` uses the
     # same pattern.
     fs.pipe(f"/corpus/{fixture_id}.tif", payload)
+    sidecar_path = FIXTURES_DIR / f"{fixture_id}.tif.ovr"
+    if sidecar_path.exists():
+        fs.pipe(f"/corpus/{fixture_id}.tif.ovr", sidecar_path.read_bytes())
     return url
 
 
@@ -196,18 +206,6 @@ def test_fsspec_parity(manifest_entry: dict, memory_fs_clean) -> None:
     with open(path, "rb") as f:
         payload = f.read()
     url = _serve_via_memory(payload, fixture_id)
-
-    # When the fixture ships a sibling ``.tif.ovr`` sidecar, push it
-    # into the memory filesystem under the matching URL so the reader's
-    # fsspec sidecar discovery (``_probe_fsspec`` -> ``load_sidecar``)
-    # can resolve the external overview levels. Without this the memory
-    # filesystem holds only the base ``.tif`` and ``overview_level>=1``
-    # fails as out of range, which is a test-harness gap rather than a
-    # reader limitation.
-    sidecar_path = path.parent / f"{path.name}.ovr"
-    if sidecar_path.exists():
-        with open(sidecar_path, "rb") as f:
-            memory_fs_clean.pipe(f"/corpus/{fixture_id}.tif.ovr", f.read())
 
     candidate = open_geotiff(url, **_OPTIN)
     # When the fixture carries pyramid overviews, hand the oracle a
