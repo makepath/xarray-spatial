@@ -250,15 +250,19 @@ def _parse_cog_http_meta(
     # typically carry no out-of-line geokeys and inherit from level-0
     # (which sits in the base buffer).
     #
-    # Map the sidecar's IFDs to their own (bytes, byte_order) so a
-    # sidecar that declares its own geokeys is parsed against the
-    # sidecar bytes, not the base file's. Sidecar IFDs without geokeys
-    # still inherit from the base level-0 via the overview path. This
-    # mirrors the ``georef_origin`` mapping the eager local / fsspec
-    # reader builds in ``_reader.py``; without it a big-endian ``.ovr``
-    # with its own georef (or any sidecar whose byte order differs from
-    # the base file) is read with the wrong byte source and returns
-    # corrupt georeferencing.
+    # Map the sidecar's IFDs to their own (bytes, byte_order) and pass
+    # it as ``sidecar_origin`` so this path stays symmetric with the
+    # eager local / fsspec reader, which builds the same mapping in
+    # ``_reader.py``. On today's eager-parse IFD model the mapping does
+    # not change the result: ``extract_geo_info`` only forwards
+    # ``data`` / ``byte_order`` to ``_parse_geokeys``, which reads
+    # values already materialized on ``ifd.entries`` (every tag,
+    # including out-of-line georef arrays, is decoded in ``parse_ifd``
+    # against its own file's byte order, and the sidecar IFDs are
+    # parsed with the sidecar header in ``discover_remote_sidecar``).
+    # We thread it anyway to match the local path and to stay correct
+    # if tag-value reads ever become lazy and start depending on the
+    # buffer / byte order handed to ``extract_geo_info``.
     georef_origin = (
         {id(sc_ifd): (sidecar.data, sidecar.header.byte_order)
          for sc_ifd in sidecar.ifds}
