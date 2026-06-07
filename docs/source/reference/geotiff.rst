@@ -216,7 +216,9 @@ Reading
 =======
 ``open_geotiff`` is the single read entry point. The backend follows the
 parameters: ``gpu=True`` returns a CuPy-backed array, ``chunks=N`` returns a
-lazy dask array, and a ``.vrt`` source reads a mosaic.
+lazy dask array, and a ``.vrt`` source reads a mosaic. It is re-exported at
+the top level, so ``from xrspatial import open_geotiff`` and
+``from xrspatial.geotiff import open_geotiff`` both work.
 
 .. autosummary::
     :toctree: _autosummary
@@ -228,7 +230,8 @@ Writing
 ``to_geotiff`` is the single write entry point (``gpu=True`` or CuPy data
 selects the GPU path; a ``.vrt`` output path writes tiles plus an index).
 Writing to a ``.vrt`` path is how you produce a VRT mosaic; the underlying
-index emitter is internal.
+index emitter is internal. Like ``open_geotiff``, it is re-exported at the
+top level, so ``from xrspatial import to_geotiff`` also works.
 
 .. autosummary::
     :toctree: _autosummary

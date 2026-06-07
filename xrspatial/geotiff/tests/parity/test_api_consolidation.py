@@ -128,3 +128,16 @@ def test_to_geotiff_gpu_matches_direct_backend(tmp_path):
     _write_geotiff_gpu(arr, direct_path, compression="deflate")
     np.testing.assert_array_equal(
         open_geotiff(via_path).values, open_geotiff(direct_path).values)
+
+
+def test_top_level_reexports_are_the_subpackage_functions():
+    """``from xrspatial import open_geotiff, to_geotiff`` (issue #3005).
+
+    The two public entry points are re-exported from the top-level
+    package so they import the same way as every other public function.
+    Both spellings must resolve to the same object.
+    """
+    import xrspatial
+
+    assert xrspatial.open_geotiff is open_geotiff
+    assert xrspatial.to_geotiff is to_geotiff
