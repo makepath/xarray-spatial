@@ -1,0 +1,37 @@
+---
+description: "Audit xrspatial modules for security vulnerabilities: unbounded allocations, integer overflow, NaN logic bombs, GPU kernel bounds, file path injection, dtype confusion"
+globs: "*.py"
+---
+
+# Sweep Security: Security Vulnerability Audit
+
+Audit xrspatial modules for security vulnerabilities specific to numeric/GPU raster libraries.
+
+## Categories to audit
+
+1. **Unbounded Allocation / DoS**: np.empty(), np.zeros(), np.full() where size comes from array dimensions without configurable max or memory check. CuPy equivalents. Queue/heap arrays sized at height*width without bounds validation.
+
+2. **Integer Overflow in Index Math**: height*width multiplication in int32 (overflows silently at ~46340x46340). Flat index calculations in numba JIT without overflow check. Queue index variables in int32 that could overflow.
+
+3. **NaN/Inf as Logic Errors**: Division without zero-check in numba kernels. log/sqrt of potentially negative values without guard. Accumulation loops that could hit Inf. Missing NaN propagation. Incorrect NaN check using == instead of != in numba.
+
+4. **GPU Kernel Bounds Safety**: CUDA kernels missing bounds guard (if i >= H or j >= W: return). cuda.shared.array with fixed size that could overflow. Missing cuda.syncthreads() after shared memory writes. Thread block dimensions causing register spill.
+
+5. **File Path Injection**: File paths constructed from user strings without canonicalization. Path traversal via ../ not prevented. Temporary file creation in user-controlled directories.
+
+6. **Dtype Confusion**: Public API functions not calling _validate_raster() on inputs. Numba kernels assuming float64 but could receive float32 or int arrays. Operations where dtype mismatch causes silent wrong results. CuPy/NumPy backend inconsistency in dtype handling.
+
+## Process
+
+1. Read the module files and utils.py.
+2. Audit for the 6 categories. Only flag issues actually present.
+3. For each issue, assign severity and note exact file:line.
+4. If any CRITICAL, HIGH, or MEDIUM issue found, fix it end-to-end.
+5. Update the state CSV file.
+
+## General rules
+
+- Only flag real, exploitable issues.
+- For CUDA code, verify bounds guards are truly missing.
+- Do NOT flag the use of numba @jit itself as a security issue.
+- For the hydro subpackage: focus on one representative variant (d8) in detail.

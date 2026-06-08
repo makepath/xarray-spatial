@@ -1,0 +1,88 @@
+---
+description: "Review a pull request with checks specific to a geospatial raster library built on NumPy, Dask, CuPy, and Numba"
+globs: "*.py"
+---
+
+# Review PR: Domain-Aware Pull Request Review
+
+Review a pull request with checks specific to a geospatial raster library built on NumPy, Dask, CuPy, and Numba.
+
+## Step 1 -- Load the PR
+
+1. Fetch PR metadata: title, body, files, commits, base/head branch names.
+2. Get the full diff.
+3. Read every changed file in full, not just the diff.
+
+## Step 2 -- Correctness review
+
+### Algorithm accuracy
+- Does the implementation match the cited algorithm or paper?
+- Are there off-by-one errors in neighborhood indexing?
+- Is the output in the correct units and range?
+
+### Floating point concerns
+- Are there divisions that could produce inf or NaN on valid input?
+- Is there catastrophic cancellation risk?
+- Does the code handle float32 vs float64 correctly?
+
+### NaN handling
+- Does the function propagate NaN correctly?
+- For neighborhood operations with boundary='nan': do edge cells become NaN?
+- Are NaN checks using np.isnan (not == np.nan)?
+
+### Edge cases
+- Empty input, single-row, single-column, 1x1 rasters
+- All-NaN input, constant-value input, very large or small values
+
+## Step 3 -- Backend completeness review
+
+### Dispatch registration
+- Does ArrayTypeFunctionMapping include all four backends?
+- If a backend is omitted, is there a comment explaining why?
+
+### Dask correctness
+- Does map_overlap use the correct depth for the kernel size?
+- Is the boundary parameter forwarded correctly?
+- Does the chunk function return the same shape as its input?
+
+### CuPy correctness
+- Does the CUDA kernel handle array bounds correctly?
+- Are results extracted with .data.get(), not .values?
+
+## Step 4 -- Performance review
+
+Check for:
+- Premature materialization (.values, .compute() in loops)
+- Unnecessary copies
+- GPU register pressure in new CUDA kernels
+- Missing @ngjit on CPU loops
+- Benchmark existence for the changed function
+
+## Step 5 -- Test coverage review
+
+- Are there tests for the changed code?
+- Do tests cover all implemented backends?
+- Do tests compare against known reference values?
+- Are edge cases tested (NaN, constant surface, boundary modes)?
+- Do dask tests use multiple chunk sizes?
+
+## Step 6 -- Documentation and API review
+
+- Does every new public function have a docstring with Parameters, Returns, and description?
+- If a new function was added, is it in the README feature matrix?
+- Does the function signature follow project conventions?
+
+## Step 7 -- Generate the review
+
+Format as structured output organized by severity:
+- **Blockers** (must fix before merge)
+- **Suggestions** (should fix, not blocking)
+- **Nits** (optional improvements)
+- What looks good
+- Checklist
+
+## General rules
+
+- Be specific. Every finding must include a file path and line number.
+- Do not suggest changes to code that was not modified unless the existing code has a clear bug.
+- False positives erode trust. If uncertain, say so explicitly.

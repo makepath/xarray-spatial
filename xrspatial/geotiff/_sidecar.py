@@ -292,6 +292,7 @@ def discover_remote_sidecar(
     source,
     base_ifds: list[IFD],
     *,
+    overview_level: int | None = None,
     max_cloud_bytes: int | None = None,
 ) -> tuple[list[IFD], 'SidecarOverviews | None', set[int]]:
     """Probe for a sibling ``.ovr`` and return a merged IFD list.
@@ -313,27 +314,40 @@ def discover_remote_sidecar(
       selected IFD's ``id()`` is in this set; non-sidecar IFDs fall
       through to the original source.
 
-    Discovery is silent: probes that fail (404, missing fsspec,
-    timeout, etc.) return ``([...base_ifds], None, set())``. A
-    successful probe whose download or parse subsequently fails -- for
-    example a hostile server that returns 200 to every URL but the
-    bytes are not a valid TIFF, or a transient network error during
-    download -- also falls back to base-only behaviour with the
-    exception swallowed, so a misbehaving server cannot poison an
-    otherwise valid base read.
+    ``overview_level`` is the caller's requested level. It is threaded
+    into :func:`handle_sidecar_parse_failure` so a download/parse
+    failure follows the same policy the eager local and fsspec readers
+    use: an explicit level the base file alone cannot serve raises with
+    the real parse error chained, anything else warns and falls back.
+
+    Discovery is silent only for the probe itself: probes that fail
+    (404, missing fsspec, timeout, etc.) return
+    ``([...base_ifds], None, set())``. A successful probe whose download
+    or parse subsequently fails -- for example a hostile server that
+    returns 200 to every URL but the bytes are not a valid TIFF, or a
+    transient network error during download -- is routed through
+    :func:`handle_sidecar_parse_failure` so it warns (and falls back to
+    base-only) instead of being swallowed, matching the eager
+    local/fsspec readers. A misbehaving server still cannot poison an
+    otherwise valid base read unless the caller pinned an
+    ``overview_level`` only the sidecar could serve.
 
     Raises
     ------
     CloudSizeLimitError
         Re-raised verbatim when the sidecar download breaches
         ``max_cloud_bytes`` (the one exception that survives the
-        otherwise silent fall-back). The budget is a caller-set
+        otherwise warn-and-fall-back path). The budget is a caller-set
         contract; surfacing the breach lets the caller distinguish "no
         sidecar" from "sidecar too big" rather than silently dropping
         the level and reading a stale base-only pyramid. Set
-        ``max_cloud_bytes=None`` to disable the budget. Other failures
-        are converted to a base-only return so callers debugging a
-        surprise sidecar miss should reach for this carve-out first.
+        ``max_cloud_bytes=None`` to disable the budget.
+    ValueError
+        Raised by :func:`handle_sidecar_parse_failure` (chained from the
+        underlying parse error) when ``overview_level`` is explicitly
+        requested and exceeds the base IFD count, so a level that
+        depends on the sidecar surfaces the real parse cause instead of
+        degrading to a generic out-of-range error.
 
     Local file paths are accepted too; the helper is shape-agnostic.
     """
@@ -351,14 +365,18 @@ def discover_remote_sidecar(
         # dropping the sidecar level and reading a stale base-only
         # pyramid. See ``load_sidecar`` for the error contract.
         raise
-    except Exception:
-        # Probe succeeded but the download / parse failed. Either the
-        # probe URL was a false positive (a server returning 200 for
-        # every path), the bytes are malformed, or a transient network
-        # error happened during the download. Fall back to base-only
-        # behaviour -- the caller still gets a working read of the in-
-        # file IFD chain. Mirrors the silent-fail-to-base contract
-        # ``find_sidecar`` uses for the probe itself.
+    except Exception as exc:
+        # Probe succeeded but the download / parse failed. Route through
+        # the shared policy the eager CPU/GPU and fsspec metadata paths
+        # use: an explicit ``overview_level`` the base file alone cannot
+        # serve re-raises with the real parse error chained; anything
+        # else warns and falls back to base-only. This replaces the
+        # previous silent swallow so a malformed remote sidecar is no
+        # longer dropped without a trace. Issue #3022.
+        handle_sidecar_parse_failure(
+            exc, sidecar_path, overview_level,
+            base_ifd_count=len(base_ifds),
+        )
         return list(base_ifds), None, set()
     merged = list(base_ifds) + list(sidecar.ifds)
     sidecar_ifd_ids = {id(ifd) for ifd in sidecar.ifds}

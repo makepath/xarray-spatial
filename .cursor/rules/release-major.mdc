@@ -1,0 +1,85 @@
+---
+description: "Cut a major version release (X.0.0). Follow every step in order."
+alwaysApply: true
+---
+
+# Release Major: Execute Major Release Workflow
+
+Cut a major version release. Follow every step below in order.
+
+## Step 1 -- Determine the new version
+
+1. Run `git tag --sort=-v:refname | head -5` to find the latest tag.
+2. Parse the current version (format `vX.Y.Z`).
+3. Increment the major component: `X.Y.Z` -> `(X+1).0.0`.
+
+## Step 2 -- Create a release branch in a worktree
+
+The main checkout MUST stay on `main` -- the release branch lives in a dedicated worktree.
+
+```bash
+RELEASE_MAIN="$(git rev-parse --show-toplevel)"
+git -C "$RELEASE_MAIN" fetch origin main
+git -C "$RELEASE_MAIN" worktree add \
+  ".kilo/worktrees/release-vX.Y.Z" -b "release/vX.Y.Z" origin/main
+RELEASE_WT="$RELEASE_MAIN/.kilo/worktrees/release-vX.Y.Z"
+cd "$RELEASE_WT"
+```
+
+Verify isolation: pwd equals RELEASE_WT, branch is `release/vX.Y.Z`, main checkout branch is still `main`.
+
+## Step 3 -- Update CHANGELOG.md
+
+1. Run `git log --pretty=format:"- %s" <latest_tag>..HEAD` to collect changes.
+2. Add a new section at the top of CHANGELOG.md matching the existing format.
+3. Use today's date. Categorize under "New Features" and/or "Bug Fixes & Improvements".
+
+## Step 4 -- Commit and push
+
+```bash
+git add CHANGELOG.md
+git commit -m "Update CHANGELOG for vX.Y.Z release"
+git push -u origin release/vX.Y.Z
+```
+
+## Step 5 -- Verify CI
+
+Open a PR against main. Wait for CI. If CI fails, fix the issue, add a commit, push, and re-check.
+
+## Step 6 -- Merge the extension branch
+
+```bash
+gh pr merge <PR_NUMBER> --merge --delete-branch
+```
+
+## Step 7 -- Tag the release
+
+From the main checkout (NOT the release worktree):
+
+```bash
+cd "$RELEASE_MAIN"
+git checkout main && git pull --ff-only origin main
+git tag -a vX.Y.Z -m "Version X.Y.Z"
+git push origin vX.Y.Z
+```
+
+Do not sign the tag. Remove the release worktree after tagging.
+
+## Step 8 -- Create a GitHub release
+
+```bash
+gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <(changelog_excerpt)
+```
+
+## Step 9 -- Verify PyPI
+
+Watch the `pypi-publish.yml` workflow. Confirm the new version appears on PyPI.
+
+## Step 10 -- Summary
+
+Print the new version, links to the PR, GitHub release, and PyPI page.
+
+## General rules
+
+- Run humanize on all text destined for GitHub: PR title/body, release notes, commit messages.
+- Temporary files must use unique names including the version number.

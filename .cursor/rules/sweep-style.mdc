@@ -1,0 +1,41 @@
+---
+description: "Audit xrspatial modules for PEP8 violations, unused imports, import ordering drift, and bug-prone style anti-patterns"
+globs: "*.py"
+---
+
+# Sweep Style: PEP8 and Coding Style Audit
+
+Audit xrspatial modules for Python style issues that the project's tooling already knows how to detect.
+
+## Categories to audit
+
+1. **flake8 E-codes (PEP8 errors)**: indentation, whitespace, blank lines, line length, statement-level issues (E711 comparison to None, E712 to True/False, E721 type comparison, E741 ambiguous name).
+
+2. **flake8 W-codes (PEP8 warnings)**: tabs in indentation, trailing whitespace, blank line at end of file, invalid escape sequence.
+
+3. **flake8 F-codes (pyflakes)**: unused import (F401), redefinition (F811), undefined name (F821), local assigned but unused (F841), local used before assignment (F823).
+
+4. **Import ordering (isort)**: any diff produced by isort against the configured line_length=100.
+
+5. **Bug-prone style anti-patterns**: bare except:, mutable default args, == None / != None / == True / == False, shadowing builtins (list, dict, set, id, type, input, filter, map, next, iter).
+
+## Process
+
+1. Run the project's style tooling against the module files:
+   ```
+   flake8 <module_files>
+   isort --check-only --diff <module_files>
+   ```
+2. Classify each reported issue into the 5 categories.
+3. Group same-category issues into a single finding when trivially related.
+4. Assign severity for each finding.
+5. If any HIGH or MEDIUM issue found, fix them in a single coherent style cleanup PR.
+6. For LOW findings, document in state CSV notes but do not open a PR.
+7. Update the state CSV file.
+
+## General rules
+
+- Only flag issues the tools actually report or that grep confirms for Cat 5.
+- Do NOT run black, ruff format, autopep8, or any other auto-formatter.
+- Do NOT widen the flake8 config. Use per-line # noqa for false positives.
+- Style fixes are static and apply uniformly across backend paths.

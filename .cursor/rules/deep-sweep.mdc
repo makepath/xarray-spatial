@@ -1,0 +1,49 @@
+---
+description: "Pick one xrspatial module and dispatch every sweep command at it in parallel"
+globs: "*.py"
+---
+
+# Deep Sweep: Run every sweep-* command focused on a single module
+
+Pick one xrspatial module and dispatch every sweep-* command at it in parallel. Required first argument: the module name (e.g. `geotiff`, `slope`, `hydro`).
+
+## Step 0 -- Parse arguments
+
+The first positional token is the module name (required). Parse flags:
+- `--only-sweep s1,s2` -- only dispatch named sweeps
+- `--exclude-sweep s1,s2` -- skip named sweeps
+- `--no-fix` -- audit only, no rockout, no PR
+- `--reset-state` -- delete the target module's row from state CSVs
+
+## Step 1 -- Validate the module
+
+- If `xrspatial/{module}.py` exists, it is a single-file module.
+- Else if `xrspatial/{module}/` is a directory, it is a subpackage.
+- Otherwise, report that the module was not found.
+
+Skip: `__init__`, `_version`, `__main__`, `utils`, `accessor`, `preview`, `dataset_support`, `diagnostics`, `analytics`.
+
+## Step 2 -- Discover sweep commands
+
+List all files in `.cursor/rules/` matching `sweep-*.mdc`. Build the dispatch list in sorted order. Apply `--only-sweep` / `--exclude-sweep` filters.
+
+## Step 3 -- Gather shared module metadata
+
+Collect: module_files, last_modified, total_commits, loc, has_cuda_kernels, has_file_io, has_numba_jit, has_dask_backend, has_cuda_backend, and CUDA availability.
+
+## Step 4 -- Handle --reset-state
+
+If `--reset-state` was passed, remove the target module's row from each state CSV before dispatching.
+
+## Step 5 -- Dispatch one subagent per sweep
+
+Print a dispatch table. Launch one agent per sweep in parallel, each reading its own `.mdc` rule file and auditing the specified module.
+
+## Step 6 -- Wait, collect, and print the summary
+
+Print a results table showing findings, rockout PRs, and state row written for each sweep.
+
+## General rules
+
+- Never modify source files from the parent. All edits happen inside per-sweep worktrees.
+- Keep parent output concise.

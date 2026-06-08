@@ -82,11 +82,12 @@ _DASK_GPU_SKIPS: dict[str, str] = {}
 # xrspatial reader. The base-IFD parity check still runs; the
 # overview-level loop driven by ``candidate_factory`` is skipped for
 # these ids. See the eager module for the rationale.
-_OVERVIEW_READER_GAPS: dict[str, str] = {
-    "overview_external_ovr_uint16": (
-        "External .ovr sidecar reader is not implemented in xrspatial."
-    ),
-}
+#
+# Empty now that the dask+GPU reader resolves the sibling ``.tif.ovr``
+# pyramid through the shared ``_sidecar`` discovery the eager numpy
+# backend uses, so the overview-level comparison runs for
+# ``overview_external_ovr_uint16`` on this backend too.
+_OVERVIEW_READER_GAPS: dict[str, str] = {}
 
 _INTENTIONAL_SKIPS: dict[str, str] = {
     "nodata_miniswhite_uint8": (

@@ -1,0 +1,43 @@
+---
+description: "Audit the README feature matrix, identify gaps, and file GitHub issues for the best candidates"
+alwaysApply: true
+---
+
+# New Issues: Feature Gap Analysis and Issue Creation
+
+Audit the README feature matrix, identify gaps and opportunities, and file GitHub issues for the best candidates.
+
+## Step 1 -- Read the feature matrix
+
+1. Read `README.md` and extract every function in the feature matrix tables.
+2. For each function, record: category, backend support (native, fallback, or missing).
+3. Read source files referenced in the matrix to confirm what actually exists.
+
+## Step 2 -- Identify backend gaps
+
+1. List every function where one or more backends show fallback or unsupported.
+2. Prioritize gaps where the function has 3 of 4 backends, the missing backend is CuPy or Dask+CuPy, or the function is commonly used.
+3. Draft 1-3 maintenance issues for the highest-value backend completions.
+
+## Step 3 -- Identify missing features
+
+Consider gaps across categories: surface analysis, hydrology, focal/neighborhood, multispectral, interpolation, zonal, network/connectivity, time series, I/O and interop. Select the 3-5 most impactful suggestions ranked by frequency of need, architectural fit, and uniqueness.
+
+## Step 4 -- Draft the issues
+
+For each candidate, draft a GitHub issue following the `.github/ISSUE_TEMPLATE/feature-proposal.md` template: title, labels, body sections (Reason, Proposal, Stakeholders, Drawbacks, Alternatives, Unresolved Questions).
+
+## Step 5 -- Create the issues
+
+1. Search existing issues to avoid duplicates.
+2. Create each issue with `gh issue create`, passing title, body, and labels.
+3. Record the issue numbers and URLs.
+
+## Step 6 -- Summary
+
+Print a table of all created issues and briefly explain the rationale.
+
+## General rules
+
+- Do not create duplicate issues. Search existing issues first.
+- Prefer fewer, higher-quality issues over a long wishlist.

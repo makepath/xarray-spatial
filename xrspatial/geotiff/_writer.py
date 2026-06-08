@@ -676,6 +676,37 @@ write = _write
 # re-exported above for backwards compatibility.
 
 
+def _max_streaming_row_span(row_chunks, tile_h, height):
+    """Worst-case source rows a tiled streaming compute materialises.
+
+    The streaming writer computes one ``tile_h``-tall band per dask
+    ``.compute()``. For a plain windowed read that band materialises only
+    the source chunk-rows it overlaps. For a ``map_overlap`` source
+    (slope / aspect / curvature / hillshade) dask also pulls the
+    neighbouring chunk-row on each side to satisfy the halo, and a
+    windowed read materialises every touched chunk-row in full. ``depth``
+    can never exceed one chunk, so a one-chunk halo each side is an upper
+    bound. Return the largest span across all bands so the column budget
+    is sized from the source geometry, not the output tile height (#3007).
+    """
+    import bisect
+    offsets = [0]
+    for h in row_chunks:
+        offsets.append(offsets[-1] + int(h))
+    n = len(row_chunks)
+    worst = tile_h
+    for r0 in range(0, height, tile_h):
+        r1 = min(r0 + tile_h, height)
+        first = bisect.bisect_right(offsets, r0) - 1
+        last = bisect.bisect_right(offsets, r1 - 1) - 1
+        lo = max(0, first - 1)
+        hi = min(n - 1, last + 1)
+        span = offsets[hi + 1] - offsets[lo]
+        if span > worst:
+            worst = span
+    return worst
+
+
 def _write_streaming(dask_data, path: str, *,
                      geo_transform: 'GeoTransform | None' = None,
                      crs_epsg: int | None = None,
@@ -707,11 +738,17 @@ def _write_streaming(dask_data, path: str, *,
     rasters get bounded peak memory at the cost of more dask compute
     calls.
 
-    Peak materialised memory is approximately
-    ``min(streaming_buffer_bytes, tile_height * width * bytes_per_sample
-    * samples)`` for tiled output, or
-    ``rows_per_strip * width * bytes_per_sample * samples`` for stripped
-    output (no horizontal segmentation in strip mode).
+    For tiled output the horizontal-segment budget is sized from the
+    source chunk geometry rather than the output tile height: a
+    ``map_overlap`` source (slope / aspect / curvature) makes one
+    tile-row band pull every source chunk-row it touches plus a one-chunk
+    halo, so a source chunked taller than the tile would otherwise blow
+    past the cap (#3007). ``streaming_buffer_bytes`` stays a soft cap --
+    the column halo of a 2D overlap adds a bounded couple of source
+    chunk-columns on top. Strip output (``tiled=False``) does no
+    horizontal segmentation; its peak is
+    ``rows_per_strip * width * bytes_per_sample * samples`` (plus any
+    overlap halo).
 
     After all pixel data is written the IFD offset and byte-count arrays
     are patched in place.
@@ -1026,12 +1063,29 @@ def _write_streaming(dask_data, path: str, *,
             # Stream pixel data
             if tiled:
                 # Decide how many tile-columns we can buffer at once.
-                # bytes_per_full_tile_row = tile_h * width * dtype * samples;
-                # if it fits the budget we buffer the whole row (matches
-                # original behaviour). Otherwise segment horizontally,
-                # always at tile boundaries to keep slicing aligned.
+                # Peak bytes per ``.compute()`` are set by the SOURCE chunk
+                # geometry, not the output tile height: a map_overlap source
+                # (slope / aspect / curvature) makes a single tile-row band
+                # pull every source chunk-row it touches plus a one-chunk
+                # halo, each materialised in full by the windowed read. Size
+                # the budget from that row span so a tall-chunk wide raster
+                # cannot blow past streaming_buffer_bytes (#3007). The column
+                # halo adds a bounded couple of source chunk-columns on top;
+                # streaming_buffer_bytes stays a soft cap. A non-overlap read
+                # carries no halo, so this is intentionally conservative for
+                # it -- it may segment one step early, which only costs an
+                # extra compute call near the cap. Falls back to the tile
+                # height for numpy-from-dask or unknown-chunk arrays.
+                materialized_h = th
+                row_chunks = getattr(dask_data, 'chunks', None)
+                if row_chunks:
+                    try:
+                        materialized_h = _max_streaming_row_span(
+                            row_chunks[0], th, height)
+                    except (TypeError, ValueError):
+                        materialized_h = th
                 bytes_per_tile_col = (
-                    th * tw * bytes_per_sample * samples)
+                    materialized_h * tw * bytes_per_sample * samples)
                 bytes_per_full_row = bytes_per_tile_col * tiles_across
                 if bytes_per_full_row <= streaming_buffer_bytes:
                     tiles_per_segment = tiles_across

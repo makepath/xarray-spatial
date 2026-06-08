@@ -1,0 +1,53 @@
+# xarray-spatial -- Cursor Agent Context
+
+You are working inside the xarray-spatial repository, a geospatial raster analysis library built on xarray, NumPy, Dask, CuPy, and Numba.
+
+## Architecture
+
+- **Public API**: Functions in `xrspatial/` are dispatched via `ArrayTypeFunctionMapping` which routes to numpy, cupy, dask+numpy, or dask+cupy backends.
+- **CPU kernels**: Use `@ngjit` (numba) for performance.
+- **GPU kernels**: Use `@cuda.jit` for CuPy/CUDA paths.
+- **Dask operations**: Use `map_overlap` with `depth` and `boundary=np.nan` for neighborhood operations.
+- **Tests**: Live in `xrspatial/tests/`. Cross-backend helpers are in `general_checks.py`. Fixtures are in `conftest.py`.
+- **Benchmarks**: ASV benchmarks in `benchmarks/benchmarks/`.
+- **Documentation**: Sphinx docs in `docs/source/`. User guide notebooks in `examples/user_guide/`.
+
+## Conventions
+
+- Input DataArrays are conventionally named `agg`.
+- Output DataArrays preserve input coords, dims, and attrs.
+- Boundary modes: `nan`, `nearest`, `reflect`, `wrap`.
+- Use `create_test_raster` from `general_checks.py` for test raster construction.
+- Temporary files in tests must have unique names.
+- Do not modify `CHANGELOG.md` -- it is updated at release time.
+- Line length: 100 (flake8 and isort configured in `setup.cfg`).
+
+## Backend Dispatch Pattern
+
+```python
+func_mapping = ArrayTypeFunctionMapping({
+    "numpy": _run_numpy,
+    "cupy": _run_cupy,
+    "dask+numpy": _run_dask,
+    "dask+cupy": _run_dask_cupy,
+})
+result = func_mapping(agg, ...)
+```
+
+## AI Tooling
+
+This repo maintains AI-assisted development rules in four parallel directories:
+- `.claude/commands/` -- Claude Code commands
+- `.codex/commands/` -- Codex commands
+- `.kilo/command/` -- Kilo commands
+- `.cursor/rules/` -- Cursor rules (this directory)
+
+The Cursor rules mirror the other tool's commands. They are developer-side only and do not affect source code, tests, CI, or packaging.
+
+## Key Files
+
+- `xrspatial/utils.py` -- shared helpers including `_validate_raster()`
+- `xrspatial/tests/general_checks.py` -- cross-backend test helpers
+- `xrspatial/conftest.py` -- shared pytest fixtures
+- `setup.cfg` -- flake8/isort config (max-line-length=100)
+- `README.md` -- feature matrix with backend support checkmarks

@@ -1,0 +1,35 @@
+---
+description: "Audit xrspatial modules for numerical accuracy issues: floating point precision, NaN propagation, off-by-one errors, Earth curvature corrections, backend inconsistencies"
+globs: "*.py"
+---
+
+# Sweep Accuracy: Numerical Accuracy Audit
+
+Audit xrspatial modules for numerical accuracy issues.
+
+## Categories to audit
+
+1. **Floating Point Precision Loss**: accumulation loops without compensated accumulation, float32 where float64 is needed, catastrophic cancellation, division by small numbers without stability floor.
+
+2. **NaN/Inf Propagation Errors**: NaN input producing finite output without documentation, NaN check using == instead of != x for NaN detection, neighborhood operations ignoring NaN pixels, Inf/-Inf inputs treated as numbers.
+
+3. **Off-by-One Errors in Neighborhood Operations**: loop bounds excluding last row/column, map_overlap depth smaller than stencil radius, boundary handling duplicating or skipping edge pixels, asymmetric kernel indexing, CUDA kernel bounds guard using > instead of >=.
+
+4. **Missing/Wrong Earth Curvature Corrections**: geodesic calculations assuming flat projection without curvature correction, haversine using wrong Earth radius constant, mixing projected and geographic coordinates, using cell size in degrees as meters.
+
+5. **Backend Inconsistency**: numpy and cupy paths using different algorithms, dask path materializing full array, dask map_overlap chunk function returning different shape, backend raising on valid input that another accepts, result dtype differing across backends.
+
+## Process
+
+1. Read the module files and matching test files.
+2. Audit for the 5 categories above. Only flag issues actually present in the code.
+3. For each issue, assign severity (CRITICAL/HIGH/MEDIUM/LOW) and note exact file:line.
+4. If any CRITICAL, HIGH, or MEDIUM issue is found, fix it end-to-end. For LOW issues, document but do not fix.
+5. Update the state CSV file.
+
+## General rules
+
+- Only flag real accuracy issues. False positives waste time.
+- Read the tests before flagging -- the test may codify current behavior.
+- Check all backend paths (ArrayTypeFunctionMapping), not just numpy.
+- For the hydro subpackage: focus on one representative variant (d8) in detail.
