@@ -397,6 +397,9 @@ def _boundary_ccl_unions(boundary_polys, atol, rtol, union):
     transitive closure matches numpy's single-chunk labelling.
     """
     # Global (col, row) -> value and -> set(owner polygon index) maps.
+    # A coordinate is one physical pixel, so every owner sharing it
+    # carries the same value and the same W / S match flags; overwriting
+    # ``field`` and reading the flags from any one owner is therefore safe.
     field = {}
     owners = {}
     for idx, item in enumerate(boundary_polys):

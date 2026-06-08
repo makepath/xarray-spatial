@@ -119,15 +119,22 @@ class TestEightConnFuzzParity:
     fixed seed -- no wall-clock assertions.
     """
 
+    # Total numpy polygon count over the fixed-seed sweep, recorded per
+    # rtol.  Pinning it means a numpy-side CCL change is caught here
+    # directly, rather than silently shifting the dask parity reference.
+    _EXPECTED_NUMPY_TOTAL = {0.0: 639, 0.05: 492, 0.1: 352, 0.2: 200}
+
     @pytest.mark.parametrize("rtol", [0.0, 0.05, 0.1, 0.2])
     def test_parity_8conn(self, rtol):
         rng = np.random.default_rng(2677)
+        numpy_total = 0
         for _ in range(40):
             ny = int(rng.integers(3, 6))
             nx = int(rng.integers(3, 6))
             arr = np.round(rng.uniform(1.0, 3.0, size=(ny, nx)), 3)
             v_np, g_np = polygonize(
                 xr.DataArray(arr), atol=0.0, rtol=rtol, connectivity=8)
+            numpy_total += len(v_np)
             ref = _signature(v_np, g_np)
             for chunks in _all_chunkings((ny, nx)):
                 v_dk, g_dk = polygonize(
@@ -137,6 +144,11 @@ class TestEightConnFuzzParity:
                     f"diverge arr={arr.tolist()} rtol={rtol} "
                     f"chunks={chunks}"
                 )
+        expected = self._EXPECTED_NUMPY_TOTAL[rtol]
+        assert expected is None or numpy_total == expected, (
+            f"numpy 8-conn reference count changed for rtol={rtol}: "
+            f"got {numpy_total}, expected {expected}"
+        )
 
 
 @dask_array_available
