@@ -878,7 +878,7 @@ def _calculate_event_row_col(event_type, event_row, event_col,
         x = event_col
         y = event_row
 
-    if abs(x - event_col > 1) or abs(y - event_row > 1):
+    if abs(x - event_col) > 1 or abs(y - event_row) > 1:
         raise ValueError("_calculate_event_row_col()")
 
     return y, x
