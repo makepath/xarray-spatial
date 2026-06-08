@@ -63,7 +63,10 @@ module,last_inspected,issue,severity_max,categories_found,notes
 slope,2026-05-01,1042,HIGH,1;3,"optional single-line notes"
 ```
 
-`merge=union` is set in `.gitattributes`.
+This file uses git's default 3-way text merge (no `merge=union`; see
+issue #2754), so a concurrent change surfaces a normal conflict instead
+of silently unioning duplicate rows. Keep one row per `module`, a single
+header, and one physical line per record when resolving.
 
 ## Step 3 -- Score each module
 
@@ -240,8 +243,8 @@ If CUDA_AVAILABLE is false:
    }
 
    def _oneline(v):
-       # merge=union is line-based: a newline inside a quoted field splits
-       # the record on parallel-agent merges. Force one physical line per
+       # Git merges these CSVs line by line, so a newline inside a quoted
+       # field splits the record on a merge. Force one physical line per
        # record by collapsing embedded newlines to " | ".
        return "" if v is None else str(v).replace("\r\n", " | ").replace("\r", " | ").replace("\n", " | ")
 
@@ -287,7 +290,9 @@ To reset: `/sweep-test-coverage --reset-state`
 - Keep parent output concise.
 - Default: top 3, no filter.
 - State file `.claude/sweep-test-coverage-state.csv` is tracked in git
-  with `merge=union`.
+  and uses git's default 3-way text merge (no `merge=union`; see issue
+  #2754), so a concurrent change surfaces a conflict instead of silently
+  unioning duplicate rows.
 - The "fix" is *tests, not source*. If a test reveals a bug, file a
   separate issue — do not change source in this sweep's PRs.
 - False positives are worse than missed issues.

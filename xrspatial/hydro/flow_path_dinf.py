@@ -180,7 +180,10 @@ def _flow_path_dinf_cpu(flow_dir, start_points, H, W):
                 continue
             label = v
             cr, cc = r, c
-            while True:
+            # A non-cyclic path visits each cell at most once, so it can
+            # take at most H*W steps. Capping here breaks any cycle in the
+            # direction grid instead of looping forever.
+            for _ in range(H * W):
                 out[cr, cc] = label
                 angle = flow_dir[cr, cc]
                 if angle != angle:  # NaN
@@ -300,7 +303,11 @@ def _flow_path_dinf_dask(flow_dir_data, start_points_data):
 
     for r, c, label in points:
         cr, cc = r, c
-        while True:
+        # A non-cyclic path visits each cell at most once, so it can take
+        # at most H*W steps. Capping here breaks any cycle in the
+        # direction grid instead of looping forever and growing the
+        # buffers until the process runs out of memory.
+        for _ in range(H * W):
             if _buf_len >= len(_buf_rows):
                 new_cap = len(_buf_rows) * 2
                 _new_rows = np.empty(new_cap, dtype=np.int64)

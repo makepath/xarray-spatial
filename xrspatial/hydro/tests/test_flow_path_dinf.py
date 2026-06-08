@@ -305,3 +305,109 @@ class TestMemoryGuard:
         ):
             with pytest.raises(MemoryError, match="GPU working memory"):
                 flow_path_dinf(fd_da, sp_da)
+
+
+# ====================================================================
+# Cycle-termination tests (issue #2796)
+# ====================================================================
+#
+# Before the fix, the tracing loop was ``while True`` and only broke on
+# NaN, a pit, an edge, or out-of-bounds. A cyclic direction grid (a cell
+# that eventually points back to a cell already on the path) looped
+# forever. These tests run the call on a worker thread and fail if it
+# does not terminate within a short budget, rather than hanging the whole
+# suite via a wall-clock assertion inside the loop.
+
+def _run_with_termination_guard(fn, timeout=30.0):
+    """Run fn() on a worker thread; fail if it does not terminate.
+
+    Returns fn()'s result. A non-terminating loop (the bug) leaves the
+    daemon thread spinning and raises AssertionError here; the fixed code
+    returns well under the budget. The numpy kernel is @ngjit and runs
+    without the GIL, so on the buggy code the daemon thread cannot be
+    interrupted and keeps burning a core in the background after this
+    raises -- acceptable for a regression guard that only fails when the
+    fix is absent, but worth knowing if you see a lingering busy thread.
+    """
+    import threading
+
+    box = {}
+
+    def _target():
+        try:
+            box['result'] = fn()
+        except BaseException as exc:  # noqa: BLE001 - surface in main thread
+            box['error'] = exc
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise AssertionError(
+            f"flow_path_dinf did not terminate within {timeout}s -- "
+            f"the tracing loop is not breaking the cycle (#2796)"
+        )
+    if 'error' in box:
+        raise box['error']
+    return box['result']
+
+
+def test_two_cell_cycle_terminates_numpy():
+    """The exact reproducer from the issue: [[0, pi]] is a two-cell cycle.
+
+    Cell (0,0) angle 0 points east to (0,1); cell (0,1) angle pi points
+    west back to (0,0). The path oscillates forever on the buggy code.
+    """
+    fd = np.array([[0.0, math.pi]], dtype=np.float64)
+    sp = np.full((1, 2), np.nan)
+    sp[0, 0] = 1.0
+
+    fd_da, sp_da = _make_fd_and_sp(fd, sp)
+    result = _run_with_termination_guard(lambda: flow_path_dinf(fd_da, sp_da))
+
+    # Both cells are on the cycle, so both carry the start label.
+    assert result.data[0, 0] == 1.0
+    assert result.data[0, 1] == 1.0
+
+
+def test_larger_cycle_terminates_numpy():
+    """A 2x2 clockwise loop with no exit must still terminate.
+
+    (0,0)->E->(0,1)->S->(1,1)->W->(1,0)->N->(0,0), forever on buggy code.
+    """
+    fd = np.array(
+        [[0.0, 3 * math.pi / 2],          # E, S
+         [math.pi / 2, math.pi]],         # N, W
+        dtype=np.float64,
+    )
+    sp = np.full((2, 2), np.nan)
+    sp[0, 0] = 9.0
+
+    fd_da, sp_da = _make_fd_and_sp(fd, sp)
+    result = _run_with_termination_guard(lambda: flow_path_dinf(fd_da, sp_da))
+
+    # All four cells lie on the loop and receive the start label.
+    assert np.all(result.data == 9.0)
+
+
+@dask_array_available
+def test_two_cell_cycle_terminates_dask():
+    """Dask path on a cyclic grid must terminate (and not leak the buffers).
+
+    Same [[0, pi]] reproducer; the dask loop appended to growing buffers
+    each iteration, so a cycle ate memory until the process died.
+    """
+    fd = np.array([[0.0, math.pi]], dtype=np.float64)
+    sp = np.full((1, 2), np.nan)
+    sp[0, 0] = 1.0
+
+    fd_np, sp_np = _make_fd_and_sp(fd, sp, backend='numpy')
+    fd_dk, sp_dk = _make_fd_and_sp(fd, sp, backend='dask', chunks=(1, 1))
+
+    np_result = flow_path_dinf(fd_np, sp_np)
+    dk_result = _run_with_termination_guard(
+        lambda: flow_path_dinf(fd_dk, sp_dk).compute())
+
+    np.testing.assert_allclose(np_result.data, dk_result.data, equal_nan=True)
+    assert dk_result.data[0, 0] == 1.0
+    assert dk_result.data[0, 1] == 1.0
