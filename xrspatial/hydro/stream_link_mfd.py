@@ -938,6 +938,8 @@ def _stream_link_mfd_dask(fractions_da, accum_da, threshold):
     np.cumsum(chunks_x, out=cum_x[1:])
 
     def _tile(ac_block, block_info=None):
+        # ``meta`` is passed to map_blocks below, so dask never runs a
+        # block_info=None dry-run; block_info is always populated here.
         iy, ix = block_info[0]['chunk-location']
         y_start = int(cum_y[iy])
         y_end = int(cum_y[iy + 1])

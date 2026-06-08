@@ -1326,6 +1326,8 @@ def _stream_order_mfd_dask_strahler(fractions_da, accum_da, threshold):
     np.cumsum(chunks_x, out=cum_x[1:])
 
     def _tile(ac_block, block_info=None):
+        # ``meta`` is passed to map_blocks below, so dask never runs a
+        # block_info=None dry-run; block_info is always populated here.
         iy, ix = block_info[0]['chunk-location']
         y_start, y_end = int(cum_y[iy]), int(cum_y[iy + 1])
         x_start, x_end = int(cum_x[ix]), int(cum_x[ix + 1])
@@ -1403,6 +1405,8 @@ def _stream_order_mfd_dask_shreve(fractions_da, accum_da, threshold):
     np.cumsum(chunks_x, out=cum_x[1:])
 
     def _tile(ac_block, block_info=None):
+        # ``meta`` is passed to map_blocks below, so dask never runs a
+        # block_info=None dry-run; block_info is always populated here.
         iy, ix = block_info[0]['chunk-location']
         y_start, y_end = int(cum_y[iy]), int(cum_y[iy + 1])
         x_start, x_end = int(cum_x[ix]), int(cum_x[ix + 1])
