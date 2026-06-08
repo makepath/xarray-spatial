@@ -178,8 +178,9 @@ def _validate_lowlevel_write_kwargs(*,
     ----------
     compression : str or other
         Codec name. Validated against :data:`_VALID_COMPRESSIONS` and
-        the JPEG-in-TIFF opt-in gate. Non-string values are not
-        rejected here; ``_compression_tag`` raises downstream.
+        the JPEG-in-TIFF opt-in gate. Non-string values (including
+        ``None``) are rejected here with ``TypeError`` so they never
+        reach ``_compression_tag``'s ``.lower()`` (#2978).
     allow_internal_only_jpeg : bool
         If False (the default), ``compression='jpeg'`` is rejected
         because the encoder writes JFIF tiles without the
@@ -212,11 +213,13 @@ def _validate_lowlevel_write_kwargs(*,
             raise ValueError(
                 f"Unknown compression {compression!r} (in {entry_point}). "
                 f"Valid options: {list(_VALID_COMPRESSIONS)}.")
-    elif compression is not None:
-        # Unreachable from ``to_geotiff`` (which only forwards ``str``
-        # or the default), but direct callers can hit this. Without the
+    else:
+        # ``None`` and every other non-string value land here. Without the
         # explicit guard the downstream ``compression.lower()`` would
-        # surface as ``AttributeError`` instead of a typed error.
+        # surface as ``AttributeError`` instead of a typed error. ``None``
+        # is rejected rather than aliased to ``'none'``: the contract is
+        # ``compression: str`` (use the ``'none'`` string to disable
+        # compression) (#2978).
         raise TypeError(
             f"compression must be a str (in {entry_point}); "
             f"got {type(compression).__name__}.")

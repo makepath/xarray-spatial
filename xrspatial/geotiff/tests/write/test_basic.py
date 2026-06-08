@@ -188,6 +188,26 @@ class TestWriteInvalidInput:
         to_geotiff(arr, str(tmp_path / 'tmp_2975_deflate.tif'),
                    compression='deflate', compression_level=6)
 
+    def test_to_geotiff_none_compression_typeerror(self, tmp_path):
+        # Regression for #2978: ``compression=None`` was exempted from the
+        # #2975 type guard, so it fell through to ``_compression_tag`` and
+        # surfaced as a raw ``AttributeError: 'NoneType' object has no
+        # attribute 'lower'``. The contract is ``compression: str`` (use the
+        # ``'none'`` string to disable compression), so ``None`` is rejected
+        # with the same ``TypeError`` as any other non-string type.
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_2978_none.tif')
+        with pytest.raises(TypeError, match="compression must be a str"):
+            to_geotiff(arr, path, compression=None)
+
+    def test_write_none_compression_typeerror(self, tmp_path):
+        # The low-level writer's guard rejects ``None`` for direct callers
+        # too, so it can never reach ``_compression_tag`` (#2978).
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_2978_none_lowlevel.tif')
+        with pytest.raises(TypeError, match="compression must be a str"):
+            write(arr, path, compression=None)
+
 
 # -------------------------------------------------------------------------
 # Section: writer dtype x compression matrix
