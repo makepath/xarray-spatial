@@ -1,0 +1,86 @@
+---
+description: "Take a user prompt describing an enhancement, bug, or suggestion and drive it through the full implementation workflow"
+globs: "*.py"
+---
+
+# Rockout: End-to-End Issue-to-Implementation Workflow
+
+Take a prompt describing an enhancement, bug, or suggestion and drive it through the full implementation workflow.
+
+## Step 1 -- Create a GitHub Issue
+
+1. Decide the issue type: enhancement, bug, or proposal.
+2. Pick labels from the repo's existing set. Always include the type label.
+3. Draft the title and body following the repo's issue templates.
+4. Create the issue with `gh issue create`.
+5. Capture the new issue number.
+
+## Step 2 -- Create a Git Worktree
+
+The main checkout MUST remain on `main`. All implementation happens inside a dedicated worktree.
+
+```bash
+git worktree add .worktrees/issue-<NUMBER> -b issue-<NUMBER>
+```
+
+Verify isolation: worktree path ends in `.worktrees/issue-<NUMBER>`, branch is `issue-<NUMBER>`, main checkout is still on `main`.
+
+## Step 3 -- Implement the Change
+
+1. Read relevant source files.
+2. Follow the ArrayTypeFunctionMapping dispatch pattern.
+3. Support all four backends where feasible: numpy, cupy, dask+numpy, dask+cupy.
+4. Use @ngjit for CPU kernels and @cuda.jit for GPU kernels.
+5. For dask, use map_overlap with depth and boundary=np.nan.
+6. Keep changes focused.
+7. Review for OOM risks, especially dask code paths.
+
+## Step 4 -- Add Test Coverage
+
+1. Add or update tests in `xrspatial/tests/`.
+2. Use cross-backend helpers from `general_checks.py`.
+3. Cover correctness, edge cases, and all supported backends.
+4. Run tests with pytest to verify they pass.
+
+## Step 5 -- Update Documentation
+
+1. Check `docs/source/reference/` for the relevant .rst file.
+2. Add or update API entries for new public functions.
+
+Do NOT edit CHANGELOG.md.
+
+## Step 6 -- Create a User Guide Notebook
+
+Skip if the change is a pure bug fix with no new user-facing API.
+
+## Step 7 -- Update the README Feature Matrix
+
+Skip if no new functions were added and no backend support changed.
+
+## Step 8 -- Open the Pull Request
+
+1. Push the branch with upstream tracking.
+2. Draft a PR title and body referencing the issue.
+3. Open the PR with `gh pr create`.
+
+## Step 9 -- Run the PR Review
+
+Invoke the review-pr command. Post the review as a GitHub review event of type COMMENT.
+
+## Step 10 -- Follow Up on Review Findings
+
+Fix every Blocker, then work through Suggestions and Nits. Default to fixing. Group related fixes into focused commits.
+
+## Step 11 -- Resolve Merge Conflicts With main
+
+Fetch latest main, merge into the feature branch, resolve any conflicts, re-run tests, and push.
+
+## Step 12 -- Fix CI Failures
+
+Poll PR checks until complete. For each failing check, pull logs, classify the failure, fix real defects, and push.
+
+## General rules
+
+- Work entirely within the worktree. The main checkout MUST stay on main.
+- Commit after each major step with a message referencing the issue number.
+- Never modify CHANGELOG.md.

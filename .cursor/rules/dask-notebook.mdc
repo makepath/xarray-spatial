@@ -1,0 +1,58 @@
+---
+description: "Create a Jupyter notebook that sets up a Dask distributed LocalCluster and walks through an ETL workflow"
+globs: "*.ipynb"
+---
+
+# Dask ETL Notebook
+
+Create a Jupyter notebook that sets up a Dask distributed LocalCluster and walks through an ETL (Extract, Transform, Load) workflow.
+
+## Notebook structure
+
+1. Title + one-line description
+2. Overview (what the pipeline does, what you'll learn)
+3. Imports
+4. Cluster Setup -- create and inspect a LocalCluster + Client
+5. Extract -- load or generate source data as lazy Dask arrays
+6. Transform -- apply transformations (filtering, rechunking, computation)
+7. Load -- write results to disk (Zarr, Parquet, GeoTIFF)
+8. Cleanup -- close the client and cluster
+9. Summary + next steps
+
+## Cluster Setup
+
+Always use this pattern:
+```python
+from dask.distributed import Client, LocalCluster
+
+cluster = LocalCluster(
+    n_workers=4,
+    threads_per_worker=2,
+    memory_limit="2GB",
+)
+client = Client(cluster)
+client
+```
+
+Include a markdown cell noting the dashboard link and that n_workers/memory_limit should be tuned.
+
+## Code conventions
+
+- **Lazy by default**: build the computation graph before calling .compute().
+- **Chunking**: explain chunk choices. Use explicit chunks=.
+- **Avoid full materialization mid-pipeline**: no .values or .compute() until the Load phase.
+- **Persist when reused**: if an intermediate result is used in multiple downstream steps, call client.persist().
+- **Cleanup**: always close the client and cluster at the end.
+
+## Data handling
+
+- Generate or load data lazily. Wrap numpy arrays with da.from_array(..., chunks=...).
+- For file-based sources, prefer xr.open_dataset with explicit chunks=.
+- For Load phase, prefer Zarr (to_zarr()) as default output format.
+
+## Checklist
+
+1. Pick a data domain from the prompt (or default to geospatial raster).
+2. Write the full cell sequence following the structure.
+3. Verify all code cells are syntactically correct and self-contained.
+4. Ensure the notebook cleans up after itself (cluster closed, temp files noted).

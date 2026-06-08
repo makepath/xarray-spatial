@@ -1,0 +1,45 @@
+---
+description: "Scan open pull requests and report the ones that are ready to merge"
+alwaysApply: true
+---
+
+# Ready to Merge: Surface PRs Safe to Merge
+
+Scan the open pull requests and report the ones that are ready to merge. This rule is read-only -- it does not apply labels, post comments, approve, or merge anything.
+
+## Step 1 -- List the open PRs
+
+```bash
+gh pr list --state open --limit 100 \
+  --json number,title,url,isDraft,headRefName,reviews,mergeable,mergeStateStatus
+```
+
+Drop any PR where `isDraft` is true.
+
+## Step 2 -- Reviewed gate
+
+A PR qualifies as reviewed when it has at least one review of any state (APPROVED or COMMENTED). If all reviews are COMMENTED with none APPROVED, flag it as `(no approving review)`.
+
+## Step 3 -- Merge-conflict gate
+
+Re-fetch mergeable status until it settles (not UNKNOWN). `mergeable == "MERGEABLE"` passes. `mergeable == "CONFLICTING"` or `mergeStateStatus == "DIRTY"` excludes the PR.
+
+## Step 4 -- CI gate, with the Read the Docs exception
+
+Pull the check rollup as JSON. Classify:
+- Any check with bucket `pending` -- exclude with reason `CI still running`
+- A check with bucket `fail` on a non-RTD check -- exclude with reason `CI failure: <check name>`
+- The RTD check (`docs/readthedocs.org:xarray-spatial`) failing is tolerated
+- Every check bucket `pass` or `skipping` -- passes
+
+## Step 5 -- Blockers-addressed gate
+
+For each PR that cleared Steps 2-4, re-run the review to confirm no unresolved blockers remain. Zero blockers means the PR is ready. One or more blockers means excluded with reason `open review blockers (N)`.
+
+## Step 6 -- Report
+
+Print two sections: "Ready to merge" with qualifying PRs, and "Excluded" with every other open PR and the specific reason it did not qualify.
+
+## General rules
+
+- Do not apply labels, comment on any PR, or merge anything. The output is a report for a human to act on.

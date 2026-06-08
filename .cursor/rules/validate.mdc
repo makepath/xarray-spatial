@@ -1,0 +1,52 @@
+---
+description: "Validate a function's numerical accuracy against reference implementations and across all four backends"
+globs: "*.py"
+---
+
+# Validate: Numerical Accuracy and Backend Parity Check
+
+Take a function name and verify its numerical accuracy against reference implementations and across all four backends.
+
+## Step 1 -- Identify the target
+
+1. If the prompt names a specific function, use that.
+2. If the prompt is empty or says "auto", find changed source files and identify which public functions were added or modified.
+3. Read the function's source to understand: which backends are implemented, parameters, expected output range and dtype, whether it's a neighborhood or per-cell operation.
+
+## Step 2 -- Select or build reference data
+
+Build three test datasets:
+
+1. **Analytical known-answer dataset**: small synthetic raster where the correct answer can be computed by hand.
+2. **Reference implementation dataset**: reuse existing QGIS/rasterio/scipy reference fixtures if available.
+3. **Realistic stress dataset**: larger raster (256x256+) with terrain-like features, NaN patches, and mixed flat/steep areas.
+
+## Step 3 -- Run across all backends
+
+For each dataset and parameter combination, run on every implemented backend:
+1. NumPy -- always available, baseline
+2. Dask+NumPy -- with even and ragged chunk sizes
+3. CuPy -- skip if CUDA not available
+4. Dask+CuPy -- skip if CUDA not available
+
+## Step 4 -- Compare results
+
+1. **Ground truth comparison**: compare NumPy result against hand-computed expected array.
+2. **Reference implementation comparison**: compare against rasterio/scipy/QGIS reference.
+3. **Backend parity**: compare every non-NumPy backend against NumPy result.
+4. **Edge case and invariant checks**: NaN propagation, constant surface, single-cell raster, dtype preservation, boundary modes.
+
+## Step 5 -- Generate the report
+
+Print a structured report with: target info, datasets, ground truth results, reference implementation results, backend parity table, edge cases table, and verdict.
+
+## Step 6 -- Suggest fixes (if failures found)
+
+If any check failed: identify root cause, describe the fix, ask the user whether to apply it. Do NOT apply fixes automatically.
+
+## General rules
+
+- Run all comparisons with np.testing.assert_allclose for numeric checks.
+- Temporary files must use unique names including the function name.
+- If CUDA is not available, skip GPU backends gracefully.
+- Do not modify any source or test files. This rule is read-only analysis.
