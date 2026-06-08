@@ -496,13 +496,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
     # error surfaces from _compression_tag with a less obvious traceback.
-    if not isinstance(compression, str) and compression is not None:
+    if not isinstance(compression, str):
         # The string block below validates bad NAMES, but a non-string
         # ``compression`` skips it entirely and later lands in
         # ``compression.lower()`` during compression_level validation,
         # surfacing as ``AttributeError`` instead of a typed error.
-        # Reject the bad TYPE here with the same shape as the low-level
-        # writer's guard in ``_writer.py``.
+        # ``None`` is included: the contract is ``compression: str`` (use
+        # the ``'none'`` string to disable compression), so ``None`` is
+        # rejected here rather than aliased (#2978). Reject the bad TYPE
+        # with the same shape as the low-level writer's guard in
+        # ``_writer.py``.
         raise TypeError(
             f"compression must be a str (in to_geotiff); "
             f"got {type(compression).__name__}.")
