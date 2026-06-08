@@ -1630,6 +1630,17 @@ def _viewshed_cpu(
     return visibility
 
 
+def _validate_finite_scalar(value, param_name):
+    # Reject NaN, inf, and non-numeric types for a scalar parameter.
+    try:
+        is_bad = not np.isfinite(value)
+    except (TypeError, ValueError):
+        is_bad = True
+    if is_bad:
+        raise ValueError(
+            f"{param_name} must be a finite number, got {value!r}")
+
+
 def viewshed(raster: xarray.DataArray,
              x: Union[int, float],
              y: Union[int, float],
@@ -1650,11 +1661,13 @@ def viewshed(raster: xarray.DataArray,
     y : int, float
         y-coordinate in data space of observer location.
     observer_elev : float
-        Observer elevation above the terrain.
+        Observer elevation above the terrain. Must be a finite number;
+        NaN, inf, or a non-numeric value raises ``ValueError``.
     target_elev : float
         Target elevation offset above the terrain, which is the height
         in surface units to be added to the z-value of each pixel
-        when it is being analyzed for visibility.
+        when it is being analyzed for visibility. Must be a finite
+        number; NaN, inf, or a non-numeric value raises ``ValueError``.
     max_distance : float, optional
         Maximum analysis distance from the observer in surface units.
         Must be a finite number >= 0; a negative or non-finite value
@@ -1748,6 +1761,11 @@ def viewshed(raster: xarray.DataArray,
 
     """
     _validate_raster(raster, func_name='viewshed', name='raster')
+
+    # Validate scalar parameters before any backend dispatch so all four
+    # backends (numpy, cupy, dask+numpy, dask+cupy) get the same clear error.
+    _validate_finite_scalar(observer_elev, 'observer_elev')
+    _validate_finite_scalar(target_elev, 'target_elev')
 
     # --- max_distance: validate, then extract spatial window for any backend ---
     if max_distance is not None:
