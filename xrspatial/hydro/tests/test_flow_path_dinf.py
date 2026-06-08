@@ -323,7 +323,11 @@ def _run_with_termination_guard(fn, timeout=30.0):
 
     Returns fn()'s result. A non-terminating loop (the bug) leaves the
     daemon thread spinning and raises AssertionError here; the fixed code
-    returns well under the budget.
+    returns well under the budget. The numpy kernel is @ngjit and runs
+    without the GIL, so on the buggy code the daemon thread cannot be
+    interrupted and keeps burning a core in the background after this
+    raises -- acceptable for a regression guard that only fails when the
+    fix is absent, but worth knowing if you see a lingering busy thread.
     """
     import threading
 
