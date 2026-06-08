@@ -924,38 +924,50 @@ def _stream_link_mfd_dask(fractions_da, accum_da, threshold):
     _mask_bdry = mask_bdry
     _threshold = threshold
 
-    # Assemble result via da.block
-    rows = []
-    for iy in range(n_tile_y):
-        row = []
-        for ix in range(n_tile_x):
-            y_start = sum(chunks_y[:iy])
-            y_end = y_start + chunks_y[iy]
-            x_start = sum(chunks_x[:ix])
-            x_end = x_start + chunks_x[ix]
+    # Lazy assembly: each tile is recomputed on demand from the converged
+    # boundary state.  Driver memory holds only the small boundary/mask
+    # snapshots, so peak memory scales with chunk size rather than the full
+    # grid.  ``fractions_da`` is 3D (8, H, W) and cannot align with the 2D
+    # output via map_blocks, so we map over ``accum_da`` (aligned to the
+    # fractions' spatial tile grid) and slice the matching fractions strip
+    # inside the closure.  ``chunk-location`` gives the tile index directly.
+    accum_da = accum_da.rechunk((chunks_y, chunks_x))
+    cum_y = np.zeros(n_tile_y + 1, dtype=np.int64)
+    np.cumsum(chunks_y, out=cum_y[1:])
+    cum_x = np.zeros(n_tile_x + 1, dtype=np.int64)
+    np.cumsum(chunks_x, out=cum_x[1:])
 
-            frac_chunk = np.asarray(
-                fractions_da[:, y_start:y_end, x_start:x_end].compute(),
-                dtype=np.float64)
-            ac_chunk = _to_numpy_f64(
-                accum_da[y_start:y_end, x_start:x_end].compute())
+    def _tile(ac_block, block_info=None):
+        # ``meta`` is passed to map_blocks below, so dask never runs a
+        # block_info=None dry-run; block_info is always populated here.
+        iy, ix = block_info[0]['chunk-location']
+        y_start = int(cum_y[iy])
+        y_end = int(cum_y[iy + 1])
+        x_start = int(cum_x[ix])
+        x_end = int(cum_x[ix + 1])
 
-            sm = np.where(ac_chunk >= _threshold, 1, 0).astype(np.int8)
-            sm = np.where(np.isnan(ac_chunk), 0, sm).astype(np.int8)
-            sm = np.where(np.isnan(frac_chunk[0]), 0, sm).astype(np.int8)
-            _, h, w = frac_chunk.shape
+        frac_chunk = np.asarray(
+            fractions_da[:, y_start:y_end, x_start:x_end].compute(),
+            dtype=np.float64)
+        ac_chunk = _to_numpy_f64(ac_block)
 
-            seeds = _compute_link_seeds_mfd(
-                iy, ix, _boundaries, _frac_bdry, _mask_bdry,
-                chunks_y, chunks_x, n_tile_y, n_tile_x)
+        sm = np.where(ac_chunk >= _threshold, 1, 0).astype(np.int8)
+        sm = np.where(np.isnan(ac_chunk), 0, sm).astype(np.int8)
+        sm = np.where(np.isnan(frac_chunk[0]), 0, sm).astype(np.int8)
+        _, h, w = frac_chunk.shape
 
-            tile_link = _stream_link_mfd_tile_kernel(
-                frac_chunk, sm, h, w, *seeds,
-                row_offsets[iy], col_offsets[ix], total_width)
-            row.append(da.from_array(tile_link, chunks=tile_link.shape))
-        rows.append(row)
+        seeds = _compute_link_seeds_mfd(
+            iy, ix, _boundaries, _frac_bdry, _mask_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x)
 
-    return da.block(rows)
+        return _stream_link_mfd_tile_kernel(
+            frac_chunk, sm, h, w, *seeds,
+            row_offsets[iy], col_offsets[ix], total_width)
+
+    return da.map_blocks(
+        _tile, accum_da,
+        dtype=np.float64, meta=np.array((), dtype=np.float64),
+    )
 
 
 def _stream_link_mfd_dask_cupy(fractions_da, accum_da, threshold):
