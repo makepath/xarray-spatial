@@ -1112,3 +1112,68 @@ def test_viewshed_does_not_mutate_cupy_input():
     assert isinstance(raster.data, cp.ndarray)
     assert raster.dtype == np.dtype("int16")
     np.testing.assert_array_equal(raster.data.get(), before)
+
+
+# -------------------------------------------------------------------
+# Regular-grid validation (#2789)
+# -------------------------------------------------------------------
+
+def _build_grid_2789(backend, xs, ys):
+    """5x5 raster with a single peak, given explicit x/y coordinates."""
+    arr = np.zeros((len(ys), len(xs)), dtype="float64")
+    arr[2, 2] = 5.0
+    if backend == "cupy":
+        import cupy as cp
+        arr = cp.asarray(arr)
+    elif backend == "dask":
+        arr = da.from_array(arr, chunks=(3, 3))
+    return xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_irregular_x_raises(backend):
+    """Non-uniform x spacing must raise a clear ValueError naming the axis."""
+    ys = np.arange(5, dtype=float)
+    xs = np.array([0.0, 1.0, 2.0, 5.0, 6.0])  # gap between index 2 and 3
+    raster = _build_grid_2789(backend, xs, ys)
+    with pytest.raises(ValueError, match="x coordinates are not uniformly spaced"):
+        viewshed(raster, x=2, y=2, observer_elev=2)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_irregular_y_raises(backend):
+    """Non-uniform y spacing must raise a clear ValueError naming the axis."""
+    xs = np.arange(5, dtype=float)
+    ys = np.array([0.0, 1.0, 2.0, 5.0, 6.0])
+    raster = _build_grid_2789(backend, xs, ys)
+    with pytest.raises(ValueError, match="y coordinates are not uniformly spaced"):
+        viewshed(raster, x=2, y=2, observer_elev=2)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_irregular_with_max_distance_raises(backend):
+    """The windowed (max_distance) path is validated too (#2789)."""
+    ys = np.arange(5, dtype=float)
+    xs = np.array([0.0, 1.0, 2.0, 5.0, 6.0])
+    raster = _build_grid_2789(backend, xs, ys)
+    with pytest.raises(ValueError, match="x coordinates are not uniformly spaced"):
+        viewshed(raster, x=2, y=2, observer_elev=2, max_distance=10)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_regular_grid_passes(backend):
+    """A regularly spaced grid must not be rejected by the validation."""
+    xs = np.arange(5, dtype=float)
+    ys = np.arange(5, dtype=float)
+    raster = _build_grid_2789(backend, xs, ys)
+    result = viewshed(raster, x=2, y=2, observer_elev=2)
+    general_output_checks(raster, result)
+
+
+def test_viewshed_float_roundoff_regular_grid_passes():
+    """Coordinates from linspace carry float roundoff but are still regular."""
+    xs = np.linspace(-20, 20, 5)
+    ys = np.linspace(-20, 20, 5)
+    raster = _build_grid_2789("numpy", xs, ys)
+    # Should not raise despite the diffs not being bit-identical.
+    viewshed(raster, x=0, y=0, observer_elev=2)
