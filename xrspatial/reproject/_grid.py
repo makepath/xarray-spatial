@@ -5,7 +5,6 @@ import warnings
 
 import numpy as np
 
-
 _VALID_BOUNDS_POLICIES = ("auto", "raw", "clamp", "percentile")
 
 
