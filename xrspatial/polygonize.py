@@ -332,14 +332,18 @@ def _ranges_close(range_a, range_b, atol, rtol):
     return False
 
 
-def _cells_close_directed(cells_a, cells_b, atol, rtol, connectivity_8):
+def _cells_close_directed(cells_a, cells_b, atol, rtol, connectivity_8,
+                          cell_field=None):
     """Direction-aware close-value test between two chunk-boundary polygons.
 
-    ``cells_a`` / ``cells_b`` map ``(global_col, global_row) -> value`` for
-    the pixels each polygon places on an internal chunk edge.  Return True
-    if any pixel in ``cells_a`` is grid-adjacent to any pixel in ``cells_b``
-    (orthogonally for 4-conn, plus diagonally for 8-conn) AND the pair
-    compares close under the *same orientation* numpy CCL uses.
+    ``cells_a`` / ``cells_b`` map ``(global_col, global_row) ->
+    (value, w_match, s_match)`` for the pixels each polygon places on an
+    internal chunk edge.  ``w_match`` / ``s_match`` record whether numpy
+    CCL connected that pixel to its in-chunk W / S orthogonal neighbour
+    (same region).  Return True if any pixel in ``cells_a`` is grid-adjacent
+    to any pixel in ``cells_b`` (orthogonally for 4-conn, plus diagonally
+    for 8-conn) AND the pair compares close under the *same orientation*
+    numpy CCL uses.
 
     numpy's ``_calculate_regions`` walks pixels in raster-scan order and
     tests ``_is_close(reference=current, value=earlier_neighbour)`` where
@@ -351,27 +355,84 @@ def _cells_close_directed(cells_a, cells_b, atol, rtol, connectivity_8):
     ``ij = col + row * nx`` increases with row first, then column, so the
     higher-``ij`` pixel of an adjacent pair is the one with the greater row,
     or the greater column when rows are equal.
+
+    8-connectivity diagonals are *conditional* in numpy CCL: a pixel only
+    consults its SW diagonal when its W neighbour did not match, and its
+    SE diagonal only when its S neighbour did not match (see the
+    ``connectivity_8`` block in :func:`_calculate_regions`).  A pairwise
+    cross-chunk test that always honoured the diagonal over-merged two
+    regions numpy keeps separate when the intervening orthogonal neighbour
+    already matched (#2677).  The guard against that has two parts:
+
+    * ``w_match`` / ``s_match`` on the higher-``ij`` pixel cover the case
+      where the orthogonal neighbour is *in the same chunk* (so numpy
+      already absorbed it into this pixel's region during the per-chunk
+      pass).
+    * ``cell_field`` -- a global ``(col, row) -> value`` map over every
+      boundary pixel -- covers the case where the orthogonal neighbour
+      lives in a *different chunk* and is itself a boundary pixel; the
+      diagonal is suppressed when that neighbour value is close to the
+      higher-``ij`` pixel under numpy's orientation.
     """
     if not cells_a or not cells_b:
         return False
-    for (ca, ra), va in cells_a.items():
-        for (cb, rb), vb in cells_b.items():
+    for (ca, ra), (va, wa, sa) in cells_a.items():
+        for (cb, rb), (vb, wb, sb) in cells_b.items():
             dcol = cb - ca
             drow = rb - ra
-            adjacent = (
+            orthogonal = (
                 (abs(dcol) == 1 and drow == 0) or
-                (abs(drow) == 1 and dcol == 0) or
-                (connectivity_8 and abs(dcol) == 1 and abs(drow) == 1))
-            if not adjacent:
+                (abs(drow) == 1 and dcol == 0))
+            diagonal = (
+                connectivity_8 and abs(dcol) == 1 and abs(drow) == 1)
+            if not (orthogonal or diagonal):
                 continue
             # Higher-ij pixel is the reference (greater row, then col).
             if (rb, cb) > (ra, ca):
                 reference, value = vb, va
+                hi_col, hi_row = cb, rb
+                w_match, s_match = wb, sb
+                lo_col = ca
             else:
                 reference, value = va, vb
+                hi_col, hi_row = ca, ra
+                w_match, s_match = wa, sa
+                lo_col = cb
+            if diagonal:
+                # numpy consults the SW diagonal only when W did not
+                # match, and the SE diagonal only when S did not match.
+                # The diagonal partner sits one row below the higher-ij
+                # pixel, so lo_col < hi_col is SW, lo_col > hi_col is SE.
+                if lo_col == hi_col - 1:
+                    if w_match or _guard_matches(
+                            cell_field, hi_col - 1, hi_row,
+                            reference, atol, rtol):
+                        continue
+                elif lo_col == hi_col + 1:
+                    if s_match or _guard_matches(
+                            cell_field, hi_col, hi_row - 1,
+                            reference, atol, rtol):
+                        continue
             if _values_close(reference, value, atol, rtol):
                 return True
     return False
+
+
+def _guard_matches(cell_field, gcol, grow, reference, atol, rtol):
+    """Whether the orthogonal guard pixel at ``(gcol, grow)`` matched.
+
+    Looks the guard pixel up in the global boundary-value map and tests it
+    against the higher-``ij`` pixel under numpy's ``_is_close`` orientation
+    (reference scales the tolerance).  Returns False when the guard is not
+    a boundary pixel -- the in-chunk ``w_match`` / ``s_match`` flags cover
+    that case, so a missing entry here must not suppress a real merge.
+    """
+    if cell_field is None:
+        return False
+    guard = cell_field.get((gcol, grow))
+    if guard is None:
+        return False
+    return _values_close(reference, guard, atol, rtol)
 
 
 def _group_boundary_polygons(boundary_polys,
@@ -489,6 +550,19 @@ def _group_boundary_polygons(boundary_polys,
                     seen.add(key)
                     adjacency_index.setdefault(key, []).append(idx)
 
+    # Global (col, row) -> value map across every boundary polygon's
+    # cells.  The 8-connectivity diagonal guard in
+    # ``_cells_close_directed`` consults the orthogonal neighbour numpy
+    # would have checked first when that neighbour lives in another chunk
+    # (#2677).  Cell values are (value, w_match, s_match) tuples.
+    cell_field = {}
+    if connectivity_8:
+        for item in boundary_polys:
+            cells = item[3]
+            if cells:
+                for coord, cval in cells.items():
+                    cell_field[coord] = cval[0]
+
     # Union-find over polygon indices.
     parent = list(range(n))
 
@@ -523,7 +597,8 @@ def _group_boundary_polygons(boundary_polys,
                 cells_j = boundary_polys[pj][3]
                 if cells_i and cells_j:
                     close = _cells_close_directed(
-                        cells_i, cells_j, atol, rtol, connectivity_8)
+                        cells_i, cells_j, atol, rtol, connectivity_8,
+                        cell_field=cell_field)
                 else:
                     range_i = boundary_polys[pi][2]
                     range_j = boundary_polys[pj][2]
@@ -1205,12 +1280,13 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
     ``(value, rings, (val_min, val_max), cells)`` tuple instead of just
     ``(value, rings)``.  The ``(val_min, val_max)`` range supports the
     #2583 tolerance-chain union; ``cells`` maps
-    ``(global_col, global_row) -> value`` for the polygon's pixels on
-    internal chunk edges and lets the cross-chunk merge apply numpy
-    CCL's direction-aware ``_is_close`` orientation at the exact pixel
-    pair straddling each boundary (#2666).  Integer rasters use strict
-    equality, so their ``cells`` map is empty and the merge falls back
-    to the range check.
+    ``(global_col, global_row) -> (value, w_match, s_match)`` for the
+    polygon's pixels on internal chunk edges and lets the cross-chunk
+    merge apply numpy CCL's direction-aware ``_is_close`` orientation at
+    the exact pixel pair straddling each boundary (#2666), with the
+    ``w_match`` / ``s_match`` flags guarding the conditional 8-conn
+    diagonal (#2677).  Integer rasters use strict equality, so their
+    ``cells`` map is empty and the merge falls back to the range check.
     """
     block = _to_numpy(block)
     if mask_block is not None:
@@ -1287,12 +1363,16 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
 
     * ``val_ranges[i]`` is the ``(val_min, val_max)`` span of region ``i``
       (used by #2583 to carry the value extent into the cross-chunk merge).
-    * ``boundary_cells[i]`` is a ``{(global_col, global_row): value}`` dict
-      of the region's pixels that lie on an *internal* chunk edge (an edge
-      shared with a neighbour chunk, not a raster edge).  The cross-chunk
-      merge (#2666) uses these per-cell values to replicate numpy CCL's
+    * ``boundary_cells[i]`` is a
+      ``{(global_col, global_row): (value, w_match, s_match)}`` dict of the
+      region's pixels that lie on an *internal* chunk edge (an edge shared
+      with a neighbour chunk, not a raster edge).  The cross-chunk merge
+      (#2666) uses these per-cell values to replicate numpy CCL's
       direction-aware ``_is_close`` orientation at the actual pixel pair
       straddling each chunk boundary, instead of a symmetric range check.
+      ``w_match`` / ``s_match`` flag whether numpy CCL connected the pixel
+      to its in-chunk W / S orthogonal neighbour, which the 8-conn diagonal
+      guard (#2677) needs to know to suppress over-merging.
 
     ``row_offset`` / ``col_offset`` / ``ny_total`` / ``nx_total`` describe
     where this chunk sits in the global raster so internal edges can be
@@ -1377,7 +1457,18 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
                 if cells is None:
                     cells = {}
                     boundary_cells[idx] = cells
-                cells[(local_col + col_offset, local_row + row_offset)] = v
+                # Record whether numpy CCL connected this pixel to its
+                # in-chunk W / S orthogonal neighbour (same region).  The
+                # 8-conn diagonal guard (#2677) suppresses a cross-chunk
+                # diagonal merge when the orthogonal neighbour numpy
+                # checks first already matched.  W is (local_row,
+                # local_col-1); S is (local_row-1, local_col).
+                w_match = (
+                    local_col > 0 and regions[ij - 1] == r)
+                s_match = (
+                    local_row > 0 and regions[ij - nx_eff] == r)
+                cells[(local_col + col_offset, local_row + row_offset)] = (
+                    v, w_match, s_match)
     out = []
     cells_out = []
     for i in range(n_regions):
