@@ -142,6 +142,10 @@ def _gistar_step_zscore(step_data, kernel, sq_kernel, global_mean,
     does. ``global_mean``, ``global_std``, and ``n`` are the global terms
     over the whole space-time cube.
     """
+    # Single-array backends pass a concrete numpy or cupy slice, so pick the
+    # matching module to build the validity mask. The dask helper below works
+    # off da.* instead, since its slices are lazy dask arrays of either chunk
+    # type and convolve_2d dispatches on the chunk type at compute time.
     xp = cupy.get_array_module(step_data) if cupy is not None else np
     valid = (~xp.isnan(step_data)).astype(step_data.dtype)
     filled = xp.where(valid > 0, step_data, step_data.dtype.type(0.0))
