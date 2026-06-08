@@ -669,6 +669,41 @@ def test_viewshed_valid_max_distance_still_works(backend, good):
     assert result.shape == raster.shape
 
 
+@pytest.mark.parametrize("param", ["observer_elev", "target_elev"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"),
+                                 "tall"])
+def test_viewshed_invalid_elev_raises(param, bad):
+    """Non-finite or non-numeric observer/target elevation raises a clear
+    ValueError naming the offending parameter, before backend dispatch (#2794).
+
+    Validation lives at the public entry point, so a single numpy raster
+    covers every backend. Previously NaN/inf fell through to confusing
+    downstream errors instead of a message pointing at the bad parameter.
+    """
+    raster = _make_raster("numpy")
+    with pytest.raises(ValueError, match=f"{param} must be a finite number"):
+        viewshed(raster, x=3, y=2, **{param: bad})
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_viewshed_invalid_elev_raises_before_dispatch(backend):
+    """A dask raster also raises up front, confirming the guard runs before
+    any backend dispatch rather than from deep inside the dask path."""
+    raster = _make_raster(backend)
+    with pytest.raises(ValueError, match="observer_elev must be a finite"):
+        viewshed(raster, x=3, y=2, observer_elev=float("nan"))
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+@pytest.mark.parametrize("good", [-5.0, 0.0, 2.5])
+def test_viewshed_valid_elev_still_works(backend, good):
+    """Finite observer/target elevations (including negative) pass
+    validation and return a result of the expected shape."""
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=good, target_elev=good)
+    assert result.shape == raster.shape
+
+
 # -------------------------------------------------------------------
 # dask+cupy backend tests
 # -------------------------------------------------------------------
