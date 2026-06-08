@@ -1,5 +1,12 @@
 __init__.py export-subst
 setup.py export-subst
 
-.claude/sweep-*-state.csv merge=union
-.codex/sweep-*-state.csv merge=union
+# Sweep state CSVs are keyed by module (one row per module), not an
+# append-only log. merge=union concatenated both sides of a conflicting
+# hunk, which silently duplicated header and module rows and mixed
+# formats when a branch was based on a stale copy (issue #2754). merge=text
+# pins git's built-in 3-way text driver so a real divergence surfaces as a
+# normal conflict to resolve by hand, rather than corrupting the file in
+# the driver.
+.claude/sweep-*-state.csv merge=text
+.codex/sweep-*-state.csv merge=text

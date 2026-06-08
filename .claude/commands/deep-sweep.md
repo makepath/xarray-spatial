@@ -120,8 +120,8 @@ with path.open() as f:
     header = reader.fieldnames
     rows = [r for r in reader if r["module"] != "{module}"]
 def _oneline(v):
-    # merge=union is line-based: a newline inside a quoted field splits
-    # the record on parallel-agent merges. Force one physical line per
+    # Git merges these CSVs line by line, so a newline inside a quoted
+    # field splits the record on a merge. Force one physical line per
     # record by collapsing embedded newlines to " | ".
     return "" if v is None else str(v).replace("\r\n", " | ").replace("\r", " | ").replace("\n", " | ")
 
@@ -421,11 +421,12 @@ inspect or push them.
   per-sweep worktrees via the subagents.
 - The deliverable from the parent is: validated module, dispatch table,
   parallel agents, results table. Keep parent output concise.
-- Each sweep's state CSV is registered with `merge=union` in
-  `.gitattributes`, so the N concurrent state updates auto-merge cleanly
-  even though they all touch the same module's row in different worktrees
-  -- the last write per row wins, which is the read-update-write semantics
-  the sweep templates already use.
+- Each sweep's state CSV uses git's default 3-way text merge (no
+  `merge=union`; see issue #2754). N concurrent state updates that touch
+  the same row surface a normal conflict rather than silently unioning
+  duplicate rows. Resolve by keeping one row per module (last write per
+  row wins), which is the read-update-write semantics the sweep templates
+  already use.
 - If a sweep template later changes its state-file schema or its audit
   categories, deep-sweep picks up the change automatically the next time
   it runs, because each subagent re-reads its sweep file on dispatch.

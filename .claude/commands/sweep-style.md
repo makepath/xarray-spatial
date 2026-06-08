@@ -58,12 +58,13 @@ slope,2026-05-01,1042,MEDIUM,1;4,"optional single-line notes"
 - `notes` is CSV-quoted; newlines must be flattened to spaces on write so
   every module stays exactly one line.
 
-The file is covered by the `.claude/sweep-*-state.csv merge=union` rule in
-`.gitattributes`, so two parallel sweeps touching different modules
-auto-merge without conflict. A transient duplicate-row state can occur
-after a merge if both branches modified the same module; the
-read-update-write cycle in step 5 keys rows by `module` and last-write-wins,
-so the next write cleans up.
+The file uses git's default 3-way text merge (no `merge=union`; see
+issue #2754). Two parallel sweeps that touch the CSV surface a normal
+merge conflict rather than silently unioning duplicate rows. Resolve a
+conflict by keeping one row per `module` (latest `last_inspected` wins),
+a single header, and one physical line per record -- or just re-run the
+read-update-write cycle in step 5, which rewrites the whole canonical
+file.
 
 ## Step 3 -- Score each module
 
@@ -302,10 +303,11 @@ To reset all tracking: `/sweep-style --reset-state`
 - Do NOT modify any source files directly. Subagents handle fixes via /rockout.
 - Keep the output concise -- the table and agent dispatch are the deliverables.
 - If $ARGUMENTS is empty, use defaults: top 3, no category filter, no exclusions.
-- State file (`.claude/sweep-style-state.csv`) is tracked in git, covered by
-  the `.claude/sweep-*-state.csv merge=union` rule in `.gitattributes` so
-  parallel sweeps touching different modules auto-merge. Subagents must
-  `git add` and commit it so the state update lands in the PR.
+- State file (`.claude/sweep-style-state.csv`) is tracked in git and uses
+  git's default 3-way text merge (no `merge=union`; see issue #2754), so a
+  concurrent change surfaces a conflict instead of silently unioning
+  duplicate rows. Subagents must `git add` and commit it so the state
+  update lands in the PR.
 - For subpackage modules (geotiff, reproject, hydro), the subagent should run
   flake8 + isort across ALL `.py` files in the subpackage directory, not
   just `__init__.py`.
