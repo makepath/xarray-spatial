@@ -22,11 +22,14 @@ import numpy as np
 import xarray as xr
 from numba import prange
 
-from xrspatial.convolution import convolve_2d, _convolve_2d_numpy, _convolve_2d_cupy
-from xrspatial.focal import _calc_hotspots_numpy
+from xrspatial.convolution import convolve_2d
+from xrspatial.focal import (
+    _calc_hotspots_numpy,
+    _gistar_global_stats,
+    _gistar_zscore,
+)
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
-    _boundary_to_dask,
     _validate_boundary,
     ngjit,
     not_implemented_func,
@@ -106,6 +109,51 @@ def _check_memory(n_times, ny, nx):
             f"Use a smaller raster or pass a dask-backed DataArray for "
             f"out-of-core processing."
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-time-step Getis-Ord Gi* z-score
+# ---------------------------------------------------------------------------
+
+def _gistar_step_finalize(weighted_sum, weight_sum, sq_weight_sum,
+                          global_mean, global_std, n):
+    """Gi* z-score from convolution terms, NaN where the neighborhood is empty.
+
+    ``_gistar_zscore`` maps an empty neighborhood (``weight_sum == 0``,
+    e.g. a cell whose own value and every neighbor are NaN) to a z-score
+    of 0. Emerging hot spot analysis needs those cells to stay NaN so the
+    Mann-Kendall step can detect pixels that have no data across the whole
+    time series instead of treating them as a constant cold series.
+    """
+    z = _gistar_zscore(weighted_sum, weight_sum, sq_weight_sum,
+                       global_mean, global_std, n)
+    return np.where(weight_sum > 0, z, np.float32(np.nan))
+
+
+def _gistar_step_zscore(step_data, kernel, sq_kernel, global_mean,
+                        global_std, n, convolve):
+    """Getis-Ord Gi* z-score for a single 2-D time step.
+
+    ``convolve`` is the backend convolution (numpy or cupy) applied with
+    edge padding already handled by the caller. The neighborhood weight
+    sum ``W_i`` and squared-weight sum ``W2_i`` come from convolving the
+    validity mask with the kernel and the squared kernel, so raster edges
+    and interior NaN cells drop out of the sums exactly as ``hotspots()``
+    does. ``global_mean``, ``global_std``, and ``n`` are the global terms
+    over the whole space-time cube.
+    """
+    # Single-array backends pass a concrete numpy or cupy slice, so pick the
+    # matching module to build the validity mask. The dask helper below works
+    # off da.* instead, since its slices are lazy dask arrays of either chunk
+    # type and convolve_2d dispatches on the chunk type at compute time.
+    xp = cupy.get_array_module(step_data) if cupy is not None else np
+    valid = (~xp.isnan(step_data)).astype(step_data.dtype)
+    filled = xp.where(valid > 0, step_data, step_data.dtype.type(0.0))
+    weighted_sum = convolve(filled, kernel)
+    weight_sum = convolve(valid, kernel)
+    sq_weight_sum = convolve(valid, sq_kernel)
+    return _gistar_step_finalize(weighted_sum, weight_sum, sq_weight_sum,
+                                 global_mean, global_std, n)
 
 
 # ---------------------------------------------------------------------------
@@ -395,24 +443,23 @@ def _emerging_hotspots_numpy(raster, kernel, boundary='nan'):
     data = raster.data.astype(np.float32)
     n_times, ny, nx = data.shape
 
-    # Global statistics across entire space-time cube
-    global_mean = np.nanmean(data)
-    global_std = np.nanstd(data)
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    # Global Gi* terms across the entire space-time cube.
+    global_mean = np.float32(np.nanmean(data))
+    global_std = np.float32(np.nanstd(data))
+    n = int((~np.isnan(data)).sum())
+    _gistar_global_stats(global_mean, global_std, n)
 
-    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
+    kernel = kernel.astype(np.float32)
+    sq_kernel = kernel * kernel
+    convolve = partial(convolve_2d, boundary=boundary)
 
     # Compute Gi* z-scores and confidence bins per time step
     gi_zscore = np.empty((n_times, ny, nx), dtype=np.float32)
     gi_bin = np.empty((n_times, ny, nx), dtype=np.int8)
 
     for t in range(n_times):
-        step_data = data[t]
-        convolved = convolve_2d(step_data, norm_kernel, boundary)
-        z = (convolved - global_mean) / global_std
+        z = _gistar_step_zscore(data[t], kernel, sq_kernel, global_mean,
+                                global_std, n, convolve)
         gi_zscore[t] = z
         gi_bin[t] = _calc_hotspots_numpy(z)
 
@@ -432,20 +479,20 @@ def _emerging_hotspots_cupy(raster, kernel, boundary='nan'):
     data = raster.data.astype(cupy.float32)
     n_times, ny, nx = data.shape
 
-    global_mean = cupy.nanmean(data)
-    global_std = cupy.nanstd(data)
-    if float(global_std) == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    global_mean = np.float32(float(cupy.nanmean(data)))
+    global_std = np.float32(float(cupy.nanstd(data)))
+    n = int((~cupy.isnan(data)).sum())
+    _gistar_global_stats(global_mean, global_std, n)
 
-    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
+    kernel = cupy.asarray(kernel).astype(cupy.float32)
+    sq_kernel = kernel * kernel
+    convolve = partial(convolve_2d, boundary=boundary)
 
-    # GPU: convolution + z-score per time step
+    # GPU: per-time-step Gi* z-score
     gi_zscore_gpu = cupy.empty((n_times, ny, nx), dtype=cupy.float32)
     for t in range(n_times):
-        convolved = convolve_2d(data[t], norm_kernel, boundary)
-        gi_zscore_gpu[t] = (convolved - global_mean) / global_std
+        gi_zscore_gpu[t] = _gistar_step_zscore(
+            data[t], kernel, sq_kernel, global_mean, global_std, n, convolve)
 
     # Transfer to CPU for Mann-Kendall (branching-heavy, better on CPU)
     gi_zscore_cpu = cupy.asnumpy(gi_zscore_gpu)
@@ -471,10 +518,23 @@ def _emerging_hotspots_cupy(raster, kernel, boundary='nan'):
 # Dask + NumPy backend
 # ---------------------------------------------------------------------------
 
-def _convolve_and_zscore_chunk(chunk, kernel, global_mean, global_std):
-    """Dask chunk function: convolve -> z-score."""
-    convolved = _convolve_2d_numpy(chunk, kernel)
-    return ((convolved - global_mean) / global_std).astype(np.float32)
+def _gistar_step_dask(step_data, kernel, sq_kernel, global_mean,
+                      global_std, n, boundary):
+    """Lazy per-time-step Gi* z-score for a dask-backed 2-D slice.
+
+    Mirrors ``_hotspots_dask_numpy``: the convolutions go through the
+    dispatching ``convolve_2d`` so the dask boundary handling matches the
+    numpy/cupy single-array paths exactly. NaN cells are excluded from
+    every neighborhood sum via the validity mask.
+    """
+    valid = ~da.isnan(step_data)
+    valid_f = valid.astype(step_data.dtype)
+    filled = da.where(valid, step_data, step_data.dtype.type(0.0))
+    weighted_sum = convolve_2d(filled, kernel, boundary)
+    weight_sum = convolve_2d(valid_f, kernel, boundary)
+    sq_weight_sum = convolve_2d(valid_f, sq_kernel, boundary)
+    return _gistar_step_finalize(weighted_sum, weight_sum, sq_weight_sum,
+                                 global_mean, global_std, n)
 
 
 def _mk_classify_dask_chunk(block):
@@ -520,36 +580,23 @@ def _emerging_hotspots_dask_numpy(raster, kernel, boundary='nan'):
 
     n_times = data.shape[0]
 
-    # Pass 1: eagerly compute global statistics (two scalars)
-    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
+    # Pass 1: eagerly compute global Gi* terms over the whole cube.
+    global_mean, global_std, n = da.compute(
+        da.nanmean(data), da.nanstd(data), (~da.isnan(data)).sum())
     global_mean = np.float32(global_mean)
     global_std = np.float32(global_std)
+    n = int(n)
+    _gistar_global_stats(global_mean, global_std, n)
 
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    kernel = kernel.astype(np.float32)
+    sq_kernel = kernel * kernel
 
-    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
-    pad_h = norm_kernel.shape[0] // 2
-    pad_w = norm_kernel.shape[1] // 2
-
-    # Pass 2: per time step, convolve + z-score via map_overlap, then stack
-    zscore_slices = []
-    for t in range(n_times):
-        _func = partial(
-            _convolve_and_zscore_chunk,
-            kernel=norm_kernel,
-            global_mean=global_mean,
-            global_std=global_std,
-        )
-        z_t = data[t].map_overlap(
-            _func,
-            depth=(pad_h, pad_w),
-            boundary=_boundary_to_dask(boundary),
-            meta=np.array((), dtype=np.float32),
-        )
-        zscore_slices.append(z_t)
+    # Pass 2: per time step, lazy Gi* z-score via convolve_2d, then stack.
+    zscore_slices = [
+        _gistar_step_dask(data[t], kernel, sq_kernel, global_mean,
+                          global_std, n, boundary)
+        for t in range(n_times)
+    ]
 
     gi_zscore = da.stack(zscore_slices, axis=0)
     # Rechunk so time axis is in a single chunk (time dim is small)
@@ -581,12 +628,6 @@ def _emerging_hotspots_dask_numpy(raster, kernel, boundary='nan'):
 # ---------------------------------------------------------------------------
 # Dask + CuPy backend (GPU convolution, CPU Mann-Kendall)
 # ---------------------------------------------------------------------------
-
-def _convolve_and_zscore_cupy_chunk(chunk, kernel, global_mean, global_std):
-    """Dask chunk function: GPU convolve -> z-score."""
-    convolved = _convolve_2d_cupy(chunk, kernel)
-    return ((convolved - global_mean) / global_std).astype(cupy.float32)
-
 
 def _gi_bin_cupy_chunk(block):
     """Dask chunk function: z-scores -> confidence bins (CPU classify, CuPy I/O)."""
@@ -622,36 +663,23 @@ def _emerging_hotspots_dask_cupy(raster, kernel, boundary='nan'):
 
     n_times = data.shape[0]
 
-    # Pass 1: eagerly compute global statistics (two scalars)
-    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
+    # Pass 1: eagerly compute global Gi* terms over the whole cube.
+    global_mean, global_std, n = da.compute(
+        da.nanmean(data), da.nanstd(data), (~da.isnan(data)).sum())
     global_mean = np.float32(float(global_mean))
     global_std = np.float32(float(global_std))
+    n = int(n)
+    _gistar_global_stats(global_mean, global_std, n)
 
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+    kernel = kernel.astype(np.float32)
+    sq_kernel = kernel * kernel
 
-    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
-    pad_h = norm_kernel.shape[0] // 2
-    pad_w = norm_kernel.shape[1] // 2
-
-    # Pass 2: per time step, GPU convolve + z-score via map_overlap, then stack
-    _func = partial(
-        _convolve_and_zscore_cupy_chunk,
-        kernel=norm_kernel,
-        global_mean=global_mean,
-        global_std=global_std,
-    )
-    zscore_slices = []
-    for t in range(n_times):
-        z_t = data[t].map_overlap(
-            _func,
-            depth=(pad_h, pad_w),
-            boundary=_boundary_to_dask(boundary, is_cupy=True),
-            meta=cupy.array((), dtype=cupy.float32),
-        )
-        zscore_slices.append(z_t)
+    # Pass 2: per time step, lazy GPU Gi* z-score via convolve_2d, then stack.
+    zscore_slices = [
+        _gistar_step_dask(data[t], kernel, sq_kernel, global_mean,
+                          global_std, n, boundary)
+        for t in range(n_times)
+    ]
 
     gi_zscore = da.stack(zscore_slices, axis=0)
     gi_zscore = gi_zscore.rechunk({0: n_times})

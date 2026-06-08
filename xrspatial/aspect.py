@@ -442,7 +442,7 @@ def aspect(agg: xr.DataArray,
     _validate_boundary(boundary)
 
     if method == 'planar':
-        warn_if_unit_mismatch(agg)
+        warn_if_unit_mismatch(agg, func_name='aspect')
         cellsize_x, cellsize_y = get_dataarray_resolution(agg)
         mapper = ArrayTypeFunctionMapping(
             numpy_func=_run_numpy,

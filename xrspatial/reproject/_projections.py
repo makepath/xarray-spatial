@@ -120,63 +120,6 @@ _DATUM_PARAMS = {
 }
 
 
-@njit(nogil=True, cache=True)
-def _geodetic_to_ecef(lon_deg, lat_deg, a, f):
-    """Geographic (deg) -> geocentric ECEF (metres)."""
-    lon = math.radians(lon_deg)
-    lat = math.radians(lat_deg)
-    e2 = 2.0 * f - f * f
-    slat = math.sin(lat)
-    clat = math.cos(lat)
-    N = a / math.sqrt(1.0 - e2 * slat * slat)
-    X = N * clat * math.cos(lon)
-    Y = N * clat * math.sin(lon)
-    Z = N * (1.0 - e2) * slat
-    return X, Y, Z
-
-
-@njit(nogil=True, cache=True)
-def _ecef_to_geodetic(X, Y, Z, a, f):
-    """Geocentric ECEF (metres) -> geographic (deg).  Iterative."""
-    e2 = 2.0 * f - f * f
-    lon = math.atan2(Y, X)
-    p = math.sqrt(X * X + Y * Y)
-    lat = math.atan2(Z, p * (1.0 - e2))
-    for _ in range(10):
-        slat = math.sin(lat)
-        N = a / math.sqrt(1.0 - e2 * slat * slat)
-        lat = math.atan2(Z + e2 * N * slat, p)
-    return math.degrees(lon), math.degrees(lat)
-
-
-@njit(nogil=True, cache=True)
-def _helmert7_fwd(lon_deg, lat_deg, dx, dy, dz, rx, ry, rz, ds,
-                  a_src, f_src, a_tgt, f_tgt):
-    """Datum shift: source -> target via 7-param Helmert (Bursa-Wolf).
-
-    rx/ry/rz in arcseconds (position vector convention), ds in ppm.
-    """
-    X, Y, Z = _geodetic_to_ecef(lon_deg, lat_deg, a_src, f_src)
-    AS2RAD = math.pi / (180.0 * 3600.0)
-    rxr = rx * AS2RAD
-    ryr = ry * AS2RAD
-    rzr = rz * AS2RAD
-    sc = 1.0 + ds * 1e-6
-    X2 = dx + sc * (X - rzr * Y + ryr * Z)
-    Y2 = dy + sc * (rzr * X + Y - rxr * Z)
-    Z2 = dz + sc * (-ryr * X + rxr * Y + Z)
-    return _ecef_to_geodetic(X2, Y2, Z2, a_tgt, f_tgt)
-
-
-@njit(nogil=True, cache=True)
-def _helmert7_inv(lon_deg, lat_deg, dx, dy, dz, rx, ry, rz, ds,
-                  a_src, f_src, a_tgt, f_tgt):
-    """Inverse 7-param Helmert: target -> source (negate all params)."""
-    return _helmert7_fwd(lon_deg, lat_deg,
-                         -dx, -dy, -dz, -rx, -ry, -rz, -ds,
-                         a_tgt, f_tgt, a_src, f_src)
-
-
 def _get_datum_params(crs):
     """Return (dx, dy, dz, rx, ry, rz, ds, a_src, f_src) for a non-WGS84 datum.
 
@@ -1794,16 +1737,6 @@ def _is_wgs84_compatible_ellipsoid(crs):
     # Check if we have Helmert parameters for this datum
     key = datum if datum in _DATUM_PARAMS else ellps
     return key in _DATUM_PARAMS
-
-
-@njit(nogil=True, cache=True, parallel=True)
-def _apply_datum_shift_fwd(lon_arr, lat_arr, dx, dy, dz, rx, ry, rz, ds,
-                           a_src, f_src, a_tgt, f_tgt):
-    """Batch forward 7-param Helmert: source datum -> WGS84."""
-    for i in prange(lon_arr.shape[0]):
-        lon_arr[i], lat_arr[i] = _helmert7_fwd(
-            lon_arr[i], lat_arr[i], dx, dy, dz, rx, ry, rz, ds,
-            a_src, f_src, a_tgt, f_tgt)
 
 
 def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):

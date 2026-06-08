@@ -183,6 +183,84 @@ def test_dask_matches_numpy():
         np.nan_to_num(dask_result.values, nan=-999))
 
 
+@dask_array_available
+def test_dask_accum_chunk_mismatch():
+    """flow_accum chunked differently from fractions still matches numpy."""
+    import dask.array as da
+
+    fracs = _make_fractions({
+        (0, 0): [(1, 1.0)],
+        (0, 2): [(3, 1.0)],
+        (1, 1): [(2, 1.0)],
+        (2, 1): [],
+    }, (3, 3))
+    accum = np.array([
+        [1.0, 0.0, 1.0],
+        [0.0, 3.0, 0.0],
+        [0.0, 4.0, 0.0],
+    ], dtype=np.float64)
+
+    frac_np = xr.DataArray(fracs, dims=['neighbor', 'y', 'x'])
+    fa_np = create_test_raster(accum)
+    np_result = stream_link_mfd(frac_np, fa_np, threshold=1)
+
+    frac_dask = xr.DataArray(
+        da.from_array(fracs, chunks=(8, 2, 2)),
+        dims=['neighbor', 'y', 'x'])
+    # flow_accum chunked 3x3 while fractions are 2x2 -- the lazy assembly
+    # must realign it onto the fractions' tile grid.
+    fa_dask = xr.DataArray(
+        da.from_array(accum, chunks=(3, 3)),
+        dims=['y', 'x'])
+    dask_result = stream_link_mfd(frac_dask, fa_dask, threshold=1)
+
+    np.testing.assert_array_equal(
+        np.nan_to_num(np_result.values, nan=-999),
+        np.nan_to_num(dask_result.values, nan=-999))
+
+
+@dask_array_available
+def test_dask_assembly_is_lazy(monkeypatch):
+    """Building the output raster must be deferred to compute time (#2885)."""
+    import importlib
+    import dask.array as da
+    mod = importlib.import_module('xrspatial.hydro.stream_link_mfd')
+
+    counter = {'n': 0}
+    orig = mod._stream_link_mfd_tile_kernel
+
+    def _spy(*args, **kwargs):
+        counter['n'] += 1
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, '_stream_link_mfd_tile_kernel', _spy)
+
+    fracs = _make_fractions({
+        (0, 0): [(1, 1.0)],
+        (0, 2): [(3, 1.0)],
+        (1, 1): [(2, 1.0)],
+        (2, 1): [],
+    }, (3, 3))
+    accum = np.array([
+        [1.0, 0.0, 1.0],
+        [0.0, 3.0, 0.0],
+        [0.0, 4.0, 0.0],
+    ], dtype=np.float64)
+
+    frac_dask = xr.DataArray(
+        da.from_array(fracs, chunks=(8, 2, 2)),
+        dims=['neighbor', 'y', 'x'])
+    fa_dask = xr.DataArray(
+        da.from_array(accum, chunks=(2, 2)),
+        dims=['y', 'x'])
+
+    result = stream_link_mfd(frac_dask, fa_dask, threshold=1)
+    # The convergence sweep runs eagerly, but assembling the result must not.
+    calls_after_call = counter['n']
+    result.data.compute()
+    assert counter['n'] - calls_after_call > 0
+
+
 # ====================================================================
 # Memory guard tests
 # ====================================================================

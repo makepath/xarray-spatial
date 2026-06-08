@@ -949,7 +949,7 @@ def _infer_vertical_unit_type(agg):
     return "unknown"
 
 
-def warn_if_unit_mismatch(agg: xr.DataArray) -> None:
+def warn_if_unit_mismatch(agg: xr.DataArray, func_name: str = "slope") -> None:
     """
     Heuristic check for horizontal vs vertical unit mismatch.
 
@@ -958,6 +958,14 @@ def warn_if_unit_mismatch(agg: xr.DataArray) -> None:
     - elevation values in meters/feet
 
     Emits a UserWarning if a likely mismatch is detected.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        Input raster to inspect.
+    func_name : str, default="slope"
+        Name of the calling function. Used only to make the warning text
+        refer to the operation the user actually called (e.g. ``aspect``).
     """
     try:
         cellsize_x, cellsize_y = get_dataarray_resolution(agg)
@@ -996,8 +1004,10 @@ def warn_if_unit_mismatch(agg: xr.DataArray) -> None:
             "xrspatial: input DataArray appears to have coordinates in degrees "
             "but elevation values in a linear unit (e.g. meters/feet). "
             "Slope/aspect operations expect horizontal distances in the same "
-            "units as vertical. Consider reprojecting to a projected CRS with "
-            "meter-based coordinates before calling `slope`.",
+            "units as vertical, and away from the equator the degree-to-meter "
+            "ratio differs between the x and y axes, which skews the result. "
+            "Consider reprojecting to a projected CRS with meter-based "
+            f"coordinates before calling `{func_name}`.",
             UserWarning,
         )
 
