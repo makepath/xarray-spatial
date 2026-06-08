@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pytest
 import xarray as xr
@@ -136,6 +137,66 @@ class TestNaNHandling:
         agg = create_test_raster(data, backend='numpy')
         result = contours(agg, levels=[0.0])
         assert result == []
+
+    def test_all_nan_auto_levels_no_warning(self):
+        """All-NaN raster with auto levels must not emit RuntimeWarning (#2795)."""
+        data = np.full((4, 4), np.nan, dtype=np.float64)
+        agg = create_test_raster(data, backend='numpy')
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = contours(agg)
+            assert result == []
+            runtime_warnings = [x for x in w if issubclass(x.category, RuntimeWarning)]
+            assert len(runtime_warnings) == 0, (
+                f"RuntimeWarning emitted on all-NaN auto-level path: "
+                f"{[str(x.message) for x in runtime_warnings]}"
+            )
+
+    @dask_array_available
+    def test_all_nan_auto_levels_no_warning_dask(self):
+        """All-NaN dask raster with auto levels must not emit RuntimeWarning (#2795)."""
+        data = np.full((4, 4), np.nan, dtype=np.float64)
+        agg = create_test_raster(data, backend='dask+numpy', chunks=(2, 2))
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = contours(agg)
+            assert result == []
+            runtime_warnings = [x for x in w if issubclass(x.category, RuntimeWarning)]
+            assert len(runtime_warnings) == 0, (
+                f"RuntimeWarning emitted on all-NaN dask auto-level path: "
+                f"{[str(x.message) for x in runtime_warnings]}"
+            )
+
+    @cuda_and_cupy_available
+    def test_all_nan_auto_levels_no_warning_cupy(self):
+        """All-NaN cupy raster with auto levels must not emit RuntimeWarning (#2795)."""
+        data = np.full((4, 4), np.nan, dtype=np.float64)
+        agg = create_test_raster(data, backend='cupy')
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = contours(agg)
+            assert result == []
+            runtime_warnings = [x for x in w if issubclass(x.category, RuntimeWarning)]
+            assert len(runtime_warnings) == 0, (
+                f"RuntimeWarning emitted on all-NaN cupy auto-level path: "
+                f"{[str(x.message) for x in runtime_warnings]}"
+            )
+
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_all_nan_auto_levels_no_warning_dask_cupy(self):
+        """All-NaN dask+cupy raster with auto levels must not emit RuntimeWarning (#2795)."""
+        data = np.full((4, 4), np.nan, dtype=np.float64)
+        agg = create_test_raster(data, backend='dask+cupy', chunks=(2, 2))
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = contours(agg)
+            assert result == []
+            runtime_warnings = [x for x in w if issubclass(x.category, RuntimeWarning)]
+            assert len(runtime_warnings) == 0, (
+                f"RuntimeWarning emitted on all-NaN dask+cupy auto-level path: "
+                f"{[str(x.message) for x in runtime_warnings]}"
+            )
 
     def test_partial_nan(self):
         """Contours skip quads with NaN corners."""
