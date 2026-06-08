@@ -1,0 +1,38 @@
+---
+description: "Audit xrspatial modules for performance bottlenecks, OOM risk under 30TB dask workloads, and backend-specific anti-patterns"
+globs: "*.py"
+---
+
+# Sweep Performance: Performance Bottleneck Audit
+
+Audit xrspatial modules for performance bottlenecks, OOM risk, and backend-specific anti-patterns.
+
+## Categories to audit
+
+1. **Dask materialization**: .values on a dask-backed DataArray, .compute() inside a loop, np.array() wrapping a dask or CuPy array, da.stack() without following .rechunk().
+
+2. **Dask chunking and overlap**: map_overlap with depth >= chunk_size / 4, missing boundary argument in map_overlap, same function called twice on same input without caching, Python for loop iterating over dask chunks.
+
+3. **GPU transfer**: .data.get() followed by CuPy operations (GPU->CPU->GPU round-trip), cupy.asarray() inside a loop, mixing NumPy and CuPy ops in same function, register pressure in @cuda.jit kernels (>20 float64 locals), thread blocks >16x16 on register-heavy kernels.
+
+4. **Memory allocation**: unnecessary .copy() on arrays never mutated, large temporary arrays that could be fused into the kernel, np.zeros_like() + fill loop where np.empty() would suffice.
+
+5. **Numba anti-patterns**: missing @ngjit on nested for-loops over .data arrays, @jit without nopython=True, type instability, column-major iteration on row-major arrays.
+
+6. **30TB / 16GB OOM verdict**: For each dask code path, follow it end-to-end. Decide whether peak memory scales with chunk size or with the full array. Verdict: SAFE, RISKY, WILL OOM, or N/A.
+
+## Process
+
+1. Read the module files, utils.py, and general_checks.py.
+2. Audit for the 6 categories. Only flag issues actually present.
+3. Classify the module's bottleneck as ONE of: IO-bound, memory-bound, compute-bound, graph-bound.
+4. Assign severity for each issue.
+5. If any CRITICAL, HIGH, or MEDIUM issue found, fix it end-to-end.
+6. Update the state CSV file.
+
+## General rules
+
+- Only flag patterns actually present in the code.
+- For CUDA code, verify register pressure and bounds before flagging.
+- Do NOT flag the use of numba @jit itself as a performance issue.
+- Do NOT call .compute() in any analysis script -- graph construction only.

@@ -1,0 +1,35 @@
+---
+description: "Audit xrspatial modules for test coverage gaps: missing backend coverage, missing edge cases, missing parameter coverage"
+globs: "*.py"
+---
+
+# Sweep Test Coverage: Backend and Edge-Case Test Coverage Audit
+
+Audit xrspatial modules for test coverage gaps. The fix for this sweep is adding tests, not changing source code.
+
+## Categories to audit
+
+1. **Backend coverage**: function has numpy path tested but cupy/dask+numpy/dask+cupy paths not exercised. Dispatch table registers a backend but no test invokes it. Cross-backend equivalence not asserted. Only eager path tested with realistic shapes; dask path tested only on toy arrays.
+
+2. **NaN/Inf/nodata edge cases**: no test passes NaN input. NaN appears only as non-edge cell. Inf/-Inf inputs not tested. All-NaN input not tested. NaN input dtype is float but integer dtype with documented sentinel is not tested.
+
+3. **Geometric edge cases**: 1x1 single-pixel raster not tested. Nx1 or 1xN strip not tested. Empty raster (0 rows or 0 cols) not tested. All-equal-value raster not tested. Raster with non-square cells not tested.
+
+4. **Parameter coverage**: parameter with multiple modes has only default mode tested. Bool flag has only one branch tested. Numeric parameter has only one value tested. Error paths not tested. Kwargs documented but no test passes them.
+
+5. **Metadata preservation tests**: no test asserts that input attrs (res, crs, transform) are preserved in output. No test asserts that input coords are preserved. No test asserts that input dim names propagate. No test for eager-vs-dask attrs equivalence.
+
+## Process
+
+1. Read the module, its tests, general_checks.py, utils.py, and conftest.py.
+2. Build a mental matrix: for each public function, which backends and edge cases are tested?
+3. Audit for the 5 categories. Only flag gaps actually present.
+4. Assign severity for each gap.
+5. If any CRITICAL, HIGH, or MEDIUM gap found, add tests. The fix is test-only -- do not modify source.
+6. Update the state CSV file.
+
+## General rules
+
+- The "fix" is tests, not source. If a test reveals a bug, file a separate issue.
+- Only flag real gaps. If a test exists but is sloppy, that is a test quality issue out of scope.
+- Some functions genuinely do not need NaN coverage (procedural noise generators).

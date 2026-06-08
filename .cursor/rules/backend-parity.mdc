@@ -1,0 +1,68 @@
+---
+description: "Verify that all implemented backends produce consistent results for a given function or set of functions"
+globs: "*.py"
+---
+
+# Backend Parity: Cross-Backend Consistency Audit
+
+Verify that all implemented backends produce consistent results for a given function or set of functions.
+
+## Step 1 -- Identify targets
+
+1. If the prompt names specific functions (e.g. `slope`, `aspect`), use those.
+2. If the prompt names a category (e.g. `hydrology`, `surface`, `focal`), read `README.md` to find all functions in that category.
+3. If the prompt is empty, scan the full feature matrix in `README.md` and test every function that claims support for 2+ backends.
+4. For each function, read its source file and find the `ArrayTypeFunctionMapping` call to determine which backends are actually implemented.
+
+## Step 2 -- Build test inputs
+
+For each target function, create test rasters at three scales:
+
+| Name    | Size    | Purpose                                         |
+|---------|---------|--------------------------------------------------|
+| tiny    | 8x6     | Fast, easy to inspect cell-by-cell               |
+| medium  | 64x64   | Catches chunk-boundary artifacts in dask          |
+| large   | 256x256 | Stress test, exposes numerical accumulation drift |
+
+For each size, generate two variants:
+- **Clean:** no NaN, realistic value range for the function
+- **Dirty:** 5-10% random NaN, some extreme values near dtype limits
+
+Use `np.random.default_rng(42)` for reproducibility. Test with at least `float32` and `float64`.
+
+## Step 3 -- Run every backend
+
+1. **NumPy:** `create_test_raster(data, backend='numpy')` -- always the baseline.
+2. **Dask+NumPy:** test with two chunk configurations: even split and ragged remainder.
+3. **CuPy:** `create_test_raster(data, backend='cupy')` -- skip if CUDA unavailable.
+4. **Dask+CuPy:** `create_test_raster(data, backend='dask+cupy')` -- skip if CUDA unavailable.
+
+## Step 4 -- Pairwise comparison
+
+For every non-NumPy result, compare against the NumPy baseline. Extract data:
+- Dask: `.data.compute()`
+- CuPy: `.data.get()`
+- Dask+CuPy: `.data.compute().get()`
+
+Compute: absolute difference, relative difference, NaN mask agreement, metadata preservation.
+
+Pass/fail thresholds:
+- NumPy vs Dask+NumPy: rtol=1e-5, atol=0
+- NumPy vs CuPy: rtol=1e-6, atol=1e-6
+- NumPy vs Dask+CuPy: rtol=1e-6, atol=1e-6
+
+A comparison fails if max_abs > atol AND max_rel > rtol, or if NaN masks disagree.
+
+## Step 5 -- Chunk boundary analysis
+
+For any Dask comparison that fails, identify which cells diverge and map them to chunk boundaries. Report what percentage of divergent cells are at chunk boundaries vs interior.
+
+## Step 6 -- Generate the report
+
+Print a structured report with: functions tested, parity matrix table, failures with root cause analysis, and summary counts.
+
+## General rules
+
+- Do not modify any source or test files. This rule is read-only.
+- Use `create_test_raster` from `general_checks.py` for all raster construction.
+- If CUDA is unavailable, skip CuPy and Dask+CuPy gracefully. Report as SKIPPED, not FAIL.

@@ -1,0 +1,47 @@
+---
+description: "Analyze source code for performance anti-patterns specific to the NumPy/CuPy/Dask/Numba stack"
+globs: "*.py"
+---
+
+# Efficiency Audit: Compute Waste and Anti-Pattern Detection
+
+Analyze source code for performance anti-patterns specific to the NumPy/CuPy/Dask/Numba stack.
+
+## Step 1 -- Scope the audit
+
+1. If the prompt names specific files or functions, audit only those.
+2. If the prompt names a category, identify all source files in that category.
+3. If the prompt is empty, audit every .py file under xrspatial/ (excluding tests/, datasets/, __pycache__/).
+
+## Step 2 -- Static analysis: Dask anti-patterns
+
+- **Premature materialization (HIGH)**: .values on a Dask-backed DataArray, .compute() inside a loop, np.array() wrapping a Dask or CuPy array.
+- **Chunking issues (MEDIUM)**: da.stack() without .rechunk(), map_overlap with depth >= chunk_size / 2, missing boundary argument in map_overlap.
+- **Redundant computation (MEDIUM)**: calling the same function twice without caching, building large intermediate arrays that could be fused.
+
+## Step 3 -- Static analysis: GPU anti-patterns
+
+- **Register pressure (HIGH)**: CUDA kernels with >20 float64 locals, thread blocks >16x16 on register-heavy kernels.
+- **Unnecessary transfers (HIGH)**: .data.get() followed by CuPy operations, cupy.asarray(numpy_array) inside a hot path, mixing NumPy and CuPy ops.
+- **Kernel launch overhead (LOW)**: per-cell kernel launches, small array kernel launches.
+
+## Step 4 -- Static analysis: Numba anti-patterns
+
+- **JIT compilation issues (MEDIUM)**: missing @ngjit or @jit(nopython=True), object-mode fallback, type instability.
+- **Memory layout (LOW)**: column-major iteration on row-major arrays.
+
+## Step 5 -- Static analysis: General Python anti-patterns
+
+- **Unnecessary copies (MEDIUM)**: .copy() on arrays never mutated, np.zeros_like() + fill loop.
+- **Inefficient I/O patterns (LOW)**: reading the same file multiple times, writing intermediate results to disk.
+
+## Step 6 -- Generate the report
+
+Print a structured report with: scope, findings grouped by severity (HIGH/MEDIUM/LOW) with file:line, pattern, description, and suggested fix. Include summary counts and top 3-5 prioritized recommendations.
+
+## General rules
+
+- Do not modify source, test, or benchmark files.
+- Only flag patterns actually present in the code.
+- Include exact file path and line number for every finding.
+- False positives are worse than missed issues. If not confident a pattern is harmful, do not flag it.

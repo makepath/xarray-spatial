@@ -236,7 +236,8 @@ def _parse_cog_http_meta(
     if source_path is not None:
         from ._sidecar import discover_remote_sidecar
         ifds, sidecar, sidecar_ifd_ids = discover_remote_sidecar(
-            source_path, ifds, max_cloud_bytes=max_cloud_bytes,
+            source_path, ifds, overview_level=overview_level,
+            max_cloud_bytes=max_cloud_bytes,
         )
 
     ifd = select_overview_ifd(ifds, overview_level)
@@ -250,15 +251,29 @@ def _parse_cog_http_meta(
     # typically carry no out-of-line geokeys and inherit from level-0
     # (which sits in the base buffer).
     #
-    # The ``sidecar_origin`` kwarg used by the eager local / fsspec
-    # paths is intentionally not threaded here; the HTTP / dask
-    # sidecar-byte-order case is handled separately. When that lands,
-    # this call should pick up the same mapping so an HTTP sidecar with
-    # its own geokeys is parsed against the sidecar bytes too.
+    # Map the sidecar's IFDs to their own (bytes, byte_order) and pass
+    # it as ``sidecar_origin`` so this path stays symmetric with the
+    # eager local / fsspec reader, which builds the same mapping in
+    # ``_reader.py``. On today's eager-parse IFD model the mapping does
+    # not change the result: ``extract_geo_info`` only forwards
+    # ``data`` / ``byte_order`` to ``_parse_geokeys``, which reads
+    # values already materialized on ``ifd.entries`` (every tag,
+    # including out-of-line georef arrays, is decoded in ``parse_ifd``
+    # against its own file's byte order, and the sidecar IFDs are
+    # parsed with the sidecar header in ``discover_remote_sidecar``).
+    # We thread it anyway to match the local path and to stay correct
+    # if tag-value reads ever become lazy and start depending on the
+    # buffer / byte order handed to ``extract_geo_info``.
+    georef_origin = (
+        {id(sc_ifd): (sidecar.data, sidecar.header.byte_order)
+         for sc_ifd in sidecar.ifds}
+        if sidecar is not None else None
+    )
     geo_info = extract_geo_info_with_overview_inheritance(
         ifd, ifds, header_bytes, header.byte_order,
         allow_rotated=allow_rotated,
-        allow_invalid_nodata=allow_invalid_nodata)
+        allow_invalid_nodata=allow_invalid_nodata,
+        sidecar_origin=georef_origin)
     # When the chosen IFD lives in the sidecar, return the sidecar's own
     # ``TIFFHeader`` so the per-chunk / eager decode step sees the byte
     # order of the file the bytes actually came from. A big-endian

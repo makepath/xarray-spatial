@@ -1,0 +1,51 @@
+---
+description: "Run ASV benchmarks for the current branch against main and report regressions and improvements"
+globs: "benchmarks/**/*.py"
+---
+
+# Bench: Local Performance Comparison
+
+Run ASV benchmarks for the current branch against main and report regressions and improvements.
+
+## Step 1 -- Identify what changed
+
+1. If the prompt names specific benchmark classes or functions, use those directly.
+2. If the prompt is empty or says "auto", run `git diff origin/main --name-only` to find changed source files under `xrspatial/`. Map each changed file to the corresponding benchmark module in `benchmarks/benchmarks/`.
+3. If no benchmark exists for the changed code, note this and suggest whether one should be added.
+
+## Step 2 -- Check prerequisites
+
+1. Verify ASV is installed: `python -c "import asv"`. If missing, tell the user to install it.
+2. Verify the benchmarks directory exists at `benchmarks/`.
+3. Read `benchmarks/asv.conf.json` to confirm the project name and branch settings.
+
+## Step 3 -- Run the comparison
+
+Run ASV in continuous-comparison mode from the `benchmarks/` directory:
+
+```bash
+cd benchmarks && asv continuous origin/main HEAD -b "<regex>" -e
+```
+
+Where `<regex>` is a pattern matching the benchmark classes identified in Step 1.
+
+## Step 4 -- Parse and interpret results
+
+Classify each result:
+- REGRESSION: Ratio > 1.2x
+- IMPROVED: Ratio < 0.8x
+- UNCHANGED: Between 0.8x and 1.2x
+
+## Step 5 -- Generate the report
+
+Print a table with benchmark name, main time, HEAD time, ratio, and status. List regressions with likely causes, improvements, missing benchmarks, and a recommendation.
+
+## Step 6 -- Suggest benchmark additions
+
+If changed functions have no benchmark coverage, describe what a new benchmark should test and ask the user whether to write it.
+
+## General rules
+
+- Always run benchmarks from the `benchmarks/` directory.
+- The regression threshold is 1.2x, matching `.github/workflows/benchmarks.yml`.
+- Do not modify any source, test, or benchmark files unless explicitly asked to write a benchmark.
