@@ -1326,3 +1326,72 @@ class TestDeduplicateLines:
         results = [(1.0, fwd.copy()), (1.0, rev.copy())]
         deduped = _deduplicate_lines(results)
         assert len(deduped) == 1
+
+
+# ---------------------------------------------------------------------------
+# Cross-backend parity with NaN input (#3044)
+# ---------------------------------------------------------------------------
+
+class TestNaNBackendParity:
+    """A raster with NaN cells must trace identical segments on every backend.
+
+    The numpy backend skips quads with a non-finite corner in the interior;
+    the dask backend pads each chunk with a NaN halo and stitches across
+    chunk boundaries.  The existing backend-equivalence tests use a no-NaN
+    fixture, so nothing pins numpy/cupy/dask parity when NaN cells sit next
+    to a chunk edge.  This guards that path.
+    """
+
+    LEVELS = [2.5, 5.5, 8.5]
+
+    def _partial_nan_ramp(self, ny=10, nx=12):
+        # Left-to-right ramp so every level crosses, then punch a NaN edge
+        # row and an interior NaN cell.  The interior NaN lands inside a
+        # non-edge chunk so a halo crossing would diverge from numpy.
+        data = np.tile(np.arange(nx, dtype=np.float64), (ny, 1))
+        data[0, :] = np.nan      # NaN edge row
+        data[5, 6] = np.nan      # interior NaN cell
+        return data
+
+    @dask_array_available
+    def test_nan_dask_equals_numpy(self):
+        data = self._partial_nan_ramp()
+        np_agg = create_test_raster(data, backend='numpy')
+        dk_agg = create_test_raster(data, backend='dask+numpy', chunks=(4, 4))
+
+        np_segs = _segments_by_level(contours(np_agg, levels=self.LEVELS))
+        dk_segs = _segments_by_level(contours(dk_agg, levels=self.LEVELS))
+
+        assert set(np_segs.keys()) == set(dk_segs.keys())
+        for lvl in np_segs:
+            assert np_segs[lvl] == dk_segs[lvl], (
+                f"NaN-input dask result diverges from numpy at level {lvl}")
+
+    @cuda_and_cupy_available
+    def test_nan_cupy_equals_numpy(self):
+        data = self._partial_nan_ramp()
+        np_agg = create_test_raster(data, backend='numpy')
+        cp_agg = create_test_raster(data, backend='cupy')
+
+        np_segs = _segments_by_level(contours(np_agg, levels=self.LEVELS))
+        cp_segs = _segments_by_level(contours(cp_agg, levels=self.LEVELS))
+
+        assert set(np_segs.keys()) == set(cp_segs.keys())
+        for lvl in np_segs:
+            assert np_segs[lvl] == cp_segs[lvl], (
+                f"NaN-input cupy result diverges from numpy at level {lvl}")
+
+    @dask_array_available
+    @cuda_and_cupy_available
+    def test_nan_dask_cupy_equals_numpy(self):
+        data = self._partial_nan_ramp()
+        np_agg = create_test_raster(data, backend='numpy')
+        dc_agg = create_test_raster(data, backend='dask+cupy', chunks=(4, 4))
+
+        np_segs = _segments_by_level(contours(np_agg, levels=self.LEVELS))
+        dc_segs = _segments_by_level(contours(dc_agg, levels=self.LEVELS))
+
+        assert set(np_segs.keys()) == set(dc_segs.keys())
+        for lvl in np_segs:
+            assert np_segs[lvl] == dc_segs[lvl], (
+                f"NaN-input dask+cupy result diverges from numpy at level {lvl}")

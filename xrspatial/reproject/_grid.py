@@ -178,7 +178,7 @@ def _transform_boundary(source_crs, target_crs, xs, ys):
 
 def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
                          resolution=None, bounds=None, width=None, height=None,
-                         bounds_policy="auto"):
+                         bounds_policy="auto", lazy_output=False):
     """Compute the output raster grid parameters.
 
     Parameters
@@ -199,6 +199,11 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         How to handle output bounds near projection singularities.
         See :func:`reproject` for the full description. Ignored when
         ``bounds`` is supplied.
+    lazy_output : bool
+        When True, the output will be a lazy dask array that is never
+        materialized in full, so the ``_MAX_OUTPUT_PIXELS`` memory guard
+        is skipped. Leave False for backends that allocate the whole
+        output array (in-memory numpy/cupy, streaming).
 
     Returns
     -------
@@ -435,8 +440,11 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
     # Guard: reject output grids that would exhaust memory.
     # 1 billion pixels ~= 8 GB for a single float64 array, and the
     # reprojection pipeline allocates several arrays of this size.
+    # Lazy dask outputs never materialize the full grid (peak memory is
+    # bounded by the chunk size), so the guard only applies to backends
+    # that allocate the whole output array.
     _MAX_OUTPUT_PIXELS = 1_000_000_000
-    if width * height > _MAX_OUTPUT_PIXELS:
+    if not lazy_output and width * height > _MAX_OUTPUT_PIXELS:
         raise ValueError(
             f"Computed output grid is too large ({width} x {height} = "
             f"{width * height:,} pixels, limit is {_MAX_OUTPUT_PIXELS:,}). "
