@@ -6,7 +6,7 @@ import xarray as xa
 from xrspatial import viewshed
 from xrspatial.tests.general_checks import general_output_checks
 from xrspatial.utils import has_cuda_and_cupy
-from xrspatial.viewshed import INVISIBLE
+from xrspatial.viewshed import INVISIBLE, _calculate_event_row_col
 
 from ..gpu_rtx import has_rtx
 
@@ -1077,3 +1077,47 @@ def test_viewshed_does_not_mutate_cupy_input():
     assert isinstance(raster.data, cp.ndarray)
     assert raster.dtype == np.dtype("int16")
     np.testing.assert_array_equal(raster.data.get(), before)
+
+
+# event types from xrspatial.viewshed
+ENTERING_EVENT_2793 = 1
+EXITING_EVENT_2793 = -1
+
+
+def _event_positions_around_viewpoint_2793(vp_row, vp_col):
+    # The eight neighbours plus the four axis-aligned cells two steps out,
+    # so every quadrant/edge branch in _calculate_event_row_col is exercised.
+    offsets = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1), (0, 1),
+        (1, -1), (1, 0), (1, 1),
+        (-2, 0), (2, 0), (0, -2), (0, 2),
+    ]
+    return [(vp_row + dr, vp_col + dc) for dr, dc in offsets]
+
+
+def test_calculate_event_row_col_stays_within_one_cell_2793():
+    """The corrected bounds guard must hold for every valid branch (#2793).
+
+    _calculate_event_row_col returns a neighbour that should never drift more
+    than one cell from the event cell. With the precedence bug fixed, the
+    internal guard now enforces this; the assertions below verify the
+    invariant directly for all quadrant and edge branches and both event
+    types, so the guard cannot fire spuriously.
+    """
+    vp_row, vp_col = 5, 5
+    for event_row, event_col in _event_positions_around_viewpoint_2793(
+        vp_row, vp_col
+    ):
+        for event_type in (ENTERING_EVENT_2793, EXITING_EVENT_2793):
+            y, x = _calculate_event_row_col(
+                event_type, event_row, event_col, vp_row, vp_col
+            )
+            assert abs(x - event_col) <= 1
+            assert abs(y - event_row) <= 1
+
+
+def test_calculate_event_row_col_rejects_center_event_2793():
+    """CENTER events are not valid input and must raise (#2793)."""
+    with pytest.raises(ValueError):
+        _calculate_event_row_col(0, 5, 5, 5, 5)
