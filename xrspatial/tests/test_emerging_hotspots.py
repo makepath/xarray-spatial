@@ -59,6 +59,100 @@ class TestInputValidation:
 
 
 # ---------------------------------------------------------------------------
+# Per-step Getis-Ord Gi* z-score (issue #2804)
+# ---------------------------------------------------------------------------
+
+def _gistar_reference(step, global_mean, global_std, n, kernel):
+    """Hand-rolled per-step Gi* z-score using the focal Gi* helpers.
+
+    Mirrors what hotspots() computes, but with the global mean/std/n taken
+    over the whole space-time cube (the emerging_hotspots convention).
+    """
+    from xrspatial.focal import _gistar_convolutions_numpy, _gistar_zscore
+
+    ws, wsum, sq = _gistar_convolutions_numpy(step, kernel, 'nan')
+    z = _gistar_zscore(ws, wsum, sq, global_mean, global_std, n)
+    return np.where(wsum > 0, z, np.float32(np.nan))
+
+
+class TestGiStarStep:
+    """The per-time-step z-score must be the real Gi* statistic, not the
+    old local-mean z-score (convolve with a normalized kernel then z-score
+    the local mean against the global mean/std)."""
+
+    def test_binary_kernel_matches_reference(self):
+        rng = np.random.default_rng(2804)
+        data = rng.standard_normal((4, 12, 12)).astype('f4')
+        kernel = np.ones((3, 3), dtype=np.float32)
+        ds = emerging_hotspots(_make_raster(data), kernel)
+
+        gm = np.float32(np.nanmean(data))
+        gs = np.float32(np.nanstd(data))
+        n = int((~np.isnan(data)).sum())
+        for t in range(data.shape[0]):
+            ref = _gistar_reference(data[t], gm, gs, n, kernel)
+            got = ds['gi_zscore'].values[t]
+            np.testing.assert_allclose(got, ref, atol=1e-5, equal_nan=True)
+
+    def test_weighted_kernel_matches_reference(self):
+        # A non-binary kernel makes W_i != W2_i, exercising the squared
+        # weight-sum term the old local-mean formula dropped entirely.
+        rng = np.random.default_rng(28041)
+        data = rng.standard_normal((3, 11, 11)).astype('f4')
+        kernel = np.array(
+            [[0.5, 1.0, 0.5],
+             [1.0, 2.0, 1.0],
+             [0.5, 1.0, 0.5]], dtype=np.float32,
+        )
+        ds = emerging_hotspots(_make_raster(data), kernel)
+
+        gm = np.float32(np.nanmean(data))
+        gs = np.float32(np.nanstd(data))
+        n = int((~np.isnan(data)).sum())
+        for t in range(data.shape[0]):
+            ref = _gistar_reference(data[t], gm, gs, n, kernel)
+            got = ds['gi_zscore'].values[t]
+            np.testing.assert_allclose(got, ref, atol=1e-5, equal_nan=True)
+
+    def test_differs_from_local_mean_zscore(self):
+        # Regression guard: the old code convolved with a normalized kernel
+        # and z-scored the local mean. That formula must NOT reproduce the
+        # current output for a weighted kernel.
+        rng = np.random.default_rng(28042)
+        data = rng.standard_normal((2, 10, 10)).astype('f4')
+        kernel = np.array(
+            [[0.0, 1.0, 0.0],
+             [1.0, 4.0, 1.0],
+             [0.0, 1.0, 0.0]], dtype=np.float32,
+        )
+        ds = emerging_hotspots(_make_raster(data), kernel)
+
+        from xrspatial.convolution import convolve_2d
+        gm = np.nanmean(data)
+        gs = np.nanstd(data)
+        norm_kernel = (kernel / kernel.sum()).astype(np.float32)
+        old = (convolve_2d(data[0], norm_kernel, 'nan') - gm) / gs
+
+        got = ds['gi_zscore'].values[0]
+        interior = (slice(1, -1), slice(1, -1))
+        assert not np.allclose(
+            got[interior], old[interior], atol=1e-3
+        ), "per-step z-score still matches the old local-mean formula"
+
+    def test_interior_nan_excluded_from_neighborhood(self):
+        # An interior NaN must drop out of the Gi* neighborhood sums; the
+        # surrounding finite cells still get finite z-scores.
+        rng = np.random.default_rng(28043)
+        data = rng.standard_normal((2, 9, 9)).astype('f4')
+        data[:, 4, 4] = np.nan
+        ds = emerging_hotspots(_make_raster(data), _kernel_3x3())
+        z0 = ds['gi_zscore'].values[0]
+        # Neighbors of the NaN cell are interior and stay finite.
+        assert np.isfinite(z0[3, 4])
+        assert np.isfinite(z0[5, 4])
+
+
+# ---------------------------------------------------------------------------
 # Normal CDF approximation
 # ---------------------------------------------------------------------------
 
