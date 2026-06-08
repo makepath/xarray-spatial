@@ -335,34 +335,36 @@ def _ranges_close(range_a, range_b, atol, rtol):
 def _cells_close_directed(cells_a, cells_b, atol, rtol, connectivity_8):
     """Direction-aware close-value test between two chunk-boundary polygons.
 
-    ``cells_a`` / ``cells_b`` map ``(global_col, global_row) -> value`` for
-    the pixels each polygon places on an internal chunk edge.  Return True
-    if any pixel in ``cells_a`` is grid-adjacent to any pixel in ``cells_b``
-    (orthogonally for 4-conn, plus diagonally for 8-conn) AND the pair
+    ``cells_a`` / ``cells_b`` map ``(global_col, global_row) ->
+    (value, w_match, s_match)`` for the pixels each polygon places on an
+    internal chunk edge.  Return True if any pixel in ``cells_a`` is
+    orthogonally grid-adjacent to any pixel in ``cells_b`` AND the pair
     compares close under the *same orientation* numpy CCL uses.
 
     numpy's ``_calculate_regions`` walks pixels in raster-scan order and
     tests ``_is_close(reference=current, value=earlier_neighbour)`` where
-    ``current`` is the higher-``ij`` pixel (East / North / the SE/NE
-    diagonal partner).  Because ``rtol`` scales by ``abs(reference)``, the
-    test is asymmetric, so the cross-chunk merge must pick the higher-``ij``
-    pixel as the reference to match numpy byte for byte (#2666).
+    ``current`` is the higher-``ij`` pixel (East / North).  Because
+    ``rtol`` scales by ``abs(reference)``, the test is asymmetric, so the
+    cross-chunk merge must pick the higher-``ij`` pixel as the reference
+    to match numpy byte for byte (#2666).
 
-    ``ij = col + row * nx`` increases with row first, then column, so the
-    higher-``ij`` pixel of an adjacent pair is the one with the greater row,
-    or the greater column when rows are equal.
+    This function handles the 4-connectivity case only.  8-connectivity
+    diagonals are conditional in numpy CCL (the SW / SE neighbour is
+    consulted only when the orthogonal W / S neighbour did not match), so
+    they cannot be reproduced by an independent pairwise test; the 8-conn
+    float merge instead replays numpy's full predicate over the union of
+    boundary cells in :func:`_boundary_ccl_unions` (#2677).
     """
     if not cells_a or not cells_b:
         return False
-    for (ca, ra), va in cells_a.items():
-        for (cb, rb), vb in cells_b.items():
+    for (ca, ra), (va, _wa, _sa) in cells_a.items():
+        for (cb, rb), (vb, _wb, _sb) in cells_b.items():
             dcol = cb - ca
             drow = rb - ra
-            adjacent = (
+            orthogonal = (
                 (abs(dcol) == 1 and drow == 0) or
-                (abs(drow) == 1 and dcol == 0) or
-                (connectivity_8 and abs(dcol) == 1 and abs(drow) == 1))
-            if not adjacent:
+                (abs(drow) == 1 and dcol == 0))
+            if not orthogonal:
                 continue
             # Higher-ij pixel is the reference (greater row, then col).
             if (rb, cb) > (ra, ca):
@@ -372,6 +374,88 @@ def _cells_close_directed(cells_a, cells_b, atol, rtol, connectivity_8):
             if _values_close(reference, value, atol, rtol):
                 return True
     return False
+
+
+def _boundary_ccl_unions(boundary_polys, atol, rtol, union):
+    """Union 8-conn float boundary polygons via numpy's exact CCL predicate.
+
+    A pairwise close test cannot reproduce numpy's *conditional* diagonal:
+    in ``_calculate_regions`` a pixel consults its SW diagonal only when
+    its W neighbour did not match, and its SE diagonal only when its S
+    neighbour did not match.  Honouring every diagonal unconditionally
+    over-merged regions numpy keeps separate (#2677).
+
+    This replays that predicate over the union of every boundary polygon's
+    edge cells.  Each cell carries ``(value, w_match, s_match)`` where the
+    flags are numpy's direct W / S close test against the *in-chunk*
+    neighbour (see :func:`_compute_region_value_ranges`).  Walking the
+    cells in raster-scan order, the orthogonal-match decision prefers the
+    actual neighbour value when that neighbour is itself a boundary cell
+    (cross-chunk case) and falls back to the recorded flag otherwise
+    (the neighbour is interior to the cell's own chunk).  Whenever numpy's
+    predicate fires, the polygons owning the two cells are unioned, so the
+    transitive closure matches numpy's single-chunk labelling.
+    """
+    # Global (col, row) -> value and -> set(owner polygon index) maps.
+    # A coordinate is one physical pixel, so every owner sharing it
+    # carries the same value and the same W / S match flags; overwriting
+    # ``field`` and reading the flags from any one owner is therefore safe.
+    field = {}
+    owners = {}
+    for idx, item in enumerate(boundary_polys):
+        cells = item[3]
+        if not cells:
+            continue
+        for coord, (v, _w, _s) in cells.items():
+            field[coord] = v
+            owners.setdefault(coord, set()).add(idx)
+
+    def link(coord_a, coord_b):
+        for oi in owners.get(coord_a, ()):
+            for oj in owners.get(coord_b, ()):
+                if oi != oj:
+                    union(oi, oj)
+
+    # Raster-scan order: row first, then column, matching numpy's ij walk.
+    for (c, r) in sorted(field, key=lambda cr: (cr[1], cr[0])):
+        v = field[(c, r)]
+        flags = None  # (w_match, s_match) from any owner cell.
+        for oi in owners[(c, r)]:
+            cell = boundary_polys[oi][3].get((c, r))
+            if cell is not None:
+                flags = (cell[1], cell[2])
+                break
+        w_flag, s_flag = flags if flags is not None else (False, False)
+
+        # West neighbour.
+        w_val = field.get((c - 1, r))
+        if w_val is not None:
+            matches_w = _values_close(v, w_val, atol, rtol)
+            if matches_w:
+                link((c, r), (c - 1, r))
+        else:
+            # Interior W neighbour: numpy's match recorded as a flag.
+            matches_w = w_flag
+
+        # South neighbour.
+        s_val = field.get((c, r - 1))
+        if s_val is not None:
+            matches_s = _values_close(v, s_val, atol, rtol)
+            if matches_s:
+                link((c, r), (c, r - 1))
+        else:
+            matches_s = s_flag
+
+        # Conditional diagonals: SW only if W did not match, SE only if S
+        # did not match -- numpy's exact 8-connectivity shortcut.
+        if not matches_w:
+            sw_val = field.get((c - 1, r - 1))
+            if sw_val is not None and _values_close(v, sw_val, atol, rtol):
+                link((c, r), (c - 1, r - 1))
+        if not matches_s:
+            se_val = field.get((c + 1, r - 1))
+            if se_val is not None and _values_close(v, se_val, atol, rtol):
+                link((c, r), (c + 1, r - 1))
 
 
 def _group_boundary_polygons(boundary_polys,
@@ -503,6 +587,16 @@ def _group_boundary_polygons(boundary_polys,
         if ri != rj:
             parent[max(ri, rj)] = min(ri, rj)
 
+    # 8-connectivity float merge: numpy's diagonal is *conditional* on the
+    # orthogonal neighbour, so a per-pair close test over-merges (#2677).
+    # Replicate numpy's exact CCL predicate over the union of boundary
+    # cells -- including the conditional SW / SE diagonal -- and union the
+    # owning polygons.  4-connectivity and integer rasters keep the
+    # ring-edge-keyed pairwise test below unchanged.
+    have_cells = any(item[3] for item in boundary_polys)
+    if connectivity_8 and have_cells:
+        _boundary_ccl_unions(boundary_polys, atol, rtol, union)
+
     for poly_indices in adjacency_index.values():
         if len(poly_indices) < 2:
             continue
@@ -519,9 +613,14 @@ def _group_boundary_polygons(boundary_polys,
                 # scan-order ``_is_close`` orientation exactly (#2666).
                 # Integer polygons have no cell maps and fall back to the
                 # range check, which reduces to strict equality for them.
+                # 8-conn float unions are decided by the CCL pass above,
+                # so skip the per-pair value test for that case (its
+                # conditional diagonal cannot be reproduced pairwise).
                 cells_i = boundary_polys[pi][3]
                 cells_j = boundary_polys[pj][3]
                 if cells_i and cells_j:
+                    if connectivity_8:
+                        continue
                     close = _cells_close_directed(
                         cells_i, cells_j, atol, rtol, connectivity_8)
                 else:
@@ -1205,12 +1304,13 @@ def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
     ``(value, rings, (val_min, val_max), cells)`` tuple instead of just
     ``(value, rings)``.  The ``(val_min, val_max)`` range supports the
     #2583 tolerance-chain union; ``cells`` maps
-    ``(global_col, global_row) -> value`` for the polygon's pixels on
-    internal chunk edges and lets the cross-chunk merge apply numpy
-    CCL's direction-aware ``_is_close`` orientation at the exact pixel
-    pair straddling each boundary (#2666).  Integer rasters use strict
-    equality, so their ``cells`` map is empty and the merge falls back
-    to the range check.
+    ``(global_col, global_row) -> (value, w_match, s_match)`` for the
+    polygon's pixels on internal chunk edges and lets the cross-chunk
+    merge apply numpy CCL's direction-aware ``_is_close`` orientation at
+    the exact pixel pair straddling each boundary (#2666), with the
+    ``w_match`` / ``s_match`` flags guarding the conditional 8-conn
+    diagonal (#2677).  Integer rasters use strict equality, so their
+    ``cells`` map is empty and the merge falls back to the range check.
     """
     block = _to_numpy(block)
     if mask_block is not None:
@@ -1287,12 +1387,16 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
 
     * ``val_ranges[i]`` is the ``(val_min, val_max)`` span of region ``i``
       (used by #2583 to carry the value extent into the cross-chunk merge).
-    * ``boundary_cells[i]`` is a ``{(global_col, global_row): value}`` dict
-      of the region's pixels that lie on an *internal* chunk edge (an edge
-      shared with a neighbour chunk, not a raster edge).  The cross-chunk
-      merge (#2666) uses these per-cell values to replicate numpy CCL's
+    * ``boundary_cells[i]`` is a
+      ``{(global_col, global_row): (value, w_match, s_match)}`` dict of the
+      region's pixels that lie on an *internal* chunk edge (an edge shared
+      with a neighbour chunk, not a raster edge).  The cross-chunk merge
+      (#2666) uses these per-cell values to replicate numpy CCL's
       direction-aware ``_is_close`` orientation at the actual pixel pair
       straddling each chunk boundary, instead of a symmetric range check.
+      ``w_match`` / ``s_match`` flag whether numpy CCL connected the pixel
+      to its in-chunk W / S orthogonal neighbour, which the 8-conn diagonal
+      guard (#2677) needs to know to suppress over-merging.
 
     ``row_offset`` / ``col_offset`` / ``ny_total`` / ``nx_total`` describe
     where this chunk sits in the global raster so internal edges can be
@@ -1377,7 +1481,27 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
                 if cells is None:
                     cells = {}
                     boundary_cells[idx] = cells
-                cells[(local_col + col_offset, local_row + row_offset)] = v
+                # Record whether numpy CCL's per-pixel close test matched
+                # this pixel against its in-chunk W / S orthogonal
+                # neighbour.  This mirrors the ``matches_W`` / ``matches_S``
+                # predicates in :func:`_calculate_regions` exactly -- it is
+                # the direct ``_is_close(cur, neighbour)`` test, NOT region
+                # co-membership (two pixels can share a region via a third
+                # path without being directly close).  The 8-conn diagonal
+                # guard (#2677) consults the diagonal only when this
+                # orthogonal test failed, matching numpy's
+                # ``if not matches_W`` / ``if not matches_S`` shortcut.  W
+                # is (local_row, local_col-1); S is (local_row-1, local_col).
+                w_match = (
+                    local_col > 0 and
+                    (mask_flat is None or mask_flat[ij - 1]) and
+                    _is_close(v, values_flat[ij - 1], atol, rtol))
+                s_match = (
+                    local_row > 0 and
+                    (mask_flat is None or mask_flat[ij - nx_eff]) and
+                    _is_close(v, values_flat[ij - nx_eff], atol, rtol))
+                cells[(local_col + col_offset, local_row + row_offset)] = (
+                    v, bool(w_match), bool(s_match))
     out = []
     cells_out = []
     for i in range(n_regions):
