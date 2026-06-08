@@ -2441,6 +2441,51 @@ class TestSecurityGuards:
         )
         assert result['shape'] == (200, 200)
 
+    def test_output_grid_too_large_lazy_output_ok(self):
+        """lazy_output=True bypasses the >1e9 pixel guard (issue #3046)."""
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._crs_utils import _resolve_crs
+
+        src_crs = _resolve_crs(4326)
+        tgt_crs = _resolve_crs(4326)
+
+        # Same grid that raises without lazy_output must now succeed,
+        # because a dask output never materializes the full array.
+        result = _compute_output_grid(
+            source_bounds=(-180, -90, 180, 90),
+            source_shape=(1000, 1000),
+            source_crs=src_crs,
+            target_crs=tgt_crs,
+            resolution=1e-6,  # ~360M cols x 180M rows >> 1e9
+            lazy_output=True,
+        )
+        h, w = result['shape']
+        assert w * h > 1_000_000_000
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_dask_output_over_limit_stays_lazy(self):
+        """A dask input whose output exceeds 1e9 pixels reprojects lazily
+        instead of raising (issue #3046)."""
+        from xrspatial.reproject import reproject
+
+        raster = _make_raster(
+            np.arange(64 * 64, dtype='float64').reshape(64, 64),
+            crs='EPSG:4326',
+            x_range=(-105, -104),
+            y_range=(39, 40),
+        )
+        raster.data = da.from_array(raster.values, chunks=(32, 32))
+
+        # Tiny resolution forces >1e9 output pixels. A modest chunk_size
+        # keeps each computed block small so the test stays cheap.
+        out = reproject(raster, target_crs='EPSG:3857',
+                        resolution=2.0, chunk_size=1024)
+
+        assert isinstance(out.data, da.Array)
+        assert out.shape[0] * out.shape[1] > 1_000_000_000
+        # A single block computes without materializing the whole grid.
+        assert out.data.blocks[0, 0].compute().shape == (1024, 1024)
+
     def test_numpy_chunk_source_window_guard(self):
         """_reproject_chunk_numpy should return nodata for huge source windows."""
         from xrspatial.reproject import reproject

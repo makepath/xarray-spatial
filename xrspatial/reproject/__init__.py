@@ -936,20 +936,9 @@ def reproject(
     y_desc = _is_y_descending(raster)
     x_desc = _is_x_descending(raster)
 
-    # Compute output grid
-    grid = _compute_output_grid(
-        src_bounds, src_shape, src_crs, tgt_crs,
-        resolution=resolution, bounds=bounds,
-        width=width, height=height,
-        bounds_policy=bounds_policy,
-    )
-    out_bounds = grid['bounds']
-    out_shape = grid['shape']
-
-    # Output coordinates
-    y_coords, x_coords = _make_output_coords(out_bounds, out_shape)
-
-    # Detect backend
+    # Detect backend before computing the output grid so the grid's
+    # output-size guard can tell a lazy dask output (never materialized
+    # in full) from a materializing backend.
     from ..utils import has_dask_array, is_cupy_array
 
     data = raster.data
@@ -993,6 +982,21 @@ def reproject(
             except ImportError:
                 # dask not available -- fall back to streaming
                 _use_streaming = True
+
+    # Compute output grid. A dask output is lazy, so the output-size
+    # guard is skipped for it (peak memory is bounded by chunk size).
+    grid = _compute_output_grid(
+        src_bounds, src_shape, src_crs, tgt_crs,
+        resolution=resolution, bounds=bounds,
+        width=width, height=height,
+        bounds_policy=bounds_policy,
+        lazy_output=is_dask,
+    )
+    out_bounds = grid['bounds']
+    out_shape = grid['shape']
+
+    # Output coordinates
+    y_coords, x_coords = _make_output_coords(out_bounds, out_shape)
 
     # Serialize CRS for pickle safety
     src_wkt = src_crs.to_wkt()
