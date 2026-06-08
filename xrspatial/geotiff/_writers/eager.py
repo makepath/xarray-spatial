@@ -1240,6 +1240,10 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         res_unit = None
         gdal_meta_xml = None
         extra_tags_list = None
+        # Default to the kwarg default so a plain-ndarray write (which
+        # skips the DataArray branch below) still has a defined value
+        # when it reaches the per-tile ``restore_sentinel=`` pass-through.
+        restore_sentinel = True
 
         if isinstance(data, xr.DataArray):
             raw = data.data
