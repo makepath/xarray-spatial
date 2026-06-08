@@ -1105,6 +1105,8 @@ def test_calculate_event_row_col_stays_within_one_cell_2793():
     invariant directly for all quadrant and edge branches and both event
     types, so the guard cannot fire spuriously.
     """
+    # No valid branch produces a drift > 1, so these checks document the
+    # invariant the guard enforces; they do not drive the guard's raise.
     vp_row, vp_col = 5, 5
     for event_row, event_col in _event_positions_around_viewpoint_2793(
         vp_row, vp_col
