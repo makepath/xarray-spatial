@@ -2476,15 +2476,15 @@ class TestSecurityGuards:
         )
         raster.data = da.from_array(raster.values, chunks=(32, 32))
 
-        # Tiny resolution forces >1e9 output pixels; a large chunk_size
-        # keeps the chunk layout small so building the graph stays cheap.
+        # Tiny resolution forces >1e9 output pixels. A modest chunk_size
+        # keeps each computed block small so the test stays cheap.
         out = reproject(raster, target_crs='EPSG:3857',
-                        resolution=2.0, chunk_size=20000)
+                        resolution=2.0, chunk_size=1024)
 
         assert isinstance(out.data, da.Array)
         assert out.shape[0] * out.shape[1] > 1_000_000_000
         # A single block computes without materializing the whole grid.
-        assert out.data.blocks[0, 0].compute().shape == (20000, 20000)
+        assert out.data.blocks[0, 0].compute().shape == (1024, 1024)
 
     def test_numpy_chunk_source_window_guard(self):
         """_reproject_chunk_numpy should return nodata for huge source windows."""
