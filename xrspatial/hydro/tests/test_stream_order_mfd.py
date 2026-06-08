@@ -238,6 +238,85 @@ def test_dask_matches_numpy():
         np.nan_to_num(dask_result.values, nan=-999))
 
 
+_LAZY_FRACS = _make_fractions({
+    (0, 0): [(1, 1.0)],
+    (0, 1): [],
+    (0, 2): [(3, 1.0)],
+    (1, 0): [],
+    (1, 1): [(2, 1.0)],
+    (1, 2): [],
+    (2, 0): [(0, 1.0)],
+    (2, 1): [],
+    (2, 2): [],
+}, (3, 3))
+_LAZY_ACCUM = np.array([
+    [1.0, 1.0, 1.0],
+    [1.0, 3.0, 1.0],
+    [1.0, 5.0, 1.0],
+], dtype=np.float64)
+
+
+@dask_array_available
+@pytest.mark.parametrize('method', ['strahler', 'shreve'])
+def test_dask_accum_chunk_mismatch(method):
+    """flow_accum chunked differently from fractions still matches numpy."""
+    import dask.array as da
+
+    frac_da_np = xr.DataArray(_LAZY_FRACS, dims=['neighbor', 'y', 'x'])
+    fa_da_np = create_test_raster(_LAZY_ACCUM)
+    np_result = stream_order_mfd(frac_da_np, fa_da_np, threshold=1,
+                                  method=method)
+
+    frac_dask = xr.DataArray(
+        da.from_array(_LAZY_FRACS, chunks=(8, 2, 2)),
+        dims=['neighbor', 'y', 'x'])
+    # flow_accum chunked 3x3 while fractions are 2x2 -- the lazy assembly
+    # must realign it onto the fractions' tile grid.
+    fa_dask = xr.DataArray(
+        da.from_array(_LAZY_ACCUM, chunks=(3, 3)),
+        dims=['y', 'x'])
+    dask_result = stream_order_mfd(frac_dask, fa_dask, threshold=1,
+                                    method=method)
+
+    np.testing.assert_array_equal(
+        np.nan_to_num(np_result.values, nan=-999),
+        np.nan_to_num(dask_result.values, nan=-999))
+
+
+@dask_array_available
+@pytest.mark.parametrize('method,kernel', [
+    ('strahler', '_strahler_mfd_tile_kernel'),
+    ('shreve', '_shreve_mfd_tile_kernel'),
+])
+def test_dask_assembly_is_lazy(monkeypatch, method, kernel):
+    """Building the output raster must be deferred to compute time (#2885)."""
+    import importlib
+    import dask.array as da
+    mod = importlib.import_module('xrspatial.hydro.stream_order_mfd')
+
+    counter = {'n': 0}
+    orig = getattr(mod, kernel)
+
+    def _spy(*args, **kwargs):
+        counter['n'] += 1
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, kernel, _spy)
+
+    frac_dask = xr.DataArray(
+        da.from_array(_LAZY_FRACS, chunks=(8, 2, 2)),
+        dims=['neighbor', 'y', 'x'])
+    fa_dask = xr.DataArray(
+        da.from_array(_LAZY_ACCUM, chunks=(2, 2)),
+        dims=['y', 'x'])
+
+    result = stream_order_mfd(frac_dask, fa_dask, threshold=1, method=method)
+    # The convergence sweep runs eagerly, but assembling the result must not.
+    calls_after_call = counter['n']
+    result.data.compute()
+    assert counter['n'] - calls_after_call > 0
+
+
 # ====================================================================
 # Memory guard tests
 # ====================================================================
