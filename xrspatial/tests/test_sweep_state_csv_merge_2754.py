@@ -75,6 +75,8 @@ def _make_repo(tmp_path: Path) -> Path:
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "test")
     # Copy the project's real .gitattributes so we test the shipped rules.
+    # The sweep globs use merge=text, which is git's built-in 3-way text
+    # driver; this sandbox repo defines no custom driver of that name.
     (repo / ".gitattributes").write_text(_GITATTRIBUTES.read_text())
     state = repo / _STATE_REL
     state.parent.mkdir(parents=True)
@@ -85,7 +87,7 @@ def _make_repo(tmp_path: Path) -> Path:
 
 
 @pytest.mark.skipif(not _has_git(), reason="git executable not available")
-def test_gitattributes_sweep_csv_not_union(tmp_path):
+def test_gitattributes_sweep_csv_not_union():
     """The .gitattributes must not set merge=union for sweep state CSVs."""
     text = _GITATTRIBUTES.read_text()
     for line in text.splitlines():
@@ -130,9 +132,11 @@ def test_stale_branch_merge_conflicts_not_union(tmp_path):
     )
     merged = state.read_text()
     assert "<<<<<<<" in merged, "expected conflict markers in the merged file"
-    # The union failure mode duplicated the slope row; a conflict must not.
-    assert merged.count("slope,") <= 2, (
-        "slope row duplicated -- this is the union corruption from #2754"
+    # The union failure mode duplicated the header line; a conflict keeps one.
+    # (A slope-row count would not distinguish the two: both the union output
+    # and the conflict output contain two "slope," lines.)
+    assert merged.count("module,last_inspected,notes") == 1, (
+        "header line duplicated -- this is the union corruption from #2754"
     )
     # Clean up the conflicted merge state.
     _git(repo, "merge", "--abort")
