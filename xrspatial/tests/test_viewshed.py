@@ -669,6 +669,41 @@ def test_viewshed_valid_max_distance_still_works(backend, good):
     assert result.shape == raster.shape
 
 
+@pytest.mark.parametrize("param", ["observer_elev", "target_elev"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"),
+                                 "tall"])
+def test_viewshed_invalid_elev_raises(param, bad):
+    """Non-finite or non-numeric observer/target elevation raises a clear
+    ValueError naming the offending parameter, before backend dispatch (#2794).
+
+    Validation lives at the public entry point, so a single numpy raster
+    covers every backend. Previously NaN/inf fell through to confusing
+    downstream errors instead of a message pointing at the bad parameter.
+    """
+    raster = _make_raster("numpy")
+    with pytest.raises(ValueError, match=f"{param} must be a finite number"):
+        viewshed(raster, x=3, y=2, **{param: bad})
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_viewshed_invalid_elev_raises_before_dispatch(backend):
+    """A dask raster also raises up front, confirming the guard runs before
+    any backend dispatch rather than from deep inside the dask path."""
+    raster = _make_raster(backend)
+    with pytest.raises(ValueError, match="observer_elev must be a finite"):
+        viewshed(raster, x=3, y=2, observer_elev=float("nan"))
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+@pytest.mark.parametrize("good", [-5.0, 0.0, 2.5])
+def test_viewshed_valid_elev_still_works(backend, good):
+    """Finite observer/target elevations (including negative) pass
+    validation and return a result of the expected shape."""
+    raster = _make_raster(backend)
+    result = viewshed(raster, x=3, y=2, observer_elev=good, target_elev=good)
+    assert result.shape == raster.shape
+
+
 # -------------------------------------------------------------------
 # dask+cupy backend tests
 # -------------------------------------------------------------------
@@ -1123,3 +1158,68 @@ def test_calculate_event_row_col_rejects_center_event_2793():
     """CENTER events are not valid input and must raise (#2793)."""
     with pytest.raises(ValueError):
         _calculate_event_row_col(0, 5, 5, 5, 5)
+
+
+# -------------------------------------------------------------------
+# Regular-grid validation (#2789)
+# -------------------------------------------------------------------
+
+def _build_grid_2789(backend, xs, ys):
+    """5x5 raster with a single peak, given explicit x/y coordinates."""
+    arr = np.zeros((len(ys), len(xs)), dtype="float64")
+    arr[2, 2] = 5.0
+    if backend == "cupy":
+        import cupy as cp
+        arr = cp.asarray(arr)
+    elif backend == "dask":
+        arr = da.from_array(arr, chunks=(3, 3))
+    return xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_irregular_x_raises(backend):
+    """Non-uniform x spacing must raise a clear ValueError naming the axis."""
+    ys = np.arange(5, dtype=float)
+    xs = np.array([0.0, 1.0, 2.0, 5.0, 6.0])  # gap between index 2 and 3
+    raster = _build_grid_2789(backend, xs, ys)
+    with pytest.raises(ValueError, match="x coordinates are not uniformly spaced"):
+        viewshed(raster, x=2, y=2, observer_elev=2)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_irregular_y_raises(backend):
+    """Non-uniform y spacing must raise a clear ValueError naming the axis."""
+    xs = np.arange(5, dtype=float)
+    ys = np.array([0.0, 1.0, 2.0, 5.0, 6.0])
+    raster = _build_grid_2789(backend, xs, ys)
+    with pytest.raises(ValueError, match="y coordinates are not uniformly spaced"):
+        viewshed(raster, x=2, y=2, observer_elev=2)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_irregular_with_max_distance_raises(backend):
+    """The windowed (max_distance) path is validated too (#2789)."""
+    ys = np.arange(5, dtype=float)
+    xs = np.array([0.0, 1.0, 2.0, 5.0, 6.0])
+    raster = _build_grid_2789(backend, xs, ys)
+    with pytest.raises(ValueError, match="x coordinates are not uniformly spaced"):
+        viewshed(raster, x=2, y=2, observer_elev=2, max_distance=10)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask"])
+def test_viewshed_regular_grid_passes(backend):
+    """A regularly spaced grid must not be rejected by the validation."""
+    xs = np.arange(5, dtype=float)
+    ys = np.arange(5, dtype=float)
+    raster = _build_grid_2789(backend, xs, ys)
+    result = viewshed(raster, x=2, y=2, observer_elev=2)
+    general_output_checks(raster, result)
+
+
+def test_viewshed_float_roundoff_regular_grid_passes():
+    """Coordinates from linspace carry float roundoff but are still regular."""
+    xs = np.linspace(-20, 20, 5)
+    ys = np.linspace(-20, 20, 5)
+    raster = _build_grid_2789("numpy", xs, ys)
+    # Should not raise despite the diffs not being bit-identical.
+    viewshed(raster, x=0, y=0, observer_elev=2)
