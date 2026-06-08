@@ -183,3 +183,21 @@ def test_dask_failed_tiled_write_cleans_up(tmp_path, monkeypatch):
     to_geotiff(da, vrt_path, tiled=True, compression='none')
     assert os.path.isfile(vrt_path)
     assert os.path.isdir(tiles_dir)
+
+
+def test_plain_ndarray_tiled_write_round_trips(tmp_path):
+    """A plain ndarray VRT write must not raise UnboundLocalError on
+    ``restore_sentinel`` (issue #2969). The non-DataArray path skips the
+    branch that assigns ``restore_sentinel``, so it has to default to the
+    kwarg default before the per-tile write reads it."""
+    arr = np.arange(256, dtype='float32').reshape(16, 16)
+    vrt_path = str(tmp_path / 'ndarray_2969.vrt')
+
+    to_geotiff(arr, vrt_path, tiled=True, tile_size=16, compression='none')
+
+    assert os.path.isfile(vrt_path)
+    assert os.path.isdir(_tiles_dir_for(vrt_path))
+
+    result = open_geotiff(vrt_path)
+    np.testing.assert_array_almost_equal(
+        np.asarray(result.data).squeeze(), arr, decimal=5)
