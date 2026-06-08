@@ -511,6 +511,14 @@ def test_planar_warns_on_degree_coords_meter_elevation():
         aspect(raster)  # method='planar' is the default
 
 
+def test_planar_warning_names_aspect_not_slope():
+    # The shared warning helper defaults to naming `slope`; aspect must pass
+    # its own name so the advice is not misleading. Regression for #2782.
+    raster = _degree_coord_meter_elevation_raster()
+    with pytest.warns(UserWarning, match="before calling `aspect`"):
+        aspect(raster)
+
+
 def test_planar_no_warn_on_projected_meter_coords():
     raster = _projected_meter_raster()
     with warnings.catch_warnings():

@@ -54,6 +54,36 @@ def test_warn_if_unit_mismatch_degrees_horizontal_elevation_vertical(monkeypatch
         utils.warn_if_unit_mismatch(da)
 
 
+def test_warn_if_unit_mismatch_func_name_in_message(monkeypatch):
+    """
+    The warning text names the calling function so an aspect() caller is not
+    told to fix their `slope` call. Default stays `slope` for back-compat.
+    Regression for issue #2782.
+    """
+    data = np.linspace(0, 999, 10 * 10, dtype=float).reshape(10, 10)
+    y = np.linspace(5.0, 5.0025, 10)
+    x = np.linspace(-74.93, -74.9275, 10)
+    da_2782 = xr.DataArray(
+        data,
+        dims=("y", "x"),
+        coords={"y": y, "x": x},
+        attrs={"units": "m"},
+    )
+
+    def fake_get_dataarray_resolution(arr):
+        return float(x[1] - x[0]), float(y[1] - y[0])
+
+    monkeypatch.setattr(
+        utils, "get_dataarray_resolution", fake_get_dataarray_resolution
+    )
+
+    with pytest.warns(UserWarning, match="before calling `slope`"):
+        utils.warn_if_unit_mismatch(da_2782)
+
+    with pytest.warns(UserWarning, match="before calling `aspect`"):
+        utils.warn_if_unit_mismatch(da_2782, func_name="aspect")
+
+
 def test_warn_if_unit_mismatch_no_warning_for_projected_like_grid(monkeypatch):
     """
     If coordinates look like projected linear units (e.g., meters) and values
