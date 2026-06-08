@@ -68,11 +68,13 @@ slope,2026-05-01,1042,HIGH,1;3,"optional single-line notes"
 - `notes` is CSV-quoted; newlines must be flattened to spaces on write so
   every module stays exactly one line.
 
-The file is registered with `merge=union` in `.gitattributes`, so two
-parallel sweeps touching different modules auto-merge without conflict.
-A transient duplicate-row state can occur after a merge if both branches
-modified the same module; the read-update-write cycle in step 5 keys rows
-by `module` and last-write-wins, so the next write cleans up.
+The file uses git's default 3-way text merge (no `merge=union`; see
+issue #2754). Two parallel sweeps that touch the CSV surface a normal
+merge conflict rather than silently unioning duplicate rows. Resolve a
+conflict by keeping one row per `module` (latest `last_inspected` wins),
+a single header, and one physical line per record -- or just re-run the
+read-update-write cycle in step 5, which rewrites the whole canonical
+file.
 
 ## Step 3 -- Score each module
 
@@ -267,8 +269,8 @@ If CUDA_AVAILABLE is false:
    }
 
    def _oneline(v):
-       # merge=union is line-based: a newline inside a quoted field splits
-       # the record on parallel-agent merges. Force one physical line per
+       # Git merges these CSVs line by line, so a newline inside a quoted
+       # field splits the record on a merge. Force one physical line per
        # record by collapsing embedded newlines to " | ".
        return "" if v is None else str(v).replace("\r\n", " | ").replace("\r", " | ").replace("\n", " | ")
 
@@ -325,9 +327,10 @@ To reset all tracking: `/sweep-metadata --reset-state`
   the deliverables.
 - If $ARGUMENTS is empty, use defaults: top 3, no category filter, no
   exclusions.
-- State file (`.claude/sweep-metadata-state.csv`) is tracked in git, with
-  `merge=union` set in `.gitattributes` so parallel sweeps touching
-  different modules auto-merge.
+- State file (`.claude/sweep-metadata-state.csv`) is tracked in git and uses
+  git's default 3-way text merge (no `merge=union`; see issue #2754), so a
+  concurrent change surfaces a conflict instead of silently unioning
+  duplicate rows.
 - For subpackage modules (geotiff, reproject, hydro), the subagent should
   read ALL `.py` files in the subpackage directory, not just `__init__.py`.
 - Only flag patterns that are ACTUALLY present in the code.
