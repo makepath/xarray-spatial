@@ -1335,7 +1335,7 @@ def _antimeridian_raster():
     raster = xr.DataArray(data, dims=['lat', 'lon'])
     raster['lon'] = lon
     raster['lat'] = lat
-    return raster, data
+    return raster
 
 
 @pytest.mark.skipif(da is None, reason="dask is not installed")
@@ -1346,7 +1346,7 @@ def test_great_circle_dask_antimeridian_matches_numpy(backend, func):
     if has_cuda_and_cupy() is False and 'cupy' in backend:
         pytest.skip("Requires CUDA and CuPy")
 
-    raster, data = _antimeridian_raster()
+    raster = _antimeridian_raster()
     kwargs = dict(x='lon', y='lat', distance_metric='GREAT_CIRCLE',
                   max_distance=250_000.0)
 
@@ -1393,6 +1393,18 @@ def test_great_circle_halo_folds_on_wrap_and_pole():
     pad_y, pad_x = _halo_depth(lon, lat, 50_000.0, GREAT_CIRCLE)
     assert 0 < pad_x < len(lon)
     assert pad_y > 0
+
+    # Descending coordinates (allowed by the monotonic check) give the same
+    # halo: span and step are direction-independent.
+    pad_y_desc, pad_x_desc = _halo_depth(
+        lon[::-1], lat[::-1], 50_000.0, GREAT_CIRCLE)
+    assert (pad_y_desc, pad_x_desc) == (pad_y, pad_x)
+
+    # Descending wrap raster still folds.
+    lon_desc = np.arange(-179.5, 180.0, 1.0)[::-1]
+    lat_desc = np.arange(-5.0, 6.0, 1.0)[::-1]
+    _, pad_x = _halo_depth(lon_desc, lat_desc, 250_000.0, GREAT_CIRCLE)
+    assert pad_x > len(lon_desc)
 
 
 # ---------------------------------------------------------------------------
