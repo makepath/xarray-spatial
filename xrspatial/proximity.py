@@ -1666,11 +1666,11 @@ def proximity(
     and all proximities will be computed in pixels. Note that target
     pixels are set to the value corresponding to a distance of zero.
 
-    Proximity support NumPy backed, and Dask with NumPy backed
-    xarray DataArray. The return values of proximity are of the same type as
-    the input type.
-    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
-    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+    Proximity supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy
+    backed xarray DataArray. The return values of proximity are of the same
+    type as the input type: a NumPy-backed input gives a NumPy-backed result,
+    a CuPy-backed input gives a CuPy-backed result, and a Dask-backed input
+    gives a Dask-backed result.
 
     The implementation for NumPy-backed is ported from GDAL, which uses
     a dynamic programming approach to identify nearest target of a pixel from
@@ -1820,13 +1820,13 @@ def allocation(
     pixels in the image to a set of pixels in the source image. The
     following options are used to define the behavior of the function.
     By default all non-zero pixels in `raster.values` will be considered
-    as"target", and all allocation will be computed in pixels.
+    as "target", and all allocation will be computed in pixels.
 
-    Allocation supports NumPy backed, and Dask with NumPy backed
-    xarray DataArray. The return values of `allocation` are of the same type as
-    the input type.
-    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
-    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+    Allocation supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy
+    backed xarray DataArray. The return values of `allocation` are of the
+    same type as the input type: a NumPy-backed input gives a NumPy-backed
+    result, a CuPy-backed input gives a CuPy-backed result, and a
+    Dask-backed input gives a Dask-backed result.
 
     `allocation` uses the same approach as `proximity`, which is ported
     from GDAL. A dynamic programming approach is used for identifying nearest
@@ -1924,11 +1924,11 @@ def allocation(
         >>> allocation_agg = allocation(raster)
         >>> allocation_agg
         <xarray.DataArray (y: 5, x: 5)>
-        array([[1., 1., 2., 2., 2.],
+        array([[1., 1., 1., 2., 2.],
                [1., 1., 1., 2., 2.],
                [1., 1., 3., 2., 2.],
                [1., 3., 3., 3., 2.],
-               [3., 3., 3., 3., 3.]])
+               [3., 3., 3., 3., 3.]], dtype=float32)
         Coordinates:
           * y        (y) int64 4 3 2 1 0
           * x        (x) int64 0 1 2 3 4
@@ -1949,7 +1949,6 @@ def allocation(
         process_mode=ALLOCATION,
     )
 
-    # convert to have same type as of input @raster
     result = xr.DataArray(
         allocation_img,
         coords=raster.coords,
@@ -1971,11 +1970,10 @@ def direction(
     distance_metric: str = "EUCLIDEAN",
 ) -> xr.DataArray:
     """
-    Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the direction to
     nearest source based on a set of target values and a distance metric.
 
-    This function attempts to calculate for each cell, the the direction,
+    This function attempts to calculate for each cell, the direction,
     in degrees, to the nearest source. The output values are based on
     compass directions, where 90 is for the east, 180 for the south,
     270 for the west, 360 for the north, and 0 for the source cell
@@ -1984,11 +1982,11 @@ def direction(
     will be considered as "target", and all direction will be computed
     in pixels.
 
-    Direction support NumPy backed, and Dask with NumPy backed
-    xarray DataArray. The return values of `direction` are of the same type as
-    the input type.
-    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
-    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+    Direction supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy
+    backed xarray DataArray. The return values of `direction` are of the
+    same type as the input type: a NumPy-backed input gives a NumPy-backed
+    result, a CuPy-backed input gives a CuPy-backed result, and a
+    Dask-backed input gives a Dask-backed result.
 
     Similar to `proximity`, the implementation for NumPy-backed is ported
     from GDAL, which uses a dynamic programming approach to identify

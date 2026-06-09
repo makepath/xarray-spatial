@@ -1281,6 +1281,49 @@ def test_return_annotation_consistency(func):
     assert inspect.signature(func).return_annotation is xr.DataArray
 
 
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_docstring_states_all_backends(func):
+    # All three functions dispatch to numpy, cupy, dask+numpy, and dask+cupy
+    # backends; the docstrings used to claim numpy and dask+numpy only
+    # (issue #3091).
+    doc = func.__doc__
+    assert "CuPy" in doc
+    assert "Dask with CuPy" in doc
+    assert "support NumPy backed, and Dask with NumPy backed" not in doc
+    # The stray slope line that opened direction()'s docstring (#3091).
+    assert "downward slope" not in doc
+
+
+def test_allocation_docstring_example_matches_output():
+    # The example in allocation()'s docstring predated the lowest-flat-index
+    # tie-break and the float32 result dtype (issue #3091). Pin the printed
+    # output to what the function returns.
+    data = np.array([
+        [0., 0., 0., 0., 0.],
+        [0., 1., 0., 2., 0.],
+        [0., 0., 3., 0., 0.],
+        [0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0.]
+    ])
+    n, m = data.shape
+    raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+    raster['y'] = np.arange(n)[::-1]
+    raster['x'] = np.arange(m)
+
+    result = allocation(raster)
+
+    expected = np.array([[1., 1., 1., 2., 2.],
+                         [1., 1., 1., 2., 2.],
+                         [1., 1., 3., 2., 2.],
+                         [1., 3., 3., 3., 2.],
+                         [3., 3., 3., 3., 3.]], dtype=np.float32)
+    assert result.dtype == np.float32
+    np.testing.assert_array_equal(result.values, expected)
+    # Pixel (0, 2) ties between targets 1 and 2; the documented policy picks
+    # the lowest flat index, which is target 1.
+    assert result.values[0, 2] == 1.0
+
+
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
 def test_great_circle_dask_bounded_matches_numpy(func):
