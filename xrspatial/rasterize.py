@@ -4,7 +4,7 @@ Converts vector geometries (GeoDataFrame or list of (geometry, value) pairs)
 to a 2D xr.DataArray.  No GDAL dependency.
 
 - Polygons/MultiPolygons: scanline fill
-- Lines/MultiLineStrings: Bresenham line rasterization
+- Lines/LinearRings/MultiLineStrings: Bresenham line rasterization
 - Points/MultiPoints: direct pixel burn
 
 Supports numpy, cupy, dask+numpy, and dask+cupy backends.
@@ -219,6 +219,36 @@ def _apply_merge(out, written, order, r, c, props, new_idx,
 # Geometry classification (single pass)
 # ---------------------------------------------------------------------------
 
+#: Human-readable names for the shapely type ids the fast path reports.
+_TYPE_ID_NAMES = {
+    0: 'Point', 1: 'LineString', 2: 'LinearRing', 3: 'Polygon',
+    4: 'MultiPoint', 5: 'MultiLineString', 6: 'MultiPolygon',
+    7: 'GeometryCollection',
+}
+
+
+def _warn_dropped_geometries(types):
+    """Warn that non-empty geometries of unsupported types are being dropped.
+
+    ``types`` is an iterable of either shapely type ids (ints, from the
+    vectorized fast path) or ``geom_type`` names (strings, from the recursive
+    slow path).  Names are resolved and de-duplicated so the warning lists each
+    dropped type once.
+    """
+    names = sorted({
+        _TYPE_ID_NAMES.get(int(t), f'type id {int(t)}')
+        if isinstance(t, (int, np.integer)) else str(t)
+        for t in types
+    })
+    warnings.warn(
+        f"rasterize: dropping unsupported non-empty geometr"
+        f"{'y' if len(names) == 1 else 'ies'} of type "
+        f"{', '.join(names)}; only points, lines, and polygons are "
+        f"rasterized.",
+        stacklevel=2,
+    )
+
+
 def _classify_geometries(geometries, props_array):
     """Classify geometries by type in a single pass.
 
@@ -264,16 +294,26 @@ def _classify_geometries(geometries, props_array):
     shapely = _require_shapely()
     type_ids = shapely.get_type_id(geom_arr)
     empty = shapely.is_empty(geom_arr)
-    valid = ~empty
+    # ``get_type_id`` returns -1 for None/missing geometries (which report as
+    # non-empty); treat those as empty so they are skipped like the slow path's
+    # ``geom is None`` guard rather than warned about as an unsupported type.
+    valid = ~empty & (type_ids >= 0)
 
     # Type ID mapping:
     # 0=Point, 1=LineString, 2=LinearRing, 3=Polygon,
     # 4=MultiPoint, 5=MultiLineString, 6=MultiPolygon,
     # 7=GeometryCollection
+    # LinearRing (2) is a closed line; rasterize it like any other line.
     poly_mask = valid & ((type_ids == 3) | (type_ids == 6))
-    line_mask = valid & ((type_ids == 1) | (type_ids == 5))
+    line_mask = valid & ((type_ids == 1) | (type_ids == 2) | (type_ids == 5))
     point_mask = valid & ((type_ids == 0) | (type_ids == 4))
     gc_mask = valid & (type_ids == 7)
+
+    # Warn before dropping any non-empty geometry that matches no bucket, so a
+    # caller never loses data silently.
+    dropped_mask = valid & ~(poly_mask | line_mask | point_mask | gc_mask)
+    if np.any(dropped_mask):
+        _warn_dropped_geometries(np.unique(type_ids[dropped_mask]))
 
     # Fast path: no GeometryCollections (common case)
     if not np.any(gc_mask):
@@ -320,7 +360,7 @@ def _classify_geometries(geometries, props_array):
             poly_ids.append(poly_counter)
             poly_global.append(global_idx)
             poly_counter += 1
-        elif gt in ('LineString', 'MultiLineString'):
+        elif gt in ('LineString', 'LinearRing', 'MultiLineString'):
             line_geoms.append(geom)
             line_prop_rows.append(prop_row)
             line_global.append(global_idx)
@@ -331,6 +371,8 @@ def _classify_geometries(geometries, props_array):
         elif gt == 'GeometryCollection':
             for sub in geom.geoms:
                 _classify_one(sub, prop_row, global_idx)
+        else:
+            _warn_dropped_geometries([gt])
 
     for idx, geom in enumerate(geometries):
         _classify_one(geom, props_array[idx], idx)
@@ -3097,9 +3139,13 @@ def rasterize(
     Supported geometry types:
 
     - **Polygon / MultiPolygon** -- scanline fill
-    - **LineString / MultiLineString** -- Bresenham line rasterization
+    - **LineString / LinearRing / MultiLineString** -- Bresenham line
+      rasterization (a LinearRing burns its closed boundary)
     - **Point / MultiPoint** -- direct pixel burn
     - **GeometryCollection** -- recursively unpacked
+
+    A non-empty geometry of any other type is dropped with a warning rather
+    than silently discarded.
 
     Parameters
     ----------
