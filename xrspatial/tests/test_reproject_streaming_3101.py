@@ -95,19 +95,34 @@ class TestStreamingMatchesInMemory:
         from xrspatial.reproject import reproject
         return reproject(raster, 'EPSG:32633')
 
+    @staticmethod
+    def _max_concurrent(max_memory, tile_size):
+        # Mirror of the budget arithmetic in _reproject_streaming /
+        # _process_tile_batch so the tests can assert which batching
+        # branch they engage. If the tile_mem formula changes upstream,
+        # these assertions flag the re-routed branch instead of both
+        # tests silently exercising the same one.
+        tile_mem = tile_size * tile_size * 8 * 4
+        budget = _reproject_mod._parse_max_memory(max_memory)
+        return max(1, budget // max(tile_mem, 1))
+
     def test_multi_tile_threaded(self):
         # 64x64 output split into 32x32 tiles; 1 GB budget keeps the
         # ThreadPoolExecutor branch active (max_concurrent >= 2).
+        assert self._max_concurrent('1GB', 32) >= 2
         data = np.random.RandomState(42).rand(64, 64)
         raster = _make_raster(data)
         ref = self._reference(raster)
         out = _run_streaming(raster, tile_size=32, max_memory='1GB')
         assert out.shape == ref.shape
+        # More than one tile, or the thread pool never gets a batch.
+        assert ref.shape[0] > 32 or ref.shape[1] > 32
         np.testing.assert_allclose(out, ref.values, equal_nan=True)
 
     def test_multi_tile_serial(self):
         # max_memory=1 byte forces max_concurrent == 1, taking the serial
         # per-job loop instead of the thread pool.
+        assert self._max_concurrent(1, 32) == 1
         data = np.random.RandomState(7).rand(64, 64)
         raster = _make_raster(data)
         ref = self._reference(raster)
@@ -144,9 +159,12 @@ class TestStreaming3D:
     @pytest.mark.xfail(strict=True, raises=ValueError,
                        reason="2-D output buffer vs 3-D tiles, see #3100")
     def test_3d_source_streams(self):
+        from xrspatial.reproject import reproject
         data = np.random.RandomState(5).rand(32, 32, 3)
         raster = _make_raster(data)
         out = _run_streaming(raster, tile_size=16, max_memory='1GB')
-        # Once #3100 is fixed this should hold and the xfail can be
-        # removed:
-        assert out.ndim == 3 and out.shape[2] == 3
+        # Once #3100 is fixed the xfail comes off and the streaming
+        # result must match the in-memory 3-D path:
+        ref = reproject(raster, 'EPSG:32633')
+        assert out.shape == ref.shape
+        np.testing.assert_allclose(out, ref.values, equal_nan=True)
