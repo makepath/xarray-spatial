@@ -6925,3 +6925,48 @@ class TestNonWgsDatumNumbaFastPath:
         # Guard against the old corruption: coords must be metres, not degrees.
         assert np.all(np.abs(src_x) > 1000.0)
         assert np.all(np.abs(src_y) > 1000.0)
+
+
+class TestVerticalReturnTypes:
+    """Pin the return types the _vertical.py docstrings describe (#3097).
+
+    The Returns sections used to claim "same type as input", which was
+    wrong for DataArray input (plain ndarray comes back) and for scalar
+    input to the conversion wrappers (numpy scalar, not Python float).
+    These tests pin the actual behaviour the docs now state.
+    """
+
+    def test_geoid_height_scalar_returns_python_float(self):
+        from xrspatial.reproject import geoid_height
+        out = geoid_height(-74.0, 40.7)
+        assert type(out) is float
+
+    def test_geoid_height_array_returns_ndarray(self):
+        from xrspatial.reproject import geoid_height
+        out = geoid_height(np.array([-74.0, 0.0]), np.array([40.7, 0.0]))
+        assert type(out) is np.ndarray
+        assert out.shape == (2,)
+
+    def test_geoid_height_dataarray_returns_ndarray(self):
+        from xrspatial.reproject import geoid_height
+        lon = xr.DataArray(np.array([-74.0, 0.0]))
+        lat = xr.DataArray(np.array([40.7, 0.0]))
+        out = geoid_height(lon, lat)
+        # Documented: DataArray input comes back as a plain ndarray.
+        assert type(out) is np.ndarray
+
+    def test_conversion_wrappers_return_numpy_types(self):
+        from xrspatial.reproject import (
+            depth_to_ellipsoidal,
+            ellipsoidal_to_depth,
+            ellipsoidal_to_orthometric,
+            orthometric_to_ellipsoidal,
+        )
+        for func in (ellipsoidal_to_orthometric, orthometric_to_ellipsoidal,
+                     depth_to_ellipsoidal, ellipsoidal_to_depth):
+            scalar_out = func(100.0, -74.0, 40.7)
+            assert isinstance(scalar_out, np.floating), func.__name__
+            arr_out = func(np.array([100.0, 50.0]),
+                           np.array([-74.0, 0.0]), np.array([40.7, 0.0]))
+            assert type(arr_out) is np.ndarray, func.__name__
+            assert arr_out.shape == (2,), func.__name__
