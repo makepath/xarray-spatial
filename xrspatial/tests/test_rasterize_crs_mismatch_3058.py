@@ -92,6 +92,20 @@ class TestCrsMismatch:
                 column='value',
             )
 
+    def test_mismatch_message_is_compact(self):
+        # The error labels each side with a short "EPSG:xxxx" rather than
+        # the multi-line pyproj CRS repr.
+        with pytest.raises(ValueError) as exc:
+            rasterize(
+                _gdf(crs='EPSG:4326'),
+                like=_make_like(crs_attr='EPSG:3857'),
+                column='value',
+            )
+        msg = str(exc.value)
+        assert 'EPSG:4326' in msg
+        assert 'EPSG:3857' in msg
+        assert '\n' not in msg
+
     def test_check_crs_false_bypasses(self):
         # Opt out: the (wrong) template CRS still propagates, no raise.
         result = rasterize(

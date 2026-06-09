@@ -3012,6 +3012,11 @@ def _like_crs(like):
         if rio_crs is not None:
             return rio_crs
     except Exception:
+        # Broad on purpose (matches polygonize._detect_raster_crs):
+        # ``.rio`` raises AttributeError when rioxarray is not installed,
+        # and rio.crs can raise on a malformed georeference.  Either way
+        # we treat the template as having no detectable CRS and let the
+        # earlier attrs/spatial_ref paths be the source of truth.
         pass
 
     return None
@@ -3045,9 +3050,15 @@ def _check_crs_match(geom_crs, like_crs):
     g = _norm(geom_crs, 'geometry')
     t = _norm(like_crs, "'like' template")
     if not g.equals(t):
+        # Prefer a compact "EPSG:xxxx" label over the raw value, whose
+        # repr is a multi-line WKT block for a pyproj/geopandas CRS.
+        # Fall back to the CRS name when no EPSG code is available.
+        def _label(crs):
+            epsg = crs.to_epsg()
+            return f"EPSG:{epsg}" if epsg is not None else crs.name
         raise ValueError(
-            f"CRS mismatch: geometries are in {geom_crs!r} but the "
-            f"'like' template is in {like_crs!r}. Reproject the "
+            f"CRS mismatch: geometries are in {_label(g)} but the "
+            f"'like' template is in {_label(t)}. Reproject the "
             f"geometries to match the template, or pass check_crs=False "
             f"to rasterize onto the template grid anyway (the output "
             f"will inherit the template CRS without reprojection)."
