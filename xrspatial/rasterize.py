@@ -3375,7 +3375,11 @@ def rasterize(
                 cast_back = fill_arr.astype(
                     final_dtype_np).astype(fill_arr.dtype)
             representable = bool(np.array_equal(fill_arr, cast_back))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # A fill too large for the dtype's C type (e.g. an int wider
+            # than the platform long) overflows the cast rather than
+            # round-tripping; that is exactly a value the dtype cannot
+            # hold, so treat it as non-representable.
             representable = False
         if not representable:
             raise ValueError(

@@ -79,6 +79,20 @@ def test_out_of_range_int_fill_raises_numpy(dt, fill):
 
 
 @skip_no_shapely
+def test_huge_int_fill_raises_cleanly():
+    """A fill wider than the platform C long is rejected, not crashed on.
+
+    ``np.array(2**100)`` is an object array whose ``astype(<int>)`` raises
+    ``OverflowError`` rather than ``ValueError``; the guard catches it so
+    the user sees the same actionable message instead of a stray
+    ``OverflowError``.
+    """
+    with pytest.raises(ValueError, match="cannot be represented"):
+        rasterize(_square(), width=10, height=10, bounds=(0, 0, 10, 10),
+                  fill=2 ** 100, dtype=np.int64)
+
+
+@skip_no_shapely
 @skip_no_dask
 def test_out_of_range_int_fill_raises_dask_numpy():
     with pytest.raises(ValueError, match="cannot be represented"):
