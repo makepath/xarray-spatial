@@ -116,10 +116,11 @@ write.
        #2135.
    * - ``mask_and_scale_dtype``
      - str
-     - Integer source dtype name (e.g. ``"int8"``), set only when a
-       ``mask_and_scale=True`` read promoted an integer array to float.
-       ``to_geotiff(pack=True)`` reads it to reverse the promotion and
-       restore the on-disk dtype. Added in contract v5 (issue #3064).
+     - Integer source dtype name (e.g. ``"int8"``), set only when an
+       ``unpack=True`` (formerly ``mask_and_scale=True``) read promoted an
+       integer array to float. ``to_geotiff(pack=True)`` reads it to reverse
+       the promotion and restore the on-disk dtype. The attr keeps its
+       ``mask_and_scale_dtype`` name. Added in contract v5 (issue #3064).
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;
@@ -384,10 +385,11 @@ round-trip until ``to_geotiff`` learns to emit
 ``ModelTransformationTag`` (issue #2115 follow-up).
 
 Contract v5 (issue #3064) added the ``mask_and_scale_dtype`` attr to
-the canonical tier. The attr records the integer source dtype when a
-``mask_and_scale=True`` read promoted the array to float, so
+the canonical tier. The attr records the integer source dtype when an
+``unpack=True`` read promoted the array to float, so
 ``to_geotiff(pack=True)`` can reverse the scale / offset, fill NaN back
 to the nodata sentinel, and restore the on-disk dtype. The packed file
 keeps its ``SCALE`` / ``OFFSET`` tags, so reopening it with
-``mask_and_scale=True`` unpacks to the same values instead of scaling a
-second time.
+``unpack=True`` unpacks to the same values instead of scaling a
+second time. (The read option was renamed from ``mask_and_scale`` to
+``unpack`` in issue #3071; the attr keeps its name.)

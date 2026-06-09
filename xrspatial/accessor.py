@@ -254,13 +254,13 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
         is_vrt = str(source).lower().endswith('.vrt')
         if gpu_requested or is_vrt:
             raise ValueError(
-                "coregister=True applies mask_and_scale, which is not "
-                "supported with gpu=True or .vrt sources. Read on CPU, "
-                "or pass coregister=False."
+                "coregister=True runs an unpack-and-reproject read that "
+                "runs on CPU only and is not supported with gpu=True or "
+                ".vrt sources. Read on CPU, or pass coregister=False."
             )
-        # coregister implies a masked-and-scaled read; this overrides an
-        # explicit mask_and_scale=False.
-        kwargs['mask_and_scale'] = True
+        # coregister implies an unpacked (scaled + masked) read; this
+        # overrides an explicit unpack=False.
+        kwargs['unpack'] = True
 
     if 'y' not in obj.coords or 'x' not in obj.coords:
         raise ValueError(
@@ -927,16 +927,16 @@ class XrsSpatialDataArrayAccessor:
             :func:`xrspatial.reproject.reproject` so the returned
             DataArray lines up with ``self``.
         coregister : bool
-            If True, read the file masked and scaled
-            (``mask_and_scale=True``), reproject into ``self``'s CRS, and
+            If True, read the file unpacked (``unpack=True``: scaled and
+            masked), reproject into ``self``'s CRS, and
             resample onto ``self``'s exact grid, so the result shares
             ``self``'s ``y``/``x`` coordinates and shape. The grid snap
-            happens even when the CRS already matches. ``mask_and_scale``
-            is unsupported with ``gpu=True`` or ``.vrt`` sources, so
-            ``coregister=True`` raises ``ValueError`` there, and it
-            overrides an explicit ``mask_and_scale=False``. The resample
-            mode follows ``resampling``. This is the heavier counterpart
-            of ``auto_reproject``, which keeps the file's native
+            happens even when the CRS already matches. The
+            unpack-and-reproject read runs on CPU only, so
+            ``coregister=True`` raises ``ValueError`` with ``gpu=True`` or
+            ``.vrt`` sources, and it overrides an explicit ``unpack=False``.
+            The resample mode follows ``resampling``. This is the heavier
+            counterpart of ``auto_reproject``, which keeps the file's native
             resolution.
         resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
             Resampling mode for the ``auto_reproject`` / ``coregister``
@@ -1456,14 +1456,14 @@ class XrsSpatialDatasetAccessor:
             Data variable used for backend inference and CRS lookup. If
             None, picks the first 2D variable with ``y``/``x`` dims.
         coregister : bool
-            If True, read the file masked and scaled
-            (``mask_and_scale=True``), reproject into the Dataset's CRS,
+            If True, read the file unpacked (``unpack=True``: scaled and
+            masked), reproject into the Dataset's CRS,
             and resample onto the Dataset's exact grid, so the result
             shares the Dataset's ``y``/``x`` coordinates and shape. The
-            grid snap happens even when the CRS already matches.
-            ``mask_and_scale`` is unsupported with ``gpu=True`` or
-            ``.vrt`` sources, so ``coregister=True`` raises ``ValueError``
-            there, and it overrides an explicit ``mask_and_scale=False``.
+            grid snap happens even when the CRS already matches. The
+            unpack-and-reproject read runs on CPU only, so
+            ``coregister=True`` raises ``ValueError`` with ``gpu=True`` or
+            ``.vrt`` sources, and it overrides an explicit ``unpack=False``.
             The resample mode follows ``resampling``.
         resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
             Resampling mode for the ``auto_reproject`` / ``coregister``

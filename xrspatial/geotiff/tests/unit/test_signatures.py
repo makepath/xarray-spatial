@@ -435,9 +435,12 @@ _CANONICAL_ORDER = (
     # immediately before its deprecated ``mask_nodata`` alias.
     "masked",
     "mask_nodata",
-    # rioxarray-compatible read options. ``mask_and_scale`` /
-    # ``parse_coordinates`` are also threaded into ``read_geotiff_dask``;
-    # ``lock`` / ``cache`` are open_geotiff-only accept-and-warn shims.
+    # rioxarray-compatible read options. ``unpack`` (canonical) and its
+    # deprecated ``mask_and_scale`` alias, plus ``parse_coordinates``, are
+    # threaded into ``read_geotiff_dask``; ``unpack`` also reaches the GPU /
+    # dask+GPU backends (#3071). ``lock`` / ``cache`` are open_geotiff-only
+    # accept-and-warn shims.
+    "unpack",
     "mask_and_scale",
     "parse_coordinates",
     "lock",

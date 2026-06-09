@@ -73,6 +73,7 @@ def _read_geotiff_gpu(source: str, *,
                       allow_internal_only_jpeg: bool = False,
                       band_nodata: str | None = None,
                       mask_nodata: bool = False,
+                      mask_and_scale: bool = False,
                       gpu: str = _GPU_DEPRECATED_SENTINEL,
                       ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
@@ -189,6 +190,14 @@ def _read_geotiff_gpu(source: str, *,
         ``_read_geotiff_gpu(path)`` keeps the source dtype and the raw
         sentinel. Pass ``mask_nodata=True`` to restore the
         promote-to-NaN behaviour.
+    mask_and_scale : bool, default False
+        [experimental] If True, apply the source's GDAL ``SCALE`` /
+        ``OFFSET`` (``data * scale + offset``) and mask the nodata
+        sentinel to NaN, matching the CPU / dask paths. This is the
+        internal name for ``open_geotiff``'s ``unpack`` option. The
+        scale/offset arithmetic runs on the CuPy buffer via numpy
+        duck-typing in the shared eager finalizer; the dask+GPU path
+        applies it through the CPU dask graph before the device upload.
     allow_rotated : bool, default False
         [experimental] Read-side opt-in for rotated / sheared
         ``ModelTransformationTag`` files. Forwarded through both GPU
@@ -362,6 +371,7 @@ def _read_geotiff_gpu(source: str, *,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
             mask_nodata=mask_nodata,
+            mask_and_scale=mask_and_scale,
         )
 
     from .._compression import COMPRESSION_LERC
@@ -414,6 +424,7 @@ def _read_geotiff_gpu(source: str, *,
             allow_experimental_codecs=allow_experimental_codecs,
             allow_internal_only_jpeg=allow_internal_only_jpeg,
             mask_nodata=mask_nodata,
+            mask_and_scale=mask_and_scale,
         )
 
     # Parse metadata on CPU (fast, <1ms)
@@ -644,6 +655,8 @@ def _read_geotiff_gpu(source: str, *,
                 name=name,
                 allow_rotated=allow_rotated,
                 allow_unparseable_crs=allow_unparseable_crs,
+                mask_and_scale=mask_and_scale,
+                band=band,
             )
             # ``chunks`` was previously honoured only on the tiled path,
             # so stripped TIFFs returned an unchunked DataArray even when
@@ -1046,6 +1059,8 @@ def _read_geotiff_gpu(source: str, *,
             name=name,
             allow_rotated=allow_rotated,
             allow_unparseable_crs=allow_unparseable_crs,
+            mask_and_scale=mask_and_scale,
+            band=band,
         )
 
         # ``chunks=`` is handled at function entry via
@@ -1073,7 +1088,8 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
                                     allow_invalid_nodata: bool = False,
                                     allow_experimental_codecs: bool = False,
                                     allow_internal_only_jpeg: bool = False,
-                                    mask_nodata: bool = True):
+                                    mask_nodata: bool = True,
+                                    mask_and_scale: bool = False):
     """Eager CPU decode + GPU upload for HTTP / fsspec sources.
 
     Reached via ``open_geotiff(url, gpu=True)`` and the direct
@@ -1155,6 +1171,8 @@ def _read_geotiff_gpu_eager_via_cpu(source, *, dtype, window, overview_level,
         name=name,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
+        mask_and_scale=mask_and_scale,
+        band=band,
     )
 
 
@@ -1304,7 +1322,8 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                               allow_invalid_nodata: bool = False,
                               allow_experimental_codecs: bool = False,
                               allow_internal_only_jpeg: bool = False,
-                              mask_nodata: bool = True):
+                              mask_nodata: bool = True,
+                              mask_and_scale: bool = False):
     """Lazy Dask+CuPy backend for ``_read_geotiff_gpu(chunks=...)``.
 
     Two paths produce the same shape of dask graph:
@@ -1403,8 +1422,13 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
                 ifd.tile_byte_counts is not None
                 and any(bc == 0 for bc in ifd.tile_byte_counts)
             )
-            if _gds_chunk_path_available(
-                    src_path, ifd, has_sparse_tile, orientation):
+            # ``mask_and_scale`` disqualifies the disk->GPU GDS fast path:
+            # it decodes straight to the device and has no scale/offset
+            # step. The CPU-decode fallback below applies the scale lazily
+            # through ``_read_geotiff_dask`` (as float) before the per-block
+            # device upload, so an unpack request takes that route instead.
+            if (not mask_and_scale and _gds_chunk_path_available(
+                    src_path, ifd, has_sparse_tile, orientation)):
                 return _read_geotiff_gpu_chunked_gds(
                     src_path, ifd, geo_info, header,
                     dtype=dtype, chunks=chunks, window=window, band=band,
@@ -1430,6 +1454,7 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
         allow_experimental_codecs=allow_experimental_codecs,
         allow_internal_only_jpeg=allow_internal_only_jpeg,
         mask_nodata=mask_nodata,
+        mask_and_scale=mask_and_scale,
     )
 
     cpu_dask_arr = cpu_da.data
@@ -1462,6 +1487,12 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     ``_gds_chunk_path_available``. Each chunk task pulls only the tile
     subset overlapping its window via KvikIO GDS (or an mmap fallback
     inside ``gpu_decode_tiles_from_file``) and crops on device.
+
+    This path is unpack-free: it decodes straight to the device with no
+    SCALE/OFFSET step, so ``_read_geotiff_gpu_chunked`` disqualifies it
+    when ``mask_and_scale=True`` and routes that read through the
+    CPU-decode fallback instead. A future direct caller that needs unpack
+    must take the same fallback rather than calling this helper.
     """
     import cupy
     import dask

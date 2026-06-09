@@ -5,10 +5,11 @@ Covers the renamed parameters and the masking-off default flip:
 * ``masked`` (canonical) <- ``mask_nodata`` (deprecated alias), default
   flipped from True to False to match rioxarray.
 * ``default_name`` (canonical) <- ``name`` (deprecated alias).
-* ``mask_and_scale`` (new): apply GDAL SCALE/OFFSET + mask.
+* ``unpack`` (canonical) <- ``mask_and_scale`` (deprecated alias): apply
+  GDAL SCALE/OFFSET + mask. Runs on CPU, dask, GPU, and dask+GPU (#3071).
 * ``parse_coordinates`` (new): skip x/y coords.
 * ``lock`` / ``cache`` (new, accept-and-warn shims).
-* GPU / VRT gating for ``mask_and_scale`` / ``parse_coordinates=False``.
+* VRT gating for ``unpack``; GPU / VRT gating for ``parse_coordinates=False``.
 """
 import numpy as np
 import pytest
@@ -182,12 +183,36 @@ def test_default_name_and_name_both_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# mask_and_scale
+# unpack (renamed from mask_and_scale)
 # ---------------------------------------------------------------------------
+
+def test_mask_and_scale_alias_warns_and_matches(tmp_path):
+    """The deprecated ``mask_and_scale`` alias warns and matches ``unpack``."""
+    path = _scale_offset_tiff(str(tmp_path / "t3071_ms_alias.tif"))
+    with pytest.warns(DeprecationWarning, match="mask_and_scale.*deprecated"):
+        legacy = open_geotiff(path, mask_and_scale=True)
+    canonical = open_geotiff(path, unpack=True)
+    np.testing.assert_array_equal(legacy.data, canonical.data)
+    assert legacy.attrs.get("scale_factor") == canonical.attrs.get(
+        "scale_factor") == 2.0
+
+
+def test_unpack_and_mask_and_scale_both_raises(tmp_path):
+    path = _scale_offset_tiff(str(tmp_path / "t3071_ms_both.tif"))
+    with pytest.raises(TypeError, match="either 'unpack' or"):
+        open_geotiff(path, unpack=True, mask_and_scale=True)
+
+
+def test_unpack_false_emits_no_warning(tmp_path, recwarn):
+    path = _scale_offset_tiff(str(tmp_path / "t3071_ms_nowarn.tif"))
+    open_geotiff(path, unpack=False)
+    assert not [w for w in recwarn.list
+                if issubclass(w.category, DeprecationWarning)]
+
 
 def test_mask_and_scale_eager(tmp_path):
     path = _scale_offset_tiff(str(tmp_path / "t2961_ms_eager.tif"))
-    out = open_geotiff(path, mask_and_scale=True)
+    out = open_geotiff(path, unpack=True)
     assert out.dtype.kind == "f"
     # data * 2 + 10, sentinel pixel -> NaN
     expected = np.array([[12.0, 14.0, 16.0], [18.0, 20.0, np.nan]])
@@ -198,8 +223,8 @@ def test_mask_and_scale_eager(tmp_path):
 
 def test_mask_and_scale_dask_matches_eager(tmp_path):
     path = _scale_offset_tiff(str(tmp_path / "t2961_ms_dask.tif"))
-    eager = open_geotiff(path, mask_and_scale=True)
-    lazy = open_geotiff(path, mask_and_scale=True, chunks=2)
+    eager = open_geotiff(path, unpack=True)
+    lazy = open_geotiff(path, unpack=True, chunks=2)
     np.testing.assert_array_equal(eager.data, lazy.compute().data)
     assert lazy.attrs.get("scale_factor") == 2.0
 
@@ -207,7 +232,7 @@ def test_mask_and_scale_dask_matches_eager(tmp_path):
 def test_mask_and_scale_no_metadata_is_noop(tmp_path):
     """A source with no SCALE/OFFSET keeps raw values (scale 1, offset 0)."""
     path = _int_sentinel_tiff(str(tmp_path / "t2961_ms_noop.tif"))
-    out = open_geotiff(path, mask_and_scale=True)
+    out = open_geotiff(path, unpack=True)
     # sentinel still masked, but values otherwise unscaled
     assert out.data[0, 0] == 1.0
     assert np.isnan(out.data[0, 2])
@@ -217,7 +242,7 @@ def test_mask_and_scale_no_metadata_is_noop(tmp_path):
 def test_mask_and_scale_int_dtype_raises(tmp_path):
     path = _scale_offset_tiff(str(tmp_path / "t2961_ms_int.tif"))
     with pytest.raises(ValueError):
-        open_geotiff(path, mask_and_scale=True, dtype="uint8")
+        open_geotiff(path, unpack=True, dtype="uint8")
 
 
 # ---------------------------------------------------------------------------
@@ -244,20 +269,20 @@ def test_mask_and_scale_malformed_scale_raises(tmp_path):
     """A present-but-unparseable SCALE fails closed under mask_and_scale."""
     path = _malformed_scale_tiff(str(tmp_path / "t2987_bad_scale.tif"))
     with pytest.raises(MalformedScaleOffsetError, match="SCALE"):
-        open_geotiff(path, mask_and_scale=True)
+        open_geotiff(path, unpack=True)
 
 
 def test_mask_and_scale_malformed_offset_raises(tmp_path):
     path = _malformed_scale_tiff(
         str(tmp_path / "t2987_bad_offset.tif"), scale="1", offset="xyz")
     with pytest.raises(MalformedScaleOffsetError, match="OFFSET"):
-        open_geotiff(path, mask_and_scale=True)
+        open_geotiff(path, unpack=True)
 
 
 def test_mask_and_scale_malformed_scale_dask_raises(tmp_path):
     path = _malformed_scale_tiff(str(tmp_path / "t2987_bad_scale_dask.tif"))
     with pytest.raises(MalformedScaleOffsetError, match="SCALE"):
-        open_geotiff(path, mask_and_scale=True, chunks=2)
+        open_geotiff(path, unpack=True, chunks=2)
 
 
 def test_malformed_scale_ignored_without_mask_and_scale(tmp_path):
@@ -300,13 +325,13 @@ def test_mask_and_scale_malformed_xml_raises(tmp_path):
     """Malformed GDAL_METADATA XML fails closed under mask_and_scale."""
     path = _malformed_xml_tiff(str(tmp_path / "t2998_bad_xml.tif"))
     with pytest.raises(MalformedScaleOffsetError, match="XML"):
-        open_geotiff(path, mask_and_scale=True)
+        open_geotiff(path, unpack=True)
 
 
 def test_mask_and_scale_malformed_xml_dask_raises(tmp_path):
     path = _malformed_xml_tiff(str(tmp_path / "t2998_bad_xml_dask.tif"))
     with pytest.raises(MalformedScaleOffsetError, match="XML"):
-        open_geotiff(path, mask_and_scale=True, chunks=2)
+        open_geotiff(path, unpack=True, chunks=2)
 
 
 def test_malformed_xml_ignored_without_mask_and_scale(tmp_path):
@@ -369,13 +394,48 @@ def test_default_lock_cache_no_warning(tmp_path, recwarn):
 
 
 # ---------------------------------------------------------------------------
-# GPU / VRT gating for the new behavioral options
+# unpack GPU / dask+GPU support (#3071) and remaining gating
 # ---------------------------------------------------------------------------
 
-def test_mask_and_scale_gpu_rejected(tmp_path):
-    path = _scale_offset_tiff(str(tmp_path / "t2961_gate_gpu.tif"))
-    with pytest.raises(ValueError, match="mask_and_scale.*gpu=True"):
-        open_geotiff(path, mask_and_scale=True, gpu=True)
+@requires_gpu
+def test_unpack_gpu_matches_cpu(tmp_path):
+    """``unpack=True`` on the GPU eager path matches the CPU eager read."""
+    path = _scale_offset_tiff(str(tmp_path / "t3071_unpack_gpu.tif"))
+    cpu = open_geotiff(path, unpack=True)
+    gpu = open_geotiff(path, unpack=True, gpu=True)
+    np.testing.assert_array_equal(cpu.data, gpu.data.get())
+    assert gpu.attrs.get("scale_factor") == 2.0
+    assert gpu.attrs.get("add_offset") == 10.0
+
+
+@requires_gpu
+def test_unpack_dask_gpu_matches_cpu(tmp_path):
+    """``unpack=True`` on the dask+GPU path matches the CPU eager read."""
+    path = _scale_offset_tiff(str(tmp_path / "t3071_unpack_dask_gpu.tif"))
+    cpu = open_geotiff(path, unpack=True)
+    dgpu = open_geotiff(path, unpack=True, gpu=True, chunks=2)
+    np.testing.assert_array_equal(cpu.data, dgpu.compute().data.get())
+    assert dgpu.attrs.get("scale_factor") == 2.0
+
+
+@requires_gpu
+def test_unpack_gpu_no_metadata_is_noop(tmp_path):
+    """GPU ``unpack`` on a source without SCALE/OFFSET masks but does not
+    scale, matching the CPU no-op contract."""
+    path = _int_sentinel_tiff(str(tmp_path / "t3071_unpack_gpu_noop.tif"))
+    gpu = open_geotiff(path, unpack=True, gpu=True)
+    host = gpu.data.get()
+    assert host[0, 0] == 1.0
+    assert np.isnan(host[0, 2])
+    assert "scale_factor" not in gpu.attrs
+
+
+@requires_gpu
+def test_unpack_gpu_int_dtype_raises(tmp_path):
+    """A ``dtype=<integer>`` cast under GPU ``unpack`` raises, like CPU."""
+    path = _scale_offset_tiff(str(tmp_path / "t3071_unpack_gpu_int.tif"))
+    with pytest.raises(ValueError):
+        open_geotiff(path, unpack=True, gpu=True, dtype="uint8")
 
 
 def test_parse_coordinates_false_gpu_rejected(tmp_path):
@@ -384,11 +444,11 @@ def test_parse_coordinates_false_gpu_rejected(tmp_path):
         open_geotiff(path, parse_coordinates=False, gpu=True)
 
 
-def test_mask_and_scale_vrt_rejected(tmp_path):
+def test_unpack_vrt_rejected(tmp_path):
     src = _int_sentinel_tiff(str(tmp_path / "t2961_gate_vrt_src.tif"))
     vrt = _build_vrt(str(tmp_path / "t2961_gate.vrt"), source_files=[src])
-    with pytest.raises(ValueError, match="mask_and_scale.*.vrt"):
-        open_geotiff(vrt, mask_and_scale=True)
+    with pytest.raises(ValueError, match="unpack.*.vrt"):
+        open_geotiff(vrt, unpack=True)
 
 
 def test_parse_coordinates_false_vrt_rejected(tmp_path):
@@ -436,7 +496,7 @@ def test_mask_and_scale_mixed_per_band_eager_raises(tmp_path):
         str(tmp_path / "t2988_mixed_eager.tif"),
         scales=[2.0, 4.0, 8.0], offsets=[0.0, 0.0, 0.0])
     with pytest.raises(MixedBandMetadataError, match="per-band SCALE"):
-        open_geotiff(path, mask_and_scale=True)
+        open_geotiff(path, unpack=True)
 
 
 def test_mask_and_scale_mixed_per_band_offset_raises(tmp_path):
@@ -445,7 +505,7 @@ def test_mask_and_scale_mixed_per_band_offset_raises(tmp_path):
         str(tmp_path / "t2988_mixed_offset.tif"),
         scales=[2.0, 2.0, 2.0], offsets=[1.0, 5.0, 9.0])
     with pytest.raises(MixedBandMetadataError, match="per-band OFFSET"):
-        open_geotiff(path, mask_and_scale=True)
+        open_geotiff(path, unpack=True)
 
 
 def test_mask_and_scale_mixed_per_band_dask_raises(tmp_path):
@@ -454,7 +514,7 @@ def test_mask_and_scale_mixed_per_band_dask_raises(tmp_path):
         str(tmp_path / "t2988_mixed_dask.tif"),
         scales=[2.0, 4.0, 8.0], offsets=[0.0, 0.0, 0.0])
     with pytest.raises(MixedBandMetadataError, match="per-band SCALE"):
-        open_geotiff(path, mask_and_scale=True, chunks=2)
+        open_geotiff(path, unpack=True, chunks=2)
 
 
 def test_mask_and_scale_band_selects_own_scale(tmp_path):
@@ -463,7 +523,7 @@ def test_mask_and_scale_band_selects_own_scale(tmp_path):
         str(tmp_path / "t2988_band_sel.tif"),
         scales=[2.0, 4.0, 8.0], offsets=[1.0, 5.0, 9.0])
     # band 1: raw value 2, scale 4, offset 5 -> 2 * 4 + 5 = 13.
-    out = open_geotiff(path, mask_and_scale=True, band=1)
+    out = open_geotiff(path, unpack=True, band=1)
     assert out.attrs.get("scale_factor") == 4.0
     assert out.attrs.get("add_offset") == 5.0
     np.testing.assert_array_equal(out.data, np.full((3, 4), 13.0))
@@ -474,8 +534,8 @@ def test_mask_and_scale_band_select_dask_matches_eager(tmp_path):
     path = _per_band_scale_tiff(
         str(tmp_path / "t2988_band_dask.tif"),
         scales=[2.0, 4.0, 8.0], offsets=[1.0, 5.0, 9.0])
-    eager = open_geotiff(path, mask_and_scale=True, band=2)
-    lazy = open_geotiff(path, mask_and_scale=True, band=2, chunks=2)
+    eager = open_geotiff(path, unpack=True, band=2)
+    lazy = open_geotiff(path, unpack=True, band=2, chunks=2)
     np.testing.assert_array_equal(eager.data, lazy.compute().data)
     assert lazy.attrs.get("scale_factor") == 8.0
 
@@ -485,7 +545,7 @@ def test_mask_and_scale_uniform_per_band_applies(tmp_path):
     path = _per_band_scale_tiff(
         str(tmp_path / "t2988_uniform.tif"),
         scales=[3.0, 3.0, 3.0], offsets=[2.0, 2.0, 2.0])
-    out = open_geotiff(path, mask_and_scale=True)
+    out = open_geotiff(path, unpack=True)
     assert out.attrs.get("scale_factor") == 3.0
     assert out.attrs.get("add_offset") == 2.0
     # band b raw value (b + 1) * 3 + 2.
