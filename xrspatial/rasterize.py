@@ -3121,7 +3121,7 @@ def rasterize(
     fill: float = np.nan,
     dtype: Optional[np.dtype] = None,
     all_touched: bool = False,
-    use_cuda: bool = False,
+    gpu: bool = False,
     name: str = 'rasterize',
     resolution: Optional[Union[float, Tuple[float, float]]] = None,
     like: Optional[xr.DataArray] = None,
@@ -3129,6 +3129,7 @@ def rasterize(
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
     max_pixels: int = MAX_PIXELS_DEFAULT,
     check_crs: bool = True,
+    use_cuda: Optional[bool] = None,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
 
@@ -3206,8 +3207,10 @@ def rasterize(
         pixel-for-pixel up to rasterization tie-breaking on shared
         edges. If False, only pixels whose centers fall inside a
         polygon are burned.
-    use_cuda : bool, default False
-        If True, use the CuPy/CUDA backend.
+    gpu : bool, default False
+        If True, use the CuPy/CUDA backend.  Same convention as
+        ``open_geotiff(gpu=True)``; combine with ``chunks`` for the
+        dask+cupy backend.
     name : str, default 'rasterize'
         Name for the output DataArray.
     resolution : float or (x_res, y_res), optional
@@ -3247,7 +3250,7 @@ def rasterize(
         Custom merge function (pass a callable):
 
         For CPU backends, pass a ``@ngjit``-decorated function.  For GPU
-        backends (``use_cuda=True``), pass a
+        backends (``gpu=True``), pass a
         ``@numba.cuda.jit(device=True)`` function.  Signature::
 
             merge_fn(pixel, props, is_first) -> float64
@@ -3258,7 +3261,7 @@ def rasterize(
 
         .. warning::
 
-           On the GPU backends (``use_cuda=True``, with or without
+           On the GPU backends (``gpu=True``, with or without
            ``chunks``) a custom callable does not use CUDA atomics.  Its
            per-pixel update is a non-atomic read-modify-write, so when
            geometries overlap, several threads may update the same pixel
@@ -3268,14 +3271,14 @@ def rasterize(
            ``'max'``, ``'first'``, ``'last'``) do use atomics and stay
            deterministic over overlap; pass one of those if you need a
            stable result where geometries overlap on the GPU.  Calling
-           ``rasterize`` with a callable ``merge`` and ``use_cuda=True``
+           ``rasterize`` with a callable ``merge`` and ``gpu=True``
            emits a ``UserWarning`` to this effect.
 
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
         tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
         ``> 0``.  A single int uses the same chunk size for both axes.
-        Combined with ``use_cuda`` to select dask+numpy vs dask+cupy.
+        Combined with ``gpu`` to select dask+numpy vs dask+cupy.
     max_pixels : int, default 1_000_000_000
         Safety cap on the resolved output size (``width * height``).  The
         function raises ``ValueError`` before any host or device
@@ -3292,6 +3295,11 @@ def rasterize(
         them yourself to match the template.  Pass ``check_crs=False`` to
         skip the comparison (the output still inherits the template CRS).
         The check is a no-op when either side lacks a CRS.
+    use_cuda : bool, optional
+        .. deprecated:: 0.11
+           Deprecated alias for ``gpu``; emits a ``DeprecationWarning``.
+           Passing both ``gpu=True`` and ``use_cuda`` raises
+           ``TypeError``.
 
     Returns
     -------
@@ -3317,6 +3325,22 @@ def rasterize(
         >>> density = rasterize(gdf, width=100, height=100,
         ...                     column='pop', merge='sum', fill=0)
     """
+    # Deprecation shim: ``use_cuda`` was renamed to ``gpu`` so the GPU
+    # opt-in matches ``open_geotiff(gpu=True)`` (issue #3089).  The old
+    # keyword still works but warns; asking for both is ambiguous.
+    if use_cuda is not None:
+        if gpu:
+            raise TypeError(
+                "rasterize() got both 'gpu' and its deprecated alias "
+                "'use_cuda'; pass only 'gpu'")
+        warnings.warn(
+            "rasterize(use_cuda=...) is deprecated; use gpu=... instead "
+            "(same convention as open_geotiff).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        gpu = use_cuda
+
     # Fail early with a clear message if the optional ``vector`` extra
     # (shapely) is not installed, rather than deep inside a helper.
     _require_shapely()
@@ -3611,10 +3635,10 @@ def rasterize(
     # ``_ensure_gpu_kernels``; ``None`` falls back to the non-atomic
     # closure path used for user callables.
     gpu_merge_name = None
-    if use_cuda:
+    if gpu:
         if cupy is None:
             raise ImportError(
-                "CuPy is required for use_cuda=True but is not installed")
+                "CuPy is required for gpu=True but is not installed")
         gpu_fns = _get_gpu_merge_fns()
         if isinstance(_merge_fn_gpu, str):
             gpu_merge_fn, should_write_gpu = gpu_fns[_merge_fn_gpu]
@@ -3634,7 +3658,7 @@ def rasterize(
             # merge stays deterministic over overlap.
             warnings.warn(
                 "A custom callable merge on the GPU backend "
-                "(use_cuda=True) uses a non-atomic read-modify-write, so "
+                "(gpu=True) uses a non-atomic read-modify-write, so "
                 "values for pixels where geometries overlap are "
                 "nondeterministic and may not match the CPU backend. Use a "
                 "built-in string merge ('sum', 'count', 'min', 'max', "
@@ -3647,7 +3671,7 @@ def rasterize(
     if chunks is not None:
         row_chunks, col_chunks = _normalize_chunks(
             chunks, final_height, final_width)
-        if use_cuda:
+        if gpu:
             out = _run_dask_cupy(
                 geom_list, props_array, final_bounds,
                 final_height, final_width, fill, final_dtype,
@@ -3659,7 +3683,7 @@ def rasterize(
                 final_height, final_width, fill, final_dtype,
                 all_touched, merge_fn, should_write_cpu,
                 row_chunks, col_chunks)
-    elif use_cuda:
+    elif gpu:
         out = _run_cupy(geom_list, props_array, final_bounds,
                         final_height, final_width, fill, final_dtype,
                         all_touched, gpu_merge_fn, should_write_gpu,
