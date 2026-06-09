@@ -94,6 +94,9 @@ _BACKENDS = [
 # burns 9 pixels.  The gap between the two is what makes this geometry
 # a sharp probe for the all_touched x line interaction.
 _DIAG = [(0.2, 0.2), (4.8, 4.8)]
+# Shallow line crossing cell interiors (never a pixel corner), so the
+# no-op pin is not hostage to tie-breaking on shared corners.
+_INTERIOR = [(0.5, 0.7), (4.5, 3.3)]
 _GRID = dict(width=5, height=5, bounds=(0.0, 0.0, 5.0, 5.0), fill=0.0)
 
 
@@ -116,11 +119,14 @@ class TestAllTouchedLineNoOp:
     visible in CI rather than shipping silently.
     """
 
+    @pytest.mark.parametrize('coords', [_DIAG, _INTERIOR],
+                             ids=['corner_crossing', 'interior_crossing'])
     @pytest.mark.parametrize('backend_name,kw', _BACKENDS)
-    def test_line_all_touched_equals_default(self, backend_name, kw):
-        flagged = rasterize([(_line(), 1.0)], **_GRID,
+    def test_line_all_touched_equals_default(self, backend_name, kw, coords):
+        line = LineString(coords)
+        flagged = rasterize([(line, 1.0)], **_GRID,
                             all_touched=True, **kw)
-        default = rasterize([(_line(), 1.0)], **_GRID,
+        default = rasterize([(line, 1.0)], **_GRID,
                             all_touched=False, **kw)
         np.testing.assert_array_equal(
             _materialise(flagged), _materialise(default))
