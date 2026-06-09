@@ -4,7 +4,7 @@ Converts vector geometries (GeoDataFrame or list of (geometry, value) pairs)
 to a 2D xr.DataArray.  No GDAL dependency.
 
 - Polygons/MultiPolygons: scanline fill
-- Lines/MultiLineStrings: Bresenham line rasterization
+- Lines/LinearRings/MultiLineStrings: Bresenham line rasterization
 - Points/MultiPoints: direct pixel burn
 
 Supports numpy, cupy, dask+numpy, and dask+cupy backends.
@@ -219,6 +219,36 @@ def _apply_merge(out, written, order, r, c, props, new_idx,
 # Geometry classification (single pass)
 # ---------------------------------------------------------------------------
 
+#: Human-readable names for the shapely type ids the fast path reports.
+_TYPE_ID_NAMES = {
+    0: 'Point', 1: 'LineString', 2: 'LinearRing', 3: 'Polygon',
+    4: 'MultiPoint', 5: 'MultiLineString', 6: 'MultiPolygon',
+    7: 'GeometryCollection',
+}
+
+
+def _warn_dropped_geometries(types):
+    """Warn that non-empty geometries of unsupported types are being dropped.
+
+    ``types`` is an iterable of either shapely type ids (ints, from the
+    vectorized fast path) or ``geom_type`` names (strings, from the recursive
+    slow path).  Names are resolved and de-duplicated so the warning lists each
+    dropped type once.
+    """
+    names = sorted({
+        _TYPE_ID_NAMES.get(int(t), f'type id {int(t)}')
+        if isinstance(t, (int, np.integer)) else str(t)
+        for t in types
+    })
+    warnings.warn(
+        f"rasterize: dropping unsupported non-empty geometr"
+        f"{'y' if len(names) == 1 else 'ies'} of type "
+        f"{', '.join(names)}; only points, lines, and polygons are "
+        f"rasterized.",
+        stacklevel=2,
+    )
+
+
 def _classify_geometries(geometries, props_array):
     """Classify geometries by type in a single pass.
 
@@ -264,16 +294,26 @@ def _classify_geometries(geometries, props_array):
     shapely = _require_shapely()
     type_ids = shapely.get_type_id(geom_arr)
     empty = shapely.is_empty(geom_arr)
-    valid = ~empty
+    # ``get_type_id`` returns -1 for None/missing geometries (which report as
+    # non-empty); treat those as empty so they are skipped like the slow path's
+    # ``geom is None`` guard rather than warned about as an unsupported type.
+    valid = ~empty & (type_ids >= 0)
 
     # Type ID mapping:
     # 0=Point, 1=LineString, 2=LinearRing, 3=Polygon,
     # 4=MultiPoint, 5=MultiLineString, 6=MultiPolygon,
     # 7=GeometryCollection
+    # LinearRing (2) is a closed line; rasterize it like any other line.
     poly_mask = valid & ((type_ids == 3) | (type_ids == 6))
-    line_mask = valid & ((type_ids == 1) | (type_ids == 5))
+    line_mask = valid & ((type_ids == 1) | (type_ids == 2) | (type_ids == 5))
     point_mask = valid & ((type_ids == 0) | (type_ids == 4))
     gc_mask = valid & (type_ids == 7)
+
+    # Warn before dropping any non-empty geometry that matches no bucket, so a
+    # caller never loses data silently.
+    dropped_mask = valid & ~(poly_mask | line_mask | point_mask | gc_mask)
+    if np.any(dropped_mask):
+        _warn_dropped_geometries(np.unique(type_ids[dropped_mask]))
 
     # Fast path: no GeometryCollections (common case)
     if not np.any(gc_mask):
@@ -320,7 +360,7 @@ def _classify_geometries(geometries, props_array):
             poly_ids.append(poly_counter)
             poly_global.append(global_idx)
             poly_counter += 1
-        elif gt in ('LineString', 'MultiLineString'):
+        elif gt in ('LineString', 'LinearRing', 'MultiLineString'):
             line_geoms.append(geom)
             line_prop_rows.append(prop_row)
             line_global.append(global_idx)
@@ -331,6 +371,8 @@ def _classify_geometries(geometries, props_array):
         elif gt == 'GeometryCollection':
             for sub in geom.geoms:
                 _classify_one(sub, prop_row, global_idx)
+        else:
+            _warn_dropped_geometries([gt])
 
     for idx, geom in enumerate(geometries):
         _classify_one(geom, props_array[idx], idx)
@@ -2742,13 +2784,16 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
 # ---------------------------------------------------------------------------
 
 def _parse_input(geometries, column=None, columns=None):
-    """Normalise input to (geometry_list, props_array, bounds).
+    """Normalise input to (geometry_list, props_array, bounds, crs).
 
     Returns
     -------
     geom_list : list of shapely geometries
     props_array : (N, P) float64 array of property values
     bounds : tuple or None
+    crs : the GeoDataFrame's ``.crs`` (any pyproj-parseable value) or
+        ``None``.  Only a GeoDataFrame exposes a CRS; the
+        ``(geometry, value)`` iterable path always returns ``None``.
     """
     # Handle dask-geopandas by materializing eagerly.  Geometry data is
     # typically much smaller than the output raster, so this is fine.
@@ -2782,7 +2827,7 @@ def _parse_input(geometries, column=None, columns=None):
                     column = numeric_cols[0]
                 props_array = geometries[column].values.astype(
                     np.float64).reshape(-1, 1)
-            return geom_list, props_array, total_bounds
+            return geom_list, props_array, total_bounds, geometries.crs
     except ImportError:
         pass
 
@@ -2798,13 +2843,13 @@ def _parse_input(geometries, column=None, columns=None):
 
     if not geom_list:
         props_array = np.empty((0, 1), dtype=np.float64)
-        return geom_list, props_array, None
+        return geom_list, props_array, None, None
 
     props_array = np.array(value_list, dtype=np.float64).reshape(-1, 1)
 
     # Bounds computation is deferred: return None here and let the
     # caller compute bboxes only when bounds are actually needed.
-    return geom_list, props_array, None
+    return geom_list, props_array, None, None
 
 
 def _check_uniform_axis(axis_name, coords, expected_step):
@@ -2973,6 +3018,95 @@ def _extract_grid_from_like(like):
     )
 
 
+def _like_crs(like):
+    """Detect the CRS of a ``like`` template DataArray, or ``None``.
+
+    Mirrors the resolution order in
+    ``xrspatial.polygonize._detect_raster_crs`` so a template carries the
+    same CRS into rasterize that polygonize would read back out:
+
+    1. ``like.attrs['crs']`` (xrspatial.geotiff convention)
+    2. ``like.attrs['crs_wkt']``
+    3. the ``spatial_ref`` non-dim coord's ``crs_wkt`` / ``spatial_ref``
+       attr (rioxarray's georeference coord)
+    4. ``like.rio.crs`` (rioxarray, if installed)
+    5. ``None``
+
+    The raw value is returned (string / int / WKT / pyproj.CRS) so the
+    caller normalizes it the same way the geometry CRS is normalized.
+    """
+    crs_attr = like.attrs.get('crs')
+    if crs_attr is not None:
+        return crs_attr
+
+    crs_wkt = like.attrs.get('crs_wkt')
+    if crs_wkt is not None:
+        return crs_wkt
+
+    if 'spatial_ref' in like.coords:
+        sr_attrs = like.coords['spatial_ref'].attrs
+        sr_crs = sr_attrs.get('crs_wkt') or sr_attrs.get('spatial_ref')
+        if sr_crs is not None:
+            return sr_crs
+
+    try:
+        rio_crs = like.rio.crs
+        if rio_crs is not None:
+            return rio_crs
+    except Exception:
+        # Broad on purpose (matches polygonize._detect_raster_crs):
+        # ``.rio`` raises AttributeError when rioxarray is not installed,
+        # and rio.crs can raise on a malformed georeference.  Either way
+        # we treat the template as having no detectable CRS and let the
+        # earlier attrs/spatial_ref paths be the source of truth.
+        pass
+
+    return None
+
+
+def _check_crs_match(geom_crs, like_crs):
+    """Raise ``ValueError`` if ``geom_crs`` and ``like_crs`` disagree.
+
+    Both values are normalized through ``pyproj.CRS`` so an int EPSG
+    code, an ``"EPSG:xxxx"`` string, a WKT string, and a ``pyproj.CRS``
+    instance describing the same system all compare equal.  When either
+    side is ``None`` (no CRS to compare) the check is a no-op -- this
+    keeps CRS-less geometry lists and templates working unchanged.  An
+    unparseable value on either side raises ``ValueError`` rather than
+    silently disabling the guard.
+    """
+    if geom_crs is None or like_crs is None:
+        return
+
+    from pyproj import CRS as _PyprojCRS
+    from pyproj.exceptions import CRSError
+
+    def _norm(value, label):
+        try:
+            return _PyprojCRS(value)
+        except CRSError as e:
+            raise ValueError(
+                f"{label} CRS {value!r} is not a valid CRS: {e}"
+            ) from e
+
+    g = _norm(geom_crs, 'geometry')
+    t = _norm(like_crs, "'like' template")
+    if not g.equals(t):
+        # Prefer a compact "EPSG:xxxx" label over the raw value, whose
+        # repr is a multi-line WKT block for a pyproj/geopandas CRS.
+        # Fall back to the CRS name when no EPSG code is available.
+        def _label(crs):
+            epsg = crs.to_epsg()
+            return f"EPSG:{epsg}" if epsg is not None else crs.name
+        raise ValueError(
+            f"CRS mismatch: geometries are in {_label(g)} but the "
+            f"'like' template is in {_label(t)}. Reproject the "
+            f"geometries to match the template, or pass check_crs=False "
+            f"to rasterize onto the template grid anyway (the output "
+            f"will inherit the template CRS without reprojection)."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -2994,6 +3128,7 @@ def rasterize(
     merge: Union[str, Callable] = 'last',
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
     max_pixels: int = MAX_PIXELS_DEFAULT,
+    check_crs: bool = True,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
 
@@ -3004,9 +3139,13 @@ def rasterize(
     Supported geometry types:
 
     - **Polygon / MultiPolygon** -- scanline fill
-    - **LineString / MultiLineString** -- Bresenham line rasterization
+    - **LineString / LinearRing / MultiLineString** -- Bresenham line
+      rasterization (a LinearRing burns its closed boundary)
     - **Point / MultiPoint** -- direct pixel burn
     - **GeometryCollection** -- recursively unpacked
+
+    A non-empty geometry of any other type is dropped with a warning rather
+    than silently discarded.
 
     Parameters
     ----------
@@ -3039,16 +3178,26 @@ def rasterize(
         length ``len(columns)`` as its ``props`` argument.
     fill : float, default np.nan
         Value for pixels not covered by any geometry.  When ``dtype``
-        resolves to an integer type (either via the ``dtype`` argument or
-        via ``like`` carrying an integer dtype), the default NaN fill is
-        rejected with ``ValueError`` because NaN has no integer
-        representation and the cast would silently land on a
-        platform-specific sentinel with no ``_FillValue`` attr to mark
-        it; pass an explicit integer sentinel (e.g. ``fill=0`` or
-        ``fill=-9999``) or use a floating dtype.
+        resolves to an integer or boolean type (either via the ``dtype``
+        argument or via ``like``), a fill the dtype cannot represent
+        exactly is rejected with ``ValueError``.  This covers NaN into an
+        integer dtype (which would land on a platform sentinel), an
+        out-of-range integer (``fill=-9999`` into ``uint8`` wraps to
+        241), and any non-False value into ``bool`` (which collapses to
+        ``True``).  Without the guard the burned array and its emitted
+        ``nodata`` / ``_FillValue`` attrs would disagree.  Pass a fill the
+        dtype can hold (e.g. ``fill=0`` or ``fill=-9999`` for integers,
+        ``fill=False`` for bool) or use a floating dtype.
     dtype : numpy dtype, optional
         Data type of the output array.  Defaults to np.float64, or
-        to the dtype of ``like`` if provided.
+        to the dtype of ``like`` if provided.  When this resolves to an
+        integer type, burn values are validated against the float64 safe
+        integer range: the rasterizer computes in float64, so a value
+        with magnitude above ``2**53 - 1`` cannot be cast back to an
+        exact integer (e.g. ``2**53 + 1`` would land on ``2**53``).  Such
+        a value is rejected with ``ValueError`` rather than silently
+        rounded; use a floating dtype to burn identifiers larger than
+        that.
     all_touched : bool, default False
         If True, every pixel a polygon boundary passes through is
         burned in addition to the normal center-fill, using a
@@ -3107,6 +3256,21 @@ def rasterize(
         - *props*: 1D float64 array of property values for the geometry
         - *is_first*: 1 on first write to this pixel, 0 otherwise
 
+        .. warning::
+
+           On the GPU backends (``use_cuda=True``, with or without
+           ``chunks``) a custom callable does not use CUDA atomics.  Its
+           per-pixel update is a non-atomic read-modify-write, so when
+           geometries overlap, several threads may update the same pixel
+           at once and the result for those pixels is nondeterministic --
+           it can vary between runs and need not match the CPU backend.
+           The built-in string merges (``'sum'``, ``'count'``, ``'min'``,
+           ``'max'``, ``'first'``, ``'last'``) do use atomics and stay
+           deterministic over overlap; pass one of those if you need a
+           stable result where geometries overlap on the GPU.  Calling
+           ``rasterize`` with a callable ``merge`` and ``use_cuda=True``
+           emits a ``UserWarning`` to this effect.
+
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
         tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
@@ -3117,6 +3281,17 @@ def rasterize(
         function raises ``ValueError`` before any host or device
         allocation if the cap is exceeded.  Raise this explicitly when
         rasterizing a legitimately large grid.
+    check_crs : bool, default True
+        When ``geometries`` is a GeoDataFrame with a ``.crs`` and ``like``
+        is a template that carries a CRS (via ``attrs['crs']``,
+        ``attrs['crs_wkt']``, a ``spatial_ref`` coord, or ``rio.crs``),
+        compare the two and raise ``ValueError`` if they disagree.  This
+        prevents silently burning, say, an EPSG:4326 GeoDataFrame onto an
+        EPSG:3857 template and handing back a raster mislabeled with the
+        template CRS.  The geometries are never reprojected; reproject
+        them yourself to match the template.  Pass ``check_crs=False`` to
+        skip the comparison (the output still inherits the template CRS).
+        The check is a no-op when either side lacks a CRS.
 
     Returns
     -------
@@ -3213,8 +3388,15 @@ def rasterize(
         like_x_descending = grid.x_descending
 
     # Parse input geometries
-    geom_list, props_array, inferred_bounds = _parse_input(
+    geom_list, props_array, inferred_bounds, geom_crs = _parse_input(
         geometries, column=column, columns=columns)
+
+    # Guard against silently burning geometries onto a template in a
+    # different CRS.  The output inherits the template CRS (attrs /
+    # spatial_ref coord) but the geometry coords are never reprojected,
+    # so a mismatch yields an authoritative-looking but wrong raster.
+    if check_crs and geom_crs is not None and like is not None:
+        _check_crs_match(geom_crs, _like_crs(like))
 
     # Resolve bounds: explicit > like > inferred from geometries
     final_bounds = bounds
@@ -3338,37 +3520,89 @@ def rasterize(
     else:
         final_dtype = np.float64
 
-    # Reject NaN fill against an integer output dtype.  Without this guard
-    # the final ``astype(int_dtype)`` silently coerces NaN to either 0
-    # (unsigned) or ``np.iinfo(dtype).min`` (signed), and the rasterizer
-    # emits no ``_FillValue`` / ``nodata`` / ``nodatavals`` attr to mark
-    # the unwritten pixels.  Downstream consumers (geotiff writer,
-    # rioxarray masks) have no sentinel to key off and treat unwritten
-    # cells as valid data -- a metadata-propagation failure surfaced by
-    # the metadata sweep (issue #2504).
+    # Reject a fill that the output dtype cannot represent exactly.  Every
+    # backend casts its float64 work buffer with ``astype(final_dtype)`` at
+    # the end (``_run_numpy`` etc.), and the attrs block below stores the
+    # original ``fill`` verbatim.  When the cast changes the value, the
+    # array and its ``nodata`` / ``_FillValue`` / ``nodatavals`` attrs
+    # disagree, so downstream consumers (geotiff writer, rioxarray masks)
+    # mask the wrong pixels or treat unwritten cells as valid data -- a
+    # metadata-propagation failure surfaced by the metadata sweep
+    # (issues #2504, #3054).  Failure modes guarded here:
+    #   * NaN fill into an integer dtype -> coerced to 0 / INT_MIN.
+    #   * out-of-range integer fill (fill=-9999 into uint8 -> 241).
+    #   * any non-False fill into bool (fill=NaN -> True everywhere).
+    # ``np.issubdtype(bool_, np.integer)`` is False, so bool needs the
+    # explicit round-trip test below rather than the old integer-only
+    # check.
     #
     # Checked before any host / device allocation so the error surfaces
     # cleanly regardless of backend (numpy, cupy, dask+numpy, dask+cupy).
     # It runs after ``_check_output_dimensions`` because the
     # width/height/resolution guard reports a more actionable diagnostic
     # for oversized grids; both checks land before the allocator either
-    # way.
+    # way.  Float dtypes are left alone: NaN is representable and ordinary
+    # float rounding is expected, not a metadata lie.
     final_dtype_np = np.dtype(final_dtype)
-    try:
-        fill_is_nan_for_dtype_check = (
-            isinstance(fill, (float, np.floating))
-            and np.isnan(float(fill)))
-    except (TypeError, ValueError):
-        fill_is_nan_for_dtype_check = False
-    if (fill_is_nan_for_dtype_check
-            and np.issubdtype(final_dtype_np, np.integer)):
-        raise ValueError(
-            f"fill=NaN cannot be represented in integer dtype "
-            f"{final_dtype_np}: the cast would silently coerce NaN to a "
-            f"dtype-specific sentinel (0 for unsigned, INT_MIN for signed) "
-            f"with no _FillValue attr to mark unwritten pixels. Pass an "
-            f"explicit integer fill (e.g. fill=0 or fill=-9999) or use a "
-            f"floating dtype.")
+    if (np.issubdtype(final_dtype_np, np.integer)
+            or final_dtype_np == np.bool_):
+        try:
+            fill_arr = np.array(fill)
+            with warnings.catch_warnings():
+                # NaN -> int casts warn; we are probing for exactly that.
+                warnings.simplefilter('ignore', RuntimeWarning)
+                cast_back = fill_arr.astype(
+                    final_dtype_np).astype(fill_arr.dtype)
+            representable = bool(np.array_equal(fill_arr, cast_back))
+        except (TypeError, ValueError, OverflowError):
+            # A fill too large for the dtype's C type (e.g. an int wider
+            # than the platform long) overflows the cast rather than
+            # round-tripping; that is exactly a value the dtype cannot
+            # hold, so treat it as non-representable.
+            representable = False
+        if not representable:
+            raise ValueError(
+                f"fill={fill!r} cannot be represented exactly in output "
+                f"dtype {final_dtype_np}: the final cast would silently "
+                f"change it (e.g. NaN -> 0/INT_MIN, an out-of-range int -> "
+                f"a wrapped value, any non-False value -> True for bool), "
+                f"leaving the burned array and its nodata/_FillValue attrs "
+                f"in disagreement. Pass a fill the dtype can hold (e.g. "
+                f"fill=0 or fill=-9999 for integers, fill=False for bool) "
+                f"or use a floating dtype.")
+
+    # Reject burn values that float64 cannot hold exactly when the output
+    # dtype is integer.  ``_parse_input`` casts every burn value to float64
+    # (props_array is float64, GeoDataFrame columns go through
+    # ``.astype(np.float64)``, and ``(geom, value)`` pairs go through
+    # ``float()``), and the whole rasterize pipeline computes in float64
+    # before the final ``astype(int_dtype)``.  Integers with magnitude above
+    # 2**53 - 1 (the IEEE-754 "max safe integer") are not exactly
+    # representable, so an ID like ``2**53 + 1`` silently lands on
+    # ``2**53`` -- off by one -- by the time it reaches the output.  Zone
+    # IDs, parcel IDs, and uint64 identifiers are exactly the values that
+    # exceed this range, so a silent round is a correctness failure rather
+    # than a rounding nicety.  Reject up front with the offending value
+    # named, mirroring the NaN-fill guard above.  Float dtypes are
+    # unaffected: the float64 value is what the user asked to store.
+    #
+    # Checked before any host / device allocation so the error surfaces
+    # cleanly across all four backends (numpy, cupy, dask+numpy, dask+cupy).
+    if (np.issubdtype(final_dtype_np, np.integer)
+            and props_array.size > 0):
+        max_safe_int = 2.0 ** 53 - 1
+        finite = np.isfinite(props_array)
+        unsafe = finite & (np.abs(props_array) > max_safe_int)
+        if unsafe.any():
+            bad_value = float(props_array[unsafe].flat[0])
+            raise ValueError(
+                f"burn value {bad_value!r} exceeds the range of integers "
+                f"that float64 can represent exactly (|value| > 2**53 - 1 "
+                f"= {int(max_safe_int)}). rasterize() computes in float64, "
+                f"so casting to integer dtype {final_dtype_np} would "
+                f"silently round it (e.g. 2**53 + 1 lands on 2**53). Use a "
+                f"floating output dtype, or pass values within the safe "
+                f"integer range.")
 
     # For GPU paths, resolve string merge names to GPU (merge_fn,
     # should_write_fn) pairs.  User callables are paired with the
@@ -3391,6 +3625,24 @@ def rasterize(
             # _should_write_any_gpu from the cache.  The cached dict
             # always includes a sum/count entry that uses it.
             _, should_write_gpu = gpu_fns['sum']
+            # A callable keeps gpu_merge_name=None, i.e. the non-atomic
+            # read-modify-write path in _apply_merge_gpu.  Overlapping
+            # geometries then race and the overlap pixels are
+            # nondeterministic.  Warn here (after the CuPy check so a
+            # missing-dependency caller only sees the ImportError); this
+            # covers both the cupy and dask+cupy paths.  A built-in string
+            # merge stays deterministic over overlap.
+            warnings.warn(
+                "A custom callable merge on the GPU backend "
+                "(use_cuda=True) uses a non-atomic read-modify-write, so "
+                "values for pixels where geometries overlap are "
+                "nondeterministic and may not match the CPU backend. Use a "
+                "built-in string merge ('sum', 'count', 'min', 'max', "
+                "'first', 'last') if you need a deterministic result over "
+                "overlap.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     if chunks is not None:
         row_chunks, col_chunks = _normalize_chunks(
