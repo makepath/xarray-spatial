@@ -1597,7 +1597,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     if malformed:
         raise MalformedScaleOffsetError(
             "GDAL_METADATA XML is malformed and could not be parsed. "
-            "mask_and_scale=True cannot honour the scale / offset it may "
+            "unpack=True cannot honour the scale / offset it may "
             "declare, so the read is refused rather than returning raw, "
             "unscaled pixels."
         )
@@ -1613,7 +1613,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
         except (TypeError, ValueError):
             raise MalformedScaleOffsetError(
                 f"GDAL_METADATA {name} is not a number: {raw!r}. "
-                "mask_and_scale=True cannot honour a malformed "
+                "unpack=True cannot honour a malformed "
                 f"{name}."
             ) from None
 
@@ -1642,11 +1642,11 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
         if len(distinct) > 1:
             from ._errors import MixedBandMetadataError
             raise MixedBandMetadataError(
-                f"mask_and_scale=True but the source declares distinct "
+                f"unpack=True but the source declares distinct "
                 f"per-band {name} values {distinct!r}. Applying one band's "
                 f"{name} to the whole array would silently corrupt the other "
                 f"bands. Select a single band with band= to read it with its "
-                f"own {name}, or drop mask_and_scale."
+                f"own {name}, or drop unpack."
             )
         return distinct[0]
 
@@ -1686,10 +1686,10 @@ def _pack(data):
     if ('scale_factor' not in attrs and target is None
             and not attrs.get('masked_nodata')):
         raise ValueError(
-            "pack=True but the array carries no mask_and_scale state to "
+            "pack=True but the array carries no unpack state to "
             "reverse (no scale_factor / mask_and_scale_dtype / "
             "masked_nodata). It was not produced by "
-            "open_geotiff(mask_and_scale=True).")
+            "open_geotiff(unpack=True).")
 
     out = (data - offset) / scale
 

@@ -552,3 +552,42 @@ def test_mask_and_scale_uniform_per_band_applies(tmp_path):
     expected = np.stack(
         [np.full((3, 4), (b + 1) * 3.0 + 2.0) for b in range(3)], axis=-1)
     np.testing.assert_array_equal(out.data, expected)
+
+
+# ---------------------------------------------------------------------------
+# error messages name unpack, not the deprecated mask_and_scale alias (#3086)
+# ---------------------------------------------------------------------------
+
+def test_mixed_per_band_error_names_unpack_not_alias(tmp_path):
+    """The mixed per-band rejection's remedy names the current kwarg.
+
+    ``mask_and_scale=`` is a deprecated alias of ``unpack=`` (#3071); the
+    error a caller sees on the ``unpack=True`` path must not steer them
+    to the alias.
+    """
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t3086_mixed.tif"),
+        scales=[2.0, 4.0, 8.0], offsets=[0.0, 0.0, 0.0])
+    with pytest.raises(MixedBandMetadataError) as excinfo:
+        open_geotiff(path, unpack=True)
+    msg = str(excinfo.value)
+    assert "unpack=True" in msg
+    assert "drop unpack" in msg
+    assert "mask_and_scale" not in msg
+
+
+def test_malformed_scale_error_names_unpack_not_alias(tmp_path):
+    """Same contract for the malformed SCALE and malformed XML rejections."""
+    path = _malformed_scale_tiff(str(tmp_path / "t3086_bad_scale.tif"))
+    with pytest.raises(MalformedScaleOffsetError) as excinfo:
+        open_geotiff(path, unpack=True)
+    msg = str(excinfo.value)
+    assert "unpack=True" in msg
+    assert "mask_and_scale" not in msg
+
+    xml_path = _malformed_xml_tiff(str(tmp_path / "t3086_bad_xml.tif"))
+    with pytest.raises(MalformedScaleOffsetError) as excinfo:
+        open_geotiff(xml_path, unpack=True)
+    msg = str(excinfo.value)
+    assert "unpack=True" in msg
+    assert "mask_and_scale" not in msg
