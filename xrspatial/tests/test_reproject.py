@@ -2108,7 +2108,11 @@ class TestCupyPyprojFallbackParity:
                                    rtol=1e-6, atol=1e-6)
 
     @pytest.mark.skipif(not HAS_DASK, reason="dask required")
-    def test_projected_to_projected_dask_cupy_match(self):
+    @pytest.mark.parametrize('resampling', ['nearest', 'bilinear', 'cubic'])
+    def test_projected_to_projected_dask_cupy_match(self, resampling):
+        # The dask+cupy chunk-assembly path must thread every resampling
+        # mode through to _resample_cupy_native per chunk, not just the
+        # 'cubic' mode that used to be the only one covered here (#3050).
         from xrspatial.reproject import reproject
         y, x, data = self._make_utm_source()
         attrs = {'crs': 'EPSG:32633'}
@@ -2116,11 +2120,11 @@ class TestCupyPyprojFallbackParity:
             reproject(
                 xr.DataArray(data, dims=('y', 'x'),
                              coords={'y': y, 'x': x}, attrs=attrs),
-                'EPSG:3857', resampling='cubic').data)
+                'EPSG:3857', resampling=resampling).data)
         dc = xr.DataArray(
             da.from_array(cp.asarray(data), chunks=(32, 32)),
             dims=('y', 'x'), coords={'y': y, 'x': x}, attrs=attrs)
-        out = reproject(dc, 'EPSG:3857', resampling='cubic').data
+        out = reproject(dc, 'EPSG:3857', resampling=resampling).data
         if hasattr(out, 'compute'):
             out = out.compute()
         out = cp.asnumpy(out) if isinstance(out, cp.ndarray) else np.asarray(out)
