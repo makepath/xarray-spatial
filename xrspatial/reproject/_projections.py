@@ -22,6 +22,7 @@ All other CRS pairs fall back to pyproj.
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 from numba import njit, prange
@@ -127,7 +128,16 @@ def _get_datum_params(crs):
     Returns None for WGS84/NAD83/GRS80 (no shift needed).
     """
     try:
-        d = crs.to_dict()
+        # crs.to_dict() goes through pyproj's to_proj4(), which warns that a
+        # PROJ string drops detail. We only read the datum/ellps short names
+        # here, never the lossy string, so silence that one warning.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                'ignore',
+                message='.*lose important projection information.*',
+                category=UserWarning,
+            )
+            d = crs.to_dict()
     except Exception:
         return None
     datum = d.get('datum', '')
