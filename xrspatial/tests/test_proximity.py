@@ -1285,7 +1285,9 @@ def test_return_annotation_consistency(func):
 def test_docstring_states_all_backends(func):
     # All three functions dispatch to numpy, cupy, dask+numpy, and dask+cupy
     # backends; the docstrings used to claim numpy and dask+numpy only
-    # (issue #3091).
+    # (issue #3091). This pins exact phrases to keep the old wording from
+    # coming back; if the docs are reworded while staying accurate, update
+    # the pinned strings rather than the docs.
     doc = func.__doc__
     assert "CuPy" in doc
     assert "Dask with CuPy" in doc

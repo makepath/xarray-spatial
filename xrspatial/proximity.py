@@ -1678,9 +1678,11 @@ def proximity(
     holds for the EUCLIDEAN and MANHATTAN metrics; for GREAT_CIRCLE the NumPy
     backend uses an exact brute-force nearest-target search instead, because
     great-circle distance is not locally monotonic across the raster.
-    The implementation for Dask-backed uses `dask.map_overlap` to compute
-    proximity chunk by chunk by expanding the chunk's borders to cover
-    the `max_distance`.
+    The Dask-backed implementation depends on `max_distance`: when it is
+    smaller than the maximum possible distance within the raster, proximity
+    is computed chunk by chunk with `dask.map_overlap`, expanding each
+    chunk's borders to cover `max_distance`; otherwise the nearest targets
+    are found with a KDTree query over all target pixels.
 
     Parameters
     ----------
@@ -1828,12 +1830,15 @@ def allocation(
     result, a CuPy-backed input gives a CuPy-backed result, and a
     Dask-backed input gives a Dask-backed result.
 
-    `allocation` uses the same approach as `proximity`, which is ported
-    from GDAL. A dynamic programming approach is used for identifying nearest
-    target of a pixel from its surrounding neighborhood in a 3x3 window.
-    The implementation for Dask-backed uses `dask.map_overlap` to compute
-    `allocation` chunk by chunk by expanding the chunk's borders to cover
-    the `max_distance`.
+    Unlike `proximity`, the NumPy-backed implementation does not use the
+    GDAL-style 3x3 line-sweep: `allocation` must pick a single target per
+    pixel, so it uses an exact nearest-target search whose tie-break matches
+    every other backend (see Tie-breaking below).
+    The Dask-backed implementation depends on `max_distance`: when it is
+    smaller than the maximum possible distance within the raster,
+    `allocation` is computed chunk by chunk with `dask.map_overlap`,
+    expanding each chunk's borders to cover `max_distance`; otherwise the
+    nearest targets are found with a KDTree query over all target pixels.
 
     Tie-breaking: when two or more targets are exactly equidistant from a
     pixel, the target with the lowest flat (row-major) index wins, i.e. the
@@ -1988,12 +1993,15 @@ def direction(
     result, a CuPy-backed input gives a CuPy-backed result, and a
     Dask-backed input gives a Dask-backed result.
 
-    Similar to `proximity`, the implementation for NumPy-backed is ported
-    from GDAL, which uses a dynamic programming approach to identify
-    nearest target of a pixel from its surrounding neighborhood in a 3x3 window
-    The implementation for Dask-backed uses `dask.map_overlap` to compute
-    proximity direction chunk by chunk by expanding the chunk's borders
-    to cover the `max_distance`.
+    Unlike `proximity`, the NumPy-backed implementation does not use the
+    GDAL-style 3x3 line-sweep: `direction` must pick a single target per
+    pixel, so it uses an exact nearest-target search whose tie-break matches
+    every other backend (see Tie-breaking below).
+    The Dask-backed implementation depends on `max_distance`: when it is
+    smaller than the maximum possible distance within the raster,
+    `direction` is computed chunk by chunk with `dask.map_overlap`,
+    expanding each chunk's borders to cover `max_distance`; otherwise the
+    nearest targets are found with a KDTree query over all target pixels.
 
     Tie-breaking: when two or more targets are exactly equidistant from a
     pixel, the direction is computed toward the target with the lowest flat
