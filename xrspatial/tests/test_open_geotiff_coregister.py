@@ -108,6 +108,32 @@ def test_coregister_matches_grid_same_crs(tmp_path):
     assert np.allclose(out.coords['y'].values, template.coords['y'].values)
 
 
+def test_coregister_crs_less_file(tmp_path):
+    # A file with a transform but no CRS is treated as already in the
+    # template's CRS: coregister resamples onto the template grid rather
+    # than failing reproject's source-CRS detection.
+    height, width = 20, 20
+    arr = np.arange(height * width, dtype=np.float32).reshape(height, width)
+    y = np.linspace(45.5, 44.5, height)
+    x = np.linspace(-120.5, -119.5, width)
+    # no 'crs' attr -> to_geotiff writes a transform-only (CRS-less) file
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': y, 'x': x})
+    path = str(tmp_path / 'cg_nocrs.tif')
+    to_geotiff(da, path, compression='none')
+
+    template = xr.DataArray(
+        np.zeros((8, 8), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.linspace(45.3, 44.7, 8),
+                'x': np.linspace(-120.3, -119.7, 8)},
+        attrs={'crs': 4326},
+    )
+    out = template.xrs.open_geotiff(path, coregister=True)
+    assert out.shape == template.shape
+    assert np.allclose(out.coords['x'].values, template.coords['x'].values)
+    assert np.allclose(out.coords['y'].values, template.coords['y'].values)
+
+
 def test_coregister_dask_template(tmp_path):
     path = _file_4326(tmp_path, np.float32, 'cg_dask.tif')
     template = _template_3857(6).chunk({'y': 3, 'x': 3})

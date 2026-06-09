@@ -197,6 +197,11 @@ def _caller_grid(obj):
     emits pixel-centre coords ``linspace(left+res/2, right-res/2, W)``, so
     bounds offset half a pixel outside the caller's centre extent map the
     output cells back onto the caller's coordinates.
+
+    Assumes a regular grid with ``x`` ascending and ``y`` descending (the
+    convention ``_open_geotiff_windowed`` already works in); resolution is
+    the centre spacing. An irregular or descending-``x`` template would
+    not line up cell-for-cell.
     """
     y = obj.coords['y'].values
     x = obj.coords['x'].values
@@ -337,11 +342,15 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
                 "coregister=True needs a CRS: set attrs['crs'] on the "
                 "caller or read a file that declares one"
             )
+        # A file that declares no CRS is treated as already in the
+        # caller's CRS, so coregister stays a pure resample instead of
+        # failing reproject's source-CRS detection.
+        source_crs = file_crs if file_crs is not None else target_crs
         bounds, width_out, height_out = _caller_grid(obj)
         result = reproject(
             result,
             target_crs=target_crs,
-            source_crs=file_crs,
+            source_crs=source_crs,
             bounds=bounds,
             width=width_out,
             height=height_out,
@@ -924,7 +933,8 @@ class XrsSpatialDataArrayAccessor:
             ``self``'s ``y``/``x`` coordinates and shape. The grid snap
             happens even when the CRS already matches. ``mask_and_scale``
             is unsupported with ``gpu=True`` or ``.vrt`` sources, so
-            ``coregister=True`` raises ``ValueError`` there. The resample
+            ``coregister=True`` raises ``ValueError`` there, and it
+            overrides an explicit ``mask_and_scale=False``. The resample
             mode follows ``resampling``. This is the heavier counterpart
             of ``auto_reproject``, which keeps the file's native
             resolution.
@@ -1453,7 +1463,8 @@ class XrsSpatialDatasetAccessor:
             grid snap happens even when the CRS already matches.
             ``mask_and_scale`` is unsupported with ``gpu=True`` or
             ``.vrt`` sources, so ``coregister=True`` raises ``ValueError``
-            there. The resample mode follows ``resampling``.
+            there, and it overrides an explicit ``mask_and_scale=False``.
+            The resample mode follows ``resampling``.
         resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
             Resampling mode for the ``auto_reproject`` / ``coregister``
             reproject step; ignored when no reprojection happens.
