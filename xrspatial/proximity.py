@@ -811,8 +811,10 @@ def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
 
     ``cKDTree.query`` does not promise which of several equidistant targets
     it returns, so allocation and direction can disagree with the brute-force
-    and CUDA backends on a tie. Target coordinates are stored in row-major
-    (flat-index) order, so the lowest target index is the lowest flat index --
+    and CUDA backends on a tie. Target coordinates are sorted into row-major
+    (flat-index) order by ``_collect_region_targets`` before the tree is
+    built -- chunk-by-chunk collection alone does not produce that order
+    (issue #3090) -- so the lowest target index is the lowest flat index,
     the tie-break policy documented on ``allocation``/``direction``.
 
     Query the two nearest targets; wherever they are equidistant, keep the one
@@ -887,6 +889,16 @@ def _target_mask(chunk_data, target_values):
     return np.isin(chunk_data, target_values) & np.isfinite(chunk_data)
 
 
+def _global_flat_indices(iy, ix, rows, cols, y_offsets, x_offsets, width):
+    """Global flat (row-major) pixel indices of chunk-local target positions.
+
+    The flat index is the tie-break key documented on
+    ``allocation``/``direction``: among equidistant targets, the lowest one
+    wins (see ``_kdtree_query_lowest_index``).
+    """
+    return (y_offsets[iy] + rows) * width + (x_offsets[ix] + cols)
+
+
 def _stream_target_counts(raster, target_values, y_coords, x_coords,
                           chunks_y, chunks_x):
     """Stream all dask chunks, counting targets per chunk.
@@ -940,7 +952,8 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
                     x_coords[x_offsets[ix] + cols],
                 ])
                 vals = chunk_data[rows, cols].astype(np.float32)
-                flat = (y_offsets[iy] + rows) * width + (x_offsets[ix] + cols)
+                flat = _global_flat_indices(
+                    iy, ix, rows, cols, y_offsets, x_offsets, width)
                 entry_bytes = coords.nbytes + vals.nbytes + flat.nbytes
                 if cache_bytes + entry_bytes <= budget:
                     coords_cache[(iy, ix)] = coords
@@ -1003,10 +1016,8 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
                     val_parts.append(
                         chunk_data[rows, cols].astype(np.float32)
                     )
-                    flat_parts.append(
-                        (y_offsets[iy] + rows) * width
-                        + (x_offsets[ix] + cols)
-                    )
+                    flat_parts.append(_global_flat_indices(
+                        iy, ix, rows, cols, y_offsets, x_offsets, width))
     if not coord_parts:
         return None, None
     coords = np.concatenate(coord_parts)
