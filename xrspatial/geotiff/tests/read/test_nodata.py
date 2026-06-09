@@ -3511,9 +3511,9 @@ def test_eager_masked_uint64_max_sentinel_exact_hits_only_3098(tmp_path):
 def test_eager_masked_int64_near_sentinel_without_hit_3098(tmp_path):
     """A near-sentinel valid pixel with no exact sentinel in the file.
 
-    Nothing is masked, ``nodata_pixels_present`` is False (the native
-    -width scan a few lines below the mask already said so; the mask
-    and the scan must agree), and the buffer is still promoted to
+    Nothing is masked, ``nodata_pixels_present`` is False (the
+    native-width scan a few lines below the mask already said so; the
+    mask and the scan must agree), and the buffer is still promoted to
     float64 per the unconditional-promotion contract (issue #2990).
     """
     i64max = np.iinfo(np.int64).max
