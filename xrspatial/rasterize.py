@@ -3107,6 +3107,21 @@ def rasterize(
         - *props*: 1D float64 array of property values for the geometry
         - *is_first*: 1 on first write to this pixel, 0 otherwise
 
+        .. warning::
+
+           On the GPU backends (``use_cuda=True``, with or without
+           ``chunks``) a custom callable does not use CUDA atomics.  Its
+           per-pixel update is a non-atomic read-modify-write, so when
+           geometries overlap, several threads may update the same pixel
+           at once and the result for those pixels is nondeterministic --
+           it can vary between runs and need not match the CPU backend.
+           The built-in string merges (``'sum'``, ``'count'``, ``'min'``,
+           ``'max'``, ``'first'``, ``'last'``) do use atomics and stay
+           deterministic over overlap; pass one of those if you need a
+           stable result where geometries overlap on the GPU.  Calling
+           ``rasterize`` with a callable ``merge`` and ``use_cuda=True``
+           emits a ``UserWarning`` to this effect.
+
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
         tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
@@ -3163,6 +3178,23 @@ def rasterize(
         merge_fn = merge
         should_write_cpu = _should_write_any
         _merge_fn_gpu = merge  # same object for GPU path
+        if use_cuda:
+            # The GPU path has no atomic variant for an arbitrary callable,
+            # so it falls back to a non-atomic read-modify-write per pixel
+            # (see _apply_merge_gpu).  Overlapping geometries then race and
+            # the overlap pixels are nondeterministic.  Warn at call time;
+            # a built-in string merge stays deterministic over overlap.
+            warnings.warn(
+                "A custom callable merge on the GPU backend "
+                "(use_cuda=True) uses a non-atomic read-modify-write, so "
+                "values for pixels where geometries overlap are "
+                "nondeterministic and may not match the CPU backend. Use a "
+                "built-in string merge ('sum', 'count', 'min', 'max', "
+                "'first', 'last') if you need a deterministic result over "
+                "overlap.",
+                UserWarning,
+                stacklevel=2,
+            )
     elif isinstance(merge, str):
         if merge not in _MERGE_FUNCTIONS:
             raise ValueError(
