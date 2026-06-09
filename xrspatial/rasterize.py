@@ -3051,7 +3051,14 @@ def rasterize(
         ``fill=False`` for bool) or use a floating dtype.
     dtype : numpy dtype, optional
         Data type of the output array.  Defaults to np.float64, or
-        to the dtype of ``like`` if provided.
+        to the dtype of ``like`` if provided.  When this resolves to an
+        integer type, burn values are validated against the float64 safe
+        integer range: the rasterizer computes in float64, so a value
+        with magnitude above ``2**53 - 1`` cannot be cast back to an
+        exact integer (e.g. ``2**53 + 1`` would land on ``2**53``).  Such
+        a value is rejected with ``ValueError`` rather than silently
+        rounded; use a floating dtype to burn identifiers larger than
+        that.
     all_touched : bool, default False
         If True, every pixel a polygon boundary passes through is
         burned in addition to the normal center-fill, using a
@@ -3406,6 +3413,39 @@ def rasterize(
                 f"in disagreement. Pass a fill the dtype can hold (e.g. "
                 f"fill=0 or fill=-9999 for integers, fill=False for bool) "
                 f"or use a floating dtype.")
+
+    # Reject burn values that float64 cannot hold exactly when the output
+    # dtype is integer.  ``_parse_input`` casts every burn value to float64
+    # (props_array is float64, GeoDataFrame columns go through
+    # ``.astype(np.float64)``, and ``(geom, value)`` pairs go through
+    # ``float()``), and the whole rasterize pipeline computes in float64
+    # before the final ``astype(int_dtype)``.  Integers with magnitude above
+    # 2**53 - 1 (the IEEE-754 "max safe integer") are not exactly
+    # representable, so an ID like ``2**53 + 1`` silently lands on
+    # ``2**53`` -- off by one -- by the time it reaches the output.  Zone
+    # IDs, parcel IDs, and uint64 identifiers are exactly the values that
+    # exceed this range, so a silent round is a correctness failure rather
+    # than a rounding nicety.  Reject up front with the offending value
+    # named, mirroring the NaN-fill guard above.  Float dtypes are
+    # unaffected: the float64 value is what the user asked to store.
+    #
+    # Checked before any host / device allocation so the error surfaces
+    # cleanly across all four backends (numpy, cupy, dask+numpy, dask+cupy).
+    if (np.issubdtype(final_dtype_np, np.integer)
+            and props_array.size > 0):
+        max_safe_int = 2.0 ** 53 - 1
+        finite = np.isfinite(props_array)
+        unsafe = finite & (np.abs(props_array) > max_safe_int)
+        if unsafe.any():
+            bad_value = float(props_array[unsafe].flat[0])
+            raise ValueError(
+                f"burn value {bad_value!r} exceeds the range of integers "
+                f"that float64 can represent exactly (|value| > 2**53 - 1 "
+                f"= {int(max_safe_int)}). rasterize() computes in float64, "
+                f"so casting to integer dtype {final_dtype_np} would "
+                f"silently round it (e.g. 2**53 + 1 lands on 2**53). Use a "
+                f"floating output dtype, or pass values within the safe "
+                f"integer range.")
 
     # For GPU paths, resolve string merge names to GPU (merge_fn,
     # should_write_fn) pairs.  User callables are paired with the
