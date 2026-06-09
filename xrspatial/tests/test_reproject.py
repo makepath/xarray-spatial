@@ -6987,6 +6987,9 @@ class TestMergeCupyBackends:
         # Inputs stay on the GPU; the host conversion works on copies.
         assert isinstance(a_gpu.data, cp.ndarray)
         assert isinstance(b_gpu.data, cp.ndarray)
+        # And the values are untouched (no in-place mutation).
+        np.testing.assert_array_equal(cp.asnumpy(a_gpu.data), a.data)
+        np.testing.assert_array_equal(cp.asnumpy(b_gpu.data), b.data)
 
     @pytest.mark.skipif(not HAS_DASK, reason="dask required")
     def test_dask_cupy_inputs_stay_lazy_and_match_numpy(self):

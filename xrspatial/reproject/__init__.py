@@ -2108,7 +2108,11 @@ def _merge_inputs_to_host(rasters):
     except ImportError:
         return False, rasters
 
-    from ..utils import is_dask_cupy
+    from ..utils import has_dask_array, is_dask_cupy
+
+    # is_dask_cupy dereferences dask.array.Array, so it must only run
+    # when dask is importable (cupy without dask is a valid install).
+    _dask_ok = has_dask_array()
 
     any_cupy = False
     host = []
@@ -2116,7 +2120,7 @@ def _merge_inputs_to_host(rasters):
         if isinstance(r.data, cp.ndarray):
             any_cupy = True
             host.append(r.copy(data=cp.asnumpy(r.data)))
-        elif is_dask_cupy(r):
+        elif _dask_ok and is_dask_cupy(r):
             any_cupy = True
             host.append(r.copy(data=r.data.map_blocks(
                 cp.asnumpy, dtype=r.dtype,
