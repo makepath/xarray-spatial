@@ -1177,15 +1177,31 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
             i = j
 
 
+def _alloc_order(height, width, should_write):
+    """Allocate the per-pixel owner-index array for the CPU kernels.
+
+    ``order`` tracks the input index of the current owner per pixel.  -1
+    sentinel is fine: written[r,c]==0 means cur_idx is never consulted
+    for the "first write" branch of the predicates.
+
+    Only the ordered predicates (``first`` / ``last``) ever read the
+    stored values.  For ``_should_write_any`` merges (max/min/sum/count
+    and user callables) the kernels still store the int64 owner index,
+    but nothing reads it back, so an int8 buffer (1 byte/pixel instead
+    of 8) is enough -- numba wraps the store and the wrapped values are
+    dead.  Issue #3107.
+    """
+    if should_write is _should_write_any:
+        return np.zeros((height, width), dtype=np.int8)
+    return np.full((height, width), -1, dtype=np.int64)
+
+
 def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
                all_touched, merge_fn, should_write):
     """NumPy backend for rasterize."""
     out = np.full((height, width), fill, dtype=np.float64)
     written = np.zeros((height, width), dtype=np.int8)
-    # Order tracks the input index of the current owner per pixel.  -1
-    # sentinel is fine: written[r,c]==0 means cur_idx is never consulted
-    # for the "first write" branch of the predicates.
-    order = np.full((height, width), -1, dtype=np.int64)
+    order = _alloc_order(height, width, should_write)
 
     (poly_geoms, poly_props, poly_ids, poly_global), \
         (line_geoms, line_props, line_global), \
@@ -1234,7 +1250,10 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
-        return out.astype(dtype)
+        # copy=False: the work buffer is local, so when dtype is already
+        # float64 (the default) the cast is a no-op and skips a full-
+        # raster copy.  Issue #3107.
+        return out.astype(dtype, copy=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2208,7 +2227,9 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
 
     final_out = _gpu_finalize_buffers(out, written, order, order_sentinel,
                                       fill, atomic_mode)
-    return final_out.astype(dtype)
+    # copy=False skips a full-raster device copy when dtype is already
+    # float64 (the default).  The buffer is local to this call.  #3107.
+    return final_out.astype(dtype, copy=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2417,7 +2438,11 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
     """
     out = np.full((tile_h, tile_w), fill, dtype=np.float64)
     written = np.zeros((tile_h, tile_w), dtype=np.int8)
-    order = np.full((tile_h, tile_w), -1, dtype=np.int64)
+    # int8 for order-insensitive merges, int64 for first/last; the
+    # decision runs worker-side, keyed on the unpickled predicate.
+    # ``_should_write_any`` is a module-level dispatcher, so pickling
+    # preserves identity.  Issue #3107.
+    order = _alloc_order(tile_h, tile_w, should_write)
 
     # 1. Polygons (deserialize WKB, then scanline fill)
     if poly_wkb:
@@ -2457,7 +2482,8 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                          point_props, point_global,
                          merge_fn, should_write, order)
 
-    return out.astype(dtype)
+    # copy=False: no per-tile copy when dtype is already float64.  #3107.
+    return out.astype(dtype, copy=False)
 
 
 def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
@@ -2685,7 +2711,9 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
 
     final_out = _gpu_finalize_buffers(out, written, order, order_sentinel,
                                       fill, atomic_mode)
-    return final_out.astype(dtype)
+    # copy=False: no per-tile device copy when dtype is already float64.
+    # Issue #3107.
+    return final_out.astype(dtype, copy=False)
 
 
 def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
