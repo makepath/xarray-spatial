@@ -8,14 +8,18 @@ sentinel, and restores the integer source dtype recorded on
 re-packed file unpacks to the same values on the next ``mask_and_scale``
 read rather than double-scaling.
 
-``mask_and_scale`` is a CPU eager + dask read feature (GPU/VRT reject it),
-so the round-trip is exercised on numpy and dask.
+``unpack`` reads run on numpy, dask, gpu, and dask+gpu since #3075 (VRT
+still rejects it). The round-trip passes on numpy and dask; the gpu and
+dask+gpu legs are pinned as strict xfail on #3112 until the cupy
+``fillna`` crash in ``_pack`` is fixed.
 """
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
+
+from .._helpers.markers import requires_gpu
 
 
 def _write_int_tiff(path, data, *, nodata=None, scale=None, offset=None):
@@ -144,6 +148,46 @@ def test_pack_with_scale_offset_round_trip(tmp_path, chunks):
     repacked_decoded = open_geotiff(out, unpack=True)
     np.testing.assert_allclose(
         repacked_decoded.data, eager_decoded.data, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# GPU-backed input: ``unpack=True`` works with ``gpu=True`` since #3075, so
+# the ``pack=True`` inverse must round-trip there too. Both legs crash today
+# (#3112): ``_pack``'s ``fillna`` breaks on cupy-backed arrays. Strict xfail
+# so the marker flips loudly once the crash is fixed.
+# ---------------------------------------------------------------------------
+
+
+@requires_gpu
+@pytest.mark.xfail(
+    strict=True,
+    reason="to_geotiff(pack=True) crashes on cupy-backed input (#3112)")
+@pytest.mark.parametrize("chunks", [None, 2], ids=["gpu", "dask-gpu"])
+def test_pack_round_trip_gpu(tmp_path, chunks):
+    """A ``gpu=True`` unpack read packs back to the integer source dtype."""
+    data = np.array([[1, 2, 3], [4, 5, 255]], dtype=np.uint8)
+    src = _write_int_tiff(
+        tmp_path / "src_gpu_3114.tif", data,
+        nodata=255, scale=2.0, offset=10.0)
+
+    decoded = (open_geotiff(src, unpack=True, gpu=True) if chunks is None
+               else open_geotiff(src, unpack=True, gpu=True, chunks=chunks))
+    assert decoded.attrs.get("mask_and_scale_dtype") == "uint8"
+
+    out = str(tmp_path / f"out_gpu_3114_{chunks}.tif")
+    decoded.xrs.to_geotiff(out, pack=True)
+
+    # Raw read: the stored integers round-trip exactly.
+    raw = open_geotiff(out)
+    assert str(raw.dtype) == "uint8"
+    np.testing.assert_array_equal(np.asarray(raw.data), data)
+
+    # Parity with the CPU eager unpack of the same source.
+    cpu_decoded = open_geotiff(src, unpack=True)
+    repacked_decoded = open_geotiff(out, unpack=True)
+    np.testing.assert_allclose(
+        np.asarray(repacked_decoded.data), np.asarray(cpu_decoded.data),
+        equal_nan=True)
 
 
 # ---------------------------------------------------------------------------
