@@ -1190,6 +1190,11 @@ def _alloc_order(height, width, should_write):
     but nothing reads it back, so an int8 buffer (1 byte/pixel instead
     of 8) is enough -- numba wraps the store and the wrapped values are
     dead.  Issue #3107.
+
+    Caveat: the wrap is a compiled-code behavior.  Under
+    ``NUMBA_DISABLE_JIT=1`` (pure-Python debugging) NumPy raises
+    ``OverflowError`` on the first store of an owner index above 127;
+    if that bites, force the int64 branch here.
     """
     if should_write is _should_write_any:
         return np.zeros((height, width), dtype=np.int8)

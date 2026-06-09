@@ -92,20 +92,15 @@ class TestWrappedOrderIndices:
         result = rasterize(geoms, width=64, height=64,
                            bounds=(0, 0, 20, 20), merge=merge)
         data = result.data
-        # Pixel well inside all 300 boxes (boxes cover (0,0)-(10,10)).
-        inside = data[48, 16]  # x=5.16, y=4.84
-        if merge == 'sum':
-            # 300 boxes (1..300) + point 600 burn this pixel region; the
-            # exact line hit depends on Bresenham, so check the box sum
-            # at a pixel away from line and point.
-            assert data[60, 4] == sum(range(1, 301))
-        elif merge == 'count':
-            assert data[60, 4] == 300
-        elif merge == 'min':
-            assert data[60, 4] == 1.0
-        elif merge == 'max':
-            assert data[60, 4] == 300.0
-        assert np.isfinite(inside)
+        # Pixel (60, 4) sees only the 300 boxes: the diagonal line burns
+        # (60, 3) / (59, 4), and the point lands on (48, 16).
+        boxes_only = {'sum': 45150.0, 'count': 300.0,
+                      'min': 1.0, 'max': 300.0}
+        assert data[60, 4] == boxes_only[merge]
+        # Pixel (48, 16) is the point burn (600) on top of the boxes.
+        with_point = {'sum': 45750.0, 'count': 301.0,
+                      'min': 1.0, 'max': 600.0}
+        assert data[48, 16] == with_point[merge]
 
     @pytest.mark.parametrize("merge", ["first", "last"])
     def test_ordered_merges_unaffected(self, merge):
