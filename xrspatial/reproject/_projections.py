@@ -36,6 +36,7 @@ _WGS84_N = (_WGS84_A - _WGS84_B) / (_WGS84_A + _WGS84_B)  # third flattening
 _WGS84_E2 = 2.0 * _WGS84_F - _WGS84_F ** 2  # eccentricity squared
 _WGS84_E = math.sqrt(_WGS84_E2)             # eccentricity
 
+
 # ---------------------------------------------------------------------------
 # Web Mercator  (EPSG:3857)  --  spherical, trivial
 # ---------------------------------------------------------------------------
@@ -207,9 +208,9 @@ def _authalic_apa(e):
     e6 = e4 * e2
     e8 = e6 * e2
     e10 = e8 * e2
-    e12 = e10 * e2
     apa = np.empty(6, dtype=np.float64)
-    apa[0] = e2 / 3.0 + 31.0 * e4 / 180.0 + 59.0 * e6 / 560.0 + 17141.0 * e8 / 166320.0 + 28289.0 * e10 / 249480.0
+    apa[0] = (e2 / 3.0 + 31.0 * e4 / 180.0 + 59.0 * e6 / 560.0
+              + 17141.0 * e8 / 166320.0 + 28289.0 * e10 / 249480.0)
     apa[1] = 17.0 * e4 / 360.0 + 61.0 * e6 / 1260.0 + 10217.0 * e8 / 120960.0 + 319.0 * e10 / 3024.0
     apa[2] = 383.0 * e6 / 45360.0 + 34729.0 * e8 / 1814400.0 + 192757.0 * e10 / 5765760.0
     apa[3] = 6007.0 * e8 / 272160.0 + 36941.0 * e10 / 1270080.0
@@ -316,7 +317,7 @@ def _lcc_params(crs):
         (1.0 + e * sinphi1) / (1.0 - e * sinphi1), e / 2.0)
 
     if abs(lat_1 - lat_2) > 1e-10:
-        m2 = cosphi2 = math.cos(lat_2)
+        cosphi2 = math.cos(lat_2)
         cosphi2 /= math.sqrt(1.0 - _WGS84_E2 * sinphi2 * sinphi2)
         ts2 = math.tan(math.pi / 4.0 - lat_2 / 2.0) * math.pow(
             (1.0 + e * sinphi2) / (1.0 - e * sinphi2), e / 2.0)
@@ -363,7 +364,6 @@ def _lcc_inv_point(x, y, lon0, n, c, rho0, k0, e, a):
         return math.degrees(_norm_lon_rad(lon0 + lam_n / n)), 90.0 if n > 0 else -90.0
     ts = math.pow(rho / (a * k0 * c), 1.0 / n)
     # Recover phi from ts via Newton (pj_sinhpsi2tanphi)
-    phi_approx = math.pi / 2.0 - 2.0 * math.atan(ts)
     taup = math.sinh(math.log(1.0 / ts))  # sinh(psi)
     tau = _pj_sinhpsi2tanphi(taup, e)
     phi = math.atan(tau)
@@ -733,7 +733,6 @@ def _laea_params(crs):
     fn = d.get('y_0', 0.0)
 
     e = _WGS84_E
-    a = _WGS84_A
     e2 = _WGS84_E2
 
     qp = _authalic_q(1.0, e)
@@ -783,7 +782,7 @@ def _laea_fwd_point(lon_deg, lat_deg, lon0, sinb1, cosb1,
     lam = math.radians(lon_deg) - lon0
     sinphi = math.sin(phi)
     q = (1.0 - e2) * (sinphi / (1.0 - e2 * sinphi * sinphi)
-                       + math.atanh(e * sinphi) / e)
+                      + math.atanh(e * sinphi) / e)
     sinb = q / qp
     if sinb > 1.0:
         sinb = 1.0
@@ -852,7 +851,7 @@ def _laea_inv_point(x, y, lon0, sinb1, cosb1,
         if mode == 0:  # OBLIQ
             ab = cosz * sinb1 + yn * sinz * cosb1 / rho
             lam = math.atan2(xn * sinz,
-                              rho * cosb1 * cosz - yn * sinb1 * sinz)
+                             rho * cosb1 * cosz - yn * sinb1 * sinz)
         else:  # EQUIT
             ab = yn * sinz / rho
             lam = math.atan2(xn * sinz, rho * cosz)
@@ -865,7 +864,8 @@ def _laea_inv_point(x, y, lon0, sinb1, cosb1,
     elif ratio < -1.0:
         ratio = -1.0
     beta = math.asin(ratio)
-    phi = beta + apa[0] * math.sin(2.0 * beta) + apa[1] * math.sin(4.0 * beta) + apa[2] * math.sin(6.0 * beta)
+    phi = (beta + apa[0] * math.sin(2.0 * beta) + apa[1] * math.sin(4.0 * beta)
+           + apa[2] * math.sin(6.0 * beta))
     return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
@@ -875,7 +875,7 @@ def laea_forward(lons, lats, out_x, out_y,
                  fe, fn, e, a, e2, mode):
     for i in prange(lons.shape[0]):
         x, y = _laea_fwd_point(lons[i], lats[i], lon0, sinb1, cosb1,
-                                xmf, ymf, rq, qp, e, a, e2, mode)
+                               xmf, ymf, rq, qp, e, a, e2, mode)
         out_x[i] = x + fe
         out_y[i] = y + fn
 
@@ -935,13 +935,11 @@ def _stere_params(crs):
         m_ts = coslts / math.sqrt(1.0 - e2 * sinlts * sinlts)
         t_ts = math.tan(math.pi / 4.0 - lat_ts_r / 2.0) * math.pow(
             (1.0 + e * sinlts) / (1.0 - e * sinlts), e / 2.0)
-        t_90 = 0.0  # tan(pi/4 - pi/4) = 0 at the pole
         # For polar: k0 = m_ts / (2 * t_ts) * (something)
         # Actually, for UPS/polar stereographic:
         # akm1 = a * m_ts / sqrt((1+e)^(1+e) * (1-e)^(1-e)) / (2 * t_ts)
         # But simpler: akm1 = a * k0 * 2 / sqrt((1+e)^(1+e)*(1-e)^(1-e))
         # Let's compute akm1 directly
-        half_e = e / 2.0
         con = math.pow(1.0 + e, 1.0 + e) * math.pow(1.0 - e, 1.0 - e)
         if abs(t_ts) < 1e-30:
             # lat_ts = 90: use k0 formula
@@ -955,7 +953,6 @@ def _stere_params(crs):
     else:
         k0 = 0.994  # UPS default
 
-    half_e = e / 2.0
     con = math.pow(1.0 + e, 1.0 + e) * math.pow(1.0 - e, 1.0 - e)
     akm1 = a * k0 * 2.0 / math.sqrt(con)
     fe = d.get('x_0', 0.0)
@@ -1021,7 +1018,6 @@ def _stere_inv_point(x, y, lon0, akm1, e, is_south):
 @njit(nogil=True, cache=True, parallel=True)
 def stere_forward(lons, lats, out_x, out_y,
                   lon0, akm1, fe, fn, e, is_south):
-    south_f = 1.0 if is_south else 0.0
     for i in prange(lons.shape[0]):
         x, y = _stere_fwd_point(lons[i], lats[i], lon0, akm1, e, is_south)
         out_x[i] = x + fe
@@ -1093,7 +1089,8 @@ def _gauss_fwd(phi, lam, C, K, e, ratexp):
     """Geodetic -> Gauss conformal sphere: (phi, lam) -> (chi, lam_conf)."""
     sinphi = math.sin(phi)
     srat = math.pow((1.0 - e * sinphi) / (1.0 + e * sinphi), ratexp)
-    chi = 2.0 * math.atan(K * math.pow(math.tan(math.pi / 4.0 + phi / 2.0), C) * srat) - math.pi / 2.0
+    chi = (2.0 * math.atan(K * math.pow(math.tan(math.pi / 4.0 + phi / 2.0), C) * srat)
+           - math.pi / 2.0)
     lam_conf = C * lam
     return chi, lam_conf
 
@@ -1157,7 +1154,7 @@ def sterea_forward(lons, lats, out_x, out_y,
                    lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e):
     for i in prange(lons.shape[0]):
         x, y = _sterea_fwd_point(lons[i], lats[i], lon0, sinc0, cosc0, R2,
-                                  C, K, ratexp, e)
+                                 C, K, ratexp, e)
         out_x[i] = x + fe
         out_y[i] = y + fn
 
@@ -1252,12 +1249,11 @@ def _omerc_fwd_point(lon_deg, lat_deg, lam0, singam, cosgam,
         math.tan(math.pi / 4.0 - phi / 2.0)
         * math.pow((1.0 + e * sinphi) / (1.0 - e * sinphi), e / 2.0)
     )
-    Q = math.exp(-BH * lam)
     Vl = 0.5 * (H * math.exp(S) - math.exp(-S) / H)
     Ul = 0.5 * (H * math.exp(S) + math.exp(-S) / H)
     u = AH * math.atan2(Vl * cosaz + math.sin(BH * lam) * sinaz, math.cos(BH * lam))
     v = 0.5 * AH * math.log((Ul - Vl * sinaz + math.sin(BH * lam) * cosaz)
-                              / (Ul + Vl * sinaz - math.sin(BH * lam) * cosaz))
+                            / (Ul + Vl * sinaz - math.sin(BH * lam) * cosaz))
 
     x = v * cosgam + u * singam
     y = u * cosgam - v * singam
@@ -1305,7 +1301,7 @@ def omerc_forward(lons, lats, out_x, out_y,
                   BH, AH, H, F, e):
     for i in prange(lons.shape[0]):
         x, y = _omerc_fwd_point(lons[i], lats[i], lam0, singam, cosgam,
-                                 sinaz, cosaz, BH, AH, H, F, e)
+                                sinaz, cosaz, BH, AH, H, F, e)
         out_x[i] = x + fe
         out_y[i] = y + fn
 
@@ -1384,16 +1380,16 @@ def _tmerc_coefficients(n):
     # Geographic -> Conformal latitude: cbg[1..6]
     cbg = np.array([
         n * (-2.0 + n * (2.0 / 3.0 + n * (4.0 / 3.0 + n * (-82.0 / 45.0
-        + n * (32.0 / 45.0 + n * 4642.0 / 4725.0))))),
+            + n * (32.0 / 45.0 + n * 4642.0 / 4725.0))))),  # noqa: E128
 
         n2 * (5.0 / 3.0 + n * (-16.0 / 15.0 + n * (-13.0 / 9.0
-        + n * (904.0 / 315.0 - n * 1522.0 / 945.0)))),
+            + n * (904.0 / 315.0 - n * 1522.0 / 945.0)))),  # noqa: E128
 
         n3 * (-26.0 / 15.0 + n * (34.0 / 21.0 + n * (8.0 / 5.0
-        - n * 12686.0 / 2835.0))),
+            - n * 12686.0 / 2835.0))),  # noqa: E128
 
         n4 * (1237.0 / 630.0 + n * (-12.0 / 5.0
-        - n * 24832.0 / 14175.0)),
+            - n * 24832.0 / 14175.0)),  # noqa: E128
 
         n5 * (-734.0 / 315.0 + n * 109598.0 / 31185.0),
 
@@ -1403,16 +1399,16 @@ def _tmerc_coefficients(n):
     # Conformal -> Geographic latitude: cgb[1..6]
     cgb = np.array([
         n * (2.0 + n * (-2.0 / 3.0 + n * (-2.0 + n * (116.0 / 45.0
-        + n * (26.0 / 45.0 - n * 2854.0 / 675.0))))),
+            + n * (26.0 / 45.0 - n * 2854.0 / 675.0))))),  # noqa: E128
 
         n2 * (7.0 / 3.0 + n * (-8.0 / 5.0 + n * (-227.0 / 45.0
-        + n * (2704.0 / 315.0 + n * 2323.0 / 945.0)))),
+            + n * (2704.0 / 315.0 + n * 2323.0 / 945.0)))),  # noqa: E128
 
         n3 * (56.0 / 15.0 + n * (-136.0 / 35.0 + n * (-1262.0 / 105.0
-        + n * 73814.0 / 2835.0))),
+            + n * 73814.0 / 2835.0))),  # noqa: E128
 
         n4 * (4279.0 / 630.0 + n * (-332.0 / 35.0
-        - n * 399572.0 / 14175.0)),
+            - n * 399572.0 / 14175.0)),  # noqa: E128
 
         n5 * (4174.0 / 315.0 - n * 144838.0 / 6237.0),
 
@@ -1447,9 +1443,15 @@ def _clenshaw_complex_py(coeffs, sin2Cn, cos2Cn, sinh2Ce, cosh2Ce):
     N = len(coeffs)
     r = 2.0 * cos2Cn * cosh2Ce
     im = -2.0 * sin2Cn * sinh2Ce
-    hr = 0.0; hi = 0.0; hr1 = 0.0; hi1 = 0.0
+    hr = 0.0
+    hi = 0.0
+    hr1 = 0.0
+    hi1 = 0.0
     for k in range(N - 1, -1, -1):
-        hr2 = hr1; hi2 = hi1; hr1 = hr; hi1 = hi
+        hr2 = hr1
+        hi2 = hi1
+        hr1 = hr
+        hi1 = hi
         hr = -hr2 + r * hr1 - im * hi1 + coeffs[k]
         hi = -hi2 + im * hr1 + r * hi1
     dCn = sin2Cn * cosh2Ce * hr - cos2Cn * sinh2Ce * hi
@@ -2239,5 +2241,3 @@ def transform_points(src_crs, tgt_crs, xs, ys):
             return tx, ty
 
     return None
-
-

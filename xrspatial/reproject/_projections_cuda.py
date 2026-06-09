@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
-
 try:
     from numba import cuda
     HAS_CUDA = True
@@ -81,9 +79,15 @@ else:
                             sin2Cn, cos2Cn, sinh2Ce, cosh2Ce):
         r = 2.0 * cos2Cn * cosh2Ce
         im = -2.0 * sin2Cn * sinh2Ce
-        hr = 0.0; hi = 0.0; hr1 = 0.0; hi1 = 0.0
+        hr = 0.0
+        hi = 0.0
+        hr1 = 0.0
+        hi1 = 0.0
         for a in (a5, a4, a3, a2, a1, a0):
-            hr2 = hr1; hi2 = hi1; hr1 = hr; hi1 = hi
+            hr2 = hr1
+            hi2 = hi1
+            hr1 = hr
+            hi1 = hi
             hr = -hr2 + r * hr1 - im * hi1 + a
             hi = -hi2 + im * hr1 + r * hi1
         dCn = sin2Cn * cosh2Ce * hr - cos2Cn * sinh2Ce * hi
@@ -213,7 +217,7 @@ else:
         sinh2 = 2.0 * tan_Ce * inv_d
         cosh2 = 2.0 * inv_d2 - 1.0
         dCn, dCe = _d_clenshaw_complex(a0, a1, a2, a3, a4, a5,
-                                        sin2, cos2, sinh2, cosh2)
+                                       sin2, cos2, sinh2, cosh2)
         return Qn * (Ce + dCe), Qn * (Cn + dCn)
 
     @cuda.jit(device=True)
@@ -229,7 +233,7 @@ else:
         sinh2Ce = 0.5 * (exp2Ce - inv_exp)
         cosh2Ce = 0.5 * (exp2Ce + inv_exp)
         dCn, dCe = _d_clenshaw_complex(b0, b1, b2, b3, b4, b5,
-                                        sin2Cn, cos2Cn, sinh2Ce, cosh2Ce)
+                                       sin2Cn, cos2Cn, sinh2Ce, cosh2Ce)
         Cn -= dCn
         Ce -= dCe
         sin_Cn = math.sin(Cn)
@@ -252,8 +256,8 @@ else:
             tx = left + (j + 0.5) * res_x - fe
             ty = top - (i + 0.5) * res_y - fn
             lon, lat = _d_tmerc_inv(tx, ty, lon0, Qn,
-                                     b0, b1, b2, b3, b4, b5,
-                                     g0, g1, g2, g3, g4, g5)
+                                    b0, b1, b2, b3, b4, b5,
+                                    g0, g1, g2, g3, g4, g5)
             out_src_x[i, j] = lon
             out_src_y[i, j] = lat
 
@@ -268,8 +272,8 @@ else:
             lon = left + (j + 0.5) * res_x
             lat = top - (i + 0.5) * res_y
             x, y = _d_tmerc_fwd(lon, lat, lon0, Qn,
-                                 a0, a1, a2, a3, a4, a5,
-                                 c0, c1, c2, c3, c4, c5)
+                                a0, a1, a2, a3, a4, a5,
+                                c0, c1, c2, c3, c4, c5)
             out_src_x[i, j] = x + fe
             out_src_y[i, j] = y + fn
 
@@ -376,7 +380,7 @@ else:
             tx = left + (j + 0.5) * res_x - fe
             ty = top - (i + 0.5) * res_y - fn
             lon, lat = _d_aea_inv(tx, ty, lon0, n, C, rho0, e, a, qp,
-                                   apa0, apa1, apa2, apa3, apa4)
+                                  apa0, apa1, apa2, apa3, apa4)
             out_src_x[i, j] = lon
             out_src_y[i, j] = lat
 
@@ -425,7 +429,7 @@ else:
             tx = left + (j + 0.5) * res_x - fe
             ty = top - (i + 0.5) * res_y - fn
             lon, lat = _d_cea_inv(tx, ty, lon0, k0, e, a, qp,
-                                   apa0, apa1, apa2, apa3, apa4)
+                                  apa0, apa1, apa2, apa3, apa4)
             out_src_x[i, j] = lon
             out_src_y[i, j] = lat
 
@@ -591,7 +595,7 @@ else:
             if mode == 0:
                 ab = cosz * sinb1 + yn * sinz * cosb1 / rho
                 lam = math.atan2(xn * sinz,
-                                  rho * cosb1 * cosz - yn * sinb1 * sinz)
+                                 rho * cosb1 * cosz - yn * sinb1 * sinz)
             else:
                 ab = yn * sinz / rho
                 lam = math.atan2(xn * sinz, rho * cosz)
@@ -616,8 +620,8 @@ else:
             tx = left + (j + 0.5) * res_x - fe
             ty = top - (i + 0.5) * res_y - fn
             lon, lat = _d_laea_inv(tx, ty, lon0, sinb1, cosb1,
-                                    xmf, ymf, rq, qp, e, a, e2, mode,
-                                    apa0, apa1, apa2, apa3, apa4)
+                                   xmf, ymf, rq, qp, e, a, e2, mode,
+                                   apa0, apa1, apa2, apa3, apa4)
             out_src_x[i, j] = lon
             out_src_y[i, j] = lat
 
@@ -631,7 +635,7 @@ else:
             lon = left + (j + 0.5) * res_x
             lat = top - (i + 0.5) * res_y
             x, y = _d_laea_fwd(lon, lat, lon0, sinb1, cosb1,
-                                xmf, ymf, rq, qp, e, a, e2, mode)
+                               xmf, ymf, rq, qp, e, a, e2, mode)
             out_src_x[i, j] = x + fe
             out_src_y[i, j] = y + fn
 
@@ -725,13 +729,11 @@ else:
         or None to fall back to CPU.
         """
         import cupy as cp
-        from ._projections import (
-            _get_epsg, _is_geographic_wgs84_or_nad83, _utm_params,
-            _tmerc_params, _lcc_params, _aea_params, _cea_params,
-            _sinu_params, _laea_params, _stere_params,
-            _ALPHA, _BETA, _CBG, _CGB, _A_RECT, _QP, _APA,
-            _WGS84_E2, _MLFN_EN,
-        )
+
+        from ._projections import (_A_RECT, _ALPHA, _APA, _BETA, _CBG, _CGB, _MLFN_EN, _QP,
+                                   _WGS84_E2, _aea_params, _cea_params, _get_epsg,
+                                   _is_geographic_wgs84_or_nad83, _laea_params, _lcc_params,
+                                   _sinu_params, _stere_params, _tmerc_params, _utm_params)
 
         src_epsg = _get_epsg(src_crs)
         tgt_epsg = _get_epsg(tgt_crs)
@@ -750,12 +752,12 @@ else:
         # --- Web Mercator ---
         if _is_geographic_wgs84_or_nad83(src_epsg) and tgt_epsg == 3857:
             _k_merc_inverse[bpg, tpb](out_src_x, out_src_y,
-                                       left, top, res_x, res_y)
+                                      left, top, res_x, res_y)
             return out_src_y, out_src_x
 
         if src_epsg == 3857 and _is_geographic_wgs84_or_nad83(tgt_epsg):
             _k_merc_forward[bpg, tpb](out_src_x, out_src_y,
-                                       left, top, res_x, res_y)
+                                      left, top, res_x, res_y)
             return out_src_y, out_src_x
 
         # --- UTM ---
@@ -787,12 +789,12 @@ else:
         # --- Ellipsoidal Mercator ---
         if _is_geographic_wgs84_or_nad83(src_epsg) and tgt_epsg == 3395:
             _k_emerc_inverse[bpg, tpb](out_src_x, out_src_y,
-                                        left, top, res_x, res_y, 1.0, _E)
+                                       left, top, res_x, res_y, 1.0, _E)
             return out_src_y, out_src_x
 
         if src_epsg == 3395 and _is_geographic_wgs84_or_nad83(tgt_epsg):
             _k_emerc_forward[bpg, tpb](out_src_x, out_src_y,
-                                        left, top, res_x, res_y, 1.0, _E)
+                                       left, top, res_x, res_y, 1.0, _E)
             return out_src_y, out_src_x
 
         # --- Generic Transverse Mercator (State Plane, etc.) ---
