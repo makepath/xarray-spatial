@@ -7,6 +7,12 @@ import numpy as np
 
 _VALID_BOUNDS_POLICIES = ("auto", "raw", "clamp", "percentile")
 
+# Largest output grid a materializing backend may allocate. 1 billion pixels
+# is ~8 GB for a single float64 array, and the pipeline holds several such
+# arrays at once. Lazy dask outputs never materialize the full grid, so the
+# guard is skipped for them. Shared so merge()'s in-memory check matches.
+_MAX_OUTPUT_PIXELS = 1_000_000_000
+
 
 def _validate_bounds_policy(bounds_policy, func_name):
     """Reject unknown bounds_policy tokens at the API boundary."""
@@ -437,13 +443,10 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
     if height is None:
         height = max(1, int(round((top - bottom) / res_y)))
 
-    # Guard: reject output grids that would exhaust memory.
-    # 1 billion pixels ~= 8 GB for a single float64 array, and the
-    # reprojection pipeline allocates several arrays of this size.
-    # Lazy dask outputs never materialize the full grid (peak memory is
-    # bounded by the chunk size), so the guard only applies to backends
-    # that allocate the whole output array.
-    _MAX_OUTPUT_PIXELS = 1_000_000_000
+    # Guard: reject output grids that would exhaust memory. See
+    # _MAX_OUTPUT_PIXELS above for the rationale. Lazy dask outputs never
+    # materialize the full grid (peak memory is bounded by the chunk size),
+    # so the guard only applies to backends that allocate the whole output.
     if not lazy_output and width * height > _MAX_OUTPUT_PIXELS:
         raise ValueError(
             f"Computed output grid is too large ({width} x {height} = "

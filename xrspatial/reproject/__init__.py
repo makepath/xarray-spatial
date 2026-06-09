@@ -23,6 +23,7 @@ from ._crs_utils import (
     _resolve_crs,
 )
 from ._grid import (
+    _MAX_OUTPUT_PIXELS,
     _chunk_bounds,
     _compute_chunk_layout,
     _compute_output_grid,
@@ -2346,8 +2347,8 @@ def merge(
         # output array. Re-apply the output-size guard that was skipped
         # during grid computation so a genuinely in-memory merge over the
         # pixel limit still raises (the guard skip only applies to the
-        # lazy dask path).
-        _MAX_OUTPUT_PIXELS = 1_000_000_000
+        # lazy dask path). _MAX_OUTPUT_PIXELS is imported from _grid so the
+        # limit stays in sync with _compute_output_grid's own check.
         if out_shape[0] * out_shape[1] > _MAX_OUTPUT_PIXELS:
             raise ValueError(
                 f"Computed output grid is too large ({out_shape[1]} x "
