@@ -1,6 +1,8 @@
 """Tests for xrspatial.reproject module."""
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -589,6 +591,32 @@ class TestDatumShiftBounds:
         ).transform(cx, cy)
         assert abs(left - rx.min()) < abs(left - unshifted_x.min())
         assert abs(right - rx.max()) < abs(right - unshifted_x.max())
+
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj required")
+class TestDatumProbeNoProjWarning:
+    """_get_datum_params probes the datum via crs.to_dict(), which routes
+    through pyproj's to_proj4() and warns that a PROJ string drops detail.
+    The probe never uses that lossy string, so the warning must not leak to
+    callers of reproject(). See GH #3076.
+    """
+
+    def test_get_datum_params_silences_proj_warning(self):
+        from xrspatial.reproject._projections import _get_datum_params
+        # EPSG:3857 round-trips through to_proj4() inside to_dict() and is
+        # the CRS that surfaced the warning in the original report.
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter('always')
+            _get_datum_params(pyproj.CRS.from_epsg(3857))
+        leaked = [w for w in rec
+                  if 'lose important projection information' in str(w.message)]
+        assert leaked == []
+
+    def test_get_datum_params_still_resolves_known_datum(self):
+        # Silencing the warning must not break the datum lookup: NAD27
+        # (EPSG:4267) is in the shift table and must still return params.
+        from xrspatial.reproject._projections import _get_datum_params
+        assert _get_datum_params(pyproj.CRS.from_epsg(4267)) is not None
 
 
 # ---------------------------------------------------------------------------
