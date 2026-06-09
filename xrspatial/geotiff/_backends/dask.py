@@ -529,6 +529,21 @@ def _read_geotiff_dask(source: str, *,
         allow_unparseable_crs=allow_unparseable_crs,
     )
 
+    # Record the integer source dtype when a *real* ``mask_and_scale``
+    # transform -- masking a fittable sentinel, here, or a non-identity
+    # scale / offset, in the block below -- promotes the array to float, so
+    # ``to_geotiff(pack=True)`` can re-pack (issue #3064). Scoped to
+    # ``mask_and_scale`` (not a plain ``masked`` read) to mirror the eager
+    # path. Keys off the real transform, not the graph's ``effective_dtype``,
+    # which over-promotes a bare ``mask_and_scale`` read of an int source
+    # with no scale / offset and no sentinel (a pre-existing eager/dask dtype
+    # gap, left untouched here).
+    if (mask_and_scale
+            and file_dtype.kind in ('u', 'i')
+            and nodata is not None
+            and lifecycle.sentinel_fits_buffer):
+        attrs['mask_and_scale_dtype'] = file_dtype.name
+
     if isinstance(chunks, int):
         ch_h = ch_w = chunks
     else:
@@ -641,6 +656,10 @@ def _read_geotiff_dask(source: str, *,
             dask_arr = dask_arr * scale + offset
             attrs['scale_factor'] = scale
             attrs['add_offset'] = offset
+            # A non-identity scale / offset is the other real transform that
+            # promotes an int source to float (issue #3064).
+            if file_dtype.kind != 'f':
+                attrs.setdefault('mask_and_scale_dtype', file_dtype.name)
 
     # ``parse_coordinates=False`` drops the x / y coordinate arrays (the
     # transform / crs attrs still carry georeferencing); the band coord is

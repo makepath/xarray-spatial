@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
 from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _VALID_COMPRESSIONS, _extract_rich_tags,
-                      _resolve_nodata_attr, _should_restore_nan_sentinel)
+                      _pack, _resolve_nodata_attr, _should_restore_nan_sentinel)
 from .._backends._gpu_helpers import _is_gpu_data
 from .._coords import _BAND_DIM_NAMES, ROTATION_SHEAR_TOL, _has_no_georef_marker
 from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
@@ -61,7 +61,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                allow_internal_only_jpeg: bool = False,
                allow_experimental_codecs: bool = False,
                allow_unparseable_crs: bool = False,
-               drop_rotation: bool = False) -> str | BinaryIO:
+               drop_rotation: bool = False,
+               pack: bool = False) -> str | BinaryIO:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Release-contract tier (see
@@ -338,6 +339,19 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         impossible without an explicit signal. ``drop_rotation=True``
         accepts the loss and lets the write proceed; consumers reading
         the output will see an axis-aligned, non-rotated TIFF.
+    pack : bool, default False
+        [advanced] Inverse of ``open_geotiff(mask_and_scale=True)``. Re-pack
+        a decoded float array before writing: reverse the scale / offset
+        recorded on ``attrs['scale_factor']`` / ``attrs['add_offset']``,
+        fill NaN back to the nodata sentinel, and cast to the integer source
+        dtype recorded on ``attrs['mask_and_scale_dtype']`` (contract v5).
+        The output stores the raw packed integers and keeps the
+        SCALE / OFFSET GDAL_METADATA, so reopening it with
+        ``mask_and_scale=True`` unpacks to the original values instead of
+        scaling a second time. Raises ``ValueError`` for a bare array (no
+        attrs) or one that never went through a ``mask_and_scale`` read. The
+        dtype falls back to the ``attrs['nodata']`` width for arrays read
+        before contract v5.
 
     Returns
     -------
@@ -374,6 +388,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     from .._reader import _coerce_path
 
     path = _coerce_path(path)
+
+    # ``pack``: inverse of ``open_geotiff(mask_and_scale=True)``. Reverse
+    # the scale / offset, restore the recorded integer source dtype, fill
+    # NaN back to the nodata sentinel, and drop the SCALE / OFFSET tags so
+    # the written file round-trips cleanly. Run before any dispatch (GPU /
+    # VRT / streaming / eager) so every write path sees the re-packed array.
+    if pack:
+        if not isinstance(data, xr.DataArray):
+            raise ValueError(
+                "pack=True requires a DataArray carrying mask_and_scale "
+                "attrs; got a bare array with no metadata to reverse.")
+        data = _pack(data)
 
     # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
     # ``int`` in Python, so a typo like ``nodata=True`` slips past every
