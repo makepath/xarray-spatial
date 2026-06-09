@@ -3296,10 +3296,9 @@ def rasterize(
         skip the comparison (the output still inherits the template CRS).
         The check is a no-op when either side lacks a CRS.
     use_cuda : bool, optional
-        .. deprecated:: 0.11
-           Deprecated alias for ``gpu``; emits a ``DeprecationWarning``.
-           Passing both ``gpu=True`` and ``use_cuda`` raises
-           ``TypeError``.
+        Deprecated alias for ``gpu``; emits a ``DeprecationWarning``
+        when passed.  Passing both ``gpu=True`` and ``use_cuda`` raises
+        ``TypeError``.
 
     Returns
     -------
