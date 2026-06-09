@@ -3110,6 +3110,21 @@ def rasterize(
         - *props*: 1D float64 array of property values for the geometry
         - *is_first*: 1 on first write to this pixel, 0 otherwise
 
+        .. warning::
+
+           On the GPU backends (``use_cuda=True``, with or without
+           ``chunks``) a custom callable does not use CUDA atomics.  Its
+           per-pixel update is a non-atomic read-modify-write, so when
+           geometries overlap, several threads may update the same pixel
+           at once and the result for those pixels is nondeterministic --
+           it can vary between runs and need not match the CPU backend.
+           The built-in string merges (``'sum'``, ``'count'``, ``'min'``,
+           ``'max'``, ``'first'``, ``'last'``) do use atomics and stay
+           deterministic over overlap; pass one of those if you need a
+           stable result where geometries overlap on the GPU.  Calling
+           ``rasterize`` with a callable ``merge`` and ``use_cuda=True``
+           emits a ``UserWarning`` to this effect.
+
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
         tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
@@ -3413,6 +3428,24 @@ def rasterize(
             # _should_write_any_gpu from the cache.  The cached dict
             # always includes a sum/count entry that uses it.
             _, should_write_gpu = gpu_fns['sum']
+            # A callable keeps gpu_merge_name=None, i.e. the non-atomic
+            # read-modify-write path in _apply_merge_gpu.  Overlapping
+            # geometries then race and the overlap pixels are
+            # nondeterministic.  Warn here (after the CuPy check so a
+            # missing-dependency caller only sees the ImportError); this
+            # covers both the cupy and dask+cupy paths.  A built-in string
+            # merge stays deterministic over overlap.
+            warnings.warn(
+                "A custom callable merge on the GPU backend "
+                "(use_cuda=True) uses a non-atomic read-modify-write, so "
+                "values for pixels where geometries overlap are "
+                "nondeterministic and may not match the CPU backend. Use a "
+                "built-in string merge ('sum', 'count', 'min', 'max', "
+                "'first', 'last') if you need a deterministic result over "
+                "overlap.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     if chunks is not None:
         row_chunks, col_chunks = _normalize_chunks(
