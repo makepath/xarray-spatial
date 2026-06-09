@@ -127,9 +127,8 @@ class TestGeomCrsPropagation:
         assert 'crs_wkt' not in result.attrs
 
     def test_like_spatial_ref_coord_wins(self):
-        wkt = gpd.GeoDataFrame(
-            geometry=[], crs='EPSG:32610').crs.to_wkt()
-        like = _make_like(spatial_ref_wkt=wkt)
+        from pyproj import CRS
+        like = _make_like(spatial_ref_wkt=CRS('EPSG:32610').to_wkt())
         result = rasterize(
             _gdf(crs='EPSG:32610'), like=like, column='value', fill=0,
         )
