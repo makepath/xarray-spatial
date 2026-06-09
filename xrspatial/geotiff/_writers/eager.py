@@ -1375,7 +1375,12 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         # Tiles are written into ``staging_dir``; ``tile_names`` records the
         # bare filenames so the final tile paths (under ``tiles_dir``) can be
         # rebuilt for the VRT index after the atomic rename below.
+        # ``tile_offsets`` records each tile's (x_off, y_off) pixel
+        # placement in lockstep: non-georeferenced tiles carry no
+        # transform, so the VRT index needs the placement passed
+        # explicitly or every tile lands at the origin (issue #3116).
         tile_names = []
+        tile_offsets = []
         delayed_tasks = []
 
         def _safe_write_tile(*args, **kwargs):
@@ -1406,6 +1411,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 tile_name = f'tile_{ri:0{pad_width}d}_{ci:0{pad_width}d}.tif'
                 tile_path = os.path.join(staging_dir, tile_name)
                 tile_names.append(tile_name)
+                tile_offsets.append((col_offset, row_offset))
 
                 # Compute per-tile geo_transform
                 tile_gt = None
@@ -1513,7 +1519,13 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # and validated above; passing it again is idempotent.
     from .vrt import _build_vrt
     try:
-        _build_vrt(vrt_path, tile_paths, relative=True, nodata=nodata)
+        # ``dst_offsets`` carries the tile placement only for
+        # non-georeferenced input: georeferenced tiles place via their
+        # per-tile GeoTransform (computed above), and write_vrt rejects
+        # the kwarg alongside georeferenced sources (issue #3116).
+        _build_vrt(vrt_path, tile_paths, relative=True, nodata=nodata,
+                   dst_offsets=(
+                       tile_offsets if geo_transform is None else None))
     except BaseException:
         # The index step failed after the rename. Remove the now-renamed
         # tile dir too so a retry is not blocked by the leftover-state
