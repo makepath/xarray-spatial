@@ -3039,13 +3039,16 @@ def rasterize(
         length ``len(columns)`` as its ``props`` argument.
     fill : float, default np.nan
         Value for pixels not covered by any geometry.  When ``dtype``
-        resolves to an integer type (either via the ``dtype`` argument or
-        via ``like`` carrying an integer dtype), the default NaN fill is
-        rejected with ``ValueError`` because NaN has no integer
-        representation and the cast would silently land on a
-        platform-specific sentinel with no ``_FillValue`` attr to mark
-        it; pass an explicit integer sentinel (e.g. ``fill=0`` or
-        ``fill=-9999``) or use a floating dtype.
+        resolves to an integer or boolean type (either via the ``dtype``
+        argument or via ``like``), a fill the dtype cannot represent
+        exactly is rejected with ``ValueError``.  This covers NaN into an
+        integer dtype (which would land on a platform sentinel), an
+        out-of-range integer (``fill=-9999`` into ``uint8`` wraps to
+        241), and any non-False value into ``bool`` (which collapses to
+        ``True``).  Without the guard the burned array and its emitted
+        ``nodata`` / ``_FillValue`` attrs would disagree.  Pass a fill the
+        dtype can hold (e.g. ``fill=0`` or ``fill=-9999`` for integers,
+        ``fill=False`` for bool) or use a floating dtype.
     dtype : numpy dtype, optional
         Data type of the output array.  Defaults to np.float64, or
         to the dtype of ``like`` if provided.
@@ -3338,37 +3341,56 @@ def rasterize(
     else:
         final_dtype = np.float64
 
-    # Reject NaN fill against an integer output dtype.  Without this guard
-    # the final ``astype(int_dtype)`` silently coerces NaN to either 0
-    # (unsigned) or ``np.iinfo(dtype).min`` (signed), and the rasterizer
-    # emits no ``_FillValue`` / ``nodata`` / ``nodatavals`` attr to mark
-    # the unwritten pixels.  Downstream consumers (geotiff writer,
-    # rioxarray masks) have no sentinel to key off and treat unwritten
-    # cells as valid data -- a metadata-propagation failure surfaced by
-    # the metadata sweep (issue #2504).
+    # Reject a fill that the output dtype cannot represent exactly.  Every
+    # backend casts its float64 work buffer with ``astype(final_dtype)`` at
+    # the end (``_run_numpy`` etc.), and the attrs block below stores the
+    # original ``fill`` verbatim.  When the cast changes the value, the
+    # array and its ``nodata`` / ``_FillValue`` / ``nodatavals`` attrs
+    # disagree, so downstream consumers (geotiff writer, rioxarray masks)
+    # mask the wrong pixels or treat unwritten cells as valid data -- a
+    # metadata-propagation failure surfaced by the metadata sweep
+    # (issues #2504, #3054).  Failure modes guarded here:
+    #   * NaN fill into an integer dtype -> coerced to 0 / INT_MIN.
+    #   * out-of-range integer fill (fill=-9999 into uint8 -> 241).
+    #   * any non-False fill into bool (fill=NaN -> True everywhere).
+    # ``np.issubdtype(bool_, np.integer)`` is False, so bool needs the
+    # explicit round-trip test below rather than the old integer-only
+    # check.
     #
     # Checked before any host / device allocation so the error surfaces
     # cleanly regardless of backend (numpy, cupy, dask+numpy, dask+cupy).
     # It runs after ``_check_output_dimensions`` because the
     # width/height/resolution guard reports a more actionable diagnostic
     # for oversized grids; both checks land before the allocator either
-    # way.
+    # way.  Float dtypes are left alone: NaN is representable and ordinary
+    # float rounding is expected, not a metadata lie.
     final_dtype_np = np.dtype(final_dtype)
-    try:
-        fill_is_nan_for_dtype_check = (
-            isinstance(fill, (float, np.floating))
-            and np.isnan(float(fill)))
-    except (TypeError, ValueError):
-        fill_is_nan_for_dtype_check = False
-    if (fill_is_nan_for_dtype_check
-            and np.issubdtype(final_dtype_np, np.integer)):
-        raise ValueError(
-            f"fill=NaN cannot be represented in integer dtype "
-            f"{final_dtype_np}: the cast would silently coerce NaN to a "
-            f"dtype-specific sentinel (0 for unsigned, INT_MIN for signed) "
-            f"with no _FillValue attr to mark unwritten pixels. Pass an "
-            f"explicit integer fill (e.g. fill=0 or fill=-9999) or use a "
-            f"floating dtype.")
+    if (np.issubdtype(final_dtype_np, np.integer)
+            or final_dtype_np == np.bool_):
+        try:
+            fill_arr = np.array(fill)
+            with warnings.catch_warnings():
+                # NaN -> int casts warn; we are probing for exactly that.
+                warnings.simplefilter('ignore', RuntimeWarning)
+                cast_back = fill_arr.astype(
+                    final_dtype_np).astype(fill_arr.dtype)
+            representable = bool(np.array_equal(fill_arr, cast_back))
+        except (TypeError, ValueError, OverflowError):
+            # A fill too large for the dtype's C type (e.g. an int wider
+            # than the platform long) overflows the cast rather than
+            # round-tripping; that is exactly a value the dtype cannot
+            # hold, so treat it as non-representable.
+            representable = False
+        if not representable:
+            raise ValueError(
+                f"fill={fill!r} cannot be represented exactly in output "
+                f"dtype {final_dtype_np}: the final cast would silently "
+                f"change it (e.g. NaN -> 0/INT_MIN, an out-of-range int -> "
+                f"a wrapped value, any non-False value -> True for bool), "
+                f"leaving the burned array and its nodata/_FillValue attrs "
+                f"in disagreement. Pass a fill the dtype can hold (e.g. "
+                f"fill=0 or fill=-9999 for integers, fill=False for bool) "
+                f"or use a floating dtype.")
 
     # For GPU paths, resolve string merge names to GPU (merge_fn,
     # should_write_fn) pairs.  User callables are paired with the

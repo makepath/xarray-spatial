@@ -574,7 +574,7 @@ class TestIntegerDtypeNanFill:
 
     def test_int32_dtype_with_default_nan_fill_raises(self):
         """NaN fill against int32 dtype raises with a clear pointer."""
-        with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+        with pytest.raises(ValueError, match="cannot be represented"):
             rasterize([(box(0, 0, 3, 3), 7.0)],
                       width=5, height=5, bounds=(0, 0, 5, 5),
                       dtype=np.int32)
