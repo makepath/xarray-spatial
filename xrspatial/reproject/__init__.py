@@ -1993,13 +1993,13 @@ def _reproject_block_adapter(
             empty_dtype = source_data.dtype
         else:
             empty_dtype = np.float64
-        if is_3d:
-            empty_shape = (*chunk_shape, n_bands)
-            if is_cupy:
-                import cupy as cp
-                return cp.full(empty_shape, nodata, dtype=empty_dtype)
-            return np.full(empty_shape, nodata, dtype=empty_dtype)
-        return np.full(chunk_shape, nodata, dtype=empty_dtype)
+        empty_shape = (*chunk_shape, n_bands) if is_3d else chunk_shape
+        if is_cupy:
+            # Match the data chunks (and the 3-D branch): dask+cupy
+            # blocks should be cupy arrays even when empty.
+            import cupy as cp
+            return cp.full(empty_shape, nodata, dtype=empty_dtype)
+        return np.full(empty_shape, nodata, dtype=empty_dtype)
 
     chunk_fn = _reproject_chunk_cupy if is_cupy else _reproject_chunk_numpy
     return chunk_fn(
