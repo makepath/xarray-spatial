@@ -2093,6 +2093,40 @@ def _reproject_dask(
 # merge()
 # ---------------------------------------------------------------------------
 
+def _merge_inputs_to_host(rasters):
+    """Bring cupy-backed merge inputs to the host.
+
+    The merge pipeline is numpy-based end to end (``_place_same_crs``,
+    ``_reproject_chunk_numpy``, ``_merge_arrays_numpy``), so cupy and
+    dask+cupy inputs are converted before any pixel data is touched.
+    Returns ``(any_cupy, host_rasters)``; the input list is returned
+    unchanged when no raster is GPU-backed. Dask-of-cupy inputs stay
+    lazy: each chunk is converted via ``map_blocks`` at compute time.
+    """
+    try:
+        import cupy as cp
+    except ImportError:
+        return False, rasters
+
+    from ..utils import is_dask_cupy
+
+    any_cupy = False
+    host = []
+    for r in rasters:
+        if isinstance(r.data, cp.ndarray):
+            any_cupy = True
+            host.append(r.copy(data=cp.asnumpy(r.data)))
+        elif is_dask_cupy(r):
+            any_cupy = True
+            host.append(r.copy(data=r.data.map_blocks(
+                cp.asnumpy, dtype=r.dtype,
+                meta=np.array((), dtype=r.dtype),
+            )))
+        else:
+            host.append(r)
+    return any_cupy, host
+
+
 def merge(
     rasters,
     *,
@@ -2112,6 +2146,11 @@ def merge(
     Each input is reprojected to the target CRS (if needed) and placed
     into a unified output grid. Overlapping regions are resolved using
     the selected *strategy*.
+
+    Accepts numpy, cupy, dask+numpy, and dask+cupy inputs. The merge
+    itself runs on the CPU: cupy-backed rasters are copied to the host
+    on entry and the mosaic is returned as a cupy (or dask+cupy) array
+    when any input was GPU-backed.
 
     Parameters
     ----------
@@ -2215,6 +2254,14 @@ def merge(
 
     from ._grid import _validate_bounds_policy
     _validate_bounds_policy(bounds_policy, func_name='merge')
+
+    # GPU inputs: the merge pipeline is numpy-based, so cupy and
+    # dask+cupy rasters are merged on the host and the mosaic is moved
+    # back to the GPU at the end. Same round-trip _apply_vertical_shift
+    # uses for its CPU-only geoid lookup. Without this, cupy inputs
+    # crashed at `.values` with xarray's implicit-conversion TypeError
+    # (#3095).
+    _any_cupy, rasters = _merge_inputs_to_host(rasters)
 
     # Resolve target CRS
     tgt_crs = _resolve_crs(target_crs)
@@ -2409,6 +2456,19 @@ def merge(
         except TypeError:
             n_entries = 1
         out_attrs['nodatavals'] = tuple(nd for _ in range(n_entries))
+
+    # Move the mosaic back to the GPU when any input was cupy-backed.
+    # An eager merge returns a cupy array; a lazy merge keeps the dask
+    # graph and converts each chunk on compute.
+    if _any_cupy:
+        import cupy as cp
+        if any_dask:
+            result_data = result_data.map_blocks(
+                cp.asarray, dtype=result_data.dtype,
+                meta=cp.array((), dtype=result_data.dtype),
+            )
+        else:
+            result_data = cp.asarray(result_data)
 
     result = xr.DataArray(
         result_data,

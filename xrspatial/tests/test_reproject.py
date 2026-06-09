@@ -6925,3 +6925,106 @@ class TestNonWgsDatumNumbaFastPath:
         # Guard against the old corruption: coords must be metres, not degrees.
         assert np.all(np.abs(src_x) > 1000.0)
         assert np.all(np.abs(src_y) > 1000.0)
+
+
+@pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+class TestMergeCupyBackends:
+    """merge() accepts GPU-backed inputs and returns a GPU mosaic (#3095).
+
+    Before the fix, _merge_inmemory called ``.values`` on cupy-backed
+    DataArrays and xarray raised ``TypeError: Implicit conversion to a
+    NumPy array is not allowed``. The merge runs on the host; these
+    tests pin the round-trip and exact value parity with the numpy path.
+    """
+
+    def _pair(self):
+        rng = np.random.default_rng(3095)
+        data_a = rng.random((16, 16)).astype(np.float32)
+        data_b = rng.random((16, 16)).astype(np.float32)
+        a = _make_raster(data_a, x_range=(-10, 0), y_range=(-5, 5))
+        b = _make_raster(data_b, x_range=(0, 10), y_range=(-5, 5))
+        return a, b
+
+    def test_cupy_inputs_return_cupy(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        expected = merge([a, b], resolution=1.0)
+        a_gpu = a.copy(data=cp.asarray(a.data))
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        result = merge([a_gpu, b_gpu], resolution=1.0)
+        assert isinstance(result.data, cp.ndarray)
+        np.testing.assert_array_equal(
+            cp.asnumpy(result.data), expected.values
+        )
+        assert result.dims == expected.dims
+        np.testing.assert_array_equal(
+            result.coords['x'].values, expected.coords['x'].values
+        )
+
+    def test_mixed_numpy_cupy_inputs_return_cupy(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        expected = merge([a, b], resolution=1.0)
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        result = merge([a, b_gpu], resolution=1.0)
+        assert isinstance(result.data, cp.ndarray)
+        np.testing.assert_array_equal(
+            cp.asnumpy(result.data), expected.values
+        )
+
+    def test_cupy_inputs_do_not_mutate_sources(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        a_gpu = a.copy(data=cp.asarray(a.data))
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        merge([a_gpu, b_gpu], resolution=1.0)
+        # Inputs stay on the GPU; the host conversion works on copies.
+        assert isinstance(a_gpu.data, cp.ndarray)
+        assert isinstance(b_gpu.data, cp.ndarray)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_cupy_inputs_stay_lazy_and_match_numpy(self):
+        import cupy as cp
+        import dask.array as dask_array
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        expected = merge([a, b], resolution=1.0)
+        a_gpu = a.copy(data=dask_array.from_array(
+            cp.asarray(a.data), chunks=8))
+        b_gpu = b.copy(data=dask_array.from_array(
+            cp.asarray(b.data), chunks=8))
+        result = merge([a_gpu, b_gpu], resolution=1.0)
+        # Graph construction must not materialize anything.
+        assert isinstance(result.data, dask_array.Array)
+        assert isinstance(result.data._meta, cp.ndarray)
+        computed = result.data.compute()
+        assert isinstance(computed, cp.ndarray)
+        np.testing.assert_array_equal(
+            cp.asnumpy(computed), expected.values
+        )
+
+    def test_cupy_merge_strategies_match_numpy(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        rng = np.random.default_rng(30952)
+        a = _make_raster(rng.random((16, 16)).astype(np.float32),
+                         x_range=(-5, 5), y_range=(-5, 5))
+        b = _make_raster(rng.random((16, 16)).astype(np.float32),
+                         x_range=(-5, 5), y_range=(-5, 5))
+        a_gpu = a.copy(data=cp.asarray(a.data))
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        for strategy in ('first', 'last', 'mean', 'max', 'min'):
+            expected = merge([a, b], strategy=strategy, resolution=1.0)
+            result = merge([a_gpu, b_gpu], strategy=strategy, resolution=1.0)
+            np.testing.assert_array_equal(
+                cp.asnumpy(result.data), expected.values,
+                err_msg=f"strategy={strategy!r}",
+            )
