@@ -114,6 +114,12 @@ write.
        float-because-masked from float-because-promoted, which a
        ``masked_nodata`` lookup alone cannot disambiguate. See issue
        #2135.
+   * - ``mask_and_scale_dtype``
+     - str
+     - Integer source dtype name (e.g. ``"int8"``), set only when a
+       ``mask_and_scale=True`` read promoted an integer array to float.
+       ``to_geotiff(pack=True)`` reads it to reverse the promotion and
+       restore the on-disk dtype. Added in contract v5 (issue #3064).
    * - ``raster_type``
      - str
      - ``'point'`` when the file declares ``RasterPixelIsPoint``;
@@ -142,7 +148,7 @@ write.
        ``ResolutionUnit`` ids 1, 2, 3).
    * - ``_xrspatial_geotiff_contract``
      - int
-     - Contract version. Currently ``4``. See `Versioning`_.
+     - Contract version. Currently ``5``. See `Versioning`_.
    * - ``_xrspatial_no_georef``
      - bool
      - Stamped ``True`` on reads of files with no GeoTIFF transform
@@ -376,3 +382,12 @@ canonical tier. The attr surfaces the rotated 6-tuple from
 so callers can recover the rotated mapping. The writer drops it on
 round-trip until ``to_geotiff`` learns to emit
 ``ModelTransformationTag`` (issue #2115 follow-up).
+
+Contract v5 (issue #3064) added the ``mask_and_scale_dtype`` attr to
+the canonical tier. The attr records the integer source dtype when a
+``mask_and_scale=True`` read promoted the array to float, so
+``to_geotiff(pack=True)`` can reverse the scale / offset, fill NaN back
+to the nodata sentinel, and restore the on-disk dtype. The packed file
+keeps its ``SCALE`` / ``OFFSET`` tags, so reopening it with
+``mask_and_scale=True`` unpacks to the same values instead of scaling a
+second time.
