@@ -2742,13 +2742,16 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
 # ---------------------------------------------------------------------------
 
 def _parse_input(geometries, column=None, columns=None):
-    """Normalise input to (geometry_list, props_array, bounds).
+    """Normalise input to (geometry_list, props_array, bounds, crs).
 
     Returns
     -------
     geom_list : list of shapely geometries
     props_array : (N, P) float64 array of property values
     bounds : tuple or None
+    crs : the GeoDataFrame's ``.crs`` (any pyproj-parseable value) or
+        ``None``.  Only a GeoDataFrame exposes a CRS; the
+        ``(geometry, value)`` iterable path always returns ``None``.
     """
     # Handle dask-geopandas by materializing eagerly.  Geometry data is
     # typically much smaller than the output raster, so this is fine.
@@ -2782,7 +2785,7 @@ def _parse_input(geometries, column=None, columns=None):
                     column = numeric_cols[0]
                 props_array = geometries[column].values.astype(
                     np.float64).reshape(-1, 1)
-            return geom_list, props_array, total_bounds
+            return geom_list, props_array, total_bounds, geometries.crs
     except ImportError:
         pass
 
@@ -2798,13 +2801,13 @@ def _parse_input(geometries, column=None, columns=None):
 
     if not geom_list:
         props_array = np.empty((0, 1), dtype=np.float64)
-        return geom_list, props_array, None
+        return geom_list, props_array, None, None
 
     props_array = np.array(value_list, dtype=np.float64).reshape(-1, 1)
 
     # Bounds computation is deferred: return None here and let the
     # caller compute bboxes only when bounds are actually needed.
-    return geom_list, props_array, None
+    return geom_list, props_array, None, None
 
 
 def _check_uniform_axis(axis_name, coords, expected_step):
@@ -2973,6 +2976,84 @@ def _extract_grid_from_like(like):
     )
 
 
+def _like_crs(like):
+    """Detect the CRS of a ``like`` template DataArray, or ``None``.
+
+    Mirrors the resolution order in
+    ``xrspatial.polygonize._detect_raster_crs`` so a template carries the
+    same CRS into rasterize that polygonize would read back out:
+
+    1. ``like.attrs['crs']`` (xrspatial.geotiff convention)
+    2. ``like.attrs['crs_wkt']``
+    3. the ``spatial_ref`` non-dim coord's ``crs_wkt`` / ``spatial_ref``
+       attr (rioxarray's georeference coord)
+    4. ``like.rio.crs`` (rioxarray, if installed)
+    5. ``None``
+
+    The raw value is returned (string / int / WKT / pyproj.CRS) so the
+    caller normalizes it the same way the geometry CRS is normalized.
+    """
+    crs_attr = like.attrs.get('crs')
+    if crs_attr is not None:
+        return crs_attr
+
+    crs_wkt = like.attrs.get('crs_wkt')
+    if crs_wkt is not None:
+        return crs_wkt
+
+    if 'spatial_ref' in like.coords:
+        sr_attrs = like.coords['spatial_ref'].attrs
+        sr_crs = sr_attrs.get('crs_wkt') or sr_attrs.get('spatial_ref')
+        if sr_crs is not None:
+            return sr_crs
+
+    try:
+        rio_crs = like.rio.crs
+        if rio_crs is not None:
+            return rio_crs
+    except Exception:
+        pass
+
+    return None
+
+
+def _check_crs_match(geom_crs, like_crs):
+    """Raise ``ValueError`` if ``geom_crs`` and ``like_crs`` disagree.
+
+    Both values are normalized through ``pyproj.CRS`` so an int EPSG
+    code, an ``"EPSG:xxxx"`` string, a WKT string, and a ``pyproj.CRS``
+    instance describing the same system all compare equal.  When either
+    side is ``None`` (no CRS to compare) the check is a no-op -- this
+    keeps CRS-less geometry lists and templates working unchanged.  An
+    unparseable value on either side raises ``ValueError`` rather than
+    silently disabling the guard.
+    """
+    if geom_crs is None or like_crs is None:
+        return
+
+    from pyproj import CRS as _PyprojCRS
+    from pyproj.exceptions import CRSError
+
+    def _norm(value, label):
+        try:
+            return _PyprojCRS(value)
+        except CRSError as e:
+            raise ValueError(
+                f"{label} CRS {value!r} is not a valid CRS: {e}"
+            ) from e
+
+    g = _norm(geom_crs, 'geometry')
+    t = _norm(like_crs, "'like' template")
+    if not g.equals(t):
+        raise ValueError(
+            f"CRS mismatch: geometries are in {geom_crs!r} but the "
+            f"'like' template is in {like_crs!r}. Reproject the "
+            f"geometries to match the template, or pass check_crs=False "
+            f"to rasterize onto the template grid anyway (the output "
+            f"will inherit the template CRS without reprojection)."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -2994,6 +3075,7 @@ def rasterize(
     merge: Union[str, Callable] = 'last',
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
     max_pixels: int = MAX_PIXELS_DEFAULT,
+    check_crs: bool = True,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
 
@@ -3117,6 +3199,17 @@ def rasterize(
         function raises ``ValueError`` before any host or device
         allocation if the cap is exceeded.  Raise this explicitly when
         rasterizing a legitimately large grid.
+    check_crs : bool, default True
+        When ``geometries`` is a GeoDataFrame with a ``.crs`` and ``like``
+        is a template that carries a CRS (via ``attrs['crs']``,
+        ``attrs['crs_wkt']``, a ``spatial_ref`` coord, or ``rio.crs``),
+        compare the two and raise ``ValueError`` if they disagree.  This
+        prevents silently burning, say, an EPSG:4326 GeoDataFrame onto an
+        EPSG:3857 template and handing back a raster mislabeled with the
+        template CRS.  The geometries are never reprojected; reproject
+        them yourself to match the template.  Pass ``check_crs=False`` to
+        skip the comparison (the output still inherits the template CRS).
+        The check is a no-op when either side lacks a CRS.
 
     Returns
     -------
@@ -3213,8 +3306,15 @@ def rasterize(
         like_x_descending = grid.x_descending
 
     # Parse input geometries
-    geom_list, props_array, inferred_bounds = _parse_input(
+    geom_list, props_array, inferred_bounds, geom_crs = _parse_input(
         geometries, column=column, columns=columns)
+
+    # Guard against silently burning geometries onto a template in a
+    # different CRS.  The output inherits the template CRS (attrs /
+    # spatial_ref coord) but the geometry coords are never reprojected,
+    # so a mismatch yields an authoritative-looking but wrong raster.
+    if check_crs and geom_crs is not None and like is not None:
+        _check_crs_match(geom_crs, _like_crs(like))
 
     # Resolve bounds: explicit > like > inferred from geometries
     final_bounds = bounds
