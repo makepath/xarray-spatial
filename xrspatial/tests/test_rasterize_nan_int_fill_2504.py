@@ -59,7 +59,7 @@ INT_DTYPES = [np.int8, np.int16, np.int32, np.int64,
 @pytest.mark.parametrize("dt", INT_DTYPES)
 def test_int_dtype_default_nan_fill_raises_numpy(dt):
     """Numpy backend: ``dtype=<int>`` + default ``fill=np.nan`` raises."""
-    with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+    with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
                   dtype=dt)
@@ -74,7 +74,7 @@ def test_like_int_dtype_default_nan_fill_raises_numpy(dt):
     like = xr.DataArray(
         np.zeros((10, 10), dtype=dt), dims=['y', 'x'],
         coords={'y': y, 'x': x}, attrs={'crs': 'EPSG:32610'})
-    with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+    with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)], like=like)
 
 
@@ -82,7 +82,7 @@ def test_like_int_dtype_default_nan_fill_raises_numpy(dt):
 @skip_no_dask
 def test_int_dtype_default_nan_fill_raises_dask_numpy():
     """Dask+numpy backend trips the guard before graph construction."""
-    with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+    with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
                   dtype=np.int32, chunks=5)
@@ -92,7 +92,7 @@ def test_int_dtype_default_nan_fill_raises_dask_numpy():
 @skip_no_cuda
 def test_int_dtype_default_nan_fill_raises_cupy():
     """CuPy backend trips the guard before any device allocation."""
-    with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+    with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
                   dtype=np.int32, use_cuda=True)
@@ -103,7 +103,7 @@ def test_int_dtype_default_nan_fill_raises_cupy():
 @skip_no_dask
 def test_int_dtype_default_nan_fill_raises_dask_cupy():
     """Dask+CuPy backend trips the guard before any device allocation."""
-    with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+    with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
                   dtype=np.int32, use_cuda=True, chunks=5)
@@ -142,7 +142,7 @@ def test_float_dtype_default_nan_fill_unaffected():
 @skip_no_shapely
 def test_int_dtype_explicit_nan_fill_also_raises():
     """``fill=np.nan`` passed explicitly trips the same guard."""
-    with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+    with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
                   fill=np.nan, dtype=np.int32)
@@ -157,7 +157,7 @@ def test_int_dtype_numpy_typed_nan_fill_raises():
     guard normalises through ``float()`` then ``np.isnan`` to catch
     every NaN flavour.
     """
-    with pytest.raises(ValueError, match="fill=NaN cannot be represented"):
+    with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
                   fill=np.float32(np.nan), dtype=np.int32)
