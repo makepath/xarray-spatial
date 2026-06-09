@@ -390,10 +390,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     path = _coerce_path(path)
 
     # ``pack``: inverse of ``open_geotiff(mask_and_scale=True)``. Reverse
-    # the scale / offset, restore the recorded integer source dtype, fill
-    # NaN back to the nodata sentinel, and drop the SCALE / OFFSET tags so
-    # the written file round-trips cleanly. Run before any dispatch (GPU /
-    # VRT / streaming / eager) so every write path sees the re-packed array.
+    # the scale / offset, restore the recorded integer source dtype, and fill
+    # NaN back to the nodata sentinel. The SCALE / OFFSET tags are kept (see
+    # ``_pack``) so the re-packed file unpacks cleanly on the next
+    # ``mask_and_scale`` read. Run before any dispatch (GPU / VRT / streaming
+    # / eager) so every write path sees the re-packed array.
     if pack:
         if not isinstance(data, xr.DataArray):
             raise ValueError(
