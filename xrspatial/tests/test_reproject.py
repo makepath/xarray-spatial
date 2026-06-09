@@ -4402,6 +4402,27 @@ class TestStreamingDtypeParity:
         assert out.shape[2] == 3
         assert out.dtype == np.uint8
 
+    def test_streaming_distributed_branch_preserves_dtype(self):
+        """The dask.bag distributed branch uses the same dtype rule (#3093).
+
+        ``_reproject_streaming`` switches to the distributed branch when a
+        ``dask.distributed`` client is active and there are more tiles than
+        workers, so run it under an in-process LocalCluster and check both
+        dtype and value parity with the local-branch result.
+        """
+        distributed = pytest.importorskip('distributed')
+        from xrspatial.reproject import _reproject_streaming
+        data = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.int16)
+        args = self._streaming_args(self._make_raster(data))
+        local_out = _reproject_streaming(*args)
+        with distributed.LocalCluster(
+            n_workers=1, processes=False, threads_per_worker=1,
+            dashboard_address=None,
+        ) as cluster, distributed.Client(cluster):
+            dist_out = _reproject_streaming(*args)
+        assert dist_out.dtype == np.int16
+        np.testing.assert_array_equal(dist_out, local_out)
+
 
 @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
                     reason="dask + cupy required")

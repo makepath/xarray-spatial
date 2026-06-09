@@ -1555,6 +1555,10 @@ def _reproject_streaming(
        O(n_tiles).
 
     Memory usage per worker: bounded by max_memory.
+
+    Output dtype follows the same rule as the dask backends: integer
+    sources round-trip back to their original dtype (the per-tile worker
+    casts tiles back after clamping), floats return float64 (#3093).
     """
     if isinstance(tile_size, int):
         tile_size = (tile_size, tile_size)
