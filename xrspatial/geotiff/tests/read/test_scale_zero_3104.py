@@ -5,8 +5,9 @@ not parse as floats. Values that parse but cannot be honoured slipped
 through: ``SCALE=0`` collapses every pixel to the offset, a non-finite
 SCALE or OFFSET destroys the array, and ``to_geotiff(pack=True)``
 divides by SCALE, so none of them have an inverse. All are now rejected
-with the same :class:`MalformedScaleOffsetError`, on both the eager and
-dask read paths (they share ``_extract_scale_offset``).
+with the same :class:`MalformedScaleOffsetError` on every read path:
+eager numpy, dask, GPU, and dask+GPU all resolve the metadata through
+``_extract_scale_offset``.
 
 ``_pack`` carries its own guard for hand-edited attrs: a
 ``scale_factor`` of zero or a non-finite ``scale_factor``/``add_offset``
@@ -18,6 +19,8 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._errors import MalformedScaleOffsetError
+
+from .._helpers.markers import requires_gpu
 
 
 def _scale_tiff(path, scale, offset="0", nodata=None):
@@ -78,6 +81,30 @@ def test_negative_scale_still_honoured(tmp_path, chunks):
     np.testing.assert_array_equal(
         np.asarray(out.data),
         np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float64) * -2.0 + 1.0)
+
+
+@requires_gpu
+@pytest.mark.parametrize("chunks", [None, 2], ids=["gpu", "dask+gpu"])
+def test_unpack_rejects_zero_scale_gpu(tmp_path, chunks):
+    """GPU and dask+GPU unpack (#3075) hit the same rejection."""
+    path = _scale_tiff(
+        str(tmp_path / f"t3104_gpu_{chunks}.tif"), scale="0")
+    kwargs = {} if chunks is None else {"chunks": chunks}
+    with pytest.raises(MalformedScaleOffsetError, match="SCALE"):
+        open_geotiff(path, unpack=True, gpu=True, **kwargs)
+
+
+@requires_gpu
+def test_valid_scale_still_unpacks_gpu(tmp_path):
+    path = _scale_tiff(
+        str(tmp_path / "t3104_gpu_good.tif"), scale="2.0", offset="1.0")
+    out = open_geotiff(path, unpack=True, gpu=True)
+    arr = out.data
+    if hasattr(arr, "get"):
+        arr = arr.get()
+    np.testing.assert_array_equal(
+        np.asarray(arr),
+        np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float64) * 2.0 + 1.0)
 
 
 def test_pack_rejects_zero_scale_factor_attr(tmp_path):
