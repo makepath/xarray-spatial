@@ -6925,3 +6925,76 @@ class TestNonWgsDatumNumbaFastPath:
         # Guard against the old corruption: coords must be metres, not degrees.
         assert np.all(np.abs(src_x) > 1000.0)
         assert np.all(np.abs(src_y) > 1000.0)
+
+
+@pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+class TestNonWgsDatumCudaFastPath:
+    """The CUDA fast path must bail for non-WGS84 datums (GH #3094).
+
+    GH #2651 gated the CPU fast paths so non-WGS84 datums fall back to
+    pyproj, but try_cuda_transform kept dispatching them. The projected
+    CRS matchers accept any datum in the Helmert table, so a pair like
+    EPSG:4326 <-> EPSG:27700 (OSGB36 / Airy) ran the WGS84 Krueger
+    series with no datum shift and returned coordinates ~100 m off,
+    making the cupy and dask+cupy backends diverge from numpy.
+    """
+
+    def test_cuda_fast_path_disabled_for_non_wgs_target(self):
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:27700')
+        result = try_cuda_transform(
+            src, tgt, (400000.0, 200000.0, 410000.0, 210000.0), (4, 4),
+        )
+        assert result is None
+
+    def test_cuda_fast_path_disabled_for_projected_non_wgs_source(self):
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:27700')
+        tgt = pyproj.CRS('EPSG:4326')
+        result = try_cuda_transform(src, tgt, (-2.0, 51.0, -1.0, 52.0), (4, 4))
+        assert result is None
+
+    def test_cuda_fast_path_disabled_for_geographic_non_wgs_source(self):
+        # NAD27 geographic (Clarke 1866 datum) -> Web Mercator.
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:4267')
+        tgt = pyproj.CRS('EPSG:3857')
+        result = try_cuda_transform(
+            src, tgt, (-8000000.0, 4000000.0, -7900000.0, 4100000.0), (4, 4),
+        )
+        assert result is None
+
+    def test_cuda_wgs_fast_path_still_active(self):
+        # WGS84 UTM <-> WGS84 geographic must keep using the CUDA path.
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:32617')
+        tgt = pyproj.CRS('EPSG:4326')
+        result = try_cuda_transform(src, tgt, (-84.0, 40.0, -83.0, 41.0), (4, 4))
+        assert result is not None
+
+    def test_cupy_reproject_matches_numpy_for_osgb36_target(self):
+        # End to end: cupy must agree with numpy for a non-WGS84 datum
+        # target. Before the fix the cupy backend sampled ~10 pixels away
+        # from the right source location (~100 m datum/ellipsoid error).
+        from xrspatial.reproject import reproject
+        rng = np.random.default_rng(3094)
+        data = rng.random((64, 64))
+        coords = {'y': np.linspace(52.0, 51.0, 64),
+                  'x': np.linspace(-2.0, -1.0, 64)}
+        host = xr.DataArray(
+            data, dims=['y', 'x'], coords=coords,
+            attrs={'crs': 'EPSG:4326'},
+        )
+        eager = reproject(host, 'EPSG:27700').values
+        gpu = host.copy(data=cp.asarray(data))
+        gpu_out = reproject(gpu, 'EPSG:27700')
+        gpu_arr = cp.asnumpy(gpu_out.data)
+        assert eager.shape == gpu_arr.shape
+        # NaN masks must agree cell for cell.
+        np.testing.assert_array_equal(
+            np.isfinite(eager), np.isfinite(gpu_arr),
+        )
+        np.testing.assert_allclose(
+            eager, gpu_arr, rtol=1e-4, atol=1e-4, equal_nan=True,
+        )
