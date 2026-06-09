@@ -78,6 +78,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                        allow_experimental_codecs: bool = False,
                        allow_unparseable_crs: bool = False,
                        drop_rotation: bool = False,
+                       pack: bool = False,
                        ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
@@ -255,6 +256,11 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         ``False`` refuses the write with ``ValueError``; the GPU
         writer does not emit a ``ModelTransformationTag`` either, so
         the silent-loss surface is identical on both backends.
+    pack : bool, default False
+        [advanced] No-op on the GPU writer: it exists for signature
+        parity with ``to_geotiff``, which applies the ``pack`` re-pack
+        transform before dispatching here. See ``to_geotiff`` for the
+        behaviour.
 
     Returns
     -------
@@ -442,6 +448,10 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # the kwarg exists for API parity with to_geotiff so callers can pass
     # the same kwargs to both entry points without filtering.
     del streaming_buffer_bytes
+    # ``pack`` is likewise a no-op here: ``to_geotiff`` applies the
+    # re-pack transform before dispatching to this writer, so the kwarg
+    # only needs to exist for signature parity (#3064).
+    del pack
     try:
         import cupy
     except ImportError:
