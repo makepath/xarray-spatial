@@ -1559,6 +1559,24 @@ def _reproject_streaming(
     if isinstance(tile_size, int):
         tile_size = (tile_size, tile_size)
 
+    # Match the dask backends: integer sources round-trip back to their
+    # original dtype after clamping (the per-tile worker already casts
+    # tiles back); floats stay float64. Without this, the streaming path
+    # silently promoted integer inputs to float64 while every other
+    # backend preserved the source dtype (#3093).
+    src_dtype = np.dtype(raster.dtype)
+    if np.issubdtype(src_dtype, np.integer):
+        out_dtype = src_dtype
+    else:
+        out_dtype = np.dtype(np.float64)
+
+    # 3-D (y, x, band) sources produce 3-D tiles, so the assembled output
+    # needs the band axis too (#3093).
+    if raster.data.ndim == 3:
+        result_shape = (*out_shape, raster.data.shape[2])
+    else:
+        result_shape = out_shape
+
     row_chunks, col_chunks = _compute_chunk_layout(out_shape, tile_size)
 
     tile_mem = tile_size[0] * tile_size[1] * 8 * 4  # ~4 arrays per tile
@@ -1612,14 +1630,14 @@ def _reproject_streaming(
         )
 
         # Compute all partitions and assemble result
-        result = np.full(out_shape, nodata, dtype=np.float64)
+        result = np.full(result_shape, nodata, dtype=out_dtype)
         for batch_results in results_bag.compute():
             for ro, co, tile in batch_results:
                 result[ro:ro + tile.shape[0], co:co + tile.shape[1]] = tile
         return result
 
     # Local: ThreadPoolExecutor within one process
-    result = np.full(out_shape, nodata, dtype=np.float64)
+    result = np.full(result_shape, nodata, dtype=out_dtype)
     batch_results = _process_tile_batch(
         jobs, raster.data,
         src_bounds, src_shape, y_desc,

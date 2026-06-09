@@ -4318,6 +4318,91 @@ class TestDaskDtypeParity:
         assert result.compute().dtype == np.float64
 
 
+class TestStreamingDtypeParity:
+    """The streaming fallback must match the other backends' dtype rule (#3093).
+
+    ``_reproject_streaming`` is only reachable through ``reproject()`` when
+    dask is not installed and the in-memory source exceeds 512 MB, so these
+    tests call the helper directly with grid parameters built the same way
+    ``reproject()`` builds them. Before the fix it allocated the assembled
+    output as float64 regardless of the source dtype (the other four
+    backends round-trip integer dtypes, see #2505) and allocated it 2-D,
+    which crashed on 3-D ``(y, x, band)`` sources.
+    """
+
+    def _streaming_args(self, raster):
+        from xrspatial.reproject import (
+            _is_y_descending,
+            _source_bounds,
+        )
+        from xrspatial.reproject._crs_utils import _detect_nodata, _resolve_crs
+        from xrspatial.reproject._grid import _compute_output_grid
+
+        src_crs = _resolve_crs('EPSG:4326')
+        tgt_crs = _resolve_crs('EPSG:3857')
+        src_bounds = _source_bounds(raster)
+        src_shape = raster.shape[:2]
+        grid = _compute_output_grid(src_bounds, src_shape, src_crs, tgt_crs)
+        nd = _detect_nodata(raster, None, dtype=raster.dtype)
+        return (
+            raster, src_bounds, src_shape, _is_y_descending(raster),
+            src_crs.to_wkt(), tgt_crs.to_wkt(),
+            grid['bounds'], grid['shape'],
+            'nearest', nd, 16,
+            8,          # tile_size: force multiple tiles
+            1024 ** 3,  # max_memory_bytes
+        )
+
+    def _make_raster(self, data):
+        coords = {
+            'y': np.linspace(50, 45, data.shape[0]),
+            'x': np.linspace(-5, 0, data.shape[1]),
+        }
+        dims = ['y', 'x'] if data.ndim == 2 else ['y', 'x', 'band']
+        if data.ndim == 3:
+            coords['band'] = np.arange(data.shape[2])
+        return xr.DataArray(data, dims=dims, coords=coords,
+                            attrs={'crs': 'EPSG:4326'})
+
+    def test_streaming_int16_preserves_dtype(self):
+        from xrspatial.reproject import _reproject_streaming
+        data = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.int16)
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.dtype == np.int16
+
+    def test_streaming_uint8_preserves_dtype(self):
+        from xrspatial.reproject import _reproject_streaming
+        data = (np.arange(32 * 32).reshape(32, 32) % 200).astype(np.uint8)
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.dtype == np.uint8
+
+    def test_streaming_float64_stays_float64(self):
+        from xrspatial.reproject import _reproject_streaming
+        data = np.random.RandomState(0).rand(32, 32)
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.dtype == np.float64
+
+    def test_streaming_matches_inmemory_values(self):
+        """Streaming and in-memory numpy paths agree on values and dtype."""
+        from xrspatial.reproject import _reproject_streaming, reproject
+        data = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.int16)
+        raster = self._make_raster(data)
+        out = _reproject_streaming(*self._streaming_args(raster))
+        expected = reproject(raster, 'EPSG:3857', resampling='nearest')
+        assert out.dtype == expected.dtype
+        np.testing.assert_array_equal(out, expected.values)
+
+    def test_streaming_3d_band_axis(self):
+        """3-D (y, x, band) sources assemble instead of crashing (#3093)."""
+        from xrspatial.reproject import _reproject_streaming
+        base = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.uint8)
+        data = np.dstack([base, base + 1, base + 2])
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.ndim == 3
+        assert out.shape[2] == 3
+        assert out.dtype == np.uint8
+
+
 @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
                     reason="dask + cupy required")
 class TestDaskCupyDtypeParity:
