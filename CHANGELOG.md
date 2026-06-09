@@ -2,6 +2,41 @@
 -----------
 
 
+### Version 0.10.6 - 2026-06-08
+
+#### New features
+- emerging_hotspots: compute the Getis-Ord Gi* statistic (#3040)
+- re-export open_geotiff and to_geotiff from top-level xrspatial (#3005) (#3006)
+- add Cursor IDE support (.cursorrules and .cursor/rules/) (#3019)
+
+#### Bug fixes and improvements
+- reproject: fix flake8/isort style issues (#3052)
+- reproject: parametrize dask+cupy parity over resampling modes (#3050) (#3051)
+- reproject: make the output-size guard backend-aware (#3046) (#3047)
+- contours: add a cross-backend NaN-input parity test (#3045)
+- sweep: drop merge=union for state CSVs (#2754) (#3043)
+- flow_path_dinf: fix a hang on cyclic D-inf flow directions (#2796) (#3042)
+- viewshed: fix the broken bounds-check guard in _calculate_event_row_col() (#2793) (#3035)
+- viewshed: validate observer_elev and target_elev before dispatch (#2794) (#3037)
+- warnings: name the calling function in the unit-mismatch warning (#2782) (#3036)
+- stream_link_mfd / stream_order_mfd: keep the dask assembly lazy (#2885) (#3039)
+- remove dead datum-shift machinery (#2659) (#3038)
+- polygonize: fix dask 8-connectivity float divergence at large rtol (#2677) (#3041)
+- viewshed: validate regular grid spacing (#2789) (#3034)
+- geotiff: reject to_geotiff(compression=None) with a clear TypeError (#2978) (#3029)
+- geotiff: fix UnboundLocalError on restore_sentinel in plain-ndarray VRT tiled write (#2969) (#3028)
+- contours: add tests for the all-NaN auto-levels RuntimeWarning regression (#2795) (#3009)
+- geotiff: thread sidecar_origin through the HTTP/fsspec sidecar georef path (#3027)
+- geotiff: remove stale external-overview skips on dask/fsspec/GPU golden-corpus backends (#3026)
+- geotiff: route remote sidecar parse failures through the shared policy (#3022) (#3025)
+- geotiff: size the streaming write budget from source chunks, not output tiles (#3008)
+- contours: fix the border collar on integer dask input (#3020) (#3021)
+- contours: fix return_type validation to fail fast on invalid values (#3010)
+
+#### Contributors
+- Thanks to @brendancol and @Melissari1997 for their contributions to this release.
+
+
 ### Version 0.10.5 - 2026-06-06
 
 #### New features
