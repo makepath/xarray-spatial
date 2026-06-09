@@ -6844,6 +6844,107 @@ class TestExactPrecisionEscapeHatch:
 
 
 @pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
+class TestNoDuplicateNumbaFastPathProbe:
+    """The numpy chunk worker must probe the numba fast path exactly once
+    per chunk (#3106).
+
+    The bug: for CRS pairs with no fast path, _reproject_chunk_numpy
+    called try_numba_transform (None), then fell into _transform_coords
+    which called try_numba_transform again before the pyproj control
+    grid. Each wasted probe re-parses CRS params and allocates four
+    chunk-sized coordinate arrays.
+    """
+
+    _BOUNDS = (-2_000_000.0, 4_000_000.0, -1_000_000.0, 5_000_000.0)
+    _SHAPE = (16, 16)
+
+    @staticmethod
+    def _wkts():
+        # WGS84 -> Mollweide has no numba fast path, so the worker takes
+        # the pyproj fallback where the duplicate probe used to happen.
+        return (pyproj.CRS('EPSG:4326').to_wkt(),
+                pyproj.CRS('ESRI:54009').to_wkt())
+
+    def test_chunk_numpy_probes_fast_path_exactly_once(self, monkeypatch):
+        from xrspatial.reproject import _reproject_chunk_numpy
+        from xrspatial.reproject import _projections
+
+        calls = []
+        real = _projections.try_numba_transform
+
+        def _spy(*args, **kwargs):
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_projections, 'try_numba_transform', _spy)
+
+        src_wkt, tgt_wkt = self._wkts()
+        source_data = np.arange(32 * 32, dtype=np.float64).reshape(32, 32)
+        out = _reproject_chunk_numpy(
+            source_data,
+            (-20.0, 35.0, -10.0, 45.0), (32, 32), True,
+            src_wkt, tgt_wkt,
+            self._BOUNDS, self._SHAPE,
+            'bilinear', np.nan, 16,
+        )
+        assert out.shape == self._SHAPE
+        assert len(calls) == 1, (
+            f"expected one try_numba_transform probe per chunk, "
+            f"got {len(calls)} (#3106)"
+        )
+
+    def test_transform_coords_still_probes_when_given_crs(self, monkeypatch):
+        """_transform_coords keeps its own probe for callers that have not
+        tried the numba path yet (the cupy CPU fallbacks rely on it)."""
+        from xrspatial.reproject import _transform_coords
+        from xrspatial.reproject import _projections
+
+        calls = []
+        real = _projections.try_numba_transform
+
+        def _spy(*args, **kwargs):
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_projections, 'try_numba_transform', _spy)
+
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:3857')
+        transformer = pyproj.Transformer.from_crs(tgt, src, always_xy=True)
+        _transform_coords(
+            transformer, self._BOUNDS, self._SHAPE, 16,
+            src_crs=src, tgt_crs=tgt,
+        )
+        assert len(calls) == 1
+
+    def test_fallback_pair_values_match_pyproj_reference(self):
+        """The skipped retry must not change the worker's coordinates:
+        the pyproj fallback output stays identical for a no-fast-path
+        pair (exact path, so it is directly comparable to pyproj)."""
+        from xrspatial.reproject import _transform_coords
+
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('ESRI:54009')
+        transformer = pyproj.Transformer.from_crs(tgt, src, always_xy=True)
+        src_y, src_x = _transform_coords(
+            transformer, self._BOUNDS, self._SHAPE, 0,
+        )
+
+        h, w = self._SHAPE
+        left, bottom, right, top = self._BOUNDS
+        res_x = (right - left) / w
+        res_y = (top - bottom) / h
+        out_x = left + (np.arange(w) + 0.5) * res_x
+        out_y = top - (np.arange(h) + 0.5) * res_y
+        gx, gy = np.meshgrid(out_x, out_y)
+        ref_x, ref_y = transformer.transform(gx.ravel(), gy.ravel())
+        np.testing.assert_allclose(
+            src_x, np.asarray(ref_x).reshape(h, w), atol=1e-9)
+        np.testing.assert_allclose(
+            src_y, np.asarray(ref_y).reshape(h, w), atol=1e-9)
+
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
 class TestNonWgsDatumNumbaFastPath:
     """The numba fast path must not corrupt coordinates for non-WGS84
     datums (GH #2651).
