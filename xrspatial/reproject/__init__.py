@@ -63,6 +63,10 @@ __all__ = [
 _Y_NAMES = {'y', 'lat', 'latitude', 'Y', 'Lat', 'Latitude'}
 _X_NAMES = {'x', 'lon', 'longitude', 'X', 'Lon', 'Longitude'}
 
+# Output byte budget above which merge() auto-promotes an in-memory mosaic
+# to the lazy dask path instead of allocating the whole array.
+_MERGE_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
+
 # Map friendly vertical datum tokens to EPSG codes so attrs['vertical_crs']
 # from reproject output matches the convention used by xrspatial.geotiff,
 # which also writes EPSG ints to attrs['vertical_crs'].
@@ -2305,19 +2309,12 @@ def merge(
     else:
         merged_bounds = bounds
 
-    # Use first raster's info for resolution estimation if needed
-    info0 = raster_infos[0]
-    grid = _compute_output_grid(
-        info0['src_bounds'], info0['src_shape'],
-        info0['src_crs'], tgt_crs,
-        resolution=resolution, bounds=merged_bounds,
-        bounds_policy=bounds_policy,
-    )
-    out_bounds = grid['bounds']
-    out_shape = grid['shape']
-    tgt_wkt = tgt_crs.to_wkt()
-
-    # Detect if any input is dask, or if total size exceeds memory threshold
+    # Detect dask inputs up front. A dask-backed merge runs through the
+    # lazy _merge_dask path and never materializes the full output, so its
+    # output-size guard must be skipped. The auto-promote-to-dask decision
+    # below also needs the output shape, which only exists after the grid
+    # is computed -- so compute the grid with the guard disabled here and
+    # re-apply it only when the final path is the in-memory merge.
     from ..utils import has_dask_array
 
     any_dask = False
@@ -2325,12 +2322,39 @@ def merge(
         import dask.array as _da
         any_dask = any(isinstance(r.data, _da.Array) for r in rasters)
 
+    # Use first raster's info for resolution estimation if needed
+    info0 = raster_infos[0]
+    grid = _compute_output_grid(
+        info0['src_bounds'], info0['src_shape'],
+        info0['src_crs'], tgt_crs,
+        resolution=resolution, bounds=merged_bounds,
+        bounds_policy=bounds_policy,
+        lazy_output=True,
+    )
+    out_bounds = grid['bounds']
+    out_shape = grid['shape']
+    tgt_wkt = tgt_crs.to_wkt()
+
     # Auto-promote to dask path if output would be too large for in-memory merge
     if not any_dask:
         out_nbytes = out_shape[0] * out_shape[1] * 8 * len(rasters)  # float64 per tile
-        _OOM_THRESHOLD = 512 * 1024 * 1024
-        if out_nbytes > _OOM_THRESHOLD:
+        if out_nbytes > _MERGE_OOM_THRESHOLD:
             any_dask = True
+
+    if not any_dask:
+        # The final path is the in-memory merge, which allocates the whole
+        # output array. Re-apply the output-size guard that was skipped
+        # during grid computation so a genuinely in-memory merge over the
+        # pixel limit still raises (the guard skip only applies to the
+        # lazy dask path).
+        _MAX_OUTPUT_PIXELS = 1_000_000_000
+        if out_shape[0] * out_shape[1] > _MAX_OUTPUT_PIXELS:
+            raise ValueError(
+                f"Computed output grid is too large ({out_shape[1]} x "
+                f"{out_shape[0]} = {out_shape[0] * out_shape[1]:,} pixels, "
+                f"limit is {_MAX_OUTPUT_PIXELS:,}). Increase the resolution "
+                f"parameter or reduce the output extent."
+            )
 
     if any_dask:
         result_data = _merge_dask(

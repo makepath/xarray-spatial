@@ -2534,6 +2534,76 @@ class TestSecurityGuards:
         result = reproject(raster, target_crs='EPSG:3857')
         assert result.shape[0] > 0 and result.shape[1] > 0
 
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_merge_dask_output_over_limit_stays_lazy(self):
+        """A dask-backed merge whose output exceeds 1e9 pixels runs through
+        the lazy path instead of tripping the in-memory guard (issue #3048)."""
+        from xrspatial.reproject import merge
+
+        a = _make_raster(
+            np.full((32, 32), 1.0), x_range=(-105, -104), y_range=(39, 40)
+        )
+        b = _make_raster(
+            np.full((32, 32), 2.0), x_range=(-104, -103), y_range=(39, 40)
+        )
+        a.data = da.from_array(a.values, chunks=(16, 16))
+        b.data = da.from_array(b.values, chunks=(16, 16))
+
+        # Tiny resolution forces > 1e9 output pixels. The merge is dask
+        # backed, so the result stays lazy and the guard must not fire.
+        out = merge([a, b], resolution=4e-5, chunk_size=1024)
+
+        assert isinstance(out.data, da.Array)
+        assert out.shape[0] * out.shape[1] > 1_000_000_000
+        # A single block computes without materializing the whole grid.
+        assert out.data.blocks[0, 0].compute().shape == (1024, 1024)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_merge_inmemory_auto_promote_over_limit_stays_lazy(self):
+        """An in-memory merge whose output exceeds 1e9 pixels auto-promotes
+        to the dask path and must not raise the in-memory guard (issue #3048)."""
+        from xrspatial.reproject import merge
+
+        a = _make_raster(
+            np.full((32, 32), 1.0), x_range=(-105, -104), y_range=(39, 40)
+        )
+        b = _make_raster(
+            np.full((32, 32), 2.0), x_range=(-104, -103), y_range=(39, 40)
+        )
+
+        # Numpy inputs over the in-memory size threshold auto-promote to
+        # dask, so the > 1e9 pixel output must not trip the guard.
+        out = merge([a, b], resolution=4e-5, chunk_size=1024)
+
+        assert isinstance(out.data, da.Array)
+        assert out.shape[0] * out.shape[1] > 1_000_000_000
+
+    def test_merge_inmemory_over_limit_still_raises(self, monkeypatch):
+        """A genuinely in-memory merge over the pixel limit still raises the
+        'too large' guard (issue #3048 must not weaken the in-memory path).
+
+        Disabling the auto-promote-to-dask threshold keeps a > 1e9 pixel
+        output on the in-memory path, where the guard must still reject it.
+        """
+        import importlib
+
+        from xrspatial.reproject import merge
+        _reproject = importlib.import_module('xrspatial.reproject')
+
+        # Raise the auto-promote byte budget above the test output so the
+        # merge stays on the in-memory branch instead of promoting to dask.
+        monkeypatch.setattr(_reproject, '_MERGE_OOM_THRESHOLD', 1 << 60)
+
+        a = _make_raster(
+            np.full((32, 32), 1.0), x_range=(-105, -104), y_range=(39, 40)
+        )
+        b = _make_raster(
+            np.full((32, 32), 2.0), x_range=(-104, -103), y_range=(39, 40)
+        )
+
+        with pytest.raises(ValueError, match="too large"):
+            merge([a, b], resolution=4e-5)
+
 
 # =====================================================================
 # Issue #1431: _validate_raster on public API inputs
