@@ -1656,7 +1656,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
 
 
 def _pack(data):
-    """Re-pack a ``mask_and_scale=True`` read for writing -- inverse of
+    """Re-pack an ``unpack=True`` read for writing -- inverse of
     :func:`_extract_scale_offset`'s forward direction.
 
     Reverses the scale / offset applied on read (``(data - add_offset) /
@@ -1668,12 +1668,12 @@ def _pack(data):
 
     The SCALE / OFFSET GDAL_METADATA tags are kept: the written file stores
     the raw packed integers and re-declares the scale, so reopening with
-    ``mask_and_scale=True`` unpacks to the same values rather than scaling a
+    ``unpack=True`` unpacks to the same values rather than scaling a
     second time. (The double-scale bug the round-trip caveat warns about
     comes from writing the *already-scaled* floats with the tags still on;
     reversing the scale first, as here, makes keeping the tags correct.)
 
-    Raises ``ValueError`` when ``data`` carries no mask_and_scale state to
+    Raises ``ValueError`` when ``data`` carries no unpack state to
     reverse, or when an integer dtype must be restored but NaN pixels are
     present with no declared sentinel to fill them.
     """

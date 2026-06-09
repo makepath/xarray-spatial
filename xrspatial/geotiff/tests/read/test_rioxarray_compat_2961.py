@@ -576,18 +576,16 @@ def test_mixed_per_band_error_names_unpack_not_alias(tmp_path):
     assert "mask_and_scale" not in msg
 
 
-def test_malformed_scale_error_names_unpack_not_alias(tmp_path):
+@pytest.mark.parametrize(
+    "builder,fname",
+    [(_malformed_scale_tiff, "t3086_bad_scale.tif"),
+     (_malformed_xml_tiff, "t3086_bad_xml.tif")],
+    ids=["bad_scale_value", "bad_xml"])
+def test_malformed_scale_error_names_unpack_not_alias(tmp_path, builder, fname):
     """Same contract for the malformed SCALE and malformed XML rejections."""
-    path = _malformed_scale_tiff(str(tmp_path / "t3086_bad_scale.tif"))
+    path = builder(str(tmp_path / fname))
     with pytest.raises(MalformedScaleOffsetError) as excinfo:
         open_geotiff(path, unpack=True)
-    msg = str(excinfo.value)
-    assert "unpack=True" in msg
-    assert "mask_and_scale" not in msg
-
-    xml_path = _malformed_xml_tiff(str(tmp_path / "t3086_bad_xml.tif"))
-    with pytest.raises(MalformedScaleOffsetError) as excinfo:
-        open_geotiff(xml_path, unpack=True)
     msg = str(excinfo.value)
     assert "unpack=True" in msg
     assert "mask_and_scale" not in msg
