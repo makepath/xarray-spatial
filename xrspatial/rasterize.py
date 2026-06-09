@@ -3048,7 +3048,14 @@ def rasterize(
         ``fill=-9999``) or use a floating dtype.
     dtype : numpy dtype, optional
         Data type of the output array.  Defaults to np.float64, or
-        to the dtype of ``like`` if provided.
+        to the dtype of ``like`` if provided.  When this resolves to an
+        integer type, burn values are validated against the float64 safe
+        integer range: the rasterizer computes in float64, so a value
+        with magnitude above ``2**53 - 1`` cannot be cast back to an
+        exact integer (e.g. ``2**53 + 1`` would land on ``2**53``).  Such
+        a value is rejected with ``ValueError`` rather than silently
+        rounded; use a floating dtype to burn identifiers larger than
+        that.
     all_touched : bool, default False
         If True, every pixel a polygon boundary passes through is
         burned in addition to the normal center-fill, using a
