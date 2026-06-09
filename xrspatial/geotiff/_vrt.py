@@ -2028,7 +2028,10 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         georeferencing (issue #3116). Rejected when any source is
         georeferenced: georeferenced sources place via their
         GeoTransform and an explicit override would let the two
-        disagree silently.
+        disagree silently. Offsets are not checked for overlap or
+        full coverage; the tiled write path always supplies a
+        non-overlapping cover, and a direct caller is responsible
+        for its own layout.
 
     Returns
     -------

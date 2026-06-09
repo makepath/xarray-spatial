@@ -15,6 +15,7 @@ explicit placement.
 from __future__ import annotations
 
 import importlib.util
+import pathlib
 
 import numpy as np
 import pytest
@@ -85,7 +86,7 @@ def test_non_georef_index_places_tiles_by_pixel_offset(tmp_path):
     vrt_path = str(tmp_path / "ng_xml_3116.vrt")
     to_geotiff(xr.DataArray(_DATA, dims=("y", "x")), vrt_path, tile_size=16)
 
-    xml = open(vrt_path).read()
+    xml = pathlib.Path(vrt_path).read_text()
     assert 'rasterXSize="32" rasterYSize="24"' in xml
     for rect in ('<DstRect xOff="0" yOff="0" xSize="16" ySize="16"/>',
                  '<DstRect xOff="16" yOff="0" xSize="16" ySize="16"/>',
@@ -220,8 +221,7 @@ def test_write_vrt_dst_offsets_length_mismatch_raises(tmp_path):
     "00",                # not a pair at all
 ])
 def test_write_vrt_dst_offsets_bad_pair_raises(tmp_path, bad):
-    a = _write_plain_tile(tmp_path, f"bad_a_{hash(str(bad)) & 0xffff}_3116.tif",
-                          _DATA[:8, :8])
+    a = _write_plain_tile(tmp_path, "bad_a_3116.tif", _DATA[:8, :8])
     with pytest.raises(ValueError, match="dst_offsets"):
         _write_vrt_internal(str(tmp_path / "bad_3116.vrt"), [a],
                             dst_offsets=[bad])
