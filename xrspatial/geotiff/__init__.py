@@ -717,6 +717,11 @@ def open_geotiff(source: str | BinaryIO, *,
         scale / offset is applied. Supported on the CPU eager, dask, GPU
         (``gpu=True``), and dask+GPU (``gpu=True, chunks=``) paths;
         combining it with a ``.vrt`` source raises ``ValueError``.
+        On the dask+GPU path, ``unpack=True`` reads through the
+        CPU-decode-then-upload route rather than the direct disk->GPU GDS
+        fast path (the GDS path has no scale step), so a local tiled COG
+        that would otherwise stream straight to the device decodes on CPU
+        first.
         Round-trip caveat: the source's ``SCALE`` / ``OFFSET`` tags stay on
         ``attrs['gdal_metadata']`` / ``attrs['gdal_metadata_xml']`` after the
         read, so writing an ``unpack=True`` result back out with

@@ -418,6 +418,26 @@ def test_unpack_dask_gpu_matches_cpu(tmp_path):
     assert dgpu.attrs.get("scale_factor") == 2.0
 
 
+@requires_gpu
+def test_unpack_gpu_no_metadata_is_noop(tmp_path):
+    """GPU ``unpack`` on a source without SCALE/OFFSET masks but does not
+    scale, matching the CPU no-op contract."""
+    path = _int_sentinel_tiff(str(tmp_path / "t3071_unpack_gpu_noop.tif"))
+    gpu = open_geotiff(path, unpack=True, gpu=True)
+    host = gpu.data.get()
+    assert host[0, 0] == 1.0
+    assert np.isnan(host[0, 2])
+    assert "scale_factor" not in gpu.attrs
+
+
+@requires_gpu
+def test_unpack_gpu_int_dtype_raises(tmp_path):
+    """A ``dtype=<integer>`` cast under GPU ``unpack`` raises, like CPU."""
+    path = _scale_offset_tiff(str(tmp_path / "t3071_unpack_gpu_int.tif"))
+    with pytest.raises(ValueError):
+        open_geotiff(path, unpack=True, gpu=True, dtype="uint8")
+
+
 def test_parse_coordinates_false_gpu_rejected(tmp_path):
     path = _int_sentinel_tiff(str(tmp_path / "t2961_gate_gpu_pc.tif"))
     with pytest.raises(ValueError, match="parse_coordinates=False.*gpu=True"):

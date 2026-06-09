@@ -1487,6 +1487,12 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     ``_gds_chunk_path_available``. Each chunk task pulls only the tile
     subset overlapping its window via KvikIO GDS (or an mmap fallback
     inside ``gpu_decode_tiles_from_file``) and crops on device.
+
+    This path is unpack-free: it decodes straight to the device with no
+    SCALE/OFFSET step, so ``_read_geotiff_gpu_chunked`` disqualifies it
+    when ``mask_and_scale=True`` and routes that read through the
+    CPU-decode fallback instead. A future direct caller that needs unpack
+    must take the same fallback rather than calling this helper.
     """
     import cupy
     import dask
