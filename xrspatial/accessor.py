@@ -841,6 +841,10 @@ class XrsSpatialDataArrayAccessor:
             ``'bilinear'`` otherwise. Note an integer-typed continuous
             DEM (e.g. int16 elevation) is treated as categorical under
             ``'auto'``; pass ``resampling='bilinear'`` for those.
+            Conversely, an integer raster read with a nodata sentinel is
+            promoted to float on read, so a categorical raster that
+            carries nodata and no colormap resolves to ``'bilinear'``;
+            pass ``resampling='nearest'`` for those.
         **kwargs
             Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
             ``window=``, which is computed automatically).
@@ -1352,6 +1356,10 @@ class XrsSpatialDatasetAccessor:
             ``'bilinear'`` otherwise. Note an integer-typed continuous
             DEM (e.g. int16 elevation) is treated as categorical under
             ``'auto'``; pass ``resampling='bilinear'`` for those.
+            Conversely, an integer raster read with a nodata sentinel is
+            promoted to float on read, so a categorical raster that
+            carries nodata and no colormap resolves to ``'bilinear'``;
+            pass ``resampling='nearest'`` for those.
         **kwargs
             Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
             ``window=``, which is computed automatically).

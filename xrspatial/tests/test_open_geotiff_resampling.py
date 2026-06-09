@@ -113,6 +113,31 @@ def test_explicit_override_forwarded(tmp_path, reproject_spy):
     assert reproject_spy['resampling'] == 'cubic'
 
 
+def test_categorical_real_reproject_preserves_class_ids(tmp_path):
+    # End-to-end (no spy): an integer class raster reprojected under
+    # 'auto' uses nearest, so every output value is an original class ID
+    # rather than an averaged in-between value.
+    classes = np.array([10, 20, 30, 40], dtype=np.int16)
+    template, path = _mismatch_template_and_file(
+        tmp_path, np.int16, 'rs3067_classids.tif')
+    # Rewrite the file with only a few distinct class values
+    height, width = 30, 30
+    y = np.linspace(45.5, 44.5, height)
+    x = np.linspace(-120.5, -119.5, width)
+    block = np.tile(classes, (height, width // classes.size + 1))[:, :width]
+    file_da = xr.DataArray(
+        block.astype(np.int16), dims=['y', 'x'],
+        coords={'y': y, 'x': x}, attrs={'crs': 4326},
+    )
+    to_geotiff(file_da, path, compression='none')
+
+    result = template.xrs.open_geotiff(path, auto_reproject=True)
+    vals = np.asarray(result.data)
+    finite = vals[np.isfinite(vals)]
+    assert finite.size > 0
+    assert np.isin(finite, classes).all()
+
+
 # ---------------------------------------------------------------------------
 # Validation and no-op behaviour
 # ---------------------------------------------------------------------------
