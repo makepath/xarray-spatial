@@ -1,7 +1,7 @@
 """Eager/dask dtype parity for ``mask_and_scale`` reads (#3066).
 
 The dask reader used to promote any integer source to float64 for
-``mask_and_scale=True`` regardless of whether a scale/offset or a fittable
+``unpack=True`` regardless of whether a scale/offset or a fittable
 nodata sentinel was present, while the eager reader kept the integer dtype
 when there was nothing to transform. These tests pin the two paths to the
 same dtype (and values) across the relevant cases.
@@ -54,8 +54,8 @@ def test_eager_dask_dtype_parity(tmp_path, label, nodata, scale, offset,
         tmp_path / f"src_{label}_3066.tif", _DATA,
         nodata=nodata, scale=scale, offset=offset)
 
-    eager = open_geotiff(path, mask_and_scale=True)
-    lazy = open_geotiff(path, mask_and_scale=True, chunks=2)
+    eager = open_geotiff(path, unpack=True)
+    lazy = open_geotiff(path, unpack=True, chunks=2)
 
     assert str(eager.dtype) == expected_dtype
     assert str(lazy.dtype) == expected_dtype

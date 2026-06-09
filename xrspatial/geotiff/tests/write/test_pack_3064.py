@@ -1,6 +1,6 @@
-"""``to_geotiff(pack=True)`` -- the inverse of ``mask_and_scale=True`` (#3064).
+"""``to_geotiff(pack=True)`` -- the inverse of ``unpack=True`` (#3064).
 
-A ``mask_and_scale=True`` read promotes an integer raster to float64,
+A ``unpack=True`` read promotes an integer raster to float64,
 applies the GDAL SCALE/OFFSET, and masks the nodata sentinel to NaN.
 ``pack=True`` reverses that on write: it un-scales, fills NaN back to the
 sentinel, and restores the integer source dtype recorded on
@@ -41,8 +41,8 @@ def _write_int_tiff(path, data, *, nodata=None, scale=None, offset=None):
 
 
 def _reopen(path, chunks):
-    return (open_geotiff(path, mask_and_scale=True) if chunks is None
-            else open_geotiff(path, mask_and_scale=True, chunks=chunks))
+    return (open_geotiff(path, unpack=True) if chunks is None
+            else open_geotiff(path, unpack=True, chunks=chunks))
 
 
 # ---------------------------------------------------------------------------
@@ -107,8 +107,8 @@ def test_pack_with_scale_offset_round_trip(tmp_path, chunks):
 
     # The SCALE/OFFSET tags are kept, so a mask_and_scale read of the packed
     # file reproduces the original decoded values rather than scaling twice.
-    eager_decoded = open_geotiff(src, mask_and_scale=True)
-    repacked_decoded = open_geotiff(out, mask_and_scale=True)
+    eager_decoded = open_geotiff(src, unpack=True)
+    repacked_decoded = open_geotiff(out, unpack=True)
     np.testing.assert_allclose(
         repacked_decoded.data, eager_decoded.data, equal_nan=True)
 
@@ -122,8 +122,8 @@ def test_mask_and_scale_dtype_recorded_eager_dask_match(tmp_path):
     data = np.array([[1, 2, 255], [4, 5, 6]], dtype=np.uint8)
     src = _write_int_tiff(tmp_path / "src_attr_3064.tif", data, nodata=255)
 
-    eager = open_geotiff(src, mask_and_scale=True)
-    lazy = open_geotiff(src, mask_and_scale=True, chunks=2)
+    eager = open_geotiff(src, unpack=True)
+    lazy = open_geotiff(src, unpack=True, chunks=2)
     assert eager.attrs.get("mask_and_scale_dtype") == "uint8"
     assert (eager.attrs.get("mask_and_scale_dtype")
             == lazy.attrs.get("mask_and_scale_dtype"))

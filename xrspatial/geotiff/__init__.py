@@ -509,7 +509,8 @@ def open_geotiff(source: str | BinaryIO, *,
                  masked: bool = False,
                  mask_nodata: bool = _MASK_NODATA_DEPRECATED_SENTINEL,  # type: ignore[assignment]
                  unpack: bool = False,
-                 mask_and_scale: bool = _MASK_AND_SCALE_DEPRECATED_SENTINEL,  # type: ignore[assignment]
+                 mask_and_scale: bool = (
+                     _MASK_AND_SCALE_DEPRECATED_SENTINEL),  # type: ignore[assignment]
                  parse_coordinates: bool = True,
                  lock: object | None = None,
                  cache: bool = True,
