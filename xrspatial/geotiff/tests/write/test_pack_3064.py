@@ -161,6 +161,11 @@ def test_pack_with_scale_offset_round_trip(tmp_path, chunks):
 @requires_gpu
 @pytest.mark.xfail(
     strict=True,
+    # eager gpu: xarray's where() calls cupy.astype (AttributeError);
+    # dask+gpu: numpy fill value inside cupy.where (TypeError). Pinning
+    # raises= keeps an unrelated assertion failure from hiding under the
+    # known crash.
+    raises=(AttributeError, TypeError),
     reason="to_geotiff(pack=True) crashes on cupy-backed input (#3112)")
 @pytest.mark.parametrize("chunks", [None, 2], ids=["gpu", "dask-gpu"])
 def test_pack_round_trip_gpu(tmp_path, chunks):
