@@ -1319,6 +1319,83 @@ def test_great_circle_dask_bounded_matches_numpy(func):
 
 
 # ---------------------------------------------------------------------------
+# Regression tests for issue #3108: bounded GREAT_CIRCLE on dask missed
+# targets across the +/-180 antimeridian seam. The map_overlap halo is sized
+# in array space, but great-circle distance is periodic in longitude, so a
+# target near one edge of the array can be the nearest target of a pixel
+# near the opposite edge. numpy/cupy (whole-raster brute force) found it;
+# dask+numpy/dask+cupy returned NaN.
+# ---------------------------------------------------------------------------
+
+def _antimeridian_raster():
+    lon = np.arange(-179.5, 180.0, 1.0)   # 360 columns spanning the seam
+    lat = np.arange(-5.0, 6.0, 1.0)
+    data = np.zeros((lat.size, lon.size))
+    data[5, 0] = 1.0                       # target at (lat 0, lon -179.5)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = lon
+    raster['lat'] = lat
+    return raster, data
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_great_circle_dask_antimeridian_matches_numpy(backend, func):
+    """Bounded GREAT_CIRCLE dask sees targets across the +/-180 seam."""
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+
+    raster, data = _antimeridian_raster()
+    kwargs = dict(x='lon', y='lat', distance_metric='GREAT_CIRCLE',
+                  max_distance=250_000.0)
+
+    numpy_result = func(raster, **kwargs)
+    # The wrap pixel at lon 179.5 is ~111 km from the target at lon -179.5,
+    # within max_distance: it must be found, not NaN.
+    assert np.isfinite(numpy_result.values[5, -1])
+
+    chunk_data = raster.data
+    if 'cupy' in backend:
+        import cupy
+        chunk_data = cupy.asarray(chunk_data)
+    dask_raster = raster.copy(data=da.from_array(chunk_data, chunks=(11, 60)))
+    dask_result = func(dask_raster, **kwargs)
+
+    result_data = dask_result.data.compute()
+    if 'cupy' in backend:
+        result_data = result_data.get()
+    np.testing.assert_allclose(
+        result_data, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+def test_great_circle_halo_folds_on_wrap_and_pole():
+    """_halo_depth signals an x-axis fold when the chord bound cannot help."""
+    from xrspatial.proximity import GREAT_CIRCLE, _halo_depth
+
+    # Raster spanning the antimeridian: seam gap (1 degree) within reach.
+    lon = np.arange(-179.5, 180.0, 1.0)
+    lat = np.arange(-5.0, 6.0, 1.0)
+    _, pad_x = _halo_depth(lon, lat, 250_000.0, GREAT_CIRCLE)
+    assert pad_x > len(lon), "wrap-reachable raster must fold the x axis"
+
+    # Pole-adjacent raster: the 180-degree chord at lat 89.75 is ~62 km,
+    # within max_distance, so no longitude separation excludes a target.
+    lon = np.arange(0.0, 180.0, 1.0)
+    lat = np.arange(88.0, 90.0, 0.25)
+    _, pad_x = _halo_depth(lon, lat, 500_000.0, GREAT_CIRCLE)
+    assert pad_x > len(lon), "pole-adjacent raster must fold the x axis"
+
+    # Regional raster far from seam and pole: finite halo, no fold.
+    lon = np.arange(0.0, 10.0, 0.1)
+    lat = np.arange(40.0, 45.0, 0.1)
+    pad_y, pad_x = _halo_depth(lon, lat, 50_000.0, GREAT_CIRCLE)
+    assert 0 < pad_x < len(lon)
+    assert pad_y > 0
+
+
+# ---------------------------------------------------------------------------
 # Coverage gaps closed for issue #2692 (test-only; no source change).
 #
 # All behaviour below was verified correct and cross-backend consistent on a

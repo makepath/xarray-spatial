@@ -284,6 +284,65 @@ def _check_monotonic_coords(x_coords, y_coords, x, y):
             )
 
 
+def _great_circle_col_halo(x_coords, y_coords, max_distance):
+    """Column halo depth (in pixels) for the GREAT_CIRCLE metric.
+
+    Great-circle distance is periodic in longitude (haversine takes the
+    short way around the sphere) and its chords shorten toward the poles,
+    so a linear sum of per-column step distances is not a lower bound on
+    the spherical distance between two grid points. Use the chord bound
+
+        dist(p, t) >= 2 * R * asin(cos(lat_max) * |sin(dlon / 2)|)
+
+    which holds for every pair of grid points (``lat_max`` is the largest
+    absolute latitude on the raster). Inverting it for ``max_distance``
+    gives ``dlon_max``: any pair separated by more than ``dlon_max``
+    degrees of longitude (the short way around) is farther apart than
+    ``max_distance`` no matter the latitudes.
+
+    When the bound cannot exclude anything -- ``max_distance`` reaches the
+    180-degree chord at ``lat_max``, or targets across the +/-180 seam are
+    within reach (seam gap <= ``dlon_max``) -- no array-space halo can
+    cover the wrap. Return a depth one larger than the axis so
+    ``_fit_halo_to_chunks`` folds the x axis into a single chunk and every
+    chunk sees all columns.
+    """
+    width = len(x_coords)
+    if width < 2:
+        return 0
+    fold = width + 1
+
+    radius = 6378137.0
+    half_angle = max_distance / (2.0 * radius)
+    if half_angle >= np.pi / 2.0:
+        # max_distance spans half the circumference: everything is in reach.
+        return fold
+
+    cos_lat_max = np.cos(np.radians(np.abs(np.asarray(y_coords)).max()))
+    sin_half = np.sin(half_angle)
+    if sin_half >= cos_lat_max:
+        # Even a 180-degree longitude gap at the worst-case latitude stays
+        # within max_distance, so no longitude separation excludes a target.
+        return fold
+
+    dlon_max = np.degrees(2.0 * np.arcsin(sin_half / cos_lat_max))
+
+    # Wrap check: the smallest longitude separation through the +/-180 seam
+    # is between the first and last columns. If that is within dlon_max, a
+    # target near one edge of the array can be the nearest target of a pixel
+    # near the opposite edge, which no per-chunk halo can express.
+    span = abs(float(x_coords[-1]) - float(x_coords[0]))
+    seam_gap = 360.0 - span
+    if seam_gap <= dlon_max:
+        return fold
+
+    # No wrap in reach: a target k columns away is at least k * min_step
+    # degrees of longitude away (monotonic coords), so columns beyond
+    # dlon_max / min_step are excluded by the chord bound.
+    min_step = np.abs(np.diff(np.asarray(x_coords, dtype=np.float64))).min()
+    return int(np.ceil(dlon_max / min_step))
+
+
 def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     """Overlap depth in pixels for the bounded dask map_overlap call.
 
@@ -302,10 +361,15 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     no halo along that axis (depth 0), so (1, N) and (N, 1) rasters do not
     crash on the missing second coordinate.
 
-    For GREAT_CIRCLE the east-west distance per degree of longitude shrinks
-    toward the poles, so the column spacing is measured at the highest-latitude
-    row (largest absolute y) to take the worst case. The north-south distance
-    does not depend on longitude, so the row spacing uses a fixed longitude.
+    For GREAT_CIRCLE the column depth comes from the spherical chord bound
+    in ``_great_circle_col_halo``: longitude is periodic and chords shorten
+    toward the poles, so a per-column linear step sum is not a valid lower
+    bound there. When targets across the +/-180 seam are within
+    ``max_distance``, the returned column depth exceeds the axis length so
+    ``_fit_halo_to_chunks`` folds the axis. The row depth stays linear: the
+    great-circle distance between two points is never smaller than their
+    meridian (north-south) separation, so the per-row step sum is a valid
+    lower bound for every metric.
     """
     def _min_step_distance(coords, x_ref, y_ref, along):
         if len(coords) < 2:
@@ -322,15 +386,15 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
                 smallest = d
         return smallest
 
-    # Worst-case latitude for east-west spacing: the row farthest from the
-    # equator, where a degree of longitude covers the least ground.
-    y_worst = max(y_coords, key=abs)
-
     dist_per_row = _min_step_distance(y_coords, x_coords[0], None, "row")
-    dist_per_col = _min_step_distance(x_coords, None, y_worst, "col")
-
     pad_y = 0 if dist_per_row is None else int(max_distance / dist_per_row + 0.5)
-    pad_x = 0 if dist_per_col is None else int(max_distance / dist_per_col + 0.5)
+
+    if distance_metric == GREAT_CIRCLE:
+        pad_x = _great_circle_col_halo(x_coords, y_coords, max_distance)
+    else:
+        dist_per_col = _min_step_distance(x_coords, None, y_coords[0], "col")
+        pad_x = 0 if dist_per_col is None else int(
+            max_distance / dist_per_col + 0.5)
     return pad_y, pad_x
 
 
