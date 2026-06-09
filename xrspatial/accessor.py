@@ -146,7 +146,29 @@ def _bbox_edge_samples(x_min, y_min, x_max, y_max, n_per_side=20):
     return xs, ys
 
 
-def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
+_RESAMPLING_CHOICES = ('auto', 'nearest', 'bilinear', 'cubic')
+
+
+def _resolve_resampling(resampling, result):
+    """Resolve an ``'auto'`` resampling choice for the reproject step.
+
+    ``'auto'`` picks ``'nearest'`` for categorical rasters (a paletted
+    colormap is present, or the data has an integer dtype) and
+    ``'bilinear'`` otherwise. Any explicit mode is returned unchanged
+    for :func:`xrspatial.reproject.reproject` to validate.
+    """
+    if resampling != 'auto':
+        return resampling
+    import numpy as np
+    categorical = (
+        result.attrs.get('colormap') is not None
+        or np.issubdtype(result.dtype, np.integer)
+    )
+    return 'nearest' if categorical else 'bilinear'
+
+
+def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
+                           resampling='auto', **kwargs):
     """Shared implementation for ``.xrs.open_geotiff`` on DataArray and
     Dataset.
 
@@ -169,6 +191,12 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
     """
     from .geotiff import open_geotiff, _read_geo_info, _extent_to_window
     from .utils import _classify_backend
+
+    if resampling not in _RESAMPLING_CHOICES:
+        raise ValueError(
+            f"resampling must be one of {list(_RESAMPLING_CHOICES)}, "
+            f"got {resampling!r}"
+        )
 
     if 'y' not in obj.coords or 'x' not in obj.coords:
         raise ValueError(
@@ -243,6 +271,7 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False, **kwargs):
             result,
             target_crs=caller_crs,
             source_crs=file_crs,
+            resampling=_resolve_resampling(resampling, result),
         )
 
     return result
@@ -783,7 +812,8 @@ class XrsSpatialDataArrayAccessor:
         from .geotiff import to_geotiff
         return to_geotiff(self._obj, path, **kwargs)
 
-    def open_geotiff(self, source, *, auto_reproject=False, **kwargs):
+    def open_geotiff(self, source, *, auto_reproject=False,
+                     resampling='auto', **kwargs):
         """Read a GeoTIFF windowed to this DataArray's spatial extent.
 
         Uses ``self``'s ``y``/``x`` coordinates to compute a pixel window
@@ -803,6 +833,14 @@ class XrsSpatialDataArrayAccessor:
             then reprojects the result back to ``self``'s CRS via
             :func:`xrspatial.reproject.reproject` so the returned
             DataArray lines up with ``self``.
+        resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
+            Resampling mode for the ``auto_reproject`` reproject step;
+            ignored when no reprojection happens. ``'auto'`` (default)
+            picks ``'nearest'`` for categorical rasters (a paletted
+            colormap is present, or the data has an integer dtype) and
+            ``'bilinear'`` otherwise. Note an integer-typed continuous
+            DEM (e.g. int16 elevation) is treated as categorical under
+            ``'auto'``; pass ``resampling='bilinear'`` for those.
         **kwargs
             Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
             ``window=``, which is computed automatically).
@@ -815,7 +853,8 @@ class XrsSpatialDataArrayAccessor:
             file's native CRS.
         """
         return _open_geotiff_windowed(
-            self._obj, source, auto_reproject=auto_reproject, **kwargs
+            self._obj, source, auto_reproject=auto_reproject,
+            resampling=resampling, **kwargs
         )
 
     # ---- Chunking ----
@@ -1281,7 +1320,8 @@ class XrsSpatialDatasetAccessor:
             "Dataset has no variable with 'y' and 'x' dimensions to write"
         )
 
-    def open_geotiff(self, source, *, auto_reproject=False, var=None, **kwargs):
+    def open_geotiff(self, source, *, auto_reproject=False, var=None,
+                     resampling='auto', **kwargs):
         """Read a GeoTIFF windowed to this Dataset's spatial extent.
 
         Uses the Dataset's ``y``/``x`` coordinates to compute a pixel
@@ -1304,6 +1344,14 @@ class XrsSpatialDatasetAccessor:
         var : str or None
             Data variable used for backend inference and CRS lookup. If
             None, picks the first 2D variable with ``y``/``x`` dims.
+        resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
+            Resampling mode for the ``auto_reproject`` reproject step;
+            ignored when no reprojection happens. ``'auto'`` (default)
+            picks ``'nearest'`` for categorical rasters (a paletted
+            colormap is present, or the data has an integer dtype) and
+            ``'bilinear'`` otherwise. Note an integer-typed continuous
+            DEM (e.g. int16 elevation) is treated as categorical under
+            ``'auto'``; pass ``resampling='bilinear'`` for those.
         **kwargs
             Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
             ``window=``, which is computed automatically).
@@ -1325,7 +1373,8 @@ class XrsSpatialDatasetAccessor:
             rep = rep.copy()
             rep.attrs = {**rep.attrs, 'crs': ds.attrs['crs']}
         return _open_geotiff_windowed(
-            rep, source, auto_reproject=auto_reproject, **kwargs
+            rep, source, auto_reproject=auto_reproject,
+            resampling=resampling, **kwargs
         )
 
     # ---- Chunking ----
