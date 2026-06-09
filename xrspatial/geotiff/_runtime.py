@@ -56,6 +56,10 @@ _VRT_PATH_MISSING_SENTINEL = object()
 # as ``_GPU_DEPRECATED_SENTINEL`` above.
 _MASK_NODATA_DEPRECATED_SENTINEL = object()
 _NAME_DEPRECATED_SENTINEL = object()
+# ``mask_and_scale`` was renamed to ``unpack`` (the operation unpacks
+# CF-packed integers via SCALE/OFFSET). Same sentinel deprecation as the
+# pair above: the old name still works but warns, and passing both raises.
+_MASK_AND_SCALE_DEPRECATED_SENTINEL = object()
 
 
 # Spatial dim names recognised on 3D writer inputs. ``y``/``x`` are the
