@@ -167,8 +167,51 @@ def _resolve_resampling(resampling, result):
     return 'nearest' if categorical else 'bilinear'
 
 
+def _axis_res(coord, n, obj, axis):
+    """Resolution (cell size) for one axis of the caller's grid.
+
+    With 2+ cells it is the centre spacing. A single-cell axis cannot
+    give a spacing, so fall back to the caller's ``attrs['res']`` or
+    ``attrs['transform']`` pixel size, and raise if neither is present.
+    """
+    if n >= 2:
+        return abs(float(coord[-1]) - float(coord[0])) / (n - 1)
+    res = obj.attrs.get('res')
+    if res is not None:
+        return abs(float(res[0] if axis == 'x' else res[1]))
+    transform = obj.attrs.get('transform')
+    if transform is not None:
+        return abs(float(transform[0] if axis == 'x' else transform[4]))
+    raise ValueError(
+        f"coregister cannot infer {axis} resolution for a single-cell "
+        f"template; use a template with 2+ cells along {axis}, or set "
+        f"attrs['res'] / attrs['transform']"
+    )
+
+
+def _caller_grid(obj):
+    """Edge bounds + shape that make :func:`reproject` reproduce the
+    caller's exact pixel centres.
+
+    Returns ``((left, bottom, right, top), width, height)``. ``reproject``
+    emits pixel-centre coords ``linspace(left+res/2, right-res/2, W)``, so
+    bounds offset half a pixel outside the caller's centre extent map the
+    output cells back onto the caller's coordinates.
+    """
+    y = obj.coords['y'].values
+    x = obj.coords['x'].values
+    width, height = len(x), len(y)
+    res_x = _axis_res(x, width, obj, 'x')
+    res_y = _axis_res(y, height, obj, 'y')
+    x_lo, x_hi = float(min(x[0], x[-1])), float(max(x[0], x[-1]))
+    y_lo, y_hi = float(min(y[0], y[-1])), float(max(y[0], y[-1]))
+    bounds = (x_lo - res_x / 2, y_lo - res_y / 2,
+              x_hi + res_x / 2, y_hi + res_y / 2)
+    return bounds, width, height
+
+
 def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
-                           resampling='auto', **kwargs):
+                           coregister=False, resampling='auto', **kwargs):
     """Shared implementation for ``.xrs.open_geotiff`` on DataArray and
     Dataset.
 
@@ -198,6 +241,22 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
             f"got {resampling!r}"
         )
 
+    if coregister:
+        gpu_requested = (
+            kwargs.get('gpu', False)
+            or _classify_backend(obj) in ("cupy", "dask+cupy")
+        )
+        is_vrt = str(source).lower().endswith('.vrt')
+        if gpu_requested or is_vrt:
+            raise ValueError(
+                "coregister=True applies mask_and_scale, which is not "
+                "supported with gpu=True or .vrt sources. Read on CPU, "
+                "or pass coregister=False."
+            )
+        # coregister implies a masked-and-scaled read; this overrides an
+        # explicit mask_and_scale=False.
+        kwargs['mask_and_scale'] = True
+
     if 'y' not in obj.coords or 'x' not in obj.coords:
         raise ValueError(
             "Caller must have 'y' and 'x' coordinates to compute a "
@@ -221,7 +280,7 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
         and not caller_crs.equals(file_crs)
     )
 
-    if crs_mismatch and not auto_reproject:
+    if crs_mismatch and not (auto_reproject or coregister):
         raise ValueError(
             f"CRS mismatch: caller has {caller_crs_raw!r} but file has "
             f"EPSG:{file_crs_raw}. Pass auto_reproject=True to project "
@@ -265,13 +324,38 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
 
     result = open_geotiff(source, window=window, **kwargs)
 
-    if crs_mismatch:
+    # A masked read replaces the nodata sentinel with NaN but leaves
+    # attrs['nodata'] as the raw sentinel; tell reproject the holes are
+    # NaN so it does not resample them as ordinary values.
+    nodata_arg = float('nan') if result.attrs.get('masked_nodata') else None
+
+    if coregister:
+        from .reproject import reproject
+        target_crs = caller_crs if caller_crs is not None else file_crs
+        if target_crs is None:
+            raise ValueError(
+                "coregister=True needs a CRS: set attrs['crs'] on the "
+                "caller or read a file that declares one"
+            )
+        bounds, width_out, height_out = _caller_grid(obj)
+        result = reproject(
+            result,
+            target_crs=target_crs,
+            source_crs=file_crs,
+            bounds=bounds,
+            width=width_out,
+            height=height_out,
+            resampling=_resolve_resampling(resampling, result),
+            nodata=nodata_arg,
+        )
+    elif crs_mismatch:
         from .reproject import reproject
         result = reproject(
             result,
             target_crs=caller_crs,
             source_crs=file_crs,
             resampling=_resolve_resampling(resampling, result),
+            nodata=nodata_arg,
         )
 
     return result
@@ -813,7 +897,7 @@ class XrsSpatialDataArrayAccessor:
         return to_geotiff(self._obj, path, **kwargs)
 
     def open_geotiff(self, source, *, auto_reproject=False,
-                     resampling='auto', **kwargs):
+                     coregister=False, resampling='auto', **kwargs):
         """Read a GeoTIFF windowed to this DataArray's spatial extent.
 
         Uses ``self``'s ``y``/``x`` coordinates to compute a pixel window
@@ -833,18 +917,30 @@ class XrsSpatialDataArrayAccessor:
             then reprojects the result back to ``self``'s CRS via
             :func:`xrspatial.reproject.reproject` so the returned
             DataArray lines up with ``self``.
+        coregister : bool
+            If True, read the file masked and scaled
+            (``mask_and_scale=True``), reproject into ``self``'s CRS, and
+            resample onto ``self``'s exact grid, so the result shares
+            ``self``'s ``y``/``x`` coordinates and shape. The grid snap
+            happens even when the CRS already matches. ``mask_and_scale``
+            is unsupported with ``gpu=True`` or ``.vrt`` sources, so
+            ``coregister=True`` raises ``ValueError`` there. The resample
+            mode follows ``resampling``. This is the heavier counterpart
+            of ``auto_reproject``, which keeps the file's native
+            resolution.
         resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
-            Resampling mode for the ``auto_reproject`` reproject step;
-            ignored when no reprojection happens. ``'auto'`` (default)
-            picks ``'nearest'`` for categorical rasters (a paletted
-            colormap is present, or the data has an integer dtype) and
-            ``'bilinear'`` otherwise. Note an integer-typed continuous
-            DEM (e.g. int16 elevation) is treated as categorical under
-            ``'auto'``; pass ``resampling='bilinear'`` for those.
-            Conversely, an integer raster read with a nodata sentinel is
-            promoted to float on read, so a categorical raster that
-            carries nodata and no colormap resolves to ``'bilinear'``;
-            pass ``resampling='nearest'`` for those.
+            Resampling mode for the ``auto_reproject`` / ``coregister``
+            reproject step; ignored when no reprojection happens.
+            ``'auto'`` (default) picks ``'nearest'`` for categorical
+            rasters (a paletted colormap is present, or the data has an
+            integer dtype) and ``'bilinear'`` otherwise. Note an
+            integer-typed continuous DEM (e.g. int16 elevation) is
+            treated as categorical under ``'auto'``; pass
+            ``resampling='bilinear'`` for those. Conversely, an integer
+            raster read with a nodata sentinel is promoted to float on
+            read, so a categorical raster that carries nodata and no
+            colormap resolves to ``'bilinear'``; pass
+            ``resampling='nearest'`` for those.
         **kwargs
             Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
             ``window=``, which is computed automatically).
@@ -852,13 +948,14 @@ class XrsSpatialDataArrayAccessor:
         Returns
         -------
         xr.DataArray
-            The windowed portion of the GeoTIFF, in ``self``'s CRS when
-            ``auto_reproject`` reprojection occurred and otherwise in the
-            file's native CRS.
+            The windowed portion of the GeoTIFF. In ``self``'s CRS when
+            ``auto_reproject`` reprojection occurred, on ``self``'s exact
+            grid when ``coregister`` is set, and otherwise in the file's
+            native CRS.
         """
         return _open_geotiff_windowed(
             self._obj, source, auto_reproject=auto_reproject,
-            resampling=resampling, **kwargs
+            coregister=coregister, resampling=resampling, **kwargs
         )
 
     # ---- Chunking ----
@@ -1325,7 +1422,7 @@ class XrsSpatialDatasetAccessor:
         )
 
     def open_geotiff(self, source, *, auto_reproject=False, var=None,
-                     resampling='auto', **kwargs):
+                     coregister=False, resampling='auto', **kwargs):
         """Read a GeoTIFF windowed to this Dataset's spatial extent.
 
         Uses the Dataset's ``y``/``x`` coordinates to compute a pixel
@@ -1348,18 +1445,28 @@ class XrsSpatialDatasetAccessor:
         var : str or None
             Data variable used for backend inference and CRS lookup. If
             None, picks the first 2D variable with ``y``/``x`` dims.
+        coregister : bool
+            If True, read the file masked and scaled
+            (``mask_and_scale=True``), reproject into the Dataset's CRS,
+            and resample onto the Dataset's exact grid, so the result
+            shares the Dataset's ``y``/``x`` coordinates and shape. The
+            grid snap happens even when the CRS already matches.
+            ``mask_and_scale`` is unsupported with ``gpu=True`` or
+            ``.vrt`` sources, so ``coregister=True`` raises ``ValueError``
+            there. The resample mode follows ``resampling``.
         resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
-            Resampling mode for the ``auto_reproject`` reproject step;
-            ignored when no reprojection happens. ``'auto'`` (default)
-            picks ``'nearest'`` for categorical rasters (a paletted
-            colormap is present, or the data has an integer dtype) and
-            ``'bilinear'`` otherwise. Note an integer-typed continuous
-            DEM (e.g. int16 elevation) is treated as categorical under
-            ``'auto'``; pass ``resampling='bilinear'`` for those.
-            Conversely, an integer raster read with a nodata sentinel is
-            promoted to float on read, so a categorical raster that
-            carries nodata and no colormap resolves to ``'bilinear'``;
-            pass ``resampling='nearest'`` for those.
+            Resampling mode for the ``auto_reproject`` / ``coregister``
+            reproject step; ignored when no reprojection happens.
+            ``'auto'`` (default) picks ``'nearest'`` for categorical
+            rasters (a paletted colormap is present, or the data has an
+            integer dtype) and ``'bilinear'`` otherwise. Note an
+            integer-typed continuous DEM (e.g. int16 elevation) is
+            treated as categorical under ``'auto'``; pass
+            ``resampling='bilinear'`` for those. Conversely, an integer
+            raster read with a nodata sentinel is promoted to float on
+            read, so a categorical raster that carries nodata and no
+            colormap resolves to ``'bilinear'``; pass
+            ``resampling='nearest'`` for those.
         **kwargs
             Forwarded to :func:`xrspatial.geotiff.open_geotiff` (except
             ``window=``, which is computed automatically).
@@ -1382,7 +1489,7 @@ class XrsSpatialDatasetAccessor:
             rep.attrs = {**rep.attrs, 'crs': ds.attrs['crs']}
         return _open_geotiff_windowed(
             rep, source, auto_reproject=auto_reproject,
-            resampling=resampling, **kwargs
+            coregister=coregister, resampling=resampling, **kwargs
         )
 
     # ---- Chunking ----
