@@ -421,18 +421,34 @@ def _read_geotiff_dask(source: str, *,
     nodata_attr = lifecycle.raw_sentinel  # original sentinel for attrs['nodata']
     nodata = lifecycle.effective_sentinel  # post-MinIsWhite for masking
 
+    # ``mask_and_scale`` reads need the scale / offset up front: the dtype
+    # decision below must know whether the transform is real -- a non-identity
+    # scale / offset, or a fittable sentinel to mask -- before declaring the
+    # graph dtype. A bare ``mask_and_scale`` read of an int source with no
+    # scale / offset and no fittable sentinel stays integer, matching the
+    # eager path (issue #3066). Extracted once here and reused when the
+    # scaling is applied lazily below.
+    ms_scale, ms_offset = 1.0, 0.0
+    if mask_and_scale:
+        from .._attrs import _extract_scale_offset
+        ms_scale, ms_offset = _extract_scale_offset(
+            getattr(geo_info, 'gdal_metadata', None), band=band,
+            malformed=getattr(geo_info, 'gdal_metadata_malformed', False))
+
     # Nodata masking promotes integer arrays to float64 (for NaN).
     # The lifecycle's ``sentinel_fits_buffer`` already encapsulates the
-    # finite / integer / in-range gates, so the
-    # promotion fires iff the helper says the sentinel is comparable.
+    # finite / integer / in-range gates, so the promotion fires iff the
+    # helper says the sentinel is comparable. ``mask_and_scale`` masks the
+    # sentinel too, so it shares this gate.
     effective_dtype = file_dtype
-    if (mask_nodata
+    if ((mask_nodata or mask_and_scale)
             and file_dtype.kind in ('u', 'i')
             and lifecycle.sentinel_fits_buffer):
         effective_dtype = np.dtype('float64')
-    # ``mask_and_scale`` applies ``data * scale + offset`` (and masks), which
-    # promotes any integer source to float regardless of the sentinel.
-    if mask_and_scale and file_dtype.kind != 'f':
+    # A non-identity scale / offset promotes any integer source to float
+    # even when no sentinel is present.
+    if (mask_and_scale and file_dtype.kind != 'f'
+            and (ms_scale != 1.0 or ms_offset != 0.0)):
         effective_dtype = np.dtype('float64')
 
     if dtype is not None:
@@ -528,6 +544,20 @@ def _read_geotiff_dask(source: str, *,
         allow_rotated=allow_rotated,
         allow_unparseable_crs=allow_unparseable_crs,
     )
+
+    # Record the integer source dtype when a *real* ``mask_and_scale``
+    # transform -- masking a fittable sentinel, here, or a non-identity
+    # scale / offset, in the block below -- promotes the array to float, so
+    # ``to_geotiff(pack=True)`` can re-pack (issue #3064). Scoped to
+    # ``mask_and_scale`` (not a plain ``masked`` read) to mirror the eager
+    # path. ``effective_dtype`` now agrees with this gate (issue #3066), so a
+    # bare ``mask_and_scale`` read of an int source with no scale / offset and
+    # no sentinel stays integer and records nothing.
+    if (mask_and_scale
+            and file_dtype.kind in ('u', 'i')
+            and nodata is not None
+            and lifecycle.sentinel_fits_buffer):
+        attrs['mask_and_scale_dtype'] = file_dtype.name
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks
@@ -630,17 +660,17 @@ def _read_geotiff_dask(source: str, *,
     dask_arr = da.concatenate(dask_rows, axis=0)
 
     # ``mask_and_scale``: apply ``data * scale + offset`` lazily on the
-    # assembled dask array. The per-chunk mask above already promoted the
-    # graph to float and replaced sentinels with NaN.
-    if mask_and_scale:
-        from .._attrs import _extract_scale_offset
-        scale, offset = _extract_scale_offset(
-            getattr(geo_info, 'gdal_metadata', None), band=band,
-            malformed=getattr(geo_info, 'gdal_metadata_malformed', False))
-        if scale != 1.0 or offset != 0.0:
-            dask_arr = dask_arr * scale + offset
-            attrs['scale_factor'] = scale
-            attrs['add_offset'] = offset
+    # assembled dask array, reusing the scale / offset extracted up front.
+    # The per-chunk mask above already promoted the graph to float and
+    # replaced sentinels with NaN.
+    if mask_and_scale and (ms_scale != 1.0 or ms_offset != 0.0):
+        dask_arr = dask_arr * ms_scale + ms_offset
+        attrs['scale_factor'] = ms_scale
+        attrs['add_offset'] = ms_offset
+        # A non-identity scale / offset is the other real transform that
+        # promotes an int source to float (issue #3064).
+        if file_dtype.kind != 'f':
+            attrs.setdefault('mask_and_scale_dtype', file_dtype.name)
 
     # ``parse_coordinates=False`` drops the x / y coordinate arrays (the
     # transform / crs attrs still carry georeferencing); the band coord is

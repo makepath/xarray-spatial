@@ -840,10 +840,13 @@ def test_version_constant_is_current():
 
     Contract v3 added ``attrs['georef_status']`` to the canonical tier.
     Contract v4 added ``attrs['rotated_affine']`` for the
-    ``allow_rotated=True`` opt-in path. Bumping past 4 should be paired
-    with a docs update and a sibling test for the new key.
+    ``allow_rotated=True`` opt-in path. Contract v5 added
+    ``attrs['mask_and_scale_dtype']`` (the integer source dtype recorded
+    on a ``mask_and_scale`` read, for ``to_geotiff(pack=True)``). Bumping
+    past 5 should be paired with a docs update and a sibling test for the
+    new key.
     """
-    assert _ATTRS_CONTRACT_VERSION == 4
+    assert _ATTRS_CONTRACT_VERSION == 5
 
 
 def test_version_module_docstring_matches_constant():
