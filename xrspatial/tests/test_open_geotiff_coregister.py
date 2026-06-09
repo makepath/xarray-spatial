@@ -1,5 +1,5 @@
 """Tests for ``.xrs.open_geotiff(coregister=True)`` (issue #3069 -
-mask_and_scale + reproject + resample onto the caller's exact grid)."""
+unpack + reproject + resample onto the caller's exact grid)."""
 from __future__ import annotations
 
 import numpy as np
@@ -143,12 +143,12 @@ def test_coregister_dask_template(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# mask_and_scale
+# unpack (renamed from mask_and_scale)
 # ---------------------------------------------------------------------------
 
-def test_coregister_forwards_mask_and_scale(tmp_path, monkeypatch):
-    # coregister must read with mask_and_scale=True. Spy on the real
-    # open_geotiff and confirm the kwarg, then delegate.
+def test_coregister_forwards_unpack(tmp_path, monkeypatch):
+    # coregister must read with unpack=True. Spy on the real open_geotiff
+    # and confirm the kwarg, then delegate.
     path = _file_4326(tmp_path, np.float32, 'cg_ms.tif')
     template = _template_3857(6)
 
@@ -157,12 +157,12 @@ def test_coregister_forwards_mask_and_scale(tmp_path, monkeypatch):
     seen = {}
 
     def spy(src, **kw):
-        seen['mask_and_scale'] = kw.get('mask_and_scale')
+        seen['unpack'] = kw.get('unpack')
         return real(src, **kw)
 
     monkeypatch.setattr(gt, 'open_geotiff', spy)
     template.xrs.open_geotiff(path, coregister=True)
-    assert seen['mask_and_scale'] is True
+    assert seen['unpack'] is True
 
 
 def test_coregister_masks_nodata_to_nan(tmp_path):
