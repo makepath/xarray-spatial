@@ -1699,17 +1699,22 @@ def _pack(data):
         target = np.asarray(nodata).dtype.name
     tgt = np.dtype(target) if target is not None else np.dtype(str(out.dtype))
 
+    if nodata is not None:
+        # Restore the masked sentinel for every dtype. Integers can't hold
+        # NaN at all; floats would otherwise write NaN pixels under a
+        # GDAL_NODATA tag that still declares the sentinel, leaving an
+        # inconsistent file that non-masking readers misread (#3078).
+        out = out.fillna(nodata)
+    elif tgt.kind in ('i', 'u'):
+        # ``isnull().any()`` forces a compute on dask; only reached on the
+        # error path where no sentinel exists to fill an integer's holes.
+        if bool(out.isnull().any()):
+            raise ValueError(
+                f"pack=True: cannot restore integer dtype {tgt.name}: "
+                "NaN pixels are present but no nodata sentinel is "
+                "declared to fill them.")
+
     if tgt.kind in ('i', 'u'):
-        if nodata is None:
-            # ``isnull().any()`` forces a compute on dask; only reached on
-            # the error path where no sentinel exists to fill the holes.
-            if bool(out.isnull().any()):
-                raise ValueError(
-                    f"pack=True: cannot restore integer dtype {tgt.name}: "
-                    "NaN pixels are present but no nodata sentinel is "
-                    "declared to fill them.")
-        else:
-            out = out.fillna(nodata)
         out = out.round()
 
     out = out.astype(tgt)

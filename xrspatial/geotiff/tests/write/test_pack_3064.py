@@ -83,6 +83,39 @@ def test_pack_restores_uint16_no_scale(tmp_path, chunks):
 
 
 # ---------------------------------------------------------------------------
+# Float source: the masked sentinel must be restored, not left as NaN (#3078)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("chunks", [None, 2], ids=["numpy", "dask"])
+def test_pack_restores_float_nodata_sentinel(tmp_path, chunks):
+    """A float raster masks its sentinel to NaN on an ``unpack=True`` read.
+    ``pack=True`` must put the declared sentinel back so the pixels on disk
+    match the GDAL_NODATA tag -- otherwise the file declares nodata=-9999 but
+    stores NaN, which a non-masking reader silently treats as a valid value.
+    """
+    data = np.array([[1.5, 2.5, -9999.0], [4.5, 5.5, 6.5]], dtype=np.float32)
+    src = _write_int_tiff(tmp_path / "src_f32_3078.tif", data, nodata=-9999.0)
+
+    decoded = _reopen(src, chunks)
+    assert np.isnan(np.asarray(decoded.data)).any()  # sentinel was masked
+
+    out = str(tmp_path / "out_f32_3078.tif")
+    decoded.xrs.to_geotiff(out, pack=True)
+
+    # Plain (non-masking) read: the sentinel is back and no NaN survives.
+    back = np.asarray(open_geotiff(out).data)
+    assert not np.isnan(back).any()
+    assert back[0, 2] == -9999.0
+    assert open_geotiff(out).attrs.get("nodata") == -9999.0
+
+    # An unpack read still round-trips the masked value to NaN.
+    repacked = open_geotiff(out, unpack=True)
+    np.testing.assert_array_equal(
+        np.asarray(repacked.data), np.asarray(decoded.data))
+
+
+# ---------------------------------------------------------------------------
 # Round trip: with SCALE/OFFSET -- the file must unpack, not double-scale
 # ---------------------------------------------------------------------------
 
