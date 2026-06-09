@@ -201,7 +201,8 @@ this section is the brief.
   nodata sentinels raises ``MixedBandMetadataError`` by default. Pass
   ``band_nodata='first'`` to opt back into the legacy flatten-to-band-0
   behaviour; see ``xrspatial/geotiff/tests/vrt/test_metadata.py``.
-* Malformed scale/offset. Under ``mask_and_scale=True`` the read applies
+* Malformed scale/offset. Under ``unpack=True`` (formerly
+  ``mask_and_scale=True``) the read applies
   the source's ``SCALE`` / ``OFFSET`` from ``GDAL_METADATA``. A key that
   is present but does not parse as a float (for example ``SCALE="abc"``)
   raises ``MalformedScaleOffsetError`` (a ``GeoTIFFAmbiguousMetadataError``
