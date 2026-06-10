@@ -2009,12 +2009,28 @@ STANDARDIZE_IDS = [
 ]
 
 
+def _standardize_cases(exclude=()):
+    """STANDARDIZE_CASES (with ids) minus the named methods."""
+    pairs = [
+        (case, case_id)
+        for case, case_id in zip(STANDARDIZE_CASES, STANDARDIZE_IDS)
+        if case[0] not in exclude
+    ]
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
+def _standardize_case(method):
+    """Look up a STANDARDIZE_CASES entry by method name."""
+    return next(case for case in STANDARDIZE_CASES if case[0] == method)
+
+
 def _assert_standardize_matches_numpy(backend, method, kwargs):
     data = _standardize_data()
     numpy_agg = create_test_raster(data, backend="numpy")
     other_agg = create_test_raster(data, backend=backend)
     expected = standardize(numpy_agg, method=method, **kwargs)
     result = standardize(other_agg, method=method, **kwargs)
+    assert isinstance(result.data, type(other_agg.data))
     if "dask" in backend:
         assert hasattr(result.data, "compute"), "lost laziness"
     np.testing.assert_allclose(
@@ -2022,17 +2038,22 @@ def _assert_standardize_matches_numpy(backend, method, kwargs):
     )
 
 
+_CUPY_OK_CASES, _CUPY_OK_IDS = _standardize_cases(exclude=("piecewise",))
+_DASK_CUPY_OK_CASES, _DASK_CUPY_OK_IDS = _standardize_cases(
+    exclude=("piecewise", "categorical"))
+
+
 @cuda_and_cupy_available
 class TestStandardizeCupy:
-    @pytest.mark.parametrize("method,kwargs", STANDARDIZE_CASES[:-1],
-                             ids=STANDARDIZE_IDS[:-1])
+    @pytest.mark.parametrize("method,kwargs", _CUPY_OK_CASES,
+                             ids=_CUPY_OK_IDS)
     def test_matches_numpy(self, method, kwargs):
         _assert_standardize_matches_numpy("cupy", method, kwargs)
 
     @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_piecewise_matches_numpy(self):
         # cupy.interp rejects the numpy breakpoint/value arrays
-        _assert_standardize_matches_numpy("cupy", *STANDARDIZE_CASES[-1])
+        _assert_standardize_matches_numpy("cupy", *_standardize_case("piecewise"))
 
     def test_result_stays_on_gpu(self):
         import cupy
@@ -2055,20 +2076,22 @@ class TestStandardizeDaskNumpy:
 @cuda_and_cupy_available
 @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
 class TestStandardizeDaskCupy:
-    @pytest.mark.parametrize("method,kwargs", STANDARDIZE_CASES[:-2],
-                             ids=STANDARDIZE_IDS[:-2])
+    @pytest.mark.parametrize("method,kwargs", _DASK_CUPY_OK_CASES,
+                             ids=_DASK_CUPY_OK_IDS)
     def test_matches_numpy(self, method, kwargs):
         _assert_standardize_matches_numpy("dask+cupy", method, kwargs)
 
     @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_categorical_matches_numpy(self):
         # _apply_mapping calls np.asarray on cupy chunks
-        _assert_standardize_matches_numpy("dask+cupy", *STANDARDIZE_CASES[-2])
+        _assert_standardize_matches_numpy(
+            "dask+cupy", *_standardize_case("categorical"))
 
     @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_piecewise_matches_numpy(self):
         # _interp_block calls np.asarray on cupy chunks
-        _assert_standardize_matches_numpy("dask+cupy", *STANDARDIZE_CASES[-1])
+        _assert_standardize_matches_numpy(
+            "dask+cupy", *_standardize_case("piecewise"))
 
 
 def _combine_criteria(backend):
@@ -2101,7 +2124,9 @@ COMBINE_IDS = [case[0] for case in COMBINE_CASES]
 
 def _assert_combine_matches_numpy(backend, fn):
     expected = fn(_combine_criteria("numpy"))
-    result = fn(_combine_criteria(backend))
+    criteria = _combine_criteria(backend)
+    result = fn(criteria)
+    assert isinstance(result.data, type(criteria["a"].data))
     if "dask" in backend:
         assert hasattr(result.data, "compute"), "lost laziness"
     np.testing.assert_allclose(
@@ -2175,6 +2200,8 @@ class TestConstrainBackends:
         expected = constrain(suit_np, exclude=[mask_np])
         suit, mask = _constrain_inputs(backend)
         result = constrain(suit, exclude=[mask])
+        if "dask" in backend:
+            assert hasattr(result.data, "compute"), "lost laziness"
         np.testing.assert_allclose(
             _to_numpy(result), expected.values, equal_nan=True,
         )
@@ -2212,6 +2239,8 @@ class TestBooleanOverlayBackends:
 
         expected = boolean_overlay(build("numpy"), operator=operator)
         result = boolean_overlay(build(backend), operator=operator)
+        if "dask" in backend:
+            assert hasattr(result.data, "compute"), "lost laziness"
         np.testing.assert_array_equal(
             np.asarray(_to_numpy(result), dtype=bool), expected.values,
         )
