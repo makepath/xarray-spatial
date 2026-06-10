@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
     import cupy
 
-from .._attrs import (_EXPERIMENTAL_CODECS, _extract_rich_tags, _resolve_nodata_attr,
-                      _should_restore_nan_sentinel)
+from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _extract_rich_tags,
+                      _resolve_nodata_attr, _should_restore_nan_sentinel)
 from .._coords import _BAND_DIM_NAMES, _has_no_georef_marker
 from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
 from .._coords import resolve_georef as _resolve_georef
@@ -163,9 +163,14 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
           nvCOMP/CUDA accelerator, so these fall through to the CPU
           encoder for byte-stable parity with ``to_geotiff``.
     compression_level : int or None
-        [experimental] Compression effort level. Accepted for API
-        compatibility but currently ignored -- nvCOMP does not expose
-        level control.
+        [experimental] Compression effort level. Validated against the
+        same codec ranges as ``to_geotiff`` (deflate 1-9, zstd 1-22,
+        lz4 0-16); out-of-range values raise ``ValueError``. Tiles
+        compressed through the CPU codecs (lzw / packbits / lerc, and
+        deflate / zstd / lz4 when nvCOMP is unavailable) honor the
+        level. The nvCOMP device encoder for deflate / zstd does not
+        expose level control: when it handles the tiles, an explicit
+        level is ignored and a ``UserWarning`` is emitted.
     tiled : bool
         [experimental] Must be True (default). The GPU writer is
         tiled-only because nvCOMP batch compression operates on
@@ -347,6 +352,18 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 GeoTIFFFallbackWarning,
                 stacklevel=2,
             )
+        # Mirror to_geotiff's compression_level range gate so direct
+        # callers of _write_geotiff_gpu get the same rejection the
+        # dispatcher applies upstream (#3167).
+        if compression_level is not None:
+            _level_range = _LEVEL_RANGES.get(_gpu_codec)
+            if _level_range is not None:
+                _lo, _hi = _level_range
+                if not (_lo <= compression_level <= _hi):
+                    raise ValueError(
+                        f"compression_level={compression_level} out of "
+                        f"range for {compression} "
+                        f"(valid: {_lo}-{_hi})")
     # MinIsWhite pre-inversion runs in the eager CPU writer.
     # The GPU writer assembles tile bytes directly on device; threading
     # the pixel + nodata-sentinel transform through that pipeline is out
@@ -614,7 +631,8 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         """Compress a GPU array into a (stub, w, h, offsets, counts, tiles) tuple."""
         compressed = gpu_compress_tiles(
             gpu_arr, tile_size, tile_size, w, h,
-            comp_tag, pred_val, np_dtype, spp)
+            comp_tag, pred_val, np_dtype, spp,
+            compression_level=compression_level)
         rel_off = []
         bc = []
         off = 0
