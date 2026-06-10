@@ -228,7 +228,7 @@ class TestCrsMismatchBackends:
                 _gdf(crs='EPSG:4326'),
                 like=_make_like(crs_attr='EPSG:3857'),
                 column='value',
-                use_cuda=True,
+                gpu=True,
             )
 
     @pytest.mark.skipif(not has_cuda, reason="CUDA / CuPy not available")
@@ -237,6 +237,6 @@ class TestCrsMismatchBackends:
             _gdf(crs='EPSG:4326'),
             like=_make_like(crs_attr='EPSG:4326'),
             column='value',
-            use_cuda=True,
+            gpu=True,
         )
         assert result.attrs.get('crs') == 'EPSG:4326'

@@ -182,7 +182,7 @@ class TestRasterizeLinearRing:
     @skip_no_cuda
     def test_cupy_burns_ring(self):
         result = rasterize([(_RING, 1.0)], width=5, height=5,
-                           bounds=(0, 0, 5, 5), fill=0, use_cuda=True)
+                           bounds=(0, 0, 5, 5), fill=0, gpu=True)
         np.testing.assert_array_equal(result.data.get(), _EXPECTED)
 
     @skip_no_cuda
@@ -190,7 +190,7 @@ class TestRasterizeLinearRing:
     def test_dask_cupy_burns_ring(self):
         result = rasterize([(_RING, 1.0)], width=5, height=5,
                            bounds=(0, 0, 5, 5), fill=0,
-                           use_cuda=True, chunks=3)
+                           gpu=True, chunks=3)
         np.testing.assert_array_equal(
             np.asarray(result.data.map_blocks(lambda b: b.get())),
             _EXPECTED)

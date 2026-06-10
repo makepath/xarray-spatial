@@ -3154,7 +3154,7 @@ def rasterize(
     fill: float = np.nan,
     dtype: Optional[np.dtype] = None,
     all_touched: bool = False,
-    use_cuda: bool = False,
+    gpu: bool = False,
     name: str = 'rasterize',
     resolution: Optional[Union[float, Tuple[float, float]]] = None,
     like: Optional[xr.DataArray] = None,
@@ -3162,6 +3162,7 @@ def rasterize(
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
     max_pixels: int = MAX_PIXELS_DEFAULT,
     check_crs: bool = True,
+    use_cuda: Optional[bool] = None,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
 
@@ -3230,7 +3231,11 @@ def rasterize(
         exact integer (e.g. ``2**53 + 1`` would land on ``2**53``).  Such
         a value is rejected with ``ValueError`` rather than silently
         rounded; use a floating dtype to burn identifiers larger than
-        that.
+        that.  Non-finite burn values (NaN, inf) are likewise rejected
+        for integer and bool dtypes -- the final cast would otherwise
+        land them on a platform sentinel (NaN becomes ``-2147483648``
+        for int32, ``True`` for bool).  ``merge='count'`` is exempt
+        because it burns overlap counts, never the property values.
     all_touched : bool, default False
         If True, every pixel a polygon boundary passes through is
         burned in addition to the normal center-fill, using a
@@ -3239,8 +3244,10 @@ def rasterize(
         pixel-for-pixel up to rasterization tie-breaking on shared
         edges. If False, only pixels whose centers fall inside a
         polygon are burned.
-    use_cuda : bool, default False
-        If True, use the CuPy/CUDA backend.
+    gpu : bool, default False
+        If True, use the CuPy/CUDA backend.  Same convention as
+        ``open_geotiff(gpu=True)``; combine with ``chunks`` for the
+        dask+cupy backend.
     name : str, default 'rasterize'
         Name for the output DataArray.
     resolution : float or (x_res, y_res), optional
@@ -3280,7 +3287,7 @@ def rasterize(
         Custom merge function (pass a callable):
 
         For CPU backends, pass a ``@ngjit``-decorated function.  For GPU
-        backends (``use_cuda=True``), pass a
+        backends (``gpu=True``), pass a
         ``@numba.cuda.jit(device=True)`` function.  Signature::
 
             merge_fn(pixel, props, is_first) -> float64
@@ -3291,7 +3298,7 @@ def rasterize(
 
         .. warning::
 
-           On the GPU backends (``use_cuda=True``, with or without
+           On the GPU backends (``gpu=True``, with or without
            ``chunks``) a custom callable does not use CUDA atomics.  Its
            per-pixel update is a non-atomic read-modify-write, so when
            geometries overlap, several threads may update the same pixel
@@ -3301,14 +3308,14 @@ def rasterize(
            ``'max'``, ``'first'``, ``'last'``) do use atomics and stay
            deterministic over overlap; pass one of those if you need a
            stable result where geometries overlap on the GPU.  Calling
-           ``rasterize`` with a callable ``merge`` and ``use_cuda=True``
+           ``rasterize`` with a callable ``merge`` and ``gpu=True``
            emits a ``UserWarning`` to this effect.
 
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
         tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
         ``> 0``.  A single int uses the same chunk size for both axes.
-        Combined with ``use_cuda`` to select dask+numpy vs dask+cupy.
+        Combined with ``gpu`` to select dask+numpy vs dask+cupy.
     max_pixels : int, default 1_000_000_000
         Safety cap on the resolved output size (``width * height``).  The
         function raises ``ValueError`` before any host or device
@@ -3325,11 +3332,19 @@ def rasterize(
         them yourself to match the template.  Pass ``check_crs=False`` to
         skip the comparison (the output still inherits the template CRS).
         The check is a no-op when either side lacks a CRS.
+    use_cuda : bool, optional
+        Deprecated alias for ``gpu``; emits a ``DeprecationWarning``
+        when passed.  Passing both ``gpu=True`` and ``use_cuda`` raises
+        ``TypeError``.
 
     Returns
     -------
     xr.DataArray
-        2D raster with dims ``('y', 'x')``.
+        2D raster with dims ``('y', 'x')``.  When ``geometries`` is a
+        GeoDataFrame with a ``.crs`` and neither ``like`` nor its
+        ``spatial_ref`` coord supplies a CRS, the geometry CRS is
+        emitted on the output (``attrs['crs']`` as an EPSG int when one
+        resolves, else ``attrs['crs_wkt']`` as WKT).
 
     Examples
     --------
@@ -3350,6 +3365,22 @@ def rasterize(
         >>> density = rasterize(gdf, width=100, height=100,
         ...                     column='pop', merge='sum', fill=0)
     """
+    # Deprecation shim: ``use_cuda`` was renamed to ``gpu`` so the GPU
+    # opt-in matches ``open_geotiff(gpu=True)`` (issue #3089).  The old
+    # keyword still works but warns; asking for both is ambiguous.
+    if use_cuda is not None:
+        if gpu:
+            raise TypeError(
+                "rasterize() got both 'gpu' and its deprecated alias "
+                "'use_cuda'; pass only 'gpu'")
+        warnings.warn(
+            "rasterize(use_cuda=...) is deprecated; use gpu=... instead "
+            "(same convention as open_geotiff).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        gpu = use_cuda
+
     # Fail early with a clear message if the optional ``vector`` extra
     # (shapely) is not installed, rather than deep inside a helper.
     _require_shapely()
@@ -3637,6 +3668,33 @@ def rasterize(
                 f"floating output dtype, or pass values within the safe "
                 f"integer range.")
 
+    # Reject non-finite burn values when the output dtype cannot represent
+    # them.  The pipeline computes in float64 and casts with
+    # ``astype(final_dtype)`` at the end, so a NaN or +/-inf burn value
+    # (e.g. a GeoDataFrame column with missing data) against an integer
+    # dtype lands on a platform sentinel (NaN -> -2147483648 for int32) and
+    # against bool collapses to True -- silently on the numpy backend,
+    # whose final cast suppresses the RuntimeWarning.  This mirrors the
+    # NaN-fill guard (#2504) and the unsafe-integer guard (#3056) above;
+    # the non-finite burn value was the remaining gap (#3085).
+    # ``merge='count'`` never reads property values (the burned value is
+    # the overlap count), so NaN attributes stay usable there.  Float
+    # dtypes are unaffected: NaN/inf are representable.
+    if ((np.issubdtype(final_dtype_np, np.integer)
+            or final_dtype_np == np.bool_)
+            and props_array.size > 0
+            and merge != 'count'):
+        nonfinite_props = ~np.isfinite(props_array)
+        if nonfinite_props.any():
+            bad_value = float(props_array[nonfinite_props].flat[0])
+            raise ValueError(
+                f"burn value {bad_value!r} is not finite and cannot be "
+                f"represented in output dtype {final_dtype_np}: the final "
+                f"cast would silently turn it into a platform sentinel "
+                f"(e.g. NaN -> -2147483648 for int32, NaN -> True for "
+                f"bool). Remove or fill the non-finite values, or use a "
+                f"floating output dtype.")
+
     # For GPU paths, resolve string merge names to GPU (merge_fn,
     # should_write_fn) pairs.  User callables are paired with the
     # always-write predicate (matches the public 3-arg signature).
@@ -3644,10 +3702,10 @@ def rasterize(
     # ``_ensure_gpu_kernels``; ``None`` falls back to the non-atomic
     # closure path used for user callables.
     gpu_merge_name = None
-    if use_cuda:
+    if gpu:
         if cupy is None:
             raise ImportError(
-                "CuPy is required for use_cuda=True but is not installed")
+                "CuPy is required for gpu=True but is not installed")
         gpu_fns = _get_gpu_merge_fns()
         if isinstance(_merge_fn_gpu, str):
             gpu_merge_fn, should_write_gpu = gpu_fns[_merge_fn_gpu]
@@ -3667,7 +3725,7 @@ def rasterize(
             # merge stays deterministic over overlap.
             warnings.warn(
                 "A custom callable merge on the GPU backend "
-                "(use_cuda=True) uses a non-atomic read-modify-write, so "
+                "(gpu=True) uses a non-atomic read-modify-write, so "
                 "values for pixels where geometries overlap are "
                 "nondeterministic and may not match the CPU backend. Use a "
                 "built-in string merge ('sum', 'count', 'min', 'max', "
@@ -3680,7 +3738,7 @@ def rasterize(
     if chunks is not None:
         row_chunks, col_chunks = _normalize_chunks(
             chunks, final_height, final_width)
-        if use_cuda:
+        if gpu:
             out = _run_dask_cupy(
                 geom_list, props_array, final_bounds,
                 final_height, final_width, fill, final_dtype,
@@ -3692,7 +3750,7 @@ def rasterize(
                 final_height, final_width, fill, final_dtype,
                 all_touched, merge_fn, should_write_cpu,
                 row_chunks, col_chunks)
-    elif use_cuda:
+    elif gpu:
         out = _run_cupy(geom_list, props_array, final_bounds,
                         final_height, final_width, fill, final_dtype,
                         all_touched, gpu_merge_fn, should_write_gpu,
@@ -3768,6 +3826,31 @@ def rasterize(
         out_attrs['nodata'] = fill
         out_attrs['_FillValue'] = fill
         out_attrs['nodatavals'] = (fill,)
+
+    # Emit the geometry CRS when the output would otherwise carry none.
+    # The grid is laid out in the geometry's coordinate system (bounds
+    # come from the geometry coords), so a CRS-carrying GeoDataFrame
+    # rasterized without ``like`` should produce a raster labeled with
+    # that CRS -- otherwise to_geotiff writes an un-georeferenced file
+    # and polygonize(rasterize(gdf)) returns crs=None (issue #3087).
+    # A template CRS always wins: if ``like`` supplied attrs['crs'],
+    # attrs['crs_wkt'], or a spatial_ref coord, those are left alone
+    # (the check_crs guard has already compared them to geom_crs).
+    # Follow the geotiff attrs convention (xrspatial/geotiff/_attrs.py):
+    # an EPSG int under 'crs' when one resolves, else WKT under
+    # 'crs_wkt'.  geom_crs is only non-None on the GeoDataFrame path,
+    # where pyproj is available (geopandas requires it).
+    if (geom_crs is not None
+            and 'crs' not in out_attrs
+            and 'crs_wkt' not in out_attrs
+            and 'spatial_ref' not in like_extra_coords):
+        from pyproj import CRS as _PyprojCRS
+        crs_obj = _PyprojCRS(geom_crs)
+        epsg = crs_obj.to_epsg()
+        if epsg is not None:
+            out_attrs['crs'] = epsg
+        else:
+            out_attrs['crs_wkt'] = crs_obj.to_wkt()
 
     # Combine y/x dim coords with any non-dim coords carried from the
     # template (e.g. rioxarray's spatial_ref CRS coord).
