@@ -16,37 +16,16 @@ import xarray as xr
 
 from xrspatial.utils import _validate_raster
 
-from ._crs_utils import (
-    _detect_band_nodata,
-    _detect_nodata,
-    _detect_source_crs,
-    _resolve_crs,
-)
-from ._grid import (
-    _MAX_OUTPUT_PIXELS,
-    _chunk_bounds,
-    _compute_chunk_layout,
-    _compute_output_grid,
-    _make_output_coords,
-    _validate_grid_params,
-)
-from ._interpolate import (
-    _resample_cupy_native,
-    _resample_numpy,
-    _validate_resampling,
-)
-from ._merge import _merge_arrays_cupy, _merge_arrays_numpy, _validate_strategy
+from ._crs_utils import _detect_band_nodata, _detect_nodata, _detect_source_crs, _resolve_crs
+from ._grid import (_MAX_OUTPUT_PIXELS, _chunk_bounds, _compute_chunk_layout, _compute_output_grid,
+                    _make_output_coords, _validate_grid_params)
+from ._interpolate import _resample_cupy_native, _resample_numpy, _validate_resampling
+from ._itrf import itrf_transform
+from ._itrf import list_frames as itrf_frames
+from ._merge import _merge_arrays_numpy, _validate_strategy
 from ._transform import ApproximateTransform
-
-from ._vertical import (
-    geoid_height,
-    geoid_height_raster,
-    ellipsoidal_to_orthometric,
-    orthometric_to_ellipsoidal,
-    depth_to_ellipsoidal,
-    ellipsoidal_to_depth,
-)
-from ._itrf import itrf_transform, list_frames as itrf_frames
+from ._vertical import (depth_to_ellipsoidal, ellipsoidal_to_depth, ellipsoidal_to_orthometric,
+                        geoid_height, geoid_height_raster, orthometric_to_ellipsoidal)
 
 __all__ = [
     'reproject', 'merge',
@@ -377,9 +356,13 @@ def _reproject_chunk_numpy(
         transformer = pyproj.Transformer.from_crs(
             tgt_crs, src_crs, always_xy=True
         )
+        # Pass src_crs/tgt_crs as None: the numba fast path was already
+        # tried above and returned None, and _transform_coords gates its
+        # own try_numba_transform retry on both CRSes being non-None.
+        # Re-trying would repeat the CRS param parsing and chunk-sized
+        # coordinate allocations for nothing (#3106).
         src_y, src_x = _transform_coords(
             transformer, chunk_bounds_tuple, chunk_shape, transform_precision,
-            src_crs=src_crs, tgt_crs=tgt_crs,
         )
 
     # Convert source CRS coordinates to source pixel coordinates
@@ -577,8 +560,7 @@ def _reproject_chunk_cupy(
         r_max = int(np.ceil(r_max_val)) + 3
         c_min = int(np.floor(c_min_val)) - 2
         c_max = int(np.ceil(c_max_val)) + 3
-        # Keep coordinates as CuPy arrays for native CUDA resampling
-        _use_native_cuda = True
+        # Coordinates stay as CuPy arrays for native CUDA resampling
     else:
         # CPU fallback (Numba JIT or pyproj)
         from ._crs_utils import _require_pyproj
@@ -617,7 +599,6 @@ def _reproject_chunk_cupy(
         r_max = int(np.ceil(r_max)) + 3
         c_min = int(np.floor(c_min)) - 2
         c_max = int(np.ceil(c_max)) + 3
-        _use_native_cuda = False
 
     if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:
         return cp.full(_empty_shape, nodata, dtype=_empty_dtype)
@@ -1314,7 +1295,7 @@ def _apply_vertical_shift_numpy(data, y_arr, x_arr,
     matches the input), the behaviour is in-place on a copy of the
     input -- same as before this signature was added.
     """
-    from ._vertical import _load_geoid, _interp_geoid_2d
+    from ._vertical import _interp_geoid_2d, _load_geoid
 
     # Determine if we need inverse projection (output CRS is projected)
     need_inverse = False
@@ -1573,9 +1554,31 @@ def _reproject_streaming(
        O(n_tiles).
 
     Memory usage per worker: bounded by max_memory.
+
+    Output dtype follows the same rule as the dask backends: integer
+    sources round-trip back to their original dtype (the per-tile worker
+    casts tiles back after clamping), floats return float64 (#3093).
     """
     if isinstance(tile_size, int):
         tile_size = (tile_size, tile_size)
+
+    # Match the dask backends: integer sources round-trip back to their
+    # original dtype after clamping (the per-tile worker already casts
+    # tiles back); floats stay float64. Without this, the streaming path
+    # silently promoted integer inputs to float64 while every other
+    # backend preserved the source dtype (#3093).
+    src_dtype = np.dtype(raster.dtype)
+    if np.issubdtype(src_dtype, np.integer):
+        out_dtype = src_dtype
+    else:
+        out_dtype = np.dtype(np.float64)
+
+    # 3-D (y, x, band) sources produce 3-D tiles, so the assembled output
+    # needs the band axis too (#3093).
+    if raster.data.ndim == 3:
+        result_shape = (*out_shape, raster.data.shape[2])
+    else:
+        result_shape = out_shape
 
     row_chunks, col_chunks = _compute_chunk_layout(out_shape, tile_size)
 
@@ -1630,14 +1633,14 @@ def _reproject_streaming(
         )
 
         # Compute all partitions and assemble result
-        result = np.full(out_shape, nodata, dtype=np.float64)
+        result = np.full(result_shape, nodata, dtype=out_dtype)
         for batch_results in results_bag.compute():
             for ro, co, tile in batch_results:
                 result[ro:ro + tile.shape[0], co:co + tile.shape[1]] = tile
         return result
 
     # Local: ThreadPoolExecutor within one process
-    result = np.full(out_shape, nodata, dtype=np.float64)
+    result = np.full(result_shape, nodata, dtype=out_dtype)
     batch_results = _process_tile_batch(
         jobs, raster.data,
         src_bounds, src_shape, y_desc,
@@ -2117,6 +2120,44 @@ def _reproject_dask(
 # merge()
 # ---------------------------------------------------------------------------
 
+def _merge_inputs_to_host(rasters):
+    """Bring cupy-backed merge inputs to the host.
+
+    The merge pipeline is numpy-based end to end (``_place_same_crs``,
+    ``_reproject_chunk_numpy``, ``_merge_arrays_numpy``), so cupy and
+    dask+cupy inputs are converted before any pixel data is touched.
+    Returns ``(any_cupy, host_rasters)``; the input list is returned
+    unchanged when no raster is GPU-backed. Dask-of-cupy inputs stay
+    lazy: each chunk is converted via ``map_blocks`` at compute time.
+    """
+    try:
+        import cupy as cp
+    except ImportError:
+        return False, rasters
+
+    from ..utils import has_dask_array, is_dask_cupy
+
+    # is_dask_cupy dereferences dask.array.Array, so it must only run
+    # when dask is importable (cupy without dask is a valid install).
+    _dask_ok = has_dask_array()
+
+    any_cupy = False
+    host = []
+    for r in rasters:
+        if isinstance(r.data, cp.ndarray):
+            any_cupy = True
+            host.append(r.copy(data=cp.asnumpy(r.data)))
+        elif _dask_ok and is_dask_cupy(r):
+            any_cupy = True
+            host.append(r.copy(data=r.data.map_blocks(
+                cp.asnumpy, dtype=r.dtype,
+                meta=np.array((), dtype=r.dtype),
+            )))
+        else:
+            host.append(r)
+    return any_cupy, host
+
+
 def merge(
     rasters,
     *,
@@ -2136,6 +2177,11 @@ def merge(
     Each input is reprojected to the target CRS (if needed) and placed
     into a unified output grid. Overlapping regions are resolved using
     the selected *strategy*.
+
+    Accepts numpy, cupy, dask+numpy, and dask+cupy inputs. The merge
+    itself runs on the CPU: cupy-backed rasters are copied to the host
+    on entry and the mosaic is returned as a cupy (or dask+cupy) array
+    when any input was GPU-backed.
 
     Parameters
     ----------
@@ -2239,6 +2285,14 @@ def merge(
 
     from ._grid import _validate_bounds_policy
     _validate_bounds_policy(bounds_policy, func_name='merge')
+
+    # GPU inputs: the merge pipeline is numpy-based, so cupy and
+    # dask+cupy rasters are merged on the host and the mosaic is moved
+    # back to the GPU at the end. Same round-trip _apply_vertical_shift
+    # uses for its CPU-only geoid lookup. Without this, cupy inputs
+    # crashed at `.values` with xarray's implicit-conversion TypeError
+    # (#3095).
+    _any_cupy, rasters = _merge_inputs_to_host(rasters)
 
     # Resolve target CRS
     tgt_crs = _resolve_crs(target_crs)
@@ -2433,6 +2487,19 @@ def merge(
         except TypeError:
             n_entries = 1
         out_attrs['nodatavals'] = tuple(nd for _ in range(n_entries))
+
+    # Move the mosaic back to the GPU when any input was cupy-backed.
+    # An eager merge returns a cupy array; a lazy merge keeps the dask
+    # graph and converts each chunk on compute.
+    if _any_cupy:
+        import cupy as cp
+        if any_dask:
+            result_data = result_data.map_blocks(
+                cp.asarray, dtype=result_data.dtype,
+                meta=cp.array((), dtype=result_data.dtype),
+            )
+        else:
+            result_data = cp.asarray(result_data)
 
     result = xr.DataArray(
         result_data,

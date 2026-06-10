@@ -95,7 +95,7 @@ def test_int_dtype_default_nan_fill_raises_cupy():
     with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
-                  dtype=np.int32, use_cuda=True)
+                  dtype=np.int32, gpu=True)
 
 
 @skip_no_shapely
@@ -106,7 +106,7 @@ def test_int_dtype_default_nan_fill_raises_dask_cupy():
     with pytest.raises(ValueError, match="cannot be represented"):
         rasterize([(box(2, 2, 8, 8), 1.0)],
                   width=10, height=10, bounds=(0, 0, 10, 10),
-                  dtype=np.int32, use_cuda=True, chunks=5)
+                  dtype=np.int32, gpu=True, chunks=5)
 
 
 @skip_no_shapely
