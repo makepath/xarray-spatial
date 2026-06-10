@@ -240,7 +240,14 @@ def clip_polygon(
             )
 
         if has_cuda_and_cupy() and is_dask_cupy(raster):
-            # dask+cupy: use map_blocks with both raster and condition
+            # dask+cupy: use map_blocks with both raster and condition.
+            # The mask is built with a uniform chunk size taken from the
+            # raster's first chunk, so its block layout can differ from a
+            # raster with non-uniform chunks.  map_blocks pairs blocks
+            # positionally, so align the condition to the raster's chunks
+            # first or it raises (or stamps the mask onto the wrong cells).
+            cond = cond.rechunk(raster.data.chunks[-2:])
+
             def _apply_mask(raster_block, cond_block):
                 import cupy
                 out = raster_block.copy()

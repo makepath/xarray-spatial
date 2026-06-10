@@ -243,6 +243,21 @@ class TestClipPolygonDask:
             dk_result.values, np_result.values, equal_nan=True
         )
 
+    def test_nonuniform_chunks_matches_numpy(self):
+        """Dask+NumPy with non-uniform chunks matches NumPy (#3186)."""
+        np_raster = _make_raster(backend='numpy')
+        poly = _inner_polygon()
+        np_result = clip_polygon(np_raster, poly, crop=False)
+
+        for chunks in (((3, 5), (6,)), ((3, 2, 3), (2, 1, 3))):
+            dk_raster = _make_raster(backend='dask+numpy', chunks=(3, 3))
+            dk_raster = dk_raster.copy(data=dk_raster.data.rechunk(chunks))
+            dk_result = clip_polygon(dk_raster, poly, crop=False)
+            np.testing.assert_allclose(
+                dk_result.values, np_result.values, equal_nan=True,
+                err_msg=f"mismatch for chunks={chunks}",
+            )
+
     def test_all_touched_crop_matches_nocrop(self):
         """Dask: crop=True with all_touched=True keeps boundary pixels (#1197)."""
         dk_raster = _make_raster(backend='dask+numpy', chunks=(4, 3))
@@ -300,6 +315,33 @@ class TestClipPolygonDaskCuPy:
         np.testing.assert_allclose(
             dkcp_result.data.compute().get(), np_result.values, equal_nan=True
         )
+
+    def test_nonuniform_chunks_matches_numpy(self):
+        """Dask+CuPy with non-uniform chunks matches NumPy (#3186).
+
+        The polygon mask is rasterized with a uniform chunk size taken
+        from the raster's first chunk.  When the raster has irregular
+        chunks the mask layout differs, and da.map_blocks pairs blocks
+        positionally -- so without rechunking the condition to the
+        raster's chunks it raised (or stamped the mask onto the wrong
+        cells).
+        """
+        np_raster = _make_raster(backend='numpy')
+        poly = _inner_polygon()
+        np_result = clip_polygon(np_raster, poly, crop=False)
+
+        for chunks in (((3, 5), (6,)), ((3, 2, 3), (2, 1, 3))):
+            dkcp_raster = _make_raster(backend='dask+cupy', chunks=(3, 3))
+            dkcp_raster = dkcp_raster.copy(
+                data=dkcp_raster.data.rechunk(chunks)
+            )
+            dkcp_result = clip_polygon(dkcp_raster, poly, crop=False)
+            np.testing.assert_allclose(
+                dkcp_result.data.compute().get(),
+                np_result.values,
+                equal_nan=True,
+                err_msg=f"mismatch for chunks={chunks}",
+            )
 
 
 # ---------------------------------------------------------------------------
