@@ -137,7 +137,7 @@ class TestSinglePixelRaster:
                          width=1, height=1, bounds=(0, 0, 5, 5))
         cp_r = rasterize([(box(0, 0, 5, 5), 7.0)],
                          width=1, height=1, bounds=(0, 0, 5, 5),
-                         use_cuda=True)
+                         gpu=True)
         assert cp_r.shape == (1, 1)
         # Pin the absolute value too: a co-regression in eager numpy and
         # eager cupy (both writing fill instead of the burn value) would
@@ -166,7 +166,7 @@ class TestSinglePixelRaster:
                          width=1, height=1, bounds=(0, 0, 5, 5))
         dkcp_r = rasterize([(box(0, 0, 5, 5), 7.0)],
                            width=1, height=1, bounds=(0, 0, 5, 5),
-                           chunks=(1, 1), use_cuda=True)
+                           chunks=(1, 1), gpu=True)
         assert dkcp_r.shape == (1, 1)
         assert _as_numpy(dkcp_r)[0, 0] == 7.0
         np.testing.assert_array_equal(np_r.values, _as_numpy(dkcp_r))
@@ -251,11 +251,11 @@ class TestLikeParameter:
         assert r.dtype == np.float32
 
     @skip_no_cuda
-    def test_like_with_use_cuda(self):
+    def test_like_with_gpu(self):
         """``like=`` works on the cupy backend (dtype + shape inherited)."""
         template = self._template(dtype=np.float32)
         r = rasterize([(box(0, 0, 6, 4), 9.0)],
-                      like=template, fill=0, use_cuda=True)
+                      like=template, fill=0, gpu=True)
         assert r.shape == template.shape
         assert r.dtype == np.float32
         assert isinstance(r.data, cupy.ndarray)
@@ -278,7 +278,7 @@ class TestLikeParameter:
         template = self._template(dtype=np.float32)
         r = rasterize([(box(0, 0, 6, 4), 9.0)],
                       like=template, fill=0, chunks=(2, 3),
-                      use_cuda=True)
+                      gpu=True)
         assert r.shape == template.shape
         assert r.dtype == np.float32
 
@@ -366,7 +366,7 @@ class TestResolutionParameter:
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0)
         cp_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0,
-                         use_cuda=True)
+                         gpu=True)
         assert cp_r.shape == (5, 5)
         # Positive pin: polygon covers the full 5x5 grid.
         assert int((_as_numpy(cp_r) == 1.0).sum()) == 25
@@ -392,7 +392,7 @@ class TestResolutionParameter:
                          resolution=1.0, bounds=(0, 0, 5, 5), fill=0)
         dkcp_r = rasterize([(box(0, 0, 5, 5), 1.0)],
                            resolution=1.0, bounds=(0, 0, 5, 5), fill=0,
-                           chunks=(2, 2), use_cuda=True)
+                           chunks=(2, 2), gpu=True)
         assert dkcp_r.shape == (5, 5)
         assert int((_as_numpy(dkcp_r) == 1.0).sum()) == 25
         np.testing.assert_array_equal(np_r.values, _as_numpy(dkcp_r))
@@ -469,7 +469,7 @@ class TestGeometryCollection:
         np_r = rasterize([(gc, 1.0)], width=10, height=10,
                          bounds=(0, 0, 10, 10), fill=0)
         cp_r = rasterize([(gc, 1.0)], width=10, height=10,
-                         bounds=(0, 0, 10, 10), fill=0, use_cuda=True)
+                         bounds=(0, 0, 10, 10), fill=0, gpu=True)
         # 25 polygon cells + 1 point cell = 26 (eager case pins this too).
         assert int((_as_numpy(cp_r) == 1.0).sum()) == 26
         np.testing.assert_array_equal(np_r.values, _as_numpy(cp_r))
@@ -494,7 +494,7 @@ class TestGeometryCollection:
                          bounds=(0, 0, 10, 10), fill=0)
         dkcp_r = rasterize([(gc, 1.0)], width=10, height=10,
                            bounds=(0, 0, 10, 10), fill=0,
-                           chunks=(5, 5), use_cuda=True)
+                           chunks=(5, 5), gpu=True)
         assert int((_as_numpy(dkcp_r) == 1.0).sum()) == 26
         np.testing.assert_array_equal(np_r.values, _as_numpy(dkcp_r))
 
@@ -526,7 +526,7 @@ class TestEagerCupyAllTouched:
                          all_touched=True)
         cp_r = rasterize([(geom, 1.0)], width=5, height=5,
                          bounds=(0, 0, 5, 5), fill=0,
-                         all_touched=True, use_cuda=True)
+                         all_touched=True, gpu=True)
         np.testing.assert_array_equal(np_r.values, _as_numpy(cp_r))
         # Sanity: the touched mode lights the four corner cells.
         assert int((np_r.values == 1.0).sum()) == 4
@@ -540,10 +540,10 @@ class TestEagerCupyAllTouched:
         geom = box(1.9, 1.9, 2.1, 2.1)
         cp_default = rasterize([(geom, 1.0)], width=5, height=5,
                                bounds=(0, 0, 5, 5), fill=0,
-                               use_cuda=True)
+                               gpu=True)
         cp_touched = rasterize([(geom, 1.0)], width=5, height=5,
                                bounds=(0, 0, 5, 5), fill=0,
-                               all_touched=True, use_cuda=True)
+                               all_touched=True, gpu=True)
         default_mask = (_as_numpy(cp_default) == 1.0)
         touched_mask = (_as_numpy(cp_touched) == 1.0)
         # all_touched must fill everywhere the default mode filled.

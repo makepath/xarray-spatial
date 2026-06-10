@@ -4318,6 +4318,172 @@ class TestDaskDtypeParity:
         assert result.compute().dtype == np.float64
 
 
+class TestStreamingDtypeParity:
+    """The streaming fallback must match the other backends' dtype rule (#3093).
+
+    ``_reproject_streaming`` is only reachable through ``reproject()`` when
+    dask is not installed and the in-memory source exceeds 512 MB, so these
+    tests call the helper directly with grid parameters built the same way
+    ``reproject()`` builds them. Before the fix it allocated the assembled
+    output as float64 regardless of the source dtype (the other four
+    backends round-trip integer dtypes, see #2505) and allocated it 2-D,
+    which crashed on 3-D ``(y, x, band)`` sources.
+    """
+
+    def _streaming_args(self, raster):
+        from xrspatial.reproject import (
+            _is_y_descending,
+            _source_bounds,
+        )
+        from xrspatial.reproject._crs_utils import _detect_nodata, _resolve_crs
+        from xrspatial.reproject._grid import _compute_output_grid
+
+        src_crs = _resolve_crs('EPSG:4326')
+        tgt_crs = _resolve_crs('EPSG:3857')
+        src_bounds = _source_bounds(raster)
+        src_shape = raster.shape[:2]
+        grid = _compute_output_grid(src_bounds, src_shape, src_crs, tgt_crs)
+        nd = _detect_nodata(raster, None, dtype=raster.dtype)
+        return (
+            raster, src_bounds, src_shape, _is_y_descending(raster),
+            src_crs.to_wkt(), tgt_crs.to_wkt(),
+            grid['bounds'], grid['shape'],
+            'nearest', nd, 16,
+            8,          # tile_size: force multiple tiles
+            1024 ** 3,  # max_memory_bytes
+        )
+
+    def _make_raster(self, data):
+        coords = {
+            'y': np.linspace(50, 45, data.shape[0]),
+            'x': np.linspace(-5, 0, data.shape[1]),
+        }
+        dims = ['y', 'x'] if data.ndim == 2 else ['y', 'x', 'band']
+        if data.ndim == 3:
+            coords['band'] = np.arange(data.shape[2])
+        return xr.DataArray(data, dims=dims, coords=coords,
+                            attrs={'crs': 'EPSG:4326'})
+
+    def test_streaming_int16_preserves_dtype(self):
+        from xrspatial.reproject import _reproject_streaming
+        data = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.int16)
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.dtype == np.int16
+
+    def test_streaming_uint8_preserves_dtype(self):
+        from xrspatial.reproject import _reproject_streaming
+        data = (np.arange(32 * 32).reshape(32, 32) % 200).astype(np.uint8)
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.dtype == np.uint8
+
+    def test_streaming_float64_stays_float64(self):
+        from xrspatial.reproject import _reproject_streaming
+        data = np.random.RandomState(0).rand(32, 32)
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.dtype == np.float64
+
+    def test_streaming_matches_inmemory_values(self):
+        """Streaming and in-memory numpy paths agree on values and dtype."""
+        from xrspatial.reproject import _reproject_streaming, reproject
+        data = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.int16)
+        raster = self._make_raster(data)
+        out = _reproject_streaming(*self._streaming_args(raster))
+        expected = reproject(raster, 'EPSG:3857', resampling='nearest')
+        assert out.dtype == expected.dtype
+        np.testing.assert_array_equal(out, expected.values)
+
+    def test_streaming_3d_band_axis(self):
+        """3-D (y, x, band) sources assemble instead of crashing (#3093)."""
+        from xrspatial.reproject import _reproject_streaming
+        base = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.uint8)
+        data = np.dstack([base, base + 1, base + 2])
+        out = _reproject_streaming(*self._streaming_args(self._make_raster(data)))
+        assert out.ndim == 3
+        assert out.shape[2] == 3
+        assert out.dtype == np.uint8
+
+    def test_streaming_distributed_branch_preserves_dtype(self):
+        """The dask.bag distributed branch uses the same dtype rule (#3093).
+
+        ``_reproject_streaming`` switches to the distributed branch when a
+        ``dask.distributed`` client is active and there are more tiles than
+        workers, so run it under an in-process LocalCluster and check both
+        dtype and value parity with the local-branch result.
+        """
+        distributed = pytest.importorskip('distributed')
+        from xrspatial.reproject import _reproject_streaming
+        data = (np.arange(32 * 32).reshape(32, 32) % 100).astype(np.int16)
+        args = self._streaming_args(self._make_raster(data))
+        local_out = _reproject_streaming(*args)
+        with distributed.LocalCluster(
+            n_workers=1, processes=False, threads_per_worker=1,
+            dashboard_address=None,
+        ) as cluster, distributed.Client(cluster):
+            dist_out = _reproject_streaming(*args)
+        assert dist_out.dtype == np.int16
+        np.testing.assert_array_equal(dist_out, local_out)
+
+
+class TestParallelKernelThreadSafety:
+    """Concurrent launches of the numba projection kernels must not abort.
+
+    The kernels in _projections.py are ``parallel=True``, and numba's
+    default 'workqueue' threading layer terminates the process (SIGABRT
+    on macOS, see the #3093 CI failure) when two host threads enter a
+    parallel region concurrently. The streaming tile pool and dask's
+    threaded scheduler both launch these kernels from worker threads, so
+    try_numba_transform / transform_points serialize launches behind a
+    module lock. Run the hammer in a subprocess with the workqueue layer
+    forced so a regression aborts the child, not the test session.
+    """
+
+    _SCRIPT = """
+import threading
+import numpy as np
+from xrspatial.reproject._projections import transform_points, try_numba_transform
+from xrspatial.reproject._crs_utils import _resolve_crs
+
+src = _resolve_crs('EPSG:4326')
+tgt = _resolve_crs('EPSG:3857')
+bounds = (-561014.0, 5621521.0, -556014.0, 6453998.0)
+xs = np.linspace(-5.0, 5.0, 1000)
+ys = np.linspace(40.0, 50.0, 1000)
+errs = []
+
+def work():
+    try:
+        for _ in range(25):
+            try_numba_transform(src, tgt, bounds, (128, 128))
+            transform_points(src, tgt, xs, ys)
+    except BaseException as e:  # noqa: BLE001 - report everything
+        errs.append(e)
+
+threads = [threading.Thread(target=work) for _ in range(4)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+assert not errs, errs
+print('OK')
+"""
+
+    def test_concurrent_kernel_launches_survive_workqueue(self):
+        import os
+        import subprocess
+        import sys
+        env = dict(os.environ, NUMBA_THREADING_LAYER='workqueue')
+        proc = subprocess.run(
+            [sys.executable, '-c', self._SCRIPT],
+            capture_output=True, text=True, timeout=600, env=env,
+        )
+        assert proc.returncode == 0, (
+            f"subprocess exited {proc.returncode}\n"
+            f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+        )
+        assert 'OK' in proc.stdout
+        assert 'not threadsafe' not in proc.stderr
+
+
 @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
                     reason="dask + cupy required")
 class TestDaskCupyDtypeParity:
@@ -4406,6 +4572,97 @@ class TestDaskCupyDtypeParity:
         r_np = reproject(dask_np, 'EPSG:4326', resolution=1.0)
         r_cp = reproject(dask_cp, 'EPSG:4326', resolution=1.0)
         assert r_np.dtype == r_cp.dtype == np.int16
+
+
+class TestEmptyChunkDtype:
+    """Empty / no-overlap chunks must keep the integer source dtype (#3096).
+
+    The empty-chunk fills in the chunk workers and the footprint-skip
+    path in ``_reproject_block_adapter`` were hardcoded to float64. With
+    an integer source, one no-overlap chunk was enough to promote the
+    whole computed dask array to float64 while the lazy array (and the
+    eager backend) advertised the integer dtype.
+    """
+
+    # Output bounds in EPSG:3857 that are far larger than the projected
+    # footprint of the source raster below, so corner chunks have no
+    # source overlap and take the empty-chunk path.
+    _WIDE_BOUNDS = (-2_000_000.0, 5_000_000.0, 2_000_000.0, 9_000_000.0)
+
+    def _make_int16_data(self, n=200):
+        rng = np.random.default_rng(3096)
+        return (rng.random((n, n)) * 1000).astype(np.int16)
+
+    def _coords(self, n=200):
+        return {'y': np.linspace(52.0, 51.0, n), 'x': np.linspace(-2.0, -1.0, n)}
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_int16_empty_chunks_keep_dtype(self):
+        from xrspatial.reproject import reproject
+        data = self._make_int16_data()
+        raster = xr.DataArray(
+            da.from_array(data, chunks=(64, 64)),
+            dims=['y', 'x'], coords=self._coords(),
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(raster, 'EPSG:3857', bounds=self._WIDE_BOUNDS,
+                           resolution=20000, chunk_size=64)
+        assert result.dtype == np.int16
+        computed = result.compute()
+        assert computed.dtype == np.int16
+        # The no-overlap corners must hold the integer sentinel.
+        assert computed.values[0, 0] == -32768
+        # Some chunk must contain real data, or this test exercises
+        # nothing but empty fills.
+        assert (computed.values != -32768).any()
+
+    def test_numpy_int16_no_overlap_output_keeps_dtype(self):
+        # Eager backend, output grid entirely outside the source
+        # footprint: the single chunk takes the no-overlap early return.
+        from xrspatial.reproject import reproject
+        data = self._make_int16_data(32)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'], coords=self._coords(32),
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(raster, 'EPSG:3857',
+                           bounds=(5_000_000.0, 5_000_000.0,
+                                   6_000_000.0, 6_000_000.0),
+                           resolution=20000)
+        assert result.dtype == np.int16
+        assert (result.values == -32768).all()
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_float_empty_chunks_stay_float64(self):
+        # Float sources keep returning float64 empty chunks (NaN fill).
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(0).rand(200, 200)
+        raster = xr.DataArray(
+            da.from_array(data, chunks=(64, 64)),
+            dims=['y', 'x'], coords=self._coords(),
+            attrs={'crs': 'EPSG:4326'},
+        )
+        result = reproject(raster, 'EPSG:3857', bounds=self._WIDE_BOUNDS,
+                           resolution=20000, chunk_size=64)
+        assert result.dtype == np.float64
+        computed = result.compute()
+        assert computed.dtype == np.float64
+        assert np.isnan(computed.values[0, 0])
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask + cupy required")
+    def test_dask_cupy_int16_empty_chunks_keep_dtype(self):
+        from xrspatial.reproject import reproject
+        data = self._make_int16_data()
+        raster = xr.DataArray(
+            da.from_array(cp.asarray(data), chunks=(64, 64)),
+            dims=['y', 'x'], coords=self._coords(),
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(raster, 'EPSG:3857', bounds=self._WIDE_BOUNDS,
+                           resolution=20000, chunk_size=64)
+        computed = result.compute()
+        assert computed.dtype == np.int16
 
 
 @pytest.mark.skipif(not HAS_DASK, reason="dask required")
@@ -6844,6 +7101,107 @@ class TestExactPrecisionEscapeHatch:
 
 
 @pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
+class TestNoDuplicateNumbaFastPathProbe:
+    """The numpy chunk worker must probe the numba fast path exactly once
+    per chunk (#3106).
+
+    The bug: for CRS pairs with no fast path, _reproject_chunk_numpy
+    called try_numba_transform (None), then fell into _transform_coords
+    which called try_numba_transform again before the pyproj control
+    grid. Each wasted probe re-parses CRS params and allocates four
+    chunk-sized coordinate arrays.
+    """
+
+    _BOUNDS = (-2_000_000.0, 4_000_000.0, -1_000_000.0, 5_000_000.0)
+    _SHAPE = (16, 16)
+
+    @staticmethod
+    def _wkts():
+        # WGS84 -> Mollweide has no numba fast path, so the worker takes
+        # the pyproj fallback where the duplicate probe used to happen.
+        return (pyproj.CRS('EPSG:4326').to_wkt(),
+                pyproj.CRS('ESRI:54009').to_wkt())
+
+    def test_chunk_numpy_probes_fast_path_exactly_once(self, monkeypatch):
+        from xrspatial.reproject import _reproject_chunk_numpy
+        from xrspatial.reproject import _projections
+
+        calls = []
+        real = _projections.try_numba_transform
+
+        def _spy(*args, **kwargs):
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_projections, 'try_numba_transform', _spy)
+
+        src_wkt, tgt_wkt = self._wkts()
+        source_data = np.arange(32 * 32, dtype=np.float64).reshape(32, 32)
+        out = _reproject_chunk_numpy(
+            source_data,
+            (-20.0, 35.0, -10.0, 45.0), (32, 32), True,
+            src_wkt, tgt_wkt,
+            self._BOUNDS, self._SHAPE,
+            'bilinear', np.nan, 16,
+        )
+        assert out.shape == self._SHAPE
+        assert len(calls) == 1, (
+            f"expected one try_numba_transform probe per chunk, "
+            f"got {len(calls)} (#3106)"
+        )
+
+    def test_transform_coords_still_probes_when_given_crs(self, monkeypatch):
+        """_transform_coords keeps its own probe for callers that have not
+        tried the numba path yet (the cupy CPU fallbacks rely on it)."""
+        from xrspatial.reproject import _transform_coords
+        from xrspatial.reproject import _projections
+
+        calls = []
+        real = _projections.try_numba_transform
+
+        def _spy(*args, **kwargs):
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_projections, 'try_numba_transform', _spy)
+
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:3857')
+        transformer = pyproj.Transformer.from_crs(tgt, src, always_xy=True)
+        _transform_coords(
+            transformer, self._BOUNDS, self._SHAPE, 16,
+            src_crs=src, tgt_crs=tgt,
+        )
+        assert len(calls) == 1
+
+    def test_fallback_pair_values_match_pyproj_reference(self):
+        """The skipped retry must not change the worker's coordinates:
+        the pyproj fallback output stays identical for a no-fast-path
+        pair (exact path, so it is directly comparable to pyproj)."""
+        from xrspatial.reproject import _transform_coords
+
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('ESRI:54009')
+        transformer = pyproj.Transformer.from_crs(tgt, src, always_xy=True)
+        src_y, src_x = _transform_coords(
+            transformer, self._BOUNDS, self._SHAPE, 0,
+        )
+
+        h, w = self._SHAPE
+        left, bottom, right, top = self._BOUNDS
+        res_x = (right - left) / w
+        res_y = (top - bottom) / h
+        out_x = left + (np.arange(w) + 0.5) * res_x
+        out_y = top - (np.arange(h) + 0.5) * res_y
+        gx, gy = np.meshgrid(out_x, out_y)
+        ref_x, ref_y = transformer.transform(gx.ravel(), gy.ravel())
+        np.testing.assert_allclose(
+            src_x, np.asarray(ref_x).reshape(h, w), atol=1e-9)
+        np.testing.assert_allclose(
+            src_y, np.asarray(ref_y).reshape(h, w), atol=1e-9)
+
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
 class TestNonWgsDatumNumbaFastPath:
     """The numba fast path must not corrupt coordinates for non-WGS84
     datums (GH #2651).
@@ -6925,3 +7283,182 @@ class TestNonWgsDatumNumbaFastPath:
         # Guard against the old corruption: coords must be metres, not degrees.
         assert np.all(np.abs(src_x) > 1000.0)
         assert np.all(np.abs(src_y) > 1000.0)
+
+
+@pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+class TestMergeCupyBackends:
+    """merge() accepts GPU-backed inputs and returns a GPU mosaic (#3095).
+
+    Before the fix, _merge_inmemory called ``.values`` on cupy-backed
+    DataArrays and xarray raised ``TypeError: Implicit conversion to a
+    NumPy array is not allowed``. The merge runs on the host; these
+    tests pin the round-trip and exact value parity with the numpy path.
+    """
+
+    def _pair(self):
+        rng = np.random.default_rng(3095)
+        data_a = rng.random((16, 16)).astype(np.float32)
+        data_b = rng.random((16, 16)).astype(np.float32)
+        a = _make_raster(data_a, x_range=(-10, 0), y_range=(-5, 5))
+        b = _make_raster(data_b, x_range=(0, 10), y_range=(-5, 5))
+        return a, b
+
+    def test_cupy_inputs_return_cupy(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        expected = merge([a, b], resolution=1.0)
+        a_gpu = a.copy(data=cp.asarray(a.data))
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        result = merge([a_gpu, b_gpu], resolution=1.0)
+        assert isinstance(result.data, cp.ndarray)
+        np.testing.assert_array_equal(
+            cp.asnumpy(result.data), expected.values
+        )
+        assert result.dims == expected.dims
+        np.testing.assert_array_equal(
+            result.coords['x'].values, expected.coords['x'].values
+        )
+
+    def test_mixed_numpy_cupy_inputs_return_cupy(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        expected = merge([a, b], resolution=1.0)
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        result = merge([a, b_gpu], resolution=1.0)
+        assert isinstance(result.data, cp.ndarray)
+        np.testing.assert_array_equal(
+            cp.asnumpy(result.data), expected.values
+        )
+
+    def test_cupy_inputs_do_not_mutate_sources(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        a_gpu = a.copy(data=cp.asarray(a.data))
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        merge([a_gpu, b_gpu], resolution=1.0)
+        # Inputs stay on the GPU; the host conversion works on copies.
+        assert isinstance(a_gpu.data, cp.ndarray)
+        assert isinstance(b_gpu.data, cp.ndarray)
+        # And the values are untouched (no in-place mutation).
+        np.testing.assert_array_equal(cp.asnumpy(a_gpu.data), a.data)
+        np.testing.assert_array_equal(cp.asnumpy(b_gpu.data), b.data)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_cupy_inputs_stay_lazy_and_match_numpy(self):
+        import cupy as cp
+        import dask.array as dask_array
+
+        from xrspatial.reproject import merge
+        a, b = self._pair()
+        expected = merge([a, b], resolution=1.0)
+        a_gpu = a.copy(data=dask_array.from_array(
+            cp.asarray(a.data), chunks=8))
+        b_gpu = b.copy(data=dask_array.from_array(
+            cp.asarray(b.data), chunks=8))
+        result = merge([a_gpu, b_gpu], resolution=1.0)
+        # Graph construction must not materialize anything.
+        assert isinstance(result.data, dask_array.Array)
+        assert isinstance(result.data._meta, cp.ndarray)
+        computed = result.data.compute()
+        assert isinstance(computed, cp.ndarray)
+        np.testing.assert_array_equal(
+            cp.asnumpy(computed), expected.values
+        )
+
+    def test_cupy_merge_strategies_match_numpy(self):
+        import cupy as cp
+
+        from xrspatial.reproject import merge
+        rng = np.random.default_rng(30952)
+        a = _make_raster(rng.random((16, 16)).astype(np.float32),
+                         x_range=(-5, 5), y_range=(-5, 5))
+        b = _make_raster(rng.random((16, 16)).astype(np.float32),
+                         x_range=(-5, 5), y_range=(-5, 5))
+        a_gpu = a.copy(data=cp.asarray(a.data))
+        b_gpu = b.copy(data=cp.asarray(b.data))
+        for strategy in ('first', 'last', 'mean', 'max', 'min'):
+            expected = merge([a, b], strategy=strategy, resolution=1.0)
+            result = merge([a_gpu, b_gpu], strategy=strategy, resolution=1.0)
+            np.testing.assert_array_equal(
+                cp.asnumpy(result.data), expected.values,
+                err_msg=f"strategy={strategy!r}",
+            )
+
+
+@pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
+class TestNonWgsDatumCudaFastPath:
+    """The CUDA fast path must bail for non-WGS84 datums (GH #3094).
+
+    GH #2651 gated the CPU fast paths so non-WGS84 datums fall back to
+    pyproj, but try_cuda_transform kept dispatching them. The projected
+    CRS matchers accept any datum in the Helmert table, so a pair like
+    EPSG:4326 <-> EPSG:27700 (OSGB36 / Airy) ran the WGS84 Krueger
+    series with no datum shift and returned coordinates ~100 m off,
+    making the cupy and dask+cupy backends diverge from numpy.
+    """
+
+    def test_cuda_fast_path_disabled_for_non_wgs_target(self):
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:4326')
+        tgt = pyproj.CRS('EPSG:27700')
+        result = try_cuda_transform(
+            src, tgt, (400000.0, 200000.0, 410000.0, 210000.0), (4, 4),
+        )
+        assert result is None
+
+    def test_cuda_fast_path_disabled_for_projected_non_wgs_source(self):
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:27700')
+        tgt = pyproj.CRS('EPSG:4326')
+        result = try_cuda_transform(src, tgt, (-2.0, 51.0, -1.0, 52.0), (4, 4))
+        assert result is None
+
+    def test_cuda_fast_path_disabled_for_geographic_non_wgs_source(self):
+        # NAD27 geographic (Clarke 1866 datum) -> Web Mercator.
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:4267')
+        tgt = pyproj.CRS('EPSG:3857')
+        result = try_cuda_transform(
+            src, tgt, (-8000000.0, 4000000.0, -7900000.0, 4100000.0), (4, 4),
+        )
+        assert result is None
+
+    def test_cuda_wgs_fast_path_still_active(self):
+        # WGS84 UTM <-> WGS84 geographic must keep using the CUDA path.
+        from xrspatial.reproject._projections_cuda import try_cuda_transform
+        src = pyproj.CRS('EPSG:32617')
+        tgt = pyproj.CRS('EPSG:4326')
+        result = try_cuda_transform(src, tgt, (-84.0, 40.0, -83.0, 41.0), (4, 4))
+        assert result is not None
+
+    def test_cupy_reproject_matches_numpy_for_osgb36_target(self):
+        # End to end: cupy must agree with numpy for a non-WGS84 datum
+        # target. Before the fix the cupy backend sampled ~10 pixels away
+        # from the right source location (~100 m datum/ellipsoid error).
+        from xrspatial.reproject import reproject
+        rng = np.random.default_rng(3094)
+        data = rng.random((64, 64))
+        coords = {'y': np.linspace(52.0, 51.0, 64),
+                  'x': np.linspace(-2.0, -1.0, 64)}
+        host = xr.DataArray(
+            data, dims=['y', 'x'], coords=coords,
+            attrs={'crs': 'EPSG:4326'},
+        )
+        eager = reproject(host, 'EPSG:27700').values
+        gpu = host.copy(data=cp.asarray(data))
+        gpu_out = reproject(gpu, 'EPSG:27700')
+        gpu_arr = cp.asnumpy(gpu_out.data)
+        assert eager.shape == gpu_arr.shape
+        # NaN masks must agree cell for cell.
+        np.testing.assert_array_equal(
+            np.isfinite(eager), np.isfinite(gpu_arr),
+        )
+        np.testing.assert_allclose(
+            eager, gpu_arr, rtol=1e-4, atol=1e-4, equal_nan=True,
+        )
