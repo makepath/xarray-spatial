@@ -15,9 +15,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    MalformedScaleOffsetError, MixedBandMetadataError, _build_vrt,
-    _read_geotiff_dask, _read_geotiff_gpu, _read_vrt, open_geotiff, to_geotiff)
+from xrspatial.geotiff import (MalformedScaleOffsetError, MixedBandMetadataError, _build_vrt,
+                               _read_geotiff_dask, _read_geotiff_gpu, _read_vrt, open_geotiff,
+                               to_geotiff)
 from xrspatial.geotiff._runtime import GeoTIFFFallbackWarning
 from xrspatial.geotiff.tests._helpers.markers import requires_gpu
 
@@ -552,3 +552,40 @@ def test_mask_and_scale_uniform_per_band_applies(tmp_path):
     expected = np.stack(
         [np.full((3, 4), (b + 1) * 3.0 + 2.0) for b in range(3)], axis=-1)
     np.testing.assert_array_equal(out.data, expected)
+
+
+# ---------------------------------------------------------------------------
+# error messages name unpack, not the deprecated mask_and_scale alias (#3086)
+# ---------------------------------------------------------------------------
+
+def test_mixed_per_band_error_names_unpack_not_alias(tmp_path):
+    """The mixed per-band rejection's remedy names the current kwarg.
+
+    ``mask_and_scale=`` is a deprecated alias of ``unpack=`` (#3071); the
+    error a caller sees on the ``unpack=True`` path must not steer them
+    to the alias.
+    """
+    path = _per_band_scale_tiff(
+        str(tmp_path / "t3086_mixed.tif"),
+        scales=[2.0, 4.0, 8.0], offsets=[0.0, 0.0, 0.0])
+    with pytest.raises(MixedBandMetadataError) as excinfo:
+        open_geotiff(path, unpack=True)
+    msg = str(excinfo.value)
+    assert "unpack=True" in msg
+    assert "drop unpack" in msg
+    assert "mask_and_scale" not in msg
+
+
+@pytest.mark.parametrize(
+    "builder,fname",
+    [(_malformed_scale_tiff, "t3086_bad_scale.tif"),
+     (_malformed_xml_tiff, "t3086_bad_xml.tif")],
+    ids=["bad_scale_value", "bad_xml"])
+def test_malformed_scale_error_names_unpack_not_alias(tmp_path, builder, fname):
+    """Same contract for the malformed SCALE and malformed XML rejections."""
+    path = builder(str(tmp_path / fname))
+    with pytest.raises(MalformedScaleOffsetError) as excinfo:
+        open_geotiff(path, unpack=True)
+    msg = str(excinfo.value)
+    assert "unpack=True" in msg
+    assert "mask_and_scale" not in msg

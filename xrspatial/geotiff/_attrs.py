@@ -1609,7 +1609,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     if malformed:
         raise MalformedScaleOffsetError(
             "GDAL_METADATA XML is malformed and could not be parsed. "
-            "mask_and_scale=True cannot honour the scale / offset it may "
+            "unpack=True cannot honour the scale / offset it may "
             "declare, so the read is refused rather than returning raw, "
             "unscaled pixels."
         )
@@ -1625,7 +1625,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
         except (TypeError, ValueError):
             raise MalformedScaleOffsetError(
                 f"GDAL_METADATA {name} is not a number: {raw!r}. "
-                "mask_and_scale=True cannot honour a malformed "
+                "unpack=True cannot honour a malformed "
                 f"{name}."
             ) from None
 
@@ -1654,11 +1654,11 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
         if len(distinct) > 1:
             from ._errors import MixedBandMetadataError
             raise MixedBandMetadataError(
-                f"mask_and_scale=True but the source declares distinct "
+                f"unpack=True but the source declares distinct "
                 f"per-band {name} values {distinct!r}. Applying one band's "
                 f"{name} to the whole array would silently corrupt the other "
                 f"bands. Select a single band with band= to read it with its "
-                f"own {name}, or drop mask_and_scale."
+                f"own {name}, or drop unpack."
             )
         return distinct[0]
 
@@ -1668,7 +1668,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
 
 
 def _pack(data):
-    """Re-pack a ``mask_and_scale=True`` read for writing -- inverse of
+    """Re-pack an ``unpack=True`` read for writing -- inverse of
     :func:`_extract_scale_offset`'s forward direction.
 
     Reverses the scale / offset applied on read (``(data - add_offset) /
@@ -1680,12 +1680,12 @@ def _pack(data):
 
     The SCALE / OFFSET GDAL_METADATA tags are kept: the written file stores
     the raw packed integers and re-declares the scale, so reopening with
-    ``mask_and_scale=True`` unpacks to the same values rather than scaling a
+    ``unpack=True`` unpacks to the same values rather than scaling a
     second time. (The double-scale bug the round-trip caveat warns about
     comes from writing the *already-scaled* floats with the tags still on;
     reversing the scale first, as here, makes keeping the tags correct.)
 
-    Raises ``ValueError`` when ``data`` carries no mask_and_scale state to
+    Raises ``ValueError`` when ``data`` carries no unpack state to
     reverse, or when an integer dtype must be restored but NaN pixels are
     present with no declared sentinel to fill them.
     """
@@ -1698,10 +1698,10 @@ def _pack(data):
     if ('scale_factor' not in attrs and target is None
             and not attrs.get('masked_nodata')):
         raise ValueError(
-            "pack=True but the array carries no mask_and_scale state to "
+            "pack=True but the array carries no unpack state to "
             "reverse (no scale_factor / mask_and_scale_dtype / "
             "masked_nodata). It was not produced by "
-            "open_geotiff(mask_and_scale=True).")
+            "open_geotiff(unpack=True).")
 
     out = (data - offset) / scale
 
