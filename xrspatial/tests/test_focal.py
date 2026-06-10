@@ -245,6 +245,39 @@ def test_hotspots_rejects_oversize_kernel_1284():
             hotspots(raster, kernel)
 
 
+def test_apply_oversize_kernel_accounts_for_float64_3223():
+    # Regression for #3223: the guard budgeted 4 bytes/cell (float32) but
+    # apply() preserves float64 input since #2805, so float64 combos could
+    # pass the guard and then allocate twice the estimate. With 1 MB
+    # "available", a (201, 201) kernel on a 10x10 raster needs ~338 KB in
+    # float32 (within the 50% threshold) but ~676 KB in float64, which
+    # must be rejected.
+    kernel = np.ones((201, 201), dtype=np.float32)
+    raster64 = xr.DataArray(np.zeros((10, 10), dtype=np.float64))
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError, match=r"apply\(\): kernel of shape"):
+            apply(raster64, kernel)
+
+    # The same combination with float32 input stays within budget.
+    raster32 = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        out = apply(raster32, kernel)
+    assert out.shape == (10, 10)
+
+
+def test_focal_stats_oversize_kernel_accounts_for_float64_3223():
+    # Regression for #3223: same float64 budget check for focal_stats.
+    kernel = np.ones((201, 201), dtype=np.float32)
+    raster64 = xr.DataArray(np.zeros((10, 10), dtype=np.float64))
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError,
+                           match=r"focal_stats\(\): kernel of shape"):
+            focal_stats(raster64, kernel, stats_funcs=['mean'])
+
+
 def test_apply_small_kernel_not_rejected_1284():
     # The guard must not fire for realistic kernel + raster combos.
     raster = xr.DataArray(np.ones((50, 50), dtype=np.float32))
