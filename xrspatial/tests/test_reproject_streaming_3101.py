@@ -57,13 +57,14 @@ def _streaming_setup(raster, target_crs='EPSG:32633'):
     return src_crs, tgt_crs, src_bounds, src_shape, grid
 
 
-def _run_streaming(raster, tile_size, max_memory, resampling='bilinear'):
+def _run_streaming(raster, tile_size, max_memory, resampling='bilinear',
+                   precision=16):
     src_crs, tgt_crs, src_bounds, src_shape, grid = _streaming_setup(raster)
     return _reproject_mod._reproject_streaming(
         raster, src_bounds, src_shape, True,
         src_crs.to_wkt(), tgt_crs.to_wkt(),
         grid['bounds'], grid['shape'],
-        resampling, float('nan'), 16,
+        resampling, float('nan'), precision,
         tile_size, _reproject_mod._parse_max_memory(max_memory),
         x_desc=False, band_nodata=None,
     )
@@ -109,11 +110,20 @@ class TestStreamingMatchesInMemory:
     def test_multi_tile_threaded(self):
         # 64x64 output split into 32x32 tiles; 1 GB budget keeps the
         # ThreadPoolExecutor branch active (max_concurrent >= 2).
+        #
+        # transform_precision=0 forces the exact pyproj path (one
+        # Transformer per worker thread). The numba fast-path kernels are
+        # parallel=True, and running them concurrently from this thread
+        # pool aborts the interpreter on numba's workqueue threading
+        # layer (macOS arm64 CI) -- that source bug is #3141. The numba
+        # path stays covered by the serial tests below.
         assert self._max_concurrent('1GB', 32) >= 2
         data = np.random.RandomState(42).rand(64, 64)
         raster = _make_raster(data)
-        ref = self._reference(raster)
-        out = _run_streaming(raster, tile_size=32, max_memory='1GB')
+        from xrspatial.reproject import reproject
+        ref = reproject(raster, 'EPSG:32633', transform_precision=0)
+        out = _run_streaming(raster, tile_size=32, max_memory='1GB',
+                             precision=0)
         assert out.shape == ref.shape
         # More than one tile, or the thread pool never gets a batch.
         assert ref.shape[0] > 32 or ref.shape[1] > 32
@@ -141,13 +151,15 @@ class TestStreamingMatchesInMemory:
 
     def test_nearest_resampling_with_nan(self):
         # NaN cells survive the streaming assembly the same way they do
-        # in-memory.
+        # in-memory. max_memory=1 keeps this multi-tile run on the serial
+        # loop so the parallel=True numba kernels are never entered
+        # concurrently (#3141) while still covering the numba fast path.
         from xrspatial.reproject import reproject
         data = np.random.RandomState(11).rand(48, 48)
         data[10:14, 20:24] = np.nan
         raster = _make_raster(data)
         ref = reproject(raster, 'EPSG:32633', resampling='nearest')
-        out = _run_streaming(raster, tile_size=20, max_memory='1GB',
+        out = _run_streaming(raster, tile_size=20, max_memory=1,
                              resampling='nearest')
         assert out.shape == ref.shape
         np.testing.assert_allclose(out, ref.values, equal_nan=True)
@@ -162,7 +174,10 @@ class TestStreaming3D:
         from xrspatial.reproject import reproject
         data = np.random.RandomState(5).rand(32, 32, 3)
         raster = _make_raster(data)
-        out = _run_streaming(raster, tile_size=16, max_memory='1GB')
+        # max_memory=1 -> serial loop, so the expected failure is the
+        # deterministic assembly ValueError, never the concurrent
+        # parallel-kernel abort from #3141.
+        out = _run_streaming(raster, tile_size=16, max_memory=1)
         # Once #3100 is fixed the xfail comes off and the streaming
         # result must match the in-memory 3-D path:
         ref = reproject(raster, 'EPSG:32633')
