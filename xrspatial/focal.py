@@ -191,7 +191,9 @@ def _mean_dask_numpy(data, excludes, boundary='nan'):
 
 
 def _mean_dask_cupy(data, excludes, boundary='nan'):
-    data = data.astype(cupy.float32)
+    # Preserve float64 like the CPU paths; only promote non-float input
+    # (issue #3222).
+    data = data.astype(_promote_float(data.dtype))
     _func = partial(_mean_cupy, excludes=excludes)
     out = data.map_overlap(_func,
                            depth=(1, 1),
@@ -257,9 +259,11 @@ def _mean_gpu(data, excludes, out):
 
 
 def _mean_cupy(data, excludes):
-    # ensure cupy arrays and a float dtype
-    data_cu = cupy.asarray(data, dtype=cupy.float32)
-    excludes_cu = cupy.asarray(excludes, dtype=cupy.float32)
+    # Ensure cupy arrays and a float dtype. Keep float64 input as float64
+    # so the GPU result matches the CPU paths, which compute in the
+    # promoted dtype (issue #3222).
+    data_cu = cupy.asarray(data, dtype=_promote_float(data.dtype))
+    excludes_cu = cupy.asarray(excludes, dtype=data_cu.dtype)
 
     griddim, blockdim = cuda_args(data_cu.shape)
 

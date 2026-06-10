@@ -103,6 +103,41 @@ def test_mean_transfer_function_dask_gpu():
         equal_nan=True, rtol=1e-4)
 
 
+@cuda_and_cupy_available
+def test_mean_preserves_float64_gpu_3222():
+    # Regression for #3222: _mean_cupy forced float32, so a float64 raster
+    # came back float32 on GPU while the CPU paths returned float64. The
+    # +1e7 offset makes the float32 rounding visible (abs error ~0.5).
+    import cupy
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5) + 1e7
+    numpy_mean = mean(xr.DataArray(data))
+    cupy_mean = mean(xr.DataArray(cupy.asarray(data)))
+
+    assert numpy_mean.data.dtype == np.float64
+    assert cupy_mean.data.dtype == np.float64
+    np.testing.assert_allclose(
+        numpy_mean.data, cupy_mean.data.get(), equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_mean_preserves_float64_dask_gpu_3222():
+    # Regression for #3222: same as above for the dask+cupy path, which
+    # cast every chunk to float32 in _mean_dask_cupy.
+    import cupy
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5) + 1e7
+    numpy_mean = mean(xr.DataArray(data))
+
+    dask_cupy_agg = xr.DataArray(
+        da.from_array(cupy.asarray(data), chunks=(2, 3)))
+    result = mean(dask_cupy_agg).data.compute().get()
+
+    assert result.dtype == np.float64
+    np.testing.assert_allclose(numpy_mean.data, result, equal_nan=True)
+
+
 @pytest.fixture
 def convolve_2d_data():
     data = np.array([
