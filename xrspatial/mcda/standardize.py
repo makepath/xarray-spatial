@@ -268,15 +268,18 @@ def _piecewise(data, *, breakpoints, values):
         import dask.array as da
 
         def _interp_block(block):
-            # Ensure block is numpy for np.interp (handles cupy chunks)
-            arr = np.asarray(block)
-            return np.interp(arr, bp, vl)
+            # Use the block's own array module so cupy chunks stay on
+            # the device (np.asarray on a cupy block raises TypeError).
+            xp_b = _get_xp(block)
+            return xp_b.interp(block, xp_b.asarray(bp), xp_b.asarray(vl))
 
         result = da.map_blocks(_interp_block, data, dtype=np.float64)
         result = da.where(da.isfinite(data), result, np.nan)
         return result
 
-    result = xp.interp(data, bp, vl)
+    # cupy.interp rejects numpy operands, so move the lookup tables to
+    # the data's array module first (a no-op copy for numpy).
+    result = xp.interp(data, xp.asarray(bp), xp.asarray(vl))
     result = xp.where(xp.isfinite(data), result, xp.nan)
     return result
 
@@ -292,11 +295,12 @@ def _categorical(data, *, mapping):
         import dask.array as da
 
         def _apply_mapping(block):
-            # Ensure block is numpy (handles cupy chunks)
-            arr = np.asarray(block)
-            out = np.full(arr.shape, np.nan, dtype=np.float64)
+            # Use the block's own array module so cupy chunks stay on
+            # the device (np.asarray on a cupy block raises TypeError).
+            xp_b = _get_xp(block)
+            out = xp_b.full(block.shape, np.nan, dtype=np.float64)
             for k, v in zip(keys, vals):
-                out[arr == k] = v
+                out[block == k] = v
             return out
 
         result = da.map_blocks(_apply_mapping, data, dtype=np.float64)
