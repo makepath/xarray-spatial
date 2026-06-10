@@ -17,9 +17,7 @@ from typing import Optional
 import numpy as np
 import xarray
 
-from .utils import (
-    _validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array, ngjit,
-)
+from .utils import _validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array, ngjit
 
 SPEED_OF_LIGHT = 299_792_458.0  # m/s
 
@@ -258,7 +256,7 @@ def cumulative_viewshed(
         Integer raster (int32) with the count of observers that have
         line-of-sight to each cell.
     """
-    from .viewshed import viewshed, INVISIBLE
+    from .viewshed import INVISIBLE, viewshed
 
     _validate_raster(raster, func_name='cumulative_viewshed', name='raster')
     if not observers:

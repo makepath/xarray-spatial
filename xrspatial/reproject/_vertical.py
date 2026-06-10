@@ -212,9 +212,13 @@ def geoid_height(lon, lat, model='EGM96'):
 
     Returns
     -------
-    N : same type as input
+    N : float or numpy.ndarray
         Geoid undulation in metres. Positive means the geoid is above
-        the ellipsoid.
+        the ellipsoid. A Python ``float`` when both *lon* and *lat* are
+        scalars; otherwise a ``numpy.ndarray`` with the same shape as
+        the inputs. Array-like and ``xr.DataArray`` inputs both come
+        back as a plain ndarray (coords and attrs are not carried
+        through).
 
     Examples
     --------
@@ -330,8 +334,10 @@ def ellipsoidal_to_orthometric(height, lon, lat, model='EGM96'):
 
     Returns
     -------
-    H : same type as height
-        Orthometric height in metres.
+    H : numpy.ndarray or numpy scalar
+        Orthometric height in metres. The input is passed through
+        ``np.asarray``, so scalar input returns a numpy scalar and
+        array-like or ``xr.DataArray`` input returns a plain ndarray.
     """
     N = geoid_height(lon, lat, model)
     return np.asarray(height) - N
@@ -353,8 +359,10 @@ def orthometric_to_ellipsoidal(height, lon, lat, model='EGM96'):
 
     Returns
     -------
-    h : same type as height
-        Ellipsoidal height in metres.
+    h : numpy.ndarray or numpy scalar
+        Ellipsoidal height in metres. The input is passed through
+        ``np.asarray``, so scalar input returns a numpy scalar and
+        array-like or ``xr.DataArray`` input returns a plain ndarray.
     """
     N = geoid_height(lon, lat, model)
     return np.asarray(height) + N
@@ -378,8 +386,11 @@ def depth_to_ellipsoidal(depth, lon, lat, model='EGM96'):
 
     Returns
     -------
-    h : same type as depth
-        Ellipsoidal height in metres (negative below ellipsoid).
+    h : numpy.ndarray or numpy scalar
+        Ellipsoidal height in metres (negative below ellipsoid). The
+        input is passed through ``np.asarray``, so scalar input returns
+        a numpy scalar and array-like or ``xr.DataArray`` input returns
+        a plain ndarray.
     """
     N = geoid_height(lon, lat, model)
     return -np.asarray(depth) + N
@@ -403,8 +414,11 @@ def ellipsoidal_to_depth(height, lon, lat, model='EGM96'):
 
     Returns
     -------
-    depth : same type as height
-        Depth below chart datum in metres (positive downward).
+    depth : numpy.ndarray or numpy scalar
+        Depth below chart datum in metres (positive downward). The
+        input is passed through ``np.asarray``, so scalar input returns
+        a numpy scalar and array-like or ``xr.DataArray`` input returns
+        a plain ndarray.
     """
     N = geoid_height(lon, lat, model)
     return N - np.asarray(height)

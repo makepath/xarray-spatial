@@ -284,6 +284,65 @@ def _check_monotonic_coords(x_coords, y_coords, x, y):
             )
 
 
+def _great_circle_col_halo(x_coords, y_coords, max_distance):
+    """Column halo depth (in pixels) for the GREAT_CIRCLE metric.
+
+    Great-circle distance is periodic in longitude (haversine takes the
+    short way around the sphere) and its chords shorten toward the poles,
+    so a linear sum of per-column step distances is not a lower bound on
+    the spherical distance between two grid points. Use the chord bound
+
+        dist(p, t) >= 2 * R * asin(cos(lat_max) * |sin(dlon / 2)|)
+
+    which holds for every pair of grid points (``lat_max`` is the largest
+    absolute latitude on the raster). Inverting it for ``max_distance``
+    gives ``dlon_max``: any pair separated by more than ``dlon_max``
+    degrees of longitude (the short way around) is farther apart than
+    ``max_distance`` no matter the latitudes.
+
+    When the bound cannot exclude anything -- ``max_distance`` reaches the
+    180-degree chord at ``lat_max``, or targets across the +/-180 seam are
+    within reach (seam gap <= ``dlon_max``) -- no array-space halo can
+    cover the wrap. Return a depth one larger than the axis so
+    ``_fit_halo_to_chunks`` folds the x axis into a single chunk and every
+    chunk sees all columns.
+    """
+    width = len(x_coords)
+    if width < 2:
+        return 0
+    fold = width + 1
+
+    radius = 6378137.0
+    half_angle = max_distance / (2.0 * radius)
+    if half_angle >= np.pi / 2.0:
+        # max_distance spans half the circumference: everything is in reach.
+        return fold
+
+    cos_lat_max = np.cos(np.radians(np.abs(np.asarray(y_coords)).max()))
+    sin_half = np.sin(half_angle)
+    if sin_half >= cos_lat_max:
+        # Even a 180-degree longitude gap at the worst-case latitude stays
+        # within max_distance, so no longitude separation excludes a target.
+        return fold
+
+    dlon_max = np.degrees(2.0 * np.arcsin(sin_half / cos_lat_max))
+
+    # Wrap check: the smallest longitude separation through the +/-180 seam
+    # is between the first and last columns. If that is within dlon_max, a
+    # target near one edge of the array can be the nearest target of a pixel
+    # near the opposite edge, which no per-chunk halo can express.
+    span = abs(float(x_coords[-1]) - float(x_coords[0]))
+    seam_gap = 360.0 - span
+    if seam_gap <= dlon_max:
+        return fold
+
+    # No wrap in reach: a target k columns away is at least k * min_step
+    # degrees of longitude away (monotonic coords), so columns beyond
+    # dlon_max / min_step are excluded by the chord bound.
+    min_step = np.abs(np.diff(np.asarray(x_coords, dtype=np.float64))).min()
+    return int(np.ceil(dlon_max / min_step))
+
+
 def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     """Overlap depth in pixels for the bounded dask map_overlap call.
 
@@ -302,10 +361,15 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     no halo along that axis (depth 0), so (1, N) and (N, 1) rasters do not
     crash on the missing second coordinate.
 
-    For GREAT_CIRCLE the east-west distance per degree of longitude shrinks
-    toward the poles, so the column spacing is measured at the highest-latitude
-    row (largest absolute y) to take the worst case. The north-south distance
-    does not depend on longitude, so the row spacing uses a fixed longitude.
+    For GREAT_CIRCLE the column depth comes from the spherical chord bound
+    in ``_great_circle_col_halo``: longitude is periodic and chords shorten
+    toward the poles, so a per-column linear step sum is not a valid lower
+    bound there. When targets across the +/-180 seam are within
+    ``max_distance``, the returned column depth exceeds the axis length so
+    ``_fit_halo_to_chunks`` folds the axis. The row depth stays linear: the
+    great-circle distance between two points is never smaller than their
+    meridian (north-south) separation, so the per-row step sum is a valid
+    lower bound for every metric.
     """
     def _min_step_distance(coords, x_ref, y_ref, along):
         if len(coords) < 2:
@@ -322,15 +386,15 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
                 smallest = d
         return smallest
 
-    # Worst-case latitude for east-west spacing: the row farthest from the
-    # equator, where a degree of longitude covers the least ground.
-    y_worst = max(y_coords, key=abs)
-
     dist_per_row = _min_step_distance(y_coords, x_coords[0], None, "row")
-    dist_per_col = _min_step_distance(x_coords, None, y_worst, "col")
-
     pad_y = 0 if dist_per_row is None else int(max_distance / dist_per_row + 0.5)
-    pad_x = 0 if dist_per_col is None else int(max_distance / dist_per_col + 0.5)
+
+    if distance_metric == GREAT_CIRCLE:
+        pad_x = _great_circle_col_halo(x_coords, y_coords, max_distance)
+    else:
+        dist_per_col = _min_step_distance(x_coords, None, y_coords[0], "col")
+        pad_x = 0 if dist_per_col is None else int(
+            max_distance / dist_per_col + 0.5)
     return pad_y, pad_x
 
 
@@ -1723,11 +1787,11 @@ def proximity(
     and all proximities will be computed in pixels. Note that target
     pixels are set to the value corresponding to a distance of zero.
 
-    Proximity support NumPy backed, and Dask with NumPy backed
-    xarray DataArray. The return values of proximity are of the same type as
-    the input type.
-    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
-    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+    Proximity supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy
+    backed xarray DataArray. The return values of proximity are of the same
+    type as the input type: a NumPy-backed input gives a NumPy-backed result,
+    a CuPy-backed input gives a CuPy-backed result, and a Dask-backed input
+    gives a Dask-backed result.
 
     The implementation for NumPy-backed is ported from GDAL, which uses
     a dynamic programming approach to identify nearest target of a pixel from
@@ -1735,9 +1799,11 @@ def proximity(
     holds for the EUCLIDEAN and MANHATTAN metrics; for GREAT_CIRCLE the NumPy
     backend uses an exact brute-force nearest-target search instead, because
     great-circle distance is not locally monotonic across the raster.
-    The implementation for Dask-backed uses `dask.map_overlap` to compute
-    proximity chunk by chunk by expanding the chunk's borders to cover
-    the `max_distance`.
+    The Dask-backed implementation depends on `max_distance`: when it is
+    smaller than the maximum possible distance within the raster, proximity
+    is computed chunk by chunk with `dask.map_overlap`, expanding each
+    chunk's borders to cover `max_distance`; otherwise the nearest targets
+    are found with a KDTree query over all target pixels.
 
     Parameters
     ----------
@@ -1877,20 +1943,23 @@ def allocation(
     pixels in the image to a set of pixels in the source image. The
     following options are used to define the behavior of the function.
     By default all non-zero pixels in `raster.values` will be considered
-    as"target", and all allocation will be computed in pixels.
+    as "target", and all allocation will be computed in pixels.
 
-    Allocation supports NumPy backed, and Dask with NumPy backed
-    xarray DataArray. The return values of `allocation` are of the same type as
-    the input type.
-    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
-    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+    Allocation supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy
+    backed xarray DataArray. The return values of `allocation` are of the
+    same type as the input type: a NumPy-backed input gives a NumPy-backed
+    result, a CuPy-backed input gives a CuPy-backed result, and a
+    Dask-backed input gives a Dask-backed result.
 
-    `allocation` uses the same approach as `proximity`, which is ported
-    from GDAL. A dynamic programming approach is used for identifying nearest
-    target of a pixel from its surrounding neighborhood in a 3x3 window.
-    The implementation for Dask-backed uses `dask.map_overlap` to compute
-    `allocation` chunk by chunk by expanding the chunk's borders to cover
-    the `max_distance`.
+    Unlike `proximity`, the NumPy-backed implementation does not use the
+    GDAL-style 3x3 line-sweep: `allocation` must pick a single target per
+    pixel, so it uses an exact nearest-target search whose tie-break matches
+    every other backend (see Tie-breaking below).
+    The Dask-backed implementation depends on `max_distance`: when it is
+    smaller than the maximum possible distance within the raster,
+    `allocation` is computed chunk by chunk with `dask.map_overlap`,
+    expanding each chunk's borders to cover `max_distance`; otherwise the
+    nearest targets are found with a KDTree query over all target pixels.
 
     Tie-breaking: when two or more targets are exactly equidistant from a
     pixel, the target with the lowest flat (row-major) index wins, i.e. the
@@ -1981,11 +2050,11 @@ def allocation(
         >>> allocation_agg = allocation(raster)
         >>> allocation_agg
         <xarray.DataArray (y: 5, x: 5)>
-        array([[1., 1., 2., 2., 2.],
+        array([[1., 1., 1., 2., 2.],
                [1., 1., 1., 2., 2.],
                [1., 1., 3., 2., 2.],
                [1., 3., 3., 3., 2.],
-               [3., 3., 3., 3., 3.]])
+               [3., 3., 3., 3., 3.]], dtype=float32)
         Coordinates:
           * y        (y) int64 4 3 2 1 0
           * x        (x) int64 0 1 2 3 4
@@ -2006,7 +2075,6 @@ def allocation(
         process_mode=ALLOCATION,
     )
 
-    # convert to have same type as of input @raster
     result = xr.DataArray(
         allocation_img,
         coords=raster.coords,
@@ -2028,11 +2096,10 @@ def direction(
     distance_metric: str = "EUCLIDEAN",
 ) -> xr.DataArray:
     """
-    Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the direction to
     nearest source based on a set of target values and a distance metric.
 
-    This function attempts to calculate for each cell, the the direction,
+    This function attempts to calculate for each cell, the direction,
     in degrees, to the nearest source. The output values are based on
     compass directions, where 90 is for the east, 180 for the south,
     270 for the west, 360 for the north, and 0 for the source cell
@@ -2041,18 +2108,21 @@ def direction(
     will be considered as "target", and all direction will be computed
     in pixels.
 
-    Direction support NumPy backed, and Dask with NumPy backed
-    xarray DataArray. The return values of `direction` are of the same type as
-    the input type.
-    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
-    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+    Direction supports NumPy, CuPy, Dask with NumPy, and Dask with CuPy
+    backed xarray DataArray. The return values of `direction` are of the
+    same type as the input type: a NumPy-backed input gives a NumPy-backed
+    result, a CuPy-backed input gives a CuPy-backed result, and a
+    Dask-backed input gives a Dask-backed result.
 
-    Similar to `proximity`, the implementation for NumPy-backed is ported
-    from GDAL, which uses a dynamic programming approach to identify
-    nearest target of a pixel from its surrounding neighborhood in a 3x3 window
-    The implementation for Dask-backed uses `dask.map_overlap` to compute
-    proximity direction chunk by chunk by expanding the chunk's borders
-    to cover the `max_distance`.
+    Unlike `proximity`, the NumPy-backed implementation does not use the
+    GDAL-style 3x3 line-sweep: `direction` must pick a single target per
+    pixel, so it uses an exact nearest-target search whose tie-break matches
+    every other backend (see Tie-breaking below).
+    The Dask-backed implementation depends on `max_distance`: when it is
+    smaller than the maximum possible distance within the raster,
+    `direction` is computed chunk by chunk with `dask.map_overlap`,
+    expanding each chunk's borders to cover `max_distance`; otherwise the
+    nearest targets are found with a KDTree query over all target pixels.
 
     Tie-breaking: when two or more targets are exactly equidistant from a
     pixel, the direction is computed toward the target with the lowest flat
