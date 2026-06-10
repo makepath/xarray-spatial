@@ -391,6 +391,74 @@ class TestStandardizeDask:
         assert float(computed.values[0, 1]) == pytest.approx(1.0)
 
 
+class TestStandardizeCupy:
+    """GPU paths for standardize (#3151).
+
+    piecewise on cupy used numpy lookup tables (cupy.interp rejects
+    them), and the piecewise/categorical dask chunk functions called
+    np.asarray on cupy blocks (implicit conversion raises TypeError).
+    """
+
+    @pytest.fixture
+    def raw(self):
+        return np.array([
+            [0.0, 25.0, 50.0, 100.0],
+            [75.0, np.nan, 10.0, 90.0],
+        ], dtype=np.float64)
+
+    piecewise_kw = dict(
+        method="piecewise", breakpoints=[0, 50, 100], values=[0.0, 1.0, 0.5],
+    )
+    categorical_kw = dict(
+        method="categorical", mapping={0: 0.1, 50: 0.5, 100: 0.9},
+    )
+
+    @cuda_and_cupy_available
+    def test_piecewise_cupy(self, raw):
+        import cupy
+        ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
+                          **self.piecewise_kw)
+        agg = xr.DataArray(cupy.asarray(raw), dims=["y", "x"])
+        result = standardize(agg, **self.piecewise_kw)
+        # Result stays on the device
+        assert isinstance(result.data, cupy.ndarray)
+        np.testing.assert_allclose(
+            result.data.get(), ref.values, equal_nan=True,
+        )
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_piecewise_dask_cupy(self, raw):
+        import cupy
+        ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
+                          **self.piecewise_kw)
+        agg = xr.DataArray(
+            da.from_array(cupy.asarray(raw), chunks=(1, 3)), dims=["y", "x"],
+        )
+        result = standardize(agg, **self.piecewise_kw)
+        computed = result.data.compute()
+        assert isinstance(computed, cupy.ndarray)
+        np.testing.assert_allclose(
+            computed.get(), ref.values, equal_nan=True,
+        )
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_categorical_dask_cupy(self, raw):
+        import cupy
+        ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
+                          **self.categorical_kw)
+        agg = xr.DataArray(
+            da.from_array(cupy.asarray(raw), chunks=(1, 3)), dims=["y", "x"],
+        )
+        result = standardize(agg, **self.categorical_kw)
+        computed = result.data.compute()
+        assert isinstance(computed, cupy.ndarray)
+        np.testing.assert_allclose(
+            computed.get(), ref.values, equal_nan=True,
+        )
+
+
 # ===========================================================================
 # weights
 # ===========================================================================
