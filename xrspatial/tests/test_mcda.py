@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.tests.general_checks import cuda_and_cupy_available
+
 from xrspatial.mcda import (
     ahp_weights,
     boolean_overlay,
@@ -836,24 +838,94 @@ class TestSensitivityMonteCarlo:
 
 @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
 class TestSensitivityDask:
-    def test_monte_carlo_dask_returns_numpy(self):
-        """MC with dask input should compute eagerly, not build huge graph."""
-        ds = xr.Dataset({
-            "a": xr.DataArray(
-                np.random.rand(20, 20), dims=["y", "x"],
-            ).chunk({"y": 10, "x": 10}),
-            "b": xr.DataArray(
-                np.random.rand(20, 20), dims=["y", "x"],
-            ).chunk({"y": 10, "x": 10}),
+    """Monte Carlo on dask input stays lazy and chunk-bounded (#3152).
+
+    The previous implementation called criteria.compute() up front,
+    materializing the full dataset; the sample loop now runs inside a
+    single map_blocks chunk function instead.
+    """
+
+    @pytest.fixture
+    def numpy_ds(self):
+        np.random.seed(3152)
+        return xr.Dataset({
+            "a": xr.DataArray(np.random.rand(20, 20), dims=["y", "x"]),
+            "b": xr.DataArray(np.random.rand(20, 20), dims=["y", "x"]),
         })
+
+    def test_monte_carlo_dask_stays_lazy(self, numpy_ds):
+        ds = numpy_ds.chunk({"y": 10, "x": 10})
         result = sensitivity(
             ds, {"a": 0.6, "b": 0.4},
             method="monte_carlo", n_samples=30,
         )
-        # Result should be eagerly computed numpy, not dask
-        assert isinstance(result.data, np.ndarray)
-        assert result.shape == (20, 20)
-        assert np.all(result.values >= 0)
+        assert isinstance(result.data, da.Array)
+        # One MC task per chunk: the graph must not scale with n_samples.
+        assert len(result.data.__dask_graph__()) < 30
+        computed = result.compute()
+        assert computed.shape == (20, 20)
+        assert np.all(computed.values >= 0)
+
+    @pytest.mark.parametrize("combine_method", ["wlc", "wpm"])
+    def test_monte_carlo_dask_matches_numpy(self, numpy_ds, combine_method):
+        """Same seed gives the same values on both backends."""
+        ds = numpy_ds.chunk({"y": 10, "x": 10})
+        kwargs = dict(
+            method="monte_carlo", combine_method=combine_method,
+            n_samples=30, seed=7,
+        )
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        dask_result = sensitivity(ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values,
+            atol=1e-14,
+        )
+
+    def test_monte_carlo_dask_nan_propagates(self, numpy_ds):
+        with_nan = numpy_ds.copy(deep=True)
+        with_nan["a"].values[3, 4] = np.nan
+        ds = with_nan.chunk({"y": 10, "x": 10})
+        result = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="monte_carlo", n_samples=10,
+        ).compute()
+        assert np.isnan(result.values[3, 4])
+        assert np.isfinite(result.values[0, 0])
+
+    def test_monte_carlo_dask_missing_weight_raises(self, numpy_ds):
+        ds = numpy_ds.chunk({"y": 10, "x": 10})
+        with pytest.raises(ValueError, match="Missing weights"):
+            sensitivity(
+                ds, {"a": 1.0}, method="monte_carlo", n_samples=5,
+            )
+
+
+class TestSensitivityCupy:
+    """Monte Carlo on cupy input (#3151): no .values round trips."""
+
+    @cuda_and_cupy_available
+    def test_monte_carlo_cupy_matches_numpy(self):
+        import cupy
+        np.random.seed(3151)
+        arrays = {
+            "a": np.random.rand(10, 10),
+            "b": np.random.rand(10, 10),
+        }
+        numpy_ds = xr.Dataset({
+            k: xr.DataArray(v, dims=["y", "x"]) for k, v in arrays.items()
+        })
+        cupy_ds = xr.Dataset({
+            k: xr.DataArray(cupy.asarray(v), dims=["y", "x"])
+            for k, v in arrays.items()
+        })
+        kwargs = dict(method="monte_carlo", n_samples=20, seed=11)
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        cupy_result = sensitivity(cupy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        # Accumulation runs on the device; result is still cupy
+        assert isinstance(cupy_result.data, cupy.ndarray)
+        np.testing.assert_allclose(
+            cupy_result.data.get(), numpy_result.values, atol=1e-12,
+        )
 
 
 # ===========================================================================
@@ -1224,6 +1296,16 @@ class TestConstrainEdgeCases:
         )
         result = constrain(suit, exclude=[mask])
         assert np.all(np.isnan(result.values))
+
+    def test_input_name_unchanged(self):
+        """Renaming the output must not leak into the caller's object."""
+        suit = xr.DataArray(
+            np.array([[0.8]], dtype=np.float64), dims=["y", "x"],
+            name="orig",
+        )
+        result = constrain(suit, exclude=[], name="new")
+        assert result.name == "new"
+        assert suit.name == "orig"
 
 
 # ===========================================================================
