@@ -2341,3 +2341,22 @@ def test_write_geotiff_gpu_positional_dask_warns_3166(tmp_path):
         _write_geotiff_gpu(lazy, path)
 
     assert len(_materialise_warnings_3166(records)) == 1
+
+
+@_gpu_only
+def test_to_geotiff_dask_numpy_gpu_true_warns_3166(tmp_path):
+    """``gpu=True`` with dask+numpy input forces GPU dispatch (no
+    ``_is_gpu_data`` auto-detect involved) and warns the same way."""
+    import dask.array as dca
+
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    da = _gradient_da_3166(dca.from_array(arr, chunks=(32, 32)))
+    path = str(tmp_path / "dask_numpy_gpu_true_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path, gpu=True)
+
+    assert len(_materialise_warnings_3166(records)) == 1
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)

@@ -40,6 +40,18 @@ def _warn_dask_materialised() -> None:
     input auto-dispatches here (issue #3166). Emitted from both
     ``.compute()`` sites in ``_write_geotiff_gpu`` so explicit and
     auto-detected GPU writes warn the same way.
+
+    Deliberately does NOT participate in the
+    ``XRSPATIAL_GEOTIFF_STRICT`` promotion that most
+    ``GeoTIFFFallbackWarning`` sites apply: there is no opt-out flag
+    for the materialisation, so promotion would turn every dask+cupy
+    GPU write into a hard failure. Same shape as the JPEG /
+    experimental-codec opt-in warnings, which also stay warnings under
+    strict mode.
+
+    The warning stays truthful even when the GPU write later falls
+    back to CPU (e.g. nvCOMP raises after dispatch): the ``.compute()``
+    has already run by the time the fallback fires.
     """
     warnings.warn(
         "Dask-backed input routed to the GPU writer is materialised "
