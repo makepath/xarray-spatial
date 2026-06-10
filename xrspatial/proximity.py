@@ -978,8 +978,10 @@ def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
 
     ``cKDTree.query`` does not promise which of several equidistant targets
     it returns, so allocation and direction can disagree with the brute-force
-    and CUDA backends on a tie. Target coordinates are stored in row-major
-    (flat-index) order, so the lowest target index is the lowest flat index --
+    and CUDA backends on a tie. Target coordinates are sorted into row-major
+    (flat-index) order by ``_collect_region_targets`` before the tree is
+    built -- chunk-by-chunk collection alone does not produce that order
+    (issue #3090) -- so the lowest target index is the lowest flat index,
     the tie-break policy documented on ``allocation``/``direction``.
 
     Query the two nearest targets; wherever they are equidistant, keep the one
@@ -1054,6 +1056,16 @@ def _target_mask(chunk_data, target_values):
     return np.isin(chunk_data, target_values) & np.isfinite(chunk_data)
 
 
+def _global_flat_indices(iy, ix, rows, cols, y_offsets, x_offsets, width):
+    """Global flat (row-major) pixel indices of chunk-local target positions.
+
+    The flat index is the tie-break key documented on
+    ``allocation``/``direction``: among equidistant targets, the lowest one
+    wins (see ``_kdtree_query_lowest_index``).
+    """
+    return (y_offsets[iy] + rows) * width + (x_offsets[ix] + cols)
+
+
 def _stream_target_counts(raster, target_values, y_coords, x_coords,
                           chunks_y, chunks_x):
     """Stream all dask chunks, counting targets per chunk.
@@ -1067,12 +1079,17 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
     total_targets : int
     coords_cache : dict  (iy, ix) -> ndarray shape (N, 2)
     values_cache : dict  (iy, ix) -> ndarray shape (N,), dtype float32
+    flat_cache : dict  (iy, ix) -> ndarray shape (N,), dtype int64
+        Global flat (row-major) pixel index of each cached target. Used by
+        ``_collect_region_targets`` to restore row-major target order so the
+        documented lowest-flat-index tie-break holds across chunkings.
     """
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
     target_counts = np.zeros((n_tile_y, n_tile_x), dtype=np.int64)
     coords_cache = {}
     values_cache = {}
+    flat_cache = {}
     cache_bytes = 0
     budget = int(0.25 * _available_memory_bytes())
 
@@ -1080,6 +1097,7 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
     np.cumsum(chunks_y, out=y_offsets[1:])
     x_offsets = np.zeros(n_tile_x + 1, dtype=np.int64)
     np.cumsum(chunks_x, out=x_offsets[1:])
+    width = int(x_offsets[-1])
 
     for iy in range(n_tile_y):
         # Compute one chunk-row at a time so the scheduler can read the
@@ -1101,14 +1119,17 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
                     x_coords[x_offsets[ix] + cols],
                 ])
                 vals = chunk_data[rows, cols].astype(np.float32)
-                entry_bytes = coords.nbytes + vals.nbytes
+                flat = _global_flat_indices(
+                    iy, ix, rows, cols, y_offsets, x_offsets, width)
+                entry_bytes = coords.nbytes + vals.nbytes + flat.nbytes
                 if cache_bytes + entry_bytes <= budget:
                     coords_cache[(iy, ix)] = coords
                     values_cache[(iy, ix)] = vals
+                    flat_cache[(iy, ix)] = flat
                     cache_bytes += entry_bytes
 
     total_targets = int(target_counts.sum())
-    return target_counts, total_targets, coords_cache, values_cache
+    return target_counts, total_targets, coords_cache, values_cache, flat_cache
 
 
 def _chunk_offsets(chunks):
@@ -1122,14 +1143,25 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
                             target_values, target_counts,
                             y_coords, x_coords,
                             y_offsets, x_offsets,
-                            coords_cache, values_cache):
+                            coords_cache, values_cache, flat_cache):
     """Collect target (y, x) coords and pixel values from chunks.
 
     Uses cache where available, re-reads uncached chunks via .compute().
     Returns (coords ndarray (N, 2), vals ndarray (N,)) or (None, None).
+
+    The returned targets are sorted by global flat (row-major) pixel index.
+    Chunks are visited chunk-row by chunk-column, so with more than one chunk
+    column the concatenation order is chunk-major, not row-major. The KDTree
+    tie-break in ``_kdtree_query_lowest_index`` keeps the lowest *tree* index
+    on a tie, which only matches the documented lowest-flat-index policy of
+    ``allocation``/``direction`` if the tree's target order is global
+    row-major. Sorting here restores that order for both the global and the
+    tiled KDTree paths.
     """
     coord_parts = []
     val_parts = []
+    flat_parts = []
+    width = int(x_offsets[-1])
     for iy in range(jy_lo, jy_hi):
         for ix in range(jx_lo, jx_hi):
             if target_counts[iy, ix] == 0:
@@ -1137,6 +1169,7 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
             if (iy, ix) in coords_cache:
                 coord_parts.append(coords_cache[(iy, ix)])
                 val_parts.append(values_cache[(iy, ix)])
+                flat_parts.append(flat_cache[(iy, ix)])
             else:
                 chunk_data = raster.data.blocks[iy, ix].compute()
                 mask = _target_mask(chunk_data, target_values)
@@ -1150,9 +1183,15 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
                     val_parts.append(
                         chunk_data[rows, cols].astype(np.float32)
                     )
+                    flat_parts.append(_global_flat_indices(
+                        iy, ix, rows, cols, y_offsets, x_offsets, width))
     if not coord_parts:
         return None, None
-    return np.concatenate(coord_parts), np.concatenate(val_parts)
+    coords = np.concatenate(coord_parts)
+    vals = np.concatenate(val_parts)
+    flat = np.concatenate(flat_parts)
+    order = np.argsort(flat)
+    return coords[order], vals[order]
 
 
 def _min_boundary_distance(iy, ix, y_coords, x_coords,
@@ -1207,7 +1246,7 @@ def _min_boundary_distance(iy, ix, y_coords, x_coords,
 def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
                        y_offsets, x_offsets,
                        target_values, target_counts,
-                       coords_cache, values_cache,
+                       coords_cache, values_cache, flat_cache,
                        max_distance, p,
                        n_tile_y, n_tile_x, process_mode):
     """Expanding-ring local KDTree for one output chunk.
@@ -1237,7 +1276,7 @@ def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
             raster, jy_lo, jy_hi, jx_lo, jx_hi,
             target_values, target_counts,
             y_coords, x_coords, y_offsets, x_offsets,
-            coords_cache, values_cache,
+            coords_cache, values_cache, flat_cache,
         )
 
         if target_coords is None:
@@ -1293,7 +1332,7 @@ def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
 
 def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
                         max_distance, p, target_counts,
-                        coords_cache, values_cache,
+                        coords_cache, values_cache, flat_cache,
                         chunks_y, chunks_x, process_mode):
     """Tiled (eager) KDTree query — memory-safe fallback."""
     H, W = raster.shape
@@ -1325,7 +1364,7 @@ def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
                 raster, iy, ix, y_coords, x_coords,
                 y_offsets, x_offsets,
                 target_values, target_counts,
-                coords_cache, values_cache,
+                coords_cache, values_cache, flat_cache,
                 max_distance, p, n_tile_y, n_tile_x, process_mode,
             )
             r0 = int(y_offsets[iy])
@@ -1339,7 +1378,7 @@ def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
 
 def _build_global_kdtree(raster, y_coords, x_coords, target_values,
                          max_distance, p, target_counts,
-                         coords_cache, values_cache,
+                         coords_cache, values_cache, flat_cache,
                          chunks_y, chunks_x, process_mode):
     """Global KDTree query — fast, lazy via da.map_blocks."""
     n_tile_y = len(chunks_y)
@@ -1351,7 +1390,7 @@ def _build_global_kdtree(raster, y_coords, x_coords, target_values,
         raster, 0, n_tile_y, 0, n_tile_x,
         target_values, target_counts,
         y_coords, x_coords, y_offsets, x_offsets,
-        coords_cache, values_cache,
+        coords_cache, values_cache, flat_cache,
     )
 
     tree = cKDTree(target_coords)
@@ -1390,7 +1429,7 @@ def _process_dask_kdtree(raster, x_coords, y_coords,
     chunks_y, chunks_x = raster.data.chunks
 
     # Phase 0: streaming count pass
-    target_counts, total_targets, coords_cache, values_cache = \
+    target_counts, total_targets, coords_cache, values_cache, flat_cache = \
         _stream_target_counts(
             raster, target_values, y_coords, x_coords, chunks_y, chunks_x,
         )
@@ -1407,14 +1446,14 @@ def _process_dask_kdtree(raster, x_coords, y_coords,
         return _build_global_kdtree(
             raster, y_coords, x_coords, target_values,
             max_distance, p, target_counts,
-            coords_cache, values_cache,
+            coords_cache, values_cache, flat_cache,
             chunks_y, chunks_x, process_mode,
         )
     else:
         return _build_tiled_kdtree(
             raster, y_coords, x_coords, target_values,
             max_distance, p, target_counts,
-            coords_cache, values_cache,
+            coords_cache, values_cache, flat_cache,
             chunks_y, chunks_x, process_mode,
         )
 

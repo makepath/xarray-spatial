@@ -620,6 +620,56 @@ def test_direction_tie_break_matches_numpy(backend, tie_break_raster_data):
     general_output_checks(raster, result, expected)
 
 
+@pytest.fixture
+def tie_break_chunk_column_data():
+    # Regression data for issue #3090. Pixel (2, 3) is equidistant to target
+    # 2 at (1, 3) (flat index 8) and target 3 at (2, 2) (flat index 12), so
+    # the documented lowest-flat-index policy picks 2. With chunks=(5, 3) the
+    # raster splits into two chunk columns and target 3 sits in chunk (0, 0)
+    # while target 2 sits in chunk (0, 1). The dask KDTree path used to
+    # collect targets chunk by chunk, so its tree order was [1, 3, 2] instead
+    # of the global row-major [1, 2, 3] and the tie resolved to 3.
+    return np.array([[0., 0., 0., 0., 0.],
+                     [0., 1., 0., 2., 0.],
+                     [0., 0., 3., 0., 0.],
+                     [0., 0., 0., 0., 0.],
+                     [0., 0., 0., 0., 0.]], dtype=np.float64)
+
+
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+def test_allocation_tie_break_chunk_column_order(
+        backend, tie_break_chunk_column_data):
+    numpy_raster = create_test_raster(
+        tie_break_chunk_column_data, backend='numpy', dims=['lat', 'lon'],
+    )
+    expected = allocation(numpy_raster, x='lon', y='lat').data
+    # The tied pixel must go to target 2 (lowest flat index).
+    assert expected[2, 3] == 2.0
+
+    raster = create_test_raster(
+        tie_break_chunk_column_data, backend=backend, dims=['lat', 'lon'],
+        chunks=(5, 3),
+    )
+    result = allocation(raster, x='lon', y='lat')
+    general_output_checks(raster, result, expected, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+def test_direction_tie_break_chunk_column_order(
+        backend, tie_break_chunk_column_data):
+    numpy_raster = create_test_raster(
+        tie_break_chunk_column_data, backend='numpy', dims=['lat', 'lon'],
+    )
+    expected = direction(numpy_raster, x='lon', y='lat').data
+
+    raster = create_test_raster(
+        tie_break_chunk_column_data, backend=backend, dims=['lat', 'lon'],
+        chunks=(5, 3),
+    )
+    result = direction(raster, x='lon', y='lat')
+    general_output_checks(raster, result, expected)
+
+
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 def test_proximity_dask_kdtree_no_targets():
     """No target pixels found → result is all NaN."""
@@ -824,6 +874,48 @@ def test_allocation_tie_break_tiled_path():
 
 
 @pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_allocation_tie_break_tiled_path_chunk_column_order():
+    """The tiled KDTree fallback ties row-major across chunk columns (#3090).
+
+    Same geometry as test_allocation_tie_break_chunk_column_order: target 3
+    is collected from an earlier chunk than target 2, so a chunk-major tree
+    order would flip the tie at pixel (2, 3) to 3.
+    """
+    data = np.array([[0., 0., 0., 0., 0.],
+                     [0., 1., 0., 2., 0.],
+                     [0., 0., 3., 0., 0.],
+                     [0., 0., 0., 0., 0.],
+                     [0., 0., 0., 0., 0.]], dtype=np.float64)
+    _lon = np.arange(5, dtype=np.float64)
+    _lat = np.arange(5, dtype=np.float64)[::-1]
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+
+    numpy_expected = allocation(raster.copy(), x='lon', y='lat').values
+    assert numpy_expected[2, 3] == 2.0
+
+    raster.data = da.from_array(data, chunks=(5, 3))
+
+    # Force the eager tiled KDTree path (see _force_tiled_proximity for the
+    # counter semantics): tiny cache budget, force the tiled decision, then a
+    # large value so the result-size guard passes.
+    call_count = [0]
+
+    def _small_then_large():
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            return 1
+        return 10 * 1024 ** 3
+
+    with patch('xrspatial.proximity._available_memory_bytes',
+               side_effect=_small_then_large):
+        result = allocation(raster, x='lon', y='lat')
+
+    np.testing.assert_array_equal(result.values, numpy_expected)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
 def test_proximity_dask_kdtree_tiled_single_target():
     """One target in a corner, many chunks → exercises max ring expansion."""
     height, width = 20, 20
@@ -988,9 +1080,10 @@ def test_stream_target_counts_matches_sequential_baseline():
     target_values = np.asarray([])
     chunks_y, chunks_x = raster.data.chunks
 
-    counts, total, coords_cache, values_cache = _stream_target_counts(
-        raster, target_values, _lat, _lon, chunks_y, chunks_x,
-    )
+    counts, total, coords_cache, values_cache, flat_cache = \
+        _stream_target_counts(
+            raster, target_values, _lat, _lon, chunks_y, chunks_x,
+        )
 
     # Sequential reference (the pre-fix behaviour).
     n_tile_y, n_tile_x = len(chunks_y), len(chunks_x)
@@ -1026,6 +1119,10 @@ def test_stream_target_counts_matches_sequential_baseline():
             np.testing.assert_array_equal(
                 values_cache[(iy, ix)],
                 cd[rows, cols].astype(np.float32),
+            )
+            np.testing.assert_array_equal(
+                flat_cache[(iy, ix)],
+                (y_off[iy] + rows) * width + (x_off[ix] + cols),
             )
 
 
