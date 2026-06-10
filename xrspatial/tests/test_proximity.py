@@ -1986,7 +1986,13 @@ _INT_RASTER_DATA = np.array([[0, 0, 0, 0, 0, 2],
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
 @pytest.mark.parametrize("max_distance", [np.inf, 10.0])
-def test_integer_raster_matches_float_baseline(backend, func, max_distance):
+# int32: the NaN halo pad casts to INT_MIN, a phantom non-zero "target".
+# uint8 (the usual land-cover dtype): the same cast lands on a different
+# garbage value (0 on most platforms, which is a non-target). Both casts
+# must leave the result identical to the float64 baseline.
+@pytest.mark.parametrize("dtype", [np.int32, np.uint8])
+def test_integer_raster_matches_float_baseline(backend, func, max_distance,
+                                               dtype):
     if has_cuda_and_cupy() is False and 'cupy' in backend:
         pytest.skip("Requires CUDA and CuPy")
     if 'dask' in backend and da is None:
@@ -1997,13 +2003,14 @@ def test_integer_raster_matches_float_baseline(backend, func, max_distance):
     expected = func(
         float_raster, x='lon', y='lat', max_distance=max_distance).data
 
-    raster = _backend_raster(_INT_RASTER_DATA.copy(), backend)
+    raster = _backend_raster(_INT_RASTER_DATA.astype(dtype), backend)
     result = func(raster, x='lon', y='lat', max_distance=max_distance)
     general_output_checks(raster, result, expected, verify_dtype=True)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
-def test_integer_raster_explicit_target_values(backend):
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_integer_raster_explicit_target_values(backend, func):
     # target_values matching against integer pixels (int == int comparison in
     # _is_target_value / _target_mask / cp.isin) on every backend.
     if has_cuda_and_cupy() is False and 'cupy' in backend:
@@ -2013,11 +2020,11 @@ def test_integer_raster_explicit_target_values(backend):
 
     float_raster = _backend_raster(
         _INT_RASTER_DATA.astype(np.float64), 'numpy')
-    expected = proximity(
+    expected = func(
         float_raster, x='lon', y='lat', target_values=[2, 3]).data
 
     raster = _backend_raster(_INT_RASTER_DATA.copy(), backend)
-    result = proximity(raster, x='lon', y='lat', target_values=[2, 3])
+    result = func(raster, x='lon', y='lat', target_values=[2, 3])
     general_output_checks(raster, result, expected, verify_dtype=True)
 
 
