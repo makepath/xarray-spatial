@@ -271,6 +271,8 @@ def cumulative_viewshed(
     _is_cupy = has_cuda_and_cupy() and is_cupy_array(raster.data)
 
     if _is_dask:
+        # Dask is checked first, so a dask-of-cupy raster takes this branch
+        # and never reaches the cupy branch below.
         count = da.zeros(raster.shape, dtype=np.int32, chunks=raster.data.chunks)
     elif _is_cupy:
         import cupy as cp
