@@ -624,6 +624,25 @@ def test_focal_stats_dask_cupy():
         equal_nan=True, rtol=1e-4)
 
 
+@cuda_and_cupy_available
+def test_focal_stats_cupy_casts_input_once_3231():
+    # Regression for #3231: the cupy stats loop re-ran agg.data.astype()
+    # (a full-raster device copy, even for an unchanged dtype) once per
+    # stat. The input cast is now hoisted above the loop, so
+    # _promote_float runs once for the input plus once per stat for the
+    # output allocation inside _focal_stats_func_cupy.
+    import xrspatial.focal as focal_module
+    data = np.arange(48, dtype=np.float64).reshape(6, 8)
+    agg = create_test_raster(data, backend='cupy')
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    stats = ['mean', 'sum', 'min', 'max']
+    with patch.object(focal_module, '_promote_float',
+                      wraps=focal_module._promote_float) as spy:
+        result = focal_stats(agg, kernel, stats_funcs=stats)
+    assert result.shape == (len(stats), 6, 8)
+    assert spy.call_count == len(stats) + 1
+
+
 # --- float64 preservation (issue-2769) ------------------------------------
 # apply() and focal_stats() used to cast every input to float32 internally,
 # silently downcasting float64 rasters. convolve_2d() preserves the input

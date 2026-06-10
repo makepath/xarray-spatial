@@ -1149,9 +1149,12 @@ def _focal_stats_cupy(agg, kernel, stats_funcs):
         var=lambda *args: _focal_stats_func_cupy(*args, func=_focal_var_cuda),
         variety=lambda *args: _focal_stats_func_cupy(*args, func=_focal_variety_cuda),
     )
+    # Cast once, outside the loop: cupy's astype allocates and copies a
+    # full device raster even when the dtype is unchanged, so casting per
+    # stat repeated that copy once per requested statistic.
+    data = agg.data.astype(_promote_float(agg.data.dtype))
     stats_aggs = []
     for stats in stats_funcs:
-        data = agg.data.astype(_promote_float(agg.data.dtype))
         stats_data = _stats_cupy_mapper[stats](data, kernel)
         stats_agg = xr.DataArray(
             stats_data,
