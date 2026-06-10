@@ -200,7 +200,7 @@ def test_unsafe_int_raises_cupy():
     with pytest.raises(ValueError, match=_MATCH):
         rasterize([(box(0, 0, 5, 5), UNSAFE)],
                   width=4, height=4, bounds=(0, 0, 5, 5),
-                  fill=0, dtype=np.int64, use_cuda=True)
+                  fill=0, dtype=np.int64, gpu=True)
 
 
 @skip_no_shapely
@@ -211,4 +211,4 @@ def test_unsafe_int_raises_dask_cupy():
     with pytest.raises(ValueError, match=_MATCH):
         rasterize([(box(0, 0, 5, 5), UNSAFE)],
                   width=4, height=4, bounds=(0, 0, 5, 5),
-                  fill=0, dtype=np.int64, use_cuda=True, chunks=2)
+                  fill=0, dtype=np.int64, gpu=True, chunks=2)

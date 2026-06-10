@@ -5,7 +5,14 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from xrspatial.mcda.combine import wlc, wpm
+from xrspatial.mcda.combine import (
+    _check_wpm_positive,
+    _validate_criteria,
+    _validate_weights,
+    wlc,
+    wpm,
+)
+from xrspatial.mcda.standardize import _get_xp
 
 
 def sensitivity(
@@ -46,7 +53,9 @@ def sensitivity(
         For ``"one_at_a_time"``: Dataset with per-criterion DataArrays
         showing the absolute score difference under perturbation.
         For ``"monte_carlo"``: DataArray of per-pixel coefficient of
-        variation across random weight samples.
+        variation across random weight samples. Dask-backed criteria
+        produce a lazy dask-backed result; the sample loop runs inside
+        each chunk, so memory stays bounded by chunk size.
     """
     combine_fn = {"wlc": wlc, "wpm": wpm}.get(combine_method)
     if combine_fn is None:
@@ -63,7 +72,7 @@ def sensitivity(
                 f"n_samples must be a positive integer >= 1, got {n_samples!r}"
             )
         return _monte_carlo(
-            criteria, weights, combine_fn, int(n_samples), seed, name
+            criteria, weights, combine_method, int(n_samples), seed, name
         )
     else:
         raise ValueError(
@@ -135,7 +144,51 @@ def _is_dask_dataset(criteria):
         return False
 
 
-def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
+def _mc_block(block, weight_matrix, combine_method):
+    """Run the Monte Carlo sample loop on one in-memory block.
+
+    ``block`` has shape ``(n_criteria,) + grid`` with weight columns in
+    the same criterion order. Welford's online algorithm keeps only the
+    running mean and M2 buffers alive, so peak memory per block is a
+    few times the block size regardless of ``n_samples``. Works on
+    numpy and cupy blocks alike.
+    """
+    xp = _get_xp(block)
+    n_samples = weight_matrix.shape[0]
+    n_criteria = block.shape[0]
+    shape = block.shape[1:]
+    running_mean = xp.zeros(shape, dtype=np.float64)
+    running_m2 = xp.zeros(shape, dtype=np.float64)
+
+    for i in range(n_samples):
+        w = weight_matrix[i]
+        # Same per-pixel arithmetic as combine.wlc / combine.wpm (the
+        # canonical definitions), inlined on raw arrays so the loop
+        # runs inside a single dask chunk. Keep in sync with those.
+        if combine_method == "wpm":
+            score = block[0] ** float(w[0])
+            for j in range(1, n_criteria):
+                score = score * block[j] ** float(w[j])
+        else:
+            score = block[0] * float(w[0])
+            for j in range(1, n_criteria):
+                score = score + block[j] * float(w[j])
+
+        delta_val = score - running_mean
+        running_mean = running_mean + delta_val / (i + 1)
+        delta2 = score - running_mean
+        running_m2 = running_m2 + delta_val * delta2
+
+    variance = running_m2 / n_samples
+    std_dev = xp.sqrt(variance)
+    # Coefficient of variation
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return xp.where(
+            running_mean != 0, std_dev / xp.abs(running_mean), 0.0
+        )
+
+
+def _monte_carlo(criteria, weights, combine_method, n_samples, seed, name):
     """Monte Carlo sensitivity: random weight vectors, measure CV."""
     rng = np.random.default_rng(seed)
     n_criteria = len(weights)
@@ -146,44 +199,59 @@ def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
     alpha = np.array([weights[k] for k in criteria_names]) * n_criteria * 5
     alpha = np.maximum(alpha, 0.5)  # floor to avoid zero concentrations
 
+    # Draw sequentially so a given seed reproduces the sample stream of
+    # the previous per-iteration implementation.
+    weight_matrix = np.stack(
+        [rng.dirichlet(alpha) for _ in range(n_samples)]
+    )
+
+    # Validate once up front with the first sampled vector (it is
+    # finite and sums to 1, so only key-set mismatches can fire) the
+    # way the first combine call used to.
+    _validate_criteria(criteria)
+    probe = {k: float(weight_matrix[0][j])
+             for j, k in enumerate(criteria_names)}
+    _validate_weights(probe, criteria)
+    if combine_method == "wpm":
+        _check_wpm_positive(criteria)
+
     first_var = list(criteria.data_vars)[0]
     template = criteria[first_var]
 
-    use_dask = _is_dask_dataset(criteria)
+    # Stack criterion layers in data_vars order (the order wlc/wpm
+    # combine in) and permute the weight columns to match.
+    var_order = list(criteria.data_vars)
+    col = {k: j for j, k in enumerate(criteria_names)}
+    ordered_weights = weight_matrix[:, [col[v] for v in var_order]]
 
-    # Accumulate running mean and M2 for Welford's online algorithm
-    # to avoid storing all n_samples surfaces in memory
-    running_mean = template.values * 0.0 if not use_dask else np.zeros(template.shape)
-    running_m2 = running_mean.copy()
+    if _is_dask_dataset(criteria):
+        import dask.array as da
 
-    # For dask inputs: compute each score eagerly to avoid graph
-    # explosion (each lazy iteration would chain ~35 graph nodes;
-    # 1000 iterations = 35000 chained tasks with no parallelism).
-    # The criterion layers are small enough per-pixel that the
-    # bottleneck is the combination, not I/O.
-    if use_dask:
-        criteria_np = criteria.compute()
+        base_chunks = next(
+            criteria[v].data.chunks for v in var_order
+            if isinstance(criteria[v].data, da.Array)
+        )
+        layers = []
+        for v in var_order:
+            arr = criteria[v].data
+            if isinstance(arr, da.Array):
+                arr = arr.rechunk(base_chunks)
+            else:
+                arr = da.from_array(arr, chunks=base_chunks)
+            layers.append(arr)
+        # The sample loop runs inside one chunk function, so the graph
+        # stays at one task per chunk and nothing materializes the full
+        # criteria stack.
+        stacked = da.stack(layers).rechunk({0: -1})
+        cv_vals = da.map_blocks(
+            _mc_block, stacked,
+            weight_matrix=ordered_weights, combine_method=combine_method,
+            drop_axis=0, dtype=np.float64,
+            meta=stacked._meta.sum(axis=0),
+        )
     else:
-        criteria_np = criteria
-
-    for i in range(n_samples):
-        raw = rng.dirichlet(alpha)
-        sample_weights = {
-            k: float(raw[j]) for j, k in enumerate(criteria_names)
-        }
-        score = combine_fn(criteria_np, sample_weights)
-        score_vals = score.values
-
-        delta_val = score_vals - running_mean
-        running_mean = running_mean + delta_val / (i + 1)
-        delta2 = score_vals - running_mean
-        running_m2 = running_m2 + delta_val * delta2
-
-    variance = running_m2 / n_samples
-    std_dev = np.sqrt(variance)
-    # Coefficient of variation
-    with np.errstate(divide="ignore", invalid="ignore"):
-        cv_vals = np.where(running_mean != 0, std_dev / np.abs(running_mean), 0.0)
+        stacked = np.stack([criteria[v].data for v in var_order])
+        cv_vals = _mc_block(stacked, ordered_weights, combine_method)
 
     result = xr.DataArray(
         cv_vals, name=name, dims=template.dims,

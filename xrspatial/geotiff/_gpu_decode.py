@@ -2995,7 +2995,7 @@ def _nvjpeg2k_batch_encode(d_tile_bufs, tile_width, tile_height,
 def gpu_compress_tiles(d_image, tile_width, tile_height,
                        image_width, image_height,
                        compression, predictor, dtype,
-                       samples=1):
+                       samples=1, compression_level=None):
     """Extract and compress tiles from a CuPy image on GPU.
 
     Parameters
@@ -3014,6 +3014,14 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
         Pixel dtype.
     samples : int
         Samples per pixel.
+    compression_level : int or None
+        Compression effort level, forwarded to the CPU codec fallback
+        (deflate / zstd / lz4) so fallback tiles compress at the
+        requested level instead of the codec default (#3167). The
+        nvCOMP device encoder does not expose level control; when it
+        handles the tiles and an explicit level was requested, a
+        ``UserWarning`` is emitted and the level is ignored. ``None``
+        means codec default.
 
     Returns
     -------
@@ -3115,16 +3123,34 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
     result = _nvcomp_batch_compress(d_tiles, None, tile_bytes, compression, n_tiles)
 
     if result is not None:
+        if compression_level is not None:
+            # nvCOMP's batched deflate/zstd APIs expose no level knob,
+            # so an explicit level cannot be honored on the device
+            # path. Say so instead of silently compressing at the
+            # library default (#3167). The GPU writer calls this
+            # function once per IFD part (full resolution plus each
+            # COG overview level); the default warning filter dedups
+            # by location, so normal runs see the message once, but
+            # ``-W always`` repeats it per part.
+            warnings.warn(
+                f"compression_level={compression_level} is ignored by "
+                "the nvCOMP GPU encoder; tiles are compressed at the "
+                "library default. Pass gpu=False to honor the level.",
+                stacklevel=2,
+            )
         return result
 
-    # Fallback: copy to CPU, compress with CPU codecs
+    # Fallback: copy to CPU, compress with CPU codecs at the requested
+    # level (the cpu ``compress`` default, 6, when compression_level is
+    # None).
     from ._compression import compress as cpu_compress
+    level = 6 if compression_level is None else compression_level
     cpu_buf = d_tile_buf.get()
     result = []
     for i in range(n_tiles):
         start = i * tile_bytes
         tile_data = bytes(cpu_buf[start:start + tile_bytes])
-        result.append(cpu_compress(tile_data, compression))
+        result.append(cpu_compress(tile_data, compression, level=level))
 
     return result
 
