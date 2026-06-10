@@ -6,6 +6,8 @@ layers and return a single composite ``xr.DataArray``.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import xarray as xr
 
@@ -249,9 +251,11 @@ def wpm(
 
 def owa(
     criteria: xr.Dataset,
-    criterion_weights: dict[str, float],
-    order_weights: list[float],
+    weights: dict[str, float] | None = None,
+    order_weights: list[float] | None = None,
     name: str = "owa",
+    *,
+    criterion_weights: dict[str, float] | None = None,
 ) -> xr.DataArray:
     """Ordered Weighted Averaging.
 
@@ -263,22 +267,45 @@ def owa(
     ----------
     criteria : xr.Dataset
         Standardized criterion layers (0-1).
-    criterion_weights : dict
-        ``{criterion_name: weight}``, must sum to ~1.0.
+    weights : dict
+        Criterion weights as ``{criterion_name: weight}``, must sum
+        to ~1.0. Same convention as :func:`wlc` and :func:`wpm`.
+        Required; the ``None`` default exists only to support the
+        deprecated ``criterion_weights`` alias.
     order_weights : list of float
         Weights applied by rank position (index 0 = highest value).
         Must have the same length as the number of criteria and
         sum to ~1.0.
     name : str
         Name of the output DataArray.
+    criterion_weights : dict, optional
+        Deprecated alias for ``weights``. Emits ``DeprecationWarning``.
 
     Returns
     -------
     xr.DataArray
         Composite suitability surface.
     """
+    if criterion_weights is not None:
+        if weights is not None:
+            raise TypeError(
+                "owa() got values for both 'weights' and its deprecated "
+                "alias 'criterion_weights'"
+            )
+        warnings.warn(
+            "The 'criterion_weights' argument of owa() is deprecated; "
+            "use 'weights' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        weights = criterion_weights
+    if weights is None:
+        raise TypeError("owa() missing required argument: 'weights'")
+    if order_weights is None:
+        raise TypeError("owa() missing required argument: 'order_weights'")
+
     _validate_criteria(criteria)
-    _validate_weights(criterion_weights, criteria)
+    _validate_weights(weights, criteria)
 
     n = len(criteria.data_vars)
     if len(order_weights) != n:
@@ -330,7 +357,7 @@ def owa(
     # First apply criterion weights
     weighted_layers = []
     for var_name in criteria.data_vars:
-        w = criterion_weights[var_name]
+        w = weights[var_name]
         weighted_layers.append(criteria[var_name] * w * n)
 
     # Stack, sort descending along criterion axis, apply order weights
@@ -342,16 +369,26 @@ def owa(
     shape = [n] + [1] * (sorted_data.ndim - 1)
     ow = order_weights_arr.reshape(shape)
 
-    # Match the array module of the data: cupy kernels reject numpy
-    # operands, so cupy-backed inputs (plain or dask) need a cupy copy
-    # of the order weights.
-    meta = getattr(sorted_data, "_meta", sorted_data)
+    # Match the order-weight array to the backend of sorted_data:
+    # cupy refuses to operate with non-scalar numpy arrays, so cupy
+    # (and dask-with-cupy-chunks) inputs need a cupy order-weight
+    # array.
+    is_dask_sorted = False
+    da = None
+    try:
+        import dask.array as da
+        is_dask_sorted = isinstance(sorted_data, da.Array)
+    except ImportError:
+        pass
+    target = sorted_data._meta if is_dask_sorted else sorted_data
     try:
         import cupy
-        if isinstance(meta, cupy.ndarray):
+        if isinstance(target, cupy.ndarray):
             ow = cupy.asarray(ow)
     except ImportError:
         pass
+    if is_dask_sorted:
+        ow = da.from_array(ow, chunks=-1)
 
     result_data = (sorted_data * ow).sum(axis=0)
 
@@ -363,32 +400,21 @@ def owa(
     )
 
 
-def _sort_block_descending(block, axis=0):
-    """Sort one in-memory block descending along ``axis``.
-
-    ``np.sort`` dispatches to cupy for cupy blocks via
-    ``__array_function__``, so this works for dask+numpy and dask+cupy.
-    This is the same ``-np.sort(-data)`` expression as the eager path,
-    so NaN ordering matches it exactly (NaN negates to NaN and sorts
-    to the same end).
-    """
-    return -np.sort(-block, axis=axis)
-
-
 def _sort_descending(data, axis):
     """Sort array descending along axis, supporting dask."""
     try:
         import dask.array as da
         if isinstance(data, da.Array):
-            # dask.array has no sort(). Rechunk the sort axis to a
-            # single chunk, then sort each block independently: the
-            # axis is fully contained in one chunk, so a per-block
-            # sort is exact. Peak memory stays bounded by the block
-            # size (n_criteria x chunk pixels).
-            rechunked = data.rechunk({axis: -1})
-            return da.map_blocks(
-                _sort_block_descending, rechunked,
-                axis=axis, dtype=data.dtype, meta=data._meta,
+            # dask.array has no sort(); rechunk the sort axis into a
+            # single chunk and sort each block independently.  np.sort
+            # dispatches to cupy for cupy-backed chunks.  Pass meta
+            # explicitly: inference calls the lambda on an empty meta
+            # array and falls back to numpy, which would mislabel
+            # cupy-backed results.
+            data = data.rechunk({axis: -1})
+            return data.map_blocks(
+                lambda block: -np.sort(-block, axis=axis),
+                meta=data._meta,
             )
     except ImportError:
         pass
@@ -479,7 +505,7 @@ def fuzzy_overlay(
 
 
 def boolean_overlay(
-    criteria: dict[str, xr.DataArray],
+    criteria: xr.Dataset | dict[str, xr.DataArray],
     operator: str = "and",
     name: str = "boolean_overlay",
 ) -> xr.DataArray:
@@ -487,8 +513,10 @@ def boolean_overlay(
 
     Parameters
     ----------
-    criteria : dict of str to xr.DataArray
-        Named boolean/binary criterion masks.
+    criteria : xr.Dataset or dict of str to xr.DataArray
+        Boolean/binary criterion masks, either as a Dataset of mask
+        variables (matching the other combination functions) or as a
+        mapping of name to mask.
     operator : str
         ``"and"`` (intersection) or ``"or"`` (union).
     name : str
@@ -499,8 +527,8 @@ def boolean_overlay(
     xr.DataArray
         Binary suitability mask.
     """
-    if not criteria:
-        raise ValueError("criteria dict is empty")
+    if len(criteria) == 0:
+        raise ValueError("criteria is empty")
 
     # Cast to bool to handle numeric input (0/1, float thresholds)
     layers = [v.astype(bool) for v in criteria.values()]

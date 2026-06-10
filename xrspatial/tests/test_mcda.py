@@ -2385,16 +2385,133 @@ class TestOWAMemoryGuard:
         assert "dask" in msg
 
 
+# ---------------------------------------------------------------------------
+# API consistency (#3148)
+# ---------------------------------------------------------------------------
+
+
+class TestOWAWeightsParam3148:
+    """owa() takes its criterion-weight dict as `weights` like wlc/wpm,
+    with `criterion_weights` kept as a deprecated alias."""
+
+    def test_weights_keyword(self, criteria_dataset, weights_3):
+        result = owa(
+            criteria_dataset, weights=weights_3, order_weights=[0.5, 0.3, 0.2],
+        )
+        expected = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_criterion_weights_deprecated(self, criteria_dataset, weights_3):
+        with pytest.warns(DeprecationWarning, match="criterion_weights"):
+            result = owa(
+                criteria_dataset,
+                criterion_weights=weights_3,
+                order_weights=[0.5, 0.3, 0.2],
+            )
+        expected = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_both_names_raise(self, criteria_dataset, weights_3):
+        with pytest.raises(TypeError, match="both"):
+            owa(
+                criteria_dataset,
+                weights=weights_3,
+                criterion_weights=weights_3,
+                order_weights=[0.5, 0.3, 0.2],
+            )
+
+    def test_missing_weights_raises(self, criteria_dataset):
+        with pytest.raises(TypeError, match="weights"):
+            owa(criteria_dataset, order_weights=[0.5, 0.3, 0.2])
+
+    def test_missing_order_weights_raises(self, criteria_dataset, weights_3):
+        with pytest.raises(TypeError, match="order_weights"):
+            owa(criteria_dataset, weights_3)
+
+    def test_positional_call_unchanged(self, criteria_dataset, weights_3):
+        result = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        assert isinstance(result, xr.DataArray)
+        assert result.name == "owa"
+
+    def test_keyword_parity_with_wlc(self, criteria_dataset, weights_3):
+        """Equal order weights make OWA equal WLC; both accept weights=."""
+        n = len(criteria_dataset.data_vars)
+        result = owa(
+            criteria_dataset, weights=weights_3, order_weights=[1.0 / n] * n,
+        )
+        expected = wlc(criteria_dataset, weights=weights_3)
+        np.testing.assert_allclose(result.values, expected.values)
+
+
+class TestBooleanOverlayDataset3148:
+    """boolean_overlay() accepts a Dataset like its sibling combiners."""
+
+    def _masks(self):
+        m1 = xr.DataArray(
+            np.array([[1, 0], [1, 1]], dtype=np.float64), dims=["y", "x"],
+        )
+        m2 = xr.DataArray(
+            np.array([[1, 1], [0, 1]], dtype=np.float64), dims=["y", "x"],
+        )
+        return m1, m2
+
+    def test_dataset_input(self):
+        m1, m2 = self._masks()
+        ds = xr.Dataset({"m1": m1, "m2": m2})
+        result = boolean_overlay(ds, operator="and")
+        np.testing.assert_array_equal(
+            result.values, np.array([[True, False], [False, True]]),
+        )
+
+    def test_dataset_matches_dict(self):
+        m1, m2 = self._masks()
+        ds = xr.Dataset({"m1": m1, "m2": m2})
+        for op in ("and", "or"):
+            from_ds = boolean_overlay(ds, operator=op)
+            from_dict = boolean_overlay({"m1": m1, "m2": m2}, operator=op)
+            np.testing.assert_array_equal(from_ds.values, from_dict.values)
+
+    def test_empty_dataset_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            boolean_overlay(xr.Dataset())
+
+
+class TestConsistencyResultExport3148:
+    """ConsistencyResult is importable from the public mcda namespace."""
+
+    def test_import_and_isinstance(self):
+        from xrspatial.mcda import ConsistencyResult
+
+        _, consistency = ahp_weights(
+            criteria=["a", "b"], comparisons={("a", "b"): 2},
+        )
+        assert isinstance(consistency, ConsistencyResult)
+
+    def test_in_all(self):
+        import xrspatial.mcda as mcda
+
+        assert "ConsistencyResult" in mcda.__all__
+
+
+class TestAHPIncompleteDocstring3148:
+    """Docstring documents the warn-and-default behaviour, not a raise."""
+
+    def test_docstring_mentions_warning(self):
+        doc = ahp_weights.__doc__
+        assert "UserWarning" in doc
+        assert "Raises" in doc and "Warns" in doc
+        raises_section = doc.split("Raises")[1].split("Warns")[0]
+        assert "incomplete" not in raises_section
+
+
 # ===========================================================================
 # Cross-backend coverage (#3149)
 #
 # Every public function gets exercised on cupy, dask+numpy, and dask+cupy
-# backends and compared against the numpy result. Paths that currently
-# raise are marked xfail and tracked in #3146 (mcda source bugs) -- the
-# xfail markers should be removed when that issue is fixed.
+# backends and compared against the numpy result. The backend paths that
+# used to raise (and were marked xfail) are fixed in #3146.
 # ===========================================================================
 
-XFAIL_3146 = "broken backend path, see #3146"
 XFAIL_XR_WHERE_CUPY = (
     "xr.where raises on cupy-backed data with cupy 13.6 + current xarray; "
     "dependency incompatibility, not an mcda bug (noted in #3146)"
@@ -2483,7 +2600,6 @@ class TestStandardizeCupy:
         _assert_standardize_matches_numpy("cupy", method, kwargs)
 
     def test_piecewise_matches_numpy(self):
-        # Fixed in #3159: piecewise stays on the device for cupy inputs
         _assert_standardize_matches_numpy("cupy", *_standardize_case("piecewise"))
 
     def test_result_stays_on_gpu(self):
@@ -2513,13 +2629,10 @@ class TestStandardizeDaskCupy:
         _assert_standardize_matches_numpy("dask+cupy", method, kwargs)
 
     def test_categorical_matches_numpy(self):
-        # Fixed in #3159: categorical stays on the device for cupy chunks
         _assert_standardize_matches_numpy(
             "dask+cupy", *_standardize_case("categorical"))
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_piecewise_matches_numpy(self):
-        # _interp_block calls np.asarray on cupy chunks
         _assert_standardize_matches_numpy(
             "dask+cupy", *_standardize_case("piecewise"))
 
@@ -2571,7 +2684,6 @@ class TestCombineCupy:
         _assert_combine_matches_numpy("cupy", fn)
 
     def test_owa_matches_numpy(self):
-        # Fixed in #3158: order weights are copied to the device
         _assert_combine_matches_numpy(
             "cupy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
         )
@@ -2586,7 +2698,6 @@ class TestCombineDaskNumpy:
         _assert_combine_matches_numpy("dask+numpy", fn)
 
     def test_owa_matches_numpy(self):
-        # Fixed in #3158: _sort_descending sorts per block via map_blocks
         _assert_combine_matches_numpy(
             "dask+numpy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
         )
@@ -2708,14 +2819,14 @@ class TestSensitivityCupy:
                 equal_nan=True, rtol=1e-7,
             )
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_monte_carlo_runs(self):
-        # _monte_carlo reads .values on cupy-backed DataArrays
         result = sensitivity(
             _combine_criteria("cupy"), COMBINE_WEIGHTS,
             method="monte_carlo", n_samples=10,
         )
-        assert np.all(_to_numpy(result) >= 0)
+        # The input NaN propagates to the CV surface (as on numpy).
+        vals = _to_numpy(result)
+        assert np.all(np.isnan(vals) | (vals >= 0))
 
 
 @cuda_and_cupy_available
@@ -2736,13 +2847,14 @@ class TestSensitivityDaskCupy:
                 equal_nan=True, rtol=1e-7,
             )
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_monte_carlo_runs(self):
         result = sensitivity(
             _combine_criteria("dask+cupy"), COMBINE_WEIGHTS,
             method="monte_carlo", n_samples=10,
         )
-        assert np.all(_to_numpy(result) >= 0)
+        # The input NaN propagates to the CV surface (as on numpy).
+        vals = _to_numpy(result)
+        assert np.all(np.isnan(vals) | (vals >= 0))
 
 
 # ===========================================================================
@@ -2856,3 +2968,127 @@ class TestCombineInfPropagation:
         result = fuzzy_overlay(ds, operator="and")
         assert float(result.values[0, 0]) == pytest.approx(0.5)
         assert float(result.values[0, 1]) == pytest.approx(0.2)
+
+
+# ===========================================================================
+# owa on dask backends (#3146)
+# ===========================================================================
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestOWADask:
+    """owa used to raise AttributeError on dask input (da.sort missing)."""
+
+    def test_owa_dask_matches_numpy(self, criteria_dataset, weights_3):
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(criteria_dataset, weights_3, ow)
+        dask_ds = criteria_dataset.chunk({"y": 2, "x": 2})
+        dask_result = owa(dask_ds, weights_3, ow)
+        assert hasattr(dask_result.data, "compute")
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values, atol=1e-14,
+        )
+
+    def test_owa_dask_nan_propagates(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, np.nan]], dtype=np.float64),
+                dims=["y", "x"],
+            ).chunk({"x": 1}),
+            "b": xr.DataArray(
+                np.array([[0.7, 0.4]], dtype=np.float64),
+                dims=["y", "x"],
+            ).chunk({"x": 1}),
+        })
+        r = owa(ds, {"a": 0.6, "b": 0.4}, [0.5, 0.5]).compute()
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+
+
+# ===========================================================================
+# cupy / dask+cupy backends (#3146)
+# ===========================================================================
+
+@cuda_and_cupy_available
+class TestCupyBackends:
+    """GPU paths that used to raise: owa, piecewise/categorical
+    standardize, and monte-carlo sensitivity."""
+
+    def _gpu_ds(self, criteria_dataset, backend):
+        import cupy
+        out = {}
+        for v in criteria_dataset.data_vars:
+            arr = cupy.asarray(criteria_dataset[v].values)
+            if backend == "dask+cupy":
+                arr = da.from_array(arr, chunks=(2, 2))
+            out[v] = xr.DataArray(arr, dims=criteria_dataset[v].dims)
+        return xr.Dataset(out)
+
+    @staticmethod
+    def _to_numpy(data):
+        import cupy
+        if hasattr(data, "compute"):
+            data = data.compute()
+        return cupy.asnumpy(data) if isinstance(data, cupy.ndarray) else data
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_standardize_piecewise(self, criterion_raster, backend):
+        import cupy
+        kw = dict(
+            method="piecewise",
+            breakpoints=[0, 50, 100], values=[0.0, 1.0, 0.5],
+        )
+        numpy_result = standardize(criterion_raster, **kw)
+        arr = cupy.asarray(criterion_raster.values)
+        if backend == "dask+cupy":
+            arr = da.from_array(arr, chunks=(2, 2))
+        gpu_result = standardize(
+            xr.DataArray(arr, dims=criterion_raster.dims), **kw)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_standardize_categorical(self, backend):
+        import cupy
+        data = np.array([[1.0, 2.0], [3.0, 99.0]])
+        kw = dict(method="categorical", mapping={1: 0.9, 2: 0.7, 3: 0.4})
+        numpy_result = standardize(
+            xr.DataArray(data, dims=["y", "x"]), **kw)
+        arr = cupy.asarray(data)
+        if backend == "dask+cupy":
+            arr = da.from_array(arr, chunks=(1, 2))
+        gpu_result = standardize(
+            xr.DataArray(arr, dims=["y", "x"]), **kw)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_owa(self, criteria_dataset, weights_3, backend):
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(criteria_dataset, weights_3, ow)
+        gpu_result = owa(
+            self._gpu_ds(criteria_dataset, backend), weights_3, ow)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True, atol=1e-14,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_monte_carlo_sensitivity(
+        self, criteria_dataset, weights_3, backend,
+    ):
+        numpy_result = sensitivity(
+            criteria_dataset, weights_3,
+            method="monte_carlo", n_samples=20, seed=7,
+        )
+        gpu_result = sensitivity(
+            self._gpu_ds(criteria_dataset, backend), weights_3,
+            method="monte_carlo", n_samples=20, seed=7,
+        )
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True, rtol=1e-10,
+        )
