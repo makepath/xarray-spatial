@@ -1177,15 +1177,36 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
             i = j
 
 
+def _alloc_order(height, width, should_write):
+    """Allocate the per-pixel owner-index array for the CPU kernels.
+
+    ``order`` tracks the input index of the current owner per pixel.  -1
+    sentinel is fine: written[r,c]==0 means cur_idx is never consulted
+    for the "first write" branch of the predicates.
+
+    Only the ordered predicates (``first`` / ``last``) ever read the
+    stored values.  For ``_should_write_any`` merges (max/min/sum/count
+    and user callables) the kernels still store the int64 owner index,
+    but nothing reads it back, so an int8 buffer (1 byte/pixel instead
+    of 8) is enough -- numba wraps the store and the wrapped values are
+    dead.  Issue #3107.
+
+    Caveat: the wrap is a compiled-code behavior.  Under
+    ``NUMBA_DISABLE_JIT=1`` (pure-Python debugging) NumPy raises
+    ``OverflowError`` on the first store of an owner index above 127;
+    if that bites, force the int64 branch here.
+    """
+    if should_write is _should_write_any:
+        return np.zeros((height, width), dtype=np.int8)
+    return np.full((height, width), -1, dtype=np.int64)
+
+
 def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
                all_touched, merge_fn, should_write):
     """NumPy backend for rasterize."""
     out = np.full((height, width), fill, dtype=np.float64)
     written = np.zeros((height, width), dtype=np.int8)
-    # Order tracks the input index of the current owner per pixel.  -1
-    # sentinel is fine: written[r,c]==0 means cur_idx is never consulted
-    # for the "first write" branch of the predicates.
-    order = np.full((height, width), -1, dtype=np.int64)
+    order = _alloc_order(height, width, should_write)
 
     (poly_geoms, poly_props, poly_ids, poly_global), \
         (line_geoms, line_props, line_global), \
@@ -1234,7 +1255,10 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
-        return out.astype(dtype)
+        # copy=False: the work buffer is local, so when dtype is already
+        # float64 (the default) the cast is a no-op and skips a full-
+        # raster copy.  Issue #3107.
+        return out.astype(dtype, copy=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2208,7 +2232,9 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
 
     final_out = _gpu_finalize_buffers(out, written, order, order_sentinel,
                                       fill, atomic_mode)
-    return final_out.astype(dtype)
+    # copy=False skips a full-raster device copy when dtype is already
+    # float64 (the default).  The buffer is local to this call.  #3107.
+    return final_out.astype(dtype, copy=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2417,7 +2443,11 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
     """
     out = np.full((tile_h, tile_w), fill, dtype=np.float64)
     written = np.zeros((tile_h, tile_w), dtype=np.int8)
-    order = np.full((tile_h, tile_w), -1, dtype=np.int64)
+    # int8 for order-insensitive merges, int64 for first/last; the
+    # decision runs worker-side, keyed on the unpickled predicate.
+    # ``_should_write_any`` is a module-level dispatcher, so pickling
+    # preserves identity.  Issue #3107.
+    order = _alloc_order(tile_h, tile_w, should_write)
 
     # 1. Polygons (deserialize WKB, then scanline fill)
     if poly_wkb:
@@ -2457,7 +2487,8 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                          point_props, point_global,
                          merge_fn, should_write, order)
 
-    return out.astype(dtype)
+    # copy=False: no per-tile copy when dtype is already float64.  #3107.
+    return out.astype(dtype, copy=False)
 
 
 def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
@@ -2685,7 +2716,9 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
 
     final_out = _gpu_finalize_buffers(out, written, order, order_sentinel,
                                       fill, atomic_mode)
-    return final_out.astype(dtype)
+    # copy=False: no per-tile device copy when dtype is already float64.
+    # Issue #3107.
+    return final_out.astype(dtype, copy=False)
 
 
 def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
@@ -3121,7 +3154,7 @@ def rasterize(
     fill: float = np.nan,
     dtype: Optional[np.dtype] = None,
     all_touched: bool = False,
-    use_cuda: bool = False,
+    gpu: bool = False,
     name: str = 'rasterize',
     resolution: Optional[Union[float, Tuple[float, float]]] = None,
     like: Optional[xr.DataArray] = None,
@@ -3129,6 +3162,7 @@ def rasterize(
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
     max_pixels: int = MAX_PIXELS_DEFAULT,
     check_crs: bool = True,
+    use_cuda: Optional[bool] = None,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
 
@@ -3210,8 +3244,10 @@ def rasterize(
         pixel-for-pixel up to rasterization tie-breaking on shared
         edges. If False, only pixels whose centers fall inside a
         polygon are burned.
-    use_cuda : bool, default False
-        If True, use the CuPy/CUDA backend.
+    gpu : bool, default False
+        If True, use the CuPy/CUDA backend.  Same convention as
+        ``open_geotiff(gpu=True)``; combine with ``chunks`` for the
+        dask+cupy backend.
     name : str, default 'rasterize'
         Name for the output DataArray.
     resolution : float or (x_res, y_res), optional
@@ -3251,7 +3287,7 @@ def rasterize(
         Custom merge function (pass a callable):
 
         For CPU backends, pass a ``@ngjit``-decorated function.  For GPU
-        backends (``use_cuda=True``), pass a
+        backends (``gpu=True``), pass a
         ``@numba.cuda.jit(device=True)`` function.  Signature::
 
             merge_fn(pixel, props, is_first) -> float64
@@ -3262,7 +3298,7 @@ def rasterize(
 
         .. warning::
 
-           On the GPU backends (``use_cuda=True``, with or without
+           On the GPU backends (``gpu=True``, with or without
            ``chunks``) a custom callable does not use CUDA atomics.  Its
            per-pixel update is a non-atomic read-modify-write, so when
            geometries overlap, several threads may update the same pixel
@@ -3272,14 +3308,14 @@ def rasterize(
            ``'max'``, ``'first'``, ``'last'``) do use atomics and stay
            deterministic over overlap; pass one of those if you need a
            stable result where geometries overlap on the GPU.  Calling
-           ``rasterize`` with a callable ``merge`` and ``use_cuda=True``
+           ``rasterize`` with a callable ``merge`` and ``gpu=True``
            emits a ``UserWarning`` to this effect.
 
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
         tiles of this size ``(row_chunk, col_chunk)``.  Both axes must be
         ``> 0``.  A single int uses the same chunk size for both axes.
-        Combined with ``use_cuda`` to select dask+numpy vs dask+cupy.
+        Combined with ``gpu`` to select dask+numpy vs dask+cupy.
     max_pixels : int, default 1_000_000_000
         Safety cap on the resolved output size (``width * height``).  The
         function raises ``ValueError`` before any host or device
@@ -3296,6 +3332,10 @@ def rasterize(
         them yourself to match the template.  Pass ``check_crs=False`` to
         skip the comparison (the output still inherits the template CRS).
         The check is a no-op when either side lacks a CRS.
+    use_cuda : bool, optional
+        Deprecated alias for ``gpu``; emits a ``DeprecationWarning``
+        when passed.  Passing both ``gpu=True`` and ``use_cuda`` raises
+        ``TypeError``.
 
     Returns
     -------
@@ -3325,6 +3365,22 @@ def rasterize(
         >>> density = rasterize(gdf, width=100, height=100,
         ...                     column='pop', merge='sum', fill=0)
     """
+    # Deprecation shim: ``use_cuda`` was renamed to ``gpu`` so the GPU
+    # opt-in matches ``open_geotiff(gpu=True)`` (issue #3089).  The old
+    # keyword still works but warns; asking for both is ambiguous.
+    if use_cuda is not None:
+        if gpu:
+            raise TypeError(
+                "rasterize() got both 'gpu' and its deprecated alias "
+                "'use_cuda'; pass only 'gpu'")
+        warnings.warn(
+            "rasterize(use_cuda=...) is deprecated; use gpu=... instead "
+            "(same convention as open_geotiff).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        gpu = use_cuda
+
     # Fail early with a clear message if the optional ``vector`` extra
     # (shapely) is not installed, rather than deep inside a helper.
     _require_shapely()
@@ -3646,10 +3702,10 @@ def rasterize(
     # ``_ensure_gpu_kernels``; ``None`` falls back to the non-atomic
     # closure path used for user callables.
     gpu_merge_name = None
-    if use_cuda:
+    if gpu:
         if cupy is None:
             raise ImportError(
-                "CuPy is required for use_cuda=True but is not installed")
+                "CuPy is required for gpu=True but is not installed")
         gpu_fns = _get_gpu_merge_fns()
         if isinstance(_merge_fn_gpu, str):
             gpu_merge_fn, should_write_gpu = gpu_fns[_merge_fn_gpu]
@@ -3669,7 +3725,7 @@ def rasterize(
             # merge stays deterministic over overlap.
             warnings.warn(
                 "A custom callable merge on the GPU backend "
-                "(use_cuda=True) uses a non-atomic read-modify-write, so "
+                "(gpu=True) uses a non-atomic read-modify-write, so "
                 "values for pixels where geometries overlap are "
                 "nondeterministic and may not match the CPU backend. Use a "
                 "built-in string merge ('sum', 'count', 'min', 'max', "
@@ -3682,7 +3738,7 @@ def rasterize(
     if chunks is not None:
         row_chunks, col_chunks = _normalize_chunks(
             chunks, final_height, final_width)
-        if use_cuda:
+        if gpu:
             out = _run_dask_cupy(
                 geom_list, props_array, final_bounds,
                 final_height, final_width, fill, final_dtype,
@@ -3694,7 +3750,7 @@ def rasterize(
                 final_height, final_width, fill, final_dtype,
                 all_touched, merge_fn, should_write_cpu,
                 row_chunks, col_chunks)
-    elif use_cuda:
+    elif gpu:
         out = _run_cupy(geom_list, props_array, final_bounds,
                         final_height, final_width, fill, final_dtype,
                         all_touched, gpu_merge_fn, should_write_gpu,

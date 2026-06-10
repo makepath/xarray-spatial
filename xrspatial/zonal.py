@@ -1298,8 +1298,8 @@ def _crosstab_dask_cupy(
 def crosstab(
     zones,
     values: xr.DataArray,
-    zone_ids: List[Union[int, float]] = None,
-    cat_ids: List[Union[int, float]] = None,
+    zone_ids: Optional[List[Union[int, float]]] = None,
+    cat_ids: Optional[List[Union[int, float]]] = None,
     layer: Optional[int] = None,
     agg: Optional[str] = "count",
     nodata_values: Optional[Union[int, float]] = None,
@@ -1363,7 +1363,7 @@ def crosstab(
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
-        Cells with `nodata` do not belong to any zone,
+        Cells with `nodata_values` do not belong to any zone,
         and thus excluded from calculation.
 
     column : str, optional
