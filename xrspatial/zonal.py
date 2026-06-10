@@ -1743,6 +1743,10 @@ def hypsometric_integral(
     """
     zones = _maybe_rasterize_zones(zones, values, column=column,
                                    rasterize_kw=rasterize_kw)
+
+    _validate_raster(zones, func_name='hypsometric_integral', name='zones', ndim=2)
+    _validate_raster(values, func_name='hypsometric_integral', name='values', ndim=2)
+
     validate_arrays(zones, values)
 
     _nodata = nodata  # capture for closures

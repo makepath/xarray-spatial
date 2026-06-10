@@ -405,3 +405,41 @@ def test_hi_preserves_backend_2525(backend):
         # confirm chunks are cupy
         sample = result.data.blocks[0, 0].compute()
         assert is_cupy_array(sample)
+
+
+def test_hypsometric_integral_rejects_complex_values():
+    """Regression #3200: complex/non-numeric inputs must raise, not silently
+    drop the imaginary part.
+
+    hypsometric_integral() used to skip _validate_raster(), so a complex
+    `values` array slipped through and numpy discarded its imaginary part
+    (only a ComplexWarning), returning finite wrong numbers. Every other
+    zonal function rejects complex input with a clear ValueError; this one
+    must too.
+    """
+    from xrspatial.zonal import hypsometric_integral
+
+    zones = xr.DataArray(
+        np.array([[1, 1], [2, 2]], dtype=np.int32), dims=['y', 'x']
+    )
+    values = xr.DataArray(
+        np.array([[1 + 2j, 3 + 1j], [5j, 2 + 0j]], dtype=np.complex128),
+        dims=['y', 'x'],
+    )
+    with pytest.raises(ValueError, match='real numeric dtype'):
+        hypsometric_integral(zones, values, nodata=None)
+
+
+def test_hypsometric_integral_rejects_non_dataarray_values():
+    """Regression #3200: a non-DataArray `values` must raise a clear
+    TypeError from _validate_raster, not an opaque AttributeError from
+    validate_arrays.
+    """
+    from xrspatial.zonal import hypsometric_integral
+
+    zones = xr.DataArray(
+        np.array([[1, 1], [2, 2]], dtype=np.int32), dims=['y', 'x']
+    )
+    raw_values = np.array([[1.0, 2.0], [3.0, 4.0]])
+    with pytest.raises(TypeError, match='must be an xarray.DataArray'):
+        hypsometric_integral(zones, raw_values, nodata=None)
