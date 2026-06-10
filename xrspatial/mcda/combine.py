@@ -166,24 +166,39 @@ def _check_wpm_positive(criteria: xr.Dataset) -> None:
     NaN with no error. NaN values are allowed through so the documented
     NaN-propagation behaviour is preserved.
     """
-    bad = []
+    try:
+        import dask
+        import dask.array as da
+    except ImportError:
+        da = None
+
+    # Mask NaN so they pass through; we only want to flag <= 0.
+    names = []
+    mins = []
+    dask_positions = []
     for var_name in criteria.data_vars:
         arr = criteria[var_name].data
-        # Mask NaN so they pass through; we only want to flag <= 0.
-        try:
-            import dask.array as da
-            if isinstance(arr, da.Array):
-                # Compute once; cheap relative to the full product pass.
-                min_val = float(da.nanmin(arr).compute())
-            else:
-                min_val = float(np.nanmin(arr))
-        except ImportError:
-            min_val = float(np.nanmin(arr))
-        except ValueError:
-            # All-NaN slice; nothing to flag.
+        if arr.size == 0:
+            # Empty layer; nothing to flag.
             continue
+        if da is not None and isinstance(arr, da.Array):
+            # Defer so every dask layer reduces in one scheduler pass
+            # below instead of one compute() per criterion.
+            dask_positions.append(len(names))
+            names.append(var_name)
+            mins.append(da.nanmin(arr))
+        else:
+            names.append(var_name)
+            mins.append(float(np.nanmin(arr)))
+    if dask_positions:
+        computed = dask.compute(*[mins[i] for i in dask_positions])
+        for i, value in zip(dask_positions, computed):
+            mins[i] = float(value)
+
+    bad = []
+    for name, min_val in zip(names, mins):
         if not np.isnan(min_val) and min_val <= 0.0:
-            bad.append((var_name, min_val))
+            bad.append((name, min_val))
     if bad:
         details = ", ".join(f"{n!r} (min={v})" for n, v in bad)
         raise ValueError(
@@ -326,16 +341,18 @@ def owa(
     # Apply order weights along the criterion axis
     # Reshape order weights for broadcasting
     shape = [n] + [1] * (sorted_data.ndim - 1)
+    ow = order_weights_arr.reshape(shape)
 
+    # Match the array module of the data: cupy kernels reject numpy
+    # operands, so cupy-backed inputs (plain or dask) need a cupy copy
+    # of the order weights.
+    meta = getattr(sorted_data, "_meta", sorted_data)
     try:
-        import dask.array as da
-        if isinstance(sorted_data, da.Array):
-            ow = da.from_array(order_weights_arr.reshape(shape),
-                               chunks=-1)
-        else:
-            ow = order_weights_arr.reshape(shape)
+        import cupy
+        if isinstance(meta, cupy.ndarray):
+            ow = cupy.asarray(ow)
     except ImportError:
-        ow = order_weights_arr.reshape(shape)
+        pass
 
     result_data = (sorted_data * ow).sum(axis=0)
 
@@ -347,13 +364,30 @@ def owa(
     )
 
 
+def _sort_block_descending(block, axis=0):
+    """Sort one in-memory block descending along ``axis``.
+
+    ``np.sort`` dispatches to cupy for cupy blocks via
+    ``__array_function__``, so this works for dask+numpy and dask+cupy.
+    """
+    return -np.sort(-block, axis=axis)
+
+
 def _sort_descending(data, axis):
     """Sort array descending along axis, supporting dask."""
     try:
         import dask.array as da
         if isinstance(data, da.Array):
-            # Negate, sort, negate back to get descending order
-            return -da.sort(-data, axis=axis)
+            # dask.array has no sort(). Rechunk the sort axis to a
+            # single chunk, then sort each block independently: the
+            # axis is fully contained in one chunk, so a per-block
+            # sort is exact. Peak memory stays bounded by the block
+            # size (n_criteria x chunk pixels).
+            rechunked = data.rechunk({axis: -1})
+            return da.map_blocks(
+                _sort_block_descending, rechunked,
+                axis=axis, dtype=data.dtype, meta=data._meta,
+            )
     except ImportError:
         pass
 
