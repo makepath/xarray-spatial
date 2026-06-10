@@ -1698,6 +1698,12 @@ def _pack(data):
     second time. (The double-scale bug the round-trip caveat warns about
     comes from writing the *already-scaled* floats with the tags still on;
     reversing the scale first, as here, makes keeping the tags correct.)
+    Per-band ``(SCALE, i)`` / ``(OFFSET, i)`` entries are an exception:
+    after a band-subset read they still describe the *source's* band
+    indices, which the written file no longer has (#3161). They are
+    rewritten as dataset-level entries carrying the reversed pair -- the
+    one pair that was applied to every pixel of this array -- so the
+    packed file unpacks correctly whatever bands it carries.
 
     Raises ``ValueError`` when ``data`` carries no unpack state to
     reverse, or when an integer dtype must be restored but NaN pixels are
@@ -1754,6 +1760,45 @@ def _pack(data):
         out = out.round()
 
     out = out.astype(tgt)
+
+    # Rewrite stale per-band SCALE / OFFSET entries (#3161). After a
+    # band-subset read the kept GDAL_METADATA still describes the source's
+    # band indices, so re-reading the packed file would raise
+    # MixedBandMetadataError or silently apply another band's scale. The
+    # reversed (scale, offset) pair is the single pair that was applied to
+    # every pixel of this array, so dataset-level entries carrying it are
+    # correct for any band layout (and _extract_scale_offset gives them
+    # precedence). Dataset-level-only metadata is already index-free and
+    # stays verbatim, preserving the raw XML. Scoped to arrays that carry
+    # unpack state: a plain masked read never applied the per-band scale,
+    # so collapsing its entries would destroy valid source metadata.
+    # Other per-band items (band descriptions, STATISTICS_*) are left
+    # as-is on purpose: they don't affect pixel values and can't be
+    # re-indexed without knowing which band was read.
+    gdal_md = attrs.get('gdal_metadata')
+    if (isinstance(gdal_md, dict)
+            and ('scale_factor' in attrs or 'mask_and_scale_dtype' in attrs)):
+        per_band_keys = [
+            key for key in gdal_md
+            if (isinstance(key, tuple) and len(key) == 2
+                and key[0] in ('SCALE', 'OFFSET'))
+        ]
+        if per_band_keys:
+            new_md = {key: val for key, val in gdal_md.items()
+                      if key not in per_band_keys}
+            # Keep an existing dataset-level value verbatim (it won on
+            # read, so it already equals the applied pair). Identity
+            # values are dropped rather than written: absent and 1.0 / 0.0
+            # read back the same.
+            if 'SCALE' not in new_md and scale != 1.0:
+                new_md['SCALE'] = str(float(scale))
+            if 'OFFSET' not in new_md and offset != 0.0:
+                new_md['OFFSET'] = str(float(offset))
+            attrs['gdal_metadata'] = new_md
+            # The raw XML still carries the stale per-band items and the
+            # writer prefers it over the dict; drop it so GDAL_METADATA is
+            # rebuilt from the rewritten dict.
+            attrs.pop('gdal_metadata_xml', None)
 
     # Drop the read-side lifecycle attrs that describe the now-reversed
     # transform. The SCALE / OFFSET GDAL_METADATA stays so the packed file
