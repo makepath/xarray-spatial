@@ -837,16 +837,23 @@ def test_mean_large_offset_gpu_matches_numpy_3214():
     assert abs(gpu_spread - spread) < 1e-6
 
 
-def test_mean_excludes_match_in_working_dtype_3214():
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_mean_excludes_match_in_working_dtype_3214(backend):
     # excludes are cast to the working dtype before matching, so a float32
     # raster cell equal to float32(0.1) is excluded even though
-    # float64(0.1) != float32(0.1).
+    # float64(0.1) != float32(0.1). The cupy path casts excludes separately
+    # in _mean_cupy, so both backends are checked.
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
     data = np.full((4, 4), 5.0, dtype=np.float32)
     data[1, 1] = np.float32(0.1)
-    agg = create_test_raster(data)
+    agg = create_test_raster(data, backend=backend)
     result = mean(agg, excludes=[0.1])
+    out = result.data.get() if hasattr(result.data, 'get') else result.data
     # the excluded cell is passed through unchanged
-    assert result.data[1, 1] == np.float32(0.1)
+    assert out[1, 1] == np.float32(0.1)
 
 
 # --- focal_stats NaN handling (issue-1092) --------------------------------

@@ -332,6 +332,9 @@ def mean(agg, passes=1, excludes=None, name='mean', boundary='nan'):
         If `agg` is a Dataset, returns a Dataset with mean computed
         for each data variable.
         2D aggregate array of filtered values.
+        The input float dtype is preserved (float64 in, float64 out);
+        integer inputs are promoted to float32, matching ``apply`` and
+        ``focal_stats``.
 
     Examples
     --------
