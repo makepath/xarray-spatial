@@ -93,6 +93,7 @@ category. The `Key` column matches the runtime key.
 | `reader.allow_rotated` | experimental | Opt-in `allow_rotated=True`; drops the axis-aligned `transform` attr in favour of `rotated_affine`. |
 | `reader.allow_unparseable_crs` | experimental | Opt-in escape hatch for CRS strings pyproj cannot parse. |
 | `reader.gpu` | experimental | GPU read path; no cross-backend numerical parity claim. |
+| `reader.unpack` | experimental | `unpack=True` scale/offset decode on `open_geotiff` (CF-packed integers to float, nodata sentinel to NaN). Experimental because the GPU path crashes (#3112) and the GPU / dask+GPU branches lack tests (#3114). |
 
 ### Writers
 
@@ -106,6 +107,7 @@ category. The `Key` column matches the runtime key.
 | `writer.gpu` | experimental | GPU write path. |
 | `writer.gdal_metadata_xml` | experimental | `attrs['gdal_metadata_xml']` is escaped before serialisation. |
 | `writer.extra_tags` | experimental | Pass-through of TIFF tags outside the structured set via `attrs['extra_tags']`. |
+| `writer.pack` | experimental | `pack=True` on `to_geotiff`; inverse of `reader.unpack`. Re-applies the recorded scale/offset, restores the integer source dtype, and fills NaN back to the nodata sentinel. Tracked at the same tier as `reader.unpack` (#3112, #3114). |
 
 ### Unsupported for this release
 
