@@ -514,7 +514,7 @@ For a broader catalog of spectral indices and sensor-specific band combinations,
 | [Fuzzy Overlay](xrspatial/mcda/combine.py) | Combines criteria using fuzzy set operators (AND, OR, sum, product, gamma) | Eastman 1999 | ✅ | 🔼 | 🧪 | 🧪 |
 | [Boolean Overlay](xrspatial/mcda/combine.py) | Combines binary criterion masks using AND/OR logic | Standard | ✅ | 🔼 | 🧪 | 🧪 |
 | [Constrain](xrspatial/mcda/constrain.py) | Masks exclusion zones from a suitability surface | Standard | ✅ | 🔼 | 🧪 | 🧪 |
-| [Sensitivity](xrspatial/mcda/sensitivity.py) | Assesses weight stability via one-at-a-time or Monte Carlo perturbation | Standard | ✅ | 🔼 | 🚫 | 🚫 |
+| [Sensitivity](xrspatial/mcda/sensitivity.py) | Assesses weight stability via one-at-a-time or Monte Carlo perturbation | Standard | ✅ | 🔼 | 🧪 | 🧪 |
 
 -------
 

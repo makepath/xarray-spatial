@@ -35,7 +35,11 @@ def constrain(
     if name is None:
         name = suitability.name
 
-    result = suitability.copy()
+    # Shallow copy: xr.where returns new objects and nothing below
+    # mutates the data, so a deep copy would only duplicate the full
+    # raster. The copy still keeps the .name assignment from leaking
+    # into the caller's object when exclude is empty.
+    result = suitability.copy(deep=False)
     for mask in exclude:
         result = xr.where(mask, fill, result)
 
