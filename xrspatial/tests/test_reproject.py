@@ -4424,6 +4424,66 @@ class TestStreamingDtypeParity:
         np.testing.assert_array_equal(dist_out, local_out)
 
 
+class TestParallelKernelThreadSafety:
+    """Concurrent launches of the numba projection kernels must not abort.
+
+    The kernels in _projections.py are ``parallel=True``, and numba's
+    default 'workqueue' threading layer terminates the process (SIGABRT
+    on macOS, see the #3093 CI failure) when two host threads enter a
+    parallel region concurrently. The streaming tile pool and dask's
+    threaded scheduler both launch these kernels from worker threads, so
+    try_numba_transform / transform_points serialize launches behind a
+    module lock. Run the hammer in a subprocess with the workqueue layer
+    forced so a regression aborts the child, not the test session.
+    """
+
+    _SCRIPT = """
+import threading
+import numpy as np
+from xrspatial.reproject._projections import transform_points, try_numba_transform
+from xrspatial.reproject._crs_utils import _resolve_crs
+
+src = _resolve_crs('EPSG:4326')
+tgt = _resolve_crs('EPSG:3857')
+bounds = (-561014.0, 5621521.0, -556014.0, 6453998.0)
+xs = np.linspace(-5.0, 5.0, 1000)
+ys = np.linspace(40.0, 50.0, 1000)
+errs = []
+
+def work():
+    try:
+        for _ in range(25):
+            try_numba_transform(src, tgt, bounds, (128, 128))
+            transform_points(src, tgt, xs, ys)
+    except BaseException as e:  # noqa: BLE001 - report everything
+        errs.append(e)
+
+threads = [threading.Thread(target=work) for _ in range(4)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+assert not errs, errs
+print('OK')
+"""
+
+    def test_concurrent_kernel_launches_survive_workqueue(self):
+        import os
+        import subprocess
+        import sys
+        env = dict(os.environ, NUMBA_THREADING_LAYER='workqueue')
+        proc = subprocess.run(
+            [sys.executable, '-c', self._SCRIPT],
+            capture_output=True, text=True, timeout=600, env=env,
+        )
+        assert proc.returncode == 0, (
+            f"subprocess exited {proc.returncode}\n"
+            f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+        )
+        assert 'OK' in proc.stdout
+        assert 'not threadsafe' not in proc.stderr
+
+
 @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
                     reason="dask + cupy required")
 class TestDaskCupyDtypeParity:
