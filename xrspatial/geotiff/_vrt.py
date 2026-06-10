@@ -1892,10 +1892,13 @@ def _check_no_mixed_georef(sources_meta: list[dict]) -> None:
     ``(0, 0)`` as if those identity values were real CRS coordinates.
     Refuse rather than emit a mosaic that mislocates the tile.
 
-    The all-georeferenced and all-non-georeferenced cases both pass:
-    write_vrt emits a ``<GeoTransform>`` only when every source is
-    georeferenced, so the all-non-georeferenced VRT preserves
-    ``georef_status='none'`` on read.
+    The all-georeferenced and all-non-georeferenced cases both pass
+    this gate: write_vrt emits a ``<GeoTransform>`` only when every
+    source is georeferenced, so the all-non-georeferenced VRT preserves
+    ``georef_status='none'`` on read. Placement for multiple
+    non-georeferenced sources is handled separately in
+    :func:`write_vrt`: it requires explicit ``dst_offsets`` because the
+    identity transforms cannot place the tiles (issue #3116).
     """
     if not sources_meta:
         return
@@ -1978,7 +1981,8 @@ def _check_no_mixed_nodata(sources_meta: list[dict], *,
 def write_vrt(vrt_path: str, source_files: list[str], *,
               relative: bool = True,
               crs_wkt: str | None = None,
-              nodata: float | int | None = None) -> str:
+              nodata: float | int | None = None,
+              dst_offsets: list[tuple[int, int]] | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
     Do not call this symbol directly from external code. This is the
@@ -2014,6 +2018,20 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         (e.g. ``65535`` for uint16, ``-9999`` for int32) are accepted
         so the surface lines up with the ``nodata`` kwarg on
         ``to_geotiff`` and ``_write_geotiff_gpu``.
+    dst_offsets : list of (int, int) or None
+        [internal-only] Explicit pixel-space placement for
+        non-georeferenced sources: one ``(x_off, y_off)`` pair per
+        entry of ``source_files``, giving the source's top-left corner
+        in the mosaic. Required when more than one non-georeferenced
+        source is supplied -- such sources carry only the default
+        identity transform, so their placement cannot be derived from
+        georeferencing (issue #3116). Rejected when any source is
+        georeferenced: georeferenced sources place via their
+        GeoTransform and an explicit override would let the two
+        disagree silently. Offsets are not checked for overlap or
+        full coverage; the tiled write path always supplies a
+        non-overlapping cover, and a direct caller is responsible
+        for its own layout.
 
     Returns
     -------
@@ -2131,6 +2149,52 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     _check_no_mixed_georef(sources_meta)
     _check_no_mixed_nodata(sources_meta, caller_nodata=nodata)
 
+    # Placement policy for non-georeferenced sources (issue #3116).
+    # Mosaic placement is normally derived from each source's
+    # GeoTransform, but a non-georeferenced source carries only the
+    # default identity transform, so every such source maps to the same
+    # extent. Deriving placement from that stacks all tiles at DstRect
+    # (0, 0) and shrinks the mosaic to one tile -- a silently corrupt
+    # index. Callers that know the layout (the tiled ``.vrt`` write
+    # path in ``_writers/eager.py``) pass explicit pixel offsets via
+    # ``dst_offsets``; anything else with more than one
+    # non-georeferenced source is refused, mirroring the
+    # ``_check_no_mixed_georef`` fail-closed precedent.
+    all_non_georef = not any(
+        bool(m.get('has_georef')) for m in sources_meta)
+    if dst_offsets is not None:
+        if not all_non_georef:
+            georeffed = [m['path'] for m in sources_meta
+                         if m.get('has_georef')]
+            raise ValueError(
+                f"write_vrt: dst_offsets is only valid when every source "
+                f"is non-georeferenced; georeferenced sources "
+                f"{georeffed!r} place via their GeoTransform, and an "
+                f"explicit pixel offset could silently disagree with it. "
+                f"Drop dst_offsets or strip the georeferencing.")
+        if len(dst_offsets) != len(sources_meta):
+            raise ValueError(
+                f"write_vrt: dst_offsets has {len(dst_offsets)} entries "
+                f"for {len(sources_meta)} source file(s); pass one "
+                f"(x_off, y_off) pair per source.")
+        for i, pair in enumerate(dst_offsets):
+            if (not isinstance(pair, (tuple, list)) or len(pair) != 2
+                    or any(isinstance(v, bool)
+                           or not isinstance(v, (int, np.integer))
+                           or v < 0 for v in pair)):
+                raise ValueError(
+                    f"write_vrt: dst_offsets[{i}] must be a pair of "
+                    f"non-negative ints (x_off, y_off), got {pair!r}.")
+    elif all_non_georef and len(sources_meta) > 1:
+        raise ValueError(
+            f"write_vrt: {len(sources_meta)} non-georeferenced sources "
+            f"with no dst_offsets. Non-georeferenced TIFFs carry only a "
+            f"default identity transform, so their mosaic placement "
+            f"cannot be derived from georeferencing; writing them "
+            f"without explicit placement would stack every source at "
+            f"the origin. Pass dst_offsets with one (x_off, y_off) pair "
+            f"per source, or georeference the sources.")
+
     # Pixel size, sample format, band count, and CRS share the
     # documented "all sources must agree with first" contract. These
     # remain inline here because they predate the grouped gates above
@@ -2175,26 +2239,59 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
                 f"share the same CRS."
             )
 
-    # Compute the bounding box of all sources
-    all_x0, all_y0, all_x1, all_y1 = [], [], [], []
-    for m in sources_meta:
-        t = m['transform']
-        x0 = t.origin_x
-        y0 = t.origin_y
-        x1 = x0 + m['width'] * t.pixel_width
-        y1 = y0 + m['height'] * t.pixel_height
-        all_x0.append(min(x0, x1))
-        all_y0.append(min(y0, y1))
-        all_x1.append(max(x0, x1))
-        all_y1.append(max(y0, y1))
+    if dst_offsets is not None:
+        # Explicit pixel-space placement (non-georeferenced mosaic).
+        # The mosaic extent is the union of the placed sources; no
+        # GeoTransform is emitted (every source is non-georeferenced,
+        # enforced above), so the geo bbox math is skipped entirely.
+        placements = [(int(x), int(y)) for x, y in dst_offsets]
+        total_w = max(x + m['width']
+                      for (x, _y), m in zip(placements, sources_meta))
+        total_h = max(y + m['height']
+                      for (_x, y), m in zip(placements, sources_meta))
+        mosaic_x0 = mosaic_y_top = None  # no geo origin without georef
+    else:
+        # Compute the bounding box of all sources
+        all_x0, all_y0, all_x1, all_y1 = [], [], [], []
+        for m in sources_meta:
+            t = m['transform']
+            x0 = t.origin_x
+            y0 = t.origin_y
+            x1 = x0 + m['width'] * t.pixel_width
+            y1 = y0 + m['height'] * t.pixel_height
+            all_x0.append(min(x0, x1))
+            all_y0.append(min(y0, y1))
+            all_x1.append(max(x0, x1))
+            all_y1.append(max(y0, y1))
 
-    mosaic_x0 = min(all_x0)
-    mosaic_y_top = max(all_y1)  # top edge (y increases upward in geo)
-    mosaic_x1 = max(all_x1)
-    mosaic_y_bottom = min(all_y0)
+        mosaic_x0 = min(all_x0)
+        mosaic_y_top = max(all_y1)  # top edge (y increases upward in geo)
+        mosaic_x1 = max(all_x1)
+        mosaic_y_bottom = min(all_y0)
 
-    total_w = int(round((mosaic_x1 - mosaic_x0) / abs(res_x)))
-    total_h = int(round((mosaic_y_top - mosaic_y_bottom) / abs(res_y)))
+        total_w = int(round((mosaic_x1 - mosaic_x0) / abs(res_x)))
+        total_h = int(round((mosaic_y_top - mosaic_y_bottom) / abs(res_y)))
+
+        # Pixel offset of each source in the virtual raster, derived
+        # from its GeoTransform. ``origin_y`` is the *top* only for
+        # north-up rasters (pixel_height < 0); sources with ascending y
+        # (pixel_height > 0) place origin_y at the bottom, so the top is
+        # origin_y + height * pixel_height.
+        placements = []
+        for m in sources_meta:
+            t = m['transform']
+            src_top = max(
+                t.origin_y,
+                t.origin_y + m['height'] * t.pixel_height,
+            )
+            src_left = min(
+                t.origin_x,
+                t.origin_x + m['width'] * t.pixel_width,
+            )
+            placements.append((
+                int(round((src_left - mosaic_x0) / abs(res_x))),
+                int(round((mosaic_y_top - src_top) / abs(res_y))),
+            ))
 
     # Determine VRT dtype via the central TIFF-to-numpy resolver so the
     # VRT header agrees with what the reader will actually decode. The
@@ -2239,24 +2336,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         if nd is not None:
             lines.append(f'    <NoDataValue>{_xml_text(nd)}</NoDataValue>')
 
-        for m in sources_meta:
-            t = m['transform']
-            # Top edge of this source in geo coords -- origin_y is the
-            # *top* only for north-up rasters (pixel_height < 0).  Sources
-            # with ascending y (pixel_height > 0) place origin_y at the
-            # bottom, so the top is origin_y + height * pixel_height.
-            src_top = max(
-                t.origin_y,
-                t.origin_y + m['height'] * t.pixel_height,
-            )
-            src_left = min(
-                t.origin_x,
-                t.origin_x + m['width'] * t.pixel_width,
-            )
-            # Pixel offset in the virtual raster
-            dst_x_off = int(round((src_left - mosaic_x0) / abs(res_x)))
-            dst_y_off = int(round((mosaic_y_top - src_top) / abs(res_y)))
-
+        for m, (dst_x_off, dst_y_off) in zip(sources_meta, placements):
             fname = m['path']
             rel_attr = '0'
             if relative:
