@@ -58,7 +58,7 @@ def _validate_binary_kernel(kernel, func_name):
         )
 
 
-def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name):
+def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
     """Reject kernel + raster combinations that would OOM the host.
 
     The focal public APIs (apply, focal_stats, hotspots) accept any 2-D
@@ -77,10 +77,27 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name):
     own; the padded raster is larger).  Budget 4 bytes per kernel cell
     (float32 internal dtype) plus the padded raster footprint, and raise
     ``MemoryError`` when the total exceeds half of available memory.
+
+    Dask-backed input never materializes the padded full raster: each
+    ``map_overlap`` task allocates one chunk plus the overlap halo.  When
+    *chunks* is given (the dask ``.chunks`` tuple), the padded footprint
+    is budgeted from the largest chunk instead of the full raster shape,
+    so chunked rasters far larger than host memory pass while an
+    oversized kernel is still rejected.
     """
     krows, kcols = kernel.shape
     pad_h = krows // 2
     pad_w = kcols // 2
+
+    if chunks is not None:
+        # Per-task footprint for the dask paths: largest chunk + halo.
+        # The scheduler runs one task per worker concurrently, so true peak
+        # is ~num_workers * padded_chunk; the 0.5-of-available headroom
+        # below absorbs that for sane chunk sizes. Unknown chunk sizes
+        # (NaN, e.g. after boolean indexing) make the comparison False and
+        # fall through to dask's own map_overlap error.
+        rows = max(chunks[-2])
+        cols = max(chunks[-1])
 
     # 4 bytes per cell -- focal internals cast to float32.
     kernel_bytes = krows * kcols * 4
@@ -92,10 +109,11 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name):
     available = _available_memory_bytes()
 
     if required > 0.5 * available:
+        unit = 'chunk' if chunks is not None else 'raster'
         raise MemoryError(
             f"{func_name}(): kernel of shape {kernel.shape} on a "
-            f"{rows}x{cols} raster would need ~{required / 1e9:.1f} GB "
-            f"(kernel + padded raster), but only "
+            f"{rows}x{cols} {unit} would need ~{required / 1e9:.1f} GB "
+            f"(kernel + padded {unit}), but only "
             f"{available / 1e9:.1f} GB is available. "
             f"Use a smaller kernel or a coarser cellsize."
         )
@@ -700,7 +718,8 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
     _validate_boundary(boundary)
 
     rows, cols = agg.shape[-2], agg.shape[-1]
-    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='apply')
+    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='apply',
+                                   chunks=getattr(agg.data, 'chunks', None))
 
     # apply kernel to raster values
     # if agg is a numpy or dask with numpy backed data array,
@@ -1130,9 +1149,12 @@ def _focal_stats_cupy(agg, kernel, stats_funcs):
         var=lambda *args: _focal_stats_func_cupy(*args, func=_focal_var_cuda),
         variety=lambda *args: _focal_stats_func_cupy(*args, func=_focal_variety_cuda),
     )
+    # Cast once, outside the loop: cupy's astype allocates and copies a
+    # full device raster even when the dtype is unchanged, so casting per
+    # stat repeated that copy once per requested statistic.
+    data = agg.data.astype(_promote_float(agg.data.dtype))
     stats_aggs = []
     for stats in stats_funcs:
-        data = agg.data.astype(_promote_float(agg.data.dtype))
         stats_data = _stats_cupy_mapper[stats](data, kernel)
         stats_agg = xr.DataArray(
             stats_data,
@@ -1335,7 +1357,8 @@ def focal_stats(agg,
     _validate_boundary(boundary)
 
     rows, cols = agg.shape[-2], agg.shape[-1]
-    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='focal_stats')
+    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='focal_stats',
+                                   chunks=getattr(agg.data, 'chunks', None))
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
@@ -1722,7 +1745,8 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
         )
 
     rows, cols = agg.shape[-2], agg.shape[-1]
-    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots')
+    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots',
+                                   chunks=getattr(agg.data, 'chunks', None))
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_hotspots_numpy, boundary=boundary),

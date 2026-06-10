@@ -245,7 +245,7 @@ class TestResolutionExactAcrossBackends:
                          resolution=0.3, bounds=(0, 0, 1, 1), fill=0)
         cp_r = rasterize([(box(0, 0, 1, 1), 1.0)],
                          resolution=0.3, bounds=(0, 0, 1, 1), fill=0,
-                         use_cuda=True)
+                         gpu=True)
         assert cp_r.shape == np_r.shape == (4, 4)
         assert _cell_size(cp_r.x) == pytest.approx(0.3, abs=1e-9)
         cp_vals = cupy.asnumpy(cp_r.data)
@@ -269,7 +269,7 @@ class TestResolutionExactAcrossBackends:
                          resolution=0.3, bounds=(0, 0, 1, 1), fill=0)
         dkcp_r = rasterize([(box(0, 0, 1, 1), 1.0)],
                            resolution=0.3, bounds=(0, 0, 1, 1), fill=0,
-                           chunks=(2, 2), use_cuda=True)
+                           chunks=(2, 2), gpu=True)
         assert dkcp_r.shape == np_r.shape == (4, 4)
         assert _cell_size(dkcp_r.x) == pytest.approx(0.3, abs=1e-9)
         np.testing.assert_array_equal(

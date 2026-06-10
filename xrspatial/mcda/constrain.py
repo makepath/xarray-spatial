@@ -30,14 +30,24 @@ def constrain(
     Returns
     -------
     xr.DataArray
-        Constrained suitability surface.
+        Constrained suitability surface. Keeps the input's dims,
+        coords, and attrs (``res``, ``crs``, ``nodatavals``, ...).
     """
     if name is None:
         name = suitability.name
 
-    result = suitability.copy()
+    # Shallow copy: xr.where returns new objects and nothing below
+    # mutates the data, so a deep copy would only duplicate the full
+    # raster. The copy still keeps the .name assignment from leaking
+    # into the caller's object when exclude is empty.
+    result = suitability.copy(deep=False)
     for mask in exclude:
         result = xr.where(mask, fill, result)
 
+    # xr.where takes attrs from its first value argument (the scalar
+    # ``fill``), which strips res/crs/nodatavals from the output.
+    # Restore the input's attrs so the constrained surface stays
+    # georeferenced (#3147).
+    result.attrs = dict(suitability.attrs)
     result.name = name
     return result

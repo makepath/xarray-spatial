@@ -99,14 +99,22 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     ``nodata`` is still only stable when combined with a ``[stable]``
     codec and options).
 
-    Dask-backed DataArrays are written in streaming mode: one tile-row
-    at a time, without materialising the full array into RAM. The
-    per-compute budget is sized from the source chunk geometry, so a
-    ``map_overlap`` source (e.g. ``slope`` / ``aspect``) chunked taller
-    than the tile stays within ``streaming_buffer_bytes`` instead of
-    pulling several source chunk-rows at once (#3007). COG output
-    (``cog=True``) still materialises because overviews need the full
-    array.
+    Dask-backed DataArrays on the CPU path are written in streaming
+    mode: one tile-row at a time, without materialising the full array
+    into RAM. The per-compute budget is sized from the source chunk
+    geometry, so a ``map_overlap`` source (e.g. ``slope`` / ``aspect``)
+    chunked taller than the tile stays within
+    ``streaming_buffer_bytes`` instead of pulling several source
+    chunk-rows at once (#3007). COG output (``cog=True``) still
+    materialises because overviews need the full array.
+
+    Streaming does NOT apply to the GPU writer. CuPy-backed dask input
+    (dask+cupy) auto-dispatches to the GPU writer, which materialises
+    the entire array on device before encoding;
+    ``streaming_buffer_bytes`` is ignored there and a
+    ``GeoTIFFFallbackWarning`` is emitted when the materialisation
+    happens (issue #3166). The same applies when ``gpu=True`` is passed
+    with any dask-backed input.
 
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
@@ -235,15 +243,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
         acceleration; backend parity with the CPU writer is tested for
         the Tier 1 codec set only. Force GPU compression. None
-        (default) auto-detects CuPy data.
+        (default) auto-detects CuPy data, including CuPy-backed dask
+        arrays. Dask-backed input routed to the GPU writer is
+        materialised in full on device (no streaming; see
+        ``streaming_buffer_bytes``).
     streaming_buffer_bytes : int
         [stable] Soft cap on bytes materialised per dask compute call
         when streaming a dask-backed DataArray. Defaults to 256 MB.
         Wide rasters whose tile-row exceeds this budget are split into
-        horizontal segments. Only relevant for dask-backed inputs; the
-        kwarg is a no-op for numpy / CuPy / COG paths (the COG path
-        materialises the full array because the overview pyramid
-        needs it).
+        horizontal segments. Only applies to dask-backed inputs on the
+        CPU write path; the kwarg is a no-op for numpy / CuPy / COG
+        paths (the COG path materialises the full array because the
+        overview pyramid needs it) and for the GPU writer. dask+cupy
+        input auto-dispatches to the GPU writer, so it materialises in
+        full on device instead of streaming and emits a
+        ``GeoTIFFFallbackWarning`` (issue #3166).
     max_z_error : float
         [experimental] Per-pixel error budget for LERC compression.
         ``0.0`` (default) is lossless; larger values let the encoder
