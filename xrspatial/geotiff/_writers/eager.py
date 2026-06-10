@@ -183,6 +183,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         default (6 for deflate/zstd). Valid ranges: deflate 1-9,
         zstd 1-22, lz4 0-16. Codecs without a level concept (lzw,
         packbits, jpeg) accept any value and ignore it.
+
+        Out-of-range levels raise ``ValueError`` on every backend,
+        including GPU dispatch. On the GPU path the nvCOMP encoder
+        (deflate/zstd tiles) does not expose level control: an
+        explicit level is validated but then ignored, and a
+        ``UserWarning`` is emitted. Tiles the GPU writer compresses
+        through the CPU codecs honor the level. Pass ``gpu=False``
+        if the exact level matters.
     tiled : bool
         [stable] Use tiled layout (default True). Incompatible with
         ``cog=True`` because the COG specification requires a tiled
@@ -619,6 +627,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         raise ValueError(
             "max_z_error is only valid with compression='lerc'")
 
+    # Validate compression_level against the codec-specific range before
+    # any backend dispatch (GPU, VRT, streaming, eager) so every path
+    # rejects out-of-range levels identically. This used to run only on
+    # the CPU branches, below the GPU dispatch, so
+    # ``to_geotiff(cupy_da, ..., compression_level=999)`` succeeded while
+    # the numpy call raised (#3167).
+    if compression_level is not None:
+        level_range = _LEVEL_RANGES.get(compression.lower())
+        if level_range is not None:
+            lo, hi = level_range
+            if not (lo <= compression_level <= hi):
+                raise ValueError(
+                    f"compression_level={compression_level} out of range "
+                    f"for {compression} (valid: {lo}-{hi})")
+
     # File-like (BytesIO etc.) destinations: the streaming, GPU, COG, and
     # VRT writers all need a real filesystem path (atomic rename, overview
     # passes, sidecar writes). Reject those combos up front so the user
@@ -945,15 +968,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             if dask_arr.ndim not in (2, 3):
                 raise ValueError(
                     f"Expected 2D or 3D array, got {dask_arr.ndim}D")
-            # Validate compression_level
-            if compression_level is not None:
-                level_range = _LEVEL_RANGES.get(compression.lower())
-                if level_range is not None:
-                    lo, hi = level_range
-                    if not (lo <= compression_level <= hi):
-                        raise ValueError(
-                            f"compression_level={compression_level} out of "
-                            f"range for {compression} (valid: {lo}-{hi})")
+            # compression_level was validated up front, before backend
+            # dispatch (#3167).
             from .._writer import write_streaming
 
             # Refuse to write an unvalidatable CRS string into
@@ -1049,15 +1065,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             arr = arr.copy()
             arr[nan_mask] = arr.dtype.type(nodata)
 
-    # Validate compression_level against codec-specific range
-    if compression_level is not None:
-        level_range = _LEVEL_RANGES.get(compression.lower())
-        if level_range is not None:
-            lo, hi = level_range
-            if not (lo <= compression_level <= hi):
-                raise ValueError(
-                    f"compression_level={compression_level} out of range "
-                    f"for {compression} (valid: {lo}-{hi})")
+    # compression_level was validated up front, before backend dispatch
+    # (#3167).
 
     # Refuse to write an unvalidatable CRS string into GTCitationGeoKey
     # unless the caller opts in.
