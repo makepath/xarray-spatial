@@ -1736,6 +1736,9 @@ def _pack(data):
     # stays verbatim, preserving the raw XML. Scoped to arrays that carry
     # unpack state: a plain masked read never applied the per-band scale,
     # so collapsing its entries would destroy valid source metadata.
+    # Other per-band items (band descriptions, STATISTICS_*) are left
+    # as-is on purpose: they don't affect pixel values and can't be
+    # re-indexed without knowing which band was read.
     gdal_md = attrs.get('gdal_metadata')
     if (isinstance(gdal_md, dict)
             and ('scale_factor' in attrs or 'mask_and_scale_dtype' in attrs)):

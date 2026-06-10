@@ -101,7 +101,8 @@ def test_pack_band_subset_per_band_offset(tmp_path, chunks):
     assert not any(isinstance(k, tuple) for k in md)
 
 
-def test_pack_band_subset_selected_band_without_scale(tmp_path):
+@pytest.mark.parametrize("chunks", [None, 2], ids=["numpy", "dask"])
+def test_pack_band_subset_selected_band_without_scale(tmp_path, chunks):
     """Selected band carries no SCALE entry; the other band's stale entry
     must not survive into the packed file and get applied on re-read."""
     src, data = _write_two_band_tiff(
@@ -109,7 +110,7 @@ def test_pack_band_subset_selected_band_without_scale(tmp_path):
         gdal_metadata={("SCALE", 1): "0.2"},
     )
 
-    decoded = open_geotiff(src, band=0, unpack=True)  # identity scale
+    decoded = _open(src, chunks, band=0, unpack=True)  # identity scale
     np.testing.assert_allclose(
         np.asarray(decoded.data), data[:, :, 0].astype(np.float64))
 
@@ -126,7 +127,8 @@ def test_pack_band_subset_selected_band_without_scale(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_pack_full_read_uniform_per_band_scale(tmp_path):
+@pytest.mark.parametrize("chunks", [None, 2], ids=["numpy", "dask"])
+def test_pack_full_read_uniform_per_band_scale(tmp_path, chunks):
     """A full read of uniform per-band SCALE entries still unpacks to the
     same values after pack: the entries collapse to one dataset-level pair."""
     src, data = _write_two_band_tiff(
@@ -134,7 +136,7 @@ def test_pack_full_read_uniform_per_band_scale(tmp_path):
         gdal_metadata={("SCALE", 0): "0.5", ("SCALE", 1): "0.5"},
     )
 
-    decoded = open_geotiff(src, unpack=True)
+    decoded = _open(src, chunks, unpack=True)
     out = str(tmp_path / "packed_uniform_3161.tif")
     to_geotiff(decoded, out, pack=True)
 
