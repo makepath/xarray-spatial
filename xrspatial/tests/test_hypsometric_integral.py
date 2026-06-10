@@ -407,7 +407,8 @@ def test_hi_preserves_backend_2525(backend):
         assert is_cupy_array(sample)
 
 
-def test_hypsometric_integral_rejects_complex_values():
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_hypsometric_integral_rejects_complex_values(backend):
     """Regression #3200: complex/non-numeric inputs must raise, not silently
     drop the imaginary part.
 
@@ -415,19 +416,45 @@ def test_hypsometric_integral_rejects_complex_values():
     `values` array slipped through and numpy discarded its imaginary part
     (only a ComplexWarning), returning finite wrong numbers. Every other
     zonal function rejects complex input with a clear ValueError; this one
-    must too.
+    must too. The guard runs before backend dispatch, so it must fire the
+    same way on numpy, cupy, dask+numpy, and dask+cupy.
+    """
+    from xrspatial.utils import has_cuda_and_cupy, has_dask_array
+    from xrspatial.zonal import hypsometric_integral
+
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not has_dask_array():
+        pytest.skip("Requires Dask")
+
+    zones = create_test_raster(
+        np.array([[1, 1], [2, 2]], dtype=np.int32), backend,
+        dims=['y', 'x'], chunks=(2, 2),
+    )
+    values = create_test_raster(
+        np.array([[1 + 2j, 3 + 1j], [5j, 2 + 0j]], dtype=np.complex128),
+        backend, dims=['y', 'x'], chunks=(2, 2),
+    )
+    with pytest.raises(ValueError, match='real numeric dtype'):
+        hypsometric_integral(zones, values, nodata=None)
+
+
+def test_hypsometric_integral_rejects_3d_values():
+    """Regression #3200: hypsometric_integral is documented 2D-only.
+
+    The added _validate_raster(ndim=2) guard rejects a 3D `values`
+    DataArray with a clear ValueError instead of mangling it downstream.
     """
     from xrspatial.zonal import hypsometric_integral
 
     zones = xr.DataArray(
         np.array([[1, 1], [2, 2]], dtype=np.int32), dims=['y', 'x']
     )
-    values = xr.DataArray(
-        np.array([[1 + 2j, 3 + 1j], [5j, 2 + 0j]], dtype=np.complex128),
-        dims=['y', 'x'],
+    values_3d = xr.DataArray(
+        np.zeros((2, 2, 2), dtype=np.float64), dims=['y', 'x', 'z']
     )
-    with pytest.raises(ValueError, match='real numeric dtype'):
-        hypsometric_integral(zones, values, nodata=None)
+    with pytest.raises(ValueError, match='must be 2D'):
+        hypsometric_integral(zones, values_3d, nodata=None)
 
 
 def test_hypsometric_integral_rejects_non_dataarray_values():
