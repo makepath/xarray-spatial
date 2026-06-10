@@ -3300,7 +3300,11 @@ def rasterize(
     Returns
     -------
     xr.DataArray
-        2D raster with dims ``('y', 'x')``.
+        2D raster with dims ``('y', 'x')``.  When ``geometries`` is a
+        GeoDataFrame with a ``.crs`` and neither ``like`` nor its
+        ``spatial_ref`` coord supplies a CRS, the geometry CRS is
+        emitted on the output (``attrs['crs']`` as an EPSG int when one
+        resolves, else ``attrs['crs_wkt']`` as WKT).
 
     Examples
     --------
@@ -3766,6 +3770,31 @@ def rasterize(
         out_attrs['nodata'] = fill
         out_attrs['_FillValue'] = fill
         out_attrs['nodatavals'] = (fill,)
+
+    # Emit the geometry CRS when the output would otherwise carry none.
+    # The grid is laid out in the geometry's coordinate system (bounds
+    # come from the geometry coords), so a CRS-carrying GeoDataFrame
+    # rasterized without ``like`` should produce a raster labeled with
+    # that CRS -- otherwise to_geotiff writes an un-georeferenced file
+    # and polygonize(rasterize(gdf)) returns crs=None (issue #3087).
+    # A template CRS always wins: if ``like`` supplied attrs['crs'],
+    # attrs['crs_wkt'], or a spatial_ref coord, those are left alone
+    # (the check_crs guard has already compared them to geom_crs).
+    # Follow the geotiff attrs convention (xrspatial/geotiff/_attrs.py):
+    # an EPSG int under 'crs' when one resolves, else WKT under
+    # 'crs_wkt'.  geom_crs is only non-None on the GeoDataFrame path,
+    # where pyproj is available (geopandas requires it).
+    if (geom_crs is not None
+            and 'crs' not in out_attrs
+            and 'crs_wkt' not in out_attrs
+            and 'spatial_ref' not in like_extra_coords):
+        from pyproj import CRS as _PyprojCRS
+        crs_obj = _PyprojCRS(geom_crs)
+        epsg = crs_obj.to_epsg()
+        if epsg is not None:
+            out_attrs['crs'] = epsg
+        else:
+            out_attrs['crs_wkt'] = crs_obj.to_wkt()
 
     # Combine y/x dim coords with any non-dim coords carried from the
     # template (e.g. rioxarray's spatial_ref CRS coord).
