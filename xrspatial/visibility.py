@@ -262,9 +262,28 @@ def cumulative_viewshed(
 
     # Detect dask backend to keep accumulation lazy
     _is_dask = False
+    _input_dask_chunks = None
     if has_dask_array():
         import dask.array as da
         _is_dask = isinstance(raster.data, da.Array)
+        if _is_dask:
+            _input_dask_chunks = raster.data.chunks
+
+    # When every observer takes the full-grid path (no max_distance anywhere),
+    # each viewshed() call would compute the same dask source independently,
+    # materialising it once per observer. Compute it a single time and run the
+    # observers against the in-memory raster instead. Observers that set a
+    # max_distance keep the dask backend so its windowing still loads only the
+    # relevant window per observer. The final result is re-wrapped as dask so
+    # the output backend still matches the dask input.
+    _materialised_dask = False
+    if _is_dask and max_distance is None and not any(
+            'max_distance' in obs for obs in observers):
+        materialised = raster.copy()
+        materialised.data = raster.data.compute()
+        raster = materialised
+        _is_dask = False
+        _materialised_dask = True
 
     if _is_dask:
         count = da.zeros(raster.shape, dtype=np.int32, chunks=raster.data.chunks)
@@ -285,6 +304,10 @@ def cumulative_viewshed(
         if _is_dask and not isinstance(vs_data, da.Array):
             vs_data = da.from_array(vs_data, chunks=raster.data.chunks)
         count = count + (vs_data != INVISIBLE).astype(np.int32)
+
+    if _materialised_dask:
+        # Restore the dask-backed output type the dask input would have given.
+        count = da.from_array(count, chunks=_input_dask_chunks)
 
     result = xarray.DataArray(count, coords=raster.coords,
                               dims=raster.dims, attrs=raster.attrs)

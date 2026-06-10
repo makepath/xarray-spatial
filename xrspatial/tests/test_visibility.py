@@ -236,6 +236,45 @@ class TestCumulativeViewshed:
         result_dask = cumulative_viewshed(raster_dask, observers)
         np.testing.assert_array_equal(result_np.values, result_dask.values)
 
+    def test_dask_source_computed_once(self):
+        """No-max_distance dask path computes the source once, not per observer."""
+        H = W = 16
+        base = np.zeros((H, W), dtype=float)
+        counter = {'n': 0}
+
+        def _src(block_info=None):
+            counter['n'] += 1
+            return base.copy()
+
+        source = da.map_blocks(_src, chunks=((H,), (W,)), dtype=float,
+                               meta=np.array(()))
+        raster = xr.DataArray(
+            source, dims=['y', 'x'],
+            coords={'y': np.arange(H, dtype=float),
+                    'x': np.arange(W, dtype=float)},
+        )
+        observers = [{'x': float(i), 'y': float(i), 'observer_elev': 5}
+                     for i in range(4)]
+        counter['n'] = 0
+        result = cumulative_viewshed(raster, observers)
+        # source materialised exactly once despite four observers
+        assert counter['n'] == 1
+        # output stays dask-backed to match the dask input
+        assert isinstance(result.data, da.Array)
+
+    def test_dask_per_observer_max_distance_stays_lazy(self):
+        """A per-observer max_distance keeps the dask windowing path."""
+        data = np.zeros((20, 20), dtype=float)
+        raster_np = _make_raster(data)
+        raster_dask = raster_np.copy()
+        raster_dask.data = da.from_array(data, chunks=(8, 8))
+        observers = [{'x': 10.0, 'y': 10.0, 'observer_elev': 10,
+                      'max_distance': 3}]
+        result = cumulative_viewshed(raster_dask, observers)
+        assert isinstance(result.data, da.Array)
+        result_np = cumulative_viewshed(raster_np, observers)
+        np.testing.assert_array_equal(result.values, result_np.values)
+
     def test_preserves_coords_and_dims(self):
         data = np.zeros((5, 5), dtype=float)
         raster = _make_raster(data)
