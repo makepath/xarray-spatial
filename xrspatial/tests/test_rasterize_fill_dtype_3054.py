@@ -105,7 +105,7 @@ def test_out_of_range_int_fill_raises_dask_numpy():
 def test_out_of_range_int_fill_raises_cupy():
     with pytest.raises(ValueError, match="cannot be represented"):
         rasterize(_square(), width=10, height=10, bounds=(0, 0, 10, 10),
-                  fill=-9999, dtype=np.uint8, use_cuda=True)
+                  fill=-9999, dtype=np.uint8, gpu=True)
 
 
 @skip_no_shapely
@@ -114,7 +114,7 @@ def test_out_of_range_int_fill_raises_cupy():
 def test_out_of_range_int_fill_raises_dask_cupy():
     with pytest.raises(ValueError, match="cannot be represented"):
         rasterize(_square(), width=10, height=10, bounds=(0, 0, 10, 10),
-                  fill=-9999, dtype=np.uint8, use_cuda=True, chunks=5)
+                  fill=-9999, dtype=np.uint8, gpu=True, chunks=5)
 
 
 @skip_no_shapely
@@ -154,7 +154,7 @@ def test_bool_dtype_nan_fill_raises_dask_numpy():
 def test_bool_dtype_nan_fill_raises_cupy():
     with pytest.raises(ValueError, match="cannot be represented"):
         rasterize(_square(), width=10, height=10, bounds=(0, 0, 10, 10),
-                  fill=np.nan, dtype=np.bool_, use_cuda=True)
+                  fill=np.nan, dtype=np.bool_, gpu=True)
 
 
 @skip_no_shapely
@@ -163,7 +163,7 @@ def test_bool_dtype_nan_fill_raises_cupy():
 def test_bool_dtype_nan_fill_raises_dask_cupy():
     with pytest.raises(ValueError, match="cannot be represented"):
         rasterize(_square(), width=10, height=10, bounds=(0, 0, 10, 10),
-                  fill=np.nan, dtype=np.bool_, use_cuda=True, chunks=5)
+                  fill=np.nan, dtype=np.bool_, gpu=True, chunks=5)
 
 
 @skip_no_shapely

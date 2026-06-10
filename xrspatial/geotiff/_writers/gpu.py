@@ -32,6 +32,37 @@ from .._validation import (_validate_3d_writer_dims, _validate_no_rotated_affine
                            _validate_writer_spatial_shape, validate_write_metadata)
 
 
+def _warn_dask_materialised() -> None:
+    """Warn that a dask-backed input is about to be fully materialised.
+
+    The GPU writer has no streaming mode: ``to_geotiff``'s dask
+    streaming contract only applies to the CPU path, and dask+cupy
+    input auto-dispatches here (issue #3166). Emitted from both
+    ``.compute()`` sites in ``_write_geotiff_gpu`` so explicit and
+    auto-detected GPU writes warn the same way.
+
+    Deliberately does NOT participate in the
+    ``XRSPATIAL_GEOTIFF_STRICT`` promotion that most
+    ``GeoTIFFFallbackWarning`` sites apply: there is no opt-out flag
+    for the materialisation, so promotion would turn every dask+cupy
+    GPU write into a hard failure. Same shape as the JPEG /
+    experimental-codec opt-in warnings, which also stay warnings under
+    strict mode.
+
+    The warning stays truthful even when the GPU write later falls
+    back to CPU (e.g. nvCOMP raises after dispatch): the ``.compute()``
+    has already run by the time the fallback fires.
+    """
+    warnings.warn(
+        "Dask-backed input routed to the GPU writer is materialised "
+        "in full on device before encoding; the GPU writer has no "
+        "streaming mode and streaming_buffer_bytes is ignored. "
+        "See issue #3166.",
+        GeoTIFFFallbackWarning,
+        stacklevel=3,
+    )
+
+
 def _compute_gpu_samples_hint(data) -> int:
     """Return the band count using the same convention the GPU writer's
     band-first -> band-last remap uses.
@@ -215,6 +246,8 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         no streaming concept, so this kwarg is a no-op. Default matches
         ``to_geotiff`` (256 MB) so callers passing the same kwargs to
         either entry point see the same default and the same type.
+        Dask-backed inputs emit a ``GeoTIFFFallbackWarning`` when they
+        are materialised (issue #3166).
     max_z_error : float
         [internal-only] Per-pixel error budget for LERC compression.
         The GPU writer does not implement LERC (nvCOMP has no LERC
@@ -511,6 +544,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         arr = data.data
         # Handle Dask arrays: compute to materialize
         if hasattr(arr, 'compute'):
+            _warn_dask_materialised()
             arr = arr.compute()
         # Now arr should be CuPy or numpy
         if hasattr(arr, 'get'):
@@ -582,6 +616,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         res_unit = _rich['resolution_unit']
     else:
         if hasattr(data, 'compute'):
+            _warn_dask_materialised()
             data = data.compute()  # Dask -> CuPy or numpy
         if hasattr(data, 'device'):
             arr = data  # already CuPy

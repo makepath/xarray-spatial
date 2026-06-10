@@ -2393,3 +2393,117 @@ def test_to_geotiff_dask_gpu_degenerate_round_trip(
     out = open_geotiff(path)
     assert out.shape == (height, width)
     np.testing.assert_array_equal(out.values, arr)
+
+
+# ---------------------------------------------------------------------------
+# Dask materialisation warning on the GPU write path (#3166)
+#
+# to_geotiff's streaming contract only holds on the CPU path. dask+cupy
+# input auto-dispatches to _write_geotiff_gpu, which computes the whole
+# array on device; streaming_buffer_bytes is a no-op there. The writer
+# now emits a GeoTIFFFallbackWarning at the compute site so callers
+# learn the full array is being materialised. Plain (non-dask) cupy
+# writes must stay silent: there is nothing lazy to materialise.
+# ---------------------------------------------------------------------------
+
+
+def _materialise_warnings_3166(records):
+    """The GeoTIFFFallbackWarning records from the #3166 compute sites."""
+    return [
+        w for w in records
+        if issubclass(w.category, GeoTIFFFallbackWarning)
+        and 'materialised in full on device' in str(w.message)
+    ]
+
+
+def _gradient_da_3166(backing):
+    """A 64x64 float32 DataArray over the given array backing."""
+    return xr.DataArray(
+        backing,
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(63, -1, -1, dtype=np.float64),
+            "x": np.arange(64, dtype=np.float64),
+        },
+        attrs={
+            "crs": 4326,
+            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 63.5),
+        },
+    )
+
+
+@_gpu_only
+def test_to_geotiff_dask_cupy_warns_on_materialise_3166(tmp_path):
+    """Auto-dispatched dask+cupy writes warn that the array is
+    materialised on device instead of streamed."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    da = _gradient_da_3166(
+        dca.from_array(cupy.asarray(arr), chunks=(32, 32)))
+    path = str(tmp_path / "dask_cupy_materialise_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path)
+
+    assert len(_materialise_warnings_3166(records)) == 1
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+def test_to_geotiff_plain_cupy_no_materialise_warning_3166(tmp_path):
+    """Plain (non-dask) cupy writes have nothing lazy to materialise
+    and must not emit the #3166 warning."""
+    import cupy
+
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    da = _gradient_da_3166(cupy.asarray(arr))
+    path = str(tmp_path / "plain_cupy_no_warn_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path)
+
+    assert _materialise_warnings_3166(records) == []
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+def test_write_geotiff_gpu_positional_dask_warns_3166(tmp_path):
+    """The positional (non-DataArray) compute site in
+    ``_write_geotiff_gpu`` emits the same warning."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+    lazy = dca.from_array(cupy.asarray(arr), chunks=(16, 16))
+    path = str(tmp_path / "positional_dask_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        _write_geotiff_gpu(lazy, path)
+
+    assert len(_materialise_warnings_3166(records)) == 1
+
+
+@_gpu_only
+def test_to_geotiff_dask_numpy_gpu_true_warns_3166(tmp_path):
+    """``gpu=True`` with dask+numpy input forces GPU dispatch (no
+    ``_is_gpu_data`` auto-detect involved) and warns the same way."""
+    import dask.array as dca
+
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    da = _gradient_da_3166(dca.from_array(arr, chunks=(32, 32)))
+    path = str(tmp_path / "dask_numpy_gpu_true_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path, gpu=True)
+
+    assert len(_materialise_warnings_3166(records)) == 1
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)

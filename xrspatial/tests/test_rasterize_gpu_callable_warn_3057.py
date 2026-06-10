@@ -2,7 +2,7 @@
 non-atomic read-modify-write, so overlap pixels are nondeterministic.
 
 ``rasterize`` must warn the caller when a callable ``merge`` is paired
-with ``use_cuda=True``.  The warning fires after the CuPy import check
+with ``gpu=True``.  The warning fires after the CuPy import check
 but before the GPU kernel launch, so these tests need CuPy importable but
 not an actual GPU device: they record warnings manually and ignore the
 numba/CUDA error the (device-less) launch raises afterwards.
@@ -71,16 +71,16 @@ def _overlap_warnings(**kwargs):
 
 @skip_no_cupy
 def test_callable_gpu_merge_warns():
-    """Callable merge + use_cuda=True emits the overlap UserWarning."""
-    matched = _overlap_warnings(merge=_my_sum, use_cuda=True)
+    """Callable merge + gpu=True emits the overlap UserWarning."""
+    matched = _overlap_warnings(merge=_my_sum, gpu=True)
     assert len(matched) == 1
     assert matched[0].category is UserWarning
 
 
 @skip_no_cupy
 def test_callable_gpu_merge_chunks_warns():
-    """The warning also fires for the dask+cupy path (chunks + use_cuda)."""
-    matched = _overlap_warnings(merge=_my_sum, use_cuda=True, chunks=(5, 5))
+    """The warning also fires for the dask+cupy path (chunks + gpu)."""
+    matched = _overlap_warnings(merge=_my_sum, gpu=True, chunks=(5, 5))
     assert len(matched) == 1
     assert matched[0].category is UserWarning
 
@@ -97,4 +97,4 @@ def test_callable_cpu_merge_does_not_warn():
 def test_builtin_gpu_merge_does_not_warn():
     """A built-in string merge on the GPU backend stays silent -- it uses
     atomics and is deterministic over overlap."""
-    assert _overlap_warnings(merge='sum', use_cuda=True) == []
+    assert _overlap_warnings(merge='sum', gpu=True) == []

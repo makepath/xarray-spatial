@@ -245,6 +245,54 @@ def test_hotspots_rejects_oversize_kernel_1284():
             hotspots(raster, kernel)
 
 
+@dask_array_available
+@pytest.mark.parametrize("entry_point", [
+    lambda agg, kernel: apply(agg, kernel),
+    lambda agg, kernel: focal_stats(agg, kernel, stats_funcs=['mean']),
+    lambda agg, kernel: hotspots(agg, kernel),
+])
+def test_memory_guard_accepts_large_dask_raster_3218(entry_point):
+    # Regression for #3218: the guard budgeted the padded FULL raster on
+    # every backend, so a dask raster bigger than ~half host RAM was
+    # rejected at graph-build time even though map_overlap only ever
+    # materializes one padded chunk per task. With 1 MB "available", the
+    # full padded raster (~4 MB) would trip the old guard; the padded
+    # 100x100 chunk (~42 KB) must pass.
+    data = da.zeros((1000, 1000), chunks=(100, 100), dtype=np.float32)
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        result = entry_point(agg, kernel)
+    assert isinstance(result.data, da.Array)
+
+
+def test_memory_guard_numpy_raster_still_rejected_3218():
+    # The numpy path really does allocate full-size arrays, so the
+    # full-raster budget must keep firing for in-memory input.
+    agg = xr.DataArray(np.zeros((1000, 1000), dtype=np.float32),
+                       dims=['y', 'x'])
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError, match="padded raster"):
+            apply(agg, kernel)
+
+
+@dask_array_available
+def test_memory_guard_dask_oversize_kernel_still_rejected_3218():
+    # An oversized kernel must still be rejected on the dask path: the
+    # kernel itself plus one padded chunk blows the per-task budget. The
+    # message reports the chunk, not the raster.
+    data = da.zeros((1000, 1000), chunks=(100, 100), dtype=np.float32)
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    kernel = np.ones((301, 301), dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError, match="padded chunk"):
+            apply(agg, kernel)
+
+
 def test_apply_small_kernel_not_rejected_1284():
     # The guard must not fire for realistic kernel + raster combos.
     raster = xr.DataArray(np.ones((50, 50), dtype=np.float32))
@@ -574,6 +622,25 @@ def test_focal_stats_dask_cupy():
         cupy_focalstats.data[:, pad:-pad, pad:-pad].get(),
         dask_cupy_focalstats.data[:, pad:-pad, pad:-pad].compute().get(),
         equal_nan=True, rtol=1e-4)
+
+
+@cuda_and_cupy_available
+def test_focal_stats_cupy_casts_input_once_3231():
+    # Regression for #3231: the cupy stats loop re-ran agg.data.astype()
+    # (a full-raster device copy, even for an unchanged dtype) once per
+    # stat. The input cast is now hoisted above the loop, so
+    # _promote_float runs once for the input plus once per stat for the
+    # output allocation inside _focal_stats_func_cupy.
+    import xrspatial.focal as focal_module
+    data = np.arange(48, dtype=np.float64).reshape(6, 8)
+    agg = create_test_raster(data, backend='cupy')
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    stats = ['mean', 'sum', 'min', 'max']
+    with patch.object(focal_module, '_promote_float',
+                      wraps=focal_module._promote_float) as spy:
+        result = focal_stats(agg, kernel, stats_funcs=stats)
+    assert result.shape == (len(stats), 6, 8)
+    assert spy.call_count == len(stats) + 1
 
 
 # --- float64 preservation (issue-2769) ------------------------------------

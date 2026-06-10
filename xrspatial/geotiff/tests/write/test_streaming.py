@@ -22,6 +22,7 @@ import inspect
 import os
 import threading
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -646,6 +647,195 @@ class TestStreamingBufferBudget:
         back = open_geotiff(path).values
         np.testing.assert_allclose(back, eager.values,
                                    rtol=1e-5, atol=1e-5, equal_nan=True)
+
+
+class TestRowBandRecompute3117:
+    """Source chunks must be computed once, not once per tile-row.
+
+    Pre-fix, each 256-row tile-row / strip was one ``.compute()`` call,
+    so a source chunk taller than 256 rows was re-executed once per
+    band it overlapped (2x at chunks=512, 4x at chunks=1024). The row
+    banding groups tile-rows / strips per compute under the
+    ``streaming_buffer_bytes`` budget (#3117).
+    """
+
+    @staticmethod
+    def _count_chunk_executions(dask_da):
+        """Wrap a dask-backed DataArray so each chunk execution is counted."""
+        counts: Counter = Counter()
+        lock = threading.Lock()
+
+        def record(block, block_info=None):
+            loc = (tuple(block_info[0]['chunk-location'])
+                   if block_info else None)
+            with lock:
+                counts[loc] += 1
+            return block
+
+        wrapped = dask_da.copy(
+            data=dask_da.data.map_blocks(record, dtype=dask_da.dtype))
+        return wrapped, counts
+
+    @staticmethod
+    def _real_counts(counts):
+        # ``block_info`` is None during dask's meta-inference call;
+        # drop that key so only real chunk executions are compared.
+        return {k: v for k, v in counts.items() if k is not None}
+
+    def test_tiled_chunks_taller_than_tile(self, tmp_path):
+        """1024-tall chunks + 256 tiles: every chunk computes exactly once."""
+        arr = np.arange(1024 * 512, dtype=np.float32).reshape(1024, 512)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 1024, 'x': 512})
+
+        wrapped, counts = self._count_chunk_executions(dask_da)
+        path = str(tmp_path / 'tmp_3117_tiled.tif')
+        to_geotiff(wrapped, path, compression='zstd', tile_size=256)
+
+        real = self._real_counts(counts)
+        assert real, "instrumented source chunks never executed"
+        assert set(real.values()) == {1}, (
+            f"source chunks recomputed during tiled streaming write: "
+            f"{sorted(real.values())} executions per chunk (expected all 1)")
+
+        result = open_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
+
+    def test_strip_chunks_taller_than_strip(self, tmp_path):
+        """Strip layout (rows_per_strip=256) gets the same banding."""
+        arr = np.arange(1024 * 512, dtype=np.float32).reshape(1024, 512)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 512, 'x': 512})
+
+        wrapped, counts = self._count_chunk_executions(dask_da)
+        path = str(tmp_path / 'tmp_3117_strip.tif')
+        to_geotiff(wrapped, path, compression='zstd', tiled=False)
+
+        real = self._real_counts(counts)
+        assert real, "instrumented source chunks never executed"
+        assert set(real.values()) == {1}, (
+            f"source chunks recomputed during strip streaming write: "
+            f"{sorted(real.values())} executions per chunk (expected all 1)")
+
+        result = open_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
+
+    def test_segmented_wide_raster_unchanged(self, tmp_path):
+        """Column segmentation still bounds compute size and round-trips.
+
+        With a budget too small for one full-width tile-row, banding is
+        off and the per-tile-row segmented path runs; recompute is
+        allowed there, correctness is not negotiable.
+        """
+        rng = np.random.default_rng(3117)
+        arr = rng.random((512, 4096), dtype=np.float64)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 256, 'x': 1024})
+
+        path = str(tmp_path / 'tmp_3117_segmented.tif')
+        to_geotiff(dask_da, path, compression='zstd',
+                   streaming_buffer_bytes=2 * 256 * 256 * 8)
+        result = open_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
+
+    def test_banded_compute_respects_buffer(self, tmp_path, monkeypatch):
+        """Banding groups tile-rows but stays under the byte budget.
+
+        Budget sized so banding is on (a full-width tile-row fits) and
+        several bands are needed (the whole raster does not). Asserts
+        fewer computes than tile-rows (banding engaged) and that no
+        single compute materialises more source bytes than the budget
+        (plain source, no overlap halo, so the bound is strict).
+        """
+        import dask.array as da
+
+        height, width, chunk = 2048, 1024, 256
+        npdata = np.arange(height * width, dtype=np.float32).reshape(
+            height, width)
+        base = da.from_array(npdata, chunks=(chunk, width))
+
+        materialized = []
+
+        def _record(block):
+            materialized.append(block.nbytes)
+            return block
+
+        base = base.map_blocks(_record, dtype='float32')
+        dask_da = xr.DataArray(base, dims=['y', 'x'])
+
+        per_compute = []
+        orig_compute = da.Array.compute
+
+        def spy_compute(self, *args, **kwargs):
+            before = sum(materialized)
+            result = orig_compute(self, *args, **kwargs)
+            per_compute.append(sum(materialized) - before)
+            return result
+
+        monkeypatch.setattr(da.Array, 'compute', spy_compute)
+
+        buf = 4 * 1024 * 1024  # holds ~1024 source rows of float32
+        path = str(tmp_path / 'tmp_3117_banded_budget.tif')
+        to_geotiff(dask_da, path, compression='zstd', tile_size=256,
+                   streaming_buffer_bytes=buf)
+
+        tiles_down = height // 256
+        assert 1 < len(per_compute) < tiles_down, (
+            f"expected banding to group tile-rows: {len(per_compute)} "
+            f"computes for {tiles_down} tile-rows")
+        assert max(per_compute) <= buf, (
+            f"banded compute materialised {max(per_compute)} source "
+            f"bytes, over the {buf} budget")
+
+        result = open_geotiff(path)
+        np.testing.assert_array_equal(result.values, npdata)
+
+    def test_banded_matches_eager_with_nan_sentinel(self, tmp_path):
+        """NaN->sentinel restore happens per band; bytes must match eager."""
+        arr = np.arange(768 * 300, dtype=np.float32).reshape(768, 300)
+        arr[10:40, 5:50] = np.nan
+        arr[600:700, 200:280] = np.nan
+        da = xr.DataArray(arr, dims=['y', 'x'],
+                          attrs={'nodata': -9999.0})
+        dask_da = da.chunk({'y': 512, 'x': 300})
+
+        eager_path = str(tmp_path / 'tmp_3117_eager.tif')
+        stream_path = str(tmp_path / 'tmp_3117_stream.tif')
+        to_geotiff(da, eager_path, compression='deflate')
+        to_geotiff(dask_da, stream_path, compression='deflate')
+
+        eager = open_geotiff(eager_path, masked=True)
+        stream = open_geotiff(stream_path, masked=True)
+        np.testing.assert_array_equal(eager.values, stream.values)
+
+
+def test_stream_row_bands_3117():
+    """Band grouping under a source-row budget."""
+    from xrspatial.geotiff._writer import _stream_row_bands
+
+    # Two 512-tall chunks, 256-row bands, budget for the full height:
+    # one group covering everything.
+    assert _stream_row_bands((512, 512), 256, 1024, 1024) == [(0, 1024)]
+
+    # Budget below the two-band span (one 512 chunk + 512 halo chunk =
+    # 1024 rows): grouping cannot extend past the first band's span, so
+    # each 256-row band computes alone (pre-fix behaviour as soft floor).
+    assert _stream_row_bands((512, 512), 256, 1024, 512) == [
+        (0, 256), (256, 512), (512, 768), (768, 1024)]
+
+    # Unknown chunks: no grouping, one band per band_h.
+    assert _stream_row_bands(None, 256, 600, 10_000) == [
+        (0, 256), (256, 512), (512, 600)]
+
+    # Mid-size budget: the halo counts. Chunks of 256, bands of 256;
+    # span(0, 512) touches chunks 0-1 plus halo chunk 2 = 768 rows.
+    assert _stream_row_bands((256,) * 4, 256, 1024, 768) == [
+        (0, 512), (512, 1024)]
+
+    # Ragged tail rows land in the final band.
+    bands = _stream_row_bands((512, 100), 256, 612, 10_000)
+    assert bands[-1][1] == 612
+    assert bands[0][0] == 0
 
 
 def test_max_streaming_row_span_3007():
