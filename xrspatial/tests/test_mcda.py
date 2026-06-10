@@ -2035,13 +2035,16 @@ class TestCupyBackends:
             equal_nan=True,
         )
 
-    def test_standardize_categorical_dask_cupy(self):
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_standardize_categorical(self, backend):
         import cupy
         data = np.array([[1.0, 2.0], [3.0, 99.0]])
         kw = dict(method="categorical", mapping={1: 0.9, 2: 0.7, 3: 0.4})
         numpy_result = standardize(
             xr.DataArray(data, dims=["y", "x"]), **kw)
-        arr = da.from_array(cupy.asarray(data), chunks=(1, 2))
+        arr = cupy.asarray(data)
+        if backend == "dask+cupy":
+            arr = da.from_array(arr, chunks=(1, 2))
         gpu_result = standardize(
             xr.DataArray(arr, dims=["y", "x"]), **kw)
         np.testing.assert_allclose(
