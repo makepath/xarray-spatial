@@ -1994,3 +1994,247 @@ def test_hotspots_name_gpu():
     assert hotspots(agg, _api_kernel).name == 'hotspots'
     with pytest.warns(DeprecationWarning, match="raster"):
         hotspots(raster=agg, kernel=_api_kernel)
+
+
+# ---------------------------------------------------------------------------
+# Coverage-gap regressions from the test-coverage sweep (issue #3220):
+# Inf inputs, mean() NaN / excludes / passes behavior, 1x1 and strip rasters,
+# empty rasters, and dask+cupy boundary modes.
+# ---------------------------------------------------------------------------
+
+ALL_BACKENDS = ['numpy', 'cupy', 'dask+numpy', 'dask+cupy']
+
+_sweep_cross_kernel = np.array(
+    [[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+
+
+def _skip_unavailable_backend(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+
+def _materialize(data):
+    """Bring any backend's array back to a host numpy array."""
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    if hasattr(data, 'get'):
+        data = data.get()
+    return np.asarray(data)
+
+
+def _apply_func_for(backend):
+    if 'cupy' in backend:
+        from xrspatial.focal import _focal_mean_cuda
+        return _focal_mean_cuda
+    from xrspatial.focal import _calc_mean
+    return _calc_mean
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+def test_mean_nan_input_3220(backend):
+    # mean()'s default excludes=[np.nan] gives NaN cells specific semantics:
+    # the NaN cell itself is left unchanged, while neighbors compute a
+    # nanmean that skips it. No prior test fed mean() a NaN on any backend.
+    _skip_unavailable_backend(backend)
+    data = np.array([
+        [1., 2., 3.],
+        [4., np.nan, 6.],
+        [7., 8., 9.],
+    ])
+    expected = np.array([
+        [7 / 3, 16 / 5, 11 / 3],
+        [22 / 5, np.nan, 28 / 5],
+        [19 / 3, 34 / 5, 23 / 3],
+    ])
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    result = mean(agg)
+    np.testing.assert_allclose(
+        _materialize(result.data), expected, equal_nan=True, rtol=1e-4)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+def test_mean_excludes_sentinel_3220(backend):
+    # excludes had no behavioral test: a cell matching an exclude value must
+    # be left unchanged, and (per the documented semantics) the sentinel
+    # still participates in its neighbors' window means.
+    _skip_unavailable_backend(backend)
+    data = np.array([
+        [1., 2., 3.],
+        [4., -9999., 6.],
+        [7., 8., 9.],
+    ])
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    result = _materialize(mean(agg, excludes=[-9999.]).data)
+    assert result[1, 1] == -9999.0
+    # (0, 0) window is [1, 2, 4, -9999] -> mean -2498
+    np.testing.assert_allclose(result[0, 0], -2498.0, rtol=1e-6)
+
+    numpy_agg = create_test_raster(data, backend='numpy')
+    expected = mean(numpy_agg, excludes=[-9999.]).data
+    np.testing.assert_allclose(result, expected, equal_nan=True, rtol=1e-4)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+def test_mean_passes_3220(backend):
+    # passes was only ever tested at its default of 1. passes=2 must equal
+    # mean(mean(x)) and agree across backends.
+    _skip_unavailable_backend(backend)
+    data = np.zeros((5, 5), dtype=np.float64)
+    data[2, 2] = 9.0
+
+    numpy_agg = create_test_raster(data, backend='numpy')
+    expected = mean(mean(numpy_agg)).data
+
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    result = mean(agg, passes=2)
+    np.testing.assert_allclose(
+        _materialize(result.data), expected, equal_nan=True, rtol=1e-4)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+def test_mean_inf_input_3220(backend):
+    # No focal test exercised Inf at all. For mean(), Inf is not excluded
+    # (only NaN is by default), so every window touching it goes to +Inf.
+    _skip_unavailable_backend(backend)
+    data = np.array([
+        [1., 2., 3.],
+        [4., np.inf, 6.],
+        [7., 8., 9.],
+    ])
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    result = _materialize(mean(agg).data)
+    # every 3x3 window on this raster contains the Inf center
+    assert np.all(np.isinf(result)) and np.all(result > 0)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+def test_focal_stats_inf_input_3220(backend):
+    # Inf propagates through mean/sum/max/range, is ignored by min when a
+    # smaller finite value exists, and poisons std/var to NaN (the window
+    # mean is Inf, so deviations are NaN). All four backends must agree.
+    # hotspots() with Inf is NOT pinned here: it silently classifies
+    # everything to 0 today, which is tracked as a bug in issue #3219.
+    _skip_unavailable_backend(backend)
+    data = np.array([
+        [1., 2., 3.],
+        [4., np.inf, 6.],
+        [7., 8., 9.],
+    ])
+    stats = ['mean', 'sum', 'min', 'max', 'range', 'std', 'var']
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    result = focal_stats(agg, custom_kernel(_sweep_cross_kernel),
+                         stats_funcs=stats)
+    out = _materialize(result.data)
+
+    by_stat = dict(zip(stats, out))
+    # center cell: cross window is [2, 4, inf, 6, 8]
+    assert np.isinf(by_stat['mean'][1, 1])
+    assert np.isinf(by_stat['sum'][1, 1])
+    assert by_stat['min'][1, 1] == 2.0
+    assert np.isinf(by_stat['max'][1, 1])
+    assert np.isinf(by_stat['range'][1, 1])
+    assert np.isnan(by_stat['std'][1, 1])
+    assert np.isnan(by_stat['var'][1, 1])
+    # corner cell (0, 0): cross window is [1, 2, 4], fully finite
+    np.testing.assert_allclose(by_stat['mean'][0, 0], 7 / 3, rtol=1e-4)
+    assert np.isfinite(by_stat['std'][0, 0])
+
+    numpy_agg = create_test_raster(data, backend='numpy')
+    expected = focal_stats(numpy_agg, custom_kernel(_sweep_cross_kernel),
+                           stats_funcs=stats).data
+    np.testing.assert_allclose(out, expected, equal_nan=True, rtol=1e-4)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+def test_focal_1x1_raster_3220(backend):
+    # Degenerate single-pixel raster with a 3x3 kernel: the window clamps
+    # to the one real cell on every backend.
+    _skip_unavailable_backend(backend)
+    data = np.array([[5.0]])
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+
+    mean_result = _materialize(mean(agg).data)
+    np.testing.assert_allclose(mean_result, [[5.0]])
+
+    apply_result = _materialize(
+        apply(agg, _sweep_cross_kernel, _apply_func_for(backend)).data)
+    np.testing.assert_allclose(apply_result, [[5.0]])
+
+    fs = focal_stats(agg, custom_kernel(_sweep_cross_kernel),
+                     stats_funcs=['mean', 'sum', 'std'])
+    np.testing.assert_allclose(
+        _materialize(fs.data).ravel(), [5.0, 5.0, 0.0], atol=1e-6)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+@pytest.mark.parametrize("shape,chunks", [((1, 6), (1, 3)), ((6, 1), (3, 1))])
+def test_focal_strip_raster_3220(backend, shape, chunks):
+    # Nx1 / 1xN strips exercise the kernel-window clamping on a raster
+    # thinner than the kernel. The cross kernel reduces to a 1D window
+    # along the strip, so both orientations share one expected result.
+    _skip_unavailable_backend(backend)
+    data = np.arange(6, dtype=np.float64).reshape(shape)
+    expected = np.array([0.5, 1., 2., 3., 4., 4.5]).reshape(shape)
+    agg = create_test_raster(data, backend=backend, chunks=chunks)
+
+    mean_result = _materialize(mean(agg).data)
+    np.testing.assert_allclose(mean_result, expected, rtol=1e-6)
+
+    apply_result = _materialize(
+        apply(agg, _sweep_cross_kernel, _apply_func_for(backend)).data)
+    np.testing.assert_allclose(apply_result, expected, rtol=1e-6)
+
+    fs = focal_stats(agg, custom_kernel(_sweep_cross_kernel),
+                     stats_funcs=['mean'])
+    np.testing.assert_allclose(
+        _materialize(fs.data).reshape(shape), expected, rtol=1e-6)
+
+
+def test_focal_empty_raster_numpy_3220():
+    # A 0-row raster passes through the numpy backend with its shape
+    # preserved. The cupy and dask backends currently crash on empty
+    # input (issue #3225), so only the numpy behavior is pinned here.
+    data = np.empty((0, 5))
+    agg = create_test_raster(data, backend='numpy')
+    assert mean(agg).shape == (0, 5)
+    assert apply(agg, _sweep_cross_kernel).shape == (0, 5)
+    fs = focal_stats(agg, custom_kernel(_sweep_cross_kernel),
+                     stats_funcs=['mean'])
+    assert fs.shape == (1, 0, 5)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
+def test_focal_boundary_dask_cupy_3220(boundary):
+    # The dask+cupy backend was never exercised with a non-default boundary
+    # mode. Unlike boundary='nan' (where the single-array and map_overlap
+    # paths legitimately differ on the outer ring), the padded modes must
+    # match numpy on every cell.
+    from xrspatial.focal import _focal_mean_cuda
+    rng = np.random.default_rng(42)
+    data = rng.random((8, 10)).astype(np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       chunks=(4, 5))
+
+    np_mean = mean(numpy_agg, boundary=boundary).data
+    dc_mean = _materialize(mean(dask_cupy_agg, boundary=boundary).data)
+    np.testing.assert_allclose(dc_mean, np_mean, equal_nan=True, rtol=1e-4)
+
+    np_apply = apply(numpy_agg, _sweep_cross_kernel, boundary=boundary).data
+    dc_apply = _materialize(
+        apply(dask_cupy_agg, _sweep_cross_kernel, _focal_mean_cuda,
+              boundary=boundary).data)
+    np.testing.assert_allclose(dc_apply, np_apply, equal_nan=True, rtol=1e-4)
+
+    stats = ['mean', 'std']
+    np_fs = focal_stats(numpy_agg, custom_kernel(_sweep_cross_kernel),
+                        stats_funcs=stats, boundary=boundary).data
+    dc_fs = _materialize(
+        focal_stats(dask_cupy_agg, custom_kernel(_sweep_cross_kernel),
+                    stats_funcs=stats, boundary=boundary).data)
+    np.testing.assert_allclose(dc_fs, np_fs, equal_nan=True, rtol=1e-4)
