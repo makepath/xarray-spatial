@@ -248,5 +248,11 @@ def test_pack_rejects_array_without_mask_and_scale_state(tmp_path):
         coords={"y": [1.5, 0.5], "x": [0.5, 1.5]},
         attrs={"crs": 4326},
     )
-    with pytest.raises(ValueError, match="no mask_and_scale state"):
+    # The message names the current ``unpack`` kwarg, not the deprecated
+    # ``mask_and_scale`` alias (#3086); ``mask_and_scale_dtype`` is the only
+    # old-name token allowed (it is the contract-v5 attrs key).
+    with pytest.raises(ValueError, match="no unpack state") as excinfo:
         da.xrs.to_geotiff(str(tmp_path / "y_3064.tif"), pack=True)
+    msg = str(excinfo.value)
+    assert "open_geotiff(unpack=True)" in msg
+    assert "mask_and_scale=True" not in msg
