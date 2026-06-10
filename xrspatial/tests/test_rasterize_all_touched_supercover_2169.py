@@ -76,14 +76,14 @@ def _rio_mask(poly):
     )
 
 
-def _xs_mask(poly, *, chunks=None, use_cuda=False):
+def _xs_mask(poly, *, chunks=None, gpu=False):
     """xrspatial mask for ``poly`` on the requested backend."""
     kwargs = dict(width=_W, height=_H, bounds=_BOUNDS,
                   all_touched=True, fill=0)
     if chunks is not None:
         kwargs['chunks'] = chunks
-    if use_cuda:
-        kwargs['use_cuda'] = True
+    if gpu:
+        kwargs['gpu'] = True
     arr = rasterize([(poly, 1.0)], **kwargs)
     values = arr.data
     # dask -> concrete; cupy -> host numpy.
@@ -175,7 +175,7 @@ class TestCupySupercoverParity:
     @pytest.mark.parametrize("name,poly", list(_cases().items()))
     def test_matches_rasterio(self, name, poly):
         rio = _rio_mask(poly)
-        xs = _xs_mask(poly, use_cuda=True)
+        xs = _xs_mask(poly, gpu=True)
         assert np.array_equal(rio, xs), (
             f"{name}: rio={int(rio.sum())} xs={int(xs.sum())}"
         )
@@ -191,7 +191,7 @@ class TestDaskCupySupercoverParity:
     @pytest.mark.parametrize("name,poly", list(_cases().items()))
     def test_matches_rasterio(self, name, poly):
         rio = _rio_mask(poly)
-        xs = _xs_mask(poly, chunks=(_H // 2, _W // 2), use_cuda=True)
+        xs = _xs_mask(poly, chunks=(_H // 2, _W // 2), gpu=True)
         assert np.array_equal(rio, xs), (
             f"{name}: rio={int(rio.sum())} xs={int(xs.sum())}"
         )
