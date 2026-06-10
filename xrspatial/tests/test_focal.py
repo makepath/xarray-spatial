@@ -278,6 +278,18 @@ def test_focal_stats_oversize_kernel_accounts_for_float64_3223():
             focal_stats(raster64, kernel, stats_funcs=['mean'])
 
 
+def test_hotspots_float64_keeps_float32_budget_3223():
+    # hotspots() computes in float32 on every backend, so float64 input
+    # must stay on the 4 bytes/cell budget and not be over-rejected with
+    # the 8-byte budget apply()/focal_stats() use for float64.
+    kernel = np.ones((201, 201), dtype=np.float32)
+    data = np.random.default_rng(3223).random((10, 10)).astype(np.float64)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        out = hotspots(xr.DataArray(data), kernel)
+    assert out.shape == (10, 10)
+
+
 def test_apply_small_kernel_not_rejected_1284():
     # The guard must not fire for realistic kernel + raster combos.
     raster = xr.DataArray(np.ones((50, 50), dtype=np.float32))
