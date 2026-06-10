@@ -167,24 +167,39 @@ def _check_wpm_positive(criteria: xr.Dataset) -> None:
     NaN with no error. NaN values are allowed through so the documented
     NaN-propagation behaviour is preserved.
     """
-    bad = []
+    try:
+        import dask
+        import dask.array as da
+    except ImportError:
+        da = None
+
+    # Mask NaN so they pass through; we only want to flag <= 0.
+    names = []
+    mins = []
+    dask_positions = []
     for var_name in criteria.data_vars:
         arr = criteria[var_name].data
-        # Mask NaN so they pass through; we only want to flag <= 0.
-        try:
-            import dask.array as da
-            if isinstance(arr, da.Array):
-                # Compute once; cheap relative to the full product pass.
-                min_val = float(da.nanmin(arr).compute())
-            else:
-                min_val = float(np.nanmin(arr))
-        except ImportError:
-            min_val = float(np.nanmin(arr))
-        except ValueError:
-            # All-NaN slice; nothing to flag.
+        if arr.size == 0:
+            # Empty layer; nothing to flag.
             continue
+        if da is not None and isinstance(arr, da.Array):
+            # Defer so every dask layer reduces in one scheduler pass
+            # below instead of one compute() per criterion.
+            dask_positions.append(len(names))
+            names.append(var_name)
+            mins.append(da.nanmin(arr))
+        else:
+            names.append(var_name)
+            mins.append(float(np.nanmin(arr)))
+    if dask_positions:
+        computed = dask.compute(*[mins[i] for i in dask_positions])
+        for i, value in zip(dask_positions, computed):
+            mins[i] = float(value)
+
+    bad = []
+    for name, min_val in zip(names, mins):
         if not np.isnan(min_val) and min_val <= 0.0:
-            bad.append((var_name, min_val))
+            bad.append((name, min_val))
     if bad:
         details = ", ".join(f"{n!r} (min={v})" for n, v in bad)
         raise ValueError(

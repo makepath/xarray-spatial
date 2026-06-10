@@ -1349,6 +1349,179 @@ class TestDaskChunkAlignment:
             assert np.all(np.isfinite(result[var].compute().values))
 
 
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestOWADask:
+    """owa() on dask-backed Datasets (#3150).
+
+    Regression: _sort_descending used da.sort, which does not exist,
+    so the documented out-of-core path crashed with AttributeError.
+    """
+
+    @pytest.fixture
+    def numpy_and_dask_criteria(self):
+        np.random.seed(3150)
+        arrays = {name: np.random.rand(20, 20) for name in ["a", "b", "c"]}
+        arrays["a"][3, 4] = np.nan
+        numpy_ds = xr.Dataset({
+            name: xr.DataArray(values, dims=["y", "x"])
+            for name, values in arrays.items()
+        })
+        dask_ds = numpy_ds.chunk({"y": 10, "x": 10})
+        return numpy_ds, dask_ds
+
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            {"y": 10, "x": 10},
+            # Ragged chunks: 20 does not divide evenly by 7 or 9
+            {"y": 7, "x": 9},
+        ],
+    )
+    def test_owa_dask_matches_numpy(self, numpy_and_dask_criteria, chunks):
+        numpy_ds, _ = numpy_and_dask_criteria
+        dask_ds = numpy_ds.chunk(chunks)
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(numpy_ds, w, ow)
+        dask_result = owa(dask_ds, w, ow)
+        # Stays lazy until compute
+        assert hasattr(dask_result.data, "compute")
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values,
+            equal_nan=True, atol=1e-14,
+        )
+
+    def test_owa_dask_uniform_order_weights_equals_wlc(
+        self, numpy_and_dask_criteria,
+    ):
+        _, dask_ds = numpy_and_dask_criteria
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        owa_result = owa(dask_ds, w, [1 / 3] * 3)
+        wlc_result = wlc(dask_ds, w)
+        np.testing.assert_allclose(
+            owa_result.compute().values, wlc_result.compute().values,
+            equal_nan=True, atol=1e-14,
+        )
+
+
+class TestOWACupy:
+    """owa() on cupy and dask+cupy inputs (#3150).
+
+    Order weights must be moved to the device; mixing numpy operands
+    into cupy kernels raises TypeError.
+    """
+
+    @pytest.fixture
+    def numpy_criteria(self):
+        np.random.seed(3150)
+        return xr.Dataset({
+            name: xr.DataArray(np.random.rand(20, 20), dims=["y", "x"])
+            for name in ["a", "b", "c"]
+        })
+
+    @pytest.fixture
+    def owa_args(self):
+        return {"a": 0.4, "b": 0.35, "c": 0.25}, [0.5, 0.3, 0.2]
+
+    @cuda_and_cupy_available
+    def test_owa_cupy_matches_numpy(self, numpy_criteria, owa_args):
+        import cupy
+        w, ow = owa_args
+        cupy_ds = xr.Dataset({
+            name: xr.DataArray(
+                cupy.asarray(numpy_criteria[name].values), dims=["y", "x"],
+            )
+            for name in numpy_criteria.data_vars
+        })
+        numpy_result = owa(numpy_criteria, w, ow)
+        cupy_result = owa(cupy_ds, w, ow)
+        assert isinstance(cupy_result.data, cupy.ndarray)
+        np.testing.assert_allclose(
+            cupy_result.data.get(), numpy_result.values, atol=1e-14,
+        )
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_owa_dask_cupy_matches_numpy(self, numpy_criteria, owa_args):
+        import cupy
+        w, ow = owa_args
+        gpu_ds = xr.Dataset({
+            name: xr.DataArray(
+                da.from_array(
+                    cupy.asarray(numpy_criteria[name].values),
+                    chunks=(10, 10),
+                ),
+                dims=["y", "x"],
+            )
+            for name in numpy_criteria.data_vars
+        })
+        numpy_result = owa(numpy_criteria, w, ow)
+        gpu_result = owa(gpu_ds, w, ow)
+        computed = gpu_result.data.compute()
+        # Result stays on the device
+        assert isinstance(computed, cupy.ndarray)
+        np.testing.assert_allclose(
+            computed.get(), numpy_result.values, atol=1e-14,
+        )
+
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestWPMDask:
+    """wpm() validation on dask-backed Datasets (#3150).
+
+    Regression: _check_wpm_positive ran one .compute() per criterion;
+    it now batches every nanmin reduction into a single scheduler pass.
+    """
+
+    @pytest.fixture
+    def dask_criteria(self):
+        np.random.seed(3151)
+        return xr.Dataset({
+            name: xr.DataArray(
+                np.random.rand(20, 20) * 0.8 + 0.1, dims=["y", "x"],
+            ).chunk({"y": 10})
+            for name in ["a", "b", "c"]
+        })
+
+    def test_wpm_dask_matches_numpy(self, dask_criteria):
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        dask_result = wpm(dask_criteria, w)
+        assert hasattr(dask_result.data, "compute")
+        numpy_result = wpm(dask_criteria.compute(), w)
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values, atol=1e-14,
+        )
+
+    def test_wpm_dask_validation_single_scheduler_pass(
+        self, dask_criteria, monkeypatch,
+    ):
+        import dask
+        calls = []
+        orig_compute = dask.compute
+
+        def counting_compute(*args, **kwargs):
+            calls.append(args)
+            return orig_compute(*args, **kwargs)
+
+        monkeypatch.setattr(dask, "compute", counting_compute)
+        wpm(dask_criteria, {"a": 0.4, "b": 0.35, "c": 0.25})
+        # One batched pass over all three criteria, not one per layer.
+        assert len(calls) == 1
+        assert len(calls[0]) == 3
+
+    def test_wpm_dask_rejects_non_positive(self):
+        bad = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, 0.2], [0.3, 0.4]]), dims=["y", "x"],
+            ).chunk({"y": 1}),
+            "b": xr.DataArray(
+                np.array([[0.5, -0.2], [0.3, 0.4]]), dims=["y", "x"],
+            ).chunk({"y": 1}),
+        })
+        with pytest.raises(ValueError, match="non-positive"):
+            wpm(bad, {"a": 0.5, "b": 0.5})
+
+
 class TestWPMEdgeCases:
     def test_all_ones(self):
         """All criteria at 1.0 should produce 1.0 regardless of weights."""
@@ -2538,6 +2711,7 @@ class TestCombineDaskCupy:
         _assert_combine_matches_numpy("dask+cupy", fn)
 
     def test_owa_matches_numpy(self):
+        # Fixed in #3158
         _assert_combine_matches_numpy(
             "dask+cupy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
         )
@@ -2721,6 +2895,7 @@ class TestMetadataPreservation:
             )
 
     def test_constrain_attrs(self):
+        # Fixed in #3154: constrain preserves input attrs
         suit, mask = _constrain_inputs("numpy")
         result = constrain(suit, exclude=[mask])
         assert result.attrs == suit.attrs
