@@ -731,13 +731,25 @@ else:
         import cupy as cp
 
         from ._projections import (_A_RECT, _ALPHA, _APA, _BETA, _CBG, _CGB, _MLFN_EN, _QP,
-                                   _WGS84_E2, _aea_params, _cea_params, _get_epsg,
-                                   _is_geographic_wgs84_or_nad83, _laea_params, _lcc_params,
-                                   _sinu_params, _stere_params, _tmerc_params, _utm_params)
+                                   _WGS84_E2, _aea_params, _cea_params, _get_datum_params,
+                                   _get_epsg, _is_geographic_wgs84_or_nad83, _laea_params,
+                                   _lcc_params, _sinu_params, _stere_params, _tmerc_params,
+                                   _utm_params)
 
         src_epsg = _get_epsg(src_crs)
         tgt_epsg = _get_epsg(tgt_crs)
         if src_epsg is None and tgt_epsg is None:
+            return None
+
+        # The kernels below run in WGS84 with no datum shift. The projected
+        # CRS matchers (_tmerc_params, _lcc_params, ...) accept any datum in
+        # the Helmert table via _is_wgs84_compatible_ellipsoid, so without
+        # this guard a pair like EPSG:4326 <-> EPSG:27700 (OSGB36/Airy) is
+        # projected with WGS84 constants and lands ~100 m off. Mirror the
+        # CPU fast-path guard from GH #2651: bail out so the chunk worker
+        # falls back to the CPU path, which defers these pairs to pyproj.
+        if (_get_datum_params(src_crs) is not None
+                or _get_datum_params(tgt_crs) is not None):
             return None
 
         height, width = chunk_shape
