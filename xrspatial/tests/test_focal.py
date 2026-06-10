@@ -2049,7 +2049,7 @@ def test_mean_nan_input_3220(backend):
         [22 / 5, np.nan, 28 / 5],
         [19 / 3, 34 / 5, 23 / 3],
     ])
-    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
     result = mean(agg)
     np.testing.assert_allclose(
         _materialize(result.data), expected, equal_nan=True, rtol=1e-4)
@@ -2066,7 +2066,7 @@ def test_mean_excludes_sentinel_3220(backend):
         [4., -9999., 6.],
         [7., 8., 9.],
     ])
-    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
     result = _materialize(mean(agg, excludes=[-9999.]).data)
     assert result[1, 1] == -9999.0
     # (0, 0) window is [1, 2, 4, -9999] -> mean -2498
@@ -2104,7 +2104,7 @@ def test_mean_inf_input_3220(backend):
         [4., np.inf, 6.],
         [7., 8., 9.],
     ])
-    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
     result = _materialize(mean(agg).data)
     # every 3x3 window on this raster contains the Inf center
     assert np.all(np.isinf(result)) and np.all(result > 0)
@@ -2124,7 +2124,7 @@ def test_focal_stats_inf_input_3220(backend):
         [7., 8., 9.],
     ])
     stats = ['mean', 'sum', 'min', 'max', 'range', 'std', 'var']
-    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
     result = focal_stats(agg, custom_kernel(_sweep_cross_kernel),
                          stats_funcs=stats)
     out = _materialize(result.data)
