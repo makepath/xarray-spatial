@@ -369,6 +369,9 @@ def _sort_block_descending(block, axis=0):
 
     ``np.sort`` dispatches to cupy for cupy blocks via
     ``__array_function__``, so this works for dask+numpy and dask+cupy.
+    This is the same ``-np.sort(-data)`` expression as the eager path,
+    so NaN ordering matches it exactly (NaN negates to NaN and sorts
+    to the same end).
     """
     return -np.sort(-block, axis=axis)
 

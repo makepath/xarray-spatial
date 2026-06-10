@@ -1205,8 +1205,17 @@ class TestOWADask:
         dask_ds = numpy_ds.chunk({"y": 10, "x": 10})
         return numpy_ds, dask_ds
 
-    def test_owa_dask_matches_numpy(self, numpy_and_dask_criteria):
-        numpy_ds, dask_ds = numpy_and_dask_criteria
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            {"y": 10, "x": 10},
+            # Ragged chunks: 20 does not divide evenly by 7 or 9
+            {"y": 7, "x": 9},
+        ],
+    )
+    def test_owa_dask_matches_numpy(self, numpy_and_dask_criteria, chunks):
+        numpy_ds, _ = numpy_and_dask_criteria
+        dask_ds = numpy_ds.chunk(chunks)
         w = {"a": 0.4, "b": 0.35, "c": 0.25}
         ow = [0.5, 0.3, 0.2]
         numpy_result = owa(numpy_ds, w, ow)
