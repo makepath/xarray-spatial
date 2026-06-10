@@ -1510,6 +1510,17 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
                 nodata_int = int(mask_sentinel)
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
+                    # Compute the sentinel mask at the integer dtype's
+                    # native width BEFORE the float64 promotion. For
+                    # int64/uint64 sentinels above 2**53 (INT64_MAX,
+                    # UINT64_MAX, ...) the promotion rounds nearby valid
+                    # values onto the sentinel's float64 representation,
+                    # so a post-promotion compare masked valid pixels to
+                    # NaN and diverged from the dask / GPU-chunked / VRT
+                    # paths, which all compare at native width
+                    # (issue #3098).
+                    mask = arr == arr.dtype.type(nodata_int)
+                    nodata_pixels_present = bool(mask.any())
                     # Promote to float64 whenever the sentinel is
                     # maskable, independent of whether any pixel matches.
                     # The dask path declares float64 up front from the
@@ -1524,8 +1535,6 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
                     # (issue #2990). ``nodata_pixels_present`` still
                     # records whether a pixel matched.
                     arr = arr.astype(np.float64)
-                    mask = arr == np.float64(nodata_int)
-                    nodata_pixels_present = bool(mask.any())
                     if nodata_pixels_present:
                         arr[mask] = np.nan
                 else:
@@ -1579,8 +1588,9 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
       band's worth) are returned unchanged.
 
     Raises :class:`MalformedScaleOffsetError` when a ``SCALE`` or ``OFFSET``
-    item is present but does not parse as a float. An absent key keeps the
-    1.0 / 0.0 identity default.
+    item is present but does not parse as a float, when ``SCALE`` is zero
+    or non-finite, or when ``OFFSET`` is non-finite (issue #3104). An
+    absent key keeps the 1.0 / 0.0 identity default.
 
     ``malformed=True`` signals that the source carried a GDAL_METADATA XML
     payload that did not parse (see :func:`_parse_gdal_metadata_strict`).
@@ -1597,7 +1607,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     if malformed:
         raise MalformedScaleOffsetError(
             "GDAL_METADATA XML is malformed and could not be parsed. "
-            "mask_and_scale=True cannot honour the scale / offset it may "
+            "unpack=True cannot honour the scale / offset it may "
             "declare, so the read is refused rather than returning raw, "
             "unscaled pixels."
         )
@@ -1613,7 +1623,7 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
         except (TypeError, ValueError):
             raise MalformedScaleOffsetError(
                 f"GDAL_METADATA {name} is not a number: {raw!r}. "
-                "mask_and_scale=True cannot honour a malformed "
+                "unpack=True cannot honour a malformed "
                 f"{name}."
             ) from None
 
@@ -1642,21 +1652,37 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
         if len(distinct) > 1:
             from ._errors import MixedBandMetadataError
             raise MixedBandMetadataError(
-                f"mask_and_scale=True but the source declares distinct "
+                f"unpack=True but the source declares distinct "
                 f"per-band {name} values {distinct!r}. Applying one band's "
                 f"{name} to the whole array would silently corrupt the other "
                 f"bands. Select a single band with band= to read it with its "
-                f"own {name}, or drop mask_and_scale."
+                f"own {name}, or drop unpack."
             )
         return distinct[0]
 
     scale = _resolve('SCALE', 1.0)
     offset = _resolve('OFFSET', 0.0)
+    # A zero or non-finite SCALE (and a non-finite OFFSET) parses as a
+    # float but cannot be honoured: ``data * 0 + offset`` collapses every
+    # pixel to the offset, ``data * nan`` destroys the array, and the
+    # inverse transform in ``_pack`` divides by SCALE. Treat these like
+    # the unparseable case above and fail closed (issue #3104).
+    if scale == 0.0 or not np.isfinite(scale):
+        raise MalformedScaleOffsetError(
+            f"GDAL_METADATA SCALE is {scale!r}. mask_and_scale=True "
+            "cannot honour a zero or non-finite SCALE: applying it "
+            "destroys the data and it has no inverse for pack=True."
+        )
+    if not np.isfinite(offset):
+        raise MalformedScaleOffsetError(
+            f"GDAL_METADATA OFFSET is {offset!r}. mask_and_scale=True "
+            "cannot honour a non-finite OFFSET."
+        )
     return scale, offset
 
 
 def _pack(data):
-    """Re-pack a ``mask_and_scale=True`` read for writing -- inverse of
+    """Re-pack an ``unpack=True`` read for writing -- inverse of
     :func:`_extract_scale_offset`'s forward direction.
 
     Reverses the scale / offset applied on read (``(data - add_offset) /
@@ -1668,12 +1694,12 @@ def _pack(data):
 
     The SCALE / OFFSET GDAL_METADATA tags are kept: the written file stores
     the raw packed integers and re-declares the scale, so reopening with
-    ``mask_and_scale=True`` unpacks to the same values rather than scaling a
+    ``unpack=True`` unpacks to the same values rather than scaling a
     second time. (The double-scale bug the round-trip caveat warns about
     comes from writing the *already-scaled* floats with the tags still on;
     reversing the scale first, as here, makes keeping the tags correct.)
 
-    Raises ``ValueError`` when ``data`` carries no mask_and_scale state to
+    Raises ``ValueError`` when ``data`` carries no unpack state to
     reverse, or when an integer dtype must be restored but NaN pixels are
     present with no declared sentinel to fill them.
     """
@@ -1686,10 +1712,20 @@ def _pack(data):
     if ('scale_factor' not in attrs and target is None
             and not attrs.get('masked_nodata')):
         raise ValueError(
-            "pack=True but the array carries no mask_and_scale state to "
+            "pack=True but the array carries no unpack state to "
             "reverse (no scale_factor / mask_and_scale_dtype / "
             "masked_nodata). It was not produced by "
-            "open_geotiff(mask_and_scale=True).")
+            "open_geotiff(unpack=True).")
+
+    # ``_extract_scale_offset`` rejects these on read (issue #3104), so
+    # they can only appear via hand-edited attrs. Refuse rather than
+    # divide by zero below and silently write a corrupt file.
+    if scale == 0 or not np.isfinite(scale) or not np.isfinite(offset):
+        raise ValueError(
+            f"pack=True cannot reverse scale_factor={scale!r} / "
+            f"add_offset={offset!r}: the inverse transform divides by "
+            "scale_factor, so it must be non-zero and finite, and "
+            "add_offset must be finite.")
 
     out = (data - offset) / scale
 

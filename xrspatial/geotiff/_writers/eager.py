@@ -99,14 +99,22 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     ``nodata`` is still only stable when combined with a ``[stable]``
     codec and options).
 
-    Dask-backed DataArrays are written in streaming mode: one tile-row
-    at a time, without materialising the full array into RAM. The
-    per-compute budget is sized from the source chunk geometry, so a
-    ``map_overlap`` source (e.g. ``slope`` / ``aspect``) chunked taller
-    than the tile stays within ``streaming_buffer_bytes`` instead of
-    pulling several source chunk-rows at once (#3007). COG output
-    (``cog=True``) still materialises because overviews need the full
-    array.
+    Dask-backed DataArrays on the CPU path are written in streaming
+    mode: one tile-row at a time, without materialising the full array
+    into RAM. The per-compute budget is sized from the source chunk
+    geometry, so a ``map_overlap`` source (e.g. ``slope`` / ``aspect``)
+    chunked taller than the tile stays within
+    ``streaming_buffer_bytes`` instead of pulling several source
+    chunk-rows at once (#3007). COG output (``cog=True``) still
+    materialises because overviews need the full array.
+
+    Streaming does NOT apply to the GPU writer. CuPy-backed dask input
+    (dask+cupy) auto-dispatches to the GPU writer, which materialises
+    the entire array on device before encoding;
+    ``streaming_buffer_bytes`` is ignored there and a
+    ``GeoTIFFFallbackWarning`` is emitted when the materialisation
+    happens (issue #3166). The same applies when ``gpu=True`` is passed
+    with any dask-backed input.
 
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
@@ -235,15 +243,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
         acceleration; backend parity with the CPU writer is tested for
         the Tier 1 codec set only. Force GPU compression. None
-        (default) auto-detects CuPy data.
+        (default) auto-detects CuPy data, including CuPy-backed dask
+        arrays. Dask-backed input routed to the GPU writer is
+        materialised in full on device (no streaming; see
+        ``streaming_buffer_bytes``).
     streaming_buffer_bytes : int
         [stable] Soft cap on bytes materialised per dask compute call
         when streaming a dask-backed DataArray. Defaults to 256 MB.
         Wide rasters whose tile-row exceeds this budget are split into
-        horizontal segments. Only relevant for dask-backed inputs; the
-        kwarg is a no-op for numpy / CuPy / COG paths (the COG path
-        materialises the full array because the overview pyramid
-        needs it).
+        horizontal segments. Only applies to dask-backed inputs on the
+        CPU write path; the kwarg is a no-op for numpy / CuPy / COG
+        paths (the COG path materialises the full array because the
+        overview pyramid needs it) and for the GPU writer. dask+cupy
+        input auto-dispatches to the GPU writer, so it materialises in
+        full on device instead of streaming and emits a
+        ``GeoTIFFFallbackWarning`` (issue #3166).
     max_z_error : float
         [experimental] Per-pixel error budget for LERC compression.
         ``0.0`` (default) is lossless; larger values let the encoder
@@ -340,18 +354,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         accepts the loss and lets the write proceed; consumers reading
         the output will see an axis-aligned, non-rotated TIFF.
     pack : bool, default False
-        [advanced] Inverse of ``open_geotiff(mask_and_scale=True)``. Re-pack
+        [advanced] Inverse of ``open_geotiff(unpack=True)``. Re-pack
         a decoded float array before writing: reverse the scale / offset
         recorded on ``attrs['scale_factor']`` / ``attrs['add_offset']``,
         fill NaN back to the nodata sentinel, and cast to the integer source
-        dtype recorded on ``attrs['mask_and_scale_dtype']`` (contract v5).
-        The output stores the raw packed integers and keeps the
-        SCALE / OFFSET GDAL_METADATA, so reopening it with
-        ``mask_and_scale=True`` unpacks to the original values instead of
-        scaling a second time. Raises ``ValueError`` for a bare array (no
-        attrs) or one that never went through a ``mask_and_scale`` read. The
-        dtype falls back to the ``attrs['nodata']`` width for arrays read
-        before contract v5.
+        dtype recorded on ``attrs['mask_and_scale_dtype']`` (contract v5;
+        the attr keeps its historical name). The output stores the raw
+        packed integers and keeps the SCALE / OFFSET GDAL_METADATA, so
+        reopening it with ``unpack=True`` unpacks to the original values
+        instead of scaling a second time. Raises ``ValueError`` for a bare
+        array (no attrs) or one that never went through an ``unpack``
+        read. The dtype falls back to the ``attrs['nodata']`` width for
+        arrays read before contract v5.
 
     Returns
     -------
@@ -389,17 +403,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     path = _coerce_path(path)
 
-    # ``pack``: inverse of ``open_geotiff(mask_and_scale=True)``. Reverse
+    # ``pack``: inverse of ``open_geotiff(unpack=True)``. Reverse
     # the scale / offset, restore the recorded integer source dtype, and fill
     # NaN back to the nodata sentinel. The SCALE / OFFSET tags are kept (see
     # ``_pack``) so the re-packed file unpacks cleanly on the next
-    # ``mask_and_scale`` read. Run before any dispatch (GPU / VRT / streaming
+    # ``unpack`` read. Run before any dispatch (GPU / VRT / streaming
     # / eager) so every write path sees the re-packed array.
     if pack:
         if not isinstance(data, xr.DataArray):
             raise ValueError(
-                "pack=True requires a DataArray carrying mask_and_scale "
-                "attrs; got a bare array with no metadata to reverse.")
+                "pack=True requires a DataArray carrying the attrs from an "
+                "open_geotiff(unpack=True) read; got a bare array with no "
+                "metadata to reverse.")
         data = _pack(data)
 
     # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
@@ -1375,7 +1390,12 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         # Tiles are written into ``staging_dir``; ``tile_names`` records the
         # bare filenames so the final tile paths (under ``tiles_dir``) can be
         # rebuilt for the VRT index after the atomic rename below.
+        # ``tile_offsets`` records each tile's (x_off, y_off) pixel
+        # placement in lockstep: non-georeferenced tiles carry no
+        # transform, so the VRT index needs the placement passed
+        # explicitly or every tile lands at the origin (issue #3116).
         tile_names = []
+        tile_offsets = []
         delayed_tasks = []
 
         def _safe_write_tile(*args, **kwargs):
@@ -1406,6 +1426,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 tile_name = f'tile_{ri:0{pad_width}d}_{ci:0{pad_width}d}.tif'
                 tile_path = os.path.join(staging_dir, tile_name)
                 tile_names.append(tile_name)
+                tile_offsets.append((col_offset, row_offset))
 
                 # Compute per-tile geo_transform
                 tile_gt = None
@@ -1513,7 +1534,13 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # and validated above; passing it again is idempotent.
     from .vrt import _build_vrt
     try:
-        _build_vrt(vrt_path, tile_paths, relative=True, nodata=nodata)
+        # ``dst_offsets`` carries the tile placement only for
+        # non-georeferenced input: georeferenced tiles place via their
+        # per-tile GeoTransform (computed above), and write_vrt rejects
+        # the kwarg alongside georeferenced sources (issue #3116).
+        _build_vrt(vrt_path, tile_paths, relative=True, nodata=nodata,
+                   dst_offsets=(
+                       tile_offsets if geo_transform is None else None))
     except BaseException:
         # The index step failed after the rename. Remove the now-renamed
         # tile dir too so a retry is not blocked by the leftover-state
