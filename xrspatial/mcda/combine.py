@@ -6,6 +6,8 @@ layers and return a single composite ``xr.DataArray``.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import xarray as xr
 
@@ -235,9 +237,11 @@ def wpm(
 
 def owa(
     criteria: xr.Dataset,
-    criterion_weights: dict[str, float],
-    order_weights: list[float],
+    weights: dict[str, float] | None = None,
+    order_weights: list[float] | None = None,
     name: str = "owa",
+    *,
+    criterion_weights: dict[str, float] | None = None,
 ) -> xr.DataArray:
     """Ordered Weighted Averaging.
 
@@ -249,22 +253,47 @@ def owa(
     ----------
     criteria : xr.Dataset
         Standardized criterion layers (0-1).
-    criterion_weights : dict
-        ``{criterion_name: weight}``, must sum to ~1.0.
+    weights : dict
+        Criterion weights as ``{criterion_name: weight}``, must sum
+        to ~1.0. Same convention as :func:`wlc` and :func:`wpm`.
     order_weights : list of float
         Weights applied by rank position (index 0 = highest value).
         Must have the same length as the number of criteria and
         sum to ~1.0.
     name : str
         Name of the output DataArray.
+    criterion_weights : dict, optional
+        Deprecated alias for ``weights``. Emits ``DeprecationWarning``.
 
     Returns
     -------
     xr.DataArray
         Composite suitability surface.
     """
+    if criterion_weights is not None:
+        if weights is not None:
+            raise TypeError(
+                "owa() got values for both 'weights' and its deprecated "
+                "alias 'criterion_weights'"
+            )
+        warnings.warn(
+            "The 'criterion_weights' argument of owa() is deprecated; "
+            "use 'weights' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        weights = criterion_weights
+    if weights is None:
+        raise TypeError(
+            "owa() missing required argument: 'weights'"
+        )
+    if order_weights is None:
+        raise TypeError(
+            "owa() missing required argument: 'order_weights'"
+        )
+
     _validate_criteria(criteria)
-    _validate_weights(criterion_weights, criteria)
+    _validate_weights(weights, criteria)
 
     n = len(criteria.data_vars)
     if len(order_weights) != n:
@@ -316,7 +345,7 @@ def owa(
     # First apply criterion weights
     weighted_layers = []
     for var_name in criteria.data_vars:
-        w = criterion_weights[var_name]
+        w = weights[var_name]
         weighted_layers.append(criteria[var_name] * w * n)
 
     # Stack, sort descending along criterion axis, apply order weights
@@ -443,7 +472,7 @@ def fuzzy_overlay(
 
 
 def boolean_overlay(
-    criteria: dict[str, xr.DataArray],
+    criteria: xr.Dataset | dict[str, xr.DataArray],
     operator: str = "and",
     name: str = "boolean_overlay",
 ) -> xr.DataArray:
@@ -451,8 +480,10 @@ def boolean_overlay(
 
     Parameters
     ----------
-    criteria : dict of str to xr.DataArray
-        Named boolean/binary criterion masks.
+    criteria : xr.Dataset or dict of str to xr.DataArray
+        Boolean/binary criterion masks, either as a Dataset of mask
+        variables (matching the other combination functions) or as a
+        mapping of name to mask.
     operator : str
         ``"and"`` (intersection) or ``"or"`` (union).
     name : str
@@ -463,8 +494,8 @@ def boolean_overlay(
     xr.DataArray
         Binary suitability mask.
     """
-    if not criteria:
-        raise ValueError("criteria dict is empty")
+    if len(criteria) == 0:
+        raise ValueError("criteria is empty")
 
     # Cast to bool to handle numeric input (0/1, float thresholds)
     layers = [v.astype(bool) for v in criteria.values()]

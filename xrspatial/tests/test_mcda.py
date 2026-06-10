@@ -1950,3 +1950,120 @@ class TestOWAMemoryGuard:
         assert f"{n} criteria" in msg
         assert shape_token in msg
         assert "dask" in msg
+
+
+# ---------------------------------------------------------------------------
+# API consistency (#3148)
+# ---------------------------------------------------------------------------
+
+
+class TestOWAWeightsParam3148:
+    """owa() takes its criterion-weight dict as `weights` like wlc/wpm,
+    with `criterion_weights` kept as a deprecated alias."""
+
+    def test_weights_keyword(self, criteria_dataset, weights_3):
+        result = owa(
+            criteria_dataset, weights=weights_3, order_weights=[0.5, 0.3, 0.2],
+        )
+        expected = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_criterion_weights_deprecated(self, criteria_dataset, weights_3):
+        with pytest.warns(DeprecationWarning, match="criterion_weights"):
+            result = owa(
+                criteria_dataset,
+                criterion_weights=weights_3,
+                order_weights=[0.5, 0.3, 0.2],
+            )
+        expected = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_both_names_raise(self, criteria_dataset, weights_3):
+        with pytest.raises(TypeError, match="both"):
+            owa(
+                criteria_dataset,
+                weights=weights_3,
+                criterion_weights=weights_3,
+                order_weights=[0.5, 0.3, 0.2],
+            )
+
+    def test_missing_weights_raises(self, criteria_dataset):
+        with pytest.raises(TypeError, match="weights"):
+            owa(criteria_dataset, order_weights=[0.5, 0.3, 0.2])
+
+    def test_missing_order_weights_raises(self, criteria_dataset, weights_3):
+        with pytest.raises(TypeError, match="order_weights"):
+            owa(criteria_dataset, weights_3)
+
+    def test_positional_call_unchanged(self, criteria_dataset, weights_3):
+        result = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        assert isinstance(result, xr.DataArray)
+        assert result.name == "owa"
+
+    def test_keyword_parity_with_wlc(self, criteria_dataset, weights_3):
+        """Equal order weights make OWA equal WLC; both accept weights=."""
+        n = len(criteria_dataset.data_vars)
+        result = owa(
+            criteria_dataset, weights=weights_3, order_weights=[1.0 / n] * n,
+        )
+        expected = wlc(criteria_dataset, weights=weights_3)
+        np.testing.assert_allclose(result.values, expected.values)
+
+
+class TestBooleanOverlayDataset3148:
+    """boolean_overlay() accepts a Dataset like its sibling combiners."""
+
+    def _masks(self):
+        m1 = xr.DataArray(
+            np.array([[1, 0], [1, 1]], dtype=np.float64), dims=["y", "x"],
+        )
+        m2 = xr.DataArray(
+            np.array([[1, 1], [0, 1]], dtype=np.float64), dims=["y", "x"],
+        )
+        return m1, m2
+
+    def test_dataset_input(self):
+        m1, m2 = self._masks()
+        ds = xr.Dataset({"m1": m1, "m2": m2})
+        result = boolean_overlay(ds, operator="and")
+        np.testing.assert_array_equal(
+            result.values, np.array([[True, False], [False, True]]),
+        )
+
+    def test_dataset_matches_dict(self):
+        m1, m2 = self._masks()
+        ds = xr.Dataset({"m1": m1, "m2": m2})
+        for op in ("and", "or"):
+            from_ds = boolean_overlay(ds, operator=op)
+            from_dict = boolean_overlay({"m1": m1, "m2": m2}, operator=op)
+            np.testing.assert_array_equal(from_ds.values, from_dict.values)
+
+    def test_empty_dataset_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            boolean_overlay(xr.Dataset())
+
+
+class TestConsistencyResultExport3148:
+    """ConsistencyResult is importable from the public mcda namespace."""
+
+    def test_import_and_isinstance(self):
+        from xrspatial.mcda import ConsistencyResult
+
+        _, consistency = ahp_weights(
+            criteria=["a", "b"], comparisons={("a", "b"): 2},
+        )
+        assert isinstance(consistency, ConsistencyResult)
+
+    def test_in_all(self):
+        import xrspatial.mcda as mcda
+
+        assert "ConsistencyResult" in mcda.__all__
+
+
+class TestAHPIncompleteDocstring3148:
+    """Docstring documents the warn-and-default behaviour, not a raise."""
+
+    def test_docstring_mentions_warning(self):
+        doc = ahp_weights.__doc__
+        assert "UserWarning" in doc
+        assert "incomplete" not in doc.split("Raises")[1].split("Warns")[0]
