@@ -328,6 +328,12 @@ SUPPORTED_FEATURES = {
     'reader.local_cog': 'stable',
     'reader.http_cog': 'advanced',
     'reader.gpu': 'experimental',
+    # ``unpack=True`` scale/offset decode on ``open_geotiff`` (CF-style
+    # packed integers -> float, nodata sentinel -> NaN). Sits at
+    # ``experimental`` rather than ``advanced``: the GPU path crashes
+    # (#3112) and the GPU / dask+GPU branches have no test coverage
+    # (#3114), so no behavioural promise is made yet.
+    'reader.unpack': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
     # ``writer.cog`` is ``stable``: the CPU writer emits a
@@ -342,6 +348,12 @@ SUPPORTED_FEATURES = {
     'writer.gpu': 'experimental',
     'writer.gdal_metadata_xml': 'experimental',
     'writer.extra_tags': 'experimental',
+    # ``pack=True`` on ``to_geotiff``: inverse of ``reader.unpack``
+    # (re-apply scale/offset, restore the recorded integer dtype, fill
+    # NaN back to the nodata sentinel). Tracked at the same
+    # ``experimental`` tier as ``reader.unpack`` -- the pair shares the
+    # scale/offset attr contract and the open GPU gaps (#3112, #3114).
+    'writer.pack': 'experimental',
     # BigTIFF COG writer surface.
     # Tracked separately from ``writer.bigtiff`` and ``writer.cog`` because
     # the BigTIFF + COG combination has its own external-interop surface
@@ -1681,16 +1693,25 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     return scale, offset
 
 
-def _pack(data):
+def _pack(data, nodata=None):
     """Re-pack an ``unpack=True`` read for writing -- inverse of
     :func:`_extract_scale_offset`'s forward direction.
 
     Reverses the scale / offset applied on read (``(data - add_offset) /
-    scale_factor``), fills NaN back to the declared nodata sentinel, and
+    scale_factor``), fills NaN back to the nodata sentinel, and
     casts to the integer source dtype recorded in
     ``attrs['mask_and_scale_dtype']`` (falling back to the dtype of
     ``attrs['nodata']`` for arrays read by an xrspatial release predating
     contract v5). Returns a new DataArray; ``data`` is left untouched.
+
+    ``nodata`` is the writer's explicit ``nodata=`` kwarg. When given, it
+    overrides the attrs sentinel as the NaN fill value, matching the
+    "kwarg overrides attrs" precedence the GDAL_NODATA tag already
+    follows -- otherwise the holes get filled with one value while the
+    tag declares another and a ``masked=True`` re-read returns the holes
+    as valid pixels (#3168). The pre-v5 dtype-width fallback still keys
+    off the attrs sentinel: it is stored in the source dtype, while the
+    kwarg is a plain Python number with no width information.
 
     The SCALE / OFFSET GDAL_METADATA tags are kept: the written file stores
     the raw packed integers and re-declares the scale, so reopening with
@@ -1698,16 +1719,28 @@ def _pack(data):
     second time. (The double-scale bug the round-trip caveat warns about
     comes from writing the *already-scaled* floats with the tags still on;
     reversing the scale first, as here, makes keeping the tags correct.)
+    Per-band ``(SCALE, i)`` / ``(OFFSET, i)`` entries are an exception:
+    after a band-subset read they still describe the *source's* band
+    indices, which the written file no longer has (#3161). They are
+    rewritten as dataset-level entries carrying the reversed pair -- the
+    one pair that was applied to every pixel of this array -- so the
+    packed file unpacks correctly whatever bands it carries.
 
     Raises ``ValueError`` when ``data`` carries no unpack state to
-    reverse, or when an integer dtype must be restored but NaN pixels are
-    present with no declared sentinel to fill them.
+    reverse, when an integer dtype must be restored but NaN pixels are
+    present with no declared sentinel to fill them, or when the ``nodata``
+    kwarg cannot be represented in the packed integer dtype (out of range
+    or fractional) -- the cast would wrap or round the fill value away
+    from what the GDAL_NODATA tag declares.
     """
     attrs = dict(data.attrs)
     scale = attrs.get('scale_factor', 1.0)
     offset = attrs.get('add_offset', 0.0)
     target = attrs.get('mask_and_scale_dtype')
-    nodata = _resolve_nodata_attr(attrs)
+    attrs_nodata = _resolve_nodata_attr(attrs)
+    nodata_kwarg = nodata
+    if nodata is None:
+        nodata = attrs_nodata
 
     if ('scale_factor' not in attrs and target is None
             and not attrs.get('masked_nodata')):
@@ -1729,11 +1762,29 @@ def _pack(data):
 
     out = (data - offset) / scale
 
-    if target is None and nodata is not None:
-        # Best-effort recovery for pre-v5 reads: the sentinel is stored in
-        # the source dtype, so its width is the source width.
-        target = np.asarray(nodata).dtype.name
+    if target is None and attrs_nodata is not None:
+        # Best-effort recovery for pre-v5 reads: the attrs sentinel is
+        # stored in the source dtype, so its width is the source width.
+        # (The ``nodata`` kwarg carries no width information, so it never
+        # feeds this fallback.)
+        target = np.asarray(attrs_nodata).dtype.name
     tgt = np.dtype(target) if target is not None else np.dtype(str(out.dtype))
+
+    if nodata_kwarg is not None and tgt.kind in ('i', 'u'):
+        # The attrs sentinel fits the source dtype by construction (the
+        # reader validated it against GDAL_NODATA). The kwarg has no such
+        # guarantee: an out-of-range or fractional value would wrap /
+        # round in the ``astype`` below, silently recreating the
+        # fill-vs-tag disagreement this override exists to prevent.
+        info = np.iinfo(tgt)
+        fv = float(nodata_kwarg)
+        if not (info.min <= fv <= info.max) or fv != int(fv):
+            raise ValueError(
+                f"pack=True: nodata={nodata_kwarg!r} cannot be represented "
+                f"in the packed integer dtype {tgt.name} (valid range "
+                f"{info.min}..{info.max}). The filled holes would not match "
+                f"the GDAL_NODATA tag; pass a sentinel that fits the packed "
+                f"dtype.")
 
     if nodata is not None:
         # Restore the masked sentinel for every dtype. Integers can't hold
@@ -1755,6 +1806,45 @@ def _pack(data):
 
     out = out.astype(tgt)
 
+    # Rewrite stale per-band SCALE / OFFSET entries (#3161). After a
+    # band-subset read the kept GDAL_METADATA still describes the source's
+    # band indices, so re-reading the packed file would raise
+    # MixedBandMetadataError or silently apply another band's scale. The
+    # reversed (scale, offset) pair is the single pair that was applied to
+    # every pixel of this array, so dataset-level entries carrying it are
+    # correct for any band layout (and _extract_scale_offset gives them
+    # precedence). Dataset-level-only metadata is already index-free and
+    # stays verbatim, preserving the raw XML. Scoped to arrays that carry
+    # unpack state: a plain masked read never applied the per-band scale,
+    # so collapsing its entries would destroy valid source metadata.
+    # Other per-band items (band descriptions, STATISTICS_*) are left
+    # as-is on purpose: they don't affect pixel values and can't be
+    # re-indexed without knowing which band was read.
+    gdal_md = attrs.get('gdal_metadata')
+    if (isinstance(gdal_md, dict)
+            and ('scale_factor' in attrs or 'mask_and_scale_dtype' in attrs)):
+        per_band_keys = [
+            key for key in gdal_md
+            if (isinstance(key, tuple) and len(key) == 2
+                and key[0] in ('SCALE', 'OFFSET'))
+        ]
+        if per_band_keys:
+            new_md = {key: val for key, val in gdal_md.items()
+                      if key not in per_band_keys}
+            # Keep an existing dataset-level value verbatim (it won on
+            # read, so it already equals the applied pair). Identity
+            # values are dropped rather than written: absent and 1.0 / 0.0
+            # read back the same.
+            if 'SCALE' not in new_md and scale != 1.0:
+                new_md['SCALE'] = str(float(scale))
+            if 'OFFSET' not in new_md and offset != 0.0:
+                new_md['OFFSET'] = str(float(offset))
+            attrs['gdal_metadata'] = new_md
+            # The raw XML still carries the stale per-band items and the
+            # writer prefers it over the dict; drop it so GDAL_METADATA is
+            # rebuilt from the rewritten dict.
+            attrs.pop('gdal_metadata_xml', None)
+
     # Drop the read-side lifecycle attrs that describe the now-reversed
     # transform. The SCALE / OFFSET GDAL_METADATA stays so the packed file
     # still declares how to unpack. ``masked_nodata`` flips to False: the
@@ -1763,6 +1853,13 @@ def _pack(data):
         attrs.pop(key, None)
     if 'masked_nodata' in attrs:
         attrs['masked_nodata'] = False
+    if nodata_kwarg is not None:
+        # The buffer's holes now carry the kwarg sentinel, so the attr
+        # follows it. Downstream writers receive the kwarg and never
+        # consult the attr, but keeping the intermediate self-consistent
+        # means a path that forgot to thread the kwarg would still tag
+        # the value the pixels actually hold.
+        attrs['nodata'] = nodata_kwarg
 
     out.attrs = attrs
     out.name = data.name
