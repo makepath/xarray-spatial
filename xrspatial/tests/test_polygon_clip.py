@@ -358,3 +358,79 @@ class TestClipPolygonDaskLazyMask:
         assert len(graph) > 4, (
             f"graph has only {len(graph)} tasks; mask may not be chunked"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #3190: integer raster nodata dtype consistency across backends
+# ---------------------------------------------------------------------------
+
+def _int_raster(backend='numpy', chunks=(4, 3)):
+    """8x6 integer raster aligned to the same grid as ``_make_raster``."""
+    data = np.arange(48, dtype=np.int32).reshape(8, 6)
+    return create_test_raster(data, backend=backend, chunks=chunks)
+
+
+def _to_numpy(arr):
+    arr = arr.compute() if hasattr(arr, 'compute') else arr
+    return arr.get() if hasattr(arr, 'get') else arr
+
+
+class TestClipPolygonIntegerNodata:
+    """An integer raster clipped with a NaN nodata used to raise on the GPU
+    backends while silently upcasting on the CPU backends (#3190).  Every
+    backend must now agree on both dtype and values.
+    """
+
+    def test_int_raster_default_nan_upcasts_numpy(self):
+        """NaN nodata on an int raster promotes to float on numpy."""
+        result = clip_polygon(_int_raster(), _inner_polygon(), crop=False)
+        assert np.issubdtype(result.dtype, np.floating)
+        assert np.isnan(result.values).any()
+
+    def test_int_raster_finite_nodata_stays_integer(self):
+        """A finite integer nodata keeps the integer dtype."""
+        result = clip_polygon(
+            _int_raster(), _inner_polygon(), nodata=-1, crop=False
+        )
+        assert result.dtype == np.int32
+        assert (result.values == -1).any()
+
+    @pytest.mark.parametrize('nodata', [np.nan, -1, 2.5])
+    @dask_array_available
+    def test_dask_numpy_matches_numpy(self, nodata):
+        poly = _inner_polygon()
+        ref = clip_polygon(_int_raster(), poly, nodata=nodata, crop=False)
+        got = clip_polygon(
+            _int_raster(backend='dask+numpy'), poly, nodata=nodata, crop=False
+        )
+        assert got.dtype == ref.dtype
+        np.testing.assert_allclose(
+            _to_numpy(got.data), ref.values, equal_nan=True
+        )
+
+    @pytest.mark.parametrize('nodata', [np.nan, -1, 2.5])
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self, nodata):
+        poly = _inner_polygon()
+        ref = clip_polygon(_int_raster(), poly, nodata=nodata, crop=False)
+        got = clip_polygon(
+            _int_raster(backend='cupy'), poly, nodata=nodata, crop=False
+        )
+        assert got.dtype == ref.dtype
+        np.testing.assert_allclose(
+            _to_numpy(got.data), ref.values, equal_nan=True
+        )
+
+    @pytest.mark.parametrize('nodata', [np.nan, -1, 2.5])
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_matches_numpy(self, nodata):
+        poly = _inner_polygon()
+        ref = clip_polygon(_int_raster(), poly, nodata=nodata, crop=False)
+        got = clip_polygon(
+            _int_raster(backend='dask+cupy'), poly, nodata=nodata, crop=False
+        )
+        assert got.dtype == ref.dtype
+        np.testing.assert_allclose(
+            _to_numpy(got.data), ref.values, equal_nan=True
+        )
