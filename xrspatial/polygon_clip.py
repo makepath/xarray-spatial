@@ -213,7 +213,11 @@ def clip_polygon(
         rc, cc = raster.data.chunks[-2], raster.data.chunks[-1]
         kw.setdefault('chunks', (rc[0], cc[0]))
         if has_cuda_and_cupy() and is_dask_cupy(raster):
-            kw.setdefault('use_cuda', True)
+            # Respect a legacy ``use_cuda`` passed via rasterize_kw --
+            # defaulting ``gpu`` as well would make rasterize() see both
+            # names and raise.
+            if 'use_cuda' not in kw:
+                kw.setdefault('gpu', True)
 
     mask = rasterize(geom_pairs, **kw)
 

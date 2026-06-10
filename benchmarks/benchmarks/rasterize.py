@@ -97,11 +97,11 @@ class RasterizePolygons:
         self.bounds = (-180, -90, 180, 90)
         self.width = nx
         self.height = ny
-        self.use_cuda = (backend == "cupy")
+        self.gpu = (backend == "cupy")
 
     def time_rasterize_polygons(self, nx, backend):
         rasterize(self.pairs, width=self.width, height=self.height,
-                  bounds=self.bounds, fill=0, use_cuda=self.use_cuda)
+                  bounds=self.bounds, fill=0, gpu=self.gpu)
 
 
 class RasterizeComplexPolygons:
@@ -118,11 +118,11 @@ class RasterizeComplexPolygons:
         self.bounds = (-180, -90, 180, 90)
         self.width = nx
         self.height = ny
-        self.use_cuda = (backend == "cupy")
+        self.gpu = (backend == "cupy")
 
     def time_rasterize_complex_polygons(self, nx, backend):
         rasterize(self.pairs, width=self.width, height=self.height,
-                  bounds=self.bounds, fill=0, use_cuda=self.use_cuda)
+                  bounds=self.bounds, fill=0, gpu=self.gpu)
 
 
 # -------------------------------------------------------------------------
@@ -142,11 +142,11 @@ class RasterizeLines:
         self.bounds = (-180, -90, 180, 90)
         self.width = nx
         self.height = ny
-        self.use_cuda = (backend == "cupy")
+        self.gpu = (backend == "cupy")
 
     def time_rasterize_lines(self, nx, backend):
         rasterize(self.pairs, width=self.width, height=self.height,
-                  bounds=self.bounds, fill=0, use_cuda=self.use_cuda)
+                  bounds=self.bounds, fill=0, gpu=self.gpu)
 
 
 # -------------------------------------------------------------------------
@@ -166,11 +166,11 @@ class RasterizePoints:
         self.bounds = (-180, -90, 180, 90)
         self.width = nx
         self.height = ny
-        self.use_cuda = (backend == "cupy")
+        self.gpu = (backend == "cupy")
 
     def time_rasterize_points(self, nx, backend):
         rasterize(self.pairs, width=self.width, height=self.height,
-                  bounds=self.bounds, fill=0, use_cuda=self.use_cuda)
+                  bounds=self.bounds, fill=0, gpu=self.gpu)
 
 
 # -------------------------------------------------------------------------
@@ -195,11 +195,11 @@ class RasterizeMixed:
         self.bounds = (-180, -90, 180, 90)
         self.width = nx
         self.height = ny
-        self.use_cuda = (backend == "cupy")
+        self.gpu = (backend == "cupy")
 
     def time_rasterize_mixed(self, nx, backend):
         rasterize(self.pairs, width=self.width, height=self.height,
-                  bounds=self.bounds, fill=0, use_cuda=self.use_cuda)
+                  bounds=self.bounds, fill=0, gpu=self.gpu)
 
 
 # -------------------------------------------------------------------------
@@ -248,8 +248,8 @@ class RasterizeScaling:
             vals.append(float(i + 1))
         self.pairs = list(zip(geoms, vals))
         self.bounds = (-180, -90, 180, 90)
-        self.use_cuda = (backend == "cupy")
+        self.gpu = (backend == "cupy")
 
     def time_rasterize_scaling(self, n_polys, backend):
         rasterize(self.pairs, width=1000, height=500,
-                  bounds=self.bounds, fill=0, use_cuda=self.use_cuda)
+                  bounds=self.bounds, fill=0, gpu=self.gpu)

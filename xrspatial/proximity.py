@@ -284,6 +284,65 @@ def _check_monotonic_coords(x_coords, y_coords, x, y):
             )
 
 
+def _great_circle_col_halo(x_coords, y_coords, max_distance):
+    """Column halo depth (in pixels) for the GREAT_CIRCLE metric.
+
+    Great-circle distance is periodic in longitude (haversine takes the
+    short way around the sphere) and its chords shorten toward the poles,
+    so a linear sum of per-column step distances is not a lower bound on
+    the spherical distance between two grid points. Use the chord bound
+
+        dist(p, t) >= 2 * R * asin(cos(lat_max) * |sin(dlon / 2)|)
+
+    which holds for every pair of grid points (``lat_max`` is the largest
+    absolute latitude on the raster). Inverting it for ``max_distance``
+    gives ``dlon_max``: any pair separated by more than ``dlon_max``
+    degrees of longitude (the short way around) is farther apart than
+    ``max_distance`` no matter the latitudes.
+
+    When the bound cannot exclude anything -- ``max_distance`` reaches the
+    180-degree chord at ``lat_max``, or targets across the +/-180 seam are
+    within reach (seam gap <= ``dlon_max``) -- no array-space halo can
+    cover the wrap. Return a depth one larger than the axis so
+    ``_fit_halo_to_chunks`` folds the x axis into a single chunk and every
+    chunk sees all columns.
+    """
+    width = len(x_coords)
+    if width < 2:
+        return 0
+    fold = width + 1
+
+    radius = 6378137.0
+    half_angle = max_distance / (2.0 * radius)
+    if half_angle >= np.pi / 2.0:
+        # max_distance spans half the circumference: everything is in reach.
+        return fold
+
+    cos_lat_max = np.cos(np.radians(np.abs(np.asarray(y_coords)).max()))
+    sin_half = np.sin(half_angle)
+    if sin_half >= cos_lat_max:
+        # Even a 180-degree longitude gap at the worst-case latitude stays
+        # within max_distance, so no longitude separation excludes a target.
+        return fold
+
+    dlon_max = np.degrees(2.0 * np.arcsin(sin_half / cos_lat_max))
+
+    # Wrap check: the smallest longitude separation through the +/-180 seam
+    # is between the first and last columns. If that is within dlon_max, a
+    # target near one edge of the array can be the nearest target of a pixel
+    # near the opposite edge, which no per-chunk halo can express.
+    span = abs(float(x_coords[-1]) - float(x_coords[0]))
+    seam_gap = 360.0 - span
+    if seam_gap <= dlon_max:
+        return fold
+
+    # No wrap in reach: a target k columns away is at least k * min_step
+    # degrees of longitude away (monotonic coords), so columns beyond
+    # dlon_max / min_step are excluded by the chord bound.
+    min_step = np.abs(np.diff(np.asarray(x_coords, dtype=np.float64))).min()
+    return int(np.ceil(dlon_max / min_step))
+
+
 def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     """Overlap depth in pixels for the bounded dask map_overlap call.
 
@@ -302,10 +361,15 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
     no halo along that axis (depth 0), so (1, N) and (N, 1) rasters do not
     crash on the missing second coordinate.
 
-    For GREAT_CIRCLE the east-west distance per degree of longitude shrinks
-    toward the poles, so the column spacing is measured at the highest-latitude
-    row (largest absolute y) to take the worst case. The north-south distance
-    does not depend on longitude, so the row spacing uses a fixed longitude.
+    For GREAT_CIRCLE the column depth comes from the spherical chord bound
+    in ``_great_circle_col_halo``: longitude is periodic and chords shorten
+    toward the poles, so a per-column linear step sum is not a valid lower
+    bound there. When targets across the +/-180 seam are within
+    ``max_distance``, the returned column depth exceeds the axis length so
+    ``_fit_halo_to_chunks`` folds the axis. The row depth stays linear: the
+    great-circle distance between two points is never smaller than their
+    meridian (north-south) separation, so the per-row step sum is a valid
+    lower bound for every metric.
     """
     def _min_step_distance(coords, x_ref, y_ref, along):
         if len(coords) < 2:
@@ -322,15 +386,15 @@ def _halo_depth(x_coords, y_coords, max_distance, distance_metric):
                 smallest = d
         return smallest
 
-    # Worst-case latitude for east-west spacing: the row farthest from the
-    # equator, where a degree of longitude covers the least ground.
-    y_worst = max(y_coords, key=abs)
-
     dist_per_row = _min_step_distance(y_coords, x_coords[0], None, "row")
-    dist_per_col = _min_step_distance(x_coords, None, y_worst, "col")
-
     pad_y = 0 if dist_per_row is None else int(max_distance / dist_per_row + 0.5)
-    pad_x = 0 if dist_per_col is None else int(max_distance / dist_per_col + 0.5)
+
+    if distance_metric == GREAT_CIRCLE:
+        pad_x = _great_circle_col_halo(x_coords, y_coords, max_distance)
+    else:
+        dist_per_col = _min_step_distance(x_coords, None, y_coords[0], "col")
+        pad_x = 0 if dist_per_col is None else int(
+            max_distance / dist_per_col + 0.5)
     return pad_y, pad_x
 
 
@@ -810,13 +874,178 @@ def _process_proximity_line(
     return
 
 
+@ngjit
+def _process_numpy_linesweep(img, x_coords, y_coords, target_values,
+                             max_distance, distance_metric, process_mode):
+    height, width = img.shape
+    pan_near_x = np.zeros(width, dtype=np.int64)
+    pan_near_y = np.zeros(width, dtype=np.int64)
+
+    # output of the function
+    output_img = np.full((height, width), np.nan, dtype=np.float32)
+    img_distance = np.zeros(shape=(height, width), dtype=np.float32)
+
+    # Loop from top to bottom of the image.
+    for i in prange(width):
+        pan_near_x[i] = -1
+        pan_near_y[i] = -1
+
+    # a single line of the input image img
+    scan_line = np.zeros(width, dtype=img.dtype)
+
+    # indexes of nearest pixels of current line scan_line
+    nearest_xs = np.zeros(width, dtype=np.int64)
+    nearest_ys = np.zeros(width, dtype=np.int64)
+
+    for line in prange(height):
+        # Read for target values.
+        for i in prange(width):
+            scan_line[i] = img[line][i]
+
+        line_proximity = np.zeros(width, dtype=np.float32)
+
+        for i in prange(width):
+            line_proximity[i] = -1.0
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        # left to right
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, True,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+        for i in prange(width):
+            if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                if process_mode == ALLOCATION:
+                    output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                elif process_mode == DIRECTION:
+                    output_img[line][i] = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
+
+        # right to left
+        for i in prange(width):
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, False,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+
+        for i in prange(width):
+            img_distance[line][i] = line_proximity[i]
+
+            if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                if process_mode == ALLOCATION:
+                    output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
+
+                elif process_mode == DIRECTION:
+                    output_img[line][i] = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
+
+    # Loop from bottom to top of the image.
+    for i in prange(width):
+        pan_near_x[i] = -1
+        pan_near_y[i] = -1
+
+    for line in prange(height - 1, -1, -1):
+        # Read first pass proximity.
+        for i in prange(width):
+            line_proximity[i] = img_distance[line][i]
+
+        # Read pixel target_values.
+        for i in prange(width):
+            scan_line[i] = img[line][i]
+
+        # Right to left
+        for i in prange(width):
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, False,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+
+        for i in prange(width):
+            if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                if process_mode == ALLOCATION:
+                    output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
+
+                elif process_mode == DIRECTION:
+                    output_img[line][i] = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
+
+        # Left to right
+        for i in prange(width):
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, True,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+
+        # final post processing of distances
+        for i in prange(width):
+            if line_proximity[i] < 0:
+                line_proximity[i] = np.nan
+            else:
+                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                    if process_mode == ALLOCATION:
+                        output_img[line][i] = img[
+                            nearest_ys[i], nearest_xs[i]]
+
+                    elif process_mode == DIRECTION:
+                        output_img[line][i] = _calc_direction(
+                            x_coords[line, i],
+                            x_coords[nearest_ys[i], nearest_xs[i]],
+                            y_coords[line, i],
+                            y_coords[nearest_ys[i], nearest_xs[i]],
+                        )
+
+        for i in prange(width):
+            img_distance[line][i] = line_proximity[i]
+
+    if process_mode == PROXIMITY:
+        return img_distance
+    else:
+        return output_img
+
+
 def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
     """Nearest-target query that breaks ties by lowest target index.
 
     ``cKDTree.query`` does not promise which of several equidistant targets
     it returns, so allocation and direction can disagree with the brute-force
-    and CUDA backends on a tie. Target coordinates are stored in row-major
-    (flat-index) order, so the lowest target index is the lowest flat index --
+    and CUDA backends on a tie. Target coordinates are sorted into row-major
+    (flat-index) order by ``_collect_region_targets`` before the tree is
+    built -- chunk-by-chunk collection alone does not produce that order
+    (issue #3090) -- so the lowest target index is the lowest flat index,
     the tie-break policy documented on ``allocation``/``direction``.
 
     Query the two nearest targets; wherever they are equidistant, keep the one
@@ -891,6 +1120,16 @@ def _target_mask(chunk_data, target_values):
     return np.isin(chunk_data, target_values) & np.isfinite(chunk_data)
 
 
+def _global_flat_indices(iy, ix, rows, cols, y_offsets, x_offsets, width):
+    """Global flat (row-major) pixel indices of chunk-local target positions.
+
+    The flat index is the tie-break key documented on
+    ``allocation``/``direction``: among equidistant targets, the lowest one
+    wins (see ``_kdtree_query_lowest_index``).
+    """
+    return (y_offsets[iy] + rows) * width + (x_offsets[ix] + cols)
+
+
 def _stream_target_counts(raster, target_values, y_coords, x_coords,
                           chunks_y, chunks_x):
     """Stream all dask chunks, counting targets per chunk.
@@ -904,12 +1143,17 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
     total_targets : int
     coords_cache : dict  (iy, ix) -> ndarray shape (N, 2)
     values_cache : dict  (iy, ix) -> ndarray shape (N,), dtype float32
+    flat_cache : dict  (iy, ix) -> ndarray shape (N,), dtype int64
+        Global flat (row-major) pixel index of each cached target. Used by
+        ``_collect_region_targets`` to restore row-major target order so the
+        documented lowest-flat-index tie-break holds across chunkings.
     """
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
     target_counts = np.zeros((n_tile_y, n_tile_x), dtype=np.int64)
     coords_cache = {}
     values_cache = {}
+    flat_cache = {}
     cache_bytes = 0
     budget = int(0.25 * _available_memory_bytes())
 
@@ -917,6 +1161,7 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
     np.cumsum(chunks_y, out=y_offsets[1:])
     x_offsets = np.zeros(n_tile_x + 1, dtype=np.int64)
     np.cumsum(chunks_x, out=x_offsets[1:])
+    width = int(x_offsets[-1])
 
     for iy in range(n_tile_y):
         # Compute one chunk-row at a time so the scheduler can read the
@@ -938,14 +1183,17 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
                     x_coords[x_offsets[ix] + cols],
                 ])
                 vals = chunk_data[rows, cols].astype(np.float32)
-                entry_bytes = coords.nbytes + vals.nbytes
+                flat = _global_flat_indices(
+                    iy, ix, rows, cols, y_offsets, x_offsets, width)
+                entry_bytes = coords.nbytes + vals.nbytes + flat.nbytes
                 if cache_bytes + entry_bytes <= budget:
                     coords_cache[(iy, ix)] = coords
                     values_cache[(iy, ix)] = vals
+                    flat_cache[(iy, ix)] = flat
                     cache_bytes += entry_bytes
 
     total_targets = int(target_counts.sum())
-    return target_counts, total_targets, coords_cache, values_cache
+    return target_counts, total_targets, coords_cache, values_cache, flat_cache
 
 
 def _chunk_offsets(chunks):
@@ -959,14 +1207,25 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
                             target_values, target_counts,
                             y_coords, x_coords,
                             y_offsets, x_offsets,
-                            coords_cache, values_cache):
+                            coords_cache, values_cache, flat_cache):
     """Collect target (y, x) coords and pixel values from chunks.
 
     Uses cache where available, re-reads uncached chunks via .compute().
     Returns (coords ndarray (N, 2), vals ndarray (N,)) or (None, None).
+
+    The returned targets are sorted by global flat (row-major) pixel index.
+    Chunks are visited chunk-row by chunk-column, so with more than one chunk
+    column the concatenation order is chunk-major, not row-major. The KDTree
+    tie-break in ``_kdtree_query_lowest_index`` keeps the lowest *tree* index
+    on a tie, which only matches the documented lowest-flat-index policy of
+    ``allocation``/``direction`` if the tree's target order is global
+    row-major. Sorting here restores that order for both the global and the
+    tiled KDTree paths.
     """
     coord_parts = []
     val_parts = []
+    flat_parts = []
+    width = int(x_offsets[-1])
     for iy in range(jy_lo, jy_hi):
         for ix in range(jx_lo, jx_hi):
             if target_counts[iy, ix] == 0:
@@ -974,6 +1233,7 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
             if (iy, ix) in coords_cache:
                 coord_parts.append(coords_cache[(iy, ix)])
                 val_parts.append(values_cache[(iy, ix)])
+                flat_parts.append(flat_cache[(iy, ix)])
             else:
                 chunk_data = raster.data.blocks[iy, ix].compute()
                 mask = _target_mask(chunk_data, target_values)
@@ -987,9 +1247,15 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
                     val_parts.append(
                         chunk_data[rows, cols].astype(np.float32)
                     )
+                    flat_parts.append(_global_flat_indices(
+                        iy, ix, rows, cols, y_offsets, x_offsets, width))
     if not coord_parts:
         return None, None
-    return np.concatenate(coord_parts), np.concatenate(val_parts)
+    coords = np.concatenate(coord_parts)
+    vals = np.concatenate(val_parts)
+    flat = np.concatenate(flat_parts)
+    order = np.argsort(flat)
+    return coords[order], vals[order]
 
 
 def _min_boundary_distance(iy, ix, y_coords, x_coords,
@@ -1044,7 +1310,7 @@ def _min_boundary_distance(iy, ix, y_coords, x_coords,
 def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
                        y_offsets, x_offsets,
                        target_values, target_counts,
-                       coords_cache, values_cache,
+                       coords_cache, values_cache, flat_cache,
                        max_distance, p,
                        n_tile_y, n_tile_x, process_mode):
     """Expanding-ring local KDTree for one output chunk.
@@ -1074,7 +1340,7 @@ def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
             raster, jy_lo, jy_hi, jx_lo, jx_hi,
             target_values, target_counts,
             y_coords, x_coords, y_offsets, x_offsets,
-            coords_cache, values_cache,
+            coords_cache, values_cache, flat_cache,
         )
 
         if target_coords is None:
@@ -1130,7 +1396,7 @@ def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
 
 def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
                         max_distance, p, target_counts,
-                        coords_cache, values_cache,
+                        coords_cache, values_cache, flat_cache,
                         chunks_y, chunks_x, process_mode):
     """Tiled (eager) KDTree query — memory-safe fallback."""
     H, W = raster.shape
@@ -1162,7 +1428,7 @@ def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
                 raster, iy, ix, y_coords, x_coords,
                 y_offsets, x_offsets,
                 target_values, target_counts,
-                coords_cache, values_cache,
+                coords_cache, values_cache, flat_cache,
                 max_distance, p, n_tile_y, n_tile_x, process_mode,
             )
             r0 = int(y_offsets[iy])
@@ -1176,7 +1442,7 @@ def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
 
 def _build_global_kdtree(raster, y_coords, x_coords, target_values,
                          max_distance, p, target_counts,
-                         coords_cache, values_cache,
+                         coords_cache, values_cache, flat_cache,
                          chunks_y, chunks_x, process_mode):
     """Global KDTree query — fast, lazy via da.map_blocks."""
     n_tile_y = len(chunks_y)
@@ -1188,7 +1454,7 @@ def _build_global_kdtree(raster, y_coords, x_coords, target_values,
         raster, 0, n_tile_y, 0, n_tile_x,
         target_values, target_counts,
         y_coords, x_coords, y_offsets, x_offsets,
-        coords_cache, values_cache,
+        coords_cache, values_cache, flat_cache,
     )
 
     tree = cKDTree(target_coords)
@@ -1227,7 +1493,7 @@ def _process_dask_kdtree(raster, x_coords, y_coords,
     chunks_y, chunks_x = raster.data.chunks
 
     # Phase 0: streaming count pass
-    target_counts, total_targets, coords_cache, values_cache = \
+    target_counts, total_targets, coords_cache, values_cache, flat_cache = \
         _stream_target_counts(
             raster, target_values, y_coords, x_coords, chunks_y, chunks_x,
         )
@@ -1244,14 +1510,14 @@ def _process_dask_kdtree(raster, x_coords, y_coords,
         return _build_global_kdtree(
             raster, y_coords, x_coords, target_values,
             max_distance, p, target_counts,
-            coords_cache, values_cache,
+            coords_cache, values_cache, flat_cache,
             chunks_y, chunks_x, process_mode,
         )
     else:
         return _build_tiled_kdtree(
             raster, y_coords, x_coords, target_values,
             max_distance, p, target_counts,
-            coords_cache, values_cache,
+            coords_cache, values_cache, flat_cache,
             chunks_y, chunks_x, process_mode,
         )
 
@@ -1327,167 +1593,6 @@ def _process(
         x_coords[0], x_coords[-1], y_coords[0], y_coords[-1], distance_metric
     )
 
-    @ngjit
-    def _process_numpy_linesweep(img, x_coords, y_coords):
-        height, width = img.shape
-        pan_near_x = np.zeros(width, dtype=np.int64)
-        pan_near_y = np.zeros(width, dtype=np.int64)
-
-        # output of the function
-        output_img = np.full((height, width), np.nan, dtype=np.float32)
-        img_distance = np.zeros(shape=(height, width), dtype=np.float32)
-
-        # Loop from top to bottom of the image.
-        for i in prange(width):
-            pan_near_x[i] = -1
-            pan_near_y[i] = -1
-
-        # a single line of the input image img
-        scan_line = np.zeros(width, dtype=img.dtype)
-
-        # indexes of nearest pixels of current line scan_line
-        nearest_xs = np.zeros(width, dtype=np.int64)
-        nearest_ys = np.zeros(width, dtype=np.int64)
-
-        for line in prange(height):
-            # Read for target values.
-            for i in prange(width):
-                scan_line[i] = img[line][i]
-
-            line_proximity = np.zeros(width, dtype=np.float32)
-
-            for i in prange(width):
-                line_proximity[i] = -1.0
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            # left to right
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, True,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-            for i in prange(width):
-                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    if process_mode == ALLOCATION:
-                        output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                    elif process_mode == DIRECTION:
-                        output_img[line][i] = _calc_direction(
-                            x_coords[line, i],
-                            x_coords[nearest_ys[i], nearest_xs[i]],
-                            y_coords[line, i],
-                            y_coords[nearest_ys[i], nearest_xs[i]],
-                        )
-
-            # right to left
-            for i in prange(width):
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, False,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-
-            for i in prange(width):
-                img_distance[line][i] = line_proximity[i]
-
-                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    if process_mode == ALLOCATION:
-                        output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
-
-                    elif process_mode == DIRECTION:
-                        output_img[line][i] = _calc_direction(
-                            x_coords[line, i],
-                            x_coords[nearest_ys[i], nearest_xs[i]],
-                            y_coords[line, i],
-                            y_coords[nearest_ys[i], nearest_xs[i]],
-                        )
-
-        # Loop from bottom to top of the image.
-        for i in prange(width):
-            pan_near_x[i] = -1
-            pan_near_y[i] = -1
-
-        for line in prange(height - 1, -1, -1):
-            # Read first pass proximity.
-            for i in prange(width):
-                line_proximity[i] = img_distance[line][i]
-
-            # Read pixel target_values.
-            for i in prange(width):
-                scan_line[i] = img[line][i]
-
-            # Right to left
-            for i in prange(width):
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, False,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-
-            for i in prange(width):
-                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    if process_mode == ALLOCATION:
-                        output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
-
-                    elif process_mode == DIRECTION:
-                        output_img[line][i] = _calc_direction(
-                            x_coords[line, i],
-                            x_coords[nearest_ys[i], nearest_xs[i]],
-                            y_coords[line, i],
-                            y_coords[nearest_ys[i], nearest_xs[i]],
-                        )
-
-            # Left to right
-            for i in prange(width):
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, True,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-
-            # final post processing of distances
-            for i in prange(width):
-                if line_proximity[i] < 0:
-                    line_proximity[i] = np.nan
-                else:
-                    if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                        if process_mode == ALLOCATION:
-                            output_img[line][i] = img[
-                                nearest_ys[i], nearest_xs[i]]
-
-                        elif process_mode == DIRECTION:
-                            output_img[line][i] = _calc_direction(
-                                x_coords[line, i],
-                                x_coords[nearest_ys[i], nearest_xs[i]],
-                                y_coords[line, i],
-                                y_coords[nearest_ys[i], nearest_xs[i]],
-                            )
-
-            for i in prange(width):
-                img_distance[line][i] = line_proximity[i]
-
-        if process_mode == PROXIMITY:
-            return img_distance
-        else:
-            return output_img
-
     def _process_numpy(img, x_coords, y_coords):
         # The line-sweep propagates a single nearest-target candidate between
         # adjacent pixels, which only holds for locally-monotonic metrics
@@ -1496,7 +1601,8 @@ def _process(
         # always reachable through the neighbour chain. Use an exact
         # brute-force search there instead (matches the GPU kernel). The
         # branch lives in plain Python rather than inside the numba kernel so
-        # the metric choice is never frozen into a cached closure compilation.
+        # the metric choice is a runtime value, never frozen into a compiled
+        # specialization.
         if distance_metric == GREAT_CIRCLE:
             return _process_numpy_bruteforce(
                 img, x_coords, y_coords, target_values,
@@ -1518,7 +1624,10 @@ def _process(
                 img, x_coords, y_coords, target_values,
                 np.float32(max_distance), distance_metric, process_mode,
             )
-        return _process_numpy_linesweep(img, x_coords, y_coords)
+        return _process_numpy_linesweep(
+            img, x_coords, y_coords, target_values,
+            np.float64(max_distance), distance_metric, process_mode,
+        )
 
     def _process_dask(raster, xs, ys):
 
