@@ -810,6 +810,169 @@ def _process_proximity_line(
     return
 
 
+@ngjit
+def _process_numpy_linesweep(img, x_coords, y_coords, target_values,
+                             max_distance, distance_metric, process_mode):
+    height, width = img.shape
+    pan_near_x = np.zeros(width, dtype=np.int64)
+    pan_near_y = np.zeros(width, dtype=np.int64)
+
+    # output of the function
+    output_img = np.full((height, width), np.nan, dtype=np.float32)
+    img_distance = np.zeros(shape=(height, width), dtype=np.float32)
+
+    # Loop from top to bottom of the image.
+    for i in prange(width):
+        pan_near_x[i] = -1
+        pan_near_y[i] = -1
+
+    # a single line of the input image img
+    scan_line = np.zeros(width, dtype=img.dtype)
+
+    # indexes of nearest pixels of current line scan_line
+    nearest_xs = np.zeros(width, dtype=np.int64)
+    nearest_ys = np.zeros(width, dtype=np.int64)
+
+    for line in prange(height):
+        # Read for target values.
+        for i in prange(width):
+            scan_line[i] = img[line][i]
+
+        line_proximity = np.zeros(width, dtype=np.float32)
+
+        for i in prange(width):
+            line_proximity[i] = -1.0
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        # left to right
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, True,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+        for i in prange(width):
+            if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                if process_mode == ALLOCATION:
+                    output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                elif process_mode == DIRECTION:
+                    output_img[line][i] = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
+
+        # right to left
+        for i in prange(width):
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, False,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+
+        for i in prange(width):
+            img_distance[line][i] = line_proximity[i]
+
+            if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                if process_mode == ALLOCATION:
+                    output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
+
+                elif process_mode == DIRECTION:
+                    output_img[line][i] = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
+
+    # Loop from bottom to top of the image.
+    for i in prange(width):
+        pan_near_x[i] = -1
+        pan_near_y[i] = -1
+
+    for line in prange(height - 1, -1, -1):
+        # Read first pass proximity.
+        for i in prange(width):
+            line_proximity[i] = img_distance[line][i]
+
+        # Read pixel target_values.
+        for i in prange(width):
+            scan_line[i] = img[line][i]
+
+        # Right to left
+        for i in prange(width):
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, False,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+
+        for i in prange(width):
+            if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                if process_mode == ALLOCATION:
+                    output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
+
+                elif process_mode == DIRECTION:
+                    output_img[line][i] = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
+
+        # Left to right
+        for i in prange(width):
+            nearest_xs[i] = -1
+            nearest_ys[i] = -1
+
+        _process_proximity_line(
+            scan_line, x_coords, y_coords,
+            pan_near_x, pan_near_y, True,
+            line, width, max_distance,
+            line_proximity, nearest_xs, nearest_ys,
+            target_values, distance_metric,
+        )
+
+        # final post processing of distances
+        for i in prange(width):
+            if line_proximity[i] < 0:
+                line_proximity[i] = np.nan
+            else:
+                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
+                    if process_mode == ALLOCATION:
+                        output_img[line][i] = img[
+                            nearest_ys[i], nearest_xs[i]]
+
+                    elif process_mode == DIRECTION:
+                        output_img[line][i] = _calc_direction(
+                            x_coords[line, i],
+                            x_coords[nearest_ys[i], nearest_xs[i]],
+                            y_coords[line, i],
+                            y_coords[nearest_ys[i], nearest_xs[i]],
+                        )
+
+        for i in prange(width):
+            img_distance[line][i] = line_proximity[i]
+
+    if process_mode == PROXIMITY:
+        return img_distance
+    else:
+        return output_img
+
+
 def _kdtree_query_lowest_index(tree, query_pts, p, max_distance):
     """Nearest-target query that breaks ties by lowest target index.
 
@@ -1327,167 +1490,6 @@ def _process(
         x_coords[0], x_coords[-1], y_coords[0], y_coords[-1], distance_metric
     )
 
-    @ngjit
-    def _process_numpy_linesweep(img, x_coords, y_coords):
-        height, width = img.shape
-        pan_near_x = np.zeros(width, dtype=np.int64)
-        pan_near_y = np.zeros(width, dtype=np.int64)
-
-        # output of the function
-        output_img = np.full((height, width), np.nan, dtype=np.float32)
-        img_distance = np.zeros(shape=(height, width), dtype=np.float32)
-
-        # Loop from top to bottom of the image.
-        for i in prange(width):
-            pan_near_x[i] = -1
-            pan_near_y[i] = -1
-
-        # a single line of the input image img
-        scan_line = np.zeros(width, dtype=img.dtype)
-
-        # indexes of nearest pixels of current line scan_line
-        nearest_xs = np.zeros(width, dtype=np.int64)
-        nearest_ys = np.zeros(width, dtype=np.int64)
-
-        for line in prange(height):
-            # Read for target values.
-            for i in prange(width):
-                scan_line[i] = img[line][i]
-
-            line_proximity = np.zeros(width, dtype=np.float32)
-
-            for i in prange(width):
-                line_proximity[i] = -1.0
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            # left to right
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, True,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-            for i in prange(width):
-                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    if process_mode == ALLOCATION:
-                        output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                    elif process_mode == DIRECTION:
-                        output_img[line][i] = _calc_direction(
-                            x_coords[line, i],
-                            x_coords[nearest_ys[i], nearest_xs[i]],
-                            y_coords[line, i],
-                            y_coords[nearest_ys[i], nearest_xs[i]],
-                        )
-
-            # right to left
-            for i in prange(width):
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, False,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-
-            for i in prange(width):
-                img_distance[line][i] = line_proximity[i]
-
-                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    if process_mode == ALLOCATION:
-                        output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
-
-                    elif process_mode == DIRECTION:
-                        output_img[line][i] = _calc_direction(
-                            x_coords[line, i],
-                            x_coords[nearest_ys[i], nearest_xs[i]],
-                            y_coords[line, i],
-                            y_coords[nearest_ys[i], nearest_xs[i]],
-                        )
-
-        # Loop from bottom to top of the image.
-        for i in prange(width):
-            pan_near_x[i] = -1
-            pan_near_y[i] = -1
-
-        for line in prange(height - 1, -1, -1):
-            # Read first pass proximity.
-            for i in prange(width):
-                line_proximity[i] = img_distance[line][i]
-
-            # Read pixel target_values.
-            for i in prange(width):
-                scan_line[i] = img[line][i]
-
-            # Right to left
-            for i in prange(width):
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, False,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-
-            for i in prange(width):
-                if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    if process_mode == ALLOCATION:
-                        output_img[line][i] = img[nearest_ys[i], nearest_xs[i]]
-
-                    elif process_mode == DIRECTION:
-                        output_img[line][i] = _calc_direction(
-                            x_coords[line, i],
-                            x_coords[nearest_ys[i], nearest_xs[i]],
-                            y_coords[line, i],
-                            y_coords[nearest_ys[i], nearest_xs[i]],
-                        )
-
-            # Left to right
-            for i in prange(width):
-                nearest_xs[i] = -1
-                nearest_ys[i] = -1
-
-            _process_proximity_line(
-                scan_line, x_coords, y_coords,
-                pan_near_x, pan_near_y, True,
-                line, width, max_distance,
-                line_proximity, nearest_xs, nearest_ys,
-                target_values, distance_metric,
-            )
-
-            # final post processing of distances
-            for i in prange(width):
-                if line_proximity[i] < 0:
-                    line_proximity[i] = np.nan
-                else:
-                    if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                        if process_mode == ALLOCATION:
-                            output_img[line][i] = img[
-                                nearest_ys[i], nearest_xs[i]]
-
-                        elif process_mode == DIRECTION:
-                            output_img[line][i] = _calc_direction(
-                                x_coords[line, i],
-                                x_coords[nearest_ys[i], nearest_xs[i]],
-                                y_coords[line, i],
-                                y_coords[nearest_ys[i], nearest_xs[i]],
-                            )
-
-            for i in prange(width):
-                img_distance[line][i] = line_proximity[i]
-
-        if process_mode == PROXIMITY:
-            return img_distance
-        else:
-            return output_img
-
     def _process_numpy(img, x_coords, y_coords):
         # The line-sweep propagates a single nearest-target candidate between
         # adjacent pixels, which only holds for locally-monotonic metrics
@@ -1496,7 +1498,8 @@ def _process(
         # always reachable through the neighbour chain. Use an exact
         # brute-force search there instead (matches the GPU kernel). The
         # branch lives in plain Python rather than inside the numba kernel so
-        # the metric choice is never frozen into a cached closure compilation.
+        # the metric choice is a runtime value, never frozen into a compiled
+        # specialization.
         if distance_metric == GREAT_CIRCLE:
             return _process_numpy_bruteforce(
                 img, x_coords, y_coords, target_values,
@@ -1518,7 +1521,10 @@ def _process(
                 img, x_coords, y_coords, target_values,
                 np.float32(max_distance), distance_metric, process_mode,
             )
-        return _process_numpy_linesweep(img, x_coords, y_coords)
+        return _process_numpy_linesweep(
+            img, x_coords, y_coords, target_values,
+            np.float64(max_distance), distance_metric, process_mode,
+        )
 
     def _process_dask(raster, xs, ys):
 

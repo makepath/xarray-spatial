@@ -1961,6 +1961,31 @@ def test_proximity_dask_no_scipy_does_not_mutate_input(backend, op):
     assert raster.data.chunks == chunks_before, "proximity rechunked the input"
 
 
+def test_proximity_linesweep_compiled_once():
+    # Regression test for issue #3103: the line-sweep kernel used to be an
+    # @ngjit closure defined inside _process, so every proximity() call
+    # created a fresh dispatcher and recompiled the kernel (~0.4s per call).
+    # The kernel must be a module-level dispatcher whose compiled signatures
+    # are reused across calls.
+    from xrspatial.proximity import _process_numpy_linesweep
+
+    data = np.zeros((10, 10), dtype=np.float64)
+    data[5, 5] = 1.0
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['y'] = np.arange(10, dtype=np.float64)[::-1]
+    raster['x'] = np.arange(10, dtype=np.float64)
+
+    proximity(raster)
+    n_sigs = len(_process_numpy_linesweep.signatures)
+    assert n_sigs >= 1  # the numpy line-sweep path actually ran
+
+    proximity(raster)
+    proximity(raster)
+    assert len(_process_numpy_linesweep.signatures) == n_sigs, (
+        "repeated proximity() calls recompiled the line-sweep kernel"
+    )
+
+
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 def test_proximity_dask_coord_grid_graph_size():
     # Regression test for issue #3132: the bounded dask path used to build
