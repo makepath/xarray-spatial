@@ -1300,6 +1300,90 @@ class TestWPMEdgeCases:
             wpm(ds, {"a": 0.5, "b": 0.5})
 
 
+class TestConstrainAttrs:
+    """constrain must keep the input's attrs (#3147).
+
+    xr.where takes attrs from its first value argument (the scalar
+    fill), which used to strip res/crs/nodatavals whenever exclude
+    was non-empty.
+    """
+
+    ATTRS = {"res": (1.0, 1.0), "crs": "EPSG:32611", "nodatavals": (-9999.0,)}
+
+    def _suit_and_mask(self):
+        suit = xr.DataArray(
+            np.array([[0.8, 0.6, 0.9]], dtype=np.float64),
+            dims=["y", "x"],
+            coords={"y": [10.5], "x": [100.5, 101.5, 102.5]},
+            attrs=dict(self.ATTRS),
+            name="suit",
+        )
+        mask = xr.DataArray(
+            np.array([[True, False, False]]),
+            dims=["y", "x"],
+            coords={"y": [10.5], "x": [100.5, 101.5, 102.5]},
+        )
+        return suit, mask
+
+    def test_attrs_kept_with_mask(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask])
+        assert result.attrs == self.ATTRS
+        assert result.dims == suit.dims
+        np.testing.assert_array_equal(result["x"].values, suit["x"].values)
+
+    def test_attrs_kept_with_custom_fill(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask], fill=-1.0)
+        assert result.attrs == self.ATTRS
+
+    def test_attrs_kept_with_empty_exclude(self):
+        suit, _ = self._suit_and_mask()
+        result = constrain(suit, exclude=[])
+        assert result.attrs == self.ATTRS
+
+    def test_attrs_not_shared_with_input(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask])
+        result.attrs["crs"] = "EPSG:4326"
+        assert suit.attrs["crs"] == "EPSG:32611"
+
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_attrs_kept_dask(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(
+            suit.chunk({"x": 2}), exclude=[mask.chunk({"x": 2})],
+        )
+        assert result.attrs == self.ATTRS
+        assert hasattr(result.data, "compute")
+        np.testing.assert_allclose(
+            result.compute().values,
+            constrain(suit, exclude=[mask]).values,
+            equal_nan=True,
+        )
+
+    def test_attrs_kept_dask_cupy(self):
+        from xrspatial.utils import has_cuda_and_cupy
+        if not (HAS_DASK and has_cuda_and_cupy()):
+            pytest.skip("Requires dask, CUDA and CuPy")
+        import cupy
+
+        suit, mask = self._suit_and_mask()
+        suit_gpu = suit.copy()
+        suit_gpu.data = cupy.asarray(suit_gpu.data)
+        mask_gpu = mask.copy()
+        mask_gpu.data = cupy.asarray(mask_gpu.data)
+        result = constrain(
+            suit_gpu.chunk({"x": 2}), exclude=[mask_gpu.chunk({"x": 2})],
+        )
+        # Attrs must survive on the lazy result. Computing values here
+        # trips an unrelated cupy/xarray incompatibility inside
+        # xr.where (numpy scalar broadcast against cupy chunks), so the
+        # value-parity check stays on the numpy/dask+numpy tests above.
+        assert result.attrs == self.ATTRS
+        assert result.dims == suit.dims
+
+
 class TestConstrainEdgeCases:
     def test_empty_exclude_list(self):
         """Empty exclude list should return input unchanged."""
