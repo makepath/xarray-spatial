@@ -848,24 +848,24 @@ class TestCuPy:
     def test_cupy_output_type(self):
         geom = box(1, 1, 4, 4)
         result = rasterize([(geom, 1.0)], width=5, height=5,
-                           bounds=(0, 0, 5, 5), use_cuda=True)
+                           bounds=(0, 0, 5, 5), gpu=True)
         assert isinstance(result.data, cupy.ndarray)
 
     def test_cupy_matches_numpy(self):
         geom = box(1, 1, 8, 8)
         np_result = rasterize([(geom, 3.0)], width=10, height=10,
-                              bounds=(0, 0, 10, 10), use_cuda=False)
+                              bounds=(0, 0, 10, 10), gpu=False)
         cp_result = rasterize([(geom, 3.0)], width=10, height=10,
-                              bounds=(0, 0, 10, 10), use_cuda=True)
+                              bounds=(0, 0, 10, 10), gpu=True)
         np.testing.assert_array_equal(
             np_result.values, cupy.asnumpy(cp_result.data))
 
     def test_cupy_multiple_polygons(self):
         pairs = [(box(0, 0, 4, 4), 1.0), (box(6, 6, 10, 10), 2.0)]
         np_result = rasterize(pairs, width=10, height=10,
-                              bounds=(0, 0, 10, 10), use_cuda=False)
+                              bounds=(0, 0, 10, 10), gpu=False)
         cp_result = rasterize(pairs, width=10, height=10,
-                              bounds=(0, 0, 10, 10), use_cuda=True)
+                              bounds=(0, 0, 10, 10), gpu=True)
         np.testing.assert_array_equal(
             np_result.values, cupy.asnumpy(cp_result.data))
 
@@ -874,9 +874,9 @@ class TestCuPy:
         hole = [(3, 3), (3, 7), (7, 7), (7, 3), (3, 3)]
         poly = Polygon(exterior, [hole])
         np_result = rasterize([(poly, 1.0)], width=10, height=10,
-                              bounds=(0, 0, 10, 10), use_cuda=False)
+                              bounds=(0, 0, 10, 10), gpu=False)
         cp_result = rasterize([(poly, 1.0)], width=10, height=10,
-                              bounds=(0, 0, 10, 10), use_cuda=True)
+                              bounds=(0, 0, 10, 10), gpu=True)
         np.testing.assert_array_equal(
             np_result.values, cupy.asnumpy(cp_result.data))
 
@@ -887,9 +887,9 @@ class TestCuPy:
             (MultiPoint([(0.5, 0.5), (4.5, 4.5)]), 3.0),
         ]
         np_result = rasterize(pairs, width=5, height=5,
-                              bounds=(0, 0, 5, 5), fill=0, use_cuda=False)
+                              bounds=(0, 0, 5, 5), fill=0, gpu=False)
         cp_result = rasterize(pairs, width=5, height=5,
-                              bounds=(0, 0, 5, 5), fill=0, use_cuda=True)
+                              bounds=(0, 0, 5, 5), fill=0, gpu=True)
         np.testing.assert_array_equal(
             np_result.values, cupy.asnumpy(cp_result.data))
 
@@ -902,9 +902,9 @@ class TestCuPy:
             (MultiLineString([[(0.5, 2.5), (4.5, 2.5)]]), 3.0),
         ]
         np_result = rasterize(pairs, width=10, height=10,
-                              bounds=(0, 0, 5, 5), fill=0, use_cuda=False)
+                              bounds=(0, 0, 5, 5), fill=0, gpu=False)
         cp_result = rasterize(pairs, width=10, height=10,
-                              bounds=(0, 0, 5, 5), fill=0, use_cuda=True)
+                              bounds=(0, 0, 5, 5), fill=0, gpu=True)
         np.testing.assert_array_equal(
             np_result.values, cupy.asnumpy(cp_result.data))
 
@@ -915,14 +915,14 @@ class TestCuPy:
             (Point(2.5, 2.5), 3.0),
         ]
         np_result = rasterize(pairs, width=5, height=5,
-                              bounds=(0, 0, 5, 5), fill=0, use_cuda=False)
+                              bounds=(0, 0, 5, 5), fill=0, gpu=False)
         cp_result = rasterize(pairs, width=5, height=5,
-                              bounds=(0, 0, 5, 5), fill=0, use_cuda=True)
+                              bounds=(0, 0, 5, 5), fill=0, gpu=True)
         np.testing.assert_array_equal(
             np_result.values, cupy.asnumpy(cp_result.data))
 
     def test_cupy_no_cupy_raises(self):
-        """use_cuda=True without cupy should raise ImportError."""
+        """gpu=True without cupy should raise ImportError."""
         # This test only runs if cupy IS available, so we just verify
         # the function works -- the ImportError path is tested by
         # the fact that the guard exists.
@@ -1149,7 +1149,7 @@ class TestCustomMergeGPU:
                             bounds=(0, 0, 10, 10), fill=0, merge='sum')
         custom = rasterize(pairs, width=10, height=10,
                            bounds=(0, 0, 10, 10), fill=0,
-                           merge=my_sum_gpu, use_cuda=True)
+                           merge=my_sum_gpu, gpu=True)
         np.testing.assert_array_equal(
             builtin.values, self._to_numpy(custom))
 
@@ -1169,7 +1169,7 @@ class TestCustomMergeGPU:
                             bounds=(0, 0, 10, 10), fill=0, merge='sum')
         custom = rasterize(pairs, width=10, height=10,
                            bounds=(0, 0, 10, 10), fill=0,
-                           merge=my_sum_gpu, use_cuda=True,
+                           merge=my_sum_gpu, gpu=True,
                            chunks=(5, 5))
         np.testing.assert_array_equal(
             builtin.values, self._to_numpy(custom))
@@ -1437,7 +1437,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10))
         dk_result = rasterize([(geom, 3.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10),
-                              use_cuda=True, chunks=chunks)
+                              gpu=True, chunks=chunks)
         assert isinstance(dk_result.data, da.Array)
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
@@ -1449,7 +1449,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10))
         dk_result = rasterize(pairs, width=10, height=10,
                               bounds=(0, 0, 10, 10),
-                              use_cuda=True, chunks=chunks)
+                              gpu=True, chunks=chunks)
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1463,7 +1463,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 5, 5), fill=0)
         dk_result = rasterize(pairs, width=5, height=5,
                               bounds=(0, 0, 5, 5), fill=0,
-                              use_cuda=True, chunks=(3, 3))
+                              gpu=True, chunks=(3, 3))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1473,7 +1473,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10), fill=0)
         dk_result = rasterize([(geom, 5.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1484,7 +1484,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10), fill=0)
         dk_result = rasterize([(line, 1.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
-                              use_cuda=True, chunks=chunks)
+                              gpu=True, chunks=chunks)
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1495,7 +1495,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10), fill=0)
         dk_result = rasterize(pairs, width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
-                              use_cuda=True, chunks=chunks)
+                              gpu=True, chunks=chunks)
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1505,7 +1505,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10), fill=0)
         dk_result = rasterize([(line, 1.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1515,7 +1515,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10), fill=0)
         dk_result = rasterize([(pt, 9.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1523,7 +1523,7 @@ class TestDaskCupy:
         geom = box(0, 0, 2, 2)
         result = rasterize([(geom, 1.0)], width=10, height=10,
                            bounds=(0, 0, 10, 10), fill=-999,
-                           use_cuda=True, chunks=(5, 5))
+                           gpu=True, chunks=(5, 5))
         vals = self._to_numpy(result)
         assert np.all(vals[0:5, 5:10] == -999)
 
@@ -1533,7 +1533,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 5, 5), fill=0)
         dk_result = rasterize([(geom, 2.0)], width=5, height=5,
                               bounds=(0, 0, 5, 5), fill=0,
-                              use_cuda=True, chunks=(100, 100))
+                              gpu=True, chunks=(100, 100))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1541,7 +1541,7 @@ class TestDaskCupy:
         geom = box(0, 0, 5, 5)
         result = rasterize([(geom, 1.0)], width=10, height=10,
                            bounds=(0, 0, 10, 10),
-                           use_cuda=True, chunks=(5, 5))
+                           gpu=True, chunks=(5, 5))
         assert isinstance(result.data, da.Array)
 
     def test_output_shape_and_coords(self):
@@ -1550,7 +1550,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10))
         dk_result = rasterize([(geom, 1.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10),
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         assert dk_result.shape == np_result.shape
         assert dk_result.dims == np_result.dims
         np.testing.assert_allclose(
@@ -1562,7 +1562,7 @@ class TestDaskCupy:
         geom = box(0, 0, 5, 5)
         result = rasterize([(geom, 1.0)], width=5, height=5,
                            bounds=(0, 0, 5, 5),
-                           use_cuda=True, chunks=(3, 3))
+                           gpu=True, chunks=(3, 3))
         computed = result.compute()
         assert type(computed.data).__module__.startswith('cupy')
 
@@ -1576,7 +1576,7 @@ class TestDaskCupy:
         dk_result = rasterize(pairs, width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
                               merge=merge_mode,
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1588,13 +1588,13 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10), fill=0)
         dk_result = rasterize([(poly, 1.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
     def test_empty_geometry_list(self):
         result = rasterize([], width=5, height=5, bounds=(0, 0, 5, 5),
-                           use_cuda=True, chunks=(3, 3))
+                           gpu=True, chunks=(3, 3))
         assert isinstance(result.data, da.Array)
         vals = self._to_numpy(result)
         assert np.all(np.isnan(vals))
@@ -1607,7 +1607,7 @@ class TestDaskCupy:
         dk_result = rasterize([(geom, 1.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10), fill=0,
                               all_touched=True,
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1615,7 +1615,7 @@ class TestDaskCupy:
         geom = box(0, 0, 5, 5)
         result = rasterize([(geom, 1.0)], width=5, height=5,
                            bounds=(0, 0, 5, 5), dtype=np.float32,
-                           use_cuda=True, chunks=(3, 3))
+                           gpu=True, chunks=(3, 3))
         assert result.dtype == np.float32
 
     def test_int_chunks_shorthand(self):
@@ -1624,7 +1624,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 5, 5), fill=0)
         dk_result = rasterize([(geom, 1.0)], width=5, height=5,
                               bounds=(0, 0, 5, 5), fill=0,
-                              use_cuda=True, chunks=3)
+                              gpu=True, chunks=3)
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1639,7 +1639,7 @@ class TestDaskCupy:
                               bounds=(0, 0, 10, 10), column='value')
         dk_result = rasterize(gdf, width=10, height=10,
                               bounds=(0, 0, 10, 10), column='value',
-                              use_cuda=True, chunks=(5, 5))
+                              gpu=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
@@ -1937,7 +1937,7 @@ class TestMetadataPropagation:
     def test_like_attrs_propagated_cupy(self):
         like = _make_like(attrs={'crs': 'EPSG:32610'})
         result = rasterize(
-            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0, use_cuda=True,
+            [(box(2, 2, 8, 8), 1.0)], like=like, fill=0, gpu=True,
         )
         assert result.attrs.get('crs') == 'EPSG:32610'
         assert result.attrs.get('_FillValue') == 0
@@ -1948,7 +1948,7 @@ class TestMetadataPropagation:
         like = _make_like(attrs={'crs': 'EPSG:32610'})
         result = rasterize(
             [(box(2, 2, 8, 8), 1.0)],
-            like=like, fill=0, use_cuda=True, chunks=5,
+            like=like, fill=0, gpu=True, chunks=5,
         )
         assert result.attrs.get('crs') == 'EPSG:32610'
         assert result.attrs.get('_FillValue') == 0
@@ -2162,7 +2162,7 @@ class TestLikeStaleGridAttrs2251:
         result = rasterize(
             [(box(20, 20, 80, 80), 1.0)],
             like=like, bounds=(0, 0, 100, 100),
-            width=10, height=10, fill=0, use_cuda=True,
+            width=10, height=10, fill=0, gpu=True,
         )
         assert 'res' not in result.attrs
         assert 'transform' not in result.attrs
@@ -2175,7 +2175,7 @@ class TestLikeStaleGridAttrs2251:
         result = rasterize(
             [(box(20, 20, 80, 80), 1.0)],
             like=like, bounds=(0, 0, 100, 100),
-            width=10, height=10, fill=0, use_cuda=True, chunks=5,
+            width=10, height=10, fill=0, gpu=True, chunks=5,
         )
         assert 'res' not in result.attrs
         assert 'transform' not in result.attrs
@@ -2343,8 +2343,8 @@ class TestLikeYOrientation2170:
     @skip_no_cuda
     def test_cupy_ascending_matches_descending(self):
         geom = [(box(0, 0, 1, 1), 1.0)]
-        r_desc = rasterize(geom, like=_like_2170(False), fill=0, use_cuda=True)
-        r_asc = rasterize(geom, like=_like_2170(True), fill=0, use_cuda=True)
+        r_desc = rasterize(geom, like=_like_2170(False), fill=0, gpu=True)
+        r_asc = rasterize(geom, like=_like_2170(True), fill=0, gpu=True)
         # CuPy DataArrays expose .data.get() per project notes
         desc_vals = r_desc.data.get() if hasattr(r_desc.data, 'get') \
             else r_desc.values
@@ -2362,10 +2362,10 @@ class TestLikeYOrientation2170:
         geom = [(box(0, 0, 1, 1), 1.0)]
         r_desc = rasterize(
             geom, like=_like_2170(False), fill=0,
-            use_cuda=True, chunks=2).compute()
+            gpu=True, chunks=2).compute()
         r_asc = rasterize(
             geom, like=_like_2170(True), fill=0,
-            use_cuda=True, chunks=2).compute()
+            gpu=True, chunks=2).compute()
         desc_vals = r_desc.data.get() if hasattr(r_desc.data, 'get') \
             else r_desc.values
         asc_vals = r_asc.data.get() if hasattr(r_asc.data, 'get') \

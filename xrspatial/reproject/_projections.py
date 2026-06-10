@@ -22,10 +22,20 @@ All other CRS pairs fall back to pyproj.
 from __future__ import annotations
 
 import math
+import threading
 import warnings
 
 import numpy as np
 from numba import njit, prange
+
+# Numba parallel=True kernels must not be launched concurrently from
+# multiple Python threads: the default 'workqueue' threading layer is not
+# threadsafe and terminates the process (SIGABRT on macOS) when two host
+# threads enter a parallel region at the same time. Both the streaming
+# tile pool (_process_tile_batch) and dask's threaded scheduler call into
+# this module from worker threads, so every public entry point that
+# launches a parallel kernel takes this lock first. See #3093.
+_PARALLEL_KERNEL_LOCK = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # WGS84 ellipsoid constants
@@ -1761,7 +1771,19 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     uses a non-WGS84 datum (e.g. OSGB36, NAD27, DHDN), there is no
     proven equivalent datum-shift pipeline here, so we return None and
     let pyproj handle the transform. See GH #2651.
+
+    Thread-safe: kernel launches are serialized behind
+    ``_PARALLEL_KERNEL_LOCK`` because the kernels are ``parallel=True``
+    and numba's workqueue threading layer aborts on concurrent launch.
     """
+    with _PARALLEL_KERNEL_LOCK:
+        return _try_numba_transform_locked(
+            src_crs, tgt_crs, chunk_bounds, chunk_shape,
+        )
+
+
+def _try_numba_transform_locked(src_crs, tgt_crs, chunk_bounds, chunk_shape):
+    """Body of :func:`try_numba_transform`; caller holds the kernel lock."""
     src_epsg = _get_epsg(src_crs)
     tgt_epsg = _get_epsg(tgt_crs)
     if src_epsg is None and tgt_epsg is None:
@@ -2064,7 +2086,16 @@ def transform_points(src_crs, tgt_crs, xs, ys):
     * Sinusoidal and Generic Transverse Mercator are not covered here;
       those projections are dispatched via ``to_dict()['proj']`` which
       requires a full pyproj CRS.
+
+    Thread-safe: kernel launches are serialized behind
+    ``_PARALLEL_KERNEL_LOCK`` (see :func:`try_numba_transform`).
     """
+    with _PARALLEL_KERNEL_LOCK:
+        return _transform_points_locked(src_crs, tgt_crs, xs, ys)
+
+
+def _transform_points_locked(src_crs, tgt_crs, xs, ys):
+    """Body of :func:`transform_points`; caller holds the kernel lock."""
     src_epsg = _get_epsg(src_crs)
     tgt_epsg = _get_epsg(tgt_crs)
     if src_epsg is None and tgt_epsg is None:
