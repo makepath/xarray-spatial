@@ -1378,6 +1378,51 @@ def test_return_annotation_consistency(func):
     assert inspect.signature(func).return_annotation is xr.DataArray
 
 
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_docstring_states_all_backends(func):
+    # All three functions dispatch to numpy, cupy, dask+numpy, and dask+cupy
+    # backends; the docstrings used to claim numpy and dask+numpy only
+    # (issue #3091). This pins exact phrases to keep the old wording from
+    # coming back; if the docs are reworded while staying accurate, update
+    # the pinned strings rather than the docs.
+    doc = func.__doc__
+    assert "CuPy" in doc
+    assert "Dask with CuPy" in doc
+    assert "support NumPy backed, and Dask with NumPy backed" not in doc
+    # The stray slope line that opened direction()'s docstring (#3091).
+    assert "downward slope" not in doc
+
+
+def test_allocation_docstring_example_matches_output():
+    # The example in allocation()'s docstring predated the lowest-flat-index
+    # tie-break and the float32 result dtype (issue #3091). Pin the printed
+    # output to what the function returns.
+    data = np.array([
+        [0., 0., 0., 0., 0.],
+        [0., 1., 0., 2., 0.],
+        [0., 0., 3., 0., 0.],
+        [0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0.]
+    ])
+    n, m = data.shape
+    raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+    raster['y'] = np.arange(n)[::-1]
+    raster['x'] = np.arange(m)
+
+    result = allocation(raster)
+
+    expected = np.array([[1., 1., 1., 2., 2.],
+                         [1., 1., 1., 2., 2.],
+                         [1., 1., 3., 2., 2.],
+                         [1., 3., 3., 3., 2.],
+                         [3., 3., 3., 3., 3.]], dtype=np.float32)
+    assert result.dtype == np.float32
+    np.testing.assert_array_equal(result.values, expected)
+    # Pixel (0, 2) ties between targets 1 and 2; the documented policy picks
+    # the lowest flat index, which is target 1.
+    assert result.values[0, 2] == 1.0
+
+
 @pytest.mark.skipif(da is None, reason="dask is not installed")
 @pytest.mark.parametrize("func", [proximity, allocation, direction])
 def test_great_circle_dask_bounded_matches_numpy(func):
@@ -2213,3 +2258,136 @@ def test_proximity_dask_coord_grid_graph_size():
     ragged_result = proximity(ragged, max_distance=20)
     np.testing.assert_allclose(
         ragged_result.compute().data, expected.data, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps closed for issue #3139 (test-only; no source change).
+# All behaviour below was verified correct on a CUDA host before these tests
+# were committed. Nothing here pins a bug.
+# ---------------------------------------------------------------------------
+
+# --- Cat 2: integer-dtype rasters across all four backends -----------------
+# Every other raster in this file is float64, but integer class grids are the
+# canonical allocation input. The bounded dask path pads chunks with
+# boundary=np.nan; on an int array that pad casts to a garbage finite integer
+# (e.g. INT_MIN), which qualifies as a non-zero "target" value. The only
+# thing keeping those phantom pad targets from winning is that the
+# coordinate-grid pads are real NaNs, so their distances come out NaN and
+# never beat a finite one. Pin the int-raster result to the float64 numpy
+# baseline on every backend, bounded (engages the halo) and unbounded.
+
+_INT_RASTER_DATA = np.array([[0, 0, 0, 0, 0, 2],
+                             [0, 0, 1, 0, 0, 0],
+                             [0, 0, 3, 0, 0, 0],
+                             [4, 0, 0, 0, 0, 0]], dtype=np.int32)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("max_distance", [np.inf, 10.0])
+# int32: the NaN halo pad casts to INT_MIN, a phantom non-zero "target".
+# uint8 (the usual land-cover dtype): the same cast lands on a different
+# garbage value (0 on most platforms, which is a non-target). Both casts
+# must leave the result identical to the float64 baseline.
+@pytest.mark.parametrize("dtype", [np.int32, np.uint8])
+def test_integer_raster_matches_float_baseline(backend, func, max_distance,
+                                               dtype):
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    float_raster = _backend_raster(
+        _INT_RASTER_DATA.astype(np.float64), 'numpy')
+    expected = func(
+        float_raster, x='lon', y='lat', max_distance=max_distance).data
+
+    raster = _backend_raster(_INT_RASTER_DATA.astype(dtype), backend)
+    result = func(raster, x='lon', y='lat', max_distance=max_distance)
+    general_output_checks(raster, result, expected, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+def test_integer_raster_explicit_target_values(backend, func):
+    # target_values matching against integer pixels (int == int comparison in
+    # _is_target_value / _target_mask / cp.isin) on every backend.
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    float_raster = _backend_raster(
+        _INT_RASTER_DATA.astype(np.float64), 'numpy')
+    expected = func(
+        float_raster, x='lon', y='lat', target_values=[2, 3]).data
+
+    raster = _backend_raster(_INT_RASTER_DATA.copy(), backend)
+    result = func(raster, x='lon', y='lat', target_values=[2, 3])
+    general_output_checks(raster, result, expected, verify_dtype=True)
+
+
+# --- Cat 1: bounded dask+cupy with non-default metrics ---------------------
+# _process_dask_cupy (the chunked GPU path taken when max_distance is finite
+# and smaller than the corner-to-corner distance) sizes its overlap halo from
+# the active distance metric via _halo_depth. The metric-unit handling in that
+# sizing is the #2809/#2854 bug family, but those regression tests only cover
+# dask+numpy, and every existing finite-max_distance dask+cupy test uses
+# EUCLIDEAN. Pin MANHATTAN (max_distance in degrees, corner distance 80) and
+# GREAT_CIRCLE (max_distance in metres, corner distance ~6.0e6 m) against the
+# numpy baseline, and assert the bounded GPU path is the one that ran.
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("metric, max_dist",
+                         [('MANHATTAN', 10.0), ('GREAT_CIRCLE', 1.5e6)])
+def test_bounded_dask_cupy_nondefault_metric_matches_numpy(
+        func, metric, max_dist, _metric_raster_data):
+    if not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if da is None:
+        pytest.skip("dask not available")
+
+    import sys
+    prox_mod = sys.modules['xrspatial.proximity']
+
+    numpy_raster = _backend_raster(_metric_raster_data, 'numpy')
+    expected = func(numpy_raster, x='lon', y='lat', max_distance=max_dist,
+                    distance_metric=metric).data
+
+    raster = _backend_raster(_metric_raster_data, 'dask+cupy')
+
+    bounded_gpu_calls = []
+    original_fn = prox_mod._process_dask_cupy
+
+    def spy(*args, **kwargs):
+        bounded_gpu_calls.append(True)
+        return original_fn(*args, **kwargs)
+
+    with patch.object(prox_mod, '_process_dask_cupy', spy):
+        result = func(raster, x='lon', y='lat', max_distance=max_dist,
+                      distance_metric=metric)
+
+    assert bounded_gpu_calls, (
+        "expected the bounded dask+cupy path (_process_dask_cupy) to run; "
+        "the call fell through to a fallback instead"
+    )
+    assert isinstance(result.data, da.Array)
+    general_output_checks(raster, result, expected)
+
+
+# --- Cat 3: empty (0-row / 0-col) rasters fail fast -------------------------
+# A zero-size axis has no coordinate endpoints, so _process cannot compute
+# max_possible_distance and the call fails fast (currently IndexError from
+# the endpoint lookup). Pin that it raises rather than returning garbage; a
+# future clearer ValueError would also satisfy this contract.
+
+@pytest.mark.parametrize("func", [proximity, allocation, direction])
+@pytest.mark.parametrize("shape", [(0, 5), (5, 0)])
+def test_empty_raster_raises(func, shape):
+    data = np.zeros(shape, dtype=np.float64)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = np.arange(shape[1], dtype=np.float64)
+    raster['lat'] = np.arange(shape[0], dtype=np.float64)[::-1]
+
+    with pytest.raises((ValueError, IndexError)):
+        func(raster, x='lon', y='lat')

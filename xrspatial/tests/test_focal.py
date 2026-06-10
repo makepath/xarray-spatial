@@ -290,6 +290,54 @@ def test_hotspots_float64_keeps_float32_budget_3223():
     assert out.shape == (10, 10)
 
 
+@dask_array_available
+@pytest.mark.parametrize("entry_point", [
+    lambda agg, kernel: apply(agg, kernel),
+    lambda agg, kernel: focal_stats(agg, kernel, stats_funcs=['mean']),
+    lambda agg, kernel: hotspots(agg, kernel),
+])
+def test_memory_guard_accepts_large_dask_raster_3218(entry_point):
+    # Regression for #3218: the guard budgeted the padded FULL raster on
+    # every backend, so a dask raster bigger than ~half host RAM was
+    # rejected at graph-build time even though map_overlap only ever
+    # materializes one padded chunk per task. With 1 MB "available", the
+    # full padded raster (~4 MB) would trip the old guard; the padded
+    # 100x100 chunk (~42 KB) must pass.
+    data = da.zeros((1000, 1000), chunks=(100, 100), dtype=np.float32)
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        result = entry_point(agg, kernel)
+    assert isinstance(result.data, da.Array)
+
+
+def test_memory_guard_numpy_raster_still_rejected_3218():
+    # The numpy path really does allocate full-size arrays, so the
+    # full-raster budget must keep firing for in-memory input.
+    agg = xr.DataArray(np.zeros((1000, 1000), dtype=np.float32),
+                       dims=['y', 'x'])
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError, match="padded raster"):
+            apply(agg, kernel)
+
+
+@dask_array_available
+def test_memory_guard_dask_oversize_kernel_still_rejected_3218():
+    # An oversized kernel must still be rejected on the dask path: the
+    # kernel itself plus one padded chunk blows the per-task budget. The
+    # message reports the chunk, not the raster.
+    data = da.zeros((1000, 1000), chunks=(100, 100), dtype=np.float32)
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    kernel = np.ones((301, 301), dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError, match="padded chunk"):
+            apply(agg, kernel)
+
+
 def test_apply_small_kernel_not_rejected_1284():
     # The guard must not fire for realistic kernel + raster combos.
     raster = xr.DataArray(np.ones((50, 50), dtype=np.float32))
@@ -621,6 +669,26 @@ def test_focal_stats_dask_cupy():
         equal_nan=True, rtol=1e-4)
 
 
+@cuda_and_cupy_available
+def test_focal_stats_cupy_casts_input_once_3231():
+    # Regression for #3231: the cupy stats loop re-ran agg.data.astype()
+    # (a full-raster device copy, even for an unchanged dtype) once per
+    # stat. The input cast is now hoisted above the loop, so
+    # _promote_float runs once for the input plus once per stat for the
+    # output allocation inside _focal_stats_func_cupy, plus one
+    # dtype-only call in the memory guard at the entry point (#3223).
+    import xrspatial.focal as focal_module
+    data = np.arange(48, dtype=np.float64).reshape(6, 8)
+    agg = create_test_raster(data, backend='cupy')
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    stats = ['mean', 'sum', 'min', 'max']
+    with patch.object(focal_module, '_promote_float',
+                      wraps=focal_module._promote_float) as spy:
+        result = focal_stats(agg, kernel, stats_funcs=stats)
+    assert result.shape == (len(stats), 6, 8)
+    assert spy.call_count == len(stats) + 2
+
+
 # --- float64 preservation (issue-2769) ------------------------------------
 # apply() and focal_stats() used to cast every input to float32 internally,
 # silently downcasting float64 rasters. convolve_2d() preserves the input
@@ -807,6 +875,98 @@ def test_apply_keeps_float32(backend):
     result = apply(agg, kernel, func)
 
     assert _compute_dtype(result) == np.float32
+
+
+# --- mean dtype preservation (issue-3214) ----------------------------------
+# mean() used to cast to float64 on numpy/dask+numpy (agg.data.astype(float))
+# and to float32 on cupy/dask+cupy, so the output dtype depended on the
+# backend and float64 rasters lost precision on GPU. It now follows the same
+# _promote_float contract as apply()/focal_stats() (#2769) and convolve_2d()
+# (#1096): float dtypes are preserved, ints promote to float32.
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_mean_preserves_float64_3214(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+    result = mean(agg)
+    assert _compute_dtype(result) == np.float64
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_mean_keeps_float32_3214(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float32).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+    result = mean(agg)
+    assert _compute_dtype(result) == np.float32
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_mean_int_promotes_to_float32_3214(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    data = np.arange(20, dtype=np.int32).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend)
+    result = mean(agg)
+    assert _compute_dtype(result) == np.float32
+
+
+@cuda_and_cupy_available
+def test_mean_large_offset_gpu_matches_numpy_3214():
+    """GPU mean() must not collapse on large-offset float64 rasters (#3214).
+
+    The old cupy path cast float64 input to float32. At an offset of 1e7
+    the float32 resolution (~1) exceeds the spread of the true focal means
+    (~0.4), so the GPU result carried no signal. Computing in float64 keeps
+    the two backends in agreement.
+    """
+    import cupy
+    rng = np.random.default_rng(1)
+    data = (1e7 + rng.random((8, 8))).astype(np.float64)
+
+    numpy_mean = mean(xr.DataArray(data))
+    cupy_mean = mean(xr.DataArray(cupy.asarray(data)))
+
+    np.testing.assert_allclose(
+        numpy_mean.data, cupy_mean.data.get(), rtol=1e-12, equal_nan=True)
+    # the focal-mean variation must survive the round trip
+    spread = numpy_mean.data.max() - numpy_mean.data.min()
+    gpu_spread = cupy_mean.data.get().max() - cupy_mean.data.get().min()
+    assert spread > 0.1
+    assert abs(gpu_spread - spread) < 1e-6
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_mean_excludes_match_in_working_dtype_3214(backend):
+    # excludes are cast to the working dtype before matching, so a float32
+    # raster cell equal to float32(0.1) is excluded even though
+    # float64(0.1) != float32(0.1). The cupy path casts excludes separately
+    # in _mean_cupy, so both backends are checked.
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    data = np.full((4, 4), 5.0, dtype=np.float32)
+    data[1, 1] = np.float32(0.1)
+    agg = create_test_raster(data, backend=backend)
+    result = mean(agg, excludes=[0.1])
+    out = result.data.get() if hasattr(result.data, 'get') else result.data
+    # the excluded cell is passed through unchanged
+    assert out[1, 1] == np.float32(0.1)
 
 
 # --- focal_stats NaN handling (issue-1092) --------------------------------
