@@ -30,7 +30,7 @@ from xrspatial.convolution import (_available_memory_bytes, _promote_float, conv
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
                              _validate_boundary, _validate_raster, _validate_scalar, cuda_args,
-                             ngjit)
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 
 def _validate_binary_kernel(kernel, func_name):
@@ -565,7 +565,7 @@ def _apply_dask_cupy(data, kernel, func, boundary='nan'):
     return out
 
 
-def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
+def apply(agg=None, kernel=None, func=None, name='focal_apply',
           boundary='nan', *, raster=None):
     """
     Returns custom function applied array using a user-created window.
@@ -582,10 +582,17 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
         and any other value raises a ValueError. Apply per-cell weights
         inside ``func`` (see the example below), or use
         ``xrspatial.convolution.convolve_2d`` for a weighted convolution.
-    func : callable, default=xrspatial.focal._calc_mean
+    func : callable, default=None
         Function which takes an input array and returns an array.
-        For cupy and dask+cupy backends the function must be a
-        ``@cuda.jit`` global kernel with signature ``(data, kernel, out)``.
+        If None, a focal mean over the kernel neighbourhood is computed
+        with an implementation that matches the backend of `agg`.
+        For numpy and dask+numpy backends a user-supplied function must
+        be decorated with ``numba.jit`` (xrspatial provides
+        ``xrspatial.utils.ngjit``); for cupy and dask+cupy backends it
+        must be a ``@cuda.jit`` global kernel with signature
+        ``(data, kernel, out)``.
+    name : str, default='focal_apply'
+        Output xr.DataArray.name property.
     boundary : str, default='nan'
         How to handle edges where the kernel extends beyond the raster.
         ``'nan'``     -- fill missing neighbours with NaN (default).
@@ -688,6 +695,17 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
     agg = _resolve_raster_alias(agg, raster, 'apply')
 
     _validate_raster(agg, func_name='apply', name='agg', ndim=(2, 3))
+
+    if func is None:
+        # The default focal mean needs a per-backend implementation: the
+        # CPU paths call func on each masked window, while the GPU paths
+        # launch func as a @cuda.jit kernel. An @ngjit function cannot be
+        # launched on the device, so a single default cannot serve both
+        # (issue #3215).
+        if is_cupy_array(agg.data) or (da is not None and is_dask_cupy(agg)):
+            func = _focal_mean_cuda
+        else:
+            func = _calc_mean
 
     if agg.ndim == 3:
         return _apply_per_band(apply, agg, kernel=kernel, func=func,
