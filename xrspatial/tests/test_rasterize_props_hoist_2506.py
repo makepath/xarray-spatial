@@ -169,7 +169,7 @@ class TestParityAllTouched:
         got = rasterize(geoms, width=24, height=24,
                         bounds=(0, 0, 10, 10),
                         all_touched=True, merge=merge, fill=0.0,
-                        use_cuda=True)
+                        gpu=True)
         np.testing.assert_allclose(
             self._to_numpy(got), self._to_numpy(ref), atol=0, rtol=0,
             err_msg=f"cupy all_touched != numpy for merge={merge!r}",
@@ -190,7 +190,7 @@ class TestParityAllTouched:
         got = rasterize(geoms, width=24, height=24,
                         bounds=(0, 0, 10, 10),
                         all_touched=True, merge=merge, fill=0.0,
-                        use_cuda=True, chunks=8)
+                        gpu=True, chunks=8)
         out = self._to_numpy(got)
         assert out.shape == (24, 24)
         # Some interior pixels must have been burned by at least one

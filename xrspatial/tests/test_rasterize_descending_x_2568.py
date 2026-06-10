@@ -175,10 +175,10 @@ class TestLikeXOrientation2568:
     def test_cupy_descending_x_matches_ascending(self):
         geom = [(box(0, 0, 1, 1), 1.0)]
         r_asc = rasterize(
-            geom, like=_like_2568(x_descending=False), fill=0, use_cuda=True,
+            geom, like=_like_2568(x_descending=False), fill=0, gpu=True,
         )
         r_desc = rasterize(
-            geom, like=_like_2568(x_descending=True), fill=0, use_cuda=True,
+            geom, like=_like_2568(x_descending=True), fill=0, gpu=True,
         )
         asc_vals = r_asc.data.get() if hasattr(r_asc.data, 'get') \
             else r_asc.values
@@ -197,11 +197,11 @@ class TestLikeXOrientation2568:
         geom = [(box(0, 0, 1, 1), 1.0)]
         r_asc = rasterize(
             geom, like=_like_2568(x_descending=False), fill=0,
-            use_cuda=True, chunks=2,
+            gpu=True, chunks=2,
         ).compute()
         r_desc = rasterize(
             geom, like=_like_2568(x_descending=True), fill=0,
-            use_cuda=True, chunks=2,
+            gpu=True, chunks=2,
         ).compute()
         asc_vals = r_asc.data.get() if hasattr(r_asc.data, 'get') \
             else r_asc.values

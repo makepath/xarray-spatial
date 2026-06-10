@@ -44,9 +44,7 @@ import xarray as xr  # noqa: E402
 from xrspatial.geotiff.tests.golden_corpus._oracle import compare_to_oracle  # noqa: E402
 
 FIXTURES_DIR = (
-    pathlib.Path(__file__).resolve().parent
-    / "golden_corpus"
-    / "fixtures"
+    pathlib.Path(__file__).resolve().parent / "fixtures"
 )
 
 
