@@ -16,37 +16,16 @@ import xarray as xr
 
 from xrspatial.utils import _validate_raster
 
-from ._crs_utils import (
-    _detect_band_nodata,
-    _detect_nodata,
-    _detect_source_crs,
-    _resolve_crs,
-)
-from ._grid import (
-    _MAX_OUTPUT_PIXELS,
-    _chunk_bounds,
-    _compute_chunk_layout,
-    _compute_output_grid,
-    _make_output_coords,
-    _validate_grid_params,
-)
-from ._interpolate import (
-    _resample_cupy_native,
-    _resample_numpy,
-    _validate_resampling,
-)
-from ._merge import _merge_arrays_cupy, _merge_arrays_numpy, _validate_strategy
+from ._crs_utils import _detect_band_nodata, _detect_nodata, _detect_source_crs, _resolve_crs
+from ._grid import (_MAX_OUTPUT_PIXELS, _chunk_bounds, _compute_chunk_layout, _compute_output_grid,
+                    _make_output_coords, _validate_grid_params)
+from ._interpolate import _resample_cupy_native, _resample_numpy, _validate_resampling
+from ._itrf import itrf_transform
+from ._itrf import list_frames as itrf_frames
+from ._merge import _merge_arrays_numpy, _validate_strategy
 from ._transform import ApproximateTransform
-
-from ._vertical import (
-    geoid_height,
-    geoid_height_raster,
-    ellipsoidal_to_orthometric,
-    orthometric_to_ellipsoidal,
-    depth_to_ellipsoidal,
-    ellipsoidal_to_depth,
-)
-from ._itrf import itrf_transform, list_frames as itrf_frames
+from ._vertical import (depth_to_ellipsoidal, ellipsoidal_to_depth, ellipsoidal_to_orthometric,
+                        geoid_height, geoid_height_raster, orthometric_to_ellipsoidal)
 
 __all__ = [
     'reproject', 'merge',
@@ -559,8 +538,7 @@ def _reproject_chunk_cupy(
         r_max = int(np.ceil(r_max_val)) + 3
         c_min = int(np.floor(c_min_val)) - 2
         c_max = int(np.ceil(c_max_val)) + 3
-        # Keep coordinates as CuPy arrays for native CUDA resampling
-        _use_native_cuda = True
+        # Coordinates stay as CuPy arrays for native CUDA resampling
     else:
         # CPU fallback (Numba JIT or pyproj)
         from ._crs_utils import _require_pyproj
@@ -599,7 +577,6 @@ def _reproject_chunk_cupy(
         r_max = int(np.ceil(r_max)) + 3
         c_min = int(np.floor(c_min)) - 2
         c_max = int(np.ceil(c_max)) + 3
-        _use_native_cuda = False
 
     if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:
         return cp.full(_empty_shape, nodata, dtype=cp.float64)
@@ -1296,7 +1273,7 @@ def _apply_vertical_shift_numpy(data, y_arr, x_arr,
     matches the input), the behaviour is in-place on a copy of the
     input -- same as before this signature was added.
     """
-    from ._vertical import _load_geoid, _interp_geoid_2d
+    from ._vertical import _interp_geoid_2d, _load_geoid
 
     # Determine if we need inverse projection (output CRS is projected)
     need_inverse = False
