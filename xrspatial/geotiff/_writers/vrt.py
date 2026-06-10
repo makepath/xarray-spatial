@@ -22,7 +22,8 @@ def _build_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
                relative: bool = True,
                crs: int | str | None = None,
                crs_wkt: str | None = _CRS_WKT_DEPRECATED_SENTINEL,
-               nodata: float | int | None = None) -> str:
+               nodata: float | int | None = None,
+               dst_offsets: list[tuple[int, int]] | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
     [internal-only] This helper backs ``to_geotiff``'s ``.vrt`` write
@@ -92,6 +93,14 @@ def _build_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
         Integer sentinels (e.g. ``65535`` for uint16, ``-9999`` for
         int32) are accepted so the surface lines up with the
         ``nodata`` kwarg on ``to_geotiff`` and ``_write_geotiff_gpu``.
+    dst_offsets : list of (int, int) or None, optional
+        [internal-only] Explicit pixel-space placement for
+        non-georeferenced sources, one ``(x_off, y_off)`` pair per
+        source file. Forwarded to ``_vrt.write_vrt``; see its docstring
+        for the contract. ``to_geotiff``'s ``.vrt`` path passes this
+        for non-georeferenced input so the index places each tile by
+        its pixel offset instead of the identity transform every such
+        tile carries (issue #3116).
 
     Returns
     -------
@@ -219,4 +228,5 @@ def _build_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
         relative=relative,
         crs_wkt=resolved_wkt,
         nodata=nodata,
+        dst_offsets=dst_offsets,
     )

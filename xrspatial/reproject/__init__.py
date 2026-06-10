@@ -394,10 +394,21 @@ def _reproject_chunk_numpy(
     else:
         _empty_shape = chunk_shape
 
+    # Empty-chunk fills must match the dtype the data path returns and the
+    # dask template advertises (#3096): integer sources round-trip back to
+    # their dtype, floats stay float64. Without this, a single no-overlap
+    # chunk promoted the whole assembled dask output to float64. The
+    # resolved nodata is guaranteed representable for integer rasters
+    # (#2185/#2572).
+    if np.issubdtype(source_data.dtype, np.integer):
+        _empty_dtype = source_data.dtype
+    else:
+        _empty_dtype = np.float64
+
     if not np.isfinite(r_min) or not np.isfinite(r_max):
-        return np.full(_empty_shape, nodata, dtype=np.float64)
+        return np.full(_empty_shape, nodata, dtype=_empty_dtype)
     if not np.isfinite(c_min) or not np.isfinite(c_max):
-        return np.full(_empty_shape, nodata, dtype=np.float64)
+        return np.full(_empty_shape, nodata, dtype=_empty_dtype)
 
     r_min = int(np.floor(r_min)) - 2
     r_max = int(np.ceil(r_max)) + 3
@@ -406,7 +417,7 @@ def _reproject_chunk_numpy(
 
     # Check overlap
     if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:
-        return np.full(_empty_shape, nodata, dtype=np.float64)
+        return np.full(_empty_shape, nodata, dtype=_empty_dtype)
 
     # Clip to source bounds
     r_min_clip = max(0, r_min)
@@ -419,7 +430,7 @@ def _reproject_chunk_numpy(
     _MAX_WINDOW_PIXELS = 64 * 1024 * 1024  # 64 Mpix (~512 MB for float64)
     win_pixels = (r_max_clip - r_min_clip) * (c_max_clip - c_min_clip)
     if win_pixels > _MAX_WINDOW_PIXELS:
-        return np.full(_empty_shape, nodata, dtype=np.float64)
+        return np.full(_empty_shape, nodata, dtype=_empty_dtype)
 
     # Extract source window
     window = source_data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]
@@ -497,6 +508,13 @@ def _reproject_chunk_cupy(
     else:
         _empty_shape = chunk_shape
 
+    # Empty-chunk fills must match the dtype the data path returns (#3096);
+    # see the matching block in _reproject_chunk_numpy.
+    if np.issubdtype(source_data.dtype, np.integer):
+        _empty_dtype = source_data.dtype
+    else:
+        _empty_dtype = np.float64
+
     # Try CUDA transform first (keeps coordinates on-device).
     # transform_precision == 0 forces the exact pyproj path, so skip CUDA.
     cuda_result = None
@@ -537,7 +555,7 @@ def _reproject_chunk_cupy(
         )
         if not (np.isfinite(r_min_val) and np.isfinite(r_max_val)
                 and np.isfinite(c_min_val) and np.isfinite(c_max_val)):
-            return cp.full(_empty_shape, nodata, dtype=cp.float64)
+            return cp.full(_empty_shape, nodata, dtype=_empty_dtype)
         r_min = int(np.floor(r_min_val)) - 2
         r_max = int(np.ceil(r_max_val)) + 3
         c_min = int(np.floor(c_min_val)) - 2
@@ -574,16 +592,16 @@ def _reproject_chunk_cupy(
         c_min = np.nanmin(src_col_px)
         c_max = np.nanmax(src_col_px)
         if not np.isfinite(r_min) or not np.isfinite(r_max):
-            return cp.full(_empty_shape, nodata, dtype=cp.float64)
+            return cp.full(_empty_shape, nodata, dtype=_empty_dtype)
         if not np.isfinite(c_min) or not np.isfinite(c_max):
-            return cp.full(_empty_shape, nodata, dtype=cp.float64)
+            return cp.full(_empty_shape, nodata, dtype=_empty_dtype)
         r_min = int(np.floor(r_min)) - 2
         r_max = int(np.ceil(r_max)) + 3
         c_min = int(np.floor(c_min)) - 2
         c_max = int(np.ceil(c_max)) + 3
 
     if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:
-        return cp.full(_empty_shape, nodata, dtype=cp.float64)
+        return cp.full(_empty_shape, nodata, dtype=_empty_dtype)
 
     r_min_clip = max(0, r_min)
     r_max_clip = min(src_h, r_max)
@@ -595,7 +613,7 @@ def _reproject_chunk_cupy(
     _MAX_WINDOW_PIXELS = 64 * 1024 * 1024  # 64 Mpix (~512 MB for float64)
     win_pixels = (r_max_clip - r_min_clip) * (c_max_clip - c_min_clip)
     if win_pixels > _MAX_WINDOW_PIXELS:
-        return cp.full(_empty_shape, nodata, dtype=cp.float64)
+        return cp.full(_empty_shape, nodata, dtype=_empty_dtype)
 
     window = source_data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]
     if hasattr(window, 'compute'):
@@ -1970,15 +1988,21 @@ def _reproject_block_adapter(
 
     is_3d = n_bands is not None
 
-    # Skip chunks that don't overlap the source footprint
+    # Skip chunks that don't overlap the source footprint. The fill dtype
+    # must match the template: integer sources advertise their own dtype,
+    # so a float64 fill here would promote the assembled output (#3096).
     if src_footprint_tgt is not None and not _bounds_overlap(cb, src_footprint_tgt):
-        if is_3d:
-            empty_shape = (*chunk_shape, n_bands)
-            if is_cupy:
-                import cupy as cp
-                return cp.full(empty_shape, nodata, dtype=cp.float64)
-            return np.full(empty_shape, nodata, dtype=np.float64)
-        return np.full(chunk_shape, nodata, dtype=np.float64)
+        if np.issubdtype(source_data.dtype, np.integer):
+            empty_dtype = source_data.dtype
+        else:
+            empty_dtype = np.float64
+        empty_shape = (*chunk_shape, n_bands) if is_3d else chunk_shape
+        if is_cupy:
+            # Match the data chunks (and the 3-D branch): dask+cupy
+            # blocks should be cupy arrays even when empty.
+            import cupy as cp
+            return cp.full(empty_shape, nodata, dtype=empty_dtype)
+        return np.full(empty_shape, nodata, dtype=empty_dtype)
 
     chunk_fn = _reproject_chunk_cupy if is_cupy else _reproject_chunk_numpy
     return chunk_fn(
