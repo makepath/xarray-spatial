@@ -3426,3 +3426,118 @@ def test_read_geotiff_gpu_chunked_int_nodata_rejected_by_default(tmp_path):
     path = _build_uint16_tiff('nan', tmp_path)
     with pytest.raises(InvalidIntegerNodataError):
         _read_geotiff_gpu(path, chunks=2)
+
+
+# ----------------------------------------------------------------------
+# 64-bit integer sentinels: mask at native width, not post-promotion
+# (issue #3098)
+# ----------------------------------------------------------------------
+
+
+def _write_i64_near_sentinel_tiff(tmp_path, name):
+    """Int64 raster whose valid values sit within float64-rounding
+    distance of the INT64_MAX sentinel. Only the exact sentinel pixel
+    at (0, 0) may be masked; the post-promotion compare this pins
+    against also masked (0, 1), (0, 2), and (1, 0).
+    """
+    i64max = np.iinfo(np.int64).max
+    data = np.array(
+        [[i64max, i64max - 1, i64max - 100],
+         [i64max - 511, i64max - 512, i64max - 513],
+         [1000, 2000, 3000]],
+        dtype=np.int64,
+    )
+    da = xr.DataArray(
+        data, dims=('y', 'x'),
+        coords={'y': [2.5, 1.5, 0.5], 'x': [0.5, 1.5, 2.5]},
+    )
+    path = str(tmp_path / name)
+    to_geotiff(da, path, nodata=i64max, compression='deflate')
+    return path
+
+
+def test_eager_masked_int64_max_sentinel_exact_hits_only_3098(tmp_path):
+    """Eager masked read masks only the exact INT64_MAX pixel.
+
+    The mask must be computed at int64 width before the float64
+    promotion: values in [INT64_MAX - 512, INT64_MAX] all round to
+    2**63 in float64, so a post-promotion compare turns the three
+    near-sentinel valid pixels into NaN as well.
+    """
+    path = _write_i64_near_sentinel_tiff(tmp_path, 'i64_sentinel_3098.tif')
+    out = open_geotiff(path, masked=True)
+    nan_mask = np.isnan(out.values)
+    assert out.dtype == np.float64
+    assert nan_mask.sum() == 1
+    assert bool(nan_mask[0, 0])
+    assert out.attrs['nodata_pixels_present'] is True
+
+
+def test_eager_masked_int64_matches_dask_3098(tmp_path):
+    """numpy-eager and dask backends agree on the NaN pattern.
+
+    Before the fix the eager path masked 4 pixels and the dask
+    per-chunk path (native-width compare in ``_delayed_read_window``)
+    masked 1, so the same file gave different values per backend.
+    """
+    path = _write_i64_near_sentinel_tiff(tmp_path, 'i64_parity_3098.tif')
+    eager = open_geotiff(path, masked=True)
+    lazy = open_geotiff(path, masked=True, chunks=2)
+    e = np.asarray(eager.values)
+    lz = np.asarray(lazy.values)
+    np.testing.assert_array_equal(np.isnan(e), np.isnan(lz))
+    valid = ~np.isnan(e)
+    np.testing.assert_array_equal(e[valid], lz[valid])
+
+
+def test_eager_masked_uint64_max_sentinel_exact_hits_only_3098(tmp_path):
+    """uint64 variant: float64(UINT64_MAX) swallows the top 1024 values."""
+    u64max = np.iinfo(np.uint64).max
+    data = np.array(
+        [[u64max, u64max - 1], [u64max - 1023, 7]], dtype=np.uint64,
+    )
+    da = xr.DataArray(
+        data, dims=('y', 'x'),
+        coords={'y': [1.5, 0.5], 'x': [0.5, 1.5]},
+    )
+    path = str(tmp_path / 'u64_sentinel_3098.tif')
+    to_geotiff(da, path, nodata=int(u64max), compression='deflate')
+    out = open_geotiff(path, masked=True)
+    nan_mask = np.isnan(out.values)
+    assert nan_mask.sum() == 1
+    assert bool(nan_mask[0, 0])
+
+
+def test_eager_masked_int64_near_sentinel_without_hit_3098(tmp_path):
+    """A near-sentinel valid pixel with no exact sentinel in the file.
+
+    Nothing is masked, ``nodata_pixels_present`` is False (the
+    native-width scan a few lines below the mask already said so; the
+    mask and the scan must agree), and the buffer is still promoted to
+    float64 per the unconditional-promotion contract (issue #2990).
+    """
+    i64max = np.iinfo(np.int64).max
+    data = np.array([[i64max - 1, 5], [6, 7]], dtype=np.int64)
+    da = xr.DataArray(
+        data, dims=('y', 'x'),
+        coords={'y': [1.5, 0.5], 'x': [0.5, 1.5]},
+    )
+    path = str(tmp_path / 'i64_no_hit_3098.tif')
+    to_geotiff(da, path, nodata=i64max, compression='deflate')
+    out = open_geotiff(path, masked=True)
+    assert out.dtype == np.float64
+    assert np.isnan(out.values).sum() == 0
+    assert out.attrs['nodata_pixels_present'] is False
+
+
+@_gpu_only
+def test_gpu_eager_masked_int64_max_sentinel_exact_hits_only_3098(tmp_path):
+    """cupy-eager read shares ``_apply_eager_nodata_mask`` via duck
+    typing, so it must also mask only the exact sentinel pixel.
+    """
+    path = _write_i64_near_sentinel_tiff(tmp_path, 'i64_gpu_3098.tif')
+    out = open_geotiff(path, masked=True, gpu=True)
+    host = out.data.get()
+    nan_mask = np.isnan(host)
+    assert nan_mask.sum() == 1
+    assert bool(nan_mask[0, 0])
