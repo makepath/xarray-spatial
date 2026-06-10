@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.gpu_rtx import has_rtx
 from xrspatial.visibility import _bresenham_line, _extract_transect
 
 
@@ -189,6 +190,29 @@ class TestCumulativeViewshed:
         vs = viewshed(raster, x=7.0, y=7.0, observer_elev=50)
         expected = (vs.values != INVISIBLE).astype(np.int32)
         np.testing.assert_array_equal(result.values, expected)
+
+    @pytest.mark.skipif(not has_rtx(),
+                        reason="requires rtxpy for the GPU viewshed path")
+    def test_cupy_does_not_raise(self):
+        """cupy-backed input must accumulate without a numpy/cupy type error.
+
+        The GPU viewshed uses RTX ray tracing while the numpy backend uses
+        the GRASS sweep, so per-cell counts can differ (see viewshed's
+        docstring). This only asserts the accumulator runs and returns valid
+        counts; it does not require cell-for-cell parity with numpy.
+        """
+        import cupy as cp
+        data = np.random.RandomState(3).rand(15, 15).astype(float) * 100
+        raster_cp = _make_raster(data)
+        raster_cp.data = cp.asarray(data)
+        observers = [
+            {'x': 3.0, 'y': 3.0, 'observer_elev': 50},
+            {'x': 12.0, 'y': 12.0, 'observer_elev': 50},
+        ]
+        result = cumulative_viewshed(raster_cp, observers)
+        assert result.dtype == np.int32
+        assert result.values.min() >= 0
+        assert result.values.max() <= len(observers)
 
     def test_wall_blocks_one_side(self):
         """A tall wall blocks visibility from the other side."""

@@ -282,6 +282,12 @@ def cumulative_viewshed(
                       target_elev=te, max_distance=md)
 
         vs_data = vs.data
+        # viewshed() returns a cupy-backed result for a cupy-backed raster.
+        # The numpy `count` accumulator can't be added to a cupy array, so
+        # pull it to numpy first (matching how _extract_transect handles
+        # cupy data).
+        if has_cuda_and_cupy() and is_cupy_array(vs_data):
+            vs_data = vs_data.get()
         if _is_dask and not isinstance(vs_data, da.Array):
             vs_data = da.from_array(vs_data, chunks=raster.data.chunks)
         count = count + (vs_data != INVISIBLE).astype(np.int32)
