@@ -99,14 +99,22 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     ``nodata`` is still only stable when combined with a ``[stable]``
     codec and options).
 
-    Dask-backed DataArrays are written in streaming mode: one tile-row
-    at a time, without materialising the full array into RAM. The
-    per-compute budget is sized from the source chunk geometry, so a
-    ``map_overlap`` source (e.g. ``slope`` / ``aspect``) chunked taller
-    than the tile stays within ``streaming_buffer_bytes`` instead of
-    pulling several source chunk-rows at once (#3007). COG output
-    (``cog=True``) still materialises because overviews need the full
-    array.
+    Dask-backed DataArrays on the CPU path are written in streaming
+    mode: one tile-row at a time, without materialising the full array
+    into RAM. The per-compute budget is sized from the source chunk
+    geometry, so a ``map_overlap`` source (e.g. ``slope`` / ``aspect``)
+    chunked taller than the tile stays within
+    ``streaming_buffer_bytes`` instead of pulling several source
+    chunk-rows at once (#3007). COG output (``cog=True``) still
+    materialises because overviews need the full array.
+
+    Streaming does NOT apply to the GPU writer. CuPy-backed dask input
+    (dask+cupy) auto-dispatches to the GPU writer, which materialises
+    the entire array on device before encoding;
+    ``streaming_buffer_bytes`` is ignored there and a
+    ``GeoTIFFFallbackWarning`` is emitted when the materialisation
+    happens (issue #3166). The same applies when ``gpu=True`` is passed
+    with any dask-backed input.
 
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
@@ -175,6 +183,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         default (6 for deflate/zstd). Valid ranges: deflate 1-9,
         zstd 1-22, lz4 0-16. Codecs without a level concept (lzw,
         packbits, jpeg) accept any value and ignore it.
+
+        Out-of-range levels raise ``ValueError`` on every backend,
+        including GPU dispatch. On the GPU path the nvCOMP encoder
+        (deflate/zstd tiles) does not expose level control: an
+        explicit level is validated but then ignored, and a
+        ``UserWarning`` is emitted. Tiles the GPU writer compresses
+        through the CPU codecs honor the level. Pass ``gpu=False``
+        if the exact level matters.
     tiled : bool
         [stable] Use tiled layout (default True). Incompatible with
         ``cog=True`` because the COG specification requires a tiled
@@ -235,15 +251,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         nvCOMP / nvJPEG / nvJPEG2K libraries for codec-specific
         acceleration; backend parity with the CPU writer is tested for
         the Tier 1 codec set only. Force GPU compression. None
-        (default) auto-detects CuPy data.
+        (default) auto-detects CuPy data, including CuPy-backed dask
+        arrays. Dask-backed input routed to the GPU writer is
+        materialised in full on device (no streaming; see
+        ``streaming_buffer_bytes``).
     streaming_buffer_bytes : int
         [stable] Soft cap on bytes materialised per dask compute call
         when streaming a dask-backed DataArray. Defaults to 256 MB.
         Wide rasters whose tile-row exceeds this budget are split into
-        horizontal segments. Only relevant for dask-backed inputs; the
-        kwarg is a no-op for numpy / CuPy / COG paths (the COG path
-        materialises the full array because the overview pyramid
-        needs it).
+        horizontal segments. Only applies to dask-backed inputs on the
+        CPU write path; the kwarg is a no-op for numpy / CuPy / COG
+        paths (the COG path materialises the full array because the
+        overview pyramid needs it) and for the GPU writer. dask+cupy
+        input auto-dispatches to the GPU writer, so it materialises in
+        full on device instead of streaming and emits a
+        ``GeoTIFFFallbackWarning`` (issue #3166).
     max_z_error : float
         [experimental] Per-pixel error budget for LERC compression.
         ``0.0`` (default) is lossless; larger values let the encoder
@@ -340,18 +362,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         accepts the loss and lets the write proceed; consumers reading
         the output will see an axis-aligned, non-rotated TIFF.
     pack : bool, default False
-        [advanced] Inverse of ``open_geotiff(mask_and_scale=True)``. Re-pack
+        [advanced] Inverse of ``open_geotiff(unpack=True)``. Re-pack
         a decoded float array before writing: reverse the scale / offset
         recorded on ``attrs['scale_factor']`` / ``attrs['add_offset']``,
         fill NaN back to the nodata sentinel, and cast to the integer source
-        dtype recorded on ``attrs['mask_and_scale_dtype']`` (contract v5).
-        The output stores the raw packed integers and keeps the
-        SCALE / OFFSET GDAL_METADATA, so reopening it with
-        ``mask_and_scale=True`` unpacks to the original values instead of
-        scaling a second time. Raises ``ValueError`` for a bare array (no
-        attrs) or one that never went through a ``mask_and_scale`` read. The
-        dtype falls back to the ``attrs['nodata']`` width for arrays read
-        before contract v5.
+        dtype recorded on ``attrs['mask_and_scale_dtype']`` (contract v5;
+        the attr keeps its historical name). The output stores the raw
+        packed integers and keeps the SCALE / OFFSET GDAL_METADATA, so
+        reopening it with ``unpack=True`` unpacks to the original values
+        instead of scaling a second time. Raises ``ValueError`` for a bare
+        array (no attrs) or one that never went through an ``unpack``
+        read. The dtype falls back to the ``attrs['nodata']`` width for
+        arrays read before contract v5. An explicit ``nodata=`` kwarg
+        overrides the attrs sentinel as the NaN fill value, so the filled
+        pixels always agree with the GDAL_NODATA tag the writer emits.
 
     Returns
     -------
@@ -389,19 +413,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     path = _coerce_path(path)
 
-    # ``pack``: inverse of ``open_geotiff(mask_and_scale=True)``. Reverse
-    # the scale / offset, restore the recorded integer source dtype, and fill
-    # NaN back to the nodata sentinel. The SCALE / OFFSET tags are kept (see
-    # ``_pack``) so the re-packed file unpacks cleanly on the next
-    # ``mask_and_scale`` read. Run before any dispatch (GPU / VRT / streaming
-    # / eager) so every write path sees the re-packed array.
-    if pack:
-        if not isinstance(data, xr.DataArray):
-            raise ValueError(
-                "pack=True requires a DataArray carrying mask_and_scale "
-                "attrs; got a bare array with no metadata to reverse.")
-        data = _pack(data)
-
     # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
     # ``int`` in Python, so a typo like ``nodata=True`` slips past every
     # downstream ``isinstance(nodata, (int, float))`` guard. The geotag
@@ -433,6 +444,24 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         _validate_tile_size_arg(tile_size)
 
     _validate_nodata_arg(nodata)
+
+    # ``pack``: inverse of ``open_geotiff(unpack=True)``. Reverse
+    # the scale / offset, restore the recorded integer source dtype, and fill
+    # NaN back to the nodata sentinel. The SCALE / OFFSET tags are kept (see
+    # ``_pack``) so the re-packed file unpacks cleanly on the next
+    # ``unpack`` read. Run before any dispatch (GPU / VRT / streaming
+    # / eager) so every write path sees the re-packed array, and after the
+    # nodata kwarg validation above so the kwarg can be threaded into the
+    # fill step: ``nodata=`` overrides the attrs sentinel as the fill value,
+    # keeping the filled pixels and the GDAL_NODATA tag on the same
+    # precedence (#3168).
+    if pack:
+        if not isinstance(data, xr.DataArray):
+            raise ValueError(
+                "pack=True requires a DataArray carrying the attrs from an "
+                "open_geotiff(unpack=True) read; got a bare array with no "
+                "metadata to reverse.")
+        data = _pack(data, nodata=nodata)
 
     # Refuse to silently drop the rotated 6-tuple that the reader
     # surfaces on ``attrs['rotated_affine']`` when called with
@@ -603,6 +632,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             or compression.lower() != 'lerc'):
         raise ValueError(
             "max_z_error is only valid with compression='lerc'")
+
+    # Validate compression_level against the codec-specific range before
+    # any backend dispatch (GPU, VRT, streaming, eager) so every path
+    # rejects out-of-range levels identically. This used to run only on
+    # the CPU branches, below the GPU dispatch, so
+    # ``to_geotiff(cupy_da, ..., compression_level=999)`` succeeded while
+    # the numpy call raised (#3167).
+    if compression_level is not None:
+        level_range = _LEVEL_RANGES.get(compression.lower())
+        if level_range is not None:
+            lo, hi = level_range
+            if not (lo <= compression_level <= hi):
+                raise ValueError(
+                    f"compression_level={compression_level} out of range "
+                    f"for {compression} (valid: {lo}-{hi})")
 
     # File-like (BytesIO etc.) destinations: the streaming, GPU, COG, and
     # VRT writers all need a real filesystem path (atomic rename, overview
@@ -930,15 +974,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             if dask_arr.ndim not in (2, 3):
                 raise ValueError(
                     f"Expected 2D or 3D array, got {dask_arr.ndim}D")
-            # Validate compression_level
-            if compression_level is not None:
-                level_range = _LEVEL_RANGES.get(compression.lower())
-                if level_range is not None:
-                    lo, hi = level_range
-                    if not (lo <= compression_level <= hi):
-                        raise ValueError(
-                            f"compression_level={compression_level} out of "
-                            f"range for {compression} (valid: {lo}-{hi})")
+            # compression_level was validated up front, before backend
+            # dispatch (#3167).
             from .._writer import write_streaming
 
             # Refuse to write an unvalidatable CRS string into
@@ -1034,15 +1071,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             arr = arr.copy()
             arr[nan_mask] = arr.dtype.type(nodata)
 
-    # Validate compression_level against codec-specific range
-    if compression_level is not None:
-        level_range = _LEVEL_RANGES.get(compression.lower())
-        if level_range is not None:
-            lo, hi = level_range
-            if not (lo <= compression_level <= hi):
-                raise ValueError(
-                    f"compression_level={compression_level} out of range "
-                    f"for {compression} (valid: {lo}-{hi})")
+    # compression_level was validated up front, before backend dispatch
+    # (#3167).
 
     # Refuse to write an unvalidatable CRS string into GTCitationGeoKey
     # unless the caller opts in.
@@ -1375,7 +1405,12 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         # Tiles are written into ``staging_dir``; ``tile_names`` records the
         # bare filenames so the final tile paths (under ``tiles_dir``) can be
         # rebuilt for the VRT index after the atomic rename below.
+        # ``tile_offsets`` records each tile's (x_off, y_off) pixel
+        # placement in lockstep: non-georeferenced tiles carry no
+        # transform, so the VRT index needs the placement passed
+        # explicitly or every tile lands at the origin (issue #3116).
         tile_names = []
+        tile_offsets = []
         delayed_tasks = []
 
         def _safe_write_tile(*args, **kwargs):
@@ -1406,6 +1441,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 tile_name = f'tile_{ri:0{pad_width}d}_{ci:0{pad_width}d}.tif'
                 tile_path = os.path.join(staging_dir, tile_name)
                 tile_names.append(tile_name)
+                tile_offsets.append((col_offset, row_offset))
 
                 # Compute per-tile geo_transform
                 tile_gt = None
@@ -1513,7 +1549,13 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # and validated above; passing it again is idempotent.
     from .vrt import _build_vrt
     try:
-        _build_vrt(vrt_path, tile_paths, relative=True, nodata=nodata)
+        # ``dst_offsets`` carries the tile placement only for
+        # non-georeferenced input: georeferenced tiles place via their
+        # per-tile GeoTransform (computed above), and write_vrt rejects
+        # the kwarg alongside georeferenced sources (issue #3116).
+        _build_vrt(vrt_path, tile_paths, relative=True, nodata=nodata,
+                   dst_offsets=(
+                       tile_offsets if geo_transform is None else None))
     except BaseException:
         # The index step failed after the rename. Remove the now-renamed
         # tile dir too so a retry is not blocked by the leftover-state

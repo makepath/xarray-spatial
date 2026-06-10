@@ -59,10 +59,10 @@ def _as_numpy(arr):
     return np.asarray(data)
 
 
-def _run(geom_list, merge, use_cuda, all_touched=False):
+def _run(geom_list, merge, gpu, all_touched=False):
     return rasterize(
         geom_list, width=WIDTH, height=HEIGHT, bounds=BOUNDS,
-        merge=merge, use_cuda=use_cuda, fill=np.nan,
+        merge=merge, gpu=gpu, fill=np.nan,
         all_touched=all_touched,
     )
 
@@ -117,8 +117,8 @@ SCENARIOS = {
 @pytest.mark.parametrize('merge', MERGES)
 def test_cupy_matches_numpy_on_overlap(scenario, merge):
     geoms = SCENARIOS[scenario]()
-    expected = _as_numpy(_run(geoms, merge, use_cuda=False))
-    actual = _as_numpy(_run(geoms, merge, use_cuda=True))
+    expected = _as_numpy(_run(geoms, merge, gpu=False))
+    actual = _as_numpy(_run(geoms, merge, gpu=True))
 
     # Pixels touched by no geometry should be ``fill`` (NaN here) on
     # both backends.  np.testing.assert_array_equal treats NaN==NaN
@@ -142,11 +142,11 @@ def test_cupy_matches_numpy_on_overlap(scenario, merge):
 @pytest.mark.parametrize('merge', MERGES)
 def test_cupy_is_deterministic_across_runs(scenario, merge):
     geoms = SCENARIOS[scenario]()
-    first = _as_numpy(_run(geoms, merge, use_cuda=True))
+    first = _as_numpy(_run(geoms, merge, gpu=True))
     # Six repeats is enough to surface a thread-interleaving race
     # without making the test slow.
     for _ in range(5):
-        again = _as_numpy(_run(geoms, merge, use_cuda=True))
+        again = _as_numpy(_run(geoms, merge, gpu=True))
         np.testing.assert_allclose(
             again, first, rtol=0, atol=0, equal_nan=True,
             err_msg=(
@@ -166,7 +166,7 @@ def test_cupy_is_deterministic_across_runs(scenario, merge):
 def test_sum_of_coincident_points_equals_total():
     geoms = _coincident_points()
     # The first three points all land in the same pixel; sum should be 7.
-    result = _as_numpy(_run(geoms, 'sum', use_cuda=True))
+    result = _as_numpy(_run(geoms, 'sum', gpu=True))
     # Find the pixel with the largest accumulated value.
     finite = result[np.isfinite(result)]
     assert finite.size > 0
@@ -178,7 +178,7 @@ def test_sum_of_coincident_points_equals_total():
 
 def test_count_of_coincident_points_equals_three():
     geoms = _coincident_points()
-    result = _as_numpy(_run(geoms, 'count', use_cuda=True))
+    result = _as_numpy(_run(geoms, 'count', gpu=True))
     finite = result[np.isfinite(result)]
     assert 3.0 in finite, (
         f"expected the three-point pixel to count 3; got {finite}"
@@ -203,8 +203,8 @@ def _shared_boundary_polygons():
 @pytest.mark.parametrize('merge', MERGES)
 def test_cupy_matches_numpy_all_touched_shared_boundary(merge):
     geoms = _shared_boundary_polygons()
-    expected = _as_numpy(_run(geoms, merge, use_cuda=False, all_touched=True))
-    actual = _as_numpy(_run(geoms, merge, use_cuda=True, all_touched=True))
+    expected = _as_numpy(_run(geoms, merge, gpu=False, all_touched=True))
+    actual = _as_numpy(_run(geoms, merge, gpu=True, all_touched=True))
     np.testing.assert_allclose(
         actual, expected, rtol=0, atol=0, equal_nan=True,
         err_msg=(
@@ -218,9 +218,9 @@ def test_cupy_matches_numpy_all_touched_shared_boundary(merge):
 @pytest.mark.parametrize('merge', MERGES)
 def test_cupy_deterministic_all_touched_shared_boundary(merge):
     geoms = _shared_boundary_polygons()
-    first = _as_numpy(_run(geoms, merge, use_cuda=True, all_touched=True))
+    first = _as_numpy(_run(geoms, merge, gpu=True, all_touched=True))
     for _ in range(5):
-        again = _as_numpy(_run(geoms, merge, use_cuda=True, all_touched=True))
+        again = _as_numpy(_run(geoms, merge, gpu=True, all_touched=True))
         np.testing.assert_allclose(
             again, first, rtol=0, atol=0, equal_nan=True,
             err_msg=(
