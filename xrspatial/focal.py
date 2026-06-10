@@ -209,7 +209,7 @@ def _mean_dask_numpy(data, excludes, boundary='nan'):
 
 
 def _mean_dask_cupy(data, excludes, boundary='nan'):
-    data = data.astype(cupy.float32)
+    data = data.astype(_promote_float(data.dtype))
     _func = partial(_mean_cupy, excludes=excludes)
     out = data.map_overlap(_func,
                            depth=(1, 1),
@@ -275,9 +275,10 @@ def _mean_gpu(data, excludes, out):
 
 
 def _mean_cupy(data, excludes):
-    # ensure cupy arrays and a float dtype
-    data_cu = cupy.asarray(data, dtype=cupy.float32)
-    excludes_cu = cupy.asarray(excludes, dtype=cupy.float32)
+    # ensure cupy arrays and a float dtype; preserve float64 (issue #3214)
+    fdtype = _promote_float(data.dtype)
+    data_cu = cupy.asarray(data, dtype=fdtype)
+    excludes_cu = cupy.asarray(excludes, dtype=fdtype)
 
     griddim, blockdim = cuda_args(data_cu.shape)
 
@@ -349,6 +350,9 @@ def mean(agg, passes=1, excludes=None, name='mean', boundary='nan'):
         If `agg` is a Dataset, returns a Dataset with mean computed
         for each data variable.
         2D aggregate array of filtered values.
+        The input float dtype is preserved (float64 in, float64 out);
+        integer inputs are promoted to float32, matching ``apply`` and
+        ``focal_stats``.
 
     Examples
     --------
@@ -431,9 +435,15 @@ def mean(agg, passes=1, excludes=None, name='mean', boundary='nan'):
         return _apply_per_band(mean, agg, passes=passes, excludes=excludes,
                                name=name, boundary=boundary)
 
-    out = agg.data.astype(float)
+    # Preserve the input float dtype, promoting ints to float32 -- the same
+    # contract as apply() / focal_stats() (#2769) and convolve_2d() (#1096).
+    # Cast excludes to the working dtype so value matching behaves the same
+    # on every backend (issue #3214).
+    fdtype = _promote_float(agg.data.dtype)
+    out = agg.data.astype(fdtype)
+    excludes = np.asarray(excludes, dtype=fdtype)
     for i in range(passes):
-        out = _mean(out, tuple(excludes), boundary)
+        out = _mean(out, excludes, boundary)
 
     return DataArray(out,
                      name=name,
