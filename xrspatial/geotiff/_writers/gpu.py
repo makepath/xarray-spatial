@@ -342,6 +342,20 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 "GDAL versions is uneven. Pass allow_experimental_codecs=True "
                 "to opt in, or use 'deflate', 'zstd', or 'lzw' for a "
                 "stable lossless codec (issue #2137).")
+        # Mirror to_geotiff's compression_level range gate so direct
+        # callers of _write_geotiff_gpu get the same rejection the
+        # dispatcher applies upstream (#3167). Runs before the
+        # experimental-codec opt-in warning below so a rejected call
+        # raises without warning first, matching to_geotiff's order.
+        if compression_level is not None:
+            _level_range = _LEVEL_RANGES.get(_gpu_codec)
+            if _level_range is not None:
+                _lo, _hi = _level_range
+                if not (_lo <= compression_level <= _hi):
+                    raise ValueError(
+                        f"compression_level={compression_level} out of "
+                        f"range for {compression} "
+                        f"(valid: {_lo}-{_hi})")
         if (_gpu_codec in _EXPERIMENTAL_CODECS
                 and allow_experimental_codecs):
             warnings.warn(
@@ -352,18 +366,6 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 GeoTIFFFallbackWarning,
                 stacklevel=2,
             )
-        # Mirror to_geotiff's compression_level range gate so direct
-        # callers of _write_geotiff_gpu get the same rejection the
-        # dispatcher applies upstream (#3167).
-        if compression_level is not None:
-            _level_range = _LEVEL_RANGES.get(_gpu_codec)
-            if _level_range is not None:
-                _lo, _hi = _level_range
-                if not (_lo <= compression_level <= _hi):
-                    raise ValueError(
-                        f"compression_level={compression_level} out of "
-                        f"range for {compression} "
-                        f"(valid: {_lo}-{_hi})")
     # MinIsWhite pre-inversion runs in the eager CPU writer.
     # The GPU writer assembles tile bytes directly on device; threading
     # the pixel + nodata-sentinel transform through that pipeline is out

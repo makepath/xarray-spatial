@@ -1994,14 +1994,17 @@ def test_gpu_compress_tiles_nvcomp_level_ignored_warns_3167(monkeypatch):
         )
     assert tiles == fake_tiles
 
-    # Default level (None): nvCOMP path stays silent.
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    # Default level (None): nvCOMP path stays silent. Record instead
+    # of simplefilter('error') so an unrelated warning (e.g. a cupy
+    # deprecation) cannot fail the test.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         tiles = gpu_compress_tiles(
             d_arr, 32, 32, 32, 32, 8, 1, np.dtype(np.float32),
             samples=1, compression_level=None,
         )
     assert tiles == fake_tiles
+    assert not [w for w in caught if 'nvCOMP' in str(w.message)]
 
 
 # ===========================================================================
