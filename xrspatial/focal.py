@@ -1661,9 +1661,13 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
     ----------
     agg : xarray.DataArray
         2D Input raster image with `agg.shape` = (height, width).
-        Can be a NumPy backed, CuPy backed, or Dask with NumPy backed DataArray
+        Can be a NumPy backed, CuPy backed, Dask with NumPy backed, or
+        Dask with CuPy backed DataArray.
     kernel : Numpy Array
-        2D array where values of 1 indicate the kernel.
+        2D array of kernel weights ``w_ij``. A kernel of 0s and 1s acts
+        as a plain membership mask; unlike ``apply`` and ``focal_stats``,
+        non-binary weights are allowed and feed directly into the Gi*
+        statistic. Must not sum to zero.
     name : str, default='hotspots'
         Output xr.DataArray.name property.
     boundary : str, default='nan'
