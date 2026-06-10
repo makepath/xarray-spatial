@@ -2188,9 +2188,8 @@ def _regions_numpy(data, neighborhood):
         # region. Index 0 stays 0 and is masked out by `labeled > 0`.
         remap = np.zeros(n_features + 1, dtype=np.float64)
         remap[1:] = np.arange(uid, uid + n_features)
-        painted = remap[labeled]
         sel = labeled > 0
-        out[sel] = painted[sel]
+        out[sel] = remap[labeled[sel]]
         uid += n_features
 
     return out
@@ -2285,9 +2284,8 @@ def _regions_cupy(data, neighborhood):
         # region. Index 0 stays 0 and is masked out by `labeled > 0`.
         remap = cp.zeros(n_features + 1, dtype=cp.float64)
         remap[1:] = cp.arange(uid, uid + n_features)
-        painted = remap[labeled]
         sel = labeled > 0
-        out[sel] = painted[sel]
+        out[sel] = remap[labeled[sel]]
         uid += n_features
 
     return out
