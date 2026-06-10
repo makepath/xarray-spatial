@@ -373,6 +373,200 @@ class TestClipPolygonGeoDataFrame:
 # Issue #1207 regression tests
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Issue #3197 coverage: NaN / Inf / integer-dtype edge cases (numpy)
+# ---------------------------------------------------------------------------
+
+class TestClipPolygonEdgeInputs:
+    def test_inf_input_preserved(self):
+        """+Inf / -Inf inside the polygon survive the clip (#3197)."""
+        data = np.arange(48, dtype=np.float64).reshape(8, 6)
+        data[2, 2] = np.inf
+        data[3, 3] = -np.inf
+        raster = create_test_raster(data)
+        result = clip_polygon(raster, box(0, 0, 2.5, 3.5), crop=False)
+        assert np.isposinf(result.values[2, 2])
+        assert np.isneginf(result.values[3, 3])
+
+    def test_all_nan_input(self):
+        """All-NaN input clips to all-NaN without error (#3197)."""
+        data = np.full((8, 6), np.nan)
+        raster = create_test_raster(data)
+        result = clip_polygon(raster, _inner_polygon(), crop=False)
+        assert np.all(np.isnan(result.values))
+
+    def test_integer_dtype_sentinel_nodata(self):
+        """Integer raster with a sentinel nodata value (#3197).
+
+        Outside-polygon cells take the sentinel; inside cells keep their
+        original integer values.
+        """
+        data = np.arange(48, dtype=np.int32).reshape(8, 6)
+        raster = create_test_raster(data)
+        result = clip_polygon(raster, _inner_polygon(), nodata=-1, crop=False)
+        # Output keeps the input integer dtype (docstring contract).
+        assert result.dtype == np.int32
+        # Sentinel appears in the masked region.
+        assert np.any(result.values == -1)
+        # Interior cells keep their original values (no sentinel collision:
+        # original data is in [0, 47], sentinel is -1).
+        kept = result.values[result.values != -1]
+        assert kept.size > 0
+        assert np.all(np.isin(kept, data))
+
+
+# ---------------------------------------------------------------------------
+# Issue #3197 coverage: degenerate strip rasters (numpy)
+# ---------------------------------------------------------------------------
+
+class TestClipPolygonStripRasters:
+    def test_single_column_strip(self):
+        """Nx1 single-column raster (#3197)."""
+        data = np.arange(8, dtype=np.float64).reshape(8, 1)
+        raster = create_test_raster(data)
+        # Box spans the full x extent and the middle of the y extent.
+        poly = box(-1.0, 0.5, 1.0, 3.0)
+        result = clip_polygon(raster, poly, crop=False)
+        assert result.shape == (8, 1)
+        assert np.any(np.isfinite(result.values))
+        assert np.any(np.isnan(result.values))
+
+    def test_single_row_strip(self):
+        """1xN single-row raster (#3197)."""
+        data = np.arange(6, dtype=np.float64).reshape(1, 6)
+        raster = create_test_raster(data)
+        poly = box(0.5, -1.0, 2.0, 1.0)
+        result = clip_polygon(raster, poly, crop=False)
+        assert result.shape == (1, 6)
+        assert np.any(np.isfinite(result.values))
+        assert np.any(np.isnan(result.values))
+
+
+# ---------------------------------------------------------------------------
+# Issue #3197 coverage: coordinate / metadata preservation (numpy)
+# ---------------------------------------------------------------------------
+
+class TestClipPolygonCoords:
+    def test_coords_preserved_no_crop(self):
+        """crop=False keeps the input coordinates unchanged (#3197)."""
+        raster = _make_raster()
+        result = clip_polygon(raster, _inner_polygon(), crop=False)
+        np.testing.assert_array_equal(
+            result.coords['y'].values, raster.coords['y'].values
+        )
+        np.testing.assert_array_equal(
+            result.coords['x'].values, raster.coords['x'].values
+        )
+
+    def test_crop_coords_are_contiguous_subset(self):
+        """crop=True coords are a contiguous slice of the input coords (#3197)."""
+        raster = _make_raster()
+        result = clip_polygon(raster, _inner_polygon(), crop=True)
+
+        in_y = raster.coords['y'].values
+        in_x = raster.coords['x'].values
+        out_y = result.coords['y'].values
+        out_x = result.coords['x'].values
+
+        # Every output coordinate is one of the input coordinates.
+        assert np.all(np.isin(out_y, in_y))
+        assert np.all(np.isin(out_x, in_x))
+
+        # The output coords are a contiguous run of the input coords.
+        y0 = int(np.where(in_y == out_y[0])[0][0])
+        x0 = int(np.where(in_x == out_x[0])[0][0])
+        np.testing.assert_array_equal(in_y[y0:y0 + len(out_y)], out_y)
+        np.testing.assert_array_equal(in_x[x0:x0 + len(out_x)], out_x)
+
+
+# ---------------------------------------------------------------------------
+# Issue #3197 coverage: GPU backend parameter / NaN coverage
+# ---------------------------------------------------------------------------
+
+@cuda_and_cupy_available
+class TestClipPolygonCuPyCoverage:
+    def test_custom_nodata_matches_numpy(self):
+        """CuPy custom nodata matches numpy (#3197)."""
+        poly = _inner_polygon()
+        np_result = clip_polygon(_make_raster(backend='numpy'), poly,
+                                 nodata=-9999.0, crop=False)
+        cp_result = clip_polygon(_make_raster(backend='cupy'), poly,
+                                 nodata=-9999.0, crop=False)
+        np.testing.assert_allclose(
+            cp_result.data.get(), np_result.values, equal_nan=True
+        )
+
+    def test_all_touched_matches_numpy(self):
+        """CuPy all_touched=True matches numpy (#3197)."""
+        poly = _inner_polygon()
+        np_result = clip_polygon(_make_raster(backend='numpy'), poly,
+                                 all_touched=True, crop=False)
+        cp_result = clip_polygon(_make_raster(backend='cupy'), poly,
+                                 all_touched=True, crop=False)
+        np.testing.assert_allclose(
+            cp_result.data.get(), np_result.values, equal_nan=True
+        )
+
+    def test_nan_input_preserved_matches_numpy(self):
+        """CuPy preserves input NaN like numpy (#3197)."""
+        data = np.arange(48, dtype=np.float64).reshape(8, 6)
+        data[3, 3] = np.nan
+        poly = box(0, 0, 2.5, 3.5)
+        np_result = clip_polygon(create_test_raster(data, backend='numpy'),
+                                 poly, crop=False)
+        cp_result = clip_polygon(create_test_raster(data, backend='cupy'),
+                                 poly, crop=False)
+        np.testing.assert_allclose(
+            cp_result.data.get(), np_result.values, equal_nan=True
+        )
+        assert np.isnan(cp_result.data.get()[3, 3])
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestClipPolygonDaskCuPyCoverage:
+    def test_custom_nodata_matches_numpy(self):
+        """Dask+CuPy custom nodata matches numpy (#3197)."""
+        poly = _inner_polygon()
+        np_result = clip_polygon(_make_raster(backend='numpy'), poly,
+                                 nodata=-9999.0, crop=False)
+        dkcp_result = clip_polygon(
+            _make_raster(backend='dask+cupy', chunks=(4, 3)), poly,
+            nodata=-9999.0, crop=False)
+        np.testing.assert_allclose(
+            dkcp_result.data.compute().get(), np_result.values,
+            equal_nan=True
+        )
+
+    def test_all_touched_matches_numpy(self):
+        """Dask+CuPy all_touched=True matches numpy (#3197)."""
+        poly = _inner_polygon()
+        np_result = clip_polygon(_make_raster(backend='numpy'), poly,
+                                 all_touched=True, crop=False)
+        dkcp_result = clip_polygon(
+            _make_raster(backend='dask+cupy', chunks=(4, 3)), poly,
+            all_touched=True, crop=False)
+        np.testing.assert_allclose(
+            dkcp_result.data.compute().get(), np_result.values,
+            equal_nan=True
+        )
+
+    def test_nan_input_preserved_matches_numpy(self):
+        """Dask+CuPy preserves input NaN like numpy (#3197)."""
+        data = np.arange(48, dtype=np.float64).reshape(8, 6)
+        data[3, 3] = np.nan
+        poly = box(0, 0, 2.5, 3.5)
+        np_result = clip_polygon(create_test_raster(data, backend='numpy'),
+                                 poly, crop=False)
+        dkcp_result = clip_polygon(
+            create_test_raster(data, backend='dask+cupy', chunks=(4, 3)),
+            poly, crop=False)
+        np.testing.assert_allclose(
+            dkcp_result.data.compute().get(), np_result.values,
+            equal_nan=True
+        )
+
+
 @dask_array_available
 class TestClipPolygonDaskLazyMask:
     def test_mask_stays_lazy_for_dask_input(self):
