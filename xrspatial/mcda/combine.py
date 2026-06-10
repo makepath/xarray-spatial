@@ -352,16 +352,28 @@ def owa(
     # Apply order weights along the criterion axis
     # Reshape order weights for broadcasting
     shape = [n] + [1] * (sorted_data.ndim - 1)
+    ow = order_weights_arr.reshape(shape)
 
+    # Match the order-weight array to the backend of sorted_data:
+    # cupy refuses to operate with non-scalar numpy arrays, so cupy
+    # (and dask-with-cupy-chunks) inputs need a cupy order-weight
+    # array.
+    is_dask_sorted = False
+    da = None
     try:
         import dask.array as da
-        if isinstance(sorted_data, da.Array):
-            ow = da.from_array(order_weights_arr.reshape(shape),
-                               chunks=-1)
-        else:
-            ow = order_weights_arr.reshape(shape)
+        is_dask_sorted = isinstance(sorted_data, da.Array)
     except ImportError:
-        ow = order_weights_arr.reshape(shape)
+        pass
+    target = sorted_data._meta if is_dask_sorted else sorted_data
+    try:
+        import cupy
+        if isinstance(target, cupy.ndarray):
+            ow = cupy.asarray(ow)
+    except ImportError:
+        pass
+    if is_dask_sorted:
+        ow = da.from_array(ow, chunks=-1)
 
     result_data = (sorted_data * ow).sum(axis=0)
 
@@ -378,8 +390,17 @@ def _sort_descending(data, axis):
     try:
         import dask.array as da
         if isinstance(data, da.Array):
-            # Negate, sort, negate back to get descending order
-            return -da.sort(-data, axis=axis)
+            # dask.array has no sort(); rechunk the sort axis into a
+            # single chunk and sort each block independently.  np.sort
+            # dispatches to cupy for cupy-backed chunks.  Pass meta
+            # explicitly: inference calls the lambda on an empty meta
+            # array and falls back to numpy, which would mislabel
+            # cupy-backed results.
+            data = data.rechunk({axis: -1})
+            return data.map_blocks(
+                lambda block: -np.sort(-block, axis=axis),
+                meta=data._meta,
+            )
     except ImportError:
         pass
 

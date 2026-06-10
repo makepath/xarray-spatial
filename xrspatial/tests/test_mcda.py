@@ -2335,12 +2335,10 @@ class TestAHPIncompleteDocstring3148:
 # Cross-backend coverage (#3149)
 #
 # Every public function gets exercised on cupy, dask+numpy, and dask+cupy
-# backends and compared against the numpy result. Paths that currently
-# raise are marked xfail and tracked in #3146 (mcda source bugs) -- the
-# xfail markers should be removed when that issue is fixed.
+# backends and compared against the numpy result. The backend paths that
+# used to raise (and were marked xfail) are fixed in #3146.
 # ===========================================================================
 
-XFAIL_3146 = "broken backend path, see #3146"
 XFAIL_XR_WHERE_CUPY = (
     "xr.where raises on cupy-backed data with cupy 13.6 + current xarray; "
     "dependency incompatibility, not an mcda bug (noted in #3146)"
@@ -2461,9 +2459,7 @@ class TestStandardizeDaskCupy:
         _assert_standardize_matches_numpy(
             "dask+cupy", *_standardize_case("categorical"))
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_piecewise_matches_numpy(self):
-        # _interp_block calls np.asarray on cupy chunks
         _assert_standardize_matches_numpy(
             "dask+cupy", *_standardize_case("piecewise"))
 
@@ -2514,9 +2510,7 @@ class TestCombineCupy:
     def test_matches_numpy(self, label, fn):
         _assert_combine_matches_numpy("cupy", fn)
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_owa_matches_numpy(self):
-        # order weights stay numpy and get multiplied into a cupy stack
         _assert_combine_matches_numpy(
             "cupy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
         )
@@ -2530,9 +2524,7 @@ class TestCombineDaskNumpy:
     def test_matches_numpy(self, label, fn):
         _assert_combine_matches_numpy("dask+numpy", fn)
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_owa_matches_numpy(self):
-        # _sort_descending calls da.sort, which does not exist
         _assert_combine_matches_numpy(
             "dask+numpy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
         )
@@ -2545,7 +2537,6 @@ class TestCombineDaskCupy:
     def test_matches_numpy(self, label, fn):
         _assert_combine_matches_numpy("dask+cupy", fn)
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_owa_matches_numpy(self):
         _assert_combine_matches_numpy(
             "dask+cupy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
@@ -2654,14 +2645,14 @@ class TestSensitivityCupy:
                 equal_nan=True, rtol=1e-7,
             )
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_monte_carlo_runs(self):
-        # _monte_carlo reads .values on cupy-backed DataArrays
         result = sensitivity(
             _combine_criteria("cupy"), COMBINE_WEIGHTS,
             method="monte_carlo", n_samples=10,
         )
-        assert np.all(_to_numpy(result) >= 0)
+        # The input NaN propagates to the CV surface (as on numpy).
+        vals = _to_numpy(result)
+        assert np.all(np.isnan(vals) | (vals >= 0))
 
 
 @cuda_and_cupy_available
@@ -2682,13 +2673,14 @@ class TestSensitivityDaskCupy:
                 equal_nan=True, rtol=1e-7,
             )
 
-    @pytest.mark.xfail(reason=XFAIL_3146, strict=True)
     def test_monte_carlo_runs(self):
         result = sensitivity(
             _combine_criteria("dask+cupy"), COMBINE_WEIGHTS,
             method="monte_carlo", n_samples=10,
         )
-        assert np.all(_to_numpy(result) >= 0)
+        # The input NaN propagates to the CV surface (as on numpy).
+        vals = _to_numpy(result)
+        assert np.all(np.isnan(vals) | (vals >= 0))
 
 
 # ===========================================================================
@@ -2801,3 +2793,127 @@ class TestCombineInfPropagation:
         result = fuzzy_overlay(ds, operator="and")
         assert float(result.values[0, 0]) == pytest.approx(0.5)
         assert float(result.values[0, 1]) == pytest.approx(0.2)
+
+
+# ===========================================================================
+# owa on dask backends (#3146)
+# ===========================================================================
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestOWADask:
+    """owa used to raise AttributeError on dask input (da.sort missing)."""
+
+    def test_owa_dask_matches_numpy(self, criteria_dataset, weights_3):
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(criteria_dataset, weights_3, ow)
+        dask_ds = criteria_dataset.chunk({"y": 2, "x": 2})
+        dask_result = owa(dask_ds, weights_3, ow)
+        assert hasattr(dask_result.data, "compute")
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values, atol=1e-14,
+        )
+
+    def test_owa_dask_nan_propagates(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, np.nan]], dtype=np.float64),
+                dims=["y", "x"],
+            ).chunk({"x": 1}),
+            "b": xr.DataArray(
+                np.array([[0.7, 0.4]], dtype=np.float64),
+                dims=["y", "x"],
+            ).chunk({"x": 1}),
+        })
+        r = owa(ds, {"a": 0.6, "b": 0.4}, [0.5, 0.5]).compute()
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+
+
+# ===========================================================================
+# cupy / dask+cupy backends (#3146)
+# ===========================================================================
+
+@cuda_and_cupy_available
+class TestCupyBackends:
+    """GPU paths that used to raise: owa, piecewise/categorical
+    standardize, and monte-carlo sensitivity."""
+
+    def _gpu_ds(self, criteria_dataset, backend):
+        import cupy
+        out = {}
+        for v in criteria_dataset.data_vars:
+            arr = cupy.asarray(criteria_dataset[v].values)
+            if backend == "dask+cupy":
+                arr = da.from_array(arr, chunks=(2, 2))
+            out[v] = xr.DataArray(arr, dims=criteria_dataset[v].dims)
+        return xr.Dataset(out)
+
+    @staticmethod
+    def _to_numpy(data):
+        import cupy
+        if hasattr(data, "compute"):
+            data = data.compute()
+        return cupy.asnumpy(data) if isinstance(data, cupy.ndarray) else data
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_standardize_piecewise(self, criterion_raster, backend):
+        import cupy
+        kw = dict(
+            method="piecewise",
+            breakpoints=[0, 50, 100], values=[0.0, 1.0, 0.5],
+        )
+        numpy_result = standardize(criterion_raster, **kw)
+        arr = cupy.asarray(criterion_raster.values)
+        if backend == "dask+cupy":
+            arr = da.from_array(arr, chunks=(2, 2))
+        gpu_result = standardize(
+            xr.DataArray(arr, dims=criterion_raster.dims), **kw)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_standardize_categorical(self, backend):
+        import cupy
+        data = np.array([[1.0, 2.0], [3.0, 99.0]])
+        kw = dict(method="categorical", mapping={1: 0.9, 2: 0.7, 3: 0.4})
+        numpy_result = standardize(
+            xr.DataArray(data, dims=["y", "x"]), **kw)
+        arr = cupy.asarray(data)
+        if backend == "dask+cupy":
+            arr = da.from_array(arr, chunks=(1, 2))
+        gpu_result = standardize(
+            xr.DataArray(arr, dims=["y", "x"]), **kw)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_owa(self, criteria_dataset, weights_3, backend):
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(criteria_dataset, weights_3, ow)
+        gpu_result = owa(
+            self._gpu_ds(criteria_dataset, backend), weights_3, ow)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True, atol=1e-14,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_monte_carlo_sensitivity(
+        self, criteria_dataset, weights_3, backend,
+    ):
+        numpy_result = sensitivity(
+            criteria_dataset, weights_3,
+            method="monte_carlo", n_samples=20, seed=7,
+        )
+        gpu_result = sensitivity(
+            self._gpu_ds(criteria_dataset, backend), weights_3,
+            method="monte_carlo", n_samples=20, seed=7,
+        )
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True, rtol=1e-10,
+        )
