@@ -764,6 +764,91 @@ def test_apply_keeps_float32(backend):
     assert _compute_dtype(result) == np.float32
 
 
+# --- mean dtype preservation (issue-3214) ----------------------------------
+# mean() used to cast to float64 on numpy/dask+numpy (agg.data.astype(float))
+# and to float32 on cupy/dask+cupy, so the output dtype depended on the
+# backend and float64 rasters lost precision on GPU. It now follows the same
+# _promote_float contract as apply()/focal_stats() (#2769) and convolve_2d()
+# (#1096): float dtypes are preserved, ints promote to float32.
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_mean_preserves_float64_3214(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float64).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+    result = mean(agg)
+    assert _compute_dtype(result) == np.float64
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_mean_keeps_float32_3214(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.arange(20, dtype=np.float32).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 3))
+    result = mean(agg)
+    assert _compute_dtype(result) == np.float32
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_mean_int_promotes_to_float32_3214(backend):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    data = np.arange(20, dtype=np.int32).reshape(4, 5)
+    agg = create_test_raster(data, backend=backend)
+    result = mean(agg)
+    assert _compute_dtype(result) == np.float32
+
+
+@cuda_and_cupy_available
+def test_mean_large_offset_gpu_matches_numpy_3214():
+    """GPU mean() must not collapse on large-offset float64 rasters (#3214).
+
+    The old cupy path cast float64 input to float32. At an offset of 1e7
+    the float32 resolution (~1) exceeds the spread of the true focal means
+    (~0.4), so the GPU result carried no signal. Computing in float64 keeps
+    the two backends in agreement.
+    """
+    import cupy
+    rng = np.random.default_rng(1)
+    data = (1e7 + rng.random((8, 8))).astype(np.float64)
+
+    numpy_mean = mean(xr.DataArray(data))
+    cupy_mean = mean(xr.DataArray(cupy.asarray(data)))
+
+    np.testing.assert_allclose(
+        numpy_mean.data, cupy_mean.data.get(), rtol=1e-12, equal_nan=True)
+    # the focal-mean variation must survive the round trip
+    spread = numpy_mean.data.max() - numpy_mean.data.min()
+    gpu_spread = cupy_mean.data.get().max() - cupy_mean.data.get().min()
+    assert spread > 0.1
+    assert abs(gpu_spread - spread) < 1e-6
+
+
+def test_mean_excludes_match_in_working_dtype_3214():
+    # excludes are cast to the working dtype before matching, so a float32
+    # raster cell equal to float32(0.1) is excluded even though
+    # float64(0.1) != float32(0.1).
+    data = np.full((4, 4), 5.0, dtype=np.float32)
+    data[1, 1] = np.float32(0.1)
+    agg = create_test_raster(data)
+    result = mean(agg, excludes=[0.1])
+    # the excluded cell is passed through unchanged
+    assert result.data[1, 1] == np.float32(0.1)
+
+
 # --- focal_stats NaN handling (issue-1092) --------------------------------
 
 @pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
