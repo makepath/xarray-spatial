@@ -211,7 +211,12 @@ def clip_polygon(
 
     if has_dask_array() and isinstance(raster.data, da.Array):
         rc, cc = raster.data.chunks[-2], raster.data.chunks[-1]
-        kw.setdefault('chunks', (rc[0], cc[0]))
+        # Use the largest chunk per axis rather than the first. After a
+        # crop, _crop_to_bbox slices the dask array and the leading chunk
+        # is often a tiny partial edge chunk; building the rasterize mask
+        # at that size fragments it into many narrow chunks and explodes
+        # the task graph that xarray.where then has to align (#3191).
+        kw.setdefault('chunks', (max(rc), max(cc)))
         if has_cuda_and_cupy() and is_dask_cupy(raster):
             # Respect a legacy ``use_cuda`` passed via rasterize_kw --
             # defaulting ``gpu`` as well would make rasterize() see both
