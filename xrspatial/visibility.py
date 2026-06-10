@@ -307,6 +307,9 @@ def cumulative_viewshed(
 
     if _materialised_dask:
         # Restore the dask-backed output type the dask input would have given.
+        # The count is already a concrete numpy array, so this wrap only
+        # changes the container type; no laziness is recovered and computing
+        # the result triggers no further source materialisation.
         count = da.from_array(count, chunks=_input_dask_chunks)
 
     result = xarray.DataArray(count, coords=raster.coords,
