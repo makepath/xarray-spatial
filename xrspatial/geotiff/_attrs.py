@@ -1579,8 +1579,9 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
       band's worth) are returned unchanged.
 
     Raises :class:`MalformedScaleOffsetError` when a ``SCALE`` or ``OFFSET``
-    item is present but does not parse as a float. An absent key keeps the
-    1.0 / 0.0 identity default.
+    item is present but does not parse as a float, when ``SCALE`` is zero
+    or non-finite, or when ``OFFSET`` is non-finite (issue #3104). An
+    absent key keeps the 1.0 / 0.0 identity default.
 
     ``malformed=True`` signals that the source carried a GDAL_METADATA XML
     payload that did not parse (see :func:`_parse_gdal_metadata_strict`).
@@ -1652,6 +1653,22 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
 
     scale = _resolve('SCALE', 1.0)
     offset = _resolve('OFFSET', 0.0)
+    # A zero or non-finite SCALE (and a non-finite OFFSET) parses as a
+    # float but cannot be honoured: ``data * 0 + offset`` collapses every
+    # pixel to the offset, ``data * nan`` destroys the array, and the
+    # inverse transform in ``_pack`` divides by SCALE. Treat these like
+    # the unparseable case above and fail closed (issue #3104).
+    if scale == 0.0 or not np.isfinite(scale):
+        raise MalformedScaleOffsetError(
+            f"GDAL_METADATA SCALE is {scale!r}. mask_and_scale=True "
+            "cannot honour a zero or non-finite SCALE: applying it "
+            "destroys the data and it has no inverse for pack=True."
+        )
+    if not np.isfinite(offset):
+        raise MalformedScaleOffsetError(
+            f"GDAL_METADATA OFFSET is {offset!r}. mask_and_scale=True "
+            "cannot honour a non-finite OFFSET."
+        )
     return scale, offset
 
 
@@ -1690,6 +1707,16 @@ def _pack(data):
             "reverse (no scale_factor / mask_and_scale_dtype / "
             "masked_nodata). It was not produced by "
             "open_geotiff(unpack=True).")
+
+    # ``_extract_scale_offset`` rejects these on read (issue #3104), so
+    # they can only appear via hand-edited attrs. Refuse rather than
+    # divide by zero below and silently write a corrupt file.
+    if scale == 0 or not np.isfinite(scale) or not np.isfinite(offset):
+        raise ValueError(
+            f"pack=True cannot reverse scale_factor={scale!r} / "
+            f"add_offset={offset!r}: the inverse transform divides by "
+            "scale_factor, so it must be non-zero and finite, and "
+            "add_offset must be finite.")
 
     out = (data - offset) / scale
 
