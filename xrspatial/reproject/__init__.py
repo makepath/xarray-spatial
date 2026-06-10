@@ -356,9 +356,13 @@ def _reproject_chunk_numpy(
         transformer = pyproj.Transformer.from_crs(
             tgt_crs, src_crs, always_xy=True
         )
+        # Pass src_crs/tgt_crs as None: the numba fast path was already
+        # tried above and returned None, and _transform_coords gates its
+        # own try_numba_transform retry on both CRSes being non-None.
+        # Re-trying would repeat the CRS param parsing and chunk-sized
+        # coordinate allocations for nothing (#3106).
         src_y, src_x = _transform_coords(
             transformer, chunk_bounds_tuple, chunk_shape, transform_precision,
-            src_crs=src_crs, tgt_crs=tgt_crs,
         )
 
     # Convert source CRS coordinates to source pixel coordinates
