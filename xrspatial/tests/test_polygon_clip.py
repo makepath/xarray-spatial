@@ -362,6 +362,8 @@ class TestClipPolygonEdgeInputs:
         data = np.arange(48, dtype=np.int32).reshape(8, 6)
         raster = create_test_raster(data)
         result = clip_polygon(raster, _inner_polygon(), nodata=-1, crop=False)
+        # Output keeps the input integer dtype (docstring contract).
+        assert result.dtype == np.int32
         # Sentinel appears in the masked region.
         assert np.any(result.values == -1)
         # Interior cells keep their original values (no sentinel collision:
