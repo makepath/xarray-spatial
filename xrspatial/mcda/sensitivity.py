@@ -185,8 +185,13 @@ def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
     # plus full-size accumulators in host memory, so refuse early when
     # that working set cannot fit (issue #3145).  Run before the
     # accumulator allocations so nothing full-size is allocated first.
+    # Size the estimate from the Dataset itself: compute() materializes
+    # every data var, and weight/criteria key equality is only enforced
+    # later inside combine_fn.  The check is host-memory-only; a
+    # dask+cupy Dataset computes into GPU memory and fails later at
+    # .values regardless.
     if use_dask:
-        _check_monte_carlo_memory(n_criteria, template.shape)
+        _check_monte_carlo_memory(len(criteria.data_vars), template.shape)
 
     # Accumulate running mean and M2 for Welford's online algorithm
     # to avoid storing all n_samples surfaces in memory

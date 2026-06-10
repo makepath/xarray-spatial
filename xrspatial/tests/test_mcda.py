@@ -928,6 +928,29 @@ class TestMonteCarloMemoryGuard:
         assert "2 criteria" in msg
         assert "12x12" in msg
 
+    def test_estimate_counts_data_vars_not_weights(self):
+        """The estimate reflects what compute() materializes: every data
+        var, not just the weighted ones (weight/criteria key equality is
+        only checked later, inside the combine function)."""
+        from unittest.mock import patch
+
+        ds = self._dask_dataset()
+        ds["c"] = xr.DataArray(
+            np.random.rand(12, 12), dims=["y", "x"],
+        ).chunk({"y": 6, "x": 6})
+
+        with patch(
+            "xrspatial.mcda.sensitivity._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError) as exc_info:
+                sensitivity(
+                    ds, {"a": 0.6, "b": 0.4},
+                    method="monte_carlo", n_samples=5,
+                )
+
+        assert "3 criteria" in str(exc_info.value)
+
     def test_one_at_a_time_dask_unaffected(self):
         """The guard does not apply to the lazy one_at_a_time path."""
         from unittest.mock import patch
