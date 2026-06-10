@@ -23,6 +23,25 @@ from xrspatial.utils import (
 )
 
 
+def _masked_output_dtype(raster_dtype, nodata):
+    """Return the dtype the masked output needs to hold *nodata*.
+
+    Mirrors what ``DataArray.where(cond, other=nodata)`` does on the numpy
+    and dask+numpy paths: if *nodata* does not fit the input dtype (e.g. a
+    NaN sentinel against an integer raster), the result is promoted to a
+    type that can represent it.  The cupy / dask+cupy paths assign into a
+    copy of the input array, so without this promotion ``out[...] = nodata``
+    raises ``ValueError: cannot convert float NaN to integer``.
+
+    Keep the input dtype when *nodata* fits in it (so an integer raster
+    masked with an in-range integer sentinel stays integer, matching
+    ``DataArray.where``); promote only when the value cannot be stored
+    without loss.  ``np.result_type`` applied to the array dtype and the
+    Python scalar reproduces ``DataArray.where``'s promotion exactly.
+    """
+    return np.result_type(np.dtype(raster_dtype), nodata)
+
+
 def _resolve_geometry(geometry):
     """Return a list of ``(shapely_geom, 1.0)`` pairs for rasterize().
 
@@ -177,7 +196,11 @@ def clip_polygon(
     Returns
     -------
     xr.DataArray
-        Clipped raster with the same dtype and attributes as *raster*.
+        Clipped raster with the same attributes as *raster*.  The dtype is
+        preserved when *nodata* fits the input dtype; if it does not (for
+        example the default ``np.nan`` against an integer raster) the output
+        is promoted to a dtype that can hold *nodata*, matching
+        :meth:`xarray.DataArray.where`.
 
     Examples
     --------
@@ -240,16 +263,20 @@ def clip_polygon(
             )
 
         if has_cuda_and_cupy() and is_dask_cupy(raster):
-            # dask+cupy: use map_blocks with both raster and condition
+            # dask+cupy: use map_blocks with both raster and condition.
+            # Promote the output dtype so a nodata value that the input
+            # integer dtype cannot hold (e.g. NaN) does not raise on the
+            # in-place assignment -- matching the numpy/dask+numpy path.
+            out_dtype = _masked_output_dtype(raster.dtype, nodata)
+
             def _apply_mask(raster_block, cond_block):
-                import cupy
-                out = raster_block.copy()
+                out = raster_block.astype(out_dtype, copy=True)
                 out[~cond_block.astype(bool)] = nodata
                 return out
 
             out = da.map_blocks(
                 _apply_mask, raster.data, cond,
-                dtype=raster.dtype,
+                dtype=out_dtype,
             )
             result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
         else:
@@ -263,7 +290,11 @@ def clip_polygon(
             cond_cp = mask_data == 1
         else:
             cond_cp = cupy.asarray(np.asarray(mask_data) == 1)
-        out = raster.data.copy()
+        # Promote the output dtype so a nodata value the input integer
+        # dtype cannot hold (e.g. NaN) does not raise on assignment --
+        # matching the numpy/dask+numpy path.
+        out_dtype = _masked_output_dtype(raster.dtype, nodata)
+        out = raster.data.astype(out_dtype, copy=True)
         out[~cond_cp] = nodata
         result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
     else:

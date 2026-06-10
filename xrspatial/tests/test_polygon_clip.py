@@ -204,6 +204,72 @@ class TestClipPolygonNumpy:
 
 
 # ---------------------------------------------------------------------------
+# Issue #3187: integer raster + NaN nodata dtype promotion across backends
+# ---------------------------------------------------------------------------
+
+def _int_raster(backend='numpy', chunks=(4, 3)):
+    """8x6 int32 raster matching _make_raster's grid."""
+    data = np.arange(48, dtype=np.int32).reshape(8, 6)
+    return create_test_raster(data, backend=backend, chunks=chunks)
+
+
+class TestClipPolygonIntegerNodataDtype:
+    """Integer raster clipped with the default NaN nodata must not crash
+    on the cupy / dask+cupy paths and must promote dtype the same way the
+    numpy path does (#3187)."""
+
+    def test_numpy_int_nan_promotes_to_float(self):
+        result = clip_polygon(_int_raster('numpy'), _inner_polygon(),
+                              crop=False)
+        assert result.dtype == np.float64
+        assert np.any(np.isnan(result.values))
+
+    def test_numpy_int_integer_nodata_keeps_int(self):
+        result = clip_polygon(_int_raster('numpy'), _inner_polygon(),
+                              crop=False, nodata=-9999)
+        assert result.dtype == np.int32
+        assert np.any(result.values == -9999)
+
+
+@dask_array_available
+class TestClipPolygonIntegerNodataDask:
+    def test_dask_int_nan_matches_numpy(self):
+        ref = clip_polygon(_int_raster('numpy'), _inner_polygon(), crop=False)
+        dk = clip_polygon(_int_raster('dask+numpy'), _inner_polygon(),
+                          crop=False)
+        assert dk.dtype == ref.dtype
+        np.testing.assert_allclose(dk.data.compute(), ref.values,
+                                   equal_nan=True)
+
+
+@cuda_and_cupy_available
+class TestClipPolygonIntegerNodataCuPy:
+    def test_cupy_int_nan_does_not_raise_and_matches_numpy(self):
+        ref = clip_polygon(_int_raster('numpy'), _inner_polygon(), crop=False)
+        cp = clip_polygon(_int_raster('cupy'), _inner_polygon(), crop=False)
+        assert cp.dtype == ref.dtype
+        np.testing.assert_allclose(cp.data.get(), ref.values, equal_nan=True)
+
+    def test_cupy_int_integer_nodata_keeps_int(self):
+        cp = clip_polygon(_int_raster('cupy'), _inner_polygon(), crop=False,
+                          nodata=-9999)
+        assert cp.dtype == np.int32
+        assert np.any(cp.data.get() == -9999)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestClipPolygonIntegerNodataDaskCuPy:
+    def test_dask_cupy_int_nan_matches_numpy(self):
+        ref = clip_polygon(_int_raster('numpy'), _inner_polygon(), crop=False)
+        dkcp = clip_polygon(_int_raster('dask+cupy'), _inner_polygon(),
+                            crop=False)
+        assert dkcp.dtype == ref.dtype
+        np.testing.assert_allclose(dkcp.data.compute().get(), ref.values,
+                                   equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
 # Dask + NumPy backend
 # ---------------------------------------------------------------------------
 
