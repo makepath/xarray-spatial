@@ -753,3 +753,5 @@ file does not need to leave the page to confirm scope.
 * `#2341`_ -- GeoTIFF correctness and backend parity release gate.
 * `#2342`_ -- Conservative VRT support contract for GeoTIFF release.
 * `#2344`_ -- GeoTIFF remote / source safety hardening.
+* `#3163`_ -- Register the ``unpack`` / ``pack`` scale-offset surface in
+  ``SUPPORTED_FEATURES`` and the release contract.

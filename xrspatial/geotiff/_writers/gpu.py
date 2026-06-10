@@ -257,7 +257,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         writer does not emit a ``ModelTransformationTag`` either, so
         the silent-loss surface is identical on both backends.
     pack : bool, default False
-        [advanced] No-op on the GPU writer: it exists for signature
+        [experimental] No-op on the GPU writer: it exists for signature
         parity with ``to_geotiff``, which applies the ``pack`` re-pack
         transform before dispatching here. See ``to_geotiff`` for the
         behaviour.
