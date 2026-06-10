@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.tests.general_checks import cuda_and_cupy_available
+
 from xrspatial.mcda import (
     ahp_weights,
     boolean_overlay,
@@ -836,24 +838,119 @@ class TestSensitivityMonteCarlo:
 
 @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
 class TestSensitivityDask:
-    def test_monte_carlo_dask_returns_numpy(self):
-        """MC with dask input should compute eagerly, not build huge graph."""
-        ds = xr.Dataset({
-            "a": xr.DataArray(
-                np.random.rand(20, 20), dims=["y", "x"],
-            ).chunk({"y": 10, "x": 10}),
-            "b": xr.DataArray(
-                np.random.rand(20, 20), dims=["y", "x"],
-            ).chunk({"y": 10, "x": 10}),
+    """Monte Carlo on dask input stays lazy and chunk-bounded (#3152).
+
+    The previous implementation called criteria.compute() up front,
+    materializing the full dataset; the sample loop now runs inside a
+    single map_blocks chunk function instead.
+    """
+
+    @pytest.fixture
+    def numpy_ds(self):
+        np.random.seed(3152)
+        return xr.Dataset({
+            "a": xr.DataArray(np.random.rand(20, 20), dims=["y", "x"]),
+            "b": xr.DataArray(np.random.rand(20, 20), dims=["y", "x"]),
         })
+
+    def test_monte_carlo_dask_stays_lazy(self, numpy_ds):
+        ds = numpy_ds.chunk({"y": 10, "x": 10})
         result = sensitivity(
             ds, {"a": 0.6, "b": 0.4},
             method="monte_carlo", n_samples=30,
         )
-        # Result should be eagerly computed numpy, not dask
-        assert isinstance(result.data, np.ndarray)
-        assert result.shape == (20, 20)
-        assert np.all(result.values >= 0)
+        assert isinstance(result.data, da.Array)
+        # One MC task per chunk: the graph must not scale with n_samples.
+        assert len(result.data.__dask_graph__()) < 30
+        computed = result.compute()
+        assert computed.shape == (20, 20)
+        assert np.all(computed.values >= 0)
+
+    @pytest.mark.parametrize("combine_method", ["wlc", "wpm"])
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            {"y": 10, "x": 10},
+            # Ragged chunks: 20 does not divide evenly by 7 or 9
+            {"y": 7, "x": 9},
+        ],
+    )
+    def test_monte_carlo_dask_matches_numpy(
+        self, numpy_ds, combine_method, chunks,
+    ):
+        """Same seed gives the same values on both backends."""
+        ds = numpy_ds.chunk(chunks)
+        kwargs = dict(
+            method="monte_carlo", combine_method=combine_method,
+            n_samples=30, seed=7,
+        )
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        dask_result = sensitivity(ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values,
+            atol=1e-14,
+        )
+
+    def test_monte_carlo_mixed_numpy_and_dask_vars(self, numpy_ds):
+        """A numpy variable inside an otherwise dask Dataset works."""
+        mixed = xr.Dataset({
+            "a": numpy_ds["a"].chunk({"y": 10, "x": 10}),
+            "b": numpy_ds["b"],  # stays numpy-backed
+        })
+        kwargs = dict(method="monte_carlo", n_samples=30, seed=7)
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        mixed_result = sensitivity(mixed, {"a": 0.6, "b": 0.4}, **kwargs)
+        assert isinstance(mixed_result.data, da.Array)
+        np.testing.assert_allclose(
+            mixed_result.compute().values, numpy_result.values,
+            atol=1e-14,
+        )
+
+    def test_monte_carlo_dask_nan_propagates(self, numpy_ds):
+        with_nan = numpy_ds.copy(deep=True)
+        with_nan["a"].values[3, 4] = np.nan
+        ds = with_nan.chunk({"y": 10, "x": 10})
+        result = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="monte_carlo", n_samples=10,
+        ).compute()
+        assert np.isnan(result.values[3, 4])
+        assert np.isfinite(result.values[0, 0])
+
+    def test_monte_carlo_dask_missing_weight_raises(self, numpy_ds):
+        ds = numpy_ds.chunk({"y": 10, "x": 10})
+        with pytest.raises(ValueError, match="Missing weights"):
+            sensitivity(
+                ds, {"a": 1.0}, method="monte_carlo", n_samples=5,
+            )
+
+
+class TestSensitivityCupy:
+    """Monte Carlo on cupy input (#3151): no .values round trips."""
+
+    @cuda_and_cupy_available
+    def test_monte_carlo_cupy_matches_numpy(self):
+        import cupy
+        np.random.seed(3151)
+        arrays = {
+            "a": np.random.rand(10, 10),
+            "b": np.random.rand(10, 10),
+        }
+        numpy_ds = xr.Dataset({
+            k: xr.DataArray(v, dims=["y", "x"]) for k, v in arrays.items()
+        })
+        cupy_ds = xr.Dataset({
+            k: xr.DataArray(cupy.asarray(v), dims=["y", "x"])
+            for k, v in arrays.items()
+        })
+        kwargs = dict(method="monte_carlo", n_samples=20, seed=11)
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        cupy_result = sensitivity(cupy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        # Accumulation runs on the device; result is still cupy
+        assert isinstance(cupy_result.data, cupy.ndarray)
+        np.testing.assert_allclose(
+            cupy_result.data.get(), numpy_result.values, atol=1e-12,
+        )
 
 
 # ===========================================================================
@@ -1203,6 +1300,90 @@ class TestWPMEdgeCases:
             wpm(ds, {"a": 0.5, "b": 0.5})
 
 
+class TestConstrainAttrs:
+    """constrain must keep the input's attrs (#3147).
+
+    xr.where takes attrs from its first value argument (the scalar
+    fill), which used to strip res/crs/nodatavals whenever exclude
+    was non-empty.
+    """
+
+    ATTRS = {"res": (1.0, 1.0), "crs": "EPSG:32611", "nodatavals": (-9999.0,)}
+
+    def _suit_and_mask(self):
+        suit = xr.DataArray(
+            np.array([[0.8, 0.6, 0.9]], dtype=np.float64),
+            dims=["y", "x"],
+            coords={"y": [10.5], "x": [100.5, 101.5, 102.5]},
+            attrs=dict(self.ATTRS),
+            name="suit",
+        )
+        mask = xr.DataArray(
+            np.array([[True, False, False]]),
+            dims=["y", "x"],
+            coords={"y": [10.5], "x": [100.5, 101.5, 102.5]},
+        )
+        return suit, mask
+
+    def test_attrs_kept_with_mask(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask])
+        assert result.attrs == self.ATTRS
+        assert result.dims == suit.dims
+        np.testing.assert_array_equal(result["x"].values, suit["x"].values)
+
+    def test_attrs_kept_with_custom_fill(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask], fill=-1.0)
+        assert result.attrs == self.ATTRS
+
+    def test_attrs_kept_with_empty_exclude(self):
+        suit, _ = self._suit_and_mask()
+        result = constrain(suit, exclude=[])
+        assert result.attrs == self.ATTRS
+
+    def test_attrs_not_shared_with_input(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask])
+        result.attrs["crs"] = "EPSG:4326"
+        assert suit.attrs["crs"] == "EPSG:32611"
+
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_attrs_kept_dask(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(
+            suit.chunk({"x": 2}), exclude=[mask.chunk({"x": 2})],
+        )
+        assert result.attrs == self.ATTRS
+        assert hasattr(result.data, "compute")
+        np.testing.assert_allclose(
+            result.compute().values,
+            constrain(suit, exclude=[mask]).values,
+            equal_nan=True,
+        )
+
+    def test_attrs_kept_dask_cupy(self):
+        from xrspatial.utils import has_cuda_and_cupy
+        if not (HAS_DASK and has_cuda_and_cupy()):
+            pytest.skip("Requires dask, CUDA and CuPy")
+        import cupy
+
+        suit, mask = self._suit_and_mask()
+        suit_gpu = suit.copy()
+        suit_gpu.data = cupy.asarray(suit_gpu.data)
+        mask_gpu = mask.copy()
+        mask_gpu.data = cupy.asarray(mask_gpu.data)
+        result = constrain(
+            suit_gpu.chunk({"x": 2}), exclude=[mask_gpu.chunk({"x": 2})],
+        )
+        # Attrs must survive on the lazy result. Computing values here
+        # trips an unrelated cupy/xarray incompatibility inside
+        # xr.where (numpy scalar broadcast against cupy chunks), so the
+        # value-parity check stays on the numpy/dask+numpy tests above.
+        assert result.attrs == self.ATTRS
+        assert result.dims == suit.dims
+
+
 class TestConstrainEdgeCases:
     def test_empty_exclude_list(self):
         """Empty exclude list should return input unchanged."""
@@ -1224,6 +1405,16 @@ class TestConstrainEdgeCases:
         )
         result = constrain(suit, exclude=[mask])
         assert np.all(np.isnan(result.values))
+
+    def test_input_name_unchanged(self):
+        """Renaming the output must not leak into the caller's object."""
+        suit = xr.DataArray(
+            np.array([[0.8]], dtype=np.float64), dims=["y", "x"],
+            name="orig",
+        )
+        result = constrain(suit, exclude=[], name="new")
+        assert result.name == "new"
+        assert suit.name == "orig"
 
 
 # ===========================================================================
