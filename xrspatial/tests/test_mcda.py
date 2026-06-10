@@ -433,7 +433,7 @@ class TestStandardizeCupy:
         ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
                           **self.piecewise_kw)
         agg = xr.DataArray(
-            da.from_array(cupy.asarray(raw), chunks=(1, 2)), dims=["y", "x"],
+            da.from_array(cupy.asarray(raw), chunks=(1, 3)), dims=["y", "x"],
         )
         result = standardize(agg, **self.piecewise_kw)
         computed = result.data.compute()
@@ -449,7 +449,7 @@ class TestStandardizeCupy:
         ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
                           **self.categorical_kw)
         agg = xr.DataArray(
-            da.from_array(cupy.asarray(raw), chunks=(1, 2)), dims=["y", "x"],
+            da.from_array(cupy.asarray(raw), chunks=(1, 3)), dims=["y", "x"],
         )
         result = standardize(agg, **self.categorical_kw)
         computed = result.data.compute()

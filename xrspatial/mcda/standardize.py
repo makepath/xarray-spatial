@@ -267,11 +267,16 @@ def _piecewise(data, *, breakpoints, values):
     if _is_dask(data):
         import dask.array as da
 
+        # Convert the lookup tables once, to the module of the chunks
+        # (known from the dask meta), instead of once per block. cupy
+        # chunks then interpolate on the device with device-resident
+        # tables; np.asarray on a cupy block would raise TypeError.
+        xp_b = _get_xp(data._meta)
+        bp_t = xp_b.asarray(bp)
+        vl_t = xp_b.asarray(vl)
+
         def _interp_block(block):
-            # Use the block's own array module so cupy chunks stay on
-            # the device (np.asarray on a cupy block raises TypeError).
-            xp_b = _get_xp(block)
-            return xp_b.interp(block, xp_b.asarray(bp), xp_b.asarray(vl))
+            return xp_b.interp(block, bp_t, vl_t)
 
         result = da.map_blocks(_interp_block, data, dtype=np.float64)
         result = da.where(da.isfinite(data), result, np.nan)
@@ -294,10 +299,12 @@ def _categorical(data, *, mapping):
     if _is_dask(data):
         import dask.array as da
 
+        # Build each block's output with the chunks' own array module
+        # (known from the dask meta) so cupy blocks stay on the device;
+        # np.asarray on a cupy block would raise TypeError.
+        xp_b = _get_xp(data._meta)
+
         def _apply_mapping(block):
-            # Use the block's own array module so cupy chunks stay on
-            # the device (np.asarray on a cupy block raises TypeError).
-            xp_b = _get_xp(block)
             out = xp_b.full(block.shape, np.nan, dtype=np.float64)
             for k, v in zip(keys, vals):
                 out[block == k] = v
