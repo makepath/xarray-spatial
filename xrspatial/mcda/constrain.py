@@ -39,5 +39,10 @@ def constrain(
     for mask in exclude:
         result = xr.where(mask, fill, result)
 
+    # xr.where takes attrs from its first value argument (the scalar
+    # ``fill``), which strips res/crs/nodatavals from the output.
+    # Restore the input's attrs so the constrained surface stays
+    # georeferenced (#3147).
+    result.attrs = dict(suitability.attrs)
     result.name = name
     return result
