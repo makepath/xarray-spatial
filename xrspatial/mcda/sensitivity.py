@@ -6,6 +6,7 @@ import numpy as np
 import xarray as xr
 
 from xrspatial.mcda.combine import wlc, wpm
+from xrspatial.mcda.standardize import _get_xp
 
 
 def sensitivity(
@@ -151,11 +152,6 @@ def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
 
     use_dask = _is_dask_dataset(criteria)
 
-    # Accumulate running mean and M2 for Welford's online algorithm
-    # to avoid storing all n_samples surfaces in memory
-    running_mean = template.values * 0.0 if not use_dask else np.zeros(template.shape)
-    running_m2 = running_mean.copy()
-
     # For dask inputs: compute each score eagerly to avoid graph
     # explosion (each lazy iteration would chain ~35 graph nodes;
     # 1000 iterations = 35000 chained tasks with no parallelism).
@@ -166,13 +162,23 @@ def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
     else:
         criteria_np = criteria
 
+    # Accumulate with the array module matching the (computed)
+    # criterion data, so cupy-backed inputs stay on the GPU instead
+    # of raising on implicit conversion via ``.values``.
+    xp = _get_xp(criteria_np[first_var].data)
+
+    # Accumulate running mean and M2 for Welford's online algorithm
+    # to avoid storing all n_samples surfaces in memory
+    running_mean = xp.zeros(template.shape, dtype=np.float64)
+    running_m2 = xp.zeros(template.shape, dtype=np.float64)
+
     for i in range(n_samples):
         raw = rng.dirichlet(alpha)
         sample_weights = {
             k: float(raw[j]) for j, k in enumerate(criteria_names)
         }
         score = combine_fn(criteria_np, sample_weights)
-        score_vals = score.values
+        score_vals = score.data
 
         delta_val = score_vals - running_mean
         running_mean = running_mean + delta_val / (i + 1)
@@ -180,10 +186,11 @@ def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
         running_m2 = running_m2 + delta_val * delta2
 
     variance = running_m2 / n_samples
-    std_dev = np.sqrt(variance)
+    std_dev = xp.sqrt(variance)
     # Coefficient of variation
     with np.errstate(divide="ignore", invalid="ignore"):
-        cv_vals = np.where(running_mean != 0, std_dev / np.abs(running_mean), 0.0)
+        cv_vals = xp.where(
+            running_mean != 0, std_dev / xp.abs(running_mean), 0.0)
 
     result = xr.DataArray(
         cv_vals, name=name, dims=template.dims,
