@@ -162,6 +162,9 @@ def _mc_block(block, weight_matrix, combine_method):
 
     for i in range(n_samples):
         w = weight_matrix[i]
+        # Same per-pixel arithmetic as combine.wlc / combine.wpm (the
+        # canonical definitions), inlined on raw arrays so the loop
+        # runs inside a single dask chunk. Keep in sync with those.
         if combine_method == "wpm":
             score = block[0] ** float(w[0])
             for j in range(1, n_criteria):

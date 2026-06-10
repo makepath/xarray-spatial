@@ -867,9 +867,19 @@ class TestSensitivityDask:
         assert np.all(computed.values >= 0)
 
     @pytest.mark.parametrize("combine_method", ["wlc", "wpm"])
-    def test_monte_carlo_dask_matches_numpy(self, numpy_ds, combine_method):
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            {"y": 10, "x": 10},
+            # Ragged chunks: 20 does not divide evenly by 7 or 9
+            {"y": 7, "x": 9},
+        ],
+    )
+    def test_monte_carlo_dask_matches_numpy(
+        self, numpy_ds, combine_method, chunks,
+    ):
         """Same seed gives the same values on both backends."""
-        ds = numpy_ds.chunk({"y": 10, "x": 10})
+        ds = numpy_ds.chunk(chunks)
         kwargs = dict(
             method="monte_carlo", combine_method=combine_method,
             n_samples=30, seed=7,
@@ -878,6 +888,21 @@ class TestSensitivityDask:
         dask_result = sensitivity(ds, {"a": 0.6, "b": 0.4}, **kwargs)
         np.testing.assert_allclose(
             dask_result.compute().values, numpy_result.values,
+            atol=1e-14,
+        )
+
+    def test_monte_carlo_mixed_numpy_and_dask_vars(self, numpy_ds):
+        """A numpy variable inside an otherwise dask Dataset works."""
+        mixed = xr.Dataset({
+            "a": numpy_ds["a"].chunk({"y": 10, "x": 10}),
+            "b": numpy_ds["b"],  # stays numpy-backed
+        })
+        kwargs = dict(method="monte_carlo", n_samples=30, seed=7)
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        mixed_result = sensitivity(mixed, {"a": 0.6, "b": 0.4}, **kwargs)
+        assert isinstance(mixed_result.data, da.Array)
+        np.testing.assert_allclose(
+            mixed_result.compute().values, numpy_result.values,
             atol=1e-14,
         )
 
