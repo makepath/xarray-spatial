@@ -3197,7 +3197,11 @@ def rasterize(
         exact integer (e.g. ``2**53 + 1`` would land on ``2**53``).  Such
         a value is rejected with ``ValueError`` rather than silently
         rounded; use a floating dtype to burn identifiers larger than
-        that.
+        that.  Non-finite burn values (NaN, inf) are likewise rejected
+        for integer and bool dtypes -- the final cast would otherwise
+        land them on a platform sentinel (NaN becomes ``-2147483648``
+        for int32, ``True`` for bool).  ``merge='count'`` is exempt
+        because it burns overlap counts, never the property values.
     all_touched : bool, default False
         If True, every pixel a polygon boundary passes through is
         burned in addition to the normal center-fill, using a
@@ -3603,6 +3607,33 @@ def rasterize(
                 f"silently round it (e.g. 2**53 + 1 lands on 2**53). Use a "
                 f"floating output dtype, or pass values within the safe "
                 f"integer range.")
+
+    # Reject non-finite burn values when the output dtype cannot represent
+    # them.  The pipeline computes in float64 and casts with
+    # ``astype(final_dtype)`` at the end, so a NaN or +/-inf burn value
+    # (e.g. a GeoDataFrame column with missing data) against an integer
+    # dtype lands on a platform sentinel (NaN -> -2147483648 for int32) and
+    # against bool collapses to True -- silently on the numpy backend,
+    # whose final cast suppresses the RuntimeWarning.  This mirrors the
+    # NaN-fill guard (#2504) and the unsafe-integer guard (#3056) above;
+    # the non-finite burn value was the remaining gap (#3085).
+    # ``merge='count'`` never reads property values (the burned value is
+    # the overlap count), so NaN attributes stay usable there.  Float
+    # dtypes are unaffected: NaN/inf are representable.
+    if ((np.issubdtype(final_dtype_np, np.integer)
+            or final_dtype_np == np.bool_)
+            and props_array.size > 0
+            and merge != 'count'):
+        nonfinite_props = ~np.isfinite(props_array)
+        if nonfinite_props.any():
+            bad_value = float(props_array[nonfinite_props].flat[0])
+            raise ValueError(
+                f"burn value {bad_value!r} is not finite and cannot be "
+                f"represented in output dtype {final_dtype_np}: the final "
+                f"cast would silently turn it into a platform sentinel "
+                f"(e.g. NaN -> -2147483648 for int32, NaN -> True for "
+                f"bool). Remove or fill the non-finite values, or use a "
+                f"floating output dtype.")
 
     # For GPU paths, resolve string merge names to GPU (merge_fn,
     # should_write_fn) pairs.  User callables are paired with the
