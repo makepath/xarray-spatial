@@ -703,7 +703,7 @@ def open_geotiff(source: str | BinaryIO, *,
         raises ``TypeError``. Note the default also changed from
         ``mask_nodata=True`` to ``masked=False``.
     unpack : bool, default False
-        [advanced] If True, read the source's GDAL ``SCALE`` / ``OFFSET``
+        [experimental] If True, read the source's GDAL ``SCALE`` / ``OFFSET``
         metadata and return ``data * scale + offset``, masking the nodata
         sentinel to NaN as well. This unpacks CF-packed data (integers
         stored with a scale / offset that recover floats) and is the

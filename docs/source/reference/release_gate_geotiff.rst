@@ -465,6 +465,24 @@ attrs contract
        ``xrspatial/geotiff/tests/gpu/test_kernels_and_kwargs.py``,
        ``xrspatial/geotiff/tests/unit/test_metadata.py``
      - `#2340`_
+   * - ``reader.unpack`` (``unpack=True`` scale/offset decode)
+     - experimental
+     - ``unpack=True`` applies GDAL ``SCALE`` / ``OFFSET`` and masks the
+       nodata sentinel to NaN, recording ``scale_factor`` /
+       ``add_offset`` / ``mask_and_scale_dtype`` on the attrs. CPU eager
+       and dask paths are tested; the GPU branches are not (#3112,
+       #3114), which is why the row sits at ``experimental``.
+     - ``xrspatial/geotiff/tests/read/test_rioxarray_compat_2961.py``,
+       ``xrspatial/geotiff/tests/read/test_mask_and_scale_dtype_parity_3066.py``
+     - `#3163`_
+   * - ``writer.pack`` (``pack=True`` scale/offset re-encode)
+     - experimental
+     - ``pack=True`` reverses an ``unpack`` read before writing: re-applies
+       the recorded scale / offset, restores the integer source dtype,
+       and fills NaN back to the nodata sentinel so the file unpacks
+       cleanly on the next read.
+     - ``xrspatial/geotiff/tests/write/test_pack_3064.py``
+     - `#3163`_
 
 VRT supported subset
 ====================
@@ -725,6 +743,7 @@ file does not need to leave the page to confirm scope.
 .. _#2341: https://github.com/xarray-contrib/xarray-spatial/issues/2341
 .. _#2342: https://github.com/xarray-contrib/xarray-spatial/issues/2342
 .. _#2344: https://github.com/xarray-contrib/xarray-spatial/issues/2344
+.. _#3163: https://github.com/xarray-contrib/xarray-spatial/issues/3163
 
 * `#2286`_ -- Promote COG support to ready / stable with compliance and
   parity gates.

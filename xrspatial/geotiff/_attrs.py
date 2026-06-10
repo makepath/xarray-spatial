@@ -328,6 +328,12 @@ SUPPORTED_FEATURES = {
     'reader.local_cog': 'stable',
     'reader.http_cog': 'advanced',
     'reader.gpu': 'experimental',
+    # ``unpack=True`` scale/offset decode on ``open_geotiff`` (CF-style
+    # packed integers -> float, nodata sentinel -> NaN). Sits at
+    # ``experimental`` rather than ``advanced``: the GPU path crashes
+    # (#3112) and the GPU / dask+GPU branches have no test coverage
+    # (#3114), so no behavioural promise is made yet.
+    'reader.unpack': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
     # ``writer.cog`` is ``stable``: the CPU writer emits a
@@ -342,6 +348,12 @@ SUPPORTED_FEATURES = {
     'writer.gpu': 'experimental',
     'writer.gdal_metadata_xml': 'experimental',
     'writer.extra_tags': 'experimental',
+    # ``pack=True`` on ``to_geotiff``: inverse of ``reader.unpack``
+    # (re-apply scale/offset, restore the recorded integer dtype, fill
+    # NaN back to the nodata sentinel). Tracked at the same
+    # ``experimental`` tier as ``reader.unpack`` -- the pair shares the
+    # scale/offset attr contract and the open GPU gaps (#3112, #3114).
+    'writer.pack': 'experimental',
     # BigTIFF COG writer surface.
     # Tracked separately from ``writer.bigtiff`` and ``writer.cog`` because
     # the BigTIFF + COG combination has its own external-interop surface
