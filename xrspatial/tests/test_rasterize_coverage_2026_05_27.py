@@ -3,7 +3,7 @@
 Closes documented public-API gaps left after the pass-1 (2026-05-17) and
 pass-2 (2026-05-21) audits:
 
-- Cat 1 HIGH -- The eager cupy (``use_cuda=True``, no ``chunks=``) backend
+- Cat 1 HIGH -- The eager cupy (``gpu=True``, no ``chunks=``) backend
   has no parametrised merge-mode parity test.  The dask+numpy and
   dask+cupy backends pin all six built-in merge modes (``last`` / ``first``
   / ``max`` / ``min`` / ``sum`` / ``count``) against eager numpy via
@@ -31,7 +31,7 @@ pass-2 (2026-05-21) audits:
   ``_run_cupy`` with zero geometries (so the bbox/edge/segment buffers
   are zero-sized cupy arrays) has no direct test, and a regression
   short-circuiting to numpy on the empty branch would silently break the
-  "use_cuda=True returns cupy.ndarray" contract.
+  "gpu=True returns cupy.ndarray" contract.
 
 - Cat 2 MEDIUM -- All-equal property values on the count merge mode.
   ``count`` ignores the burned value and counts overlapping geometries.
@@ -155,7 +155,7 @@ class TestEagerCupyMergeModeParity:
         cp_result = rasterize(
             _EAGER_CUPY_MERGE_PAIRS, width=10, height=10,
             bounds=(0, 0, 10, 10), fill=0, merge=merge_mode,
-            use_cuda=True,
+            gpu=True,
         )
         # ``count`` returns an integer-valued float, the rest are the
         # burned property values; both compare bit-exact with
@@ -234,7 +234,7 @@ class TestEagerCupyMergeModePoints:
         cp_result = rasterize(
             pairs, width=5, height=5,
             bounds=(0, 0, 5, 5), fill=0, merge=merge_mode,
-            use_cuda=True,
+            gpu=True,
         )
         np.testing.assert_array_equal(
             np_result.values, _materialise(cp_result))
@@ -255,17 +255,17 @@ class TestEagerCupyEmptyGeometryList:
     eager cupy path (no ``chunks=``) feeds zero-sized cupy arrays into
     ``_gpu_init_buffers`` and ``_gpu_finalize_buffers`` and a regression
     short-circuiting to numpy on the empty-input branch would silently
-    break the "use_cuda=True returns a cupy.ndarray" contract.
+    break the "gpu=True returns a cupy.ndarray" contract.
     """
 
     def test_empty_list_returns_cupy_filled_with_fill(self):
         result = rasterize(
             [], width=8, height=8,
-            bounds=(0, 0, 8, 8), fill=-1.0, use_cuda=True,
+            bounds=(0, 0, 8, 8), fill=-1.0, gpu=True,
         )
-        # Backend contract: use_cuda=True must return a cupy.ndarray.
+        # Backend contract: gpu=True must return a cupy.ndarray.
         assert isinstance(result.data, cupy.ndarray), \
-            "use_cuda=True with empty input must keep cupy backend"
+            "gpu=True with empty input must keep cupy backend"
         host = cupy.asnumpy(result.data)
         assert host.shape == (8, 8)
         assert np.all(host == -1.0)
@@ -274,7 +274,7 @@ class TestEagerCupyEmptyGeometryList:
         """Default NaN fill must also stay on the GPU."""
         result = rasterize(
             [], width=5, height=5,
-            bounds=(0, 0, 5, 5), use_cuda=True,
+            bounds=(0, 0, 5, 5), gpu=True,
         )
         assert isinstance(result.data, cupy.ndarray)
         host = cupy.asnumpy(result.data)
@@ -345,7 +345,7 @@ class TestAllEqualValueCount:
         cp_result = rasterize(
             _ALL_EQUAL_PAIRS, width=10, height=10,
             bounds=(0, 0, 10, 10), fill=0, merge='count',
-            use_cuda=True,
+            gpu=True,
         )
         np.testing.assert_array_equal(
             np_result.values, _materialise(cp_result))
@@ -374,7 +374,7 @@ class TestAllEqualValueCount:
         dc_result = rasterize(
             _ALL_EQUAL_PAIRS, width=10, height=10,
             bounds=(0, 0, 10, 10), fill=0, merge='count',
-            use_cuda=True, chunks=(5, 5),
+            gpu=True, chunks=(5, 5),
         )
         np.testing.assert_array_equal(
             np_result.values, _materialise(dc_result))
@@ -414,7 +414,7 @@ class TestNameKwargBackends:
     def test_name_propagated_eager_cupy(self):
         result = rasterize(
             self._simple_pair(), width=5, height=5,
-            bounds=(0, 0, 5, 5), name='burned_cupy', use_cuda=True,
+            bounds=(0, 0, 5, 5), name='burned_cupy', gpu=True,
         )
         assert result.name == 'burned_cupy'
 
@@ -424,6 +424,6 @@ class TestNameKwargBackends:
         result = rasterize(
             self._simple_pair(), width=5, height=5,
             bounds=(0, 0, 5, 5), name='burned_dask_cupy',
-            use_cuda=True, chunks=(3, 3),
+            gpu=True, chunks=(3, 3),
         )
         assert result.name == 'burned_dask_cupy'

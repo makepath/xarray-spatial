@@ -103,9 +103,9 @@ def _materialise(result):
 
 _BACKEND_KWARGS = {
     'numpy': {},
-    'cupy': {'use_cuda': True},
+    'cupy': {'gpu': True},
     'dask_numpy': {'chunks': (5, 5)},
-    'dask_cupy': {'use_cuda': True, 'chunks': (5, 5)},
+    'dask_cupy': {'gpu': True, 'chunks': (5, 5)},
 }
 
 
@@ -404,7 +404,7 @@ class TestMultiColumnGPU:
                          fill=0)
         cp_r = rasterize(gdf, columns=['num', 'den'], merge='sum',
                          width=10, height=5, bounds=(0, 0, 10, 5),
-                         fill=0, use_cuda=True)
+                         fill=0, gpu=True)
         np.testing.assert_array_equal(np_r.values, _materialise(cp_r))
 
     @skip_no_cuda
@@ -416,7 +416,7 @@ class TestMultiColumnGPU:
                          fill=0)
         dc_r = rasterize(gdf, columns=['num', 'den'], merge='sum',
                          width=10, height=5, bounds=(0, 0, 10, 5),
-                         fill=0, use_cuda=True, chunks=(3, 3))
+                         fill=0, gpu=True, chunks=(3, 3))
         np.testing.assert_array_equal(np_r.values, _materialise(dc_r))
 
     @skip_no_cuda
@@ -428,7 +428,7 @@ class TestMultiColumnGPU:
         gdf = self._fixture()
         cp_r = rasterize(gdf, columns=['num', 'den'], merge='count',
                          width=10, height=5, bounds=(0, 0, 10, 5),
-                         fill=0, use_cuda=True)
+                         fill=0, gpu=True)
         data = _materialise(cp_r)
         # Every covered pixel has count==1; uncovered pixels are 0.
         assert (data == 1).sum() == 50  # full 10x5 covered by union
@@ -449,7 +449,7 @@ class TestMultiColumnGPU:
                          fill=0)
         cp_r = rasterize(gdf, columns=['a', 'b', 'c'], merge='sum',
                          width=10, height=5, bounds=(0, 0, 10, 5),
-                         fill=0, use_cuda=True)
+                         fill=0, gpu=True)
         np.testing.assert_array_equal(np_r.values, _materialise(cp_r))
 
 
