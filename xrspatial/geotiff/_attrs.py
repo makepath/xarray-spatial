@@ -1683,8 +1683,11 @@ def _pack(data, nodata=None):
     reversing the scale first, as here, makes keeping the tags correct.)
 
     Raises ``ValueError`` when ``data`` carries no mask_and_scale state to
-    reverse, or when an integer dtype must be restored but NaN pixels are
-    present with no declared sentinel to fill them.
+    reverse, when an integer dtype must be restored but NaN pixels are
+    present with no declared sentinel to fill them, or when the ``nodata``
+    kwarg cannot be represented in the packed integer dtype (out of range
+    or fractional) -- the cast would wrap or round the fill value away
+    from what the GDAL_NODATA tag declares.
     """
     attrs = dict(data.attrs)
     scale = attrs.get('scale_factor', 1.0)
@@ -1757,6 +1760,13 @@ def _pack(data, nodata=None):
         attrs.pop(key, None)
     if 'masked_nodata' in attrs:
         attrs['masked_nodata'] = False
+    if nodata_kwarg is not None:
+        # The buffer's holes now carry the kwarg sentinel, so the attr
+        # follows it. Downstream writers receive the kwarg and never
+        # consult the attr, but keeping the intermediate self-consistent
+        # means a path that forgot to thread the kwarg would still tag
+        # the value the pixels actually hold.
+        attrs['nodata'] = nodata_kwarg
 
     out.attrs = attrs
     out.name = data.name

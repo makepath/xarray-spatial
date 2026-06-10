@@ -105,6 +105,32 @@ def test_pack_nodata_kwarg_unpack_round_trip_with_scale_offset(
         np.asarray(repacked.data), np.asarray(decoded.data), equal_nan=True)
 
 
+@pytest.mark.parametrize("chunks", [None, 2], ids=["numpy", "dask"])
+def test_pack_nodata_kwarg_float_target(tmp_path, chunks):
+    """Float pack targets skip the integer range guard and the cast, so
+    pin the kwarg fill on that branch too: the hole carries the kwarg
+    sentinel, the tag agrees, and a masked re-read masks it."""
+    data = np.array([[1.5, 2.5, -9999.0], [4.5, 5.5, 6.5]], dtype=np.float32)
+    src = _write_int_tiff(tmp_path / "src_f32_3168.tif", data, nodata=-9999.0)
+
+    decoded = _reopen(src, chunks)
+    hole_mask = np.isnan(np.asarray(decoded.data))
+    assert hole_mask.sum() == 1
+
+    out = str(tmp_path / "out_f32_3168.tif")
+    decoded.xrs.to_geotiff(out, pack=True, nodata=-5.0)
+
+    raw = open_geotiff(out)
+    raw_vals = np.asarray(raw.data)
+    assert raw_vals[0, 2] == -5.0
+    assert raw.attrs.get("nodata") == -5.0
+    assert not np.isnan(raw_vals).any()
+
+    masked = open_geotiff(out, masked=True)
+    np.testing.assert_array_equal(
+        np.isnan(np.asarray(masked.data)), hole_mask)
+
+
 def test_pack_without_nodata_kwarg_still_uses_attrs_sentinel(tmp_path):
     """No kwarg: the attrs sentinel keeps driving both the fill and the
     tag, as before."""
