@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from xrspatial.mcda.combine import wlc, wpm
+from xrspatial.mcda.combine import (
+    _BYTES_PER_VALUE,
+    _available_memory_bytes,
+    wlc,
+    wpm,
+)
 
 
 def sensitivity(
@@ -135,6 +140,31 @@ def _is_dask_dataset(criteria):
         return False
 
 
+def _check_monte_carlo_memory(n_criteria, shape):
+    """Raise MemoryError if materializing the criteria would exceed 50% of RAM.
+
+    The Monte Carlo path computes dask-backed criteria eagerly (see the
+    graph-explosion comment in ``_monte_carlo``), which holds every
+    criterion layer plus three full-size float64 working buffers
+    (running mean, running M2, per-sample score) in host memory at once.
+    """
+    pixels = 1
+    for dim in shape:
+        pixels *= int(dim)
+    required = (int(n_criteria) + 3) * pixels * _BYTES_PER_VALUE
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        shape_str = "x".join(str(int(d)) for d in shape)
+        raise MemoryError(
+            f"monte_carlo sensitivity with {int(n_criteria)} criteria on "
+            f"a {shape_str} grid materializes the dask criteria and "
+            f"requires ~{required / 1e9:.1f} GB of working memory but "
+            f"only ~{available / 1e9:.1f} GB is available.  Coarsen or "
+            f"subset the criterion rasters before running Monte Carlo "
+            f"sensitivity."
+        )
+
+
 def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
     """Monte Carlo sensitivity: random weight vectors, measure CV."""
     rng = np.random.default_rng(seed)
@@ -150,6 +180,13 @@ def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
     template = criteria[first_var]
 
     use_dask = _is_dask_dataset(criteria)
+
+    # Memory guard: the dask path below materializes the full Dataset
+    # plus full-size accumulators in host memory, so refuse early when
+    # that working set cannot fit (issue #3145).  Run before the
+    # accumulator allocations so nothing full-size is allocated first.
+    if use_dask:
+        _check_monte_carlo_memory(n_criteria, template.shape)
 
     # Accumulate running mean and M2 for Welford's online algorithm
     # to avoid storing all n_samples surfaces in memory

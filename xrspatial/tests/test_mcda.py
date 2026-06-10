@@ -856,6 +856,94 @@ class TestSensitivityDask:
         assert np.all(result.values >= 0)
 
 
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestMonteCarloMemoryGuard:
+    """Memory guard on the dask materialization in monte_carlo (#3145)."""
+
+    def _dask_dataset(self, n=12):
+        return xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(n, n), dims=["y", "x"],
+            ).chunk({"y": n // 2, "x": n // 2}),
+            "b": xr.DataArray(
+                np.random.rand(n, n), dims=["y", "x"],
+            ).chunk({"y": n // 2, "x": n // 2}),
+        })
+
+    def test_oversize_dask_raises(self):
+        """Dask input raises MemoryError before being materialized."""
+        from unittest.mock import patch
+
+        ds = self._dask_dataset()
+        with patch(
+            "xrspatial.mcda.sensitivity._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                sensitivity(
+                    ds, {"a": 0.6, "b": 0.4},
+                    method="monte_carlo", n_samples=5,
+                )
+
+    def test_numpy_input_skips_guard(self, criteria_dataset, weights_3):
+        """In-memory input is already resident; the guard only applies to dask."""
+        from unittest.mock import patch
+
+        with patch(
+            "xrspatial.mcda.sensitivity._available_memory_bytes",
+            return_value=1,
+        ):
+            result = sensitivity(
+                criteria_dataset, weights_3,
+                method="monte_carlo", n_samples=5,
+            )
+        assert result.shape == (3, 3)
+
+    def test_normal_dask_succeeds(self):
+        """A small dask dataset passes the guard with real available memory."""
+        ds = self._dask_dataset()
+        result = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="monte_carlo", n_samples=5,
+        )
+        assert result.shape == (12, 12)
+        assert np.all(result.values >= 0)
+
+    def test_error_message_names_criteria_and_shape(self):
+        """The error message identifies the criterion count and grid shape."""
+        from unittest.mock import patch
+
+        ds = self._dask_dataset()
+        with patch(
+            "xrspatial.mcda.sensitivity._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError) as exc_info:
+                sensitivity(
+                    ds, {"a": 0.6, "b": 0.4},
+                    method="monte_carlo", n_samples=5,
+                )
+
+        msg = str(exc_info.value)
+        assert "2 criteria" in msg
+        assert "12x12" in msg
+
+    def test_one_at_a_time_dask_unaffected(self):
+        """The guard does not apply to the lazy one_at_a_time path."""
+        from unittest.mock import patch
+
+        ds = self._dask_dataset()
+        with patch(
+            "xrspatial.mcda.sensitivity._available_memory_bytes",
+            return_value=1,
+        ):
+            result = sensitivity(
+                ds, {"a": 0.6, "b": 0.4},
+                method="one_at_a_time",
+            )
+        assert set(result.data_vars) == {"a", "b"}
+
+
 # ===========================================================================
 # Edge cases
 # ===========================================================================
