@@ -1510,6 +1510,17 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
                 nodata_int = int(mask_sentinel)
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
+                    # Compute the sentinel mask at the integer dtype's
+                    # native width BEFORE the float64 promotion. For
+                    # int64/uint64 sentinels above 2**53 (INT64_MAX,
+                    # UINT64_MAX, ...) the promotion rounds nearby valid
+                    # values onto the sentinel's float64 representation,
+                    # so a post-promotion compare masked valid pixels to
+                    # NaN and diverged from the dask / GPU-chunked / VRT
+                    # paths, which all compare at native width
+                    # (issue #3098).
+                    mask = arr == arr.dtype.type(nodata_int)
+                    nodata_pixels_present = bool(mask.any())
                     # Promote to float64 whenever the sentinel is
                     # maskable, independent of whether any pixel matches.
                     # The dask path declares float64 up front from the
@@ -1524,8 +1535,6 @@ def _apply_eager_nodata_mask(arr, *, mask_sentinel, mask_nodata):
                     # (issue #2990). ``nodata_pixels_present`` still
                     # records whether a pixel matched.
                     arr = arr.astype(np.float64)
-                    mask = arr == np.float64(nodata_int)
-                    nodata_pixels_present = bool(mask.any())
                     if nodata_pixels_present:
                         arr[mask] = np.nan
                 else:
