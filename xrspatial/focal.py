@@ -91,6 +91,11 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
 
     if chunks is not None:
         # Per-task footprint for the dask paths: largest chunk + halo.
+        # The scheduler runs one task per worker concurrently, so true peak
+        # is ~num_workers * padded_chunk; the 0.5-of-available headroom
+        # below absorbs that for sane chunk sizes. Unknown chunk sizes
+        # (NaN, e.g. after boolean indexing) make the comparison False and
+        # fall through to dask's own map_overlap error.
         rows = max(chunks[-2])
         cols = max(chunks[-1])
 
