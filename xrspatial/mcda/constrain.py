@@ -30,7 +30,8 @@ def constrain(
     Returns
     -------
     xr.DataArray
-        Constrained suitability surface.
+        Constrained suitability surface. Keeps the input's dims,
+        coords, and attrs (``res``, ``crs``, ``nodatavals``, ...).
     """
     if name is None:
         name = suitability.name
