@@ -362,7 +362,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         accepts the loss and lets the write proceed; consumers reading
         the output will see an axis-aligned, non-rotated TIFF.
     pack : bool, default False
-        [advanced] Inverse of ``open_geotiff(unpack=True)``. Re-pack
+        [experimental] Inverse of ``open_geotiff(unpack=True)``. Re-pack
         a decoded float array before writing: reverse the scale / offset
         recorded on ``attrs['scale_factor']`` / ``attrs['add_offset']``,
         fill NaN back to the nodata sentinel, and cast to the integer source
