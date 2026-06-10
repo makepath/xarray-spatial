@@ -166,20 +166,16 @@ class TestStreamingMatchesInMemory:
 
 
 class TestStreaming3D:
-    """3-D sources crash in the streaming assembly (issue #3100)."""
+    """3-D (y, x, band) sources stream correctly since #3111 fixed #3100."""
 
-    @pytest.mark.xfail(strict=True, raises=ValueError,
-                       reason="2-D output buffer vs 3-D tiles, see #3100")
     def test_3d_source_streams(self):
         from xrspatial.reproject import reproject
         data = np.random.RandomState(5).rand(32, 32, 3)
         raster = _make_raster(data)
-        # max_memory=1 -> serial loop, so the expected failure is the
-        # deterministic assembly ValueError, never the concurrent
-        # parallel-kernel abort from #3141.
+        # max_memory=1 -> serial loop, keeping the concurrent
+        # parallel-kernel abort from #3141 out of play.
         out = _run_streaming(raster, tile_size=16, max_memory=1)
-        # Once #3100 is fixed the xfail comes off and the streaming
-        # result must match the in-memory 3-D path:
+        # The streaming result must match the in-memory 3-D path:
         ref = reproject(raster, 'EPSG:32633')
         assert out.shape == ref.shape
         np.testing.assert_allclose(out, ref.values, equal_nan=True)
