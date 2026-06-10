@@ -280,7 +280,9 @@ def clip_polygon(
             )
             result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
         else:
-            # dask+numpy: xarray.where handles lazy condition natively
+            # dask+numpy: xarray.where handles lazy condition natively and
+            # promotes the dtype for an unrepresentable nodata; the GPU
+            # branches reproduce that promotion via _masked_output_dtype.
             result = raster.where(cond, other=nodata)
     elif has_cuda_and_cupy() and is_cupy_array(raster.data):
         # Pure CuPy: operate on raw arrays to avoid xarray/cupy
