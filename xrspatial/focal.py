@@ -186,17 +186,16 @@ def _mean_dask_numpy(data, excludes, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array((), dtype=data.dtype))
     return out
 
 
 def _mean_dask_cupy(data, excludes, boundary='nan'):
-    data = data.astype(cupy.float32)
     _func = partial(_mean_cupy, excludes=excludes)
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array((), dtype=data.dtype))
     return out
 
 
@@ -257,9 +256,11 @@ def _mean_gpu(data, excludes, out):
 
 
 def _mean_cupy(data, excludes):
-    # ensure cupy arrays and a float dtype
-    data_cu = cupy.asarray(data, dtype=cupy.float32)
-    excludes_cu = cupy.asarray(excludes, dtype=cupy.float32)
+    # Ensure cupy arrays. Keep the float dtype the caller dispatched
+    # (mean() casts to float64 before dispatch) so the GPU backends
+    # return the same dtype as the numpy and dask+numpy paths.
+    data_cu = cupy.asarray(data)
+    excludes_cu = cupy.asarray(excludes, dtype=data_cu.dtype)
 
     griddim, blockdim = cuda_args(data_cu.shape)
 
@@ -531,7 +532,7 @@ def _apply_dask_numpy(data, kernel, func, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array((), dtype=data.dtype))
     return out
 
 
@@ -561,7 +562,7 @@ def _apply_dask_cupy(data, kernel, func, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array((), dtype=data.dtype))
     return out
 
 
@@ -1186,7 +1187,7 @@ def _focal_stats_dask_cupy(agg, kernel, stats_funcs, boundary='nan'):
         data = agg.data.astype(_promote_float(agg.data.dtype))
         stats_data = data.map_overlap(
             _func, depth=(pad_h, pad_w),
-            boundary=dask_bnd, meta=cupy.array(()))
+            boundary=dask_bnd, meta=cupy.array((), dtype=data.dtype))
         stats_agg = xr.DataArray(
             stats_data, dims=agg.dims, coords=agg.coords, attrs=agg.attrs)
         stats_aggs.append(stats_agg)

@@ -1881,6 +1881,91 @@ def test_hotspots_name_consistent_across_backends(backend):
     assert result.name == 'hotspots'
 
 
+# --- output dtype consistency across backends (issue #3217) -------------
+#
+# Regression: mean() hardcoded float32 on the cupy and dask+cupy paths
+# while the numpy and dask+numpy paths returned float64, so a float64
+# raster silently lost precision on the GPU. The dask paths of mean,
+# apply, and focal_stats also passed an untyped meta to map_overlap, so
+# the lazy DataArray advertised float64 while .compute() returned the
+# promoted float32 for float32/integer input.
+
+
+def _computed_dtype(result):
+    data = result.data
+    if da is not None and isinstance(data, da.Array):
+        data = data.compute()
+    return data.dtype
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("in_dtype", [np.float64, np.float32, np.int32])
+def test_mean_dtype_consistent_across_backends_3217(backend, in_dtype):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = (np.arange(16).reshape(4, 4) + 0.5).astype(in_dtype)
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
+    result = mean(agg)
+    # mean() casts to float64 before dispatch; every backend must keep that.
+    assert result.dtype == np.float64
+    assert _computed_dtype(result) == np.float64
+
+
+@cuda_and_cupy_available
+def test_mean_gpu_matches_cpu_float64_3217():
+    # The old float32 cast on the GPU paths produced ~1e-4 relative error
+    # against the CPU result. In float64 the two backends agree exactly.
+    import cupy
+    data = np.random.default_rng(7).random((16, 16))
+    cpu = mean(xr.DataArray(data))
+    gpu = mean(xr.DataArray(cupy.asarray(data)))
+    np.testing.assert_array_equal(cpu.data, gpu.data.get())
+
+
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("in_dtype", [np.float64, np.float32, np.int32])
+def test_apply_dask_advertised_dtype_matches_computed_3217(backend, in_dtype):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if da is None:
+        pytest.skip("Requires Dask")
+
+    data = (np.arange(16).reshape(4, 4) + 0.5).astype(in_dtype)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
+    if 'cupy' in backend:
+        from xrspatial.focal import _focal_mean_cuda
+        result = apply(agg, kernel, func=_focal_mean_cuda)
+    else:
+        result = apply(agg, kernel)
+    expected = np.float64 if in_dtype == np.float64 else np.float32
+    assert result.dtype == expected
+    assert _computed_dtype(result) == expected
+
+
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+@pytest.mark.parametrize("in_dtype", [np.float64, np.float32, np.int32])
+def test_focal_stats_dask_advertised_dtype_matches_computed_3217(backend, in_dtype):
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if da is None:
+        pytest.skip("Requires Dask")
+
+    data = (np.arange(16).reshape(4, 4) + 0.5).astype(in_dtype)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    agg = create_test_raster(data, backend=backend, chunks=(2, 2))
+    result = focal_stats(agg, kernel, stats_funcs=['mean', 'std'])
+    expected = np.float64 if in_dtype == np.float64 else np.float32
+    assert result.dtype == expected
+    assert _computed_dtype(result) == expected
+
+
 # ---------------------------------------------------------------------------
 # API-consistency regressions (issue #2689)
 # ---------------------------------------------------------------------------
