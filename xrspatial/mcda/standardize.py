@@ -205,7 +205,6 @@ def _linear(data, *, direction, bounds):
 
 def _sigmoidal(data, *, midpoint, spread):
     xp = _get_xp(data)
-    import warnings
     exponent = -spread * (data - midpoint)
     # Clamp exponent to avoid overflow in exp(); the sigmoid is
     # effectively 0 or 1 beyond ~±700 anyway.
