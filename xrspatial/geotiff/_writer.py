@@ -707,6 +707,56 @@ def _max_streaming_row_span(row_chunks, tile_h, height):
     return worst
 
 
+def _stream_row_bands(row_chunks, band_h, height, max_src_rows):
+    """Group ``band_h``-tall output bands into per-compute row bands.
+
+    Each ``.compute()`` of an output band materialises every source
+    chunk-row it touches (plus a one-chunk ``map_overlap`` halo each
+    side) in full, so computing one ``band_h``-tall band at a time
+    re-executes a source chunk once per band it overlaps (issue #3117).
+    Grouping consecutive bands until the touched source-row span (with
+    halo) would exceed ``max_src_rows`` lets the caller compute each
+    group once and carve the individual tile-rows / strips out of the
+    materialised array, for the same peak memory.
+
+    Returns a list of ``(start_row, stop_row)`` pairs covering
+    ``[0, height)``. Every group contains at least one band, so a
+    single band whose span already exceeds ``max_src_rows`` degrades to
+    the previous one-band-per-compute behaviour (the budget stays a
+    soft cap, matching #3007). ``row_chunks`` is the source's row-chunk
+    tuple, or ``None`` / empty when unknown, in which case no grouping
+    is attempted.
+    """
+    import bisect
+    if not row_chunks:
+        return [(r0, min(r0 + band_h, height))
+                for r0 in range(0, height, band_h)]
+    offsets = [0]
+    for h in row_chunks:
+        offsets.append(offsets[-1] + int(h))
+    n = len(row_chunks)
+
+    def _span(r0, r1):
+        first = bisect.bisect_right(offsets, r0) - 1
+        last = bisect.bisect_right(offsets, r1 - 1) - 1
+        lo = max(0, first - 1)
+        hi = min(n - 1, last + 1)
+        return offsets[hi + 1] - offsets[lo]
+
+    bands = []
+    r0 = 0
+    while r0 < height:
+        r1 = min(r0 + band_h, height)
+        while r1 < height:
+            r1_next = min(r1 + band_h, height)
+            if _span(r0, r1_next) > max_src_rows:
+                break
+            r1 = r1_next
+        bands.append((r0, r1))
+        r0 = r1
+    return bands
+
+
 def _write_streaming(dask_data, path: str, *,
                      geo_transform: 'GeoTransform | None' = None,
                      crs_epsg: int | None = None,
@@ -734,9 +784,12 @@ def _write_streaming(dask_data, path: str, *,
 
     For tiled output, each tile-row is computed in horizontal segments
     that fit within ``streaming_buffer_bytes``. Most rasters fit in a
-    single segment per tile-row, matching the previous behaviour. Wide
-    rasters get bounded peak memory at the cost of more dask compute
-    calls.
+    single segment per tile-row; in that case consecutive tile-rows are
+    additionally grouped into row bands sized by the source chunk-row
+    span and computed once per band, so a source chunk taller than the
+    tile is not re-executed once per tile-row it overlaps (issue
+    #3117). Wide rasters get bounded peak memory at the cost of more
+    dask compute calls.
 
     For tiled output the horizontal-segment budget is sized from the
     source chunk geometry rather than the output tile height: a
@@ -746,9 +799,9 @@ def _write_streaming(dask_data, path: str, *,
     past the cap (#3007). ``streaming_buffer_bytes`` stays a soft cap --
     the column halo of a 2D overlap adds a bounded couple of source
     chunk-columns on top. Strip output (``tiled=False``) does no
-    horizontal segmentation; its peak is
-    ``rows_per_strip * width * bytes_per_sample * samples`` (plus any
-    overlap halo).
+    horizontal segmentation, but groups strips into the same row bands;
+    its per-compute peak is the banded source-row span under the budget
+    (plus any overlap halo), never less than one strip.
 
     After all pixel data is written the IFD offset and byte-count arrays
     are patched in place.
@@ -1093,6 +1146,31 @@ def _write_streaming(dask_data, path: str, *,
                     tiles_per_segment = max(
                         1, streaming_buffer_bytes // bytes_per_tile_col)
 
+                # Row banding (issue #3117): when one full-width
+                # tile-row fits the budget (no column segmentation),
+                # group consecutive tile-rows into bands sized by the
+                # source chunk-row span and compute each band once.
+                # Each per-tile-row compute already materialises every
+                # touched source chunk-row in full, so carving several
+                # tile-rows out of one materialised band costs the same
+                # peak memory while dropping the per-chunk recompute
+                # (amplification was chunk_height / tile_height).
+                # Segmented wide-raster writes keep the
+                # one-tile-row-per-compute path; ``_stream_row_bands``
+                # with ``row_chunks=None`` degrades to exactly that.
+                if tiles_per_segment == tiles_across and row_chunks:
+                    bytes_per_src_row = width * bytes_per_sample * samples
+                    max_src_rows = max(
+                        1,
+                        streaming_buffer_bytes // max(1, bytes_per_src_row))
+                    try:
+                        row_bands = _stream_row_bands(
+                            row_chunks[0], th, height, max_src_rows)
+                    except (TypeError, ValueError):
+                        row_bands = _stream_row_bands(None, th, height, 0)
+                else:
+                    row_bands = _stream_row_bands(None, th, height, 0)
+
                 # Hoist the compression thread pool over the entire tiled
                 # write. Re-creating the executor per segment paid the
                 # thread-startup cost on every horizontal stripe and
@@ -1121,108 +1199,153 @@ def _write_streaming(dask_data, path: str, *,
                 # ``shutdown`` after the loop completed and leaked
                 # worker threads on any mid-stream raise.
                 try:
-                    for tr in range(tiles_down):
-                        r0 = tr * th
-                        r1 = min(r0 + th, height)
-                        actual_h = r1 - r0
-
-                        for seg_start in range(0, tiles_across, tiles_per_segment):
-                            seg_end = min(seg_start + tiles_per_segment,
-                                          tiles_across)
-                            seg_c0 = seg_start * tw
-                            seg_c1 = min(seg_end * tw, width)
-
-                            # Compute just this horizontal segment
+                    for band_r0, band_r1 in row_bands:
+                        # One compute per band when the full row width
+                        # fits the budget (issue #3117). ``band_np``
+                        # stays None on the segmented wide-raster path,
+                        # whose bands are single tile-rows.
+                        band_np = None
+                        if tiles_per_segment == tiles_across:
                             if dask_data.ndim == 3:
-                                seg_np = dask_data[
-                                    r0:r1, seg_c0:seg_c1, :].compute()
+                                band_np = dask_data[
+                                    band_r0:band_r1, :, :].compute()
                             else:
-                                seg_np = dask_data[
-                                    r0:r1, seg_c0:seg_c1].compute()
-                            if hasattr(seg_np, 'get'):
-                                seg_np = seg_np.get()  # CuPy -> numpy
-                            seg_np = np.asarray(seg_np)
+                                band_np = dask_data[
+                                    band_r0:band_r1, :].compute()
+                            if hasattr(band_np, 'get'):
+                                band_np = band_np.get()  # CuPy -> numpy
+                            band_np = np.asarray(band_np)
 
-                            if seg_np.dtype != out_dtype:
-                                seg_np = seg_np.astype(out_dtype)
+                            if band_np.dtype != out_dtype:
+                                band_np = band_np.astype(out_dtype)
 
-                            # NaN -> nodata sentinel
-                            if (nodata is not None and seg_np.dtype.kind == 'f'
+                            # NaN -> nodata sentinel. The copy doubles
+                            # the band transiently on the NaN-present
+                            # path, so the worst case is 2x the soft
+                            # cap -- same factor as the astype above
+                            # and as the old per-tile-row copy.
+                            if (nodata is not None
+                                    and band_np.dtype.kind == 'f'
                                     and not np.isnan(nodata)
                                     and restore_sentinel):
-                                nan_mask = np.isnan(seg_np)
+                                nan_mask = np.isnan(band_np)
                                 if nan_mask.any():
-                                    seg_np = seg_np.copy()
-                                    seg_np[nan_mask] = seg_np.dtype.type(nodata)
+                                    band_np = band_np.copy()
+                                    band_np[nan_mask] = (
+                                        band_np.dtype.type(nodata))
 
-                            # Build tile arrays for this segment
-                            seg_tile_arrs = []
-                            for tc in range(seg_start, seg_end):
-                                c0 = tc * tw
-                                c1 = min(c0 + tw, width)
-                                actual_w = c1 - c0
+                        for r0 in range(band_r0, band_r1, th):
+                            r1 = min(r0 + th, band_r1)
+                            actual_h = r1 - r0
 
-                                local_c0 = c0 - seg_c0
-                                local_c1 = c1 - seg_c0
-                                tile_slice = seg_np[:, local_c0:local_c1]
+                            for seg_start in range(0, tiles_across,
+                                                   tiles_per_segment):
+                                seg_end = min(seg_start + tiles_per_segment,
+                                              tiles_across)
+                                seg_c0 = seg_start * tw
+                                seg_c1 = min(seg_end * tw, width)
 
-                                if actual_h < th or actual_w < tw:
-                                    if seg_np.ndim == 3:
-                                        padded = np.zeros((th, tw, samples),
-                                                          dtype=out_dtype)
-                                    else:
-                                        padded = np.zeros((th, tw), dtype=out_dtype)
-                                    padded[:actual_h, :actual_w] = tile_slice
-                                    tile_arr = padded
+                                if band_np is not None:
+                                    # Carve this tile-row out of the
+                                    # already-materialised band (full
+                                    # width: seg_c0 == 0).
+                                    seg_np = band_np[
+                                        r0 - band_r0:r1 - band_r0]
                                 else:
-                                    tile_arr = np.ascontiguousarray(tile_slice)
+                                    # Compute just this horizontal
+                                    # segment
+                                    if dask_data.ndim == 3:
+                                        seg_np = dask_data[
+                                            r0:r1, seg_c0:seg_c1, :].compute()
+                                    else:
+                                        seg_np = dask_data[
+                                            r0:r1, seg_c0:seg_c1].compute()
+                                    if hasattr(seg_np, 'get'):
+                                        seg_np = seg_np.get()  # CuPy -> numpy
+                                    seg_np = np.asarray(seg_np)
 
-                                seg_tile_arrs.append(tile_arr)
+                                    if seg_np.dtype != out_dtype:
+                                        seg_np = seg_np.astype(out_dtype)
 
-                            # Parallel compress on the hoisted ``tile_pool``
-                            # when it exists. zlib/zstd/LZW release the GIL,
-                            # so threading actually parallelises the C-level
-                            # work. Peak memory while the segment is in
-                            # flight covers BOTH the uncompressed
-                            # ``seg_tile_arrs`` (one full tile per column,
-                            # released after the futures resolve) AND the
-                            # compressed buffers ``seg_compressed`` (held
-                            # until the sequential write loop drains them).
-                            # Both lists are bounded by ``tiles_per_segment``
-                            # which the streaming buffer cap sets; fall
-                            # through to a serial path when the pool is None
-                            # (no compression / single core) or when only
-                            # one tile sits in this segment.
-                            n_seg_tiles = len(seg_tile_arrs)
-                            if tile_pool is None or n_seg_tiles <= 1:
-                                seg_compressed = [
-                                    _compress_block(
-                                        ta, tw, th, samples, out_dtype,
-                                        bytes_per_sample, pred_int, comp_tag,
-                                        compression_level, max_z_error)
-                                    for ta in seg_tile_arrs
-                                ]
-                            else:
-                                futures = [
-                                    tile_pool.submit(
-                                        _compress_block,
-                                        ta, tw, th, samples, out_dtype,
-                                        bytes_per_sample, pred_int, comp_tag,
-                                        compression_level, max_z_error,
-                                        True)
-                                    for ta in seg_tile_arrs
-                                ]
-                                seg_compressed = [
-                                    fut.result() for fut in futures]
+                                    # NaN -> nodata sentinel
+                                    if (nodata is not None
+                                            and seg_np.dtype.kind == 'f'
+                                            and not np.isnan(nodata)
+                                            and restore_sentinel):
+                                        nan_mask = np.isnan(seg_np)
+                                        if nan_mask.any():
+                                            seg_np = seg_np.copy()
+                                            seg_np[nan_mask] = (
+                                                seg_np.dtype.type(nodata))
 
-                            # Sequential file write to preserve on-disk tile order
-                            for compressed in seg_compressed:
-                                actual_offsets.append(current_offset)
-                                actual_counts.append(len(compressed))
-                                f.write(compressed)
-                                current_offset += len(compressed)
+                                # Build tile arrays for this segment
+                                seg_tile_arrs = []
+                                for tc in range(seg_start, seg_end):
+                                    c0 = tc * tw
+                                    c1 = min(c0 + tw, width)
+                                    actual_w = c1 - c0
 
-                            del seg_np, seg_tile_arrs, seg_compressed
+                                    local_c0 = c0 - seg_c0
+                                    local_c1 = c1 - seg_c0
+                                    tile_slice = seg_np[:, local_c0:local_c1]
+
+                                    if actual_h < th or actual_w < tw:
+                                        if seg_np.ndim == 3:
+                                            padded = np.zeros((th, tw, samples),
+                                                              dtype=out_dtype)
+                                        else:
+                                            padded = np.zeros((th, tw), dtype=out_dtype)
+                                        padded[:actual_h, :actual_w] = tile_slice
+                                        tile_arr = padded
+                                    else:
+                                        tile_arr = np.ascontiguousarray(tile_slice)
+
+                                    seg_tile_arrs.append(tile_arr)
+
+                                # Parallel compress on the hoisted ``tile_pool``
+                                # when it exists. zlib/zstd/LZW release the GIL,
+                                # so threading actually parallelises the C-level
+                                # work. Peak memory while the segment is in
+                                # flight covers BOTH the uncompressed
+                                # ``seg_tile_arrs`` (one full tile per column,
+                                # released after the futures resolve) AND the
+                                # compressed buffers ``seg_compressed`` (held
+                                # until the sequential write loop drains them).
+                                # Both lists are bounded by ``tiles_per_segment``
+                                # which the streaming buffer cap sets; fall
+                                # through to a serial path when the pool is None
+                                # (no compression / single core) or when only
+                                # one tile sits in this segment.
+                                n_seg_tiles = len(seg_tile_arrs)
+                                if tile_pool is None or n_seg_tiles <= 1:
+                                    seg_compressed = [
+                                        _compress_block(
+                                            ta, tw, th, samples, out_dtype,
+                                            bytes_per_sample, pred_int, comp_tag,
+                                            compression_level, max_z_error)
+                                        for ta in seg_tile_arrs
+                                    ]
+                                else:
+                                    futures = [
+                                        tile_pool.submit(
+                                            _compress_block,
+                                            ta, tw, th, samples, out_dtype,
+                                            bytes_per_sample, pred_int, comp_tag,
+                                            compression_level, max_z_error,
+                                            True)
+                                        for ta in seg_tile_arrs
+                                    ]
+                                    seg_compressed = [
+                                        fut.result() for fut in futures]
+
+                                # Sequential file write to preserve on-disk tile order
+                                for compressed in seg_compressed:
+                                    actual_offsets.append(current_offset)
+                                    actual_counts.append(len(compressed))
+                                    f.write(compressed)
+                                    current_offset += len(compressed)
+
+                                del seg_np, seg_tile_arrs, seg_compressed
                 finally:
                     # ``cancel_futures=True`` (Python 3.9+) drops any
                     # queued-but-not-started compress jobs on the
@@ -1233,43 +1356,62 @@ def _write_streaming(dask_data, path: str, *,
                     if tile_pool is not None:
                         tile_pool.shutdown(wait=True, cancel_futures=True)
             else:
-                # Strip layout
-                for i in range(n_entries):
-                    r0 = i * rows_per_strip
-                    r1 = min(r0 + rows_per_strip, height)
-                    strip_rows = r1 - r0
+                # Strip layout. Group strips into row bands so a source
+                # chunk taller than ``rows_per_strip`` is not recomputed
+                # once per strip it overlaps (issue #3117); each band is
+                # one compute, sized by the source chunk-row span under
+                # the ``streaming_buffer_bytes`` budget.
+                bytes_per_src_row = width * bytes_per_sample * samples
+                max_src_rows = max(
+                    1, streaming_buffer_bytes // max(1, bytes_per_src_row))
+                row_chunks = getattr(dask_data, 'chunks', None)
+                try:
+                    strip_bands = _stream_row_bands(
+                        row_chunks[0] if row_chunks else None,
+                        rows_per_strip, height, max_src_rows)
+                except (TypeError, ValueError):
+                    strip_bands = _stream_row_bands(
+                        None, rows_per_strip, height, 0)
 
+                for band_r0, band_r1 in strip_bands:
                     if dask_data.ndim == 3:
-                        strip_np = dask_data[r0:r1, :, :].compute()
+                        band_np = dask_data[band_r0:band_r1, :, :].compute()
                     else:
-                        strip_np = dask_data[r0:r1, :].compute()
-                    if hasattr(strip_np, 'get'):
-                        strip_np = strip_np.get()  # CuPy -> numpy
-                    strip_np = np.asarray(strip_np)
+                        band_np = dask_data[band_r0:band_r1, :].compute()
+                    if hasattr(band_np, 'get'):
+                        band_np = band_np.get()  # CuPy -> numpy
+                    band_np = np.asarray(band_np)
 
-                    if strip_np.dtype != out_dtype:
-                        strip_np = strip_np.astype(out_dtype)
+                    if band_np.dtype != out_dtype:
+                        band_np = band_np.astype(out_dtype)
 
-                    if (nodata is not None and strip_np.dtype.kind == 'f'
+                    if (nodata is not None and band_np.dtype.kind == 'f'
                             and not np.isnan(nodata)
                             and restore_sentinel):
-                        nan_mask = np.isnan(strip_np)
+                        nan_mask = np.isnan(band_np)
                         if nan_mask.any():
-                            strip_np = strip_np.copy()
-                            strip_np[nan_mask] = strip_np.dtype.type(nodata)
+                            band_np = band_np.copy()
+                            band_np[nan_mask] = band_np.dtype.type(nodata)
 
-                    compressed = _compress_block(
-                        np.ascontiguousarray(strip_np),
-                        width, strip_rows, samples, out_dtype,
-                        bytes_per_sample, pred_int, comp_tag,
-                        compression_level, max_z_error)
+                    for r0 in range(band_r0, band_r1, rows_per_strip):
+                        r1 = min(r0 + rows_per_strip, band_r1)
+                        strip_rows = r1 - r0
+                        strip_np = band_np[r0 - band_r0:r1 - band_r0]
 
-                    actual_offsets.append(current_offset)
-                    actual_counts.append(len(compressed))
-                    f.write(compressed)
-                    current_offset += len(compressed)
+                        compressed = _compress_block(
+                            np.ascontiguousarray(strip_np),
+                            width, strip_rows, samples, out_dtype,
+                            bytes_per_sample, pred_int, comp_tag,
+                            compression_level, max_z_error)
 
-                    del strip_np
+                        actual_offsets.append(current_offset)
+                        actual_counts.append(len(compressed))
+                        f.write(compressed)
+                        current_offset += len(compressed)
+
+                        del strip_np
+
+                    del band_np
 
         # -- Pass 2: patch IFD with actual offsets.  Reuse the type
         # chosen at tag-build time (LONG for classic, LONG8 for

@@ -19,8 +19,10 @@ Folds the GPU-only writer test files into one parametrised home under
   ``cupy.putmask`` rewrite for the COG overview loop + buffer-aliasing
   guard.
 * ``test_gpu_writer_overview_mode_and_compression_level_1740.py`` --
-  ``overview_resampling='mode'`` dispatch and ``compression_level=``
-  accepted-but-ignored contract on the GPU writer.
+  ``overview_resampling='mode'`` dispatch and the ``compression_level=``
+  contract on the GPU writer: out-of-range rejected for parity with the
+  CPU writer, CPU-codec fallback tiles honor the level, nvCOMP tiles
+  warn and ignore it (#3167).
 * ``test_to_geotiff_gpu_fallback_1674.py`` -- ``to_geotiff(gpu=True)``
   exception-classification contract (ImportError + GPU-signal
   RuntimeError fall back with warning; everything else propagates).
@@ -1759,9 +1761,9 @@ def test_write_geotiff_gpu_compression_level_in_range_accepted(
     """In-range ``compression_level`` values are accepted and the file
     still round-trips.
 
-    The kwarg is documented as ignored, but ``to_geotiff(gpu=True, ...,
-    compression_level=N)`` callers expect the level to flow through
-    without error when N is a value the CPU writer would also accept.
+    ``to_geotiff(gpu=True, ..., compression_level=N)`` callers expect
+    the level to flow through without error when N is a value the CPU
+    writer would also accept.
     """
     arr = np.random.RandomState(1740).rand(32, 32).astype(np.float32)
     da = _gpu_compression_level_da(arr)
@@ -1780,71 +1782,56 @@ def test_write_geotiff_gpu_compression_level_in_range_accepted(
 
 @_gpu_only
 @pytest.mark.parametrize("compression, oor_level", [
-    # CPU writer would reject these; the GPU writer must not.
     ('zstd', 999),
     ('zstd', -5),
     ('deflate', 50),
     ('deflate', 0),
 ])
-def test_write_geotiff_gpu_compression_level_out_of_range_accepted(
+def test_write_geotiff_gpu_compression_level_out_of_range_raises(
         tmp_path, compression, oor_level):
-    """Out-of-range ``compression_level`` values do not raise on the GPU
-    writer (contrast with the CPU writer, which raises ``ValueError``).
+    """Out-of-range ``compression_level`` values raise ``ValueError`` on
+    the GPU writer, exactly like the CPU writer (#3167).
 
-    Pins the docstring contract: "Accepted for API compatibility but
-    currently ignored -- nvCOMP does not expose level control". Without
-    this test, a regression that wired the GPU writer up to the CPU
-    range validator would change behaviour against the doc and break
-    every ``to_geotiff(gpu=True, compression_level=X)`` caller for the
-    in-range case and noisily for the out-of-range one.
+    The GPU writer used to skip the range validation entirely (the
+    checks in ``to_geotiff`` sat below the GPU dispatch), so
+    ``compression_level=999`` silently wrote a file on one backend and
+    raised on the other.
     """
     arr = np.random.RandomState(1740).rand(32, 32).astype(np.float32)
     da = _gpu_compression_level_da(arr)
-    p = str(tmp_path / f'level_oor_{compression}_{oor_level}_1740.tif')
+    p = str(tmp_path / f'level_oor_{compression}_{oor_level}_3167.tif')
 
-    # Must not raise -- the GPU writer ignores the level.
-    _write_geotiff_gpu(
-        da, p, compression=compression,
-        compression_level=oor_level,
-        tile_size=32,
-    )
-
-    # And the file must still round-trip; the ignored level cannot
-    # corrupt the output.
-    out = open_geotiff(p)
-    np.testing.assert_allclose(np.asarray(out.data), arr)
+    with pytest.raises(ValueError, match=r"compression_level"):
+        _write_geotiff_gpu(
+            da, p, compression=compression,
+            compression_level=oor_level,
+            tile_size=32,
+        )
+    assert not pathlib.Path(p).exists()
 
 
 @_gpu_only
-def test_to_geotiff_gpu_compression_level_out_of_range_accepted(tmp_path):
-    """``to_geotiff(gpu=True, compression_level=X)`` threads the kwarg
-    through to ``_write_geotiff_gpu`` and must not raise on an out-of-range
-    value (the GPU writer ignores it).
-
-    Without this test the dispatcher could be rewritten to validate
-    levels before forwarding and silently break the documented contract.
+def test_to_geotiff_gpu_compression_level_out_of_range_raises(tmp_path):
+    """``to_geotiff(gpu=True, compression_level=999)`` raises before the
+    GPU dispatch, so bogus levels are rejected on every backend (#3167).
     """
     arr = np.random.RandomState(1740).rand(32, 32).astype(np.float32)
     da = _gpu_compression_level_da(arr)
-    p = str(tmp_path / 'level_oor_to_geotiff_gpu_1740.tif')
+    p = str(tmp_path / 'level_oor_to_geotiff_gpu_3167.tif')
 
-    # Must not raise even though 999 is out of zstd's 1-22 range.
-    to_geotiff(
-        da, p, gpu=True, compression='zstd',
-        compression_level=999, tiled=True, tile_size=32,
-    )
-
-    out = open_geotiff(p)
-    np.testing.assert_allclose(np.asarray(out.data), arr)
+    with pytest.raises(ValueError, match=r"compression_level=999"):
+        to_geotiff(
+            da, p, gpu=True, compression='zstd',
+            compression_level=999, tiled=True, tile_size=32,
+        )
+    assert not pathlib.Path(p).exists()
 
 
 @_gpu_only
 def test_to_geotiff_cpu_compression_level_out_of_range_raises(tmp_path):
     """Companion check: the CPU writer rejects out-of-range
-    ``compression_level``. Pins the asymmetry the GPU tests above rely
-    on -- if the CPU writer ever stopped raising, the GPU "ignored"
-    contract becomes uninteresting and the GPU tests above would silently
-    pass for the wrong reason.
+    ``compression_level``. Together with the GPU tests above this pins
+    the cross-backend parity of the rejection (#3167).
     """
     arr = np.random.RandomState(1740).rand(32, 32).astype(np.float32)
     da = xr.DataArray(
@@ -1858,6 +1845,166 @@ def test_to_geotiff_cpu_compression_level_out_of_range_raises(tmp_path):
     with pytest.raises(ValueError, match=r"compression_level=999"):
         to_geotiff(da, p, compression='zstd', compression_level=999,
                    tiled=True, tile_size=32)
+
+
+@_gpu_only
+@pytest.mark.parametrize("compression, oor_level, extra_kwargs", [
+    ('zstd', 999, {}),
+    ('deflate', 0, {}),
+    ('lz4', 17, {'allow_experimental_codecs': True}),
+])
+def test_to_geotiff_level_rejection_identical_numpy_vs_cupy_3167(
+        tmp_path, compression, oor_level, extra_kwargs):
+    """numpy and cupy inputs produce the *same* ``ValueError`` for an
+    out-of-range ``compression_level`` (#3167).
+
+    Captures both messages and compares them verbatim so the two
+    backends cannot drift apart again.
+    """
+    import cupy
+
+    arr = np.random.RandomState(3167).rand(32, 32).astype(np.float32)
+    coords = {
+        'y': np.arange(32.0, 0, -1),
+        'x': np.arange(32.0),
+    }
+    da_np = xr.DataArray(arr, dims=['y', 'x'], coords=coords)
+    da_gpu = xr.DataArray(cupy.asarray(arr), dims=['y', 'x'],
+                          coords=coords)
+
+    p_np = str(tmp_path / f'parity_np_{compression}_{oor_level}_3167.tif')
+    p_gpu = str(tmp_path / f'parity_gpu_{compression}_{oor_level}_3167.tif')
+
+    with pytest.raises(ValueError) as exc_np:
+        to_geotiff(da_np, p_np, compression=compression,
+                   compression_level=oor_level, tile_size=32,
+                   **extra_kwargs)
+    with pytest.raises(ValueError) as exc_gpu:
+        to_geotiff(da_gpu, p_gpu, compression=compression,
+                   compression_level=oor_level, tile_size=32,
+                   **extra_kwargs)
+
+    assert str(exc_np.value) == str(exc_gpu.value)
+    assert f"compression_level={oor_level}" in str(exc_gpu.value)
+    assert not pathlib.Path(p_np).exists()
+    assert not pathlib.Path(p_gpu).exists()
+
+
+@_gpu_only
+@pytest.mark.parametrize("compression, tag, level", [
+    ('zstd', 50000, 19),
+    ('zstd', 50000, 1),
+    ('deflate', 8, 9),
+    ('deflate', 8, 1),
+])
+def test_gpu_compress_tiles_cpu_fallback_honors_level_3167(
+        monkeypatch, compression, tag, level):
+    """When nvCOMP is unavailable, ``gpu_compress_tiles`` compresses
+    tiles on CPU at the *requested* level, byte-for-byte matching the
+    CPU codec dispatcher (#3167).
+
+    The fallback used to call ``compress(tile, tag)`` without the
+    level, so every fallback tile compressed at the default (6)."""
+    import cupy
+
+    from xrspatial.geotiff._compression import compress as cpu_compress
+    from xrspatial.geotiff._gpu_decode import gpu_compress_tiles
+
+    monkeypatch.setattr(
+        'xrspatial.geotiff._gpu_decode._nvcomp_batch_compress',
+        lambda *a, **k: None,
+    )
+
+    arr = np.random.RandomState(3167).rand(32, 32).astype(np.float32)
+    d_arr = cupy.asarray(arr)
+
+    tiles = gpu_compress_tiles(
+        d_arr, 32, 32, 32, 32, tag, 1, np.dtype(np.float32),
+        samples=1, compression_level=level,
+    )
+
+    # Single 32x32 tile covering the whole image: the uncompressed tile
+    # buffer is exactly the row-major image bytes.
+    expected = cpu_compress(arr.tobytes(), tag, level=level)
+    assert len(tiles) == 1
+    assert tiles[0] == expected
+
+
+@_gpu_only
+def test_to_geotiff_gpu_fallback_write_honors_level_3167(
+        monkeypatch, tmp_path):
+    """End-to-end: a GPU write whose tiles fall back to the CPU codec
+    honors ``compression_level`` -- different levels produce different
+    bytes on disk and both round-trip exactly (#3167)."""
+    import cupy
+
+    monkeypatch.setattr(
+        'xrspatial.geotiff._gpu_decode._nvcomp_batch_compress',
+        lambda *a, **k: None,
+    )
+
+    # Highly compressible data so deflate level 1 and level 9 produce
+    # observably different output.
+    arr = np.tile(
+        np.arange(64, dtype=np.float32), (64, 4))  # 64x256
+    da = xr.DataArray(
+        cupy.asarray(arr), dims=['y', 'x'],
+        coords={
+            'y': np.arange(64.0, 0, -1),
+            'x': np.arange(256.0),
+        },
+    )
+
+    paths = {}
+    for level in (1, 9):
+        p = str(tmp_path / f'fallback_level_{level}_3167.tif')
+        to_geotiff(da, p, gpu=True, compression='deflate',
+                   compression_level=level, tile_size=64)
+        out = open_geotiff(p)
+        np.testing.assert_array_equal(np.asarray(out.data), arr)
+        paths[level] = pathlib.Path(p).read_bytes()
+
+    assert paths[1] != paths[9]
+
+
+@_gpu_only
+def test_gpu_compress_tiles_nvcomp_level_ignored_warns_3167(monkeypatch):
+    """When nvCOMP handles the tiles, an explicit ``compression_level``
+    cannot be honored; ``gpu_compress_tiles`` warns instead of silently
+    dropping it. No level requested -> no warning (#3167)."""
+    import cupy
+
+    from xrspatial.geotiff._gpu_decode import gpu_compress_tiles
+
+    fake_tiles = [b'\x00fake-nvcomp-tile']
+    monkeypatch.setattr(
+        'xrspatial.geotiff._gpu_decode._nvcomp_batch_compress',
+        lambda *a, **k: list(fake_tiles),
+    )
+
+    arr = np.random.RandomState(3167).rand(32, 32).astype(np.float32)
+    d_arr = cupy.asarray(arr)
+
+    with pytest.warns(UserWarning,
+                      match=r"compression_level=9 is ignored by "
+                            r"the nvCOMP GPU encoder"):
+        tiles = gpu_compress_tiles(
+            d_arr, 32, 32, 32, 32, 8, 1, np.dtype(np.float32),
+            samples=1, compression_level=9,
+        )
+    assert tiles == fake_tiles
+
+    # Default level (None): nvCOMP path stays silent. Record instead
+    # of simplefilter('error') so an unrelated warning (e.g. a cupy
+    # deprecation) cannot fail the test.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        tiles = gpu_compress_tiles(
+            d_arr, 32, 32, 32, 32, 8, 1, np.dtype(np.float32),
+            samples=1, compression_level=None,
+        )
+    assert tiles == fake_tiles
+    assert not [w for w in caught if 'nvCOMP' in str(w.message)]
 
 
 # ===========================================================================
@@ -2321,4 +2468,118 @@ def test_to_geotiff_dask_cupy_gpu_false_streaming_multiband_3165(
 
     out = open_geotiff(path)
     assert out.shape == (64, 48, 3)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+# ---------------------------------------------------------------------------
+# Dask materialisation warning on the GPU write path (#3166)
+#
+# to_geotiff's streaming contract only holds on the CPU path. dask+cupy
+# input auto-dispatches to _write_geotiff_gpu, which computes the whole
+# array on device; streaming_buffer_bytes is a no-op there. The writer
+# now emits a GeoTIFFFallbackWarning at the compute site so callers
+# learn the full array is being materialised. Plain (non-dask) cupy
+# writes must stay silent: there is nothing lazy to materialise.
+# ---------------------------------------------------------------------------
+
+
+def _materialise_warnings_3166(records):
+    """The GeoTIFFFallbackWarning records from the #3166 compute sites."""
+    return [
+        w for w in records
+        if issubclass(w.category, GeoTIFFFallbackWarning)
+        and 'materialised in full on device' in str(w.message)
+    ]
+
+
+def _gradient_da_3166(backing):
+    """A 64x64 float32 DataArray over the given array backing."""
+    return xr.DataArray(
+        backing,
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(63, -1, -1, dtype=np.float64),
+            "x": np.arange(64, dtype=np.float64),
+        },
+        attrs={
+            "crs": 4326,
+            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 63.5),
+        },
+    )
+
+
+@_gpu_only
+def test_to_geotiff_dask_cupy_warns_on_materialise_3166(tmp_path):
+    """Auto-dispatched dask+cupy writes warn that the array is
+    materialised on device instead of streamed."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    da = _gradient_da_3166(
+        dca.from_array(cupy.asarray(arr), chunks=(32, 32)))
+    path = str(tmp_path / "dask_cupy_materialise_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path)
+
+    assert len(_materialise_warnings_3166(records)) == 1
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+def test_to_geotiff_plain_cupy_no_materialise_warning_3166(tmp_path):
+    """Plain (non-dask) cupy writes have nothing lazy to materialise
+    and must not emit the #3166 warning."""
+    import cupy
+
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    da = _gradient_da_3166(cupy.asarray(arr))
+    path = str(tmp_path / "plain_cupy_no_warn_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path)
+
+    assert _materialise_warnings_3166(records) == []
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+def test_write_geotiff_gpu_positional_dask_warns_3166(tmp_path):
+    """The positional (non-DataArray) compute site in
+    ``_write_geotiff_gpu`` emits the same warning."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.arange(32 * 32, dtype=np.float32).reshape(32, 32)
+    lazy = dca.from_array(cupy.asarray(arr), chunks=(16, 16))
+    path = str(tmp_path / "positional_dask_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        _write_geotiff_gpu(lazy, path)
+
+    assert len(_materialise_warnings_3166(records)) == 1
+
+
+@_gpu_only
+def test_to_geotiff_dask_numpy_gpu_true_warns_3166(tmp_path):
+    """``gpu=True`` with dask+numpy input forces GPU dispatch (no
+    ``_is_gpu_data`` auto-detect involved) and warns the same way."""
+    import dask.array as dca
+
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    da = _gradient_da_3166(dca.from_array(arr, chunks=(32, 32)))
+    path = str(tmp_path / "dask_numpy_gpu_true_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path, gpu=True)
+
+    assert len(_materialise_warnings_3166(records)) == 1
+    out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
