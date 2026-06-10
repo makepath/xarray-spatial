@@ -27,7 +27,6 @@ from xrspatial.geotiff import open_geotiff, to_geotiff
 
 from .._helpers.markers import requires_gpu
 
-
 # ---------------------------------------------------------------------------
 # Degenerate fixture set: every shape with at least one size-1 dimension.
 # ---------------------------------------------------------------------------

@@ -15,9 +15,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import (
-    MalformedScaleOffsetError, MixedBandMetadataError, _build_vrt,
-    _read_geotiff_dask, _read_geotiff_gpu, _read_vrt, open_geotiff, to_geotiff)
+from xrspatial.geotiff import (MalformedScaleOffsetError, MixedBandMetadataError, _build_vrt,
+                               _read_geotiff_dask, _read_geotiff_gpu, _read_vrt, open_geotiff,
+                               to_geotiff)
 from xrspatial.geotiff._runtime import GeoTIFFFallbackWarning
 from xrspatial.geotiff.tests._helpers.markers import requires_gpu
 
