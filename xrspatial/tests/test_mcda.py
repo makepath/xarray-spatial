@@ -2066,4 +2066,6 @@ class TestAHPIncompleteDocstring3148:
     def test_docstring_mentions_warning(self):
         doc = ahp_weights.__doc__
         assert "UserWarning" in doc
-        assert "incomplete" not in doc.split("Raises")[1].split("Warns")[0]
+        assert "Raises" in doc and "Warns" in doc
+        raises_section = doc.split("Raises")[1].split("Warns")[0]
+        assert "incomplete" not in raises_section

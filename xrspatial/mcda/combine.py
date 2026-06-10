@@ -256,6 +256,8 @@ def owa(
     weights : dict
         Criterion weights as ``{criterion_name: weight}``, must sum
         to ~1.0. Same convention as :func:`wlc` and :func:`wpm`.
+        Required; the ``None`` default exists only to support the
+        deprecated ``criterion_weights`` alias.
     order_weights : list of float
         Weights applied by rank position (index 0 = highest value).
         Must have the same length as the number of criteria and
@@ -284,13 +286,9 @@ def owa(
         )
         weights = criterion_weights
     if weights is None:
-        raise TypeError(
-            "owa() missing required argument: 'weights'"
-        )
+        raise TypeError("owa() missing required argument: 'weights'")
     if order_weights is None:
-        raise TypeError(
-            "owa() missing required argument: 'order_weights'"
-        )
+        raise TypeError("owa() missing required argument: 'order_weights'")
 
     _validate_criteria(criteria)
     _validate_weights(weights, criteria)
