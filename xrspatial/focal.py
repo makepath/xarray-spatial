@@ -1720,9 +1720,10 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
     kernel = custom_kernel(kernel)
     if kernel.sum() == 0:
         raise ValueError(
-            "hotspots(): kernel sums to zero. The kernel is normalized by "
-            "its sum, so a zero-sum kernel divides by zero. Supply a kernel "
-            "with at least one non-zero cell."
+            "hotspots(): kernel sums to zero. A zero-sum kernel makes the "
+            "Gi* neighborhood terms degenerate, so no cell can reach "
+            "significance. Supply a kernel whose weights have a non-zero "
+            "sum."
         )
 
     rows, cols = agg.shape[-2], agg.shape[-1]
