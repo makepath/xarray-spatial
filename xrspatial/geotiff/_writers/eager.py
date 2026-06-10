@@ -373,7 +373,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         instead of scaling a second time. Raises ``ValueError`` for a bare
         array (no attrs) or one that never went through an ``unpack``
         read. The dtype falls back to the ``attrs['nodata']`` width for
-        arrays read before contract v5.
+        arrays read before contract v5. An explicit ``nodata=`` kwarg
+        overrides the attrs sentinel as the NaN fill value, so the filled
+        pixels always agree with the GDAL_NODATA tag the writer emits.
 
     Returns
     -------
@@ -411,20 +413,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     path = _coerce_path(path)
 
-    # ``pack``: inverse of ``open_geotiff(unpack=True)``. Reverse
-    # the scale / offset, restore the recorded integer source dtype, and fill
-    # NaN back to the nodata sentinel. The SCALE / OFFSET tags are kept (see
-    # ``_pack``) so the re-packed file unpacks cleanly on the next
-    # ``unpack`` read. Run before any dispatch (GPU / VRT / streaming
-    # / eager) so every write path sees the re-packed array.
-    if pack:
-        if not isinstance(data, xr.DataArray):
-            raise ValueError(
-                "pack=True requires a DataArray carrying the attrs from an "
-                "open_geotiff(unpack=True) read; got a bare array with no "
-                "metadata to reverse.")
-        data = _pack(data)
-
     # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
     # ``int`` in Python, so a typo like ``nodata=True`` slips past every
     # downstream ``isinstance(nodata, (int, float))`` guard. The geotag
@@ -456,6 +444,24 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         _validate_tile_size_arg(tile_size)
 
     _validate_nodata_arg(nodata)
+
+    # ``pack``: inverse of ``open_geotiff(unpack=True)``. Reverse
+    # the scale / offset, restore the recorded integer source dtype, and fill
+    # NaN back to the nodata sentinel. The SCALE / OFFSET tags are kept (see
+    # ``_pack``) so the re-packed file unpacks cleanly on the next
+    # ``unpack`` read. Run before any dispatch (GPU / VRT / streaming
+    # / eager) so every write path sees the re-packed array, and after the
+    # nodata kwarg validation above so the kwarg can be threaded into the
+    # fill step: ``nodata=`` overrides the attrs sentinel as the fill value,
+    # keeping the filled pixels and the GDAL_NODATA tag on the same
+    # precedence (#3168).
+    if pack:
+        if not isinstance(data, xr.DataArray):
+            raise ValueError(
+                "pack=True requires a DataArray carrying the attrs from an "
+                "open_geotiff(unpack=True) read; got a bare array with no "
+                "metadata to reverse.")
+        data = _pack(data, nodata=nodata)
 
     # Refuse to silently drop the rotated 6-tuple that the reader
     # surfaces on ``attrs['rotated_affine']`` when called with
