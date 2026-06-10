@@ -67,13 +67,14 @@ class TestC2ReadDispatch:
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         a_path = str(tmp_path / 'a_1488.tif')
         b_path = str(tmp_path / 'b_1488.tif')
-        # Two tiles side-by-side via geo-transform attrs would normally be
-        # generated upstream; for this test we just need both files to
-        # share a CRS and the writer's default transform.
+        # The tiles carry no georeferencing, so the writer needs the
+        # side-by-side layout spelled out: write_vrt now refuses
+        # multiple non-georeferenced sources without explicit placement
+        # (issue #3116) instead of stacking them at the origin.
         write(arr, a_path, compression='none')
         write(arr, b_path, compression='none')
         vrt_path = str(tmp_path / 'mosaic_1488.vrt')
-        wv(vrt_path, [a_path, b_path])
+        wv(vrt_path, [a_path, b_path], dst_offsets=[(0, 0), (8, 0)])
 
         result = _read_geotiff_dask(vrt_path, chunks=8)
         assert result.dims == ('y', 'x')

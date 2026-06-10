@@ -67,11 +67,11 @@ def _materialise(result):
 
 ALL_BACKENDS = [
     pytest.param('numpy', {}, id='numpy'),
-    pytest.param('cupy', {'use_cuda': True},
+    pytest.param('cupy', {'gpu': True},
                  marks=skip_no_cuda, id='cupy'),
     pytest.param('dask_numpy', {'chunks': (5, 5)},
                  marks=skip_no_dask, id='dask_numpy'),
-    pytest.param('dask_cupy', {'use_cuda': True, 'chunks': (5, 5)},
+    pytest.param('dask_cupy', {'gpu': True, 'chunks': (5, 5)},
                  marks=[skip_no_cuda, skip_no_dask], id='dask_cupy'),
 ]
 
