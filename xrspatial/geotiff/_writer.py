@@ -1134,13 +1134,14 @@ def _write_streaming(dask_data, path: str, *,
 
                             # Compute just this horizontal segment
                             if dask_data.ndim == 3:
-                                seg_np = np.asarray(
-                                    dask_data[r0:r1, seg_c0:seg_c1, :].compute())
+                                seg_np = dask_data[
+                                    r0:r1, seg_c0:seg_c1, :].compute()
                             else:
-                                seg_np = np.asarray(
-                                    dask_data[r0:r1, seg_c0:seg_c1].compute())
+                                seg_np = dask_data[
+                                    r0:r1, seg_c0:seg_c1].compute()
                             if hasattr(seg_np, 'get'):
-                                seg_np = seg_np.get()
+                                seg_np = seg_np.get()  # CuPy -> numpy
+                            seg_np = np.asarray(seg_np)
 
                             if seg_np.dtype != out_dtype:
                                 seg_np = seg_np.astype(out_dtype)
@@ -1239,12 +1240,12 @@ def _write_streaming(dask_data, path: str, *,
                     strip_rows = r1 - r0
 
                     if dask_data.ndim == 3:
-                        strip_np = np.asarray(
-                            dask_data[r0:r1, :, :].compute())
+                        strip_np = dask_data[r0:r1, :, :].compute()
                     else:
-                        strip_np = np.asarray(dask_data[r0:r1, :].compute())
+                        strip_np = dask_data[r0:r1, :].compute()
                     if hasattr(strip_np, 'get'):
-                        strip_np = strip_np.get()
+                        strip_np = strip_np.get()  # CuPy -> numpy
+                    strip_np = np.asarray(strip_np)
 
                     if strip_np.dtype != out_dtype:
                         strip_np = strip_np.astype(out_dtype)
