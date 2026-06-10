@@ -181,7 +181,7 @@ open_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected
 
 to_geotiff(cupy_array, 'out.tif')                    # auto-detects GPU
 to_geotiff(data, 'out.tif', gpu=True)                # force GPU compress
-to_geotiff(data, 'ortho.tif', compression='jpeg')    # JPEG for orthophotos
+to_geotiff(data, 'out.tif', compression='zstd')      # ZSTD for smaller files
 to_geotiff(data, 'cog.tif', cog=True)                # COG with auto overviews
 to_geotiff(data, 'cog.tif', cog=True,                # COG with explicit levels
            overview_levels=[2, 4, 8],
@@ -200,7 +200,7 @@ da.xrs.to_geotiff('out.tif', compression='lzw')     # write from DataArray
 ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset extent
 ```
 
-**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), JPEG 2000 (glymur), uncompressed
+**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow, internal-only: requires `allow_internal_only_jpeg=True` and is not readable by GDAL), JPEG 2000 (glymur, experimental: requires `allow_experimental_codecs=True`), uncompressed
 
 **GPU codecs:** Deflate and ZSTD via nvCOMP batch API; JPEG 2000 via nvJPEG2000; LZW via Numba CUDA kernels
 
