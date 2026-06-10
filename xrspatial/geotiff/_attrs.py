@@ -1655,16 +1655,25 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     return scale, offset
 
 
-def _pack(data):
+def _pack(data, nodata=None):
     """Re-pack a ``mask_and_scale=True`` read for writing -- inverse of
     :func:`_extract_scale_offset`'s forward direction.
 
     Reverses the scale / offset applied on read (``(data - add_offset) /
-    scale_factor``), fills NaN back to the declared nodata sentinel, and
+    scale_factor``), fills NaN back to the nodata sentinel, and
     casts to the integer source dtype recorded in
     ``attrs['mask_and_scale_dtype']`` (falling back to the dtype of
     ``attrs['nodata']`` for arrays read by an xrspatial release predating
     contract v5). Returns a new DataArray; ``data`` is left untouched.
+
+    ``nodata`` is the writer's explicit ``nodata=`` kwarg. When given, it
+    overrides the attrs sentinel as the NaN fill value, matching the
+    "kwarg overrides attrs" precedence the GDAL_NODATA tag already
+    follows -- otherwise the holes get filled with one value while the
+    tag declares another and a ``masked=True`` re-read returns the holes
+    as valid pixels (#3168). The pre-v5 dtype-width fallback still keys
+    off the attrs sentinel: it is stored in the source dtype, while the
+    kwarg is a plain Python number with no width information.
 
     The SCALE / OFFSET GDAL_METADATA tags are kept: the written file stores
     the raw packed integers and re-declares the scale, so reopening with
@@ -1681,7 +1690,10 @@ def _pack(data):
     scale = attrs.get('scale_factor', 1.0)
     offset = attrs.get('add_offset', 0.0)
     target = attrs.get('mask_and_scale_dtype')
-    nodata = _resolve_nodata_attr(attrs)
+    attrs_nodata = _resolve_nodata_attr(attrs)
+    nodata_kwarg = nodata
+    if nodata is None:
+        nodata = attrs_nodata
 
     if ('scale_factor' not in attrs and target is None
             and not attrs.get('masked_nodata')):
@@ -1693,11 +1705,29 @@ def _pack(data):
 
     out = (data - offset) / scale
 
-    if target is None and nodata is not None:
-        # Best-effort recovery for pre-v5 reads: the sentinel is stored in
-        # the source dtype, so its width is the source width.
-        target = np.asarray(nodata).dtype.name
+    if target is None and attrs_nodata is not None:
+        # Best-effort recovery for pre-v5 reads: the attrs sentinel is
+        # stored in the source dtype, so its width is the source width.
+        # (The ``nodata`` kwarg carries no width information, so it never
+        # feeds this fallback.)
+        target = np.asarray(attrs_nodata).dtype.name
     tgt = np.dtype(target) if target is not None else np.dtype(str(out.dtype))
+
+    if nodata_kwarg is not None and tgt.kind in ('i', 'u'):
+        # The attrs sentinel fits the source dtype by construction (the
+        # reader validated it against GDAL_NODATA). The kwarg has no such
+        # guarantee: an out-of-range or fractional value would wrap /
+        # round in the ``astype`` below, silently recreating the
+        # fill-vs-tag disagreement this override exists to prevent.
+        info = np.iinfo(tgt)
+        fv = float(nodata_kwarg)
+        if not (info.min <= fv <= info.max) or fv != int(fv):
+            raise ValueError(
+                f"pack=True: nodata={nodata_kwarg!r} cannot be represented "
+                f"in the packed integer dtype {tgt.name} (valid range "
+                f"{info.min}..{info.max}). The filled holes would not match "
+                f"the GDAL_NODATA tag; pass a sentinel that fits the packed "
+                f"dtype.")
 
     if nodata is not None:
         # Restore the masked sentinel for every dtype. Integers can't hold
