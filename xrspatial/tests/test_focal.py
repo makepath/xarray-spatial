@@ -98,9 +98,11 @@ def test_mean_transfer_function_dask_gpu():
     dask_cupy_mean = mean(dask_cupy_agg)
     general_output_checks(dask_cupy_agg, dask_cupy_mean)
 
+    # Tight tolerance: since #3222 every backend computes in float64, so
+    # the old float32-drift allowance (rtol=1e-4) is no longer needed.
     np.testing.assert_allclose(
         numpy_mean.data, dask_cupy_mean.data.compute().get(),
-        equal_nan=True, rtol=1e-4)
+        equal_nan=True)
 
 
 @cuda_and_cupy_available
@@ -118,6 +120,13 @@ def test_mean_preserves_float64_gpu_3222():
     assert cupy_mean.data.dtype == np.float64
     np.testing.assert_allclose(
         numpy_mean.data, cupy_mean.data.get(), equal_nan=True)
+
+    # The float32 error used to compound with passes > 1; multi-pass
+    # results must stay in lockstep too.
+    numpy_mean3 = mean(xr.DataArray(data), passes=3)
+    cupy_mean3 = mean(xr.DataArray(cupy.asarray(data)), passes=3)
+    np.testing.assert_allclose(
+        numpy_mean3.data, cupy_mean3.data.get(), equal_nan=True)
 
 
 @dask_array_available
