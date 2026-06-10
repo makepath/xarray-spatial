@@ -1984,3 +1984,46 @@ def test_proximity_linesweep_compiled_once():
     assert len(_process_numpy_linesweep.signatures) == n_sigs, (
         "repeated proximity() calls recompiled the line-sweep kernel"
     )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_coord_grid_graph_size():
+    # Regression test for issue #3132: the bounded dask path used to build
+    # the 2D coordinate grids with da.tile / da.repeat + rechunk, which cost
+    # ~100 graph tasks per chunk (and the repeat term grew with raster
+    # height). The chunk-aligned broadcast construction stays around ~60
+    # tasks per chunk. Guard the per-chunk task budget so the tile/repeat
+    # pattern cannot come back.
+    n, c = 512, 64
+    data = np.zeros((n, n), dtype=np.float64)
+    data[5, 5] = 1.0
+    data[400, 300] = 2.0
+    raster = xr.DataArray(da.from_array(data, chunks=(c, c)), dims=['y', 'x'])
+    raster['y'] = np.arange(n, dtype=np.float64)[::-1]
+    raster['x'] = np.arange(n, dtype=np.float64)
+
+    result = proximity(raster, max_distance=20)
+    n_chunks = (n // c) ** 2
+    n_tasks = len(result.data.__dask_graph__())
+    assert n_tasks < 80 * n_chunks, (
+        f"bounded proximity graph has {n_tasks} tasks for {n_chunks} chunks "
+        f"({n_tasks / n_chunks:.1f}/chunk); coordinate-grid construction "
+        f"regressed (issue #3132)"
+    )
+
+    # The broadcast grids must produce the same values as the numpy backend,
+    # including on ragged chunks.
+    numpy_raster = xr.DataArray(data, dims=['y', 'x'])
+    numpy_raster['y'] = np.arange(n, dtype=np.float64)[::-1]
+    numpy_raster['x'] = np.arange(n, dtype=np.float64)
+    expected = proximity(numpy_raster, max_distance=20)
+    np.testing.assert_allclose(
+        result.compute().data, expected.data, equal_nan=True)
+
+    ragged = xr.DataArray(da.from_array(data, chunks=(200, 150)),
+                          dims=['y', 'x'])
+    ragged['y'] = np.arange(n, dtype=np.float64)[::-1]
+    ragged['x'] = np.arange(n, dtype=np.float64)
+    ragged_result = proximity(ragged, max_distance=20)
+    np.testing.assert_allclose(
+        ragged_result.compute().data, expected.data, equal_nan=True)

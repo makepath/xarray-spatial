@@ -632,14 +632,18 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
 
     # Build 2D coordinate grids as dask+cupy arrays matching raster chunks.
     # Each chunk is small (chunk_h x chunk_w x 8 bytes); the full grid is
-    # never materialised.
+    # never materialised. Chunk the 1D coords to the raster's chunking and
+    # broadcast: tile/repeat + rechunk built the same grids but cost ~100
+    # graph tasks per chunk (the repeat term scales with raster height),
+    # while a chunk-aligned broadcast is ~1 task per chunk (issue #3132).
     x_cp = cp.asarray(x_coords, dtype=cp.float64)
     y_cp = cp.asarray(y_coords, dtype=cp.float64)
-    x_da = da.from_array(x_cp, chunks=(x_cp.shape[0],))
-    y_da = da.from_array(y_cp, chunks=(y_cp.shape[0],))
-    xs = da.tile(x_da, (raster.shape[0], 1)).rechunk(raster.data.chunks)
-    ys = da.repeat(y_da, raster.shape[1]).reshape(
-        raster.shape).rechunk(raster.data.chunks)
+    x_da = da.from_array(x_cp, chunks=(raster.data.chunks[1],))
+    y_da = da.from_array(y_cp, chunks=(raster.data.chunks[0],))
+    xs = da.broadcast_to(
+        x_da[None, :], raster.shape, chunks=raster.data.chunks)
+    ys = da.broadcast_to(
+        y_da[:, None], raster.shape, chunks=raster.data.chunks)
 
     # Keep the overlap depth within what map_overlap accepts on skinny rasters.
     pad_y, pad_x, (raster_data, xs, ys) = _fit_halo_to_chunks(
@@ -1624,14 +1628,22 @@ def _process(
                                 "Set a finite max_distance."
                             )
 
-                # Existing path: build 2D coordinate arrays as dask arrays
-                x_coords_da = da.from_array(x_coords, chunks=x_coords.shape[0])
-                y_coords_da = da.from_array(y_coords, chunks=y_coords.shape[0])
-                xs = da.tile(x_coords_da, (raster.shape[0], 1))
-                ys = da.repeat(y_coords_da, raster.shape[1]).reshape(
-                    raster.shape)
-                xs = xs.rechunk(raster.chunks)
-                ys = ys.rechunk(raster.chunks)
+                # Build 2D coordinate grids as dask arrays. Chunk the 1D
+                # coords to the raster's chunking and broadcast: tile/repeat
+                # + rechunk built the same grids but cost ~100 graph tasks
+                # per chunk (the repeat term scales with raster height),
+                # while a chunk-aligned broadcast is ~1 task per chunk
+                # (issue #3132).
+                x_coords_da = da.from_array(
+                    x_coords, chunks=(raster.data.chunks[1],))
+                y_coords_da = da.from_array(
+                    y_coords, chunks=(raster.data.chunks[0],))
+                xs = da.broadcast_to(
+                    x_coords_da[None, :], raster.shape,
+                    chunks=raster.data.chunks)
+                ys = da.broadcast_to(
+                    y_coords_da[:, None], raster.shape,
+                    chunks=raster.data.chunks)
                 result = _process_dask(raster, xs, ys)
 
             # Convert result back to dask+cupy if input was dask+cupy
