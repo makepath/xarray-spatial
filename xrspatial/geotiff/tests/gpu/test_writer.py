@@ -2300,3 +2300,25 @@ def test_to_geotiff_dask_cupy_gpu_false_streaming_round_trip_3165(
     expected[np.isnan(expected)] = -9999.0
     np.testing.assert_array_equal(out.values, expected)
     assert out.attrs["nodata"] == -9999.0
+
+
+@_gpu_only
+@pytest.mark.parametrize("tiled", [True, False])
+def test_to_geotiff_dask_cupy_gpu_false_streaming_multiband_3165(
+        tmp_path, tiled):
+    """The ``ndim == 3`` branches of both streaming loops get the same
+    compute / ``.get()`` / ``np.asarray`` order as the 2D branches."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.random.default_rng(3165).random((64, 48, 3)).astype(np.float32)
+    chunked = dca.from_array(cupy.asarray(arr), chunks=(32, 32, 3))
+    da = xr.DataArray(chunked, dims=("y", "x", "band"))
+    layout = "tiled" if tiled else "strips"
+    path = str(tmp_path / f"dask_cupy_streaming_3165_mb_{layout}.tif")
+
+    to_geotiff(da, path, gpu=False, tiled=tiled, tile_size=32)
+
+    out = open_geotiff(path)
+    assert out.shape == (64, 48, 3)
+    np.testing.assert_array_equal(out.values, arr)
