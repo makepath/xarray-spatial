@@ -1219,7 +1219,11 @@ def _write_streaming(dask_data, path: str, *,
                             if band_np.dtype != out_dtype:
                                 band_np = band_np.astype(out_dtype)
 
-                            # NaN -> nodata sentinel
+                            # NaN -> nodata sentinel. The copy doubles
+                            # the band transiently on the NaN-present
+                            # path, so the worst case is 2x the soft
+                            # cap -- same factor as the astype above
+                            # and as the old per-tile-row copy.
                             if (nodata is not None
                                     and band_np.dtype.kind == 'f'
                                     and not np.isnan(nodata)

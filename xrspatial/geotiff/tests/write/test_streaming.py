@@ -738,6 +738,58 @@ class TestRowBandRecompute3117:
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
+    def test_banded_compute_respects_buffer(self, tmp_path, monkeypatch):
+        """Banding groups tile-rows but stays under the byte budget.
+
+        Budget sized so banding is on (a full-width tile-row fits) and
+        several bands are needed (the whole raster does not). Asserts
+        fewer computes than tile-rows (banding engaged) and that no
+        single compute materialises more source bytes than the budget
+        (plain source, no overlap halo, so the bound is strict).
+        """
+        import dask.array as da
+
+        height, width, chunk = 2048, 1024, 256
+        npdata = np.arange(height * width, dtype=np.float32).reshape(
+            height, width)
+        base = da.from_array(npdata, chunks=(chunk, width))
+
+        materialized = []
+
+        def _record(block):
+            materialized.append(block.nbytes)
+            return block
+
+        base = base.map_blocks(_record, dtype='float32')
+        dask_da = xr.DataArray(base, dims=['y', 'x'])
+
+        per_compute = []
+        orig_compute = da.Array.compute
+
+        def spy_compute(self, *args, **kwargs):
+            before = sum(materialized)
+            result = orig_compute(self, *args, **kwargs)
+            per_compute.append(sum(materialized) - before)
+            return result
+
+        monkeypatch.setattr(da.Array, 'compute', spy_compute)
+
+        buf = 4 * 1024 * 1024  # holds ~1024 source rows of float32
+        path = str(tmp_path / 'tmp_3117_banded_budget.tif')
+        to_geotiff(dask_da, path, compression='zstd', tile_size=256,
+                   streaming_buffer_bytes=buf)
+
+        tiles_down = height // 256
+        assert 1 < len(per_compute) < tiles_down, (
+            f"expected banding to group tile-rows: {len(per_compute)} "
+            f"computes for {tiles_down} tile-rows")
+        assert max(per_compute) <= buf, (
+            f"banded compute materialised {max(per_compute)} source "
+            f"bytes, over the {buf} budget")
+
+        result = open_geotiff(path)
+        np.testing.assert_array_equal(result.values, npdata)
+
     def test_banded_matches_eager_with_nan_sentinel(self, tmp_path):
         """NaN->sentinel restore happens per band; bytes must match eager."""
         arr = np.arange(768 * 300, dtype=np.float32).reshape(768, 300)
