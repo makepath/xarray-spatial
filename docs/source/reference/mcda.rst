@@ -18,6 +18,7 @@ Weights
 
     xrspatial.mcda.weights.ahp_weights
     xrspatial.mcda.weights.rank_weights
+    xrspatial.mcda.weights.ConsistencyResult
 
 Combination
 ===========

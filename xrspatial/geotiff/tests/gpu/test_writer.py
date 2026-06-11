@@ -2396,6 +2396,82 @@ def test_to_geotiff_dask_gpu_degenerate_round_trip(
 
 
 # ---------------------------------------------------------------------------
+# dask+cupy through the CPU streaming writer (#3165)
+#
+# Both streaming segment loops called ``np.asarray`` on the computed
+# chunk before the ``.get()`` handoff. ``cupy.ndarray.__array__`` raises
+# TypeError, so ``to_geotiff(dask_cupy_da, path, gpu=False)`` crashed
+# before the cupy branch could run. These tests pin the fixed order
+# (compute, then ``.get()``, then ``np.asarray``) for both the tiled
+# segment loop and the strip loop.
+# ---------------------------------------------------------------------------
+
+
+@_gpu_only
+@pytest.mark.parametrize("tiled", [True, False])
+def test_to_geotiff_dask_cupy_gpu_false_streaming_round_trip_3165(
+        tmp_path, tiled):
+    """``to_geotiff(gpu=False)`` streams a dask+cupy DataArray to disk."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.arange(64 * 48, dtype=np.float32).reshape(64, 48)
+    arr[3, 5] = np.nan
+    height, width = arr.shape
+    chunked = dca.from_array(cupy.asarray(arr), chunks=(32, 32))
+    da = xr.DataArray(
+        chunked,
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(height - 1, -1, -1, dtype=np.float64),
+            "x": np.arange(width, dtype=np.float64),
+        },
+        attrs={
+            "crs": 4326,
+            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, height - 0.5),
+            "nodata": -9999.0,
+        },
+    )
+    layout = "tiled" if tiled else "strips"
+    path = str(tmp_path / f"dask_cupy_streaming_3165_{layout}.tif")
+
+    # tile_size=32 forces multiple tiles per segment row on the tiled
+    # layout so more than one chunk crosses the cupy -> numpy handoff.
+    to_geotiff(da, path, gpu=False, tiled=tiled, tile_size=32)
+
+    out = open_geotiff(path)
+    assert out.shape == (height, width)
+    # The streaming writer restores NaN to the nodata sentinel on disk
+    # and the reader hands the sentinel back as-is.
+    expected = arr.copy()
+    expected[np.isnan(expected)] = -9999.0
+    np.testing.assert_array_equal(out.values, expected)
+    assert out.attrs["nodata"] == -9999.0
+
+
+@_gpu_only
+@pytest.mark.parametrize("tiled", [True, False])
+def test_to_geotiff_dask_cupy_gpu_false_streaming_multiband_3165(
+        tmp_path, tiled):
+    """The ``ndim == 3`` branches of both streaming loops get the same
+    compute / ``.get()`` / ``np.asarray`` order as the 2D branches."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.random.default_rng(3165).random((64, 48, 3)).astype(np.float32)
+    chunked = dca.from_array(cupy.asarray(arr), chunks=(32, 32, 3))
+    da = xr.DataArray(chunked, dims=("y", "x", "band"))
+    layout = "tiled" if tiled else "strips"
+    path = str(tmp_path / f"dask_cupy_streaming_3165_mb_{layout}.tif")
+
+    to_geotiff(da, path, gpu=False, tiled=tiled, tile_size=32)
+
+    out = open_geotiff(path)
+    assert out.shape == (64, 48, 3)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+# ---------------------------------------------------------------------------
 # Dask materialisation warning on the GPU write path (#3166)
 #
 # to_geotiff's streaming contract only holds on the CPU path. dask+cupy
