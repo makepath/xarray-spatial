@@ -337,3 +337,67 @@ class TestVisibilityFrequency:
         observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
         result = visibility_frequency(raster, observers)
         assert result.name == 'visibility_frequency'
+
+
+from xrspatial import viewshed
+from xrspatial.gpu_rtx import has_rtx
+from xrspatial.utils import has_cuda_and_cupy
+from xrspatial.viewshed import INVISIBLE
+
+cupy_skip = pytest.mark.skipif(
+    not (has_cuda_and_cupy() and has_rtx()),
+    reason="cupy / rtxpy not available",
+)
+
+
+@cupy_skip
+class TestCupyBackend:
+    """cupy backend must return a cupy-backed DataArray with the same
+    coords, dims, and attrs as the numpy backend (issue #3193)."""
+
+    def _cupy_raster(self):
+        import cupy as cp
+        data = np.random.RandomState(1).rand(20, 20).astype(float) * 100
+        raster = _make_raster(data)
+        raster.attrs['crs'] = 'EPSG:4326'
+        raster.data = cp.asarray(raster.data)
+        return raster
+
+    def test_cumulative_returns_cupy_with_metadata(self):
+        import cupy as cp
+        raster = self._cupy_raster()
+        observers = [
+            {'x': 5.0, 'y': 5.0, 'observer_elev': 50},
+            {'x': 12.0, 'y': 12.0, 'observer_elev': 50},
+        ]
+        result = cumulative_viewshed(raster, observers)
+        assert isinstance(result.data, cp.ndarray)
+        assert result.dtype == np.int32
+        assert result.dims == raster.dims
+        np.testing.assert_array_equal(result.coords['x'].values,
+                                      raster.coords['x'].values)
+        np.testing.assert_array_equal(result.coords['y'].values,
+                                      raster.coords['y'].values)
+        assert result.attrs.get('crs') == 'EPSG:4326'
+
+    def test_cumulative_matches_single_viewshed(self):
+        import cupy as cp
+        raster = self._cupy_raster()
+        obs = {'x': 5.0, 'y': 5.0, 'observer_elev': 50}
+        result = cumulative_viewshed(raster, [obs])
+        vs = viewshed(raster, x=5.0, y=5.0, observer_elev=50)
+        expected = (cp.asnumpy(vs.data) != INVISIBLE).astype(np.int32)
+        np.testing.assert_array_equal(cp.asnumpy(result.data), expected)
+
+    def test_frequency_returns_cupy_with_metadata(self):
+        import cupy as cp
+        raster = self._cupy_raster()
+        observers = [
+            {'x': 5.0, 'y': 5.0, 'observer_elev': 50},
+            {'x': 12.0, 'y': 12.0, 'observer_elev': 50},
+        ]
+        result = visibility_frequency(raster, observers)
+        assert isinstance(result.data, cp.ndarray)
+        assert result.dtype == np.float64
+        assert result.dims == raster.dims
+        assert result.attrs.get('crs') == 'EPSG:4326'
