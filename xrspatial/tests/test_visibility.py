@@ -340,6 +340,20 @@ class TestCumulativeViewshed:
                    if hasattr(result_cp.data, 'get') else result_cp.values)
         np.testing.assert_array_equal(result_np.values, cp_vals)
 
+    def test_default_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = cumulative_viewshed(raster, observers)
+        assert result.name == 'cumulative_viewshed'
+
+    def test_custom_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = cumulative_viewshed(raster, observers, name='count')
+        assert result.name == 'count'
+
     def test_preserves_coords_and_dims(self):
         data = np.zeros((5, 5), dtype=float)
         raster = _make_raster(data)
@@ -403,3 +417,10 @@ class TestVisibilityFrequency:
         cp_vals = (freq_cp.data.get()
                    if hasattr(freq_cp.data, 'get') else freq_cp.values)
         np.testing.assert_allclose(freq_np.values, cp_vals)
+
+    def test_default_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = visibility_frequency(raster, observers)
+        assert result.name == 'visibility_frequency'
