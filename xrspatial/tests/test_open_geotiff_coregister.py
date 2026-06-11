@@ -167,6 +167,19 @@ def test_coregister_explicit_chunks_kwarg(tmp_path):
     assert out.data.chunksize == (2, 2)
 
 
+def test_coregister_chunks_kwarg_tuple_and_np_integer(tmp_path):
+    # the (row, col) tuple form is what _compute_chunk_layout unpacks
+    # directly, and np.integer scalars are valid for the read so they
+    # must be coerced before reaching reproject.
+    path = _file_4326(tmp_path, np.float32, 'cg_chunks_forms_3234.tif')
+    template = _template_3857(6)
+    out = template.xrs.open_geotiff(path, coregister=True, chunks=(3, 2))
+    assert out.data.chunksize == (3, 2)
+    out = template.xrs.open_geotiff(path, coregister=True,
+                                    chunks=np.int64(2))
+    assert out.data.chunksize == (2, 2)
+
+
 def test_auto_reproject_dask_template_keeps_caller_chunks(tmp_path):
     # the auto_reproject branch reprojects onto an auto-computed grid,
     # but the output chunk layout should still follow the caller.

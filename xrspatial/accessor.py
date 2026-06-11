@@ -237,7 +237,8 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
     covers the full footprint even when the transform has curvature
     across the bbox.
     """
-    from .geotiff import open_geotiff, _read_geo_info, _extent_to_window
+    from .geotiff import (open_geotiff, _read_geo_info, _extent_to_window,
+                          _validate_chunks_arg)
     from .utils import _classify_backend
 
     if resampling not in _RESAMPLING_CHOICES:
@@ -320,7 +321,11 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
 
     # Infer backend kwargs. Caller-supplied values always win.
     backend = _classify_backend(obj)
-    explicit_chunks = kwargs.get('chunks')
+    # Coerce here because reproject's chunk layout only unpacks builtin
+    # ints, while the read path accepts np.integer scalars.
+    explicit_chunks = _validate_chunks_arg(
+        kwargs.get('chunks'), allow_none=True
+    )
     if backend in ("cupy", "dask+cupy"):
         kwargs.setdefault('gpu', True)
     if backend in ("dask+numpy", "dask+cupy"):
@@ -977,10 +982,11 @@ class XrsSpatialDataArrayAccessor:
             The windowed portion of the GeoTIFF. In ``self``'s CRS when
             ``auto_reproject`` reprojection occurred, on ``self``'s exact
             grid when ``coregister`` is set, and otherwise in the file's
-            native CRS. A dask result chunks like an explicit ``chunks=``
-            kwarg when given, and otherwise like ``self``, including
-            through the ``auto_reproject`` / ``coregister`` reproject
-            step.
+            native CRS. The ``auto_reproject`` / ``coregister``
+            reproject step chunks its dask output like the explicit
+            ``chunks=`` kwarg when given, and otherwise like ``self``,
+            rather than reverting to
+            :func:`~xrspatial.reproject.reproject`'s own default.
         """
         return _open_geotiff_windowed(
             self._obj, source, auto_reproject=auto_reproject,
