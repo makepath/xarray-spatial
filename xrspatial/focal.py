@@ -30,7 +30,7 @@ from xrspatial.convolution import (_available_memory_bytes, _promote_float, conv
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
                              _validate_boundary, _validate_raster, _validate_scalar, cuda_args,
-                             ngjit)
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 
 def _validate_binary_kernel(kernel, func_name):
@@ -58,7 +58,8 @@ def _validate_binary_kernel(kernel, func_name):
         )
 
 
-def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
+def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None,
+                                   itemsize=4):
     """Reject kernel + raster combinations that would OOM the host.
 
     The focal public APIs (apply, focal_stats, hotspots) accept any 2-D
@@ -74,8 +75,8 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
 
     Without a guard, a small raster paired with an oversized kernel can
     OOM the host (e.g. kernel of shape (50001, 50001) is ~10 GB on its
-    own; the padded raster is larger).  Budget 4 bytes per kernel cell
-    (float32 internal dtype) plus the padded raster footprint, and raise
+    own; the padded raster is larger).  Budget ``itemsize`` bytes per
+    kernel cell plus the padded raster footprint, and raise
     ``MemoryError`` when the total exceeds half of available memory.
 
     Dask-backed input never materializes the padded full raster: each
@@ -84,6 +85,12 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
     is budgeted from the largest chunk instead of the full raster shape,
     so chunked rasters far larger than host memory pass while an
     oversized kernel is still rejected.
+
+    ``itemsize`` is the byte width of the dtype the focal internals
+    compute in.  Since #2805 ``apply`` and ``focal_stats`` preserve
+    float64 input (``_promote_float``), so callers must pass 8 for
+    float64 rasters; ``hotspots`` always computes in float32 and uses
+    the default of 4 (issue #3223).
     """
     krows, kcols = kernel.shape
     pad_h = krows // 2
@@ -99,11 +106,10 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
         rows = max(chunks[-2])
         cols = max(chunks[-1])
 
-    # 4 bytes per cell -- focal internals cast to float32.
-    kernel_bytes = krows * kcols * 4
+    kernel_bytes = krows * kcols * itemsize
     padded_rows = rows + 2 * pad_h
     padded_cols = cols + 2 * pad_w
-    padded_bytes = padded_rows * padded_cols * 4
+    padded_bytes = padded_rows * padded_cols * itemsize
 
     required = kernel_bytes + padded_bytes
     available = _available_memory_bytes()
@@ -593,7 +599,7 @@ def _apply_dask_cupy(data, kernel, func, boundary='nan'):
     return out
 
 
-def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
+def apply(agg=None, kernel=None, func=None, name='focal_apply',
           boundary='nan', *, raster=None):
     """
     Returns custom function applied array using a user-created window.
@@ -610,10 +616,17 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
         and any other value raises a ValueError. Apply per-cell weights
         inside ``func`` (see the example below), or use
         ``xrspatial.convolution.convolve_2d`` for a weighted convolution.
-    func : callable, default=xrspatial.focal._calc_mean
+    func : callable, default=None
         Function which takes an input array and returns an array.
-        For cupy and dask+cupy backends the function must be a
-        ``@cuda.jit`` global kernel with signature ``(data, kernel, out)``.
+        If None, a focal mean over the kernel neighbourhood is computed
+        with an implementation that matches the backend of `agg`.
+        For numpy and dask+numpy backends a user-supplied function must
+        be decorated with ``numba.jit`` (xrspatial provides
+        ``xrspatial.utils.ngjit``); for cupy and dask+cupy backends it
+        must be a ``@cuda.jit`` global kernel with signature
+        ``(data, kernel, out)``.
+    name : str, default='focal_apply'
+        Output xr.DataArray.name property.
     boundary : str, default='nan'
         How to handle edges where the kernel extends beyond the raster.
         ``'nan'``     -- fill missing neighbours with NaN (default).
@@ -717,6 +730,17 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
 
     _validate_raster(agg, func_name='apply', name='agg', ndim=(2, 3))
 
+    if func is None:
+        # The default focal mean needs a per-backend implementation: the
+        # CPU paths call func on each masked window, while the GPU paths
+        # launch func as a @cuda.jit kernel. An @ngjit function cannot be
+        # launched on the device, so a single default cannot serve both
+        # (issue #3215).
+        if is_cupy_array(agg.data) or (da is not None and is_dask_cupy(agg)):
+            func = _focal_mean_cuda
+        else:
+            func = _calc_mean
+
     if agg.ndim == 3:
         return _apply_per_band(apply, agg, kernel=kernel, func=func,
                                name=name, boundary=boundary)
@@ -728,8 +752,12 @@ def apply(agg=None, kernel=None, func=_calc_mean, name='focal_apply',
     _validate_boundary(boundary)
 
     rows, cols = agg.shape[-2], agg.shape[-1]
+    # Budget for the dtype the internals will actually compute in:
+    # 8 bytes/cell for float64 input, 4 otherwise (issue #3223).
+    itemsize = np.dtype(_promote_float(agg.dtype)).itemsize
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='apply',
-                                   chunks=getattr(agg.data, 'chunks', None))
+                                   chunks=getattr(agg.data, 'chunks', None),
+                                   itemsize=itemsize)
 
     # apply kernel to raster values
     # if agg is a numpy or dask with numpy backed data array,
@@ -1367,8 +1395,12 @@ def focal_stats(agg,
     _validate_boundary(boundary)
 
     rows, cols = agg.shape[-2], agg.shape[-1]
+    # Budget for the dtype the internals will actually compute in:
+    # 8 bytes/cell for float64 input, 4 otherwise (issue #3223).
+    itemsize = np.dtype(_promote_float(agg.dtype)).itemsize
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='focal_stats',
-                                   chunks=getattr(agg.data, 'chunks', None))
+                                   chunks=getattr(agg.data, 'chunks', None),
+                                   itemsize=itemsize)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
@@ -1694,9 +1726,13 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
     ----------
     agg : xarray.DataArray
         2D Input raster image with `agg.shape` = (height, width).
-        Can be a NumPy backed, CuPy backed, or Dask with NumPy backed DataArray
+        Can be a NumPy backed, CuPy backed, Dask with NumPy backed, or
+        Dask with CuPy backed DataArray.
     kernel : Numpy Array
-        2D array where values of 1 indicate the kernel.
+        2D array of kernel weights ``w_ij``. A kernel of 0s and 1s acts
+        as a plain membership mask; unlike ``apply`` and ``focal_stats``,
+        non-binary weights are allowed and feed directly into the Gi*
+        statistic. Must not sum to zero.
     name : str, default='hotspots'
         Output xr.DataArray.name property.
     boundary : str, default='nan'
@@ -1749,12 +1785,15 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
     kernel = custom_kernel(kernel)
     if kernel.sum() == 0:
         raise ValueError(
-            "hotspots(): kernel sums to zero. The kernel is normalized by "
-            "its sum, so a zero-sum kernel divides by zero. Supply a kernel "
-            "with at least one non-zero cell."
+            "hotspots(): kernel sums to zero. A zero-sum kernel makes the "
+            "Gi* neighborhood terms degenerate, so no cell can reach "
+            "significance. Supply a kernel whose weights have a non-zero "
+            "sum."
         )
 
     rows, cols = agg.shape[-2], agg.shape[-1]
+    # hotspots computes in float32 on every backend, so the default
+    # 4 bytes/cell budget is correct here (issue #3223).
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots',
                                    chunks=getattr(agg.data, 'chunks', None))
 
