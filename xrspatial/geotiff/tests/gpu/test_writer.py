@@ -2472,14 +2472,14 @@ def test_to_geotiff_dask_cupy_gpu_false_streaming_multiband_3165(
 
 
 # ---------------------------------------------------------------------------
-# Dask materialisation warning on the GPU write path (#3166)
+# Dask streaming on the GPU write path (#3166)
 #
-# to_geotiff's streaming contract only holds on the CPU path. dask+cupy
-# input auto-dispatches to _write_geotiff_gpu, which computes the whole
-# array on device; streaming_buffer_bytes is a no-op there. The writer
-# now emits a GeoTIFFFallbackWarning at the compute site so callers
-# learn the full array is being materialised. Plain (non-dask) cupy
-# writes must stay silent: there is nothing lazy to materialise.
+# dask input routed to the GPU writer streams one tile-row band at a
+# time, bounded by streaming_buffer_bytes, and must produce a file
+# byte-identical to the eager (in-memory cupy) write of the same data.
+# Only cog=True still materialises the full array on device (overview
+# generation needs it) and emits the GeoTIFFFallbackWarning; every
+# other dask GPU write must stay silent.
 # ---------------------------------------------------------------------------
 
 
@@ -2509,24 +2509,30 @@ def _gradient_da_3166(backing):
 
 
 @_gpu_only
-def test_to_geotiff_dask_cupy_warns_on_materialise_3166(tmp_path):
-    """Auto-dispatched dask+cupy writes warn that the array is
-    materialised on device instead of streamed."""
+def test_to_geotiff_dask_cupy_streams_no_warning_3166(tmp_path):
+    """Auto-dispatched dask+cupy writes stream per tile-row band: no
+    materialisation warning, and the file is byte-identical to the
+    eager write of the same data."""
     import cupy
     import dask.array as dca
 
     arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
     da = _gradient_da_3166(
         dca.from_array(cupy.asarray(arr), chunks=(32, 32)))
-    path = str(tmp_path / "dask_cupy_materialise_3166.tif")
+    path = str(tmp_path / "dask_cupy_stream_3166.tif")
 
     with warnings.catch_warnings(record=True) as records:
         warnings.simplefilter("always")
         to_geotiff(da, path)
 
-    assert len(_materialise_warnings_3166(records)) == 1
+    assert _materialise_warnings_3166(records) == []
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
+
+    eager_path = str(tmp_path / "eager_cupy_3166.tif")
+    to_geotiff(_gradient_da_3166(cupy.asarray(arr)), eager_path)
+    assert (pathlib.Path(path).read_bytes()
+            == pathlib.Path(eager_path).read_bytes())
 
 
 @_gpu_only
@@ -2549,9 +2555,9 @@ def test_to_geotiff_plain_cupy_no_materialise_warning_3166(tmp_path):
 
 
 @_gpu_only
-def test_write_geotiff_gpu_positional_dask_warns_3166(tmp_path):
-    """The positional (non-DataArray) compute site in
-    ``_write_geotiff_gpu`` emits the same warning."""
+def test_write_geotiff_gpu_positional_dask_streams_3166(tmp_path):
+    """Positional (non-DataArray) dask input streams through
+    ``_write_geotiff_gpu`` without the materialisation warning."""
     import cupy
     import dask.array as dca
 
@@ -2563,13 +2569,16 @@ def test_write_geotiff_gpu_positional_dask_warns_3166(tmp_path):
         warnings.simplefilter("always")
         _write_geotiff_gpu(lazy, path)
 
-    assert len(_materialise_warnings_3166(records)) == 1
+    assert _materialise_warnings_3166(records) == []
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)
 
 
 @_gpu_only
-def test_to_geotiff_dask_numpy_gpu_true_warns_3166(tmp_path):
+def test_to_geotiff_dask_numpy_gpu_true_streams_3166(tmp_path):
     """``gpu=True`` with dask+numpy input forces GPU dispatch (no
-    ``_is_gpu_data`` auto-detect involved) and warns the same way."""
+    ``_is_gpu_data`` auto-detect involved); each band is uploaded to
+    the device per compute, with no materialisation warning."""
     import dask.array as dca
 
     arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
@@ -2580,6 +2589,110 @@ def test_to_geotiff_dask_numpy_gpu_true_warns_3166(tmp_path):
         warnings.simplefilter("always")
         to_geotiff(da, path, gpu=True)
 
+    assert _materialise_warnings_3166(records) == []
+    out = open_geotiff(path)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+def test_to_geotiff_dask_cupy_cog_warns_on_materialise_3166(tmp_path):
+    """``cog=True`` still materialises dask input in full on device
+    (overview generation needs the whole array) and warns."""
+    import cupy
+    import dask.array as dca
+
+    arr = np.arange(128 * 128, dtype=np.float32).reshape(128, 128)
+    da = xr.DataArray(
+        dca.from_array(cupy.asarray(arr), chunks=(64, 64)),
+        dims=("y", "x"),
+        attrs={
+            "crs": 4326,
+            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 127.5),
+        },
+    )
+    path = str(tmp_path / "dask_cupy_cog_3166.tif")
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, path, cog=True, tile_size=64)
+
     assert len(_materialise_warnings_3166(records)) == 1
     out = open_geotiff(path)
     np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+def test_gpu_streaming_small_buffer_byte_identical_3166(tmp_path):
+    """A tiny ``streaming_buffer_bytes`` forces one band per tile-row
+    (the floor) over an odd-sized raster with NaN holes and a nodata
+    sentinel; the streamed file must stay byte-identical to the eager
+    write and round-trip the same valid-pixel set."""
+    import cupy
+    import dask.array as dca
+
+    rng = np.random.default_rng(3166)
+    arr = rng.random((70, 52)).astype(np.float32)
+    arr[5:9, 3:7] = np.nan
+    da_kwargs = dict(
+        dims=("y", "x"),
+        attrs={
+            "crs": 4326,
+            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 69.5),
+        },
+    )
+    lazy = xr.DataArray(
+        dca.from_array(cupy.asarray(arr), chunks=(24, 52)), **da_kwargs)
+    stream_path = str(tmp_path / "stream_small_buf_3166.tif")
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(lazy, stream_path, nodata=-9999.0, tile_size=32,
+                   streaming_buffer_bytes=1)
+    assert _materialise_warnings_3166(records) == []
+
+    eager_path = str(tmp_path / "eager_small_buf_3166.tif")
+    to_geotiff(xr.DataArray(cupy.asarray(arr), **da_kwargs), eager_path,
+               nodata=-9999.0, tile_size=32)
+
+    assert (pathlib.Path(stream_path).read_bytes()
+            == pathlib.Path(eager_path).read_bytes())
+    # The per-band NaN->sentinel rewrite must land on disk: the
+    # default read keeps the sentinel, so NaN holes come back as the
+    # nodata value.
+    expected = arr.copy()
+    expected[np.isnan(arr)] = -9999.0
+    out = open_geotiff(stream_path)
+    np.testing.assert_array_equal(out.values, expected)
+
+
+@_gpu_only
+def test_gpu_streaming_band_first_byte_identical_3166(tmp_path):
+    """Band-first (band, y, x) dask+cupy input remaps lazily and
+    streams to the same bytes as the eager band-first write."""
+    import cupy
+    import dask.array as dca
+
+    rng = np.random.default_rng(31663)
+    arr = rng.random((3, 64, 48)).astype(np.float32)
+    da_kwargs = dict(
+        dims=("band", "y", "x"),
+        attrs={
+            "crs": 4326,
+            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 63.5),
+        },
+    )
+    lazy = xr.DataArray(
+        dca.from_array(cupy.asarray(arr), chunks=(3, 32, 48)), **da_kwargs)
+    stream_path = str(tmp_path / "stream_band_first_3166.tif")
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(lazy, stream_path, tile_size=32)
+    assert _materialise_warnings_3166(records) == []
+
+    eager_path = str(tmp_path / "eager_band_first_3166.tif")
+    to_geotiff(xr.DataArray(cupy.asarray(arr), **da_kwargs), eager_path,
+               tile_size=32)
+
+    assert (pathlib.Path(stream_path).read_bytes()
+            == pathlib.Path(eager_path).read_bytes())
+    out = open_geotiff(stream_path)
+    np.testing.assert_array_equal(out.values, np.moveaxis(arr, 0, -1))
