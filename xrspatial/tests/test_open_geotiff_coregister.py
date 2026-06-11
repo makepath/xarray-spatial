@@ -2,6 +2,8 @@
 unpack + reproject + resample onto the caller's exact grid)."""
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -276,3 +278,54 @@ def test_coregister_vrt_guard(tmp_path):
     template = _template_3857(6)
     with pytest.raises(ValueError, match="not supported with gpu"):
         template.xrs.open_geotiff('nonexistent.vrt', coregister=True)
+
+
+# ---------------------------------------------------------------------------
+# sparse-coverage warning (issue #3246)
+# ---------------------------------------------------------------------------
+
+def test_coregister_warns_when_file_covers_small_fraction(tmp_path):
+    # 1x1 degree file against a 10x10 degree template: ~1% coverage.
+    path = _file_4326(tmp_path, np.float32, 'cg3246_small.tif')
+    template = xr.DataArray(
+        np.zeros((100, 100), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.linspace(50.0, 40.0, 100),
+                'x': np.linspace(-125.0, -115.0, 100)},
+        attrs={'crs': 4326},
+    )
+    with pytest.warns(UserWarning, match="covers only"):
+        out = template.xrs.open_geotiff(path, coregister=True)
+    # The warning changes nothing about the result itself.
+    assert out.shape == template.shape
+    assert np.allclose(out.coords['x'].values, template.coords['x'].values)
+    assert np.allclose(out.coords['y'].values, template.coords['y'].values)
+
+
+def test_coregister_full_coverage_no_warning(tmp_path):
+    # Template sits entirely inside the file footprint: no warning.
+    path = _file_4326(tmp_path, np.float32, 'cg3246_full.tif')
+    template = _template_3857(6)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        template.xrs.open_geotiff(path, coregister=True)
+    assert not [w for w in caught if "covers only" in str(w.message)]
+
+
+def test_coregister_warns_small_fraction_crs_mismatch(tmp_path):
+    # Coverage is computed after the caller bbox is transformed into the
+    # file CRS, so the warning also fires across a CRS mismatch.
+    from pyproj import Transformer
+    path = _file_4326(tmp_path, np.float32, 'cg3246_mismatch.tif')
+    tr = Transformer.from_crs(4326, 3857, always_xy=True)
+    x0, y0 = tr.transform(-125.0, 50.0)
+    x1, y1 = tr.transform(-115.0, 40.0)
+    template = xr.DataArray(
+        np.zeros((100, 100), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.linspace(max(y0, y1), min(y0, y1), 100),
+                'x': np.linspace(min(x0, x1), max(x0, x1), 100)},
+        attrs={'crs': 3857},
+    )
+    with pytest.warns(UserWarning, match="covers only"):
+        template.xrs.open_geotiff(path, coregister=True)

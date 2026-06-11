@@ -11,6 +11,8 @@ directly via tab-completion::
     nir.xrs.ndvi(red)
 """
 
+import warnings
+
 import xarray as xr
 
 
@@ -147,6 +149,12 @@ def _bbox_edge_samples(x_min, y_min, x_max, y_max, n_per_side=20):
 
 
 _RESAMPLING_CHOICES = ('auto', 'nearest', 'bilinear', 'cubic')
+
+# coregister=True paints the file onto the caller's full grid, NaN-filling
+# everything outside the file footprint. Below this coverage fraction the
+# result is mostly NaN, so warn and point at the crop-the-caller-first
+# pattern instead.
+_COREGISTER_COVERAGE_WARN_FRACTION = 0.10
 
 
 def _resolve_resampling(resampling, result):
@@ -318,6 +326,26 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
     window = _extent_to_window(t, file_h, file_w,
                                y_min, y_max, x_min, x_max)
     kwargs.pop('window', None)
+
+    if coregister:
+        # Both extents are in file pixel units here: the caller bbox was
+        # transformed into the file CRS above when the two differ, and
+        # ``window`` is that bbox clamped to the file bounds, so the area
+        # ratio is the fraction of the caller grid the file can fill.
+        row_start, col_start, row_stop, col_stop = window
+        window_area = (max(0, row_stop - row_start)
+                       * max(0, col_stop - col_start))
+        req_rows = (y_max - y_min) / abs(t.pixel_height)
+        req_cols = (x_max - x_min) / abs(t.pixel_width)
+        coverage = window_area / (req_rows * req_cols)
+        if 0 < coverage < _COREGISTER_COVERAGE_WARN_FRACTION:
+            warnings.warn(
+                f"{source!r} covers only {coverage:.1%} of the caller "
+                "grid; the coregistered result will be mostly NaN. "
+                "Consider opening the small raster first and cropping "
+                "the caller to its bounds before coregistering.",
+                UserWarning, stacklevel=3,
+            )
 
     # Infer backend kwargs. Caller-supplied values always win.
     backend = _classify_backend(obj)
@@ -956,6 +984,9 @@ class XrsSpatialDataArrayAccessor:
             unpack-and-reproject read runs on CPU only, so
             ``coregister=True`` raises ``ValueError`` with ``gpu=True`` or
             ``.vrt`` sources, and it overrides an explicit ``unpack=False``.
+            Cells outside the file footprint come back NaN; if the file
+            covers less than 10% of ``self``'s grid a ``UserWarning``
+            suggests cropping ``self`` to the file bounds first.
             The resample mode follows ``resampling``. This is the heavier
             counterpart of ``auto_reproject``, which keeps the file's native
             resolution.
@@ -1489,6 +1520,9 @@ class XrsSpatialDatasetAccessor:
             unpack-and-reproject read runs on CPU only, so
             ``coregister=True`` raises ``ValueError`` with ``gpu=True`` or
             ``.vrt`` sources, and it overrides an explicit ``unpack=False``.
+            Cells outside the file footprint come back NaN; if the file
+            covers less than 10% of the Dataset's grid a ``UserWarning``
+            suggests cropping the Dataset to the file bounds first.
             The resample mode follows ``resampling``.
         resampling : {'auto', 'nearest', 'bilinear', 'cubic'}
             Resampling mode for the ``auto_reproject`` / ``coregister``
