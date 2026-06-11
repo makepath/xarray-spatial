@@ -252,7 +252,10 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         chunk-row span under this budget the same way the CPU
         streaming writer does; the floor is one full-width tile-row,
         so the cap is soft, and the tile-extraction buffer adds about
-        one band-sized allocation on top. In-memory (cupy / numpy)
+        one band-sized allocation on top. The cap bounds device
+        memory only: the compressed tile bytes accumulate in host RAM
+        until the file is assembled and written, matching the
+        non-streaming GPU write. In-memory (cupy / numpy)
         input ignores the kwarg. ``cog=True`` still materialises
         dask input in full on device (overview generation needs the
         whole array) and emits a ``GeoTIFFFallbackWarning``.

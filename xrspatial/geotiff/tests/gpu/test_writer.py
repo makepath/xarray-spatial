@@ -2633,15 +2633,20 @@ def test_gpu_streaming_small_buffer_byte_identical_3166(tmp_path):
     rng = np.random.default_rng(3166)
     arr = rng.random((70, 52)).astype(np.float32)
     arr[5:9, 3:7] = np.nan
-    da_kwargs = dict(
-        dims=("y", "x"),
-        attrs={
-            "crs": 4326,
-            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 69.5),
-        },
-    )
+
+    # Fresh dims/attrs per DataArray so the streamed and eager writes
+    # cannot observe each other through a shared attrs dict.
+    def da_kwargs():
+        return dict(
+            dims=("y", "x"),
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 69.5),
+            },
+        )
+
     lazy = xr.DataArray(
-        dca.from_array(cupy.asarray(arr), chunks=(24, 52)), **da_kwargs)
+        dca.from_array(cupy.asarray(arr), chunks=(24, 52)), **da_kwargs())
     stream_path = str(tmp_path / "stream_small_buf_3166.tif")
     with warnings.catch_warnings(record=True) as records:
         warnings.simplefilter("always")
@@ -2650,7 +2655,7 @@ def test_gpu_streaming_small_buffer_byte_identical_3166(tmp_path):
     assert _materialise_warnings_3166(records) == []
 
     eager_path = str(tmp_path / "eager_small_buf_3166.tif")
-    to_geotiff(xr.DataArray(cupy.asarray(arr), **da_kwargs), eager_path,
+    to_geotiff(xr.DataArray(cupy.asarray(arr), **da_kwargs()), eager_path,
                nodata=-9999.0, tile_size=32)
 
     assert (pathlib.Path(stream_path).read_bytes()
@@ -2673,15 +2678,18 @@ def test_gpu_streaming_band_first_byte_identical_3166(tmp_path):
 
     rng = np.random.default_rng(31663)
     arr = rng.random((3, 64, 48)).astype(np.float32)
-    da_kwargs = dict(
-        dims=("band", "y", "x"),
-        attrs={
-            "crs": 4326,
-            "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 63.5),
-        },
-    )
+
+    def da_kwargs():
+        return dict(
+            dims=("band", "y", "x"),
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 63.5),
+            },
+        )
+
     lazy = xr.DataArray(
-        dca.from_array(cupy.asarray(arr), chunks=(3, 32, 48)), **da_kwargs)
+        dca.from_array(cupy.asarray(arr), chunks=(3, 32, 48)), **da_kwargs())
     stream_path = str(tmp_path / "stream_band_first_3166.tif")
     with warnings.catch_warnings(record=True) as records:
         warnings.simplefilter("always")
@@ -2689,10 +2697,71 @@ def test_gpu_streaming_band_first_byte_identical_3166(tmp_path):
     assert _materialise_warnings_3166(records) == []
 
     eager_path = str(tmp_path / "eager_band_first_3166.tif")
-    to_geotiff(xr.DataArray(cupy.asarray(arr), **da_kwargs), eager_path,
+    to_geotiff(xr.DataArray(cupy.asarray(arr), **da_kwargs()), eager_path,
                tile_size=32)
 
     assert (pathlib.Path(stream_path).read_bytes()
             == pathlib.Path(eager_path).read_bytes())
     out = open_geotiff(stream_path)
     np.testing.assert_array_equal(out.values, np.moveaxis(arr, 0, -1))
+
+
+@_gpu_only
+def test_gpu_streaming_band_last_byte_identical_3166(tmp_path):
+    """Band-last (y, x, band) dask input needs no remap; the stream
+    loop slices an already band-last 3D dask array along y and must
+    match the eager write byte for byte."""
+    import cupy
+    import dask.array as dca
+
+    rng = np.random.default_rng(31664)
+    arr = rng.random((64, 48, 3)).astype(np.float32)
+
+    def da_kwargs():
+        return dict(
+            dims=("y", "x", "band"),
+            attrs={
+                "crs": 4326,
+                "transform": (1.0, 0.0, -0.5, 0.0, -1.0, 63.5),
+            },
+        )
+
+    lazy = xr.DataArray(
+        dca.from_array(cupy.asarray(arr), chunks=(32, 48, 3)), **da_kwargs())
+    stream_path = str(tmp_path / "stream_band_last_3166.tif")
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(lazy, stream_path, tile_size=32)
+    assert _materialise_warnings_3166(records) == []
+
+    eager_path = str(tmp_path / "eager_band_last_3166.tif")
+    to_geotiff(xr.DataArray(cupy.asarray(arr), **da_kwargs()), eager_path,
+               tile_size=32)
+
+    assert (pathlib.Path(stream_path).read_bytes()
+            == pathlib.Path(eager_path).read_bytes())
+    out = open_geotiff(stream_path)
+    np.testing.assert_array_equal(out.values, arr)
+
+
+@_gpu_only
+def test_write_geotiff_gpu_dask_to_bytesio_streams_3166(tmp_path):
+    """File-like destinations stay supported on the non-COG GPU path:
+    dask input streams into a BytesIO and produces the same bytes as
+    the write to a filesystem path."""
+    import io
+
+    import cupy
+    import dask.array as dca
+
+    arr = np.arange(48 * 40, dtype=np.float32).reshape(48, 40)
+    lazy = dca.from_array(cupy.asarray(arr), chunks=(16, 40))
+    buf = io.BytesIO()
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        _write_geotiff_gpu(lazy, buf, tile_size=32)
+    assert _materialise_warnings_3166(records) == []
+
+    path = str(tmp_path / "dask_bytesio_3166.tif")
+    _write_geotiff_gpu(cupy.asarray(arr), path, tile_size=32)
+    assert buf.getvalue() == pathlib.Path(path).read_bytes()

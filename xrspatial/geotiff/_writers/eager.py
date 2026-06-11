@@ -112,10 +112,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     ``gpu=True`` with any dask backing) also streams: each tile-row
     band is computed onto the device, compressed, and released before
     the next, with the per-compute budget capped by
-    ``streaming_buffer_bytes`` (issue #3166). The exception is
-    ``cog=True``, which materialises the full array on device because
-    overview generation needs it, and emits a
-    ``GeoTIFFFallbackWarning`` when it does.
+    ``streaming_buffer_bytes`` (issue #3166). The bound is on device
+    memory only: the GPU writer still assembles the compressed file
+    in host RAM before writing it out, unlike the CPU streaming path,
+    which writes incrementally to disk. The exception is ``cog=True``,
+    which materialises the full array on device because overview
+    generation needs it, and emits a ``GeoTIFFFallbackWarning`` when
+    it does.
 
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
