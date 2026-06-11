@@ -29,6 +29,12 @@ import threading
 import numpy as np
 from numba import njit, prange
 
+# Serializes parallel=True kernel launches; numba's workqueue threading
+# layer aborts the process when two host threads enter parallel regions
+# at the same time (#3141). Shared with the projection kernels because
+# the hazard spans kernels, not instances of one kernel.
+from ._projections import _PARALLEL_KERNEL_LOCK
+
 # ---------------------------------------------------------------------------
 # Geoid grid loading
 # ---------------------------------------------------------------------------
@@ -256,8 +262,9 @@ def geoid_height(lon, lat, model='EGM96'):
         )
 
     out = np.empty(lon_arr.shape[0], dtype=np.float64)
-    _interp_geoid_batch(lon_arr, lat_arr, out, data, left, top,
-                        res_x, res_y, h, w)
+    with _PARALLEL_KERNEL_LOCK:
+        _interp_geoid_batch(lon_arr, lat_arr, out, data, left, top,
+                            res_x, res_y, h, w)
 
     return float(out[0]) if scalar else out.reshape(np.shape(lon))
 
@@ -301,7 +308,8 @@ def geoid_height_raster(raster, model='EGM96'):
     xx, yy = np.meshgrid(x, y)
 
     out = np.empty_like(xx)
-    _interp_geoid_2d(xx, yy, out, data, left, top, res_x, res_y, h, w)
+    with _PARALLEL_KERNEL_LOCK:
+        _interp_geoid_2d(xx, yy, out, data, left, top, res_x, res_y, h, w)
 
     # Carry input attrs forward (crs, res, transform, _FillValue, etc.)
     # and layer units / model on top. The output grid is identical to the
