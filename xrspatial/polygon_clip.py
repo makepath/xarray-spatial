@@ -177,7 +177,11 @@ def clip_polygon(
     Returns
     -------
     xr.DataArray
-        Clipped raster with the same dtype and attributes as *raster*.
+        Clipped raster with the same attributes as *raster*.  The dtype is
+        the input dtype promoted against *nodata* (e.g. an integer raster
+        clipped with the default ``np.nan`` is returned as float), so the
+        result is identical across the numpy, cupy, dask, and dask+cupy
+        backends.
 
     Examples
     --------
@@ -231,6 +235,14 @@ def clip_polygon(
     # inputs).  For non-dask backends, compute the mask eagerly.
     mask_data = mask.data
 
+    # Determine the output dtype the same way ``xarray.where`` does: promote
+    # the raster dtype against the nodata value.  This keeps the cupy and
+    # dask+cupy paths (which assign nodata into a raw copy) consistent with
+    # the numpy / dask+numpy paths.  Without it, assigning ``np.nan`` into an
+    # integer array raises ``cannot convert float NaN to integer`` only on the
+    # GPU backends while the CPU backends silently upcast to float.
+    out_dtype = np.result_type(raster.dtype, nodata)
+
     if has_dask_array() and isinstance(raster.data, da.Array):
         # Dask path: keep mask lazy -- no .compute()
         if isinstance(mask_data, da.Array):
@@ -248,13 +260,13 @@ def clip_polygon(
             # dask+cupy: use map_blocks with both raster and condition
             def _apply_mask(raster_block, cond_block):
                 import cupy
-                out = raster_block.copy()
+                out = raster_block.astype(out_dtype, copy=True)
                 out[~cond_block.astype(bool)] = nodata
                 return out
 
             out = da.map_blocks(
                 _apply_mask, raster.data, cond,
-                dtype=raster.dtype,
+                dtype=out_dtype,
             )
             result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
         else:
@@ -268,7 +280,7 @@ def clip_polygon(
             cond_cp = mask_data == 1
         else:
             cond_cp = cupy.asarray(np.asarray(mask_data) == 1)
-        out = raster.data.copy()
+        out = raster.data.astype(out_dtype, copy=True)
         out[~cond_cp] = nodata
         result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
     else:
