@@ -12,12 +12,13 @@ from xrspatial.mcda.combine import boolean_overlay, fuzzy_overlay, owa, wlc, wpm
 from xrspatial.mcda.constrain import constrain
 from xrspatial.mcda.sensitivity import sensitivity
 from xrspatial.mcda.standardize import standardize
-from xrspatial.mcda.weights import ahp_weights, rank_weights
+from xrspatial.mcda.weights import ConsistencyResult, ahp_weights, rank_weights
 
 __all__ = [
     "standardize",
     "ahp_weights",
     "rank_weights",
+    "ConsistencyResult",
     "wlc",
     "wpm",
     "owa",
