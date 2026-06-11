@@ -2192,29 +2192,10 @@ def test_proximity_dask_no_scipy_does_not_mutate_input(backend, op):
     assert raster.data.chunks == chunks_before, "proximity rechunked the input"
 
 
-def test_proximity_linesweep_compiled_once():
-    # Regression test for issue #3103: the line-sweep kernel used to be an
-    # @ngjit closure defined inside _process, so every proximity() call
-    # created a fresh dispatcher and recompiled the kernel (~0.4s per call).
-    # The kernel must be a module-level dispatcher whose compiled signatures
-    # are reused across calls.
-    from xrspatial.proximity import _process_numpy_linesweep
-
-    data = np.zeros((10, 10), dtype=np.float64)
-    data[5, 5] = 1.0
-    raster = xr.DataArray(data, dims=['y', 'x'])
-    raster['y'] = np.arange(10, dtype=np.float64)[::-1]
-    raster['x'] = np.arange(10, dtype=np.float64)
-
-    proximity(raster)
-    n_sigs = len(_process_numpy_linesweep.signatures)
-    assert n_sigs >= 1  # the numpy line-sweep path actually ran
-
-    proximity(raster)
-    proximity(raster)
-    assert len(_process_numpy_linesweep.signatures) == n_sigs, (
-        "repeated proximity() calls recompiled the line-sweep kernel"
-    )
+# test_proximity_linesweep_compiled_once (issue #3103) was removed along
+# with the line-sweep kernel it pinned: PROXIMITY now runs an exact cKDTree
+# query in plain Python (issue #3121), so there is no per-call numba
+# recompilation left to guard against.
 
 
 @pytest.mark.skipif(da is None, reason="dask is not installed")
@@ -2391,3 +2372,130 @@ def test_empty_raster_raises(func, shape):
 
     with pytest.raises((ValueError, IndexError)):
         func(raster, x='lon', y='lat')
+
+
+# ---------------------------------------------------------------------------
+# Issue #3121: EUCLIDEAN proximity on numpy missed the true nearest target.
+#
+# The GDAL-ported 4-pass line-sweep propagates one nearest-target candidate
+# between adjacent pixels. On some target layouts the chain never delivers
+# the true nearest target and the reported distance is too large (~7%
+# relative in the repro below). The numpy backend now answers PROXIMITY for
+# EUCLIDEAN/MANHATTAN with an exact cKDTree query (brute force when scipy is
+# missing); the bounded dask+numpy chunk function reuses the numpy path, so
+# it inherits the same fix.
+# ---------------------------------------------------------------------------
+
+
+def _exact_planar_proximity(data, xs_1d, ys_1d, metric, max_distance=np.inf):
+    """Float64 exact nearest-target distance, the issue #3121 ground truth."""
+    mask = np.isfinite(data) & (data != 0)
+    tr, tc = np.where(mask)
+    out = np.full(data.shape, np.nan, dtype=np.float64)
+    if len(tr) == 0:
+        return out
+    ty, tx = ys_1d[tr], xs_1d[tc]
+    for i in range(data.shape[0]):
+        dy = ty - ys_1d[i]
+        for j in range(data.shape[1]):
+            dx = tx - xs_1d[j]
+            if metric == 'MANHATTAN':
+                d = (np.abs(dx) + np.abs(dy)).min()
+            else:
+                d = np.sqrt(dx * dx + dy * dy).min()
+            if d <= max_distance:
+                out[i, j] = d
+    return out
+
+
+def _issue_3121_raster(backend):
+    data = np.zeros((8, 10))
+    for i, j in [(0, 4), (0, 8), (1, 2), (2, 1), (6, 6)]:
+        data[i, j] = 1.0
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['y'] = np.linspace(0, 10, 101)[12:20]   # pitch 0.1
+    raster['x'] = np.linspace(0, 10, 103)[28:38]   # pitch ~0.098
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(raster.data)
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=(4, 5))
+    return raster
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("max_distance", [np.inf, 1.0])
+def test_proximity_true_nearest_target_issue_3121(backend, max_distance):
+    """Pixel (3, 4) is 0.28008 from the target at (1, 2); the line-sweep
+    reported 0.3, the distance to the target at (0, 4). max_distance=1.0
+    drives the bounded dask map_overlap path through the same check."""
+    if has_cuda_and_cupy() is False and 'cupy' in backend:
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    raster = _issue_3121_raster(backend)
+    result = proximity(raster, max_distance=max_distance)
+
+    out = result.data
+    if da is not None and isinstance(out, da.Array):
+        out = out.compute()
+    if hasattr(out, 'get'):
+        out = out.get()
+
+    expected = _exact_planar_proximity(
+        _issue_3121_raster('numpy').data,
+        raster['x'].data, raster['y'].data, 'EUCLIDEAN', max_distance)
+    np.testing.assert_allclose(out, expected, rtol=1e-5, atol=1e-7)
+    assert result.dtype == np.float32
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("metric", ['EUCLIDEAN', 'MANHATTAN'])
+@pytest.mark.parametrize("max_distance", [np.inf, 3.0])
+def test_proximity_random_raster_matches_ground_truth(
+        backend, metric, max_distance):
+    """~600 random targets on a 101x103 grid: every pixel must report the
+    float64 exact nearest-target distance (issue #3121 found 4 pixels off
+    by up to 0.02 on this kind of input)."""
+    if 'dask' in backend and da is None:
+        pytest.skip("dask not available")
+
+    rng = np.random.default_rng(0)
+    data = (rng.random((101, 103)) < 0.06).astype(np.float64)
+    ys = np.linspace(0, 10, 101)
+    xs = np.linspace(0, 10.2, 103)
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['y'] = ys
+    raster['x'] = xs
+    if 'dask' in backend:
+        raster.data = da.from_array(data, chunks=(32, 40))
+
+    result = proximity(raster, max_distance=max_distance,
+                       distance_metric=metric)
+    out = result.data
+    if da is not None and isinstance(out, da.Array):
+        out = out.compute()
+
+    expected = _exact_planar_proximity(data, xs, ys, metric, max_distance)
+    np.testing.assert_allclose(out, expected, rtol=1e-5, atol=1e-7)
+
+
+def test_proximity_numpy_no_scipy_fallback_is_exact():
+    """Without scipy the numpy backend falls back to the exact brute-force
+    kernel, not the line-sweep."""
+    import sys
+    prox_mod = sys.modules['xrspatial.proximity']
+
+    raster = _issue_3121_raster('numpy')
+    original_ckdtree = prox_mod.cKDTree
+    try:
+        prox_mod.cKDTree = None
+        with pytest.warns(UserWarning, match="brute-force"):
+            result = proximity(raster)
+    finally:
+        prox_mod.cKDTree = original_ckdtree
+
+    expected = _exact_planar_proximity(
+        raster.data, raster['x'].data, raster['y'].data, 'EUCLIDEAN')
+    np.testing.assert_allclose(result.data, expected, rtol=1e-5, atol=1e-7)

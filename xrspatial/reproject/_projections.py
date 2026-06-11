@@ -132,22 +132,34 @@ _DATUM_PARAMS = {
 }
 
 
+def _crs_to_dict(crs):
+    """``crs.to_dict()`` without pyproj's lossy-PROJ-string UserWarning.
+
+    crs.to_dict() goes through pyproj's to_proj4(), which warns that a
+    PROJ string drops detail. The param extractors here only read short
+    names and numeric projection parameters, never the lossy string, so
+    silence that one warning.
+
+    ``catch_warnings`` swaps process-global filter state and is not
+    thread-safe; callers are expected to hold ``_PARALLEL_KERNEL_LOCK``
+    (all current callers run inside the ``*_locked`` entry points).
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore',
+            message='.*lose important projection information.*',
+            category=UserWarning,
+        )
+        return crs.to_dict()
+
+
 def _get_datum_params(crs):
     """Return (dx, dy, dz, rx, ry, rz, ds, a_src, f_src) for a non-WGS84 datum.
 
     Returns None for WGS84/NAD83/GRS80 (no shift needed).
     """
     try:
-        # crs.to_dict() goes through pyproj's to_proj4(), which warns that a
-        # PROJ string drops detail. We only read the datum/ellps short names
-        # here, never the lossy string, so silence that one warning.
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                'ignore',
-                message='.*lose important projection information.*',
-                category=UserWarning,
-            )
-            d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     datum = d.get('datum', '')
@@ -305,7 +317,7 @@ def _lcc_params(crs):
     Returns (lon0, lat0, n, c, rho0, k0) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'lcc':
@@ -450,7 +462,7 @@ def _aea_params(crs):
     Returns (lon0, n, c, dd, rho0, fe, fn) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'aea':
@@ -554,7 +566,7 @@ def _cea_params(crs):
     Returns (lon0, k0, fe, fn) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'cea':
@@ -673,7 +685,7 @@ def _sinu_params(crs):
     Returns (lon0, fe, fn) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'sinu':
@@ -739,7 +751,7 @@ def _laea_params(crs):
     Or None if not LAEA.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'laea':
@@ -922,7 +934,7 @@ def _stere_params(crs):
     and generic stere/ups proj definitions with polar lat_0.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     proj = d.get('proj', '')
@@ -1063,7 +1075,7 @@ def _sterea_params(crs):
     Returns (lon0, sinc0, cosc0, R2, C_gauss, K_gauss, ratexp, fe, fn, e) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'sterea':
@@ -1199,7 +1211,7 @@ def _omerc_params(crs):
              singam, cosgam, sinaz, cosaz, BH, AH, e) or None.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'omerc':
@@ -1668,7 +1680,7 @@ def _tmerc_params(crs):
     Zb is the Krueger northing offset for non-zero lat_0.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return None
     if d.get('proj') != 'tmerc':
@@ -1747,7 +1759,7 @@ def _is_wgs84_compatible_ellipsoid(crs):
     will wrap the projection with a datum shift.
     """
     try:
-        d = crs.to_dict()
+        d = _crs_to_dict(crs)
     except Exception:
         return False
     ellps = d.get('ellps', '')
