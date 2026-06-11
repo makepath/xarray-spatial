@@ -1355,6 +1355,8 @@ def _hotspots_degenerate_cases():
     single_valid = np.full((10, 10), np.nan, dtype=np.float32)
     single_valid[0, 0] = 5.0
 
+    # A single Inf of either sign poisons nanstd the same way (std == NaN);
+    # both signs are pinned so neither regresses independently.
     pos_inf = np.arange(100, dtype=np.float32).reshape(10, 10)
     pos_inf[4, 4] = np.inf
 

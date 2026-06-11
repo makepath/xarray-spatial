@@ -1466,8 +1466,9 @@ def _gistar_global_stats(global_mean, global_std, n):
     if not np.isfinite(global_std):
         raise ValueError(
             "Standard deviation of the input raster values is not finite. "
-            "The raster contains Inf values; mask them (e.g. replace with "
-            "NaN) before calling hotspots()."
+            "The raster likely contains Inf values, or values too large "
+            "for float32; mask them (e.g. replace with NaN) or rescale "
+            "before calling hotspots()."
         )
     if global_std == 0:
         raise ZeroDivisionError(
