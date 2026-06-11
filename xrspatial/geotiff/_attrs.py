@@ -571,7 +571,10 @@ _TIFF_SHORT = 3
 # Version 5 adds ``attrs['mask_and_scale_dtype']``: the integer source
 # dtype recorded when ``mask_nodata`` / ``mask_and_scale`` promoted the
 # array to float on read. ``to_geotiff(pack=True)`` reads it to restore
-# the on-disk dtype. Existing keys keep their pre-v5 shape.
+# the on-disk dtype. Existing keys keep their pre-v5 shape. #3080 later
+# extended emission (same key, same shape, still v5) to float sources on
+# ``mask_and_scale`` reads that carry a sentinel or a non-identity
+# scale / offset, so ``pack`` keeps float32 sources float32.
 _ATTRS_CONTRACT_VERSION = 5
 
 

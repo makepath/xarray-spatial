@@ -103,6 +103,58 @@ def test_float32_attr_recorded_eager_dask_match(tmp_path):
 
 
 @pytest.mark.parametrize("chunks", [None, 2], ids=["numpy", "dask"])
+def test_pack_keeps_float64_width(tmp_path, chunks):
+    """float64 sources now record ``mask_and_scale_dtype='float64'`` too.
+    The recorded cast is a no-op there; pin it so the widest-float case
+    cannot regress."""
+    data = np.array([[1.5, 2.5, -9999.0], [4.5, 5.5, 6.5]], dtype=np.float64)
+    src = _write_f32_tiff(tmp_path / "src_f64_3080.tif", data, nodata=-9999.0)
+
+    decoded = _reopen(src, chunks, unpack=True)
+    assert decoded.dtype == np.float64
+    assert decoded.attrs.get("mask_and_scale_dtype") == "float64"
+
+    out = str(tmp_path / "out_f64_3080.tif")
+    decoded.xrs.to_geotiff(out, pack=True)
+
+    back = open_geotiff(out)
+    assert str(back.dtype) == "float64"
+    np.testing.assert_array_equal(np.asarray(back.data), data)
+
+
+def test_pack_pre_v5_integer_sentinel_fallback(tmp_path):
+    """``_pack``'s pre-v5 fallback still keys off an integer-typed
+    sentinel. #3080 narrowed that fallback to integer sentinels only, so
+    pin the surviving branch: with ``mask_and_scale_dtype`` absent and an
+    integer-dtype ``attrs['nodata']``, pack restores the sentinel's
+    dtype."""
+    data = np.array([[1, 2, -128], [4, 5, 6]], dtype=np.int8)
+    h, w = data.shape
+    src_da = xr.DataArray(
+        data,
+        dims=("y", "x"),
+        coords={"y": np.arange(h, 0, -1) - 0.5, "x": np.arange(w) + 0.5},
+        attrs={"crs": 4326, "nodata": -128},
+    )
+    src = tmp_path / "src_i8_prev5_3080.tif"
+    to_geotiff(src_da, src)
+
+    decoded = open_geotiff(src, unpack=True)
+    assert decoded.attrs.get("mask_and_scale_dtype") == "int8"
+    # Simulate a pre-v5 read: no recorded dtype, sentinel stored in the
+    # source dtype.
+    decoded.attrs.pop("mask_and_scale_dtype")
+    decoded.attrs["nodata"] = np.int8(-128)
+
+    out = str(tmp_path / "out_i8_prev5_3080.tif")
+    decoded.xrs.to_geotiff(out, pack=True)
+
+    back = open_geotiff(out)
+    assert str(back.dtype) == "int8"
+    np.testing.assert_array_equal(np.asarray(back.data), data)
+
+
+@pytest.mark.parametrize("chunks", [None, 2], ids=["numpy", "dask"])
 def test_pack_masked_read_keeps_float32_width(tmp_path, chunks):
     """A plain ``masked=True`` read records no ``mask_and_scale_dtype``
     (pack is the inverse of unpack specifically), so ``_pack`` used to

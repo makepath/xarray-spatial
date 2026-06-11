@@ -365,15 +365,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         [experimental] Inverse of ``open_geotiff(unpack=True)``. Re-pack
         a decoded float array before writing: reverse the scale / offset
         recorded on ``attrs['scale_factor']`` / ``attrs['add_offset']``,
-        fill NaN back to the nodata sentinel, and cast to the integer source
+        fill NaN back to the nodata sentinel, and cast to the source
         dtype recorded on ``attrs['mask_and_scale_dtype']`` (contract v5;
-        the attr keeps its historical name). The output stores the raw
-        packed integers and keeps the SCALE / OFFSET GDAL_METADATA, so
-        reopening it with ``unpack=True`` unpacks to the original values
-        instead of scaling a second time. Raises ``ValueError`` for a bare
-        array (no attrs) or one that never went through an ``unpack``
-        read. The dtype falls back to the ``attrs['nodata']`` width for
-        arrays read before contract v5. An explicit ``nodata=`` kwarg
+        the attr keeps its historical name). The recorded dtype is the
+        on-disk one, so an integer source gets its integer dtype back and
+        a float32 source stays float32 rather than widening to float64
+        (#3080). The output stores the raw packed values and keeps the
+        SCALE / OFFSET GDAL_METADATA, so reopening it with
+        ``unpack=True`` unpacks to the original values instead of scaling
+        a second time. Raises ``ValueError`` for a bare array (no attrs)
+        or one that never went through an ``unpack`` read. When the attr
+        is absent (arrays read before contract v5), the dtype falls back
+        to the width of an integer-typed ``attrs['nodata']``, or to the
+        buffer's own dtype when the sentinel is a float (a float sentinel
+        is stored as a plain Python float and carries no width
+        information). An explicit ``nodata=`` kwarg
         overrides the attrs sentinel as the NaN fill value, so the filled
         pixels always agree with the GDAL_NODATA tag the writer emits.
         When NaN pixels exist with no sentinel to fill them and an
