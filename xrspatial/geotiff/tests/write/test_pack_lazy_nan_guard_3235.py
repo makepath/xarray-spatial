@@ -124,6 +124,27 @@ def test_pack_dask_nan_no_sentinel_raises_at_compute(tmp_path):
         to_geotiff(da, out, pack=True)
 
 
+def test_pack_dask_nan_no_sentinel_raises_through_vrt_write(tmp_path):
+    """A ``.vrt`` destination surfaces the deferred guard the same way.
+
+    The VRT path consumes the packed graph through ``_write_vrt_tiled``'s
+    delayed per-tile writes (collect-and-reraise via ``_safe_write_tile``)
+    rather than ``_write_streaming``; the original ValueError must come
+    back verbatim and the staging dir must be cleaned up.
+    """
+    values = np.full((4, 4), 10.0, dtype=np.float64)
+    values[3, 1] = np.nan
+    da = _no_sentinel_unpacked_dask(values)
+
+    out = str(tmp_path / "out_nan_dask_3235.vrt")
+    with pytest.raises(ValueError,
+                       match="cannot restore integer dtype int16"):
+        to_geotiff(da, out, pack=True)
+    import os
+    assert not os.path.exists(out)
+    assert not os.path.isdir(str(tmp_path / "out_nan_dask_3235_tiles"))
+
+
 def test_pack_dask_nan_no_sentinel_packed_graph_is_lazy():
     """``_pack`` itself must not compute dask input, even with NaN."""
     values = np.full((4, 4), 10.0, dtype=np.float64)
