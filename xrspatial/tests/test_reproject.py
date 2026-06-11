@@ -4574,6 +4574,97 @@ class TestDaskCupyDtypeParity:
         assert r_np.dtype == r_cp.dtype == np.int16
 
 
+class TestEmptyChunkDtype:
+    """Empty / no-overlap chunks must keep the integer source dtype (#3096).
+
+    The empty-chunk fills in the chunk workers and the footprint-skip
+    path in ``_reproject_block_adapter`` were hardcoded to float64. With
+    an integer source, one no-overlap chunk was enough to promote the
+    whole computed dask array to float64 while the lazy array (and the
+    eager backend) advertised the integer dtype.
+    """
+
+    # Output bounds in EPSG:3857 that are far larger than the projected
+    # footprint of the source raster below, so corner chunks have no
+    # source overlap and take the empty-chunk path.
+    _WIDE_BOUNDS = (-2_000_000.0, 5_000_000.0, 2_000_000.0, 9_000_000.0)
+
+    def _make_int16_data(self, n=200):
+        rng = np.random.default_rng(3096)
+        return (rng.random((n, n)) * 1000).astype(np.int16)
+
+    def _coords(self, n=200):
+        return {'y': np.linspace(52.0, 51.0, n), 'x': np.linspace(-2.0, -1.0, n)}
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_int16_empty_chunks_keep_dtype(self):
+        from xrspatial.reproject import reproject
+        data = self._make_int16_data()
+        raster = xr.DataArray(
+            da.from_array(data, chunks=(64, 64)),
+            dims=['y', 'x'], coords=self._coords(),
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(raster, 'EPSG:3857', bounds=self._WIDE_BOUNDS,
+                           resolution=20000, chunk_size=64)
+        assert result.dtype == np.int16
+        computed = result.compute()
+        assert computed.dtype == np.int16
+        # The no-overlap corners must hold the integer sentinel.
+        assert computed.values[0, 0] == -32768
+        # Some chunk must contain real data, or this test exercises
+        # nothing but empty fills.
+        assert (computed.values != -32768).any()
+
+    def test_numpy_int16_no_overlap_output_keeps_dtype(self):
+        # Eager backend, output grid entirely outside the source
+        # footprint: the single chunk takes the no-overlap early return.
+        from xrspatial.reproject import reproject
+        data = self._make_int16_data(32)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'], coords=self._coords(32),
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(raster, 'EPSG:3857',
+                           bounds=(5_000_000.0, 5_000_000.0,
+                                   6_000_000.0, 6_000_000.0),
+                           resolution=20000)
+        assert result.dtype == np.int16
+        assert (result.values == -32768).all()
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_float_empty_chunks_stay_float64(self):
+        # Float sources keep returning float64 empty chunks (NaN fill).
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(0).rand(200, 200)
+        raster = xr.DataArray(
+            da.from_array(data, chunks=(64, 64)),
+            dims=['y', 'x'], coords=self._coords(),
+            attrs={'crs': 'EPSG:4326'},
+        )
+        result = reproject(raster, 'EPSG:3857', bounds=self._WIDE_BOUNDS,
+                           resolution=20000, chunk_size=64)
+        assert result.dtype == np.float64
+        computed = result.compute()
+        assert computed.dtype == np.float64
+        assert np.isnan(computed.values[0, 0])
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask + cupy required")
+    def test_dask_cupy_int16_empty_chunks_keep_dtype(self):
+        from xrspatial.reproject import reproject
+        data = self._make_int16_data()
+        raster = xr.DataArray(
+            da.from_array(cp.asarray(data), chunks=(64, 64)),
+            dims=['y', 'x'], coords=self._coords(),
+            attrs={'crs': 'EPSG:4326', 'nodata': -32768},
+        )
+        result = reproject(raster, 'EPSG:3857', bounds=self._WIDE_BOUNDS,
+                           resolution=20000, chunk_size=64)
+        computed = result.compute()
+        assert computed.dtype == np.int16
+
+
 @pytest.mark.skipif(not HAS_DASK, reason="dask required")
 class TestMergeDaskParity:
     """Dask merge should match the eager numpy merge."""
@@ -7192,6 +7283,51 @@ class TestNonWgsDatumNumbaFastPath:
         # Guard against the old corruption: coords must be metres, not degrees.
         assert np.all(np.abs(src_x) > 1000.0)
         assert np.all(np.abs(src_y) > 1000.0)
+
+
+class TestVerticalReturnTypes:
+    """Pin the return types the _vertical.py docstrings describe (#3097).
+
+    The Returns sections used to claim "same type as input", which was
+    wrong for DataArray input (plain ndarray comes back) and for scalar
+    input to the conversion wrappers (numpy scalar, not Python float).
+    These tests pin the actual behaviour the docs now state.
+    """
+
+    def test_geoid_height_scalar_returns_python_float(self):
+        from xrspatial.reproject import geoid_height
+        out = geoid_height(-74.0, 40.7)
+        assert type(out) is float
+
+    def test_geoid_height_array_returns_ndarray(self):
+        from xrspatial.reproject import geoid_height
+        out = geoid_height(np.array([-74.0, 0.0]), np.array([40.7, 0.0]))
+        assert type(out) is np.ndarray
+        assert out.shape == (2,)
+
+    def test_geoid_height_dataarray_returns_ndarray(self):
+        from xrspatial.reproject import geoid_height
+        lon = xr.DataArray(np.array([-74.0, 0.0]))
+        lat = xr.DataArray(np.array([40.7, 0.0]))
+        out = geoid_height(lon, lat)
+        # Documented: DataArray input comes back as a plain ndarray.
+        assert type(out) is np.ndarray
+
+    def test_conversion_wrappers_return_numpy_types(self):
+        from xrspatial.reproject import (
+            depth_to_ellipsoidal,
+            ellipsoidal_to_depth,
+            ellipsoidal_to_orthometric,
+            orthometric_to_ellipsoidal,
+        )
+        for func in (ellipsoidal_to_orthometric, orthometric_to_ellipsoidal,
+                     depth_to_ellipsoidal, ellipsoidal_to_depth):
+            scalar_out = func(100.0, -74.0, 40.7)
+            assert isinstance(scalar_out, np.floating), func.__name__
+            arr_out = func(np.array([100.0, 50.0]),
+                           np.array([-74.0, 0.0]), np.array([40.7, 0.0]))
+            assert type(arr_out) is np.ndarray, func.__name__
+            assert arr_out.shape == (2,), func.__name__
 
 
 @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")

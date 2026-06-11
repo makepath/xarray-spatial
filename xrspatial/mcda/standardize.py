@@ -205,7 +205,6 @@ def _linear(data, *, direction, bounds):
 
 def _sigmoidal(data, *, midpoint, spread):
     xp = _get_xp(data)
-    import warnings
     exponent = -spread * (data - midpoint)
     # Clamp exponent to avoid overflow in exp(); the sigmoid is
     # effectively 0 or 1 beyond ~±700 anyway.
@@ -267,16 +266,28 @@ def _piecewise(data, *, breakpoints, values):
     if _is_dask(data):
         import dask.array as da
 
+        # Convert the lookup tables once, to the module of the chunks
+        # (known from the dask meta), instead of once per block. cupy
+        # chunks then interpolate on the device with device-resident
+        # tables; np.asarray on a cupy block would raise TypeError.
+        xp_b = _get_xp(data._meta)
+        bp_t = xp_b.asarray(bp)
+        vl_t = xp_b.asarray(vl)
+
         def _interp_block(block):
-            # Ensure block is numpy for np.interp (handles cupy chunks)
-            arr = np.asarray(block)
-            return np.interp(arr, bp, vl)
+            # cupy.interp requires C-contiguous input and dask chunks
+            # can be non-contiguous views (no-op for contiguous numpy).
+            return xp_b.interp(xp_b.ascontiguousarray(block), bp_t, vl_t)
 
         result = da.map_blocks(_interp_block, data, dtype=np.float64)
         result = da.where(da.isfinite(data), result, np.nan)
         return result
 
-    result = xp.interp(data, bp, vl)
+    # cupy.interp rejects numpy operands and non-contiguous input, so
+    # move the lookup tables to the data's array module and force
+    # C-contiguity first (both no-ops for contiguous numpy).
+    result = xp.interp(
+        xp.ascontiguousarray(data), xp.asarray(bp), xp.asarray(vl))
     result = xp.where(xp.isfinite(data), result, xp.nan)
     return result
 
@@ -291,12 +302,15 @@ def _categorical(data, *, mapping):
     if _is_dask(data):
         import dask.array as da
 
+        # Build each block's output with the chunks' own array module
+        # (known from the dask meta) so cupy blocks stay on the device;
+        # np.asarray on a cupy block would raise TypeError.
+        xp_b = _get_xp(data._meta)
+
         def _apply_mapping(block):
-            # Ensure block is numpy (handles cupy chunks)
-            arr = np.asarray(block)
-            out = np.full(arr.shape, np.nan, dtype=np.float64)
+            out = xp_b.full(block.shape, np.nan, dtype=np.float64)
             for k, v in zip(keys, vals):
-                out[arr == k] = v
+                out[block == k] = v
             return out
 
         result = da.map_blocks(_apply_mapping, data, dtype=np.float64)

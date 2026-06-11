@@ -1916,6 +1916,75 @@ def test_regions_gpu_matches_numpy(backend):
     )
 
 
+def _regions_relabel_reference(data, neighborhood):
+    """Per-region relabel: the original O(n_regions * n_cells) semantics.
+
+    Kept here as the reference the vectorized backend remap must match
+    byte-for-byte (issue #3207).
+    """
+    from scipy.ndimage import label
+
+    structure = (
+        np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+        if neighborhood == 4 else np.ones((3, 3), dtype=int)
+    )
+    is_float = np.issubdtype(data.dtype, np.floating)
+    valid = ~np.isnan(data) if is_float else np.ones(data.shape, dtype=bool)
+    unique_vals = np.unique(data[valid])
+
+    out = np.full(data.shape, np.nan, dtype=np.float64)
+    uid = 1
+    for v in unique_vals:
+        mask = (data == v)
+        if is_float:
+            mask &= valid
+        labeled, n_features = label(mask, structure=structure)
+        for region_id in range(1, n_features + 1):
+            out[labeled == region_id] = uid
+            uid += 1
+    return out
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+@pytest.mark.parametrize("neighborhood", [4, 8])
+def test_regions_many_regions_matches_reference_3207(backend, neighborhood):
+    """Vectorized relabel equals the per-region reference on a many-region input.
+
+    Random 0/1 noise yields thousands of tiny connected components, the case
+    the old per-region scan was slow on.  Every backend must produce the same
+    labeling the original loop did: identical unique count, identical id at
+    every cell, and distinct ids for distinct regions.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("CUDA and cupy required")
+
+    rng = np.random.default_rng(3207)
+    arr = rng.integers(0, 2, size=(48, 48)).astype(np.float64)
+
+    expected = _regions_relabel_reference(arr, neighborhood)
+
+    raster = _make_regions_raster(arr, backend)
+    result = regions(raster, neighborhood=neighborhood)
+
+    data = result.data
+    if da is not None and isinstance(data, da.Array):
+        data = data.compute()
+    if not isinstance(data, np.ndarray):  # cupy
+        data = data.get()
+
+    # same id at every cell (NaN-aware) and same shape
+    np.testing.assert_array_equal(
+        np.nan_to_num(data, nan=-1.0), np.nan_to_num(expected, nan=-1.0)
+    )
+    assert result.shape == arr.shape
+
+    # distinct regions get distinct ids: the labeled cells number 1..N with no
+    # gaps, so the count of unique finite ids equals the max id.
+    finite = data[~np.isnan(data)]
+    assert finite.size > 1000  # this input really does produce many regions
+    assert len(np.unique(finite)) == int(finite.max())
+
+
 @pytest.mark.skipif(da is None, reason="dask not installed")
 def test_regions_dask_memory_guard():
     """_regions_dask should raise MemoryError before .compute() on huge arrays."""
