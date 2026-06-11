@@ -275,6 +275,20 @@ class TestCumulativeViewshed:
         result_np = cumulative_viewshed(raster_np, observers)
         np.testing.assert_array_equal(result.values, result_np.values)
 
+    def test_default_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = cumulative_viewshed(raster, observers)
+        assert result.name == 'cumulative_viewshed'
+
+    def test_custom_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = cumulative_viewshed(raster, observers, name='count')
+        assert result.name == 'count'
+
     def test_preserves_coords_and_dims(self):
         data = np.zeros((5, 5), dtype=float)
         raster = _make_raster(data)
@@ -316,3 +330,10 @@ class TestVisibilityFrequency:
         cum = cumulative_viewshed(raster, observers)
         expected = cum.values.astype(np.float64) / 3.0
         np.testing.assert_allclose(freq.values, expected)
+
+    def test_default_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = visibility_frequency(raster, observers)
+        assert result.name == 'visibility_frequency'

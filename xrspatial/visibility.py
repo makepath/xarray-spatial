@@ -12,6 +12,7 @@ line_of_sight
 """
 
 import math
+from typing import Optional
 
 import numpy as np
 import xarray
@@ -157,7 +158,7 @@ def line_of_sight(
     x1: float, y1: float,
     observer_elev: float = 0,
     target_elev: float = 0,
-    frequency_mhz: float = None,
+    frequency_mhz: Optional[float] = None,
 ) -> xarray.Dataset:
     """Compute elevation profile and visibility along a straight line.
 
@@ -229,6 +230,7 @@ def cumulative_viewshed(
     observers: list,
     target_elev: float = 0,
     max_distance: float = None,
+    name: Optional[str] = 'cumulative_viewshed',
 ) -> xarray.DataArray:
     """Count how many observers can see each cell.
 
@@ -245,6 +247,8 @@ def cumulative_viewshed(
         Default target elevation for observers that don't specify one.
     max_distance : float, optional
         Default maximum analysis radius.
+    name : str, default='cumulative_viewshed'
+        Name of the output DataArray.
 
     Returns
     -------
@@ -310,7 +314,7 @@ def cumulative_viewshed(
         # the result triggers no further source materialisation.
         count = da.from_array(count, chunks=_input_dask_chunks)
 
-    result = xarray.DataArray(count, coords=raster.coords,
+    result = xarray.DataArray(count, name=name, coords=raster.coords,
                               dims=raster.dims, attrs=raster.attrs)
     if _is_dask:
         chunk_dict = dict(zip(raster.dims, raster.data.chunks))
@@ -323,10 +327,12 @@ def visibility_frequency(
     observers: list,
     target_elev: float = 0,
     max_distance: float = None,
+    name: Optional[str] = 'visibility_frequency',
 ) -> xarray.DataArray:
     """Fraction of observers that can see each cell.
 
-    Parameters are the same as :func:`cumulative_viewshed`.
+    Parameters are the same as :func:`cumulative_viewshed`, plus a ``name``
+    for the output DataArray (default ``'visibility_frequency'``).
 
     Returns
     -------
@@ -335,4 +341,5 @@ def visibility_frequency(
     """
     cum = cumulative_viewshed(raster, observers, target_elev, max_distance)
     freq = cum.astype(np.float64) / len(observers)
+    freq.name = name
     return freq
