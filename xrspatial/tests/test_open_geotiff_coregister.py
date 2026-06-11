@@ -302,6 +302,23 @@ def test_coregister_warns_when_file_covers_small_fraction(tmp_path):
     assert np.allclose(out.coords['y'].values, template.coords['y'].values)
 
 
+def test_coregister_warns_dask_template(tmp_path):
+    # The motivating case for #3246: a large dask-backed template. The
+    # check runs on metadata before the read, so the warning fires
+    # without computing, and the result stays lazy with caller chunks.
+    path = _file_4326(tmp_path, np.float32, 'cg3246_dask.tif')
+    template = xr.DataArray(
+        np.zeros((100, 100), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.linspace(50.0, 40.0, 100),
+                'x': np.linspace(-125.0, -115.0, 100)},
+        attrs={'crs': 4326},
+    ).chunk({'y': 50, 'x': 50})
+    with pytest.warns(UserWarning, match="covers only"):
+        out = template.xrs.open_geotiff(path, coregister=True)
+    assert out.data.chunksize == (50, 50)
+
+
 def test_coregister_full_coverage_no_warning(tmp_path):
     # Template sits entirely inside the file footprint: no warning.
     path = _file_4326(tmp_path, np.float32, 'cg3246_full.tif')
