@@ -333,9 +333,9 @@ SUPPORTED_FEATURES = {
     'reader.gpu': 'experimental',
     # ``unpack=True`` scale/offset decode on ``open_geotiff`` (CF-style
     # packed integers -> float, nodata sentinel -> NaN). Sits at
-    # ``experimental`` rather than ``advanced``: the GPU path crashes
-    # (#3112) and the GPU / dask+GPU branches have no test coverage
-    # (#3114), so no behavioural promise is made yet.
+    # ``experimental`` rather than ``advanced``: the GPU / dask+GPU
+    # branches gained round-trip coverage only recently (#3112 pack
+    # crash fix, #3114 coverage), so no behavioural promise is made yet.
     'reader.unpack': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
@@ -355,7 +355,8 @@ SUPPORTED_FEATURES = {
     # (re-apply scale/offset, restore the recorded integer dtype, fill
     # NaN back to the nodata sentinel). Tracked at the same
     # ``experimental`` tier as ``reader.unpack`` -- the pair shares the
-    # scale/offset attr contract and the open GPU gaps (#3112, #3114).
+    # scale/offset attr contract and the recently-closed GPU gaps
+    # (#3112, #3114).
     'writer.pack': 'experimental',
     # BigTIFF COG writer surface.
     # Tracked separately from ``writer.bigtiff`` and ``writer.cog`` because
@@ -1699,6 +1700,27 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     return scale, offset
 
 
+def _pack_fill_nan(chunk, fill):
+    """NaN -> sentinel fill for ``_pack``, at the buffer level.
+
+    ``DataArray.fillna`` routes through xarray's ``duck_array_ops.where``,
+    which breaks on cupy-backed arrays (issue #3112): eager cupy hits
+    xarray calling ``cupy.astype`` (AttributeError on cupy 13.6), and a
+    dask+cupy graph feeds the host-side 0-d fill array into
+    ``cupy.where`` (TypeError). Filling through a boolean mask on the
+    raw buffer sidesteps ``where`` entirely: ``np.isnan`` dispatches to
+    cupy via ``__array_ufunc__`` and the masked assignment takes a
+    plain Python scalar on numpy and cupy alike.
+    """
+    if chunk.dtype.kind != 'f':
+        # Integer buffers cannot hold NaN; nothing to fill (matches
+        # ``fillna``'s no-op on non-float data).
+        return chunk
+    out = chunk.copy()
+    out[np.isnan(out)] = float(fill)
+    return out
+
+
 def _pack_guard_no_nan(chunk, tgt_name):
     """Per-chunk NaN guard for ``_pack``'s no-sentinel integer restore.
 
@@ -1830,7 +1852,17 @@ def _pack(data, nodata=None):
         # NaN at all; floats would otherwise write NaN pixels under a
         # GDAL_NODATA tag that still declares the sentinel, leaving an
         # inconsistent file that non-masking readers misread (#3078).
-        out = out.fillna(nodata)
+        # Not ``fillna``: that routes through xarray's where(), which
+        # crashes on cupy-backed arrays (#3112). ``_pack_fill_nan``
+        # fills at the buffer level on all four backends; dask backings
+        # keep the fill lazy via the same map_blocks shape as the
+        # no-sentinel guard below.
+        if hasattr(out.data, 'dask'):
+            out = out.copy(data=out.data.map_blocks(
+                _pack_fill_nan, nodata,
+                dtype=out.dtype, meta=out.data._meta))
+        else:
+            out = out.copy(data=_pack_fill_nan(out.data, nodata))
     elif tgt.kind in ('i', 'u'):
         # No sentinel exists to fill an integer's holes, so a NaN pixel
         # must abort the pack: the ``astype`` below would silently wrap

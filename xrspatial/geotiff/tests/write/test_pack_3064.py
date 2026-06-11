@@ -9,9 +9,9 @@ re-packed file unpacks to the same values on the next ``mask_and_scale``
 read rather than double-scaling.
 
 ``unpack`` reads run on numpy, dask, gpu, and dask+gpu since #3075 (VRT
-still rejects it). The round-trip passes on numpy and dask; the gpu and
-dask+gpu legs are pinned as strict xfail on #3112 until the cupy
-``fillna`` crash in ``_pack`` is fixed.
+still rejects it). The round-trip passes on all four backends; the gpu
+and dask+gpu legs crashed in ``_pack``'s ``fillna`` until #3112 replaced
+it with a buffer-level fill.
 """
 import numpy as np
 import pytest
@@ -152,21 +152,13 @@ def test_pack_with_scale_offset_round_trip(tmp_path, chunks):
 
 # ---------------------------------------------------------------------------
 # GPU-backed input: ``unpack=True`` works with ``gpu=True`` since #3075, so
-# the ``pack=True`` inverse must round-trip there too. Both legs crash today
-# (#3112): ``_pack``'s ``fillna`` breaks on cupy-backed arrays. Strict xfail
-# so the marker flips loudly once the crash is fixed.
+# the ``pack=True`` inverse must round-trip there too. Both legs crashed in
+# ``_pack``'s ``fillna`` (xarray's where() breaks on cupy) until #3112
+# switched the sentinel restore to a buffer-level fill.
 # ---------------------------------------------------------------------------
 
 
 @requires_gpu
-@pytest.mark.xfail(
-    strict=True,
-    # eager gpu: xarray's where() calls cupy.astype (AttributeError);
-    # dask+gpu: numpy fill value inside cupy.where (TypeError). Pinning
-    # raises= keeps an unrelated assertion failure from hiding under the
-    # known crash.
-    raises=(AttributeError, TypeError),
-    reason="to_geotiff(pack=True) crashes on cupy-backed input (#3112)")
 @pytest.mark.parametrize("chunks", [None, 2], ids=["gpu", "dask-gpu"])
 def test_pack_round_trip_gpu(tmp_path, chunks):
     """A ``gpu=True`` unpack read packs back to the integer source dtype."""
@@ -193,6 +185,42 @@ def test_pack_round_trip_gpu(tmp_path, chunks):
     np.testing.assert_allclose(
         np.asarray(repacked_decoded.data), np.asarray(cpu_decoded.data),
         equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# ``_pack_fill_nan``: the buffer-level NaN -> sentinel fill that replaced
+# ``fillna`` (#3112). Unit-pinned on numpy and cupy so a regression back to
+# an xarray ``where``-based fill shows up without a full round trip.
+# ---------------------------------------------------------------------------
+
+
+def test_pack_fill_nan_fills_sentinel_numpy():
+    from xrspatial.geotiff._attrs import _pack_fill_nan
+
+    chunk = np.array([[1.0, np.nan], [np.nan, 4.0]])
+    out = _pack_fill_nan(chunk, np.uint8(255))
+    np.testing.assert_array_equal(out, [[1.0, 255.0], [255.0, 4.0]])
+    # The input buffer is left untouched (fillna semantics).
+    assert np.isnan(chunk[0, 1])
+
+
+def test_pack_fill_nan_skips_integer_chunk():
+    from xrspatial.geotiff._attrs import _pack_fill_nan
+
+    chunk = np.array([[1, 2]], dtype=np.int32)
+    assert _pack_fill_nan(chunk, 255) is chunk
+
+
+@requires_gpu
+def test_pack_fill_nan_handles_cupy_chunks():
+    import cupy
+
+    from xrspatial.geotiff._attrs import _pack_fill_nan
+
+    chunk = cupy.asarray(np.array([[1.0, np.nan]]))
+    out = _pack_fill_nan(chunk, 255)
+    assert isinstance(out, cupy.ndarray)
+    np.testing.assert_array_equal(out.get(), [[1.0, 255.0]])
 
 
 # ---------------------------------------------------------------------------

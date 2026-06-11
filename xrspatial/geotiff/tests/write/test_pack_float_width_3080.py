@@ -7,8 +7,8 @@ Python float, i.e. float64 -- and widened the packed file. The fix records
 the source dtype on ``unpack=True`` reads of float sources too, and stops
 the fallback from keying off float-typed sentinels.
 
-GPU / dask+GPU pack round-trips are pinned on #3112 / covered by #3114;
-this file exercises the numpy and dask+numpy legs.
+GPU / dask+GPU pack round-trips are covered by ``test_pack_3064.py``
+(crash fixed in #3112); this file exercises the numpy and dask+numpy legs.
 """
 import numpy as np
 import pytest
