@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.tests.general_checks import cuda_and_cupy_available
 from xrspatial.visibility import _bresenham_line, _extract_transect
 
 
@@ -69,6 +70,20 @@ class TestExtractTransect:
         elev_np, _, _ = _extract_transect(raster_np, cells)
         elev_da, _, _ = _extract_transect(raster_dask, cells)
         np.testing.assert_array_equal(elev_np, elev_da)
+
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self):
+        import cupy
+        data = np.arange(25, dtype=float).reshape(5, 5)
+        raster_np = _make_raster(data)
+        raster_cp = raster_np.copy()
+        raster_cp.data = cupy.asarray(data)
+        cells = np.array([[0, 0], [2, 3], [4, 4]])
+        elev_np, _, _ = _extract_transect(raster_np, cells)
+        elev_cp, _, _ = _extract_transect(raster_cp, cells)
+        # cupy path pulls to numpy via .get(); result is a plain numpy array
+        assert isinstance(elev_cp, np.ndarray)
+        np.testing.assert_array_equal(elev_np, elev_cp)
 
 
 from xrspatial.visibility import line_of_sight
@@ -158,6 +173,72 @@ class TestLineOfSight:
         # last point should match target
         assert abs(result['x'].values[-1] - 9.0) < 1e-10
         assert abs(result['y'].values[-1] - 2.0) < 1e-10
+
+    def test_nan_terrain_cell(self):
+        """A NaN terrain cell drops out of the visibility sweep without
+        raising; its elevation is carried through as NaN and downstream
+        cells stay visible."""
+        data = np.zeros((1, 10), dtype=float)
+        data[0, 5] = np.nan
+        raster = _make_raster(data)
+        result = line_of_sight(raster, x0=0, y0=0, x1=9, y1=0,
+                               observer_elev=5)
+        elev = result['elevation'].values
+        vis = result['visible'].values
+        # the NaN cell is carried through to the elevation profile
+        assert np.isnan(elev[5])
+        # the NaN cell itself is not counted as visible
+        assert not vis[5]
+        # a NaN cell does not poison the running max-angle: cells past it
+        # remain visible on otherwise-flat terrain
+        assert vis[6]
+        assert vis[-1]
+
+    def test_fresnel_blocked_by_obstruction(self):
+        """When terrain intrudes into the first Fresnel zone, fresnel_clear
+        is False at the affected samples (the non-default branch).
+
+        Uses a long path and a low frequency so the first Fresnel zone is
+        wide (~16 m at midpoint), then puts a ridge 1 m below the LOS so
+        it sits inside the zone without blocking line of sight itself.
+        """
+        width = 101
+        mid = width // 2
+        data = np.zeros((1, width), dtype=float)
+        data[0, mid] = 49.0  # 1 m below the flat 50 m LOS
+        raster = _make_raster(data)
+        result = line_of_sight(raster, x0=0, y0=0, x1=width - 1, y1=0,
+                               observer_elev=50, target_elev=50,
+                               frequency_mhz=30)
+        clear = result['fresnel_clear'].values
+        fr = result['fresnel_radius'].values
+        clearance = result['los_height'].values - result['elevation'].values
+        # at the ridge the clearance is less than the Fresnel radius
+        assert clearance[mid] < fr[mid]
+        # so the Fresnel zone is reported blocked there
+        assert not clear[mid]
+        # endpoints (zero Fresnel radius) stay clear
+        assert clear[0]
+        assert clear[-1]
+
+    @cuda_and_cupy_available
+    def test_cupy_raster_matches_numpy(self):
+        import cupy
+        data = np.zeros((1, 10), dtype=float)
+        data[0, 5] = 100.0
+        raster_np = _make_raster(data)
+        raster_cp = raster_np.copy()
+        raster_cp.data = cupy.asarray(data)
+        res_np = line_of_sight(raster_np, x0=0, y0=0, x1=9, y1=0,
+                               observer_elev=1, target_elev=0)
+        res_cp = line_of_sight(raster_cp, x0=0, y0=0, x1=9, y1=0,
+                               observer_elev=1, target_elev=0)
+        np.testing.assert_array_equal(res_np['elevation'].values,
+                                      res_cp['elevation'].values)
+        np.testing.assert_array_equal(res_np['visible'].values,
+                                      res_cp['visible'].values)
+        np.testing.assert_allclose(res_np['distance'].values,
+                                   res_cp['distance'].values)
 
 
 import dask.array as da
