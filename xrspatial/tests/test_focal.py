@@ -491,6 +491,80 @@ def test_apply_cupy(data_apply):
         equal_nan=True, rtol=1e-4)
 
 
+def test_apply_default_func_numpy_3215(data_apply):
+    # default func=None resolves to _calc_mean on the numpy backend
+    from xrspatial.focal import _calc_mean
+
+    data, kernel, _ = data_apply
+    numpy_agg = create_test_raster(data)
+    default_apply = apply(numpy_agg, kernel)
+    explicit_apply = apply(numpy_agg, kernel, _calc_mean)
+    general_output_checks(numpy_agg, default_apply)
+    np.testing.assert_allclose(
+        default_apply.data, explicit_apply.data, equal_nan=True)
+
+
+@dask_array_available
+def test_apply_default_func_dask_numpy_3215(data_apply):
+    from xrspatial.focal import _calc_mean
+
+    data, kernel, _ = data_apply
+    dask_numpy_agg = create_test_raster(data, backend='dask')
+    default_apply = apply(dask_numpy_agg, kernel)
+    explicit_apply = apply(dask_numpy_agg, kernel, _calc_mean)
+    general_output_checks(dask_numpy_agg, default_apply)
+    np.testing.assert_allclose(
+        default_apply.data.compute(), explicit_apply.data.compute(),
+        equal_nan=True)
+
+
+@cuda_and_cupy_available
+def test_apply_default_func_cupy_3215(data_apply):
+    # apply(cupy_agg, kernel) used to raise TypeError because the default
+    # func was the @ngjit _calc_mean, which cannot be launched as a CUDA
+    # kernel. The default now resolves to _focal_mean_cuda on GPU backends.
+    from xrspatial.focal import _focal_mean_cuda
+
+    data, kernel, _ = data_apply
+    numpy_default = apply(create_test_raster(data), kernel)
+
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_default = apply(cupy_agg, kernel)
+    explicit_apply = apply(cupy_agg, kernel, _focal_mean_cuda)
+    general_output_checks(cupy_agg, cupy_default)
+
+    np.testing.assert_allclose(
+        cupy_default.data.get(), explicit_apply.data.get(), equal_nan=True)
+    # default funcs on both backends compute the same focal mean
+    np.testing.assert_allclose(
+        numpy_default.data, cupy_default.data.get(),
+        equal_nan=True, rtol=1e-4)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_apply_default_func_dask_cupy_3215():
+    rng = np.random.default_rng(7)
+    data = rng.random((20, 24)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+
+    cupy_default = apply(create_test_raster(data, backend='cupy'), kernel)
+
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy',
+                                       chunks=(10, 12))
+    dask_cupy_default = apply(dask_cupy_agg, kernel)
+    general_output_checks(dask_cupy_agg, dask_cupy_default,
+                          verify_attrs=False)
+
+    # Compare interior (boundary='nan' causes edge differences between
+    # cupy single-GPU bounds-clamping and dask map_overlap NaN-padding)
+    pad = kernel.shape[0] // 2
+    np.testing.assert_allclose(
+        cupy_default.data[pad:-pad, pad:-pad].get(),
+        dask_cupy_default.data[pad:-pad, pad:-pad].compute().get(),
+        equal_nan=True, rtol=1e-4)
+
+
 @dask_array_available
 @cuda_and_cupy_available
 def test_apply_dask_cupy():
