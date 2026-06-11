@@ -103,3 +103,19 @@ class Zonal:
             raise NotImplementedError()
         zonal.stats(zones=self.zones, values=self.values,
                     stats_funcs=self.custom_stats)
+
+
+class Regions:
+    # Random 0/1 noise produces many tiny connected components, the case the
+    # relabel step is sensitive to (issue #3207).
+    params = ([512, 1024], ["numpy", "cupy", "dask"])
+    param_names = ("raster_dim", "backend")
+
+    def setup(self, raster_dim, backend):
+        H = W = raster_dim
+        rng = np.random.default_rng(3207)
+        data = rng.integers(0, 2, size=(H, W)).astype(np.float64)
+        self.raster = create_arr(data, backend=backend)
+
+    def time_regions(self, raster_dim, backend):
+        zonal.regions(self.raster, neighborhood=4)
