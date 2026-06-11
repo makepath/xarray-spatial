@@ -58,7 +58,8 @@ def _validate_binary_kernel(kernel, func_name):
         )
 
 
-def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
+def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None,
+                                   itemsize=4):
     """Reject kernel + raster combinations that would OOM the host.
 
     The focal public APIs (apply, focal_stats, hotspots) accept any 2-D
@@ -74,8 +75,8 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
 
     Without a guard, a small raster paired with an oversized kernel can
     OOM the host (e.g. kernel of shape (50001, 50001) is ~10 GB on its
-    own; the padded raster is larger).  Budget 4 bytes per kernel cell
-    (float32 internal dtype) plus the padded raster footprint, and raise
+    own; the padded raster is larger).  Budget ``itemsize`` bytes per
+    kernel cell plus the padded raster footprint, and raise
     ``MemoryError`` when the total exceeds half of available memory.
 
     Dask-backed input never materializes the padded full raster: each
@@ -84,6 +85,12 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
     is budgeted from the largest chunk instead of the full raster shape,
     so chunked rasters far larger than host memory pass while an
     oversized kernel is still rejected.
+
+    ``itemsize`` is the byte width of the dtype the focal internals
+    compute in.  Since #2805 ``apply`` and ``focal_stats`` preserve
+    float64 input (``_promote_float``), so callers must pass 8 for
+    float64 rasters; ``hotspots`` always computes in float32 and uses
+    the default of 4 (issue #3223).
     """
     krows, kcols = kernel.shape
     pad_h = krows // 2
@@ -99,11 +106,10 @@ def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name, chunks=None):
         rows = max(chunks[-2])
         cols = max(chunks[-1])
 
-    # 4 bytes per cell -- focal internals cast to float32.
-    kernel_bytes = krows * kcols * 4
+    kernel_bytes = krows * kcols * itemsize
     padded_rows = rows + 2 * pad_h
     padded_cols = cols + 2 * pad_w
-    padded_bytes = padded_rows * padded_cols * 4
+    padded_bytes = padded_rows * padded_cols * itemsize
 
     required = kernel_bytes + padded_bytes
     available = _available_memory_bytes()
@@ -746,8 +752,12 @@ def apply(agg=None, kernel=None, func=None, name='focal_apply',
     _validate_boundary(boundary)
 
     rows, cols = agg.shape[-2], agg.shape[-1]
+    # Budget for the dtype the internals will actually compute in:
+    # 8 bytes/cell for float64 input, 4 otherwise (issue #3223).
+    itemsize = np.dtype(_promote_float(agg.dtype)).itemsize
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='apply',
-                                   chunks=getattr(agg.data, 'chunks', None))
+                                   chunks=getattr(agg.data, 'chunks', None),
+                                   itemsize=itemsize)
 
     # apply kernel to raster values
     # if agg is a numpy or dask with numpy backed data array,
@@ -1385,8 +1395,12 @@ def focal_stats(agg,
     _validate_boundary(boundary)
 
     rows, cols = agg.shape[-2], agg.shape[-1]
+    # Budget for the dtype the internals will actually compute in:
+    # 8 bytes/cell for float64 input, 4 otherwise (issue #3223).
+    itemsize = np.dtype(_promote_float(agg.dtype)).itemsize
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='focal_stats',
-                                   chunks=getattr(agg.data, 'chunks', None))
+                                   chunks=getattr(agg.data, 'chunks', None),
+                                   itemsize=itemsize)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
@@ -1778,6 +1792,8 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
         )
 
     rows, cols = agg.shape[-2], agg.shape[-1]
+    # hotspots computes in float32 on every backend, so the default
+    # 4 bytes/cell budget is correct here (issue #3223).
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots',
                                    chunks=getattr(agg.data, 'chunks', None))
 

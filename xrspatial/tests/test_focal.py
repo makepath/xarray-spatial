@@ -245,6 +245,51 @@ def test_hotspots_rejects_oversize_kernel_1284():
             hotspots(raster, kernel)
 
 
+def test_apply_oversize_kernel_accounts_for_float64_3223():
+    # Regression for #3223: the guard budgeted 4 bytes/cell (float32) but
+    # apply() preserves float64 input since #2805, so float64 combos could
+    # pass the guard and then allocate twice the estimate. With 1 MB
+    # "available", a (201, 201) kernel on a 10x10 raster needs ~338 KB in
+    # float32 (within the 50% threshold) but ~676 KB in float64, which
+    # must be rejected.
+    kernel = np.ones((201, 201), dtype=np.float32)
+    raster64 = xr.DataArray(np.zeros((10, 10), dtype=np.float64))
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError, match=r"apply\(\): kernel of shape"):
+            apply(raster64, kernel)
+
+    # The same combination with float32 input stays within budget.
+    raster32 = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        out = apply(raster32, kernel)
+    assert out.shape == (10, 10)
+
+
+def test_focal_stats_oversize_kernel_accounts_for_float64_3223():
+    # Regression for #3223: same float64 budget check for focal_stats.
+    kernel = np.ones((201, 201), dtype=np.float32)
+    raster64 = xr.DataArray(np.zeros((10, 10), dtype=np.float64))
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError,
+                           match=r"focal_stats\(\): kernel of shape"):
+            focal_stats(raster64, kernel, stats_funcs=['mean'])
+
+
+def test_hotspots_float64_keeps_float32_budget_3223():
+    # hotspots() computes in float32 on every backend, so float64 input
+    # must stay on the 4 bytes/cell budget and not be over-rejected with
+    # the 8-byte budget apply()/focal_stats() use for float64.
+    kernel = np.ones((201, 201), dtype=np.float32)
+    data = np.random.default_rng(3223).random((10, 10)).astype(np.float64)
+    with patch('xrspatial.focal._available_memory_bytes',
+               return_value=1_000_000):
+        out = hotspots(xr.DataArray(data), kernel)
+    assert out.shape == (10, 10)
+
+
 @dask_array_available
 @pytest.mark.parametrize("entry_point", [
     lambda agg, kernel: apply(agg, kernel),
@@ -704,7 +749,8 @@ def test_focal_stats_cupy_casts_input_once_3231():
     # (a full-raster device copy, even for an unchanged dtype) once per
     # stat. The input cast is now hoisted above the loop, so
     # _promote_float runs once for the input plus once per stat for the
-    # output allocation inside _focal_stats_func_cupy.
+    # output allocation inside _focal_stats_func_cupy, plus one
+    # dtype-only call in the memory guard at the entry point (#3223).
     import xrspatial.focal as focal_module
     data = np.arange(48, dtype=np.float64).reshape(6, 8)
     agg = create_test_raster(data, backend='cupy')
@@ -714,7 +760,7 @@ def test_focal_stats_cupy_casts_input_once_3231():
                       wraps=focal_module._promote_float) as spy:
         result = focal_stats(agg, kernel, stats_funcs=stats)
     assert result.shape == (len(stats), 6, 8)
-    assert spy.call_count == len(stats) + 1
+    assert spy.call_count == len(stats) + 2
 
 
 # --- float64 preservation (issue-2769) ------------------------------------
