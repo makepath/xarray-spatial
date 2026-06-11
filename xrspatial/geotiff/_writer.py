@@ -1207,14 +1207,14 @@ def _write_streaming(dask_data, path: str, *,
                         band_np = None
                         if tiles_per_segment == tiles_across:
                             if dask_data.ndim == 3:
-                                band_np = np.asarray(
-                                    dask_data[band_r0:band_r1, :, :]
-                                    .compute())
+                                band_np = dask_data[
+                                    band_r0:band_r1, :, :].compute()
                             else:
-                                band_np = np.asarray(
-                                    dask_data[band_r0:band_r1, :].compute())
+                                band_np = dask_data[
+                                    band_r0:band_r1, :].compute()
                             if hasattr(band_np, 'get'):
-                                band_np = band_np.get()
+                                band_np = band_np.get()  # CuPy -> numpy
+                            band_np = np.asarray(band_np)
 
                             if band_np.dtype != out_dtype:
                                 band_np = band_np.astype(out_dtype)
@@ -1255,17 +1255,14 @@ def _write_streaming(dask_data, path: str, *,
                                     # Compute just this horizontal
                                     # segment
                                     if dask_data.ndim == 3:
-                                        seg_np = np.asarray(
-                                            dask_data[r0:r1,
-                                                      seg_c0:seg_c1, :]
-                                            .compute())
+                                        seg_np = dask_data[
+                                            r0:r1, seg_c0:seg_c1, :].compute()
                                     else:
-                                        seg_np = np.asarray(
-                                            dask_data[r0:r1,
-                                                      seg_c0:seg_c1]
-                                            .compute())
+                                        seg_np = dask_data[
+                                            r0:r1, seg_c0:seg_c1].compute()
                                     if hasattr(seg_np, 'get'):
-                                        seg_np = seg_np.get()
+                                        seg_np = seg_np.get()  # CuPy -> numpy
+                                    seg_np = np.asarray(seg_np)
 
                                     if seg_np.dtype != out_dtype:
                                         seg_np = seg_np.astype(out_dtype)
@@ -1378,13 +1375,12 @@ def _write_streaming(dask_data, path: str, *,
 
                 for band_r0, band_r1 in strip_bands:
                     if dask_data.ndim == 3:
-                        band_np = np.asarray(
-                            dask_data[band_r0:band_r1, :, :].compute())
+                        band_np = dask_data[band_r0:band_r1, :, :].compute()
                     else:
-                        band_np = np.asarray(
-                            dask_data[band_r0:band_r1, :].compute())
+                        band_np = dask_data[band_r0:band_r1, :].compute()
                     if hasattr(band_np, 'get'):
-                        band_np = band_np.get()
+                        band_np = band_np.get()  # CuPy -> numpy
+                    band_np = np.asarray(band_np)
 
                     if band_np.dtype != out_dtype:
                         band_np = band_np.astype(out_dtype)
