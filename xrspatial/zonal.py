@@ -1298,8 +1298,8 @@ def _crosstab_dask_cupy(
 def crosstab(
     zones,
     values: xr.DataArray,
-    zone_ids: List[Union[int, float]] = None,
-    cat_ids: List[Union[int, float]] = None,
+    zone_ids: Optional[List[Union[int, float]]] = None,
+    cat_ids: Optional[List[Union[int, float]]] = None,
     layer: Optional[int] = None,
     agg: Optional[str] = "count",
     nodata_values: Optional[Union[int, float]] = None,
@@ -1363,7 +1363,7 @@ def crosstab(
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
-        Cells with `nodata` do not belong to any zone,
+        Cells with `nodata_values` do not belong to any zone,
         and thus excluded from calculation.
 
     column : str, optional
@@ -1743,6 +1743,10 @@ def hypsometric_integral(
     """
     zones = _maybe_rasterize_zones(zones, values, column=column,
                                    rasterize_kw=rasterize_kw)
+
+    _validate_raster(zones, func_name='hypsometric_integral', name='zones', ndim=2)
+    _validate_raster(values, func_name='hypsometric_integral', name='values', ndim=2)
+
     validate_arrays(zones, values)
 
     _nodata = nodata  # capture for closures
@@ -2181,9 +2185,16 @@ def _regions_numpy(data, neighborhood):
         if is_float:
             mask &= valid
         labeled, n_features = label(mask, structure=structure)
-        for region_id in range(1, n_features + 1):
-            out[labeled == region_id] = uid
-            uid += 1
+        if n_features == 0:
+            continue
+        # Vectorized relabel: map each local label k (1..n_features) to its
+        # global id in one fancy-index instead of one full-array scan per
+        # region. Index 0 stays 0 and is masked out by `labeled > 0`.
+        remap = np.zeros(n_features + 1, dtype=np.float64)
+        remap[1:] = np.arange(uid, uid + n_features)
+        sel = labeled > 0
+        out[sel] = remap[labeled[sel]]
+        uid += n_features
 
     return out
 
@@ -2270,9 +2281,16 @@ def _regions_cupy(data, neighborhood):
         if is_float:
             mask &= valid
         labeled, n_features = cp_label(mask, structure=structure)
-        for region_id in range(1, n_features + 1):
-            out[labeled == region_id] = uid
-            uid += 1
+        if n_features == 0:
+            continue
+        # Vectorized relabel: map each local label k (1..n_features) to its
+        # global id in one fancy-index instead of one full-array scan per
+        # region. Index 0 stays 0 and is masked out by `labeled > 0`.
+        remap = cp.zeros(n_features + 1, dtype=cp.float64)
+        remap[1:] = cp.arange(uid, uid + n_features)
+        sel = labeled > 0
+        out[sel] = remap[labeled[sel]]
+        uid += n_features
 
     return out
 

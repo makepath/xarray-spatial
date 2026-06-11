@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from xrspatial.tests.general_checks import cuda_and_cupy_available
+
 from xrspatial.mcda import (
     ahp_weights,
     boolean_overlay,
@@ -18,6 +20,7 @@ from xrspatial.mcda import (
     wlc,
     wpm,
 )
+from xrspatial.tests.general_checks import create_test_raster, cuda_and_cupy_available
 
 try:
     import dask.array as da
@@ -387,6 +390,74 @@ class TestStandardizeDask:
         )
         computed = result.compute()
         assert float(computed.values[0, 1]) == pytest.approx(1.0)
+
+
+class TestStandardizeCupy:
+    """GPU paths for standardize (#3151).
+
+    piecewise on cupy used numpy lookup tables (cupy.interp rejects
+    them), and the piecewise/categorical dask chunk functions called
+    np.asarray on cupy blocks (implicit conversion raises TypeError).
+    """
+
+    @pytest.fixture
+    def raw(self):
+        return np.array([
+            [0.0, 25.0, 50.0, 100.0],
+            [75.0, np.nan, 10.0, 90.0],
+        ], dtype=np.float64)
+
+    piecewise_kw = dict(
+        method="piecewise", breakpoints=[0, 50, 100], values=[0.0, 1.0, 0.5],
+    )
+    categorical_kw = dict(
+        method="categorical", mapping={0: 0.1, 50: 0.5, 100: 0.9},
+    )
+
+    @cuda_and_cupy_available
+    def test_piecewise_cupy(self, raw):
+        import cupy
+        ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
+                          **self.piecewise_kw)
+        agg = xr.DataArray(cupy.asarray(raw), dims=["y", "x"])
+        result = standardize(agg, **self.piecewise_kw)
+        # Result stays on the device
+        assert isinstance(result.data, cupy.ndarray)
+        np.testing.assert_allclose(
+            result.data.get(), ref.values, equal_nan=True,
+        )
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_piecewise_dask_cupy(self, raw):
+        import cupy
+        ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
+                          **self.piecewise_kw)
+        agg = xr.DataArray(
+            da.from_array(cupy.asarray(raw), chunks=(1, 3)), dims=["y", "x"],
+        )
+        result = standardize(agg, **self.piecewise_kw)
+        computed = result.data.compute()
+        assert isinstance(computed, cupy.ndarray)
+        np.testing.assert_allclose(
+            computed.get(), ref.values, equal_nan=True,
+        )
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_categorical_dask_cupy(self, raw):
+        import cupy
+        ref = standardize(xr.DataArray(raw, dims=["y", "x"]),
+                          **self.categorical_kw)
+        agg = xr.DataArray(
+            da.from_array(cupy.asarray(raw), chunks=(1, 3)), dims=["y", "x"],
+        )
+        result = standardize(agg, **self.categorical_kw)
+        computed = result.data.compute()
+        assert isinstance(computed, cupy.ndarray)
+        np.testing.assert_allclose(
+            computed.get(), ref.values, equal_nan=True,
+        )
 
 
 # ===========================================================================
@@ -836,24 +907,119 @@ class TestSensitivityMonteCarlo:
 
 @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
 class TestSensitivityDask:
-    def test_monte_carlo_dask_returns_numpy(self):
-        """MC with dask input should compute eagerly, not build huge graph."""
-        ds = xr.Dataset({
-            "a": xr.DataArray(
-                np.random.rand(20, 20), dims=["y", "x"],
-            ).chunk({"y": 10, "x": 10}),
-            "b": xr.DataArray(
-                np.random.rand(20, 20), dims=["y", "x"],
-            ).chunk({"y": 10, "x": 10}),
+    """Monte Carlo on dask input stays lazy and chunk-bounded (#3152).
+
+    The previous implementation called criteria.compute() up front,
+    materializing the full dataset; the sample loop now runs inside a
+    single map_blocks chunk function instead.
+    """
+
+    @pytest.fixture
+    def numpy_ds(self):
+        np.random.seed(3152)
+        return xr.Dataset({
+            "a": xr.DataArray(np.random.rand(20, 20), dims=["y", "x"]),
+            "b": xr.DataArray(np.random.rand(20, 20), dims=["y", "x"]),
         })
+
+    def test_monte_carlo_dask_stays_lazy(self, numpy_ds):
+        ds = numpy_ds.chunk({"y": 10, "x": 10})
         result = sensitivity(
             ds, {"a": 0.6, "b": 0.4},
             method="monte_carlo", n_samples=30,
         )
-        # Result should be eagerly computed numpy, not dask
-        assert isinstance(result.data, np.ndarray)
-        assert result.shape == (20, 20)
-        assert np.all(result.values >= 0)
+        assert isinstance(result.data, da.Array)
+        # One MC task per chunk: the graph must not scale with n_samples.
+        assert len(result.data.__dask_graph__()) < 30
+        computed = result.compute()
+        assert computed.shape == (20, 20)
+        assert np.all(computed.values >= 0)
+
+    @pytest.mark.parametrize("combine_method", ["wlc", "wpm"])
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            {"y": 10, "x": 10},
+            # Ragged chunks: 20 does not divide evenly by 7 or 9
+            {"y": 7, "x": 9},
+        ],
+    )
+    def test_monte_carlo_dask_matches_numpy(
+        self, numpy_ds, combine_method, chunks,
+    ):
+        """Same seed gives the same values on both backends."""
+        ds = numpy_ds.chunk(chunks)
+        kwargs = dict(
+            method="monte_carlo", combine_method=combine_method,
+            n_samples=30, seed=7,
+        )
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        dask_result = sensitivity(ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values,
+            atol=1e-14,
+        )
+
+    def test_monte_carlo_mixed_numpy_and_dask_vars(self, numpy_ds):
+        """A numpy variable inside an otherwise dask Dataset works."""
+        mixed = xr.Dataset({
+            "a": numpy_ds["a"].chunk({"y": 10, "x": 10}),
+            "b": numpy_ds["b"],  # stays numpy-backed
+        })
+        kwargs = dict(method="monte_carlo", n_samples=30, seed=7)
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        mixed_result = sensitivity(mixed, {"a": 0.6, "b": 0.4}, **kwargs)
+        assert isinstance(mixed_result.data, da.Array)
+        np.testing.assert_allclose(
+            mixed_result.compute().values, numpy_result.values,
+            atol=1e-14,
+        )
+
+    def test_monte_carlo_dask_nan_propagates(self, numpy_ds):
+        with_nan = numpy_ds.copy(deep=True)
+        with_nan["a"].values[3, 4] = np.nan
+        ds = with_nan.chunk({"y": 10, "x": 10})
+        result = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="monte_carlo", n_samples=10,
+        ).compute()
+        assert np.isnan(result.values[3, 4])
+        assert np.isfinite(result.values[0, 0])
+
+    def test_monte_carlo_dask_missing_weight_raises(self, numpy_ds):
+        ds = numpy_ds.chunk({"y": 10, "x": 10})
+        with pytest.raises(ValueError, match="Missing weights"):
+            sensitivity(
+                ds, {"a": 1.0}, method="monte_carlo", n_samples=5,
+            )
+
+
+class TestSensitivityCupy:
+    """Monte Carlo on cupy input (#3151): no .values round trips."""
+
+    @cuda_and_cupy_available
+    def test_monte_carlo_cupy_matches_numpy(self):
+        import cupy
+        np.random.seed(3151)
+        arrays = {
+            "a": np.random.rand(10, 10),
+            "b": np.random.rand(10, 10),
+        }
+        numpy_ds = xr.Dataset({
+            k: xr.DataArray(v, dims=["y", "x"]) for k, v in arrays.items()
+        })
+        cupy_ds = xr.Dataset({
+            k: xr.DataArray(cupy.asarray(v), dims=["y", "x"])
+            for k, v in arrays.items()
+        })
+        kwargs = dict(method="monte_carlo", n_samples=20, seed=11)
+        numpy_result = sensitivity(numpy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        cupy_result = sensitivity(cupy_ds, {"a": 0.6, "b": 0.4}, **kwargs)
+        # Accumulation runs on the device; result is still cupy
+        assert isinstance(cupy_result.data, cupy.ndarray)
+        np.testing.assert_allclose(
+            cupy_result.data.get(), numpy_result.values, atol=1e-12,
+        )
 
 
 # ===========================================================================
@@ -1183,6 +1349,179 @@ class TestDaskChunkAlignment:
             assert np.all(np.isfinite(result[var].compute().values))
 
 
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestOWADask:
+    """owa() on dask-backed Datasets (#3150).
+
+    Regression: _sort_descending used da.sort, which does not exist,
+    so the documented out-of-core path crashed with AttributeError.
+    """
+
+    @pytest.fixture
+    def numpy_and_dask_criteria(self):
+        np.random.seed(3150)
+        arrays = {name: np.random.rand(20, 20) for name in ["a", "b", "c"]}
+        arrays["a"][3, 4] = np.nan
+        numpy_ds = xr.Dataset({
+            name: xr.DataArray(values, dims=["y", "x"])
+            for name, values in arrays.items()
+        })
+        dask_ds = numpy_ds.chunk({"y": 10, "x": 10})
+        return numpy_ds, dask_ds
+
+    @pytest.mark.parametrize(
+        "chunks",
+        [
+            {"y": 10, "x": 10},
+            # Ragged chunks: 20 does not divide evenly by 7 or 9
+            {"y": 7, "x": 9},
+        ],
+    )
+    def test_owa_dask_matches_numpy(self, numpy_and_dask_criteria, chunks):
+        numpy_ds, _ = numpy_and_dask_criteria
+        dask_ds = numpy_ds.chunk(chunks)
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(numpy_ds, w, ow)
+        dask_result = owa(dask_ds, w, ow)
+        # Stays lazy until compute
+        assert hasattr(dask_result.data, "compute")
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values,
+            equal_nan=True, atol=1e-14,
+        )
+
+    def test_owa_dask_uniform_order_weights_equals_wlc(
+        self, numpy_and_dask_criteria,
+    ):
+        _, dask_ds = numpy_and_dask_criteria
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        owa_result = owa(dask_ds, w, [1 / 3] * 3)
+        wlc_result = wlc(dask_ds, w)
+        np.testing.assert_allclose(
+            owa_result.compute().values, wlc_result.compute().values,
+            equal_nan=True, atol=1e-14,
+        )
+
+
+class TestOWACupy:
+    """owa() on cupy and dask+cupy inputs (#3150).
+
+    Order weights must be moved to the device; mixing numpy operands
+    into cupy kernels raises TypeError.
+    """
+
+    @pytest.fixture
+    def numpy_criteria(self):
+        np.random.seed(3150)
+        return xr.Dataset({
+            name: xr.DataArray(np.random.rand(20, 20), dims=["y", "x"])
+            for name in ["a", "b", "c"]
+        })
+
+    @pytest.fixture
+    def owa_args(self):
+        return {"a": 0.4, "b": 0.35, "c": 0.25}, [0.5, 0.3, 0.2]
+
+    @cuda_and_cupy_available
+    def test_owa_cupy_matches_numpy(self, numpy_criteria, owa_args):
+        import cupy
+        w, ow = owa_args
+        cupy_ds = xr.Dataset({
+            name: xr.DataArray(
+                cupy.asarray(numpy_criteria[name].values), dims=["y", "x"],
+            )
+            for name in numpy_criteria.data_vars
+        })
+        numpy_result = owa(numpy_criteria, w, ow)
+        cupy_result = owa(cupy_ds, w, ow)
+        assert isinstance(cupy_result.data, cupy.ndarray)
+        np.testing.assert_allclose(
+            cupy_result.data.get(), numpy_result.values, atol=1e-14,
+        )
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_owa_dask_cupy_matches_numpy(self, numpy_criteria, owa_args):
+        import cupy
+        w, ow = owa_args
+        gpu_ds = xr.Dataset({
+            name: xr.DataArray(
+                da.from_array(
+                    cupy.asarray(numpy_criteria[name].values),
+                    chunks=(10, 10),
+                ),
+                dims=["y", "x"],
+            )
+            for name in numpy_criteria.data_vars
+        })
+        numpy_result = owa(numpy_criteria, w, ow)
+        gpu_result = owa(gpu_ds, w, ow)
+        computed = gpu_result.data.compute()
+        # Result stays on the device
+        assert isinstance(computed, cupy.ndarray)
+        np.testing.assert_allclose(
+            computed.get(), numpy_result.values, atol=1e-14,
+        )
+
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestWPMDask:
+    """wpm() validation on dask-backed Datasets (#3150).
+
+    Regression: _check_wpm_positive ran one .compute() per criterion;
+    it now batches every nanmin reduction into a single scheduler pass.
+    """
+
+    @pytest.fixture
+    def dask_criteria(self):
+        np.random.seed(3151)
+        return xr.Dataset({
+            name: xr.DataArray(
+                np.random.rand(20, 20) * 0.8 + 0.1, dims=["y", "x"],
+            ).chunk({"y": 10})
+            for name in ["a", "b", "c"]
+        })
+
+    def test_wpm_dask_matches_numpy(self, dask_criteria):
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        dask_result = wpm(dask_criteria, w)
+        assert hasattr(dask_result.data, "compute")
+        numpy_result = wpm(dask_criteria.compute(), w)
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values, atol=1e-14,
+        )
+
+    def test_wpm_dask_validation_single_scheduler_pass(
+        self, dask_criteria, monkeypatch,
+    ):
+        import dask
+        calls = []
+        orig_compute = dask.compute
+
+        def counting_compute(*args, **kwargs):
+            calls.append(args)
+            return orig_compute(*args, **kwargs)
+
+        monkeypatch.setattr(dask, "compute", counting_compute)
+        wpm(dask_criteria, {"a": 0.4, "b": 0.35, "c": 0.25})
+        # One batched pass over all three criteria, not one per layer.
+        assert len(calls) == 1
+        assert len(calls[0]) == 3
+
+    def test_wpm_dask_rejects_non_positive(self):
+        bad = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, 0.2], [0.3, 0.4]]), dims=["y", "x"],
+            ).chunk({"y": 1}),
+            "b": xr.DataArray(
+                np.array([[0.5, -0.2], [0.3, 0.4]]), dims=["y", "x"],
+            ).chunk({"y": 1}),
+        })
+        with pytest.raises(ValueError, match="non-positive"):
+            wpm(bad, {"a": 0.5, "b": 0.5})
+
+
 class TestWPMEdgeCases:
     def test_all_ones(self):
         """All criteria at 1.0 should produce 1.0 regardless of weights."""
@@ -1201,6 +1540,90 @@ class TestWPMEdgeCases:
         })
         with pytest.raises(ValueError, match="non-positive"):
             wpm(ds, {"a": 0.5, "b": 0.5})
+
+
+class TestConstrainAttrs:
+    """constrain must keep the input's attrs (#3147).
+
+    xr.where takes attrs from its first value argument (the scalar
+    fill), which used to strip res/crs/nodatavals whenever exclude
+    was non-empty.
+    """
+
+    ATTRS = {"res": (1.0, 1.0), "crs": "EPSG:32611", "nodatavals": (-9999.0,)}
+
+    def _suit_and_mask(self):
+        suit = xr.DataArray(
+            np.array([[0.8, 0.6, 0.9]], dtype=np.float64),
+            dims=["y", "x"],
+            coords={"y": [10.5], "x": [100.5, 101.5, 102.5]},
+            attrs=dict(self.ATTRS),
+            name="suit",
+        )
+        mask = xr.DataArray(
+            np.array([[True, False, False]]),
+            dims=["y", "x"],
+            coords={"y": [10.5], "x": [100.5, 101.5, 102.5]},
+        )
+        return suit, mask
+
+    def test_attrs_kept_with_mask(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask])
+        assert result.attrs == self.ATTRS
+        assert result.dims == suit.dims
+        np.testing.assert_array_equal(result["x"].values, suit["x"].values)
+
+    def test_attrs_kept_with_custom_fill(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask], fill=-1.0)
+        assert result.attrs == self.ATTRS
+
+    def test_attrs_kept_with_empty_exclude(self):
+        suit, _ = self._suit_and_mask()
+        result = constrain(suit, exclude=[])
+        assert result.attrs == self.ATTRS
+
+    def test_attrs_not_shared_with_input(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(suit, exclude=[mask])
+        result.attrs["crs"] = "EPSG:4326"
+        assert suit.attrs["crs"] == "EPSG:32611"
+
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_attrs_kept_dask(self):
+        suit, mask = self._suit_and_mask()
+        result = constrain(
+            suit.chunk({"x": 2}), exclude=[mask.chunk({"x": 2})],
+        )
+        assert result.attrs == self.ATTRS
+        assert hasattr(result.data, "compute")
+        np.testing.assert_allclose(
+            result.compute().values,
+            constrain(suit, exclude=[mask]).values,
+            equal_nan=True,
+        )
+
+    def test_attrs_kept_dask_cupy(self):
+        from xrspatial.utils import has_cuda_and_cupy
+        if not (HAS_DASK and has_cuda_and_cupy()):
+            pytest.skip("Requires dask, CUDA and CuPy")
+        import cupy
+
+        suit, mask = self._suit_and_mask()
+        suit_gpu = suit.copy()
+        suit_gpu.data = cupy.asarray(suit_gpu.data)
+        mask_gpu = mask.copy()
+        mask_gpu.data = cupy.asarray(mask_gpu.data)
+        result = constrain(
+            suit_gpu.chunk({"x": 2}), exclude=[mask_gpu.chunk({"x": 2})],
+        )
+        # Attrs must survive on the lazy result. Computing values here
+        # trips an unrelated cupy/xarray incompatibility inside
+        # xr.where (numpy scalar broadcast against cupy chunks), so the
+        # value-parity check stays on the numpy/dask+numpy tests above.
+        assert result.attrs == self.ATTRS
+        assert result.dims == suit.dims
 
 
 class TestConstrainEdgeCases:
@@ -1224,6 +1647,16 @@ class TestConstrainEdgeCases:
         )
         result = constrain(suit, exclude=[mask])
         assert np.all(np.isnan(result.values))
+
+    def test_input_name_unchanged(self):
+        """Renaming the output must not leak into the caller's object."""
+        suit = xr.DataArray(
+            np.array([[0.8]], dtype=np.float64), dims=["y", "x"],
+            name="orig",
+        )
+        result = constrain(suit, exclude=[], name="new")
+        assert result.name == "new"
+        assert suit.name == "orig"
 
 
 # ===========================================================================
@@ -1950,3 +2383,712 @@ class TestOWAMemoryGuard:
         assert f"{n} criteria" in msg
         assert shape_token in msg
         assert "dask" in msg
+
+
+# ---------------------------------------------------------------------------
+# API consistency (#3148)
+# ---------------------------------------------------------------------------
+
+
+class TestOWAWeightsParam3148:
+    """owa() takes its criterion-weight dict as `weights` like wlc/wpm,
+    with `criterion_weights` kept as a deprecated alias."""
+
+    def test_weights_keyword(self, criteria_dataset, weights_3):
+        result = owa(
+            criteria_dataset, weights=weights_3, order_weights=[0.5, 0.3, 0.2],
+        )
+        expected = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_criterion_weights_deprecated(self, criteria_dataset, weights_3):
+        with pytest.warns(DeprecationWarning, match="criterion_weights"):
+            result = owa(
+                criteria_dataset,
+                criterion_weights=weights_3,
+                order_weights=[0.5, 0.3, 0.2],
+            )
+        expected = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        np.testing.assert_allclose(result.values, expected.values)
+
+    def test_both_names_raise(self, criteria_dataset, weights_3):
+        with pytest.raises(TypeError, match="both"):
+            owa(
+                criteria_dataset,
+                weights=weights_3,
+                criterion_weights=weights_3,
+                order_weights=[0.5, 0.3, 0.2],
+            )
+
+    def test_missing_weights_raises(self, criteria_dataset):
+        with pytest.raises(TypeError, match="weights"):
+            owa(criteria_dataset, order_weights=[0.5, 0.3, 0.2])
+
+    def test_missing_order_weights_raises(self, criteria_dataset, weights_3):
+        with pytest.raises(TypeError, match="order_weights"):
+            owa(criteria_dataset, weights_3)
+
+    def test_positional_call_unchanged(self, criteria_dataset, weights_3):
+        result = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        assert isinstance(result, xr.DataArray)
+        assert result.name == "owa"
+
+    def test_keyword_parity_with_wlc(self, criteria_dataset, weights_3):
+        """Equal order weights make OWA equal WLC; both accept weights=."""
+        n = len(criteria_dataset.data_vars)
+        result = owa(
+            criteria_dataset, weights=weights_3, order_weights=[1.0 / n] * n,
+        )
+        expected = wlc(criteria_dataset, weights=weights_3)
+        np.testing.assert_allclose(result.values, expected.values)
+
+
+class TestBooleanOverlayDataset3148:
+    """boolean_overlay() accepts a Dataset like its sibling combiners."""
+
+    def _masks(self):
+        m1 = xr.DataArray(
+            np.array([[1, 0], [1, 1]], dtype=np.float64), dims=["y", "x"],
+        )
+        m2 = xr.DataArray(
+            np.array([[1, 1], [0, 1]], dtype=np.float64), dims=["y", "x"],
+        )
+        return m1, m2
+
+    def test_dataset_input(self):
+        m1, m2 = self._masks()
+        ds = xr.Dataset({"m1": m1, "m2": m2})
+        result = boolean_overlay(ds, operator="and")
+        np.testing.assert_array_equal(
+            result.values, np.array([[True, False], [False, True]]),
+        )
+
+    def test_dataset_matches_dict(self):
+        m1, m2 = self._masks()
+        ds = xr.Dataset({"m1": m1, "m2": m2})
+        for op in ("and", "or"):
+            from_ds = boolean_overlay(ds, operator=op)
+            from_dict = boolean_overlay({"m1": m1, "m2": m2}, operator=op)
+            np.testing.assert_array_equal(from_ds.values, from_dict.values)
+
+    def test_empty_dataset_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            boolean_overlay(xr.Dataset())
+
+
+class TestConsistencyResultExport3148:
+    """ConsistencyResult is importable from the public mcda namespace."""
+
+    def test_import_and_isinstance(self):
+        from xrspatial.mcda import ConsistencyResult
+
+        _, consistency = ahp_weights(
+            criteria=["a", "b"], comparisons={("a", "b"): 2},
+        )
+        assert isinstance(consistency, ConsistencyResult)
+
+    def test_in_all(self):
+        import xrspatial.mcda as mcda
+
+        assert "ConsistencyResult" in mcda.__all__
+
+
+class TestAHPIncompleteDocstring3148:
+    """Docstring documents the warn-and-default behaviour, not a raise."""
+
+    def test_docstring_mentions_warning(self):
+        doc = ahp_weights.__doc__
+        assert "UserWarning" in doc
+        assert "Raises" in doc and "Warns" in doc
+        raises_section = doc.split("Raises")[1].split("Warns")[0]
+        assert "incomplete" not in raises_section
+
+
+# ===========================================================================
+# Cross-backend coverage (#3149)
+#
+# Every public function gets exercised on cupy, dask+numpy, and dask+cupy
+# backends and compared against the numpy result. The backend paths that
+# used to raise (and were marked xfail) are fixed in #3146.
+# ===========================================================================
+
+XFAIL_XR_WHERE_CUPY = (
+    "xr.where raises on cupy-backed data with cupy 13.6 + current xarray; "
+    "dependency incompatibility, not an mcda bug (noted in #3146)"
+)
+
+
+def _to_numpy(agg):
+    """Pull a numpy array out of a result on any backend."""
+    data = agg.data
+    if hasattr(data, "compute"):
+        data = data.compute()
+    if hasattr(data, "get"):
+        data = data.get()
+    return data
+
+
+def _standardize_data():
+    """5x4 raster with NaN and values matching the categorical mapping."""
+    return np.array([
+        [0.2, 0.8, 0.5, 0.2],
+        [0.9, 0.1, 0.6, 0.8],
+        [0.4, np.nan, 0.3, 0.5],
+        [0.7, 0.2, 0.9, 0.1],
+        [0.5, 0.6, 0.4, 0.3],
+    ], dtype=np.float64)
+
+
+STANDARDIZE_CASES = [
+    ("linear", dict(bounds=(0.0, 1.0))),
+    ("linear", {}),
+    ("sigmoidal", dict(midpoint=0.5, spread=2.0)),
+    ("gaussian", dict(mean=0.5, std=0.2)),
+    ("triangular", dict(low=0.0, peak=0.5, high=1.0)),
+    ("categorical", dict(mapping={
+        0.1: 0.0, 0.2: 0.9, 0.3: 0.2, 0.4: 0.4, 0.5: 0.5,
+        0.6: 0.6, 0.7: 0.3, 0.8: 0.1, 0.9: 1.0,
+    })),
+    ("piecewise", dict(breakpoints=[0.0, 0.5, 1.0], values=[0.0, 1.0, 0.5])),
+]
+
+STANDARDIZE_IDS = [
+    "linear-bounds", "linear-databounds", "sigmoidal", "gaussian",
+    "triangular", "categorical", "piecewise",
+]
+
+
+def _standardize_cases(exclude=()):
+    """STANDARDIZE_CASES (with ids) minus the named methods."""
+    pairs = [
+        (case, case_id)
+        for case, case_id in zip(STANDARDIZE_CASES, STANDARDIZE_IDS)
+        if case[0] not in exclude
+    ]
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
+def _standardize_case(method):
+    """Look up a STANDARDIZE_CASES entry by method name."""
+    return next(case for case in STANDARDIZE_CASES if case[0] == method)
+
+
+def _assert_standardize_matches_numpy(backend, method, kwargs):
+    data = _standardize_data()
+    numpy_agg = create_test_raster(data, backend="numpy")
+    other_agg = create_test_raster(data, backend=backend)
+    expected = standardize(numpy_agg, method=method, **kwargs)
+    result = standardize(other_agg, method=method, **kwargs)
+    assert isinstance(result.data, type(other_agg.data))
+    if "dask" in backend:
+        assert hasattr(result.data, "compute"), "lost laziness"
+    np.testing.assert_allclose(
+        _to_numpy(result), expected.values, equal_nan=True, rtol=1e-7,
+    )
+
+
+_CUPY_OK_CASES, _CUPY_OK_IDS = _standardize_cases(exclude=("piecewise",))
+_DASK_CUPY_OK_CASES, _DASK_CUPY_OK_IDS = _standardize_cases(
+    exclude=("piecewise", "categorical"))
+
+
+@cuda_and_cupy_available
+class TestStandardizeCupy:
+    @pytest.mark.parametrize("method,kwargs", _CUPY_OK_CASES,
+                             ids=_CUPY_OK_IDS)
+    def test_matches_numpy(self, method, kwargs):
+        _assert_standardize_matches_numpy("cupy", method, kwargs)
+
+    def test_piecewise_matches_numpy(self):
+        _assert_standardize_matches_numpy("cupy", *_standardize_case("piecewise"))
+
+    def test_result_stays_on_gpu(self):
+        import cupy
+        agg = create_test_raster(_standardize_data(), backend="cupy")
+        result = standardize(agg, method="gaussian", mean=0.5, std=0.2)
+        assert isinstance(result.data, cupy.ndarray)
+
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestStandardizeDaskNumpy:
+    # linear/sigmoidal/categorical/piecewise dask paths are also covered
+    # above; this parametrization adds gaussian and triangular, which had
+    # no dask test before.
+    @pytest.mark.parametrize("method,kwargs", STANDARDIZE_CASES,
+                             ids=STANDARDIZE_IDS)
+    def test_matches_numpy(self, method, kwargs):
+        _assert_standardize_matches_numpy("dask+numpy", method, kwargs)
+
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestStandardizeDaskCupy:
+    @pytest.mark.parametrize("method,kwargs", _DASK_CUPY_OK_CASES,
+                             ids=_DASK_CUPY_OK_IDS)
+    def test_matches_numpy(self, method, kwargs):
+        _assert_standardize_matches_numpy("dask+cupy", method, kwargs)
+
+    def test_categorical_matches_numpy(self):
+        _assert_standardize_matches_numpy(
+            "dask+cupy", *_standardize_case("categorical"))
+
+    def test_piecewise_matches_numpy(self):
+        _assert_standardize_matches_numpy(
+            "dask+cupy", *_standardize_case("piecewise"))
+
+
+def _combine_criteria(backend):
+    a = np.array([[0.2, 0.8, 0.5],
+                  [0.9, 0.1, 0.6],
+                  [0.4, np.nan, 0.3]], dtype=np.float64)
+    b = np.array([[0.5, 0.3, 0.7],
+                  [0.2, 0.9, 0.4],
+                  [0.8, 0.1, 0.6]], dtype=np.float64)
+    return xr.Dataset({
+        "a": create_test_raster(a, backend=backend, name="a"),
+        "b": create_test_raster(b, backend=backend, name="b"),
+    })
+
+
+COMBINE_WEIGHTS = {"a": 0.6, "b": 0.4}
+
+COMBINE_CASES = [
+    ("wlc", lambda ds: wlc(ds, COMBINE_WEIGHTS)),
+    ("wpm", lambda ds: wpm(ds, COMBINE_WEIGHTS)),
+    ("fuzzy-and", lambda ds: fuzzy_overlay(ds, operator="and")),
+    ("fuzzy-or", lambda ds: fuzzy_overlay(ds, operator="or")),
+    ("fuzzy-sum", lambda ds: fuzzy_overlay(ds, operator="sum")),
+    ("fuzzy-product", lambda ds: fuzzy_overlay(ds, operator="product")),
+    ("fuzzy-gamma", lambda ds: fuzzy_overlay(ds, operator="gamma", gamma=0.5)),
+]
+
+COMBINE_IDS = [case[0] for case in COMBINE_CASES]
+
+
+def _assert_combine_matches_numpy(backend, fn):
+    expected = fn(_combine_criteria("numpy"))
+    criteria = _combine_criteria(backend)
+    result = fn(criteria)
+    assert isinstance(result.data, type(criteria["a"].data))
+    if "dask" in backend:
+        assert hasattr(result.data, "compute"), "lost laziness"
+    np.testing.assert_allclose(
+        _to_numpy(result), expected.values, equal_nan=True, rtol=1e-7,
+    )
+
+
+@cuda_and_cupy_available
+class TestCombineCupy:
+    @pytest.mark.parametrize("label,fn", COMBINE_CASES, ids=COMBINE_IDS)
+    def test_matches_numpy(self, label, fn):
+        _assert_combine_matches_numpy("cupy", fn)
+
+    def test_owa_matches_numpy(self):
+        _assert_combine_matches_numpy(
+            "cupy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
+        )
+
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestCombineDaskNumpy:
+    # wlc and fuzzy and/or/sum/product already have dask tests above;
+    # wpm and fuzzy-gamma did not.
+    @pytest.mark.parametrize("label,fn", COMBINE_CASES, ids=COMBINE_IDS)
+    def test_matches_numpy(self, label, fn):
+        _assert_combine_matches_numpy("dask+numpy", fn)
+
+    def test_owa_matches_numpy(self):
+        _assert_combine_matches_numpy(
+            "dask+numpy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
+        )
+
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestCombineDaskCupy:
+    @pytest.mark.parametrize("label,fn", COMBINE_CASES, ids=COMBINE_IDS)
+    def test_matches_numpy(self, label, fn):
+        _assert_combine_matches_numpy("dask+cupy", fn)
+
+    def test_owa_matches_numpy(self):
+        # Fixed in #3158
+        _assert_combine_matches_numpy(
+            "dask+cupy", lambda ds: owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]),
+        )
+
+
+def _constrain_inputs(backend):
+    suit = create_test_raster(
+        np.array([[0.8, 0.6, 0.9],
+                  [0.5, 0.7, 0.3],
+                  [0.2, 0.4, 0.1]], dtype=np.float64),
+        backend=backend, name="suit",
+    )
+    mask = create_test_raster(
+        np.array([[1.0, 0.0, 0.0],
+                  [0.0, 0.0, 1.0],
+                  [0.0, 1.0, 0.0]], dtype=np.float64),
+        backend=backend, name="mask",
+    )
+    return suit, mask
+
+
+class TestConstrainBackends:
+    def _assert_matches_numpy(self, backend):
+        suit_np, mask_np = _constrain_inputs("numpy")
+        expected = constrain(suit_np, exclude=[mask_np])
+        suit, mask = _constrain_inputs(backend)
+        result = constrain(suit, exclude=[mask])
+        if "dask" in backend:
+            assert hasattr(result.data, "compute"), "lost laziness"
+        np.testing.assert_allclose(
+            _to_numpy(result), expected.values, equal_nan=True,
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    def test_dask_numpy_matches_numpy(self):
+        self._assert_matches_numpy("dask+numpy")
+
+    @cuda_and_cupy_available
+    @pytest.mark.xfail(reason=XFAIL_XR_WHERE_CUPY, strict=False)
+    def test_cupy_matches_numpy(self):
+        self._assert_matches_numpy("cupy")
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    @pytest.mark.xfail(reason=XFAIL_XR_WHERE_CUPY, strict=False)
+    def test_dask_cupy_matches_numpy(self):
+        self._assert_matches_numpy("dask+cupy")
+
+
+class TestBooleanOverlayBackends:
+    def _assert_matches_numpy(self, backend, operator):
+        a_data = np.array([[1.0, 0.0, 1.0],
+                           [0.0, 1.0, 1.0],
+                           [1.0, 1.0, 0.0]], dtype=np.float64)
+        b_data = np.array([[1.0, 1.0, 0.0],
+                           [0.0, 0.0, 1.0],
+                           [1.0, 0.0, 0.0]], dtype=np.float64)
+
+        def build(bk):
+            return {
+                "a": create_test_raster(a_data, backend=bk, name="a"),
+                "b": create_test_raster(b_data, backend=bk, name="b"),
+            }
+
+        expected = boolean_overlay(build("numpy"), operator=operator)
+        result = boolean_overlay(build(backend), operator=operator)
+        if "dask" in backend:
+            assert hasattr(result.data, "compute"), "lost laziness"
+        np.testing.assert_array_equal(
+            np.asarray(_to_numpy(result), dtype=bool), expected.values,
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    @pytest.mark.parametrize("operator", ["and", "or"])
+    def test_dask_numpy(self, operator):
+        self._assert_matches_numpy("dask+numpy", operator)
+
+    @cuda_and_cupy_available
+    @pytest.mark.parametrize("operator", ["and", "or"])
+    def test_cupy(self, operator):
+        self._assert_matches_numpy("cupy", operator)
+
+    @cuda_and_cupy_available
+    @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+    @pytest.mark.parametrize("operator", ["and", "or"])
+    def test_dask_cupy(self, operator):
+        self._assert_matches_numpy("dask+cupy", operator)
+
+
+@cuda_and_cupy_available
+class TestSensitivityCupy:
+    def test_oat_matches_numpy(self):
+        expected = sensitivity(
+            _combine_criteria("numpy"), COMBINE_WEIGHTS,
+            method="one_at_a_time", delta=0.05,
+        )
+        result = sensitivity(
+            _combine_criteria("cupy"), COMBINE_WEIGHTS,
+            method="one_at_a_time", delta=0.05,
+        )
+        assert isinstance(result, xr.Dataset)
+        for var in expected.data_vars:
+            np.testing.assert_allclose(
+                _to_numpy(result[var]), expected[var].values,
+                equal_nan=True, rtol=1e-7,
+            )
+
+    def test_monte_carlo_runs(self):
+        result = sensitivity(
+            _combine_criteria("cupy"), COMBINE_WEIGHTS,
+            method="monte_carlo", n_samples=10,
+        )
+        # The input NaN propagates to the CV surface (as on numpy).
+        vals = _to_numpy(result)
+        assert np.all(np.isnan(vals) | (vals >= 0))
+
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestSensitivityDaskCupy:
+    def test_oat_matches_numpy(self):
+        expected = sensitivity(
+            _combine_criteria("numpy"), COMBINE_WEIGHTS,
+            method="one_at_a_time", delta=0.05,
+        )
+        result = sensitivity(
+            _combine_criteria("dask+cupy"), COMBINE_WEIGHTS,
+            method="one_at_a_time", delta=0.05,
+        )
+        for var in expected.data_vars:
+            np.testing.assert_allclose(
+                _to_numpy(result[var]), expected[var].values,
+                equal_nan=True, rtol=1e-7,
+            )
+
+    def test_monte_carlo_runs(self):
+        result = sensitivity(
+            _combine_criteria("dask+cupy"), COMBINE_WEIGHTS,
+            method="monte_carlo", n_samples=10,
+        )
+        # The input NaN propagates to the CV surface (as on numpy).
+        vals = _to_numpy(result)
+        assert np.all(np.isnan(vals) | (vals >= 0))
+
+
+# ===========================================================================
+# Metadata preservation (#3149)
+# ===========================================================================
+
+class TestMetadataPreservation:
+    """attrs (res/crs), coords, and dim names must survive each stage."""
+
+    def _check(self, input_agg, output_agg):
+        assert output_agg.attrs == input_agg.attrs
+        assert output_agg.dims == input_agg.dims
+        for coord in input_agg.coords:
+            np.testing.assert_allclose(
+                output_agg[coord].values, input_agg[coord].values,
+            )
+
+    def test_standardize(self):
+        agg = create_test_raster(_standardize_data(), backend="numpy")
+        for method, kwargs in STANDARDIZE_CASES:
+            result = standardize(agg, method=method, **kwargs)
+            self._check(agg, result)
+
+    def test_combine(self):
+        ds = _combine_criteria("numpy")
+        results = [fn(ds) for _, fn in COMBINE_CASES]
+        results.append(owa(ds, COMBINE_WEIGHTS, [0.7, 0.3]))
+        for result in results:
+            self._check(ds["a"], result)
+
+    def test_constrain_coords_and_dims(self):
+        suit, mask = _constrain_inputs("numpy")
+        result = constrain(suit, exclude=[mask])
+        assert result.dims == suit.dims
+        for coord in suit.coords:
+            np.testing.assert_allclose(
+                result[coord].values, suit[coord].values,
+            )
+
+    def test_constrain_attrs(self):
+        # Fixed in #3154: constrain preserves input attrs
+        suit, mask = _constrain_inputs("numpy")
+        result = constrain(suit, exclude=[mask])
+        assert result.attrs == suit.attrs
+
+    def test_sensitivity_oat(self):
+        ds = _combine_criteria("numpy")
+        result = sensitivity(ds, COMBINE_WEIGHTS, method="one_at_a_time")
+        for var in result.data_vars:
+            self._check(ds["a"], result[var])
+
+    def test_standardize_keeps_name(self):
+        agg = create_test_raster(_standardize_data(), backend="numpy",
+                                 name="myraster")
+        result = standardize(agg, method="gaussian", mean=0.5, std=0.2)
+        assert result.name == "myraster"
+
+    def test_custom_dim_names_propagate(self):
+        data = _standardize_data()
+        agg = xr.DataArray(data, dims=["lat", "lon"])
+        result = standardize(agg, method="gaussian", mean=0.5, std=0.2)
+        assert result.dims == ("lat", "lon")
+
+        ds = xr.Dataset({
+            "a": xr.DataArray(data, dims=["lat", "lon"]),
+            "b": xr.DataArray(data[::-1], dims=["lat", "lon"]),
+        })
+        result = wlc(ds, COMBINE_WEIGHTS)
+        assert result.dims == ("lat", "lon")
+
+
+# ===========================================================================
+# Remaining edge cases (#3149)
+# ===========================================================================
+
+class TestWPMAllNaNCriterion:
+    def test_all_nan_criterion_passes_through(self):
+        """An all-NaN layer skips the positivity check and yields NaN."""
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.full((2, 2), np.nan), dims=["y", "x"]),
+            "b": xr.DataArray(np.full((2, 2), 0.5), dims=["y", "x"]),
+        })
+        result = wpm(ds, {"a": 0.5, "b": 0.5})
+        assert np.all(np.isnan(result.values))
+
+
+class TestCombineInfPropagation:
+    def test_wlc_propagates_inf(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[np.inf, 0.5]], dtype=np.float64), dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.5, 0.5]], dtype=np.float64), dims=["y", "x"],
+            ),
+        })
+        result = wlc(ds, {"a": 0.6, "b": 0.4})
+        assert np.isinf(result.values[0, 0])
+        assert float(result.values[0, 1]) == pytest.approx(0.5)
+
+    def test_fuzzy_and_with_inf(self):
+        """min() against inf returns the finite layer's value."""
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[np.inf, 0.2]], dtype=np.float64), dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.5, 0.5]], dtype=np.float64), dims=["y", "x"],
+            ),
+        })
+        result = fuzzy_overlay(ds, operator="and")
+        assert float(result.values[0, 0]) == pytest.approx(0.5)
+        assert float(result.values[0, 1]) == pytest.approx(0.2)
+
+
+# ===========================================================================
+# owa on dask backends (#3146)
+# ===========================================================================
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestOWADask:
+    """owa used to raise AttributeError on dask input (da.sort missing)."""
+
+    def test_owa_dask_matches_numpy(self, criteria_dataset, weights_3):
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(criteria_dataset, weights_3, ow)
+        dask_ds = criteria_dataset.chunk({"y": 2, "x": 2})
+        dask_result = owa(dask_ds, weights_3, ow)
+        assert hasattr(dask_result.data, "compute")
+        np.testing.assert_allclose(
+            dask_result.compute().values, numpy_result.values, atol=1e-14,
+        )
+
+    def test_owa_dask_nan_propagates(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, np.nan]], dtype=np.float64),
+                dims=["y", "x"],
+            ).chunk({"x": 1}),
+            "b": xr.DataArray(
+                np.array([[0.7, 0.4]], dtype=np.float64),
+                dims=["y", "x"],
+            ).chunk({"x": 1}),
+        })
+        r = owa(ds, {"a": 0.6, "b": 0.4}, [0.5, 0.5]).compute()
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+
+
+# ===========================================================================
+# cupy / dask+cupy backends (#3146)
+# ===========================================================================
+
+@cuda_and_cupy_available
+class TestCupyBackends:
+    """GPU paths that used to raise: owa, piecewise/categorical
+    standardize, and monte-carlo sensitivity."""
+
+    def _gpu_ds(self, criteria_dataset, backend):
+        import cupy
+        out = {}
+        for v in criteria_dataset.data_vars:
+            arr = cupy.asarray(criteria_dataset[v].values)
+            if backend == "dask+cupy":
+                arr = da.from_array(arr, chunks=(2, 2))
+            out[v] = xr.DataArray(arr, dims=criteria_dataset[v].dims)
+        return xr.Dataset(out)
+
+    @staticmethod
+    def _to_numpy(data):
+        import cupy
+        if hasattr(data, "compute"):
+            data = data.compute()
+        return cupy.asnumpy(data) if isinstance(data, cupy.ndarray) else data
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_standardize_piecewise(self, criterion_raster, backend):
+        import cupy
+        kw = dict(
+            method="piecewise",
+            breakpoints=[0, 50, 100], values=[0.0, 1.0, 0.5],
+        )
+        numpy_result = standardize(criterion_raster, **kw)
+        arr = cupy.asarray(criterion_raster.values)
+        if backend == "dask+cupy":
+            arr = da.from_array(arr, chunks=(2, 2))
+        gpu_result = standardize(
+            xr.DataArray(arr, dims=criterion_raster.dims), **kw)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_standardize_categorical(self, backend):
+        import cupy
+        data = np.array([[1.0, 2.0], [3.0, 99.0]])
+        kw = dict(method="categorical", mapping={1: 0.9, 2: 0.7, 3: 0.4})
+        numpy_result = standardize(
+            xr.DataArray(data, dims=["y", "x"]), **kw)
+        arr = cupy.asarray(data)
+        if backend == "dask+cupy":
+            arr = da.from_array(arr, chunks=(1, 2))
+        gpu_result = standardize(
+            xr.DataArray(arr, dims=["y", "x"]), **kw)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_owa(self, criteria_dataset, weights_3, backend):
+        ow = [0.5, 0.3, 0.2]
+        numpy_result = owa(criteria_dataset, weights_3, ow)
+        gpu_result = owa(
+            self._gpu_ds(criteria_dataset, backend), weights_3, ow)
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True, atol=1e-14,
+        )
+
+    @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+    def test_monte_carlo_sensitivity(
+        self, criteria_dataset, weights_3, backend,
+    ):
+        numpy_result = sensitivity(
+            criteria_dataset, weights_3,
+            method="monte_carlo", n_samples=20, seed=7,
+        )
+        gpu_result = sensitivity(
+            self._gpu_ds(criteria_dataset, backend), weights_3,
+            method="monte_carlo", n_samples=20, seed=7,
+        )
+        np.testing.assert_allclose(
+            self._to_numpy(gpu_result.data), numpy_result.values,
+            equal_nan=True, rtol=1e-10,
+        )

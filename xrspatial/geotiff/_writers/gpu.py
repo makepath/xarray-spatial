@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
     import cupy
 
-from .._attrs import (_EXPERIMENTAL_CODECS, _extract_rich_tags, _resolve_nodata_attr,
-                      _should_restore_nan_sentinel)
+from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _extract_rich_tags,
+                      _resolve_nodata_attr, _should_restore_nan_sentinel)
 from .._coords import _BAND_DIM_NAMES, _has_no_georef_marker
 from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
 from .._coords import resolve_georef as _resolve_georef
@@ -30,6 +30,37 @@ from .._runtime import GeoTIFFFallbackWarning, _resolve_spatial_coords
 from .._validation import (_validate_3d_writer_dims, _validate_no_rotated_affine,
                            _validate_nodata_arg, _validate_tile_size_arg,
                            _validate_writer_spatial_shape, validate_write_metadata)
+
+
+def _warn_dask_materialised() -> None:
+    """Warn that a dask-backed input is about to be fully materialised.
+
+    The GPU writer has no streaming mode: ``to_geotiff``'s dask
+    streaming contract only applies to the CPU path, and dask+cupy
+    input auto-dispatches here (issue #3166). Emitted from both
+    ``.compute()`` sites in ``_write_geotiff_gpu`` so explicit and
+    auto-detected GPU writes warn the same way.
+
+    Deliberately does NOT participate in the
+    ``XRSPATIAL_GEOTIFF_STRICT`` promotion that most
+    ``GeoTIFFFallbackWarning`` sites apply: there is no opt-out flag
+    for the materialisation, so promotion would turn every dask+cupy
+    GPU write into a hard failure. Same shape as the JPEG /
+    experimental-codec opt-in warnings, which also stay warnings under
+    strict mode.
+
+    The warning stays truthful even when the GPU write later falls
+    back to CPU (e.g. nvCOMP raises after dispatch): the ``.compute()``
+    has already run by the time the fallback fires.
+    """
+    warnings.warn(
+        "Dask-backed input routed to the GPU writer is materialised "
+        "in full on device before encoding; the GPU writer has no "
+        "streaming mode and streaming_buffer_bytes is ignored. "
+        "See issue #3166.",
+        GeoTIFFFallbackWarning,
+        stacklevel=3,
+    )
 
 
 def _compute_gpu_samples_hint(data) -> int:
@@ -163,9 +194,14 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
           nvCOMP/CUDA accelerator, so these fall through to the CPU
           encoder for byte-stable parity with ``to_geotiff``.
     compression_level : int or None
-        [experimental] Compression effort level. Accepted for API
-        compatibility but currently ignored -- nvCOMP does not expose
-        level control.
+        [experimental] Compression effort level. Validated against the
+        same codec ranges as ``to_geotiff`` (deflate 1-9, zstd 1-22,
+        lz4 0-16); out-of-range values raise ``ValueError``. Tiles
+        compressed through the CPU codecs (lzw / packbits / lerc, and
+        deflate / zstd / lz4 when nvCOMP is unavailable) honor the
+        level. The nvCOMP device encoder for deflate / zstd does not
+        expose level control: when it handles the tiles, an explicit
+        level is ignored and a ``UserWarning`` is emitted.
     tiled : bool
         [experimental] Must be True (default). The GPU writer is
         tiled-only because nvCOMP batch compression operates on
@@ -210,6 +246,8 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         no streaming concept, so this kwarg is a no-op. Default matches
         ``to_geotiff`` (256 MB) so callers passing the same kwargs to
         either entry point see the same default and the same type.
+        Dask-backed inputs emit a ``GeoTIFFFallbackWarning`` when they
+        are materialised (issue #3166).
     max_z_error : float
         [internal-only] Per-pixel error budget for LERC compression.
         The GPU writer does not implement LERC (nvCOMP has no LERC
@@ -257,7 +295,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         writer does not emit a ``ModelTransformationTag`` either, so
         the silent-loss surface is identical on both backends.
     pack : bool, default False
-        [advanced] No-op on the GPU writer: it exists for signature
+        [experimental] No-op on the GPU writer: it exists for signature
         parity with ``to_geotiff``, which applies the ``pack`` re-pack
         transform before dispatching here. See ``to_geotiff`` for the
         behaviour.
@@ -337,6 +375,20 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 "GDAL versions is uneven. Pass allow_experimental_codecs=True "
                 "to opt in, or use 'deflate', 'zstd', or 'lzw' for a "
                 "stable lossless codec (issue #2137).")
+        # Mirror to_geotiff's compression_level range gate so direct
+        # callers of _write_geotiff_gpu get the same rejection the
+        # dispatcher applies upstream (#3167). Runs before the
+        # experimental-codec opt-in warning below so a rejected call
+        # raises without warning first, matching to_geotiff's order.
+        if compression_level is not None:
+            _level_range = _LEVEL_RANGES.get(_gpu_codec)
+            if _level_range is not None:
+                _lo, _hi = _level_range
+                if not (_lo <= compression_level <= _hi):
+                    raise ValueError(
+                        f"compression_level={compression_level} out of "
+                        f"range for {compression} "
+                        f"(valid: {_lo}-{_hi})")
         if (_gpu_codec in _EXPERIMENTAL_CODECS
                 and allow_experimental_codecs):
             warnings.warn(
@@ -492,6 +544,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         arr = data.data
         # Handle Dask arrays: compute to materialize
         if hasattr(arr, 'compute'):
+            _warn_dask_materialised()
             arr = arr.compute()
         # Now arr should be CuPy or numpy
         if hasattr(arr, 'get'):
@@ -563,6 +616,7 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         res_unit = _rich['resolution_unit']
     else:
         if hasattr(data, 'compute'):
+            _warn_dask_materialised()
             data = data.compute()  # Dask -> CuPy or numpy
         if hasattr(data, 'device'):
             arr = data  # already CuPy
@@ -614,7 +668,8 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         """Compress a GPU array into a (stub, w, h, offsets, counts, tiles) tuple."""
         compressed = gpu_compress_tiles(
             gpu_arr, tile_size, tile_size, w, h,
-            comp_tag, pred_val, np_dtype, spp)
+            comp_tag, pred_val, np_dtype, spp,
+            compression_level=compression_level)
         rel_off = []
         bc = []
         off = 0
