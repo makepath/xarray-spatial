@@ -470,8 +470,9 @@ attrs contract
      - ``unpack=True`` applies GDAL ``SCALE`` / ``OFFSET`` and masks the
        nodata sentinel to NaN, recording ``scale_factor`` /
        ``add_offset`` / ``mask_and_scale_dtype`` on the attrs. CPU eager
-       and dask paths are tested; the GPU branches are not (#3112,
-       #3114), which is why the row sits at ``experimental``.
+       and dask paths are tested; the GPU branches gained round-trip
+       coverage only recently (#3112, #3114), which is why the row sits
+       at ``experimental``.
      - ``xrspatial/geotiff/tests/read/test_rioxarray_compat_2961.py``,
        ``xrspatial/geotiff/tests/read/test_mask_and_scale_dtype_parity_3066.py``
      - `#3163`_
