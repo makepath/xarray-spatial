@@ -545,16 +545,18 @@ def _read_geotiff_dask(source: str, *,
         allow_unparseable_crs=allow_unparseable_crs,
     )
 
-    # Record the integer source dtype when a *real* ``mask_and_scale``
-    # transform -- masking a fittable sentinel, here, or a non-identity
-    # scale / offset, in the block below -- promotes the array to float, so
-    # ``to_geotiff(pack=True)`` can re-pack (issue #3064). Scoped to
-    # ``mask_and_scale`` (not a plain ``masked`` read) to mirror the eager
-    # path. ``effective_dtype`` now agrees with this gate (issue #3066), so a
-    # bare ``mask_and_scale`` read of an int source with no scale / offset and
-    # no sentinel stays integer and records nothing.
+    # Record the source dtype when a *real* ``mask_and_scale`` transform --
+    # masking a fittable sentinel, here, or a non-identity scale / offset,
+    # in the block below -- runs, so ``to_geotiff(pack=True)`` can re-pack
+    # (issue #3064). Scoped to ``mask_and_scale`` (not a plain ``masked``
+    # read) to mirror the eager path. ``effective_dtype`` now agrees with
+    # this gate (issue #3066), so a bare ``mask_and_scale`` read of an int
+    # source with no scale / offset and no sentinel stays integer and
+    # records nothing. Float sources record it too (issue #3080): they are
+    # never promoted, but without the attr ``_pack`` infers the target
+    # dtype from the nodata scalar and widens float32 to float64.
     if (mask_and_scale
-            and file_dtype.kind in ('u', 'i')
+            and file_dtype.kind in ('u', 'i', 'f')
             and nodata is not None
             and lifecycle.sentinel_fits_buffer):
         attrs['mask_and_scale_dtype'] = file_dtype.name
@@ -668,9 +670,9 @@ def _read_geotiff_dask(source: str, *,
         attrs['scale_factor'] = ms_scale
         attrs['add_offset'] = ms_offset
         # A non-identity scale / offset is the other real transform that
-        # promotes an int source to float (issue #3064).
-        if file_dtype.kind != 'f':
-            attrs.setdefault('mask_and_scale_dtype', file_dtype.name)
+        # promotes an int source to float (issue #3064). Float sources
+        # record their dtype too so ``pack`` keeps their width (#3080).
+        attrs.setdefault('mask_and_scale_dtype', file_dtype.name)
 
     # ``parse_coordinates=False`` drops the x / y coordinate arrays (the
     # transform / crs attrs still carry georeferencing); the band coord is

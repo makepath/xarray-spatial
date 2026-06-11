@@ -77,10 +77,13 @@ Canonical (xrspatial owns these; round-trip stable):
   happened so consumers can tell float-because-masked from
   float-because-promoted.
 - ``mask_and_scale_dtype`` (#3064, contract v5): string dtype name of
-  the integer source (e.g. ``"int8"``), only emitted when masking
-  and / or ``mask_and_scale`` promoted an integer array to float on
-  read. ``to_geotiff(pack=True)`` reads it to reverse the promotion and
-  restore the on-disk dtype.
+  the source (e.g. ``"int8"``). Emitted when masking and / or
+  ``mask_and_scale`` promoted an integer array to float on read, and
+  on ``mask_and_scale`` reads of float sources that carry a declared
+  sentinel or a non-identity scale / offset (#3080) -- float sources
+  are never promoted, but recording their width keeps
+  ``to_geotiff(pack=True)`` from widening float32 to float64.
+  ``pack`` reads it to restore the on-disk dtype.
 - ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
   (explicit / RasterPixelIsPoint).
 - ``georef_status``: one of ``'full'``, ``'transform_only'``, ``'crs_only'``,
@@ -568,7 +571,10 @@ _TIFF_SHORT = 3
 # Version 5 adds ``attrs['mask_and_scale_dtype']``: the integer source
 # dtype recorded when ``mask_nodata`` / ``mask_and_scale`` promoted the
 # array to float on read. ``to_geotiff(pack=True)`` reads it to restore
-# the on-disk dtype. Existing keys keep their pre-v5 shape.
+# the on-disk dtype. Existing keys keep their pre-v5 shape. #3080 later
+# extended emission (same key, same shape, still v5) to float sources on
+# ``mask_and_scale`` reads that carry a sentinel or a non-identity
+# scale / offset, so ``pack`` keeps float32 sources float32.
 _ATTRS_CONTRACT_VERSION = 5
 
 
@@ -1718,10 +1724,11 @@ def _pack(data, nodata=None):
 
     Reverses the scale / offset applied on read (``(data - add_offset) /
     scale_factor``), fills NaN back to the nodata sentinel, and
-    casts to the integer source dtype recorded in
-    ``attrs['mask_and_scale_dtype']`` (falling back to the dtype of
-    ``attrs['nodata']`` for arrays read by an xrspatial release predating
-    contract v5). Returns a new DataArray; ``data`` is left untouched.
+    casts to the source dtype recorded in
+    ``attrs['mask_and_scale_dtype']`` (falling back to the dtype of an
+    integer ``attrs['nodata']`` for arrays read by an xrspatial release
+    predating contract v5, and to the buffer's own dtype otherwise).
+    Returns a new DataArray; ``data`` is left untouched.
 
     ``nodata`` is the writer's explicit ``nodata=`` kwarg. When given, it
     overrides the attrs sentinel as the NaN fill value, matching the
@@ -1789,11 +1796,16 @@ def _pack(data, nodata=None):
 
     out = (data - offset) / scale
 
-    if target is None and attrs_nodata is not None:
-        # Best-effort recovery for pre-v5 reads: the attrs sentinel is
-        # stored in the source dtype, so its width is the source width.
-        # (The ``nodata`` kwarg carries no width information, so it never
-        # feeds this fallback.)
+    if (target is None and attrs_nodata is not None
+            and np.asarray(attrs_nodata).dtype.kind in ('i', 'u')):
+        # Best-effort recovery for pre-v5 reads of integer sources: the
+        # attrs sentinel is stored in the source dtype, so its width is
+        # the source width. Float sentinels are excluded -- a reader
+        # stores them as plain Python floats, so their width says
+        # float64 regardless of the source's width (issue #3080); the
+        # buffer below is the better signal because float sources are
+        # never promoted on read. (The ``nodata`` kwarg carries no width
+        # information, so it never feeds this fallback.)
         target = np.asarray(attrs_nodata).dtype.name
     tgt = np.dtype(target) if target is not None else np.dtype(str(out.dtype))
 
@@ -2007,15 +2019,21 @@ def _finalize_eager_read(
             attrs['scale_factor'] = scale
             attrs['add_offset'] = offset
 
-    # Record the integer source dtype when ``mask_and_scale`` promoted it to
-    # float, so ``to_geotiff(pack=True)`` can re-pack the decoded array
-    # (issue #3064). Scoped to ``mask_and_scale`` reads (not a plain
-    # ``masked`` read) since ``pack`` is the inverse of ``mask_and_scale``;
-    # the attr name says as much. Checked before the caller ``dtype=`` cast
-    # so it captures the on-disk dtype, not the caller's requested cast.
-    if (mask_and_scale and pre_promote_dtype.kind != 'f'
-            and np.dtype(str(arr.dtype)).kind == 'f'):
-        attrs['mask_and_scale_dtype'] = pre_promote_dtype.name
+    # Record the source dtype so ``to_geotiff(pack=True)`` can re-pack the
+    # decoded array (issue #3064). Scoped to ``mask_and_scale`` reads (not a
+    # plain ``masked`` read) since ``pack`` is the inverse of
+    # ``mask_and_scale``; the attr name says as much. Checked before the
+    # caller ``dtype=`` cast so it captures the on-disk dtype, not the
+    # caller's requested cast. Integer sources record it when the read
+    # promoted them to float. Float sources are never promoted, but record
+    # it too whenever the read carries unpack state to reverse (a declared
+    # sentinel or a non-identity scale / offset): without the attr,
+    # ``_pack`` falls back to the nodata scalar's dtype and widens a
+    # float32 source to float64 (issue #3080).
+    if mask_and_scale and np.dtype(str(arr.dtype)).kind == 'f':
+        if (pre_promote_dtype.kind != 'f'
+                or nodata is not None or 'scale_factor' in attrs):
+            attrs['mask_and_scale_dtype'] = pre_promote_dtype.name
 
     # Caller-requested dtype cast (post-mask so the integer
     # promotion above runs first). ``_validate_dtype_cast`` lives in
