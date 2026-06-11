@@ -2491,7 +2491,8 @@ def test_proximity_numpy_no_scipy_fallback_is_exact():
     original_ckdtree = prox_mod.cKDTree
     try:
         prox_mod.cKDTree = None
-        result = proximity(raster)
+        with pytest.warns(UserWarning, match="brute-force"):
+            result = proximity(raster)
     finally:
         prox_mod.cKDTree = original_ckdtree
 

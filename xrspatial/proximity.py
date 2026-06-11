@@ -734,8 +734,14 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
     )
 
 
-def _process_numpy_kdtree(img, xs, ys, target_values, max_distance, p):
+def _process_numpy_kdtree(img, xs, ys, target_values, max_distance, p,
+                          workers=1):
     """Exact nearest-target PROXIMITY on the CPU via scipy's cKDTree.
+
+    ``workers`` is forwarded to ``cKDTree.query``. The eager numpy backend
+    passes -1 (all cores) because it runs a single query over the whole
+    raster; the dask chunk path keeps the default 1 because concurrent
+    chunks already fill the cores and -1 would oversubscribe them.
 
     Replaces the GDAL-ported 4-pass line-sweep for EUCLIDEAN/MANHATTAN: the
     sweep propagated one nearest-target candidate between adjacent pixels,
@@ -769,7 +775,8 @@ def _process_numpy_kdtree(img, xs, ys, target_values, max_distance, p):
     upper = max_distance
     if np.isfinite(upper):
         upper = np.nextafter(upper, np.inf)
-    dists, _ = tree.query(query_pts, p=p, distance_upper_bound=upper)
+    dists, _ = tree.query(query_pts, p=p, distance_upper_bound=upper,
+                          workers=workers)
 
     dists = dists.astype(np.float32)
     dists[~np.isfinite(dists)] = np.nan
@@ -1333,7 +1340,7 @@ def _process(
         x_coords[0], x_coords[-1], y_coords[0], y_coords[-1], distance_metric
     )
 
-    def _process_numpy(img, x_coords, y_coords):
+    def _process_numpy(img, x_coords, y_coords, workers=1):
         # GREAT_CIRCLE is not a Minkowski metric, so the cKDTree query below
         # cannot answer it. Use an exact brute-force search instead (matches
         # the GPU kernel). The branch lives in plain Python rather than
@@ -1360,13 +1367,20 @@ def _process(
         # nearest target by a fraction of a pixel (issue #3121). Without
         # scipy, fall back to the brute-force kernel, which is also exact.
         if cKDTree is None:
+            warnings.warn(
+                "proximity: scipy is not installed; falling back to an "
+                "exact brute-force search, which is slower on large "
+                "rasters.",
+                UserWarning,
+                stacklevel=2,
+            )
             return _process_numpy_bruteforce(
                 img, x_coords, y_coords, target_values,
                 np.float32(max_distance), distance_metric, process_mode,
             )
         return _process_numpy_kdtree(
             img, x_coords, y_coords, target_values, max_distance,
-            2 if distance_metric == EUCLIDEAN else 1,
+            2 if distance_metric == EUCLIDEAN else 1, workers=workers,
         )
 
     def _process_dask(raster, xs, ys):
@@ -1408,7 +1422,7 @@ def _process(
         # numpy case - create full coordinate arrays as numpy
         xs = np.tile(x_coords, raster.shape[0]).reshape(raster.shape)
         ys = np.repeat(y_coords, raster.shape[1]).reshape(raster.shape)
-        result = _process_numpy(raster.data, xs, ys)
+        result = _process_numpy(raster.data, xs, ys, workers=-1)
 
     elif has_cuda_and_cupy() and is_cupy_array(raster.data):
         result = _process_cupy(
