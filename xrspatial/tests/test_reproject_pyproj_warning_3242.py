@@ -92,6 +92,29 @@ def test_reproject_pyproj_crs_no_lossy_proj_warning():
     assert np.isfinite(out.data).any()
 
 
+def test_reproject_dask_pyproj_crs_no_lossy_proj_warning():
+    # Same as above but dask-backed: the param extractors also run per
+    # chunk inside worker tasks, so a leak there would not show up in
+    # the numpy-path test.
+    pytest.importorskip('dask.array')
+    ny, nx = 32, 32
+    raster = xr.DataArray(
+        np.random.RandomState(42).rand(ny, nx).astype(np.float32),
+        dims=('y', 'x'),
+        coords={
+            'y': np.linspace(1_500_000, 1_400_000, ny),
+            'x': np.linspace(-1_200_000, -1_100_000, nx),
+        },
+    ).chunk({'y': 16, 'x': 16})
+    src = pyproj.CRS.from_epsg(5070)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always')
+        out = reproject(raster, pyproj.CRS.from_epsg(4326), source_crs=src)
+        result = out.compute()
+    assert not _lossy_warnings(record)
+    assert np.isfinite(result.data).any()
+
+
 def test_crs_to_dict_matches_raw_to_dict():
     crs = pyproj.CRS.from_epsg(5070)
     with warnings.catch_warnings():

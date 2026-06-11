@@ -139,6 +139,10 @@ def _crs_to_dict(crs):
     PROJ string drops detail. The param extractors here only read short
     names and numeric projection parameters, never the lossy string, so
     silence that one warning.
+
+    ``catch_warnings`` swaps process-global filter state and is not
+    thread-safe; callers are expected to hold ``_PARALLEL_KERNEL_LOCK``
+    (all current callers run inside the ``*_locked`` entry points).
     """
     with warnings.catch_warnings():
         warnings.filterwarnings(
