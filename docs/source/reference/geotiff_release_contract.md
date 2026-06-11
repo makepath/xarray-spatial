@@ -93,7 +93,7 @@ category. The `Key` column matches the runtime key.
 | `reader.allow_rotated` | experimental | Opt-in `allow_rotated=True`; drops the axis-aligned `transform` attr in favour of `rotated_affine`. |
 | `reader.allow_unparseable_crs` | experimental | Opt-in escape hatch for CRS strings pyproj cannot parse. |
 | `reader.gpu` | experimental | GPU read path; no cross-backend numerical parity claim. |
-| `reader.unpack` | experimental | `unpack=True` scale/offset decode on `open_geotiff` (CF-packed integers to float, nodata sentinel to NaN). Experimental because the GPU path crashes (#3112) and the GPU / dask+GPU branches lack tests (#3114). |
+| `reader.unpack` | experimental | `unpack=True` scale/offset decode on `open_geotiff` (CF-packed integers to float, nodata sentinel to NaN). Experimental because the GPU / dask+GPU branches gained round-trip coverage only recently (#3112 pack crash fix, #3114); no behavioural promise yet. |
 
 ### Writers
 

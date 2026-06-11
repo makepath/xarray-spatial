@@ -196,8 +196,9 @@ def test_pack_guard_skips_integer_chunk():
 def test_pack_guard_handles_cupy_chunks():
     """The guard is backend-agnostic: cupy chunks pass and raise alike.
 
-    Full dask+cupy pack round trips still crash upstream of this guard
-    (#3112), so the cupy leg is pinned at the unit level.
+    Pinned at the unit level from when full dask+cupy pack round trips
+    crashed upstream of this guard (fixed in #3112); kept as direct
+    coverage of the cupy leg.
     """
     import cupy
 
