@@ -1693,6 +1693,25 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
     return scale, offset
 
 
+def _pack_guard_no_nan(chunk, tgt_name):
+    """Per-chunk NaN guard for ``_pack``'s no-sentinel integer restore.
+
+    Mapped over dask-backed data so the scan runs inside the write's
+    single compute instead of forcing a second full execution of the
+    upstream graph at ``to_geotiff(pack=True)`` call time (issue
+    #3235). Returns the chunk unchanged when clean; raises
+    ``ValueError`` when it contains NaN. Works on numpy and cupy
+    chunks alike -- ``np.isnan`` dispatches on the array type and the
+    ``bool(...)`` reduction is a scalar sync per chunk.
+    """
+    if chunk.dtype.kind == 'f' and bool(np.isnan(chunk).any()):
+        raise ValueError(
+            f"pack=True: cannot restore integer dtype {tgt_name}: "
+            "NaN pixels are present but no nodata sentinel is "
+            "declared to fill them.")
+    return chunk
+
+
 def _pack(data, nodata=None):
     """Re-pack an ``unpack=True`` read for writing -- inverse of
     :func:`_extract_scale_offset`'s forward direction.
@@ -1732,6 +1751,14 @@ def _pack(data, nodata=None):
     kwarg cannot be represented in the packed integer dtype (out of range
     or fractional) -- the cast would wrap or round the fill value away
     from what the GDAL_NODATA tag declares.
+
+    Error timing for the NaN-with-no-sentinel case depends on the
+    backing: numpy-backed data raises here, at call time. dask-backed
+    data defers the scan into the graph (one per-chunk check fused with
+    the write's single compute) so the upstream graph is not executed a
+    second time just to look for NaN (issue #3235); the ``ValueError``
+    then surfaces from the compute that consumes the packed array,
+    typically the ``to_geotiff`` write itself.
     """
     attrs = dict(data.attrs)
     scale = attrs.get('scale_factor', 1.0)
@@ -1793,9 +1820,21 @@ def _pack(data, nodata=None):
         # inconsistent file that non-masking readers misread (#3078).
         out = out.fillna(nodata)
     elif tgt.kind in ('i', 'u'):
-        # ``isnull().any()`` forces a compute on dask; only reached on the
-        # error path where no sentinel exists to fill an integer's holes.
-        if bool(out.isnull().any()):
+        # No sentinel exists to fill an integer's holes, so a NaN pixel
+        # must abort the pack: the ``astype`` below would silently wrap
+        # it into a valid-looking integer. This guard runs on every
+        # no-sentinel integer pack, success path included. numpy-backed
+        # data scans eagerly and raises here, at call time. dask-backed
+        # data maps the guard into the graph instead: an eager
+        # ``isnull().any()`` executed the whole upstream graph once for
+        # the scan and the writer executed it again for the pixels
+        # (issue #3235), so the per-chunk check now raises from the
+        # write's single compute.
+        if hasattr(out.data, 'dask'):
+            out = out.copy(data=out.data.map_blocks(
+                _pack_guard_no_nan, tgt.name,
+                dtype=out.dtype, meta=out.data._meta))
+        elif bool(out.isnull().any()):
             raise ValueError(
                 f"pack=True: cannot restore integer dtype {tgt.name}: "
                 "NaN pixels are present but no nodata sentinel is "

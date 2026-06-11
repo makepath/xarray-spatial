@@ -376,6 +376,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         arrays read before contract v5. An explicit ``nodata=`` kwarg
         overrides the attrs sentinel as the NaN fill value, so the filled
         pixels always agree with the GDAL_NODATA tag the writer emits.
+        When NaN pixels exist with no sentinel to fill them and an
+        integer dtype must be restored, the ``ValueError`` is raised at
+        call time for numpy-backed data; for dask-backed data the check
+        runs per chunk inside the write's compute (issue #3235), so the
+        error surfaces during the write. The write itself stays atomic
+        (temp file plus rename), so no partial output is left at the
+        destination path.
 
     Returns
     -------
