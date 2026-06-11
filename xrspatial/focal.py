@@ -1456,12 +1456,18 @@ def _gistar_global_stats(global_mean, global_std, n):
     ``global_mean`` is the mean of the valid (non-NaN) raster cells,
     ``global_std`` their population standard deviation, and ``n`` the
     count of valid cells. Gi* needs ``n > 1`` (the variance term divides
-    by ``n - 1``) and a non-zero spread.
+    by ``n - 1``) and a non-zero, finite spread.
     """
     if n < 2:
         raise ValueError(
             "hotspots() needs at least 2 valid (non-NaN) cells to "
             "compute the Getis-Ord Gi* statistic."
+        )
+    if not np.isfinite(global_std):
+        raise ValueError(
+            "Standard deviation of the input raster values is not finite. "
+            "The raster contains Inf values; mask them (e.g. replace with "
+            "NaN) before calling hotspots()."
         )
     if global_std == 0:
         raise ZeroDivisionError(
@@ -1476,9 +1482,10 @@ def _gistar_validate_lazy(z_block, global_std, n):
     The dask backends keep ``global_std`` and ``n`` as lazy 0-d arrays, so
     the eager ``_gistar_global_stats`` check never runs on them. This block
     function re-applies that check at compute time and returns ``z_block``
-    unchanged, so degenerate inputs (constant raster, all-NaN raster, or a
-    single valid cell) raise the same errors as the numpy and cupy paths
-    instead of silently classifying to all zeros.
+    unchanged, so degenerate inputs (constant raster, all-NaN raster, a
+    single valid cell, or a raster containing Inf) raise the same errors
+    as the numpy and cupy paths instead of silently classifying to all
+    zeros.
     """
     _gistar_global_stats(0.0, float(global_std), int(n))
     return z_block

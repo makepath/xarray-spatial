@@ -1343,7 +1343,8 @@ def test_hotspots_zero_global_std():
 
 
 # Degenerate inputs: constant raster (std == 0), all-NaN raster (n == 0),
-# and a single valid cell (n == 1). The numpy/cupy paths raise eagerly via
+# a single valid cell (n == 1), and a raster containing Inf, which makes
+# the global std NaN (issue #3219). The numpy/cupy paths raise eagerly via
 # _gistar_global_stats; the dask paths must raise the same error at compute
 # time instead of silently classifying to all zeros (issue #2843).
 def _hotspots_degenerate_cases():
@@ -1354,12 +1355,21 @@ def _hotspots_degenerate_cases():
     single_valid = np.full((10, 10), np.nan, dtype=np.float32)
     single_valid[0, 0] = 5.0
 
+    pos_inf = np.arange(100, dtype=np.float32).reshape(10, 10)
+    pos_inf[4, 4] = np.inf
+
+    neg_inf = np.arange(100, dtype=np.float32).reshape(10, 10)
+    neg_inf[4, 4] = -np.inf
+
     std_msg = "Standard deviation of the input raster values is 0."
     n_msg = "needs at least 2 valid"
+    finite_msg = "Standard deviation of the input raster values is not finite"
     return [
         ('constant', constant, ZeroDivisionError, std_msg),
         ('all_nan', all_nan, ValueError, n_msg),
         ('single_valid', single_valid, ValueError, n_msg),
+        ('pos_inf', pos_inf, ValueError, finite_msg),
+        ('neg_inf', neg_inf, ValueError, finite_msg),
     ]
 
 
