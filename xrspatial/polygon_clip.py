@@ -7,7 +7,7 @@ a configurable nodata value (default ``np.nan``).
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional
 
 import numpy as np
 import xarray as xr
@@ -17,10 +17,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array,
-    is_dask_cupy,
-)
+from xrspatial.utils import (_validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array,
+                             is_dask_cupy)
 
 
 def _resolve_geometry(geometry):
@@ -254,7 +252,6 @@ def clip_polygon(
         if has_cuda_and_cupy() and is_dask_cupy(raster):
             # dask+cupy: use map_blocks with both raster and condition
             def _apply_mask(raster_block, cond_block):
-                import cupy
                 out = raster_block.astype(out_dtype, copy=True)
                 out[~cond_block.astype(bool)] = nodata
                 return out
