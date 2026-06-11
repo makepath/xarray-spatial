@@ -86,22 +86,22 @@ def _pick_representative_dataarray(ds, *, var=None):
     )
 
 
-def _infer_caller_y_chunk(obj):
-    """First y-axis chunk size of a dask-backed DataArray, or None."""
+def _infer_caller_chunk(obj, axis):
+    """First chunk size along *axis* of a dask-backed DataArray, or None."""
     try:
-        y_axis = obj.get_axis_num('y')
+        axis_num = obj.get_axis_num(axis)
     except (ValueError, KeyError):
         return None
     chunks_tuple = getattr(obj, 'chunks', None)
     if not chunks_tuple:
         return None
     try:
-        y_chunks = chunks_tuple[y_axis]
+        axis_chunks = chunks_tuple[axis_num]
     except (IndexError, TypeError):
         return None
-    if not y_chunks:
+    if not axis_chunks:
         return None
-    return int(y_chunks[0])
+    return int(axis_chunks[0])
 
 
 def _to_pyproj_crs(crs):
@@ -320,14 +320,28 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
 
     # Infer backend kwargs. Caller-supplied values always win.
     backend = _classify_backend(obj)
+    explicit_chunks = kwargs.get('chunks')
     if backend in ("cupy", "dask+cupy"):
         kwargs.setdefault('gpu', True)
     if backend in ("dask+numpy", "dask+cupy"):
-        inferred_chunk = _infer_caller_y_chunk(obj)
+        inferred_chunk = _infer_caller_chunk(obj, 'y')
         if inferred_chunk is not None:
             kwargs.setdefault('chunks', inferred_chunk)
 
     result = open_geotiff(source, window=window, **kwargs)
+
+    # reproject defaults its dask output chunks to 512x512; forward the
+    # explicit ``chunks=`` kwarg, or failing that the caller's chunk
+    # layout, so a coregistered / auto-reprojected result keeps the
+    # chunking of the array it is meant to align with (#3234).
+    caller_y_chunk = _infer_caller_chunk(obj, 'y')
+    caller_x_chunk = _infer_caller_chunk(obj, 'x')
+    if explicit_chunks is not None:
+        reproject_chunk_size = explicit_chunks
+    elif caller_y_chunk is not None and caller_x_chunk is not None:
+        reproject_chunk_size = (caller_y_chunk, caller_x_chunk)
+    else:
+        reproject_chunk_size = None
 
     # A masked read replaces the nodata sentinel with NaN but leaves
     # attrs['nodata'] as the raw sentinel; tell reproject the holes are
@@ -356,6 +370,7 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
             height=height_out,
             resampling=_resolve_resampling(resampling, result),
             nodata=nodata_arg,
+            chunk_size=reproject_chunk_size,
         )
     elif crs_mismatch:
         from .reproject import reproject
@@ -365,6 +380,7 @@ def _open_geotiff_windowed(obj, source, *, auto_reproject=False,
             source_crs=file_crs,
             resampling=_resolve_resampling(resampling, result),
             nodata=nodata_arg,
+            chunk_size=reproject_chunk_size,
         )
 
     return result
@@ -961,7 +977,10 @@ class XrsSpatialDataArrayAccessor:
             The windowed portion of the GeoTIFF. In ``self``'s CRS when
             ``auto_reproject`` reprojection occurred, on ``self``'s exact
             grid when ``coregister`` is set, and otherwise in the file's
-            native CRS.
+            native CRS. A dask result chunks like an explicit ``chunks=``
+            kwarg when given, and otherwise like ``self``, including
+            through the ``auto_reproject`` / ``coregister`` reproject
+            step.
         """
         return _open_geotiff_windowed(
             self._obj, source, auto_reproject=auto_reproject,
