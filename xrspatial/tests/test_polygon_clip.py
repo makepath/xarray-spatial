@@ -552,3 +552,146 @@ class TestClipPolygonDaskLazyMask:
         assert len(graph) > 4, (
             f"graph has only {len(graph)} tasks; mask may not be chunked"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #3191 regression test
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestClipPolygonCropGraphSize:
+    """crop=True must not fragment the mask into tiny edge-chunk-sized blocks.
+
+    Regression test for #3191: _crop_to_bbox slices the dask raster, leaving
+    a tiny partial chunk at the leading edge. clip_polygon picked that first
+    chunk (chunks[-1][0]) as the rasterize mask chunk size, so a wide output
+    got hundreds of narrow mask chunks and xarray.where blew the task graph
+    up. The fix uses the largest chunk per axis instead.
+    """
+
+    def _big_dask_raster(self):
+        import dask.array as da
+        # 2560x2560 raster, uniform 256-px interior chunks.
+        arr = da.zeros((2560, 2560), chunks=(256, 256), dtype='float64')
+        ys = np.linspace(2560.0, 0.0, 2560)
+        xs = np.linspace(0.0, 2560.0, 2560)
+        return xr.DataArray(arr, dims=['y', 'x'],
+                            coords={'y': ys, 'x': xs})
+
+    def test_crop_graph_stays_bounded(self):
+        """A mid-chunk crop must not explode the task graph (no .compute())."""
+        raster = self._big_dask_raster()
+        # box(500, 500, 2000, 2000) starts and ends mid-chunk, so the
+        # cropped raster gets tiny partial edge chunks on both axes.
+        poly = box(500.0, 500.0, 2000.0, 2000.0)
+
+        result = clip_polygon(raster, poly, crop=True)
+
+        # Mask/result chunks should track the 256-px interior size, not a
+        # ~12-px partial edge chunk. With the bug the x-axis fragmented into
+        # ~125 chunks; the fix keeps it in single digits.
+        assert max(result.data.numblocks) < 20, (
+            f"result over-fragmented: numblocks={result.data.numblocks}"
+        )
+
+        # Graph-construction-only size check. The buggy path produced
+        # ~13169 tasks for this case; the fix lands near ~1000. Assert well
+        # under the explosion threshold without calling .compute().
+        graph = result.data.__dask_graph__()
+        assert len(graph) < 4000, (
+            f"task graph not bounded: {len(graph)} tasks"
+        )
+
+    def test_crop_matches_nocrop_values(self):
+        """The coarser mask chunking must not change output values."""
+        raster = self._big_dask_raster()
+        poly = box(500.0, 500.0, 2000.0, 2000.0)
+
+        result_crop = clip_polygon(raster, poly, crop=True)
+        result_nocrop = clip_polygon(raster, poly, crop=False)
+
+        # Align the cropped window back into the full grid and compare the
+        # overlapping region. Both are all-zeros inside the polygon and NaN
+        # outside, so equal_nan parity is the right check.
+        crop_y = result_crop.coords['y'].values
+        crop_x = result_crop.coords['x'].values
+        aligned = result_nocrop.sel(y=crop_y, x=crop_x)
+        np.testing.assert_allclose(
+            result_crop.values, aligned.values, equal_nan=True
+        )
+
+
+# ---------------------------------------------------------------------------
+# Issue #3190: integer raster nodata dtype consistency across backends
+# ---------------------------------------------------------------------------
+
+def _int_raster(backend='numpy', chunks=(4, 3)):
+    """8x6 integer raster aligned to the same grid as ``_make_raster``."""
+    data = np.arange(48, dtype=np.int32).reshape(8, 6)
+    return create_test_raster(data, backend=backend, chunks=chunks)
+
+
+def _to_numpy(arr):
+    arr = arr.compute() if hasattr(arr, 'compute') else arr
+    return arr.get() if hasattr(arr, 'get') else arr
+
+
+class TestClipPolygonIntegerNodata:
+    """An integer raster clipped with a NaN nodata used to raise on the GPU
+    backends while silently upcasting on the CPU backends (#3190).  Every
+    backend must now agree on both dtype and values.
+    """
+
+    def test_int_raster_default_nan_upcasts_numpy(self):
+        """NaN nodata on an int raster promotes to float on numpy."""
+        result = clip_polygon(_int_raster(), _inner_polygon(), crop=False)
+        assert np.issubdtype(result.dtype, np.floating)
+        assert np.isnan(result.values).any()
+
+    def test_int_raster_finite_nodata_stays_integer(self):
+        """A finite integer nodata keeps the integer dtype."""
+        result = clip_polygon(
+            _int_raster(), _inner_polygon(), nodata=-1, crop=False
+        )
+        assert result.dtype == np.int32
+        assert (result.values == -1).any()
+
+    @pytest.mark.parametrize('nodata', [np.nan, -1, 2.5])
+    @dask_array_available
+    def test_dask_numpy_matches_numpy(self, nodata):
+        poly = _inner_polygon()
+        ref = clip_polygon(_int_raster(), poly, nodata=nodata, crop=False)
+        got = clip_polygon(
+            _int_raster(backend='dask+numpy'), poly, nodata=nodata, crop=False
+        )
+        assert got.dtype == ref.dtype
+        np.testing.assert_allclose(
+            _to_numpy(got.data), ref.values, equal_nan=True
+        )
+
+    @pytest.mark.parametrize('nodata', [np.nan, -1, 2.5])
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self, nodata):
+        poly = _inner_polygon()
+        ref = clip_polygon(_int_raster(), poly, nodata=nodata, crop=False)
+        got = clip_polygon(
+            _int_raster(backend='cupy'), poly, nodata=nodata, crop=False
+        )
+        assert got.dtype == ref.dtype
+        np.testing.assert_allclose(
+            _to_numpy(got.data), ref.values, equal_nan=True
+        )
+
+    @pytest.mark.parametrize('nodata', [np.nan, -1, 2.5])
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_matches_numpy(self, nodata):
+        poly = _inner_polygon()
+        ref = clip_polygon(_int_raster(), poly, nodata=nodata, crop=False)
+        got = clip_polygon(
+            _int_raster(backend='dask+cupy'), poly, nodata=nodata, crop=False
+        )
+        assert got.dtype == ref.dtype
+        np.testing.assert_allclose(
+            _to_numpy(got.data), ref.values, equal_nan=True
+        )

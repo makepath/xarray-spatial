@@ -58,8 +58,15 @@ def ahp_weights(
     Raises
     ------
     ValueError
-        If criteria list has fewer than 2 items or comparisons are
-        incomplete.
+        If the criteria list has fewer than 2 items or contains
+        duplicates, or if a comparison is invalid (unknown criterion,
+        self-comparison, or a non-positive or non-finite value).
+
+    Warns
+    -----
+    UserWarning
+        If fewer than ``n * (n - 1) / 2`` pairwise comparisons are
+        provided. Missing pairs default to 1 (equal importance).
     """
     n = len(criteria)
     if n < 2:

@@ -7,7 +7,7 @@ a configurable nodata value (default ``np.nan``).
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional
 
 import numpy as np
 import xarray as xr
@@ -17,10 +17,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (
-    _validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array,
-    is_dask_cupy,
-)
+from xrspatial.utils import (_validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array,
+                             is_dask_cupy)
 
 
 def _resolve_geometry(geometry):
@@ -177,7 +175,11 @@ def clip_polygon(
     Returns
     -------
     xr.DataArray
-        Clipped raster with the same dtype and attributes as *raster*.
+        Clipped raster with the same attributes as *raster*.  The dtype is
+        the input dtype promoted against *nodata* (e.g. an integer raster
+        clipped with the default ``np.nan`` is returned as float), so the
+        result is identical across the numpy, cupy, dask, and dask+cupy
+        backends.
 
     Examples
     --------
@@ -211,7 +213,12 @@ def clip_polygon(
 
     if has_dask_array() and isinstance(raster.data, da.Array):
         rc, cc = raster.data.chunks[-2], raster.data.chunks[-1]
-        kw.setdefault('chunks', (rc[0], cc[0]))
+        # Use the largest chunk per axis rather than the first. After a
+        # crop, _crop_to_bbox slices the dask array and the leading chunk
+        # is often a tiny partial edge chunk; building the rasterize mask
+        # at that size fragments it into many narrow chunks and explodes
+        # the task graph that xarray.where then has to align (#3191).
+        kw.setdefault('chunks', (max(rc), max(cc)))
         if has_cuda_and_cupy() and is_dask_cupy(raster):
             # Respect a legacy ``use_cuda`` passed via rasterize_kw --
             # defaulting ``gpu`` as well would make rasterize() see both
@@ -225,6 +232,14 @@ def clip_polygon(
     # materializing the full mask into RAM (which would OOM for 30TB
     # inputs).  For non-dask backends, compute the mask eagerly.
     mask_data = mask.data
+
+    # Determine the output dtype the same way ``xarray.where`` does: promote
+    # the raster dtype against the nodata value.  This keeps the cupy and
+    # dask+cupy paths (which assign nodata into a raw copy) consistent with
+    # the numpy / dask+numpy paths.  Without it, assigning ``np.nan`` into an
+    # integer array raises ``cannot convert float NaN to integer`` only on the
+    # GPU backends while the CPU backends silently upcast to float.
+    out_dtype = np.result_type(raster.dtype, nodata)
 
     if has_dask_array() and isinstance(raster.data, da.Array):
         # Dask path: keep mask lazy -- no .compute()
@@ -242,14 +257,13 @@ def clip_polygon(
         if has_cuda_and_cupy() and is_dask_cupy(raster):
             # dask+cupy: use map_blocks with both raster and condition
             def _apply_mask(raster_block, cond_block):
-                import cupy
-                out = raster_block.copy()
+                out = raster_block.astype(out_dtype, copy=True)
                 out[~cond_block.astype(bool)] = nodata
                 return out
 
             out = da.map_blocks(
                 _apply_mask, raster.data, cond,
-                dtype=raster.dtype,
+                dtype=out_dtype,
             )
             result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
         else:
@@ -263,7 +277,7 @@ def clip_polygon(
             cond_cp = mask_data == 1
         else:
             cond_cp = cupy.asarray(np.asarray(mask_data) == 1)
-        out = raster.data.copy()
+        out = raster.data.astype(out_dtype, copy=True)
         out[~cond_cp] = nodata
         result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
     else:

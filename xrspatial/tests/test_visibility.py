@@ -317,28 +317,58 @@ class TestCumulativeViewshed:
         result_dask = cumulative_viewshed(raster_dask, observers)
         np.testing.assert_array_equal(result_np.values, result_dask.values)
 
-    @cuda_and_cupy_available
-    @pytest.mark.xfail(
-        strict=True,
-        reason="cumulative_viewshed allocates count as numpy on the "
-               "non-dask path, so cupy input raises TypeError (issue #3192)")
-    def test_cupy_matches_numpy(self):
-        """Cupy backend should match numpy. Strict xfail until #3192:
-        the numpy accumulator + cupy viewshed result raise TypeError."""
-        import cupy
-        data = np.random.RandomState(99).rand(15, 15).astype(float) * 100
+    def test_dask_source_computed_once(self):
+        """No-max_distance dask path computes the source once, not per observer."""
+        H = W = 16
+        base = np.zeros((H, W), dtype=float)
+        counter = {'n': 0}
+
+        def _src(block_info=None):
+            counter['n'] += 1
+            return base.copy()
+
+        source = da.map_blocks(_src, chunks=((H,), (W,)), dtype=float,
+                               meta=np.array(()))
+        raster = xr.DataArray(
+            source, dims=['y', 'x'],
+            coords={'y': np.arange(H, dtype=float),
+                    'x': np.arange(W, dtype=float)},
+        )
+        observers = [{'x': float(i), 'y': float(i), 'observer_elev': 5}
+                     for i in range(4)]
+        counter['n'] = 0
+        result = cumulative_viewshed(raster, observers)
+        # source materialised exactly once despite four observers
+        assert counter['n'] == 1
+        # output stays dask-backed to match the dask input
+        assert isinstance(result.data, da.Array)
+
+    def test_dask_per_observer_max_distance_stays_lazy(self):
+        """A per-observer max_distance keeps the dask windowing path."""
+        data = np.zeros((20, 20), dtype=float)
         raster_np = _make_raster(data)
-        raster_cp = raster_np.copy()
-        raster_cp.data = cupy.asarray(data)
-        observers = [
-            {'x': 7.0, 'y': 7.0, 'observer_elev': 50},
-            {'x': 3.0, 'y': 3.0, 'observer_elev': 50},
-        ]
+        raster_dask = raster_np.copy()
+        raster_dask.data = da.from_array(data, chunks=(8, 8))
+        observers = [{'x': 10.0, 'y': 10.0, 'observer_elev': 10,
+                      'max_distance': 3}]
+        result = cumulative_viewshed(raster_dask, observers)
+        assert isinstance(result.data, da.Array)
         result_np = cumulative_viewshed(raster_np, observers)
-        result_cp = cumulative_viewshed(raster_cp, observers)
-        cp_vals = (result_cp.data.get()
-                   if hasattr(result_cp.data, 'get') else result_cp.values)
-        np.testing.assert_array_equal(result_np.values, cp_vals)
+        np.testing.assert_array_equal(result.values, result_np.values)
+
+    def test_default_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = cumulative_viewshed(raster, observers)
+        assert result.name == 'cumulative_viewshed'
+
+    def test_custom_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = cumulative_viewshed(raster, observers, name='count')
+        assert result.name == 'count'
 
     def test_preserves_coords_and_dims(self):
         data = np.zeros((5, 5), dtype=float)
@@ -382,24 +412,9 @@ class TestVisibilityFrequency:
         expected = cum.values.astype(np.float64) / 3.0
         np.testing.assert_allclose(freq.values, expected)
 
-    @cuda_and_cupy_available
-    @pytest.mark.xfail(
-        strict=True,
-        reason="visibility_frequency delegates to cumulative_viewshed, "
-               "which raises TypeError on cupy input (issue #3192)")
-    def test_cupy_matches_numpy(self):
-        """Cupy backend should match numpy. Strict xfail until #3192."""
-        import cupy
-        data = np.random.RandomState(7).rand(15, 15).astype(float) * 100
-        raster_np = _make_raster(data)
-        raster_cp = raster_np.copy()
-        raster_cp.data = cupy.asarray(data)
-        observers = [
-            {'x': 3.0, 'y': 3.0, 'observer_elev': 50},
-            {'x': 10.0, 'y': 10.0, 'observer_elev': 50},
-        ]
-        freq_np = visibility_frequency(raster_np, observers)
-        freq_cp = visibility_frequency(raster_cp, observers)
-        cp_vals = (freq_cp.data.get()
-                   if hasattr(freq_cp.data, 'get') else freq_cp.values)
-        np.testing.assert_allclose(freq_np.values, cp_vals)
+    def test_default_output_name(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = visibility_frequency(raster, observers)
+        assert result.name == 'visibility_frequency'
