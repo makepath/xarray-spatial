@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-
 # Random consistency index (Saaty) for matrices of size 1..15
 _RI = [0.0, 0.0, 0.58, 0.90, 1.12, 1.24, 1.32, 1.41, 1.45, 1.49,
        1.51, 1.48, 1.56, 1.57, 1.59]
@@ -59,8 +58,15 @@ def ahp_weights(
     Raises
     ------
     ValueError
-        If criteria list has fewer than 2 items or comparisons are
-        incomplete.
+        If the criteria list has fewer than 2 items or contains
+        duplicates, or if a comparison is invalid (unknown criterion,
+        self-comparison, or a non-positive or non-finite value).
+
+    Warns
+    -----
+    UserWarning
+        If fewer than ``n * (n - 1) / 2`` pairwise comparisons are
+        provided. Missing pairs default to 1 (equal importance).
     """
     n = len(criteria)
     if n < 2:
