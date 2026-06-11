@@ -275,15 +275,19 @@ def _piecewise(data, *, breakpoints, values):
         vl_t = xp_b.asarray(vl)
 
         def _interp_block(block):
-            return xp_b.interp(block, bp_t, vl_t)
+            # cupy.interp requires C-contiguous input and dask chunks
+            # can be non-contiguous views (no-op for contiguous numpy).
+            return xp_b.interp(xp_b.ascontiguousarray(block), bp_t, vl_t)
 
         result = da.map_blocks(_interp_block, data, dtype=np.float64)
         result = da.where(da.isfinite(data), result, np.nan)
         return result
 
-    # cupy.interp rejects numpy operands, so move the lookup tables to
-    # the data's array module first (a no-op copy for numpy).
-    result = xp.interp(data, xp.asarray(bp), xp.asarray(vl))
+    # cupy.interp rejects numpy operands and non-contiguous input, so
+    # move the lookup tables to the data's array module and force
+    # C-contiguity first (both no-ops for contiguous numpy).
+    result = xp.interp(
+        xp.ascontiguousarray(data), xp.asarray(bp), xp.asarray(vl))
     result = xp.where(xp.isfinite(data), result, xp.nan)
     return result
 
