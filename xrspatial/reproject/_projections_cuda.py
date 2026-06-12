@@ -584,8 +584,10 @@ else:
             else:
                 lam = math.atan2(x_a, -y_a)
         else:
-            xn = x / (a * xmf)
-            yn = y / (a * ymf)
+            # Keep the rq factor in rho: sce below divides by rq exactly
+            # once (mirrors the CPU kernel fix for GH #3274).
+            xn = x / (a * xmf) * rq   # = x / (a * dd)
+            yn = y / (a * ymf) * rq   # = y * dd / a
             rho = math.hypot(xn, yn)
             if rho < 1e-30:
                 return math.degrees(lon0), math.degrees(math.asin(sinb1))
