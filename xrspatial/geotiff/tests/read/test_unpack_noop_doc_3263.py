@@ -34,10 +34,15 @@ def _write(path, *, nodata=None):
 def test_unpack_doc_does_not_claim_noop_3263():
     """The docstring no longer calls the scale/offset-free case a no-op."""
     doc = open_geotiff.__doc__
-    assert "is a no-op" not in doc
+    # Scope to the ``unpack`` paragraph so an unrelated parameter
+    # documenting a legitimate no-op case cannot fail this pin.
+    start = doc.index("unpack : bool")
+    end = doc.index("mask_and_scale : bool", start)
+    unpack_doc = doc[start:end]
+    assert "is a no-op" not in unpack_doc
     # The corrected wording names what actually happens.
-    assert "skips the scaling step" in doc
-    assert "sentinel-to-NaN mask still runs" in doc
+    assert "skips the scaling step" in unpack_doc
+    assert "sentinel-to-NaN mask still runs" in unpack_doc
 
 
 def test_unpack_sentinel_only_source_masks_and_promotes_3263(tmp_path):
