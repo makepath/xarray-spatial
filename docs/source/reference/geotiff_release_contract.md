@@ -94,6 +94,7 @@ category. The `Key` column matches the runtime key.
 | `reader.allow_unparseable_crs` | experimental | Opt-in escape hatch for CRS strings pyproj cannot parse. |
 | `reader.gpu` | experimental | GPU read path; no cross-backend numerical parity claim. |
 | `reader.unpack` | experimental | `unpack=True` scale/offset decode on `open_geotiff` (CF-packed integers to float, nodata sentinel to NaN). Experimental because the GPU / dask+GPU branches gained round-trip coverage only recently (#3112 pack crash fix, #3114); no behavioural promise yet. |
+| `reader.coregister` | experimental | `coregister=True` on the `.xrs.open_geotiff` accessor: unpack-and-reproject read resampled onto the caller's exact grid. CPU only (numpy and dask+numpy); raises with `gpu=True` or `.vrt` sources. Forces `unpack=True`. Cells outside the file footprint come back NaN; a `UserWarning` fires when the file covers less than 10% of the caller grid (#3247). See the "Coregistered reads" section in the {ref}`GeoTIFF reference <reference.geotiff>` for the full caveat list. |
 
 ### Writers
 

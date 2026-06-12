@@ -337,6 +337,15 @@ SUPPORTED_FEATURES = {
     # branches gained round-trip coverage only recently (#3112 pack
     # crash fix, #3114 coverage), so no behavioural promise is made yet.
     'reader.unpack': 'experimental',
+    # ``coregister=True`` on the ``.xrs.open_geotiff`` accessor: an
+    # unpack-and-reproject read that resamples the file onto the
+    # caller's exact grid. Sits at ``experimental``: CPU-only (raises
+    # with ``gpu=True`` / ``.vrt`` sources), forces ``unpack=True``,
+    # and the surface (resampling heuristic, NaN fill outside the file
+    # footprint) can shift without a deprecation window. See the
+    # "Coregistered reads" section in
+    # ``docs/source/reference/geotiff.rst``.
+    'reader.coregister': 'experimental',
     # Write paths.
     'writer.local_file': 'stable',
     # ``writer.cog`` is ``stable``: the CPU writer emits a
