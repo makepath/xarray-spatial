@@ -8,14 +8,17 @@ longer has: re-reading the packed file raised ``MixedBandMetadataError``, and
 per-band entries as dataset-level values carrying the (scale, offset) pair
 that was actually applied.
 
-``mask_and_scale`` is a CPU eager + dask read feature, so the round-trip is
-exercised on numpy and dask.
+``unpack=True`` reads run on all four backends (gpu / dask+gpu since #3075)
+and ``pack=True`` accepts cupy input since #3240, so the round-trip is
+exercised on numpy, dask, gpu, and dask+gpu (#3266).
 """
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
+
+from .._helpers.markers import requires_gpu
 
 
 def _write_two_band_tiff(path, *, gdal_metadata, nodata=65535):
@@ -164,3 +167,49 @@ def test_pack_dataset_level_metadata_kept_verbatim(tmp_path):
     packed = _pack(decoded)
     assert packed.attrs.get("gdal_metadata") == decoded.attrs["gdal_metadata"]
     assert packed.attrs.get("gdal_metadata_xml") == xml_before
+
+
+# ---------------------------------------------------------------------------
+# GPU legs: ``pack=True`` accepts cupy / dask+cupy input since #3240, so the
+# per-band SCALE rewrite must hold there too (#3266).
+# ---------------------------------------------------------------------------
+
+
+def _to_host(data):
+    """Materialise a possibly dask- and/or cupy-backed buffer as numpy."""
+    if hasattr(data, "compute"):
+        data = data.compute()
+    if hasattr(data, "get"):
+        data = data.get()
+    return np.asarray(data)
+
+
+@requires_gpu
+@pytest.mark.parametrize("chunks", [None, 2], ids=["gpu", "dask-gpu"])
+def test_pack_band_subset_round_trips_per_band_scale_gpu(tmp_path, chunks):
+    """A ``gpu=True`` band-subset unpack read packs back with the per-band
+    SCALE rewritten dataset-level, matching the CPU legs."""
+    src, data = _write_two_band_tiff(
+        tmp_path / "src_two_band_gpu_3266.tif",
+        gdal_metadata={("SCALE", 0): "0.1", ("SCALE", 1): "0.2"},
+    )
+
+    decoded = _open(src, chunks, band=1, unpack=True, gpu=True)
+    np.testing.assert_allclose(
+        _to_host(decoded.data), data[:, :, 1].astype(np.float64) * 0.2)
+
+    out = str(tmp_path / f"packed_subset_gpu_3266_{chunks}.tif")
+    to_geotiff(decoded, out, pack=True)
+
+    # The raw integers round-trip exactly.
+    raw = open_geotiff(out)
+    assert str(raw.dtype) == "uint16"
+    np.testing.assert_array_equal(np.asarray(raw.data), data[:, :, 1])
+
+    # Re-reading with unpack=True applies the rewritten dataset-level
+    # SCALE (0.2), not the source's stale band-0 entry.
+    back = open_geotiff(out, unpack=True)
+    np.testing.assert_allclose(
+        np.asarray(back.data), _to_host(decoded.data), equal_nan=True)
+    md = back.attrs.get("gdal_metadata") or {}
+    assert not any(isinstance(k, tuple) for k in md)
