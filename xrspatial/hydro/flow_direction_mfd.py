@@ -317,6 +317,8 @@ def _run_dask_numpy(data: da.Array,
             result = _cpu(chunk, cellsize_x, cellsize_y, p_fixed)
             return result[k]
 
+        # Suffix the band index so the 8 per-band layers in one call
+        # cannot share a graph key.
         band = data.map_overlap(_band_k,
                                 depth=(1, 1),
                                 boundary=bnd,
@@ -370,6 +372,8 @@ def _run_dask_cupy(data: da.Array,
             result = _run_cupy(chunk, cellsize_x, cellsize_y, p_fixed)
             return result[k]
 
+        # Suffix the band index so the 8 per-band layers in one call
+        # cannot share a graph key.
         band = data.map_overlap(_band_k,
                                 depth=(1, 1),
                                 boundary=bnd,

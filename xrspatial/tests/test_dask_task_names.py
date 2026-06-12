@@ -8,9 +8,11 @@ import xarray as xr
 from xrspatial import (
     aspect,
     bilateral,
+    curvature,
     flow_direction_mfd,
     flow_length_mfd,
     generate_terrain,
+    hillshade,
     preview,
     slope,
     surface_allocation,
@@ -46,6 +48,27 @@ def test_slope_task_name(elevation_dask):
 def test_aspect_task_name(elevation_dask):
     result = aspect(elevation_dask)
     assert 'xrspatial.aspect' in graph_key_prefixes(result)
+
+
+def test_hillshade_task_name(elevation_dask):
+    result = hillshade(elevation_dask)
+    assert 'xrspatial.hillshade' in graph_key_prefixes(result)
+
+
+def test_curvature_task_name(elevation_dask):
+    result = curvature(elevation_dask)
+    assert 'xrspatial.curvature' in graph_key_prefixes(result)
+
+
+def test_task_names_with_ragged_chunks():
+    """Naming holds for chunk grids that do not divide the raster evenly."""
+    data = np.linspace(0, 100, 144, dtype=np.float64).reshape(12, 12)
+    ragged = create_test_raster(data, backend='dask+numpy', chunks=(5, 7))
+    result = slope(ragged)
+    assert 'xrspatial.slope' in graph_key_prefixes(result)
+    expected = slope(ragged.compute())
+    np.testing.assert_allclose(
+        result.compute().data, expected.data, rtol=1e-5, equal_nan=True)
 
 
 def test_convolve_2d_task_name(elevation_dask):

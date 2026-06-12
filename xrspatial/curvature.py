@@ -64,7 +64,8 @@ def _run_dask_numpy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array(()),
+                           name='xrspatial.curvature')
     return out
 
 
@@ -117,7 +118,8 @@ def _run_dask_cupy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array(()),
+                           name='xrspatial.curvature')
     return out
 
 

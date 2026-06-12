@@ -87,7 +87,8 @@ def _run_dask_numpy(data, azimuth, angle_altitude,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array(()),
+                           name='xrspatial.hillshade')
     return out
 
 
@@ -140,7 +141,8 @@ def _run_dask_cupy(data, azimuth, angle_altitude,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array(()),
+                           name='xrspatial.hillshade')
     return out
 
 
