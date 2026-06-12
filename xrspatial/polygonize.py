@@ -1202,6 +1202,8 @@ def _calculate_regions_cupy(data, mask_data, connectivity_8):
     unique_vals = data[valid] if valid is not None else data.ravel()
     unique_vals = cp.unique(unique_vals)
 
+    max_region = int(np.iinfo(_regions_dtype).max)
+
     uid = 1
     for v in unique_vals:
         bin_mask = (data == v)
@@ -1210,6 +1212,16 @@ def _calculate_regions_cupy(data, mask_data, connectivity_8):
         labeled, n_features = cp_label(bin_mask, structure=structure)
         if n_features == 0:
             continue
+        # Guard against uint32 region-ID exhaustion, mirroring the CPU
+        # _calculate_regions check.  Without it the uint32 addition below
+        # wraps modulo 2**32: the first wrapped ID is 0 (the masked-out
+        # sentinel) and later ones collide with real low region IDs, so
+        # polygons silently vanish or merge instead of erroring.
+        if uid - 1 + int(n_features) > max_region:
+            raise RuntimeError(
+                "polygonize generates too many polygons, "
+                "split your raster into smaller chunks."
+            )
         # Vectorized assignment: offset labeled region IDs by (uid - 1) so
         # label 1 → uid, label 2 → uid+1, etc.  Single kernel, no Python loop.
         where = labeled > 0
