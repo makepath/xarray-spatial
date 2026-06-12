@@ -7653,3 +7653,20 @@ class TestMergeIntegerDtype:
         result = merge([gpu_a, gpu_b])
         assert isinstance(result.data, cp.ndarray)
         assert result.dtype == np.int16
+
+    @pytest.mark.skipif(not (HAS_DASK and HAS_CUPY),
+                        reason="dask and cupy/CUDA required")
+    def test_merge_dask_cupy_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+
+        def gpu_lazy_tile(x0):
+            d = cp.asarray(np.arange(64, dtype=np.int16).reshape(8, 8))
+            return self._tile_3262(x0).copy(
+                data=da.from_array(d, chunks=(4, 4)),
+            )
+
+        result = merge([gpu_lazy_tile(-5), gpu_lazy_tile(5)])
+        assert result.data.dtype == np.int16
+        computed = result.data.compute()
+        assert isinstance(computed, cp.ndarray)
+        assert computed.dtype == np.int16
