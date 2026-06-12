@@ -2628,8 +2628,9 @@ def polygonize(
         Optional affine transform to apply to return polygon coordinates.
 
     column_name: str, default="DN"
-        Name to use for column returned.  Only used if return_type is
-        "geopandas" or "spatialpandas".
+        Name to use for the values column.  Used if return_type is
+        "geopandas" or "spatialpandas" (column name) or "geojson"
+        (property key on each feature).
 
     return_type: str, default="numpy"
         Format of returned data.  Allowed values are "numpy", "spatialpandas",

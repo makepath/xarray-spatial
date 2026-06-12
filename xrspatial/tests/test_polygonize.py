@@ -234,6 +234,17 @@ def test_polygonize_geojson(raster_3x3, connectivity):
             assert ring[0] == ring[-1]
 
 
+@pytest.mark.parametrize("dtype", [np.int32])
+def test_polygonize_geojson_column_name(raster_3x3):
+    # column_name is the property key on each geojson feature (#3306).
+    raster = xr.DataArray(raster_3x3)
+    fc = polygonize(raster, return_type="geojson", column_name="myval")
+    for f in fc["features"]:
+        assert list(f["properties"].keys()) == ["myval"]
+    values = [f["properties"]["myval"] for f in fc["features"]]
+    assert_allclose(values, [0, 1, 4])
+
+
 @pytest.mark.parametrize("transform", [
     (1, 0, 0, 0, 1, 0),
     (1.2, -0.3, 0.2, 1.4, 0.7, 0.1)])
