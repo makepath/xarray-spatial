@@ -110,6 +110,10 @@ class TestSphereCrsesBailToPyproj:
         lons = np.array([-100.0, -90.0])
         lats = np.array([30.0, 40.0])
         assert transform_points(geo, crs, lons, lats) is None
+        # Sphere as the source goes through the other dispatch branch.
+        assert transform_points(
+            crs, geo, np.array([0.0]), np.array([0.0])
+        ) is None
 
     def test_sphere_cea_no_fast_path(self):
         from xrspatial.reproject._projections import transform_points
