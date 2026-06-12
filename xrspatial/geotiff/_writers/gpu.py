@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
     import cupy
 
-from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _extract_rich_tags,
-                      _resolve_nodata_attr, _should_restore_nan_sentinel)
+from .._attrs import (_EXPERIMENTAL_CODECS, _LEVEL_RANGES, _extract_rich_tags, _resolve_nodata_attr,
+                      _should_restore_nan_sentinel)
 from .._coords import _BAND_DIM_NAMES, _has_no_georef_marker
 from .._coords import require_transform_for_georeferenced as _require_transform_for_georeferenced
 from .._coords import resolve_georef as _resolve_georef
