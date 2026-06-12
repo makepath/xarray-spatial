@@ -175,7 +175,11 @@ class TestIDW:
 
     @cuda_and_cupy_available
     def test_cupy_fill_value_zero_weight(self):
-        """Zero-total-weight pixels get fill_value on the cupy backend."""
+        """Zero-total-weight pixels get fill_value on the cupy backend.
+
+        Also covers dask+cupy transitively: _idw_dask_cupy delegates
+        each chunk to _idw_cupy, so this is the same code path.
+        """
         template = _make_template([0.0], [0.0], backend='cupy')
         result = idw([1e200], [0.0], [7.0], template,
                      power=4.0, fill_value=-999.0)
@@ -853,8 +857,13 @@ class TestValidation:
     @pytest.mark.parametrize('func', [idw, spline, kriging],
                              ids=['idw', 'spline', 'kriging'])
     def test_nondefault_dim_names_propagate(self, func):
-        """Templates with lat/lon dims keep those dims in the output."""
-        x, y, z = _grid_points()
+        """Templates with lat/lon dims keep those dims in the output.
+
+        Uses the spread-out kriging point set rather than _grid_points
+        so the kriging case fills enough variogram lag bins to avoid
+        the fewer-than-3-bins UserWarning.
+        """
+        x, y, z = TestKriging._spatial_data()
         data = np.zeros((2, 2))
         template = xr.DataArray(data, dims=['lat', 'lon'])
         template['lat'] = np.array([0.5, 1.5])
