@@ -198,6 +198,74 @@ class TestIDW:
         np.testing.assert_allclose(
             np_result.values, _to_numpy(dc_result), rtol=1e-10)
 
+    @dask_array_available
+    def test_dask_knearest_builds_tree_once(self, monkeypatch):
+        """The dask k-nearest path builds the cKDTree once, not per chunk.
+
+        The tree depends only on the input points, so the number of
+        constructions must not scale with chunk count (issue #3298).
+        """
+        import scipy.spatial
+
+        orig_tree = scipy.spatial.cKDTree
+        constructions = {'n': 0}
+
+        class CountingTree(orig_tree):
+            def __init__(self, *args, **kwargs):
+                constructions['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(scipy.spatial, 'cKDTree', CountingTree)
+
+        x, y, z = _grid_points()
+        da_template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0],
+                                     backend='dask', chunks=(2, 2))
+        result = idw(x, y, z, da_template, k=3)
+        assert result.data.npartitions == 4
+        result.data.compute(scheduler='synchronous')
+
+        assert constructions['n'] == 1
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_uploads_points_once(self, monkeypatch):
+        """The dask+cupy path uploads the point arrays once.
+
+        The x/y/z arrays are the same for every chunk, so the number of
+        host-to-device transfers of them must not scale with chunk
+        count (issue #3298).
+        """
+        import cupy
+
+        from xrspatial.interpolate import _idw as idw_mod
+
+        n_points = 7
+        rng = np.random.RandomState(0)
+        x = rng.uniform(0, 2, n_points)
+        y = rng.uniform(0, 2, n_points)
+        z = rng.uniform(0, 2, n_points)
+
+        coords = np.linspace(0.0, 2.0, 8)
+
+        orig_asarray = cupy.asarray
+        uploads = {'n': 0}
+
+        def counting_asarray(a, *args, **kwargs):
+            if isinstance(a, np.ndarray) and a.size == n_points:
+                uploads['n'] += 1
+            return orig_asarray(a, *args, **kwargs)
+
+        monkeypatch.setattr(idw_mod.cupy, 'asarray', counting_asarray)
+
+        template = _make_template(coords, coords,
+                                  backend='dask_cupy', chunks=(2, 2))
+        result = idw(x, y, z, template)
+        result.data.compute()
+
+        # x_pts, y_pts and z_pts -> exactly three uploads, regardless
+        # of how many chunks the grid was split into.
+        assert uploads['n'] == 3
+
     @cuda_and_cupy_available
     @dask_array_available
     def test_dask_cupy_knearest_rejected(self):
@@ -620,6 +688,91 @@ class TestKriging:
             np_pred.values, _to_numpy(dc_pred), rtol=1e-10)
         np.testing.assert_allclose(
             np_var.values, _to_numpy(dc_var), atol=1e-12)
+
+    def test_prediction_same_with_and_without_variance(self):
+        """The no-variance fast path agrees with the weight-based path.
+
+        With return_variance=False the prediction comes from the dual
+        form k0 @ (K_inv @ z_aug) instead of the full weight matrix
+        (issue #3298); both must give the same surface up to round-off.
+        """
+        x, y, z = self._spatial_data()
+        template = _make_template(
+            [0.0, 2.0, 4.0], [0.0, 1.0, 2.0, 3.0, 4.0])
+        pred_only = kriging(x, y, z, template)
+        pred_with_var, _ = kriging(x, y, z, template,
+                                   return_variance=True)
+        np.testing.assert_allclose(
+            pred_only.values, pred_with_var.values,
+            rtol=1e-8, atol=1e-10)
+
+    @dask_array_available
+    def test_dask_variance_computed_in_one_pass(self, monkeypatch):
+        """Prediction and variance share one per-chunk pipeline on dask.
+
+        return_variance=True used to build two independent map_blocks
+        graphs, running the full prediction per chunk twice (issue
+        #3298).  Computing both outputs together must invoke
+        _kriging_predict exactly once per chunk.
+        """
+        import dask
+
+        from xrspatial.interpolate import _kriging as kr_mod
+
+        calls = {'n': 0}
+        orig_predict = kr_mod._kriging_predict
+
+        def counting_predict(*args, **kwargs):
+            calls['n'] += 1
+            return orig_predict(*args, **kwargs)
+
+        monkeypatch.setattr(kr_mod, '_kriging_predict', counting_predict)
+
+        x, y, z = self._spatial_data()
+        da_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='dask', chunks=(2, 2))
+        pred, var = kriging(x, y, z, da_template, return_variance=True)
+        n_chunks = pred.data.npartitions
+        assert n_chunks == 4
+        dask.compute(pred.data, var.data, scheduler='synchronous')
+
+        assert calls['n'] == n_chunks
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_uploads_invariants_once(self, monkeypatch):
+        """The dask+cupy path uploads x/y/z and K_inv once.
+
+        These arrays are the same for every chunk; K_inv in particular
+        is (N+1) x (N+1), so re-uploading it per chunk scales transfer
+        volume with N^2 times the chunk count (issue #3298).
+        """
+        import cupy
+
+        from xrspatial.interpolate import _kriging as kr_mod
+
+        x, y, z = self._spatial_data()
+        n = len(x)
+        invariant_sizes = (n, (n + 1) * (n + 1))  # x/y/z and K_inv
+
+        orig_asarray = cupy.asarray
+        uploads = {'n': 0}
+
+        def counting_asarray(a, *args, **kwargs):
+            if isinstance(a, np.ndarray) and a.size in invariant_sizes:
+                uploads['n'] += 1
+            return orig_asarray(a, *args, **kwargs)
+
+        monkeypatch.setattr(kr_mod.cupy, 'asarray', counting_asarray)
+
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='dask_cupy', chunks=(2, 2))
+        result = kriging(x, y, z, template)
+        result.data.compute()
+
+        # x_pts, y_pts, z_pts and K_inv -> exactly four uploads,
+        # regardless of how many chunks the grid was split into.
+        assert uploads['n'] == 4
 
     @dask_array_available
     def test_dask_return_variance_matches_numpy(self):
