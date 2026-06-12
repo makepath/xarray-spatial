@@ -1083,6 +1083,324 @@ def _burn_lines_supercover_cpu(out, written, x0_arr, y0_arr, x1_arr, y1_arr,
 
 
 # ---------------------------------------------------------------------------
+# Per-geometry write deduplication for merge='sum' / merge='count'
+#
+# Those two merges are the only built-ins where burning the same pixel
+# twice for the same geometry changes the result (min/max are
+# idempotent, first/last gate repeats through the per-pixel owner
+# index).  Two code paths used to do exactly that (issue #3304):
+#
+#   * all_touched=True polygons: the scanline fill burns every cell
+#     whose center is inside, then the supercover boundary pass burns
+#     every cell the rings cross -- including the ones scanline just
+#     burned -- and consecutive ring segments re-burn their shared
+#     vertex cell.
+#   * lines: each Bresenham segment burns both endpoints, so the
+#     connecting vertex of consecutive segments is burned once per
+#     segment.
+#
+# For sum/count the line / boundary cells are therefore enumerated
+# host-side (the segment extraction is host-side already), deduplicated
+# per (geometry, row, col), filtered against the geometry's own
+# scanline coverage, and burned through the point kernels, which write
+# each surviving cell exactly once per geometry on every backend.
+# GDAL behaves the same way: rasterio's MergeAlg.add yields 1 per
+# geometry per pixel, even for self-crossing lines.  Points are left
+# alone -- GDAL burns once per point, so a MultiPoint with duplicated
+# coordinates adding twice already matches.
+#
+# Memory tradeoff: line cells are materialized as O(pixels traversed)
+# int32 arrays instead of O(vertices) segment endpoints.  That is the
+# same order as the work the burn kernel does anyway, but it is
+# allocated up front (per tile on the dask backends), so very long
+# lines on very large eager rasters cost a few extra bytes per
+# traversed pixel while the burn runs.
+# ---------------------------------------------------------------------------
+
+@ngjit
+def _bresenham_cells(r0_arr, c0_arr, r1_arr, c1_arr, geom_idx,
+                     height, width):
+    """Enumerate the in-bounds cells each Bresenham segment visits.
+
+    Walks the exact same path as :func:`_burn_lines_cpu` (and the GPU
+    twin) so the covered cell set is identical; only the write is
+    replaced by collection.  Returns (rows, cols, gids) int32 arrays
+    with one entry per visited in-bounds cell (duplicates included --
+    the caller dedups).
+    """
+    n = len(r0_arr)
+    total = 0
+    for i in range(n):
+        dr = r1_arr[i] - r0_arr[i]
+        if dr < 0:
+            dr = -dr
+        dc = c1_arr[i] - c0_arr[i]
+        if dc < 0:
+            dc = -dc
+        total += (dr if dr >= dc else dc) + 1
+
+    rows = np.empty(total, np.int32)
+    cols = np.empty(total, np.int32)
+    gids = np.empty(total, np.int32)
+    m = 0
+    for i in range(n):
+        r0 = r0_arr[i]
+        c0 = c0_arr[i]
+        r1 = r1_arr[i]
+        c1 = c1_arr[i]
+        gi = geom_idx[i]
+
+        dr = r1 - r0
+        dc = c1 - c0
+        sr = 1 if dr >= 0 else -1
+        sc = 1 if dc >= 0 else -1
+        dr = dr * sr
+        dc = dc * sc
+
+        if dr >= dc:
+            err = dc - dr
+            r, c = r0, c0
+            for _ in range(dr + 1):
+                if 0 <= r < height and 0 <= c < width:
+                    rows[m] = r
+                    cols[m] = c
+                    gids[m] = gi
+                    m += 1
+                if err >= 0:
+                    c += sc
+                    err -= dr
+                r += sr
+                err += dc
+        else:
+            err = dr - dc
+            r, c = r0, c0
+            for _ in range(dc + 1):
+                if 0 <= r < height and 0 <= c < width:
+                    rows[m] = r
+                    cols[m] = c
+                    gids[m] = gi
+                    m += 1
+                if err >= 0:
+                    r += sr
+                    err -= dc
+                c += sc
+                err += dr
+    return rows[:m].copy(), cols[:m].copy(), gids[:m].copy()
+
+
+@ngjit
+def _supercover_cells(x0_arr, y0_arr, x1_arr, y1_arr, geom_idx,
+                      height, width):
+    """Enumerate the in-bounds cells each supercover segment visits.
+
+    Same Amanatides & Woo walk as :func:`_burn_lines_supercover_cpu`
+    (including the diagonal corner tick), collecting instead of
+    writing.  Returns (rows, cols, gids) int32 arrays; duplicates are
+    the caller's problem.
+    """
+    n = len(x0_arr)
+    total = 0
+    for i in range(n):
+        cx = int(np.floor(x0_arr[i]))
+        cy = int(np.floor(y0_arr[i]))
+        ex = int(np.floor(x1_arr[i]))
+        ey = int(np.floor(y1_arr[i]))
+        total += abs(ex - cx) + abs(ey - cy) + 2
+
+    rows = np.empty(total, np.int32)
+    cols = np.empty(total, np.int32)
+    gids = np.empty(total, np.int32)
+    m = 0
+    for i in range(n):
+        x0 = x0_arr[i]
+        y0 = y0_arr[i]
+        x1 = x1_arr[i]
+        y1 = y1_arr[i]
+        gi = geom_idx[i]
+
+        cx = int(np.floor(x0))
+        cy = int(np.floor(y0))
+        end_cx = int(np.floor(x1))
+        end_cy = int(np.floor(y1))
+
+        dx = x1 - x0
+        dy = y1 - y0
+
+        if dx > 0.0:
+            step_x = 1
+        elif dx < 0.0:
+            step_x = -1
+        else:
+            step_x = 0
+
+        if dy > 0.0:
+            step_y = 1
+        elif dy < 0.0:
+            step_y = -1
+        else:
+            step_y = 0
+
+        if dx != 0.0:
+            t_delta_x = 1.0 / (dx if dx > 0.0 else -dx)
+        else:
+            t_delta_x = np.inf
+
+        if dy != 0.0:
+            t_delta_y = 1.0 / (dy if dy > 0.0 else -dy)
+        else:
+            t_delta_y = np.inf
+
+        if dx > 0.0:
+            t_max_x = (float(cx + 1) - x0) / dx
+        elif dx < 0.0:
+            t_max_x = (float(cx) - x0) / dx
+        else:
+            t_max_x = np.inf
+
+        if dy > 0.0:
+            t_max_y = (float(cy + 1) - y0) / dy
+        elif dy < 0.0:
+            t_max_y = (float(cy) - y0) / dy
+        else:
+            t_max_y = np.inf
+
+        max_steps = abs(end_cx - cx) + abs(end_cy - cy) + 2
+        for _ in range(max_steps):
+            if 0 <= cy < height and 0 <= cx < width:
+                rows[m] = cy
+                cols[m] = cx
+                gids[m] = gi
+                m += 1
+            if cx == end_cx and cy == end_cy:
+                break
+            if t_max_x < t_max_y:
+                t_max_x += t_delta_x
+                cx += step_x
+            elif t_max_y < t_max_x:
+                t_max_y += t_delta_y
+                cy += step_y
+            else:
+                t_max_x += t_delta_x
+                t_max_y += t_delta_y
+                cx += step_x
+                cy += step_y
+    return rows[:m].copy(), cols[:m].copy(), gids[:m].copy()
+
+
+def _dedup_cells(rows, cols, gids, height, width):
+    """Drop duplicate (gid, row, col) triplets.
+
+    Packs the triplet into a single int64 key (all components are
+    non-negative and bounded by the raster dimensions / geometry
+    count), uniques it, and unpacks.  Output order is irrelevant to
+    the commutative merges this feeds.
+
+    The key only overflows when n_geometries * height * width exceeds
+    2**63, by which point the cell arrays being deduplicated could not
+    have been allocated in the first place.
+    """
+    if len(rows) == 0:
+        return rows, cols, gids
+    h = np.int64(height)
+    w = np.int64(width)
+    key = (gids.astype(np.int64) * h + rows) * w + cols
+    uniq = np.unique(key)
+    hw = h * w
+    g = (uniq // hw).astype(np.int32)
+    rem = uniq % hw
+    r = (rem // w).astype(np.int32)
+    c = (rem % w).astype(np.int32)
+    return r, c, g
+
+
+@ngjit
+def _cells_not_scanline_covered(rows, cols, gids, e_y_min, e_y_max,
+                                e_x_at_ymin, e_inv_slope, gid_starts):
+    """Boolean keep-mask: True where the cell is NOT burned by its own
+    geometry's scanline fill.
+
+    Replays the scanline arithmetic for the cell's row: an edge of the
+    same geometry covers column ``c`` when ``ceil(x_at_row) <= c``, and
+    the fill burns ``c`` exactly when an odd number of the geometry's
+    active edges do (the span pairs in :func:`_scanline_fill_cpu` are
+    consecutive sorted intersections, so [ceil(x_k), ceil(x_{k+1})-1]
+    membership and crossing parity agree).  Using the same float
+    expression and the same ceil keeps the test bit-identical to what
+    the fill actually burned.
+
+    Edge arrays must be pre-sorted by geometry id; ``gid_starts`` maps
+    gid -> [start, end) slice of the sorted arrays.
+    """
+    n = len(rows)
+    keep = np.ones(n, np.bool_)
+    for i in range(n):
+        g = gids[i]
+        r = rows[i]
+        c = cols[i]
+        cnt = 0
+        for e in range(gid_starts[g], gid_starts[g + 1]):
+            if e_y_min[e] <= r and r <= e_y_max[e]:
+                x = e_x_at_ymin[e] + (r - e_y_min[e]) * e_inv_slope[e]
+                if int(np.ceil(x)) <= c:
+                    cnt += 1
+        if cnt % 2 == 1:
+            keep[i] = False
+    return keep
+
+
+def _boundary_cells_sum_count(poly_geoms, poly_ids, bounds, height, width,
+                              edge_arrays):
+    """all_touched boundary cells for sum/count, deduplicated per geometry.
+
+    Enumerates the supercover cells of every ring segment, drops
+    duplicate (geometry, cell) pairs (shared vertices, ring closure),
+    then drops cells the same geometry's scanline fill already burns.
+    The survivors are exactly the cells all_touched adds on top of the
+    center-inside fill, once per geometry.
+
+    ``edge_arrays`` is the 5-tuple the scanline fill consumes; passing
+    the same arrays keeps the coverage test in the same float
+    arithmetic as the fill itself.
+    """
+    empty = np.empty(0, np.int32)
+    bx0, by0, bx1, by1, bidx = _extract_polygon_boundary_segments_float(
+        poly_geoms, poly_ids, bounds, height, width)
+    if len(bx0) == 0:
+        return empty, empty.copy(), empty.copy()
+
+    rows, cols, gids = _supercover_cells(
+        bx0, by0, bx1, by1, bidx, height, width)
+    rows, cols, gids = _dedup_cells(rows, cols, gids, height, width)
+    if len(rows) == 0:
+        return rows, cols, gids
+
+    edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, \
+        edge_geom_id = edge_arrays
+    if len(edge_y_min) > 0:
+        order = np.argsort(edge_geom_id, kind='stable')
+        sorted_gid = edge_geom_id[order]
+        n_poly = len(poly_geoms)
+        gid_starts = np.searchsorted(
+            sorted_gid, np.arange(n_poly + 1, dtype=sorted_gid.dtype))
+        keep = _cells_not_scanline_covered(
+            rows, cols, gids,
+            edge_y_min[order], edge_y_max[order],
+            edge_x_at_ymin[order], edge_inv_slope[order],
+            gid_starts)
+        rows, cols, gids = rows[keep], cols[keep], gids[keep]
+    return rows, cols, gids
+
+
+def _is_dedup_merge_fn(merge_fn):
+    """True when *merge_fn* is one of the built-in CPU merges that needs
+    per-geometry write deduplication (sum / count).  Identity-based so
+    user callables never match; the built-ins are module-level numba
+    dispatchers, so identity survives pickling into dask workers.
+    """
+    return merge_fn is _merge_sum or merge_fn is _merge_count
+
+
+# ---------------------------------------------------------------------------
 # CPU scanline fill (numba) -- edges must be sorted by y_min
 # ---------------------------------------------------------------------------
 
@@ -1227,23 +1545,46 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
     # 1b. all_touched: draw polygon boundaries with a supercover
     #     grid traversal so every pixel a ring segment crosses is
     #     burned (matches rasterio.features.rasterize all_touched).
+    #     sum/count burn the deduplicated cell list through the point
+    #     kernel instead, so each geometry contributes at most once
+    #     per pixel (issue #3304).
+    dedup = _is_dedup_merge_fn(merge_fn)
     if all_touched and poly_geoms:
-        bx0, by0, bx1, by1, bidx = (
-            _extract_polygon_boundary_segments_float(
-                poly_geoms, poly_ids, bounds, height, width))
-        if len(bx0) > 0:
-            _burn_lines_supercover_cpu(
-                out, written, bx0, by0, bx1, by1, bidx,
-                poly_props, height, width, poly_global,
-                merge_fn, should_write, order)
+        if dedup:
+            brows, bcols, bgids = _boundary_cells_sum_count(
+                poly_geoms, poly_ids, bounds, height, width, edge_arrays)
+            if len(brows) > 0:
+                _burn_points_cpu(out, written, brows, bcols, bgids,
+                                 poly_props, poly_global,
+                                 merge_fn, should_write, order)
+        else:
+            bx0, by0, bx1, by1, bidx = (
+                _extract_polygon_boundary_segments_float(
+                    poly_geoms, poly_ids, bounds, height, width))
+            if len(bx0) > 0:
+                _burn_lines_supercover_cpu(
+                    out, written, bx0, by0, bx1, by1, bidx,
+                    poly_props, height, width, poly_global,
+                    merge_fn, should_write, order)
 
-    # 2. Lines
+    # 2. Lines.  sum/count: enumerate + dedup cells so the connecting
+    #    vertex of consecutive segments is burned once (issue #3304).
     r0, c0, r1, c1, line_idx = _extract_line_segments(
         line_geoms, bounds, height, width)
     if len(r0) > 0:
-        _burn_lines_cpu(out, written, r0, c0, r1, c1, line_idx,
-                        line_props, height, width, line_global,
-                        merge_fn, should_write, order)
+        if dedup:
+            lrows, lcols, lgids = _bresenham_cells(
+                r0, c0, r1, c1, line_idx, height, width)
+            lrows, lcols, lgids = _dedup_cells(
+                lrows, lcols, lgids, height, width)
+            if len(lrows) > 0:
+                _burn_points_cpu(out, written, lrows, lcols, lgids,
+                                 line_props, line_global,
+                                 merge_fn, should_write, order)
+        else:
+            _burn_lines_cpu(out, written, r0, c0, r1, c1, line_idx,
+                            line_props, height, width, line_global,
+                            merge_fn, should_write, order)
 
     # 3. Points
     prows, pcols, pt_idx = _extract_points(
@@ -2099,6 +2440,11 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
     kernels = _ensure_gpu_kernels(merge_fn, should_write, merge_name)
     atomic_mode = kernels['atomic_mode']
     two_pass = atomic_mode in ('first', 'last')
+    # sum/count need per-geometry write dedup (issue #3304); their
+    # boundary / line cells are enumerated host-side and burned through
+    # the point kernel instead of the segment kernels.
+    dedup = atomic_mode in ('sum', 'count')
+    extra_point_launches = []
 
     out, written, order, order_sentinel = _gpu_init_buffers(
         height, width, fill, atomic_mode)
@@ -2154,25 +2500,45 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
     # replacing the older Bresenham boundary burn.
     boundary_launch = None
     if all_touched and poly_geoms:
-        bx0, by0, bx1, by1, bidx = (
-            _extract_polygon_boundary_segments_float(
-                poly_geoms, poly_ids, bounds, height, width))
-        if len(bx0) > 0:
-            boundary_launch = (
-                cupy.asarray(bx0), cupy.asarray(by0),
-                cupy.asarray(bx1), cupy.asarray(by1),
-                cupy.asarray(bidx), poly_props_gpu,
-                poly_global_gpu, len(bx0))
+        if dedup:
+            brows, bcols, bgids = _boundary_cells_sum_count(
+                poly_geoms, poly_ids, bounds, height, width, edge_arrays)
+            if len(brows) > 0:
+                extra_point_launches.append((
+                    cupy.asarray(brows), cupy.asarray(bcols),
+                    cupy.asarray(bgids), poly_props_gpu,
+                    poly_global_gpu, len(brows)))
+        else:
+            bx0, by0, bx1, by1, bidx = (
+                _extract_polygon_boundary_segments_float(
+                    poly_geoms, poly_ids, bounds, height, width))
+            if len(bx0) > 0:
+                boundary_launch = (
+                    cupy.asarray(bx0), cupy.asarray(by0),
+                    cupy.asarray(bx1), cupy.asarray(by1),
+                    cupy.asarray(bidx), poly_props_gpu,
+                    poly_global_gpu, len(bx0))
 
     r0, c0, r1, c1, line_idx = _extract_line_segments(
         line_geoms, bounds, height, width)
     line_launch = None
     if len(r0) > 0:
-        line_launch = (
-            cupy.asarray(r0), cupy.asarray(c0),
-            cupy.asarray(r1), cupy.asarray(c1),
-            cupy.asarray(line_idx), cupy.asarray(line_props),
-            cupy.asarray(line_global), len(r0))
+        if dedup:
+            lrows, lcols, lgids = _bresenham_cells(
+                r0, c0, r1, c1, line_idx, height, width)
+            lrows, lcols, lgids = _dedup_cells(
+                lrows, lcols, lgids, height, width)
+            if len(lrows) > 0:
+                extra_point_launches.append((
+                    cupy.asarray(lrows), cupy.asarray(lcols),
+                    cupy.asarray(lgids), cupy.asarray(line_props),
+                    cupy.asarray(line_global), len(lrows)))
+        else:
+            line_launch = (
+                cupy.asarray(r0), cupy.asarray(c0),
+                cupy.asarray(r1), cupy.asarray(c1),
+                cupy.asarray(line_idx), cupy.asarray(line_props),
+                cupy.asarray(line_global), len(r0))
 
     prows, pcols, pt_idx = _extract_points(
         point_geoms, bounds, height, width)
@@ -2215,6 +2581,14 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
                                point_launch[0], point_launch[1],
                                point_launch[2], point_launch[3],
                                point_launch[4], n_pts)
+        # Deduplicated sum/count line / boundary cells (issue #3304).
+        # Only populated when ``dedup`` is true, which never coincides
+        # with the two-pass first/last modes.
+        for pl in extra_point_launches:
+            n_pts = pl[5]
+            bpg = (n_pts + tpb - 1) // tpb
+            k_points[bpg, tpb](out, written, order,
+                               pl[0], pl[1], pl[2], pl[3], pl[4], n_pts)
 
     # Pass 1: write values (atomics) or, for first/last, resolve the
     # per-pixel winning input index into ``order``.
@@ -2449,6 +2823,8 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
     # preserves identity.  Issue #3107.
     order = _alloc_order(tile_h, tile_w, should_write)
 
+    dedup = _is_dedup_merge_fn(merge_fn)
+
     # 1. Polygons (deserialize WKB, then scanline fill)
     if poly_wkb:
         poly_geoms = _polys_from_wkb(poly_wkb)
@@ -2465,21 +2841,45 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
         # 1b. all_touched: draw polygon boundaries with the
         # supercover grid traversal so the dask path matches the
         # eager numpy path pixel-for-pixel under all_touched=True.
+        # sum/count burn the deduplicated cell list instead, exactly
+        # like the eager path (issue #3304).
         if all_touched:
-            bx0, by0, bx1, by1, bidx = (
-                _extract_polygon_boundary_segments_float(
-                    poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
-            if len(bx0) > 0:
-                _burn_lines_supercover_cpu(
-                    out, written, bx0, by0, bx1, by1, bidx,
-                    poly_props_2d, tile_h, tile_w,
-                    poly_global_2d, merge_fn, should_write, order)
+            if dedup:
+                brows, bcols, bgids = _boundary_cells_sum_count(
+                    poly_geoms, poly_ids, tile_bounds, tile_h, tile_w,
+                    edge_arrays)
+                if len(brows) > 0:
+                    _burn_points_cpu(out, written, brows, bcols, bgids,
+                                     poly_props_2d, poly_global_2d,
+                                     merge_fn, should_write, order)
+            else:
+                bx0, by0, bx1, by1, bidx = (
+                    _extract_polygon_boundary_segments_float(
+                        poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
+                if len(bx0) > 0:
+                    _burn_lines_supercover_cpu(
+                        out, written, bx0, by0, bx1, by1, bidx,
+                        poly_props_2d, tile_h, tile_w,
+                        poly_global_2d, merge_fn, should_write, order)
 
-    # 2. Lines (tile-local segments, Bresenham with bounds check)
+    # 2. Lines (tile-local segments, Bresenham with bounds check).
+    #    sum/count dedup the visited cells first (issue #3304); cells
+    #    partition across tiles, so per-tile dedup equals global dedup.
     if len(seg_r0) > 0:
-        _burn_lines_cpu(out, written, seg_r0, seg_c0, seg_r1, seg_c1,
-                        seg_geom_idx, line_props, tile_h, tile_w,
-                        line_global, merge_fn, should_write, order)
+        if dedup:
+            lrows, lcols, lgids = _bresenham_cells(
+                seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
+                tile_h, tile_w)
+            lrows, lcols, lgids = _dedup_cells(
+                lrows, lcols, lgids, tile_h, tile_w)
+            if len(lrows) > 0:
+                _burn_points_cpu(out, written, lrows, lcols, lgids,
+                                 line_props, line_global,
+                                 merge_fn, should_write, order)
+        else:
+            _burn_lines_cpu(out, written, seg_r0, seg_c0, seg_r1, seg_c1,
+                            seg_geom_idx, line_props, tile_h, tile_w,
+                            line_global, merge_fn, should_write, order)
 
     # 3. Points (tile-local)
     if len(pt_rows) > 0:
@@ -2599,6 +2999,11 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
     kernels = _ensure_gpu_kernels(merge_fn, should_write, merge_name)
     atomic_mode = kernels['atomic_mode']
     two_pass = atomic_mode in ('first', 'last')
+    # Per-geometry write dedup for sum/count (issue #3304), mirroring
+    # _run_cupy: boundary / line cells enumerated host-side, burned via
+    # the point kernel.
+    dedup = atomic_mode in ('sum', 'count')
+    extra_point_launches = []
 
     out, written, order, order_sentinel = _gpu_init_buffers(
         tile_h, tile_w, fill, atomic_mode)
@@ -2643,25 +3048,48 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
 
         # all_touched: stage the supercover boundary burn through
         # ``boundary_launch`` so the two-pass first/last path can fire
-        # both pass-1 and pass-2 kernels.
+        # both pass-1 and pass-2 kernels.  sum/count stage the
+        # deduplicated cell list as a point launch instead (#3304).
         if all_touched:
-            bx0, by0, bx1, by1, bidx = (
-                _extract_polygon_boundary_segments_float(
-                    poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
-            if len(bx0) > 0:
-                boundary_launch = (
-                    cupy.asarray(bx0), cupy.asarray(by0),
-                    cupy.asarray(bx1), cupy.asarray(by1),
-                    cupy.asarray(bidx), poly_props_2d_gpu,
-                    poly_global_2d_gpu, len(bx0))
+            if dedup:
+                brows, bcols, bgids = _boundary_cells_sum_count(
+                    poly_geoms, poly_ids, tile_bounds, tile_h, tile_w,
+                    edge_arrays)
+                if len(brows) > 0:
+                    extra_point_launches.append((
+                        cupy.asarray(brows), cupy.asarray(bcols),
+                        cupy.asarray(bgids), poly_props_2d_gpu,
+                        poly_global_2d_gpu, len(brows)))
+            else:
+                bx0, by0, bx1, by1, bidx = (
+                    _extract_polygon_boundary_segments_float(
+                        poly_geoms, poly_ids, tile_bounds, tile_h, tile_w))
+                if len(bx0) > 0:
+                    boundary_launch = (
+                        cupy.asarray(bx0), cupy.asarray(by0),
+                        cupy.asarray(bx1), cupy.asarray(by1),
+                        cupy.asarray(bidx), poly_props_2d_gpu,
+                        poly_global_2d_gpu, len(bx0))
 
     line_launch = None
     if len(seg_r0) > 0:
-        line_launch = (
-            cupy.asarray(seg_r0), cupy.asarray(seg_c0),
-            cupy.asarray(seg_r1), cupy.asarray(seg_c1),
-            cupy.asarray(seg_geom_idx), _ensure_cupy(line_props),
-            _ensure_cupy(line_global), len(seg_r0))
+        if dedup:
+            lrows, lcols, lgids = _bresenham_cells(
+                seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
+                tile_h, tile_w)
+            lrows, lcols, lgids = _dedup_cells(
+                lrows, lcols, lgids, tile_h, tile_w)
+            if len(lrows) > 0:
+                extra_point_launches.append((
+                    cupy.asarray(lrows), cupy.asarray(lcols),
+                    cupy.asarray(lgids), _ensure_cupy(line_props),
+                    _ensure_cupy(line_global), len(lrows)))
+        else:
+            line_launch = (
+                cupy.asarray(seg_r0), cupy.asarray(seg_c0),
+                cupy.asarray(seg_r1), cupy.asarray(seg_c1),
+                cupy.asarray(seg_geom_idx), _ensure_cupy(line_props),
+                _ensure_cupy(line_global), len(seg_r0))
 
     point_launch = None
     if len(pt_rows) > 0:
@@ -2703,6 +3131,12 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                                point_launch[0], point_launch[1],
                                point_launch[2], point_launch[3],
                                point_launch[4], n_pts)
+        # Deduplicated sum/count line / boundary cells (issue #3304).
+        for pl in extra_point_launches:
+            n_pts = pl[5]
+            bpg = (n_pts + tpb - 1) // tpb
+            k_points[bpg, tpb](out, written, order,
+                               pl[0], pl[1], pl[2], pl[3], pl[4], n_pts)
 
     _launch_phase(kernels['scanline_fill'],
                   kernels['burn_lines'],
@@ -3286,6 +3720,15 @@ def rasterize(
         - ``'max'`` / ``'min'`` -- keep the larger / smaller value
         - ``'sum'`` -- add values together
         - ``'count'`` -- count overlapping geometries
+
+        For ``'sum'`` and ``'count'``, each geometry contributes at
+        most once per pixel: the connecting vertex of consecutive line
+        segments and the overlap between a polygon's interior fill and
+        its ``all_touched`` boundary are deduplicated, matching
+        rasterio's ``MergeAlg.add`` (which yields 1 per geometry per
+        pixel even for a self-crossing line).  Individual points are
+        not deduplicated -- a MultiPoint with repeated coordinates
+        burns once per point, also matching rasterio.
 
         Custom merge function (pass a callable):
 
