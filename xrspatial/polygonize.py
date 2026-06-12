@@ -905,7 +905,19 @@ def _detect_raster_crs(raster: xr.DataArray):
     2. ``raster.attrs['crs_wkt']``
     3. ``raster.rio.crs`` (rioxarray, if installed)
     4. ``None``
+
+    A raster carrying ``attrs['_xrspatial_no_georef']=True`` (the
+    xrspatial.geotiff "no georeference" marker) always resolves to
+    ``None``, matching ``_detect_raster_transform``.  The geotiff
+    reader emits the marker together with ``attrs['crs']`` for files
+    that have CRS geokeys but no geotransform tags
+    (``georef_status == 'crs_only'``); the geometries stay in pixel
+    space on that path, so attaching the CRS would misrepresent them
+    (#3293).
     """
+    if raster.attrs.get('_xrspatial_no_georef'):
+        return None
+
     crs_attr = raster.attrs.get('crs')
     if crs_attr is not None:
         return crs_attr
@@ -2700,7 +2712,11 @@ def polygonize(
     the output ``GeoDataFrame``.  The resolution order is
     ``raster.attrs['crs']``, then ``raster.attrs['crs_wkt']``, then
     ``raster.rio.crs`` (if rioxarray is installed).  An unparseable CRS
-    value is dropped rather than raised.  The ``spatialpandas`` and
+    value is dropped rather than raised, and no CRS is attached when the
+    raster carries ``attrs['_xrspatial_no_georef']=True`` (the
+    xrspatial.geotiff "no georeference" marker) -- the geometries stay
+    in pixel space on that path, so a CRS would misrepresent them.
+    The ``spatialpandas`` and
     ``geojson`` return types do not carry CRS metadata: spatialpandas
     has no CRS slot, and GeoJSON (RFC 7946) is WGS84 only.
 
