@@ -117,9 +117,48 @@ class TestItrfMatchesPyprojHelmert:
         dn = (oy - ny) * 111320.0
         dh = oz - nz
         shift_mm = math.sqrt(de * de + dn * dn + dh * dh) * 1000.0
-        # Expected radial effect: s_eff * R (R ~ 6.37e6 m).
+        # Expected radial effect: s_eff * R. R = 6.37e6 m approximates
+        # the geocentric radius at the test point (~6368 km); the 5%
+        # tolerance absorbs that approximation. With the broken ppb
+        # factor the measured shift is 1000x smaller and fails by three
+        # orders of magnitude.
         expected_mm = abs(s_eff_ppm) * 1e-6 * 6.37e6 * 1000.0
         assert shift_mm == pytest.approx(expected_mm, rel=0.05)
+
+    def test_reversed_lookup_matches_pyproj_inverse(self):
+        """Reversed lookups negate the file parameters, scale included.
+
+        ITRF2000 -> ITRF2014 has no direct file entry; _find_transform
+        negates the ITRF2014 -> ITRF2000 parameters. The reference is
+        the same pipeline with an inverse helmert step.
+        """
+        from xrspatial.reproject import itrf_transform
+        from xrspatial.reproject._itrf import _find_transform
+
+        params, is_reverse = _find_transform("ITRF2000", "ITRF2014")
+        if params is None or not is_reverse:
+            pytest.skip("ITRF2000->ITRF2014 is not a reversed lookup here")
+        keys = ('x', 'y', 'z', 's', 'rx', 'ry', 'rz',
+                'dx', 'dy', 'dz', 'ds', 'drx', 'dry', 'drz', 't_epoch')
+        parts = [f"+{k}={params[k]}" for k in keys if k in params]
+        convention = params.get('convention', 'position_vector')
+        tr = pyproj.Transformer.from_pipeline(
+            "+proj=pipeline "
+            "+step +proj=cart +ellps=WGS84 "
+            f"+step +inv +proj=helmert {' '.join(parts)} "
+            f"+convention={convention} "
+            "+step +inv +proj=cart +ellps=WGS84"
+        )
+        lon, lat, h = -74.0, 40.7, 100.0
+        epoch = 2024.0
+        rx, ry, rz, _ = tr.transform(lon, lat, h, epoch)
+        ox, oy, oz = itrf_transform(lon, lat, h, src='ITRF2000',
+                                    tgt='ITRF2014', epoch=epoch)
+        de = (ox - rx) * 111320.0 * math.cos(math.radians(lat))
+        dn = (oy - ry) * 111320.0
+        dh = oz - rz
+        err_mm = math.sqrt(de * de + dn * dn + dh * dh) * 1000.0
+        assert err_mm < 0.5
 
     def test_array_and_scalar_agree(self):
         from xrspatial.reproject import itrf_transform
