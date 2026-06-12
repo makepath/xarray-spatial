@@ -2207,7 +2207,12 @@ class TestCupyMultibandCoordUpload:
         coord_uploads = [s for s in uploads if s == out_shape]
         # One upload each for the shared row and column coordinate arrays,
         # regardless of the band count. Before #3268 this was 2 * n_bands.
-        assert len(coord_uploads) == 2
+        # All recorded 2-D upload shapes are included in the failure
+        # message so a future failure shows what extra upload appeared.
+        assert len(coord_uploads) == 2, (
+            f"expected 2 coordinate uploads of shape {out_shape}, got "
+            f"{len(coord_uploads)}; all 2-D ndarray uploads: {uploads}"
+        )
 
     def test_multiband_fallback_matches_numpy(self):
         from xrspatial.reproject import reproject
