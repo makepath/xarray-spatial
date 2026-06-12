@@ -29,6 +29,7 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import _dask_task_name_kwargs
 
 # Neighbor order: E, SE, S, SW, W, NW, N, NE
 NEIGHBOR_NAMES = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE']
@@ -317,10 +318,13 @@ def _run_dask_numpy(data: da.Array,
             result = _cpu(chunk, cellsize_x, cellsize_y, p_fixed)
             return result[k]
 
+        # Suffix the band index so the 8 per-band layers in one call
+        # cannot share a graph key.
         band = data.map_overlap(_band_k,
                                 depth=(1, 1),
                                 boundary=bnd,
-                                meta=np.array(()))
+                                meta=np.array(()),
+                                **_dask_task_name_kwargs(f'xrspatial.flow_direction_mfd_band{band_idx}'))
         bands.append(band)
 
     return da.stack(bands, axis=0)
@@ -369,10 +373,13 @@ def _run_dask_cupy(data: da.Array,
             result = _run_cupy(chunk, cellsize_x, cellsize_y, p_fixed)
             return result[k]
 
+        # Suffix the band index so the 8 per-band layers in one call
+        # cannot share a graph key.
         band = data.map_overlap(_band_k,
                                 depth=(1, 1),
                                 boundary=bnd,
-                                meta=cupy.array(()))
+                                meta=cupy.array(()),
+                                **_dask_task_name_kwargs(f'xrspatial.flow_direction_mfd_band{band_idx}'))
         bands.append(band)
 
     return da.stack(bands, axis=0)

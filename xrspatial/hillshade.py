@@ -19,6 +19,7 @@ from .utils import (_boundary_to_dask, _pad_array, _validate_boundary,
                     has_cuda_and_cupy, is_cupy_array, is_cupy_backed,
                     ngjit)
 from .dataset_support import supports_dataset
+from .utils import _dask_task_name_kwargs
 
 
 @ngjit
@@ -87,7 +88,8 @@ def _run_dask_numpy(data, azimuth, angle_altitude,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array(()),
+                           **_dask_task_name_kwargs('xrspatial.hillshade'))
     return out
 
 
@@ -140,7 +142,8 @@ def _run_dask_cupy(data, azimuth, angle_altitude,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array(()),
+                           **_dask_task_name_kwargs('xrspatial.hillshade'))
     return out
 
 
