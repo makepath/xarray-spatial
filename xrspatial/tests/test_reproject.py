@@ -7507,3 +7507,149 @@ class TestNonWgsDatumCudaFastPath:
         np.testing.assert_allclose(
             eager, gpu_arr, rtol=1e-4, atol=1e-4, equal_nan=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# merge() integer dtype round-trip (#3262)
+# ---------------------------------------------------------------------------
+
+class TestMergeIntegerDtype:
+    """merge() casts back to the shared integer input dtype (#3262).
+
+    Matches the reproject() convention (#2505/#3093): integer sources
+    round-trip back to their dtype after the float64 merge; mixed or
+    float inputs keep returning float64.
+    """
+
+    @staticmethod
+    def _tile_3262(x0, dtype=np.int16, fill=None, attrs=None):
+        if fill is None:
+            data = np.arange(64, dtype=dtype).reshape(8, 8)
+        else:
+            data = np.full((8, 8), fill, dtype=dtype)
+        base_attrs = {'crs': 'EPSG:4326'}
+        if attrs:
+            base_attrs.update(attrs)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(5, -5, 8),
+                    'x': np.linspace(x0, x0 + 10, 8)},
+            attrs=base_attrs,
+        )
+
+    def test_merge_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5), self._tile_3262(5)])
+        assert result.dtype == np.int16
+
+    def test_merge_uint8_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5, np.uint8),
+                        self._tile_3262(5, np.uint8)])
+        assert result.dtype == np.uint8
+
+    def test_merge_int16_same_crs_values_exact(self):
+        from xrspatial.reproject import merge
+        tile = self._tile_3262(-5)
+        result = merge([tile, self._tile_3262(5)])
+        # Same-CRS direct placement must not perturb integer values.
+        np.testing.assert_array_equal(
+            result.values[:, :8], tile.values,
+        )
+
+    def test_merge_int16_default_nodata_sentinel(self):
+        from xrspatial.reproject import merge
+        # Tiles with a gap between them: the gap must hold the int16
+        # default sentinel, not 0 (NaN collapsed by the cast) -- the
+        # same hazard reproject fixed in #2185.
+        result = merge([self._tile_3262(-20), self._tile_3262(5)])
+        assert result.dtype == np.int16
+        assert result.attrs['nodata'] == np.iinfo(np.int16).min
+        assert (result.values == np.iinfo(np.int16).min).any()
+
+    def test_merge_uint16_default_nodata_sentinel_is_max(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-20, np.uint16),
+                        self._tile_3262(5, np.uint16)])
+        assert result.dtype == np.uint16
+        assert result.attrs['nodata'] == np.iinfo(np.uint16).max
+
+    def test_merge_declared_sentinel_respected(self):
+        from xrspatial.reproject import merge
+        result = merge([
+            self._tile_3262(-20, np.int16, attrs={'nodata': -7}),
+            self._tile_3262(5, np.int16, attrs={'nodata': -7}),
+        ])
+        assert result.dtype == np.int16
+        assert result.attrs['nodata'] == -7.0
+        assert (result.values == -7).any()
+
+    def test_merge_explicit_out_of_range_nodata_raises(self):
+        from xrspatial.reproject import merge
+        with pytest.raises(ValueError, match='nodata'):
+            merge([self._tile_3262(-5, np.uint8),
+                   self._tile_3262(5, np.uint8)], nodata=-9999)
+
+    def test_merge_mixed_dtypes_return_float64(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5, np.int16),
+                        self._tile_3262(5, np.float32)])
+        assert result.dtype == np.float64
+
+    def test_merge_float_inputs_stay_float64(self):
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5, np.float64),
+                        self._tile_3262(5, np.float64)])
+        assert result.dtype == np.float64
+        assert np.isnan(result.attrs['nodata'])
+
+    def test_merge_mean_strategy_rounds_to_int(self):
+        from xrspatial.reproject import merge
+        result = merge([
+            self._tile_3262(-5, np.int16, fill=2),
+            self._tile_3262(-5, np.int16, fill=5),
+        ], strategy='mean')
+        assert result.dtype == np.int16
+        # mean(2, 5) = 3.5 rounds (half-to-even) to 4
+        assert result.values[4, 4] == 4
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_merge_dask_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        lazy = self._tile_3262(-5).copy(
+            data=da.from_array(
+                np.arange(64, dtype=np.int16).reshape(8, 8), chunks=(4, 4),
+            ),
+        )
+        result = merge([lazy, self._tile_3262(5)])
+        # The lazy graph must advertise the same dtype the chunks return.
+        assert result.data.dtype == np.int16
+        assert result.compute().dtype == np.int16
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_merge_dask_empty_chunks_keep_dtype(self):
+        from xrspatial.reproject import merge
+        # A gap forces no-overlap output chunks; their fills must not
+        # promote the assembled mosaic (#3096 trap).
+        lazy_a = self._tile_3262(-30).copy(
+            data=da.from_array(
+                np.arange(64, dtype=np.int16).reshape(8, 8), chunks=(4, 4),
+            ),
+        )
+        result = merge([lazy_a, self._tile_3262(5)], chunk_size=4)
+        computed = result.compute()
+        assert computed.dtype == np.int16
+        assert (computed.values == np.iinfo(np.int16).min).any()
+
+    @pytest.mark.skipif(not HAS_CUPY, reason="cupy/CUDA required")
+    def test_merge_cupy_int16_preserves_dtype(self):
+        from xrspatial.reproject import merge
+        gpu_a = self._tile_3262(-5).copy(
+            data=cp.asarray(np.arange(64, dtype=np.int16).reshape(8, 8)),
+        )
+        gpu_b = self._tile_3262(5).copy(
+            data=cp.asarray(np.arange(64, dtype=np.int16).reshape(8, 8)),
+        )
+        result = merge([gpu_a, gpu_b])
+        assert isinstance(result.data, cp.ndarray)
+        assert result.dtype == np.int16
