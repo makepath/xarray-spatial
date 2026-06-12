@@ -488,7 +488,16 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
     x_grid, y_grid = extract_grid_coords(template, func_name='kriging')
 
     if K_inv is None:
-        pred = np.full(template.shape, np.nan)
+        # Build the all-NaN fallback on the same backend as the template:
+        # lazy per-chunk for dask templates, and np.full_like dispatches to
+        # cupy via __array_function__ for cupy-backed blocks.
+        if da is not None and isinstance(template.data, da.Array):
+            pred = template.data.map_blocks(
+                lambda block: np.full_like(block, np.nan, dtype=np.float64),
+                dtype=np.float64,
+            )
+        else:
+            pred = np.full_like(template.data, np.nan, dtype=np.float64)
         prediction = xr.DataArray(
             pred, name=name,
             coords=template.coords,
@@ -496,7 +505,8 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
             attrs=template.attrs,
         )
         if return_variance:
-            return prediction, prediction.copy()
+            variance = prediction.copy().rename(f'{name}_variance')
+            return prediction, variance
         return prediction
 
     mapper = ArrayTypeFunctionMapping(
