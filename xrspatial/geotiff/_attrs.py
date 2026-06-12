@@ -1710,7 +1710,10 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
 
 
 def _pack_fill_nan(chunk, fill):
-    """NaN -> sentinel fill for ``_pack``, at the buffer level.
+    """NaN -> sentinel fill for ``_pack``'s float targets, at the buffer
+    level. Integer targets route through :func:`_pack_restore_int`
+    instead, which assigns the sentinel at the target dtype's native
+    width (issue #3264).
 
     ``DataArray.fillna`` routes through xarray's ``duck_array_ops.where``,
     which breaks on cupy-backed arrays (issue #3112): eager cupy hits

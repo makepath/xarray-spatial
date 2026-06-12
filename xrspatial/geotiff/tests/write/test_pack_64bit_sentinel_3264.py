@@ -141,6 +141,40 @@ def test_pack_nodata_kwarg_still_rejects_unrepresentable(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Pre-v5 fallback: no mask_and_scale_dtype, target derived from the
+# integer-typed attrs sentinel -- routes through the same native-width fill
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dask_backed", [False, True], ids=["numpy", "dask"])
+def test_pack_pre_v5_fallback_64bit_sentinel(dask_backed):
+    """Arrays read by a pre-contract-v5 release carry no
+    ``mask_and_scale_dtype``; ``_pack`` derives the target dtype from the
+    integer-typed attrs sentinel. With a >2**53 sentinel that path must
+    also fill at native width."""
+    from xrspatial.geotiff._attrs import _pack
+
+    arr = xr.DataArray(
+        np.array([[1.0, np.nan], [3.0, 4.0]]),
+        dims=("y", "x"),
+        attrs={"nodata": np.int64(I64_MAX), "masked_nodata": True},
+    )
+    if dask_backed:
+        import dask.array as da
+        arr = arr.copy(data=da.from_array(arr.values, chunks=(1, 2)))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        out = _pack(arr)
+        vals = np.asarray(out.data)
+
+    assert out.dtype == np.int64
+    assert int(vals[0, 1]) == I64_MAX
+    np.testing.assert_array_equal(vals[~np.isnan(arr.values)],
+                                  [1, 3, 4])
+
+
+# ---------------------------------------------------------------------------
 # ``_pack_restore_int``: unit-pinned on numpy and cupy chunks
 # ---------------------------------------------------------------------------
 
