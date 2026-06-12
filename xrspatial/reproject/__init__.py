@@ -47,6 +47,14 @@ _X_NAMES = {'x', 'lon', 'longitude', 'X', 'Lon', 'Longitude'}
 # to the lazy dask path instead of allocating the whole array.
 _MERGE_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
 
+# Working-set budget above which reproject() auto-promotes an in-memory
+# raster to the lazy dask path. Applied to both the input size and the
+# output size: the eager numpy path holds several output-sized float64
+# temporaries (coordinate grids, pixel-index grids, result), so a small
+# input upsampled to a large output can exhaust memory long before the
+# _MAX_OUTPUT_PIXELS guard trips (#3267).
+_REPROJECT_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
+
 # Map friendly vertical datum tokens to EPSG codes so attrs['vertical_crs']
 # from reproject output matches the convention used by xrspatial.geotiff,
 # which also writes EPSG ints to attrs['vertical_crs'].
@@ -715,6 +723,11 @@ def reproject(
     inputs, the computation is fully lazy: each output chunk independently
     reads only the source pixels it needs.
 
+    Numpy inputs whose input or output working set exceeds ~512 MB are
+    routed through the same lazy dask path when dask is installed, so the
+    result is dask-backed in that case. Without dask, a streaming
+    fallback bounds memory via ``max_memory``.
+
     Parameters
     ----------
     raster : xr.DataArray
@@ -961,20 +974,45 @@ def reproject(
     else:
         is_cupy = is_cupy_array(data)
 
-    # For large in-memory datasets, wrap in dask for chunked processing.
-    # map_blocks generates an O(1) HighLevelGraph (single blockwise layer)
-    # so graph metadata is no longer a concern -- the streaming fallback
-    # is only needed when dask itself is unavailable.
+    # Compute the output grid with the size guard disabled: whether the
+    # guard applies depends on the final execution path (a lazy dask
+    # output never materializes the full grid), and the path decision
+    # below needs the output shape. The guard is re-applied after the
+    # path is known -- same pattern merge() uses.
+    grid = _compute_output_grid(
+        src_bounds, src_shape, src_crs, tgt_crs,
+        resolution=resolution, bounds=bounds,
+        width=width, height=height,
+        bounds_policy=bounds_policy,
+        lazy_output=True,
+    )
+    out_bounds = grid['bounds']
+    out_shape = grid['shape']
+
+    # For large workloads, wrap in dask for chunked processing. Both the
+    # input and the output size count: the eager numpy path holds several
+    # output-sized float64 temporaries (coordinate grids, pixel-index
+    # grids, result), so a small input upsampled to a large output can
+    # exhaust memory well before the _MAX_OUTPUT_PIXELS guard trips
+    # (#3267). map_blocks generates an O(1) HighLevelGraph (single
+    # blockwise layer) so graph metadata is no longer a concern -- the
+    # streaming fallback is only needed when dask itself is unavailable.
     _use_streaming = False
     if not is_dask and not is_cupy:
         nbytes = src_shape[0] * src_shape[1] * data.dtype.itemsize
+        out_nbytes = out_shape[0] * out_shape[1] * 8  # float64 working set
         if data.ndim == 3:
             nbytes *= data.shape[2]
-        _OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
-        if nbytes > _OOM_THRESHOLD:
+            out_nbytes *= data.shape[2]
+        if (nbytes > _REPROJECT_OOM_THRESHOLD
+                or out_nbytes > _REPROJECT_OOM_THRESHOLD):
             cs = chunk_size or 2048
             if isinstance(cs, int):
                 cs = (cs, cs)
+            if data.ndim == 3:
+                # Band axis stays one chunk; the per-chunk workers read
+                # all bands of a (y, x) window together.
+                cs = (cs[0], cs[1], data.shape[2])
             try:
                 import dask.array as _da
                 data = _da.from_array(data, chunks=cs)
@@ -987,17 +1025,16 @@ def reproject(
                 # dask not available -- fall back to streaming
                 _use_streaming = True
 
-    # Compute output grid. A dask output is lazy, so the output-size
-    # guard is skipped for it (peak memory is bounded by chunk size).
-    grid = _compute_output_grid(
-        src_bounds, src_shape, src_crs, tgt_crs,
-        resolution=resolution, bounds=bounds,
-        width=width, height=height,
-        bounds_policy=bounds_policy,
-        lazy_output=is_dask,
-    )
-    out_bounds = grid['bounds']
-    out_shape = grid['shape']
+    # Re-apply the output-size guard for paths that materialize the whole
+    # output (in-memory numpy/cupy and streaming). A lazy dask output
+    # skips it because peak memory is bounded by the chunk size.
+    if not is_dask and out_shape[0] * out_shape[1] > _MAX_OUTPUT_PIXELS:
+        raise ValueError(
+            f"Computed output grid is too large ({out_shape[1]} x "
+            f"{out_shape[0]} = {out_shape[0] * out_shape[1]:,} pixels, "
+            f"limit is {_MAX_OUTPUT_PIXELS:,}). Increase the resolution "
+            f"parameter or reduce the output extent."
+        )
 
     # Output coordinates
     y_coords, x_coords = _make_output_coords(out_bounds, out_shape)

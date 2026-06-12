@@ -2605,6 +2605,120 @@ class TestSecurityGuards:
             merge([a, b], resolution=4e-5)
 
 
+# ---------------------------------------------------------------------------
+# Issue #3267: output-size based promotion to the dask path
+# ---------------------------------------------------------------------------
+
+class TestReprojectOutputSizePromotion:
+    """reproject() must consider the *output* size when deciding between the
+    in-memory and dask paths (#3267). The eager numpy path holds several
+    output-sized float64 temporaries, so a small input upsampled to a large
+    output OOMs long before the pixel-count guard trips.
+    """
+
+    def _patch_threshold(self, monkeypatch, value):
+        import importlib
+        _reproject = importlib.import_module('xrspatial.reproject')
+        monkeypatch.setattr(_reproject, '_REPROJECT_OOM_THRESHOLD', value)
+
+    def test_small_output_stays_numpy(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        result = reproject(raster, 'EPSG:3857')
+        assert isinstance(result.data, np.ndarray)
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_large_output_auto_promotes_to_dask(self, monkeypatch):
+        """A numpy input whose output exceeds the byte budget comes back
+        dask-backed instead of allocating the whole working set."""
+        from xrspatial.reproject import reproject
+
+        raster = _gradient_raster(h=32, w=32)
+
+        # Reference result on the eager path (budget effectively disabled).
+        self._patch_threshold(monkeypatch, 1 << 60)
+        eager = reproject(raster, 'EPSG:3857', width=128, height=128)
+        assert isinstance(eager.data, np.ndarray)
+
+        # Tiny budget: the same call must promote to the dask path.
+        self._patch_threshold(monkeypatch, 1024)
+        lazy = reproject(raster, 'EPSG:3857', width=128, height=128)
+        assert isinstance(lazy.data, da.Array)
+
+        computed = lazy.compute()
+        np.testing.assert_allclose(
+            eager.values, computed.values,
+            rtol=1e-5, atol=1e-5, equal_nan=True,
+        )
+        np.testing.assert_allclose(eager.y.values, computed.y.values)
+        np.testing.assert_allclose(eager.x.values, computed.x.values)
+        assert eager.attrs['crs'] == computed.attrs['crs']
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_large_output_auto_promotes_3d(self, monkeypatch):
+        """The promotion also covers multi-band inputs."""
+        from xrspatial.reproject import reproject
+
+        h, w, b = 16, 16, 3
+        data = np.random.default_rng(3267).random((h, w, b))
+        raster = xr.DataArray(
+            data, dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(10, 0, h), 'x': np.linspace(0, 10, w),
+                    'band': [1, 2, 3]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+
+        self._patch_threshold(monkeypatch, 1 << 60)
+        eager = reproject(raster, 'EPSG:3857', width=64, height=64)
+
+        self._patch_threshold(monkeypatch, 1024)
+        lazy = reproject(raster, 'EPSG:3857', width=64, height=64)
+        assert isinstance(lazy.data, da.Array)
+
+        np.testing.assert_allclose(
+            eager.values, lazy.compute().values,
+            rtol=1e-5, atol=1e-5, equal_nan=True,
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_numpy_input_over_pixel_limit_promotes_instead_of_raising(self):
+        """A numpy input whose output exceeds 1e9 pixels promotes to the
+        lazy path rather than tripping the guard, matching merge() (#3048)."""
+        from xrspatial.reproject import reproject
+
+        raster = _make_raster(
+            np.arange(64 * 64, dtype='float64').reshape(64, 64),
+            crs='EPSG:4326',
+            x_range=(-105, -104),
+            y_range=(39, 40),
+        )
+
+        out = reproject(raster, target_crs='EPSG:3857',
+                        resolution=2.0, chunk_size=1024)
+
+        assert isinstance(out.data, da.Array)
+        assert out.shape[0] * out.shape[1] > 1_000_000_000
+        # A single block computes without materializing the whole grid.
+        assert out.data.blocks[0, 0].compute().shape == (1024, 1024)
+
+    def test_inmemory_over_limit_still_raises(self, monkeypatch):
+        """With promotion disabled, the pixel-count guard still rejects a
+        genuinely in-memory output over the limit."""
+        from xrspatial.reproject import reproject
+
+        self._patch_threshold(monkeypatch, 1 << 60)
+
+        raster = _make_raster(
+            np.arange(64 * 64, dtype='float64').reshape(64, 64),
+            crs='EPSG:4326',
+            x_range=(-105, -104),
+            y_range=(39, 40),
+        )
+
+        with pytest.raises(ValueError, match="too large"):
+            reproject(raster, target_crs='EPSG:3857', resolution=2.0)
+
+
 # =====================================================================
 # Issue #1431: _validate_raster on public API inputs
 # =====================================================================
