@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import xarray as xr
 from numba import cuda
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _validate_raster,
-    _validate_scalar,
-    cuda_args,
-    ngjit,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, _validate_scalar,
+                             cuda_args, ngjit)
 
 from ._validation import extract_grid_coords, validate_points
 
