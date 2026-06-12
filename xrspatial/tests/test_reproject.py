@@ -2163,6 +2163,80 @@ class TestCupyPyprojFallbackParity:
                                    rtol=1e-6, atol=1e-6)
 
 
+@pytest.mark.skipif(not HAS_CUPY, reason="CuPy not installed")
+class TestCupyMultibandCoordUpload:
+    """Multi-band cupy reproject on the CPU-fallback transform path must
+    move the shared coordinate arrays to the device once per chunk, not
+    once per band (#3268).
+
+    EPSG:4326 -> EPSG:28992 (sterea) has no CUDA transform kernel, so the
+    chunk worker computes coordinates on the CPU and hands numpy arrays to
+    the per-band resample loop.
+    """
+
+    def _make_multiband(self, n_bands):
+        ny, nx = 48, 48
+        y = np.linspace(53.5, 50.5, ny)
+        x = np.linspace(3.5, 7.0, nx)
+        rng = np.random.default_rng(3268)
+        data = rng.random((ny, nx, n_bands))
+        coords = {'y': y, 'x': x, 'band': list(range(1, n_bands + 1))}
+        return data, coords
+
+    def test_coord_uploads_do_not_scale_with_bands(self, monkeypatch):
+        from xrspatial.reproject import reproject
+
+        data, coords = self._make_multiband(6)
+        raster = xr.DataArray(
+            cp.asarray(data), dims=('y', 'x', 'band'),
+            coords=coords, attrs={'crs': 'EPSG:4326'},
+        )
+
+        uploads = []
+        orig_asarray = cp.asarray
+
+        def counting_asarray(a, *args, **kwargs):
+            if isinstance(a, np.ndarray) and a.ndim == 2:
+                uploads.append(a.shape)
+            return orig_asarray(a, *args, **kwargs)
+
+        monkeypatch.setattr(cp, 'asarray', counting_asarray)
+        result = reproject(raster, 'EPSG:28992')
+
+        out_shape = result.shape[:2]
+        coord_uploads = [s for s in uploads if s == out_shape]
+        # One upload each for the shared row and column coordinate arrays,
+        # regardless of the band count. Before #3268 this was 2 * n_bands.
+        # All recorded 2-D upload shapes are included in the failure
+        # message so a future failure shows what extra upload appeared.
+        assert len(coord_uploads) == 2, (
+            f"expected 2 coordinate uploads of shape {out_shape}, got "
+            f"{len(coord_uploads)}; all 2-D ndarray uploads: {uploads}"
+        )
+
+    def test_multiband_fallback_matches_numpy(self):
+        from xrspatial.reproject import reproject
+
+        data, coords = self._make_multiband(3)
+        raster_np = xr.DataArray(
+            data, dims=('y', 'x', 'band'),
+            coords=coords, attrs={'crs': 'EPSG:4326'},
+        )
+        raster_cp = xr.DataArray(
+            cp.asarray(data), dims=('y', 'x', 'band'),
+            coords=coords, attrs={'crs': 'EPSG:4326'},
+        )
+
+        ref = np.asarray(reproject(raster_np, 'EPSG:28992').data)
+        out = cp.asnumpy(reproject(raster_cp, 'EPSG:28992').data)
+
+        assert ref.shape == out.shape
+        np.testing.assert_array_equal(np.isfinite(ref), np.isfinite(out))
+        finite = np.isfinite(ref) & np.isfinite(out)
+        np.testing.assert_allclose(ref[finite], out[finite],
+                                   rtol=1e-6, atol=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Dask graph optimization tests
 # ---------------------------------------------------------------------------
