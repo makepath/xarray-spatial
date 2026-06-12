@@ -170,9 +170,21 @@ def _build_kriging_matrix(x, y, vario_func):
 # Numpy prediction
 # ---------------------------------------------------------------------------
 
+def _dual_z_aug(xp, z_pts):
+    """Return ``[z, 0]`` for the dual kriging form on array module *xp*."""
+    z_aug = xp.zeros(len(z_pts) + 1, dtype=np.float64)
+    z_aug[:len(z_pts)] = z_pts
+    return z_aug
+
+
 def _kriging_predict(x_pts, y_pts, z_pts, x_grid, y_grid,
-                     vario_func, K_inv, return_variance):
-    """Vectorised kriging prediction for a grid chunk."""
+                     vario_func, K_inv, return_variance, dual_w=None):
+    """Vectorised kriging prediction for a grid chunk.
+
+    ``dual_w`` is an optional precomputed dual weight vector
+    ``K_inv @ [z, 0]`` used by the no-variance path; the dask backend
+    passes it in so the O(N^2) matvec runs once instead of per chunk.
+    """
     n = len(x_pts)
     gx, gy = np.meshgrid(x_grid, y_grid)
     gx_flat = gx.ravel()
@@ -200,9 +212,9 @@ def _kriging_predict(x_pts, y_pts, z_pts, x_grid, y_grid,
         # z_aug[n] == 0, and it replaces the
         # (grid_pixels, N+1) x (N+1, N+1) matmul and the
         # (grid_pixels, N+1) `w` temporary with a single matvec.
-        z_aug = np.zeros(n + 1, dtype=np.float64)
-        z_aug[:n] = z_pts
-        prediction = k0 @ (K_inv @ z_aug)
+        if dual_w is None:
+            dual_w = K_inv @ _dual_z_aug(np, z_pts)
+        prediction = k0 @ dual_w
     prediction = prediction.reshape(len(y_grid), len(x_grid))
 
     return prediction, variance
@@ -226,6 +238,10 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
                         vario_func, K_inv, return_variance, template_data):
 
     if not return_variance:
+        # The dual weight vector is chunk-invariant; compute it once
+        # here rather than once per chunk.
+        dual_w = K_inv @ _dual_z_aug(np, z_pts)
+
         def _chunk_pred(block, block_info=None):
             if block_info is None:
                 return block
@@ -233,7 +249,8 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
             y_sl = y_grid[loc[0][0]:loc[0][1]]
             x_sl = x_grid[loc[1][0]:loc[1][1]]
             pred, _ = _kriging_predict(x_pts, y_pts, z_pts, x_sl, y_sl,
-                                       vario_func, K_inv, False)
+                                       vario_func, K_inv, False,
+                                       dual_w=dual_w)
             return pred
 
         prediction = da.map_blocks(_chunk_pred, template_data,
@@ -266,11 +283,14 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
 # ---------------------------------------------------------------------------
 
 def _kriging_predict_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
-                          vario_func, K_inv, return_variance):
+                          vario_func, K_inv, return_variance,
+                          dual_w=None):
     """Vectorised kriging prediction on GPU via CuPy.
 
     The point arrays and ``K_inv`` may arrive either on the host or
     already on the device; ``cupy.asarray`` is a no-op for the latter.
+    ``dual_w`` is the optional precomputed device-resident dual weight
+    vector for the no-variance path (see ``_kriging_predict``).
     """
     n = len(x_pts)
 
@@ -301,9 +321,9 @@ def _kriging_predict_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
         variance = variance.reshape(len(y_grid), len(x_grid))
     else:
         # Dual kriging form; see _kriging_predict for the derivation.
-        z_aug = cupy.zeros(n + 1, dtype=np.float64)
-        z_aug[:n] = z_gpu
-        prediction = k0 @ (K_inv_gpu @ z_aug)
+        if dual_w is None:
+            dual_w = K_inv_gpu @ _dual_z_aug(cupy, z_gpu)
+        prediction = k0 @ dual_w
     prediction = prediction.reshape(len(y_grid), len(x_grid))
 
     return prediction, variance
@@ -331,12 +351,20 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
     # _kriging_predict_cupy passes them through cupy.asarray, which is
     # a no-op for device-resident arrays.  K_inv is (N+1) x (N+1), so
     # re-uploading it per chunk is the expensive part for large N.
+    # Under the threaded/synchronous scheduler the per-chunk closure
+    # shares these device buffers by reference; a distributed scheduler
+    # would re-serialise them per task, which is no worse than the
+    # previous per-chunk upload.
     x_gpu = cupy.asarray(x_pts)
     y_gpu = cupy.asarray(y_pts)
     z_gpu = cupy.asarray(z_pts)
     K_inv_gpu = cupy.asarray(K_inv)
 
     if not return_variance:
+        # The dual weight vector is chunk-invariant; compute it once
+        # here rather than once per chunk.
+        dual_w = K_inv_gpu @ _dual_z_aug(cupy, z_gpu)
+
         def _chunk_pred(block, block_info=None):
             if block_info is None:
                 return block
@@ -344,7 +372,8 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
             y_sl = y_grid[loc[0][0]:loc[0][1]]
             x_sl = x_grid[loc[1][0]:loc[1][1]]
             pred, _ = _kriging_predict_cupy(x_gpu, y_gpu, z_gpu, x_sl, y_sl,
-                                            vario_func, K_inv_gpu, False)
+                                            vario_func, K_inv_gpu, False,
+                                            dual_w=dual_w)
             return pred
 
         prediction = da.map_blocks(

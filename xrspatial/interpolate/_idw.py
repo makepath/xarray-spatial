@@ -228,6 +228,10 @@ def _idw_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
     # The point arrays are the same for every chunk, so upload them to
     # the device once instead of once per chunk.  _idw_cupy passes them
     # through cupy.asarray, which is a no-op for device-resident arrays.
+    # Under the threaded/synchronous scheduler the per-chunk closure
+    # shares these device buffers by reference; a distributed scheduler
+    # would re-serialise them per task, which is no worse than the
+    # previous per-chunk upload.
     x_gpu = cupy.asarray(x_pts)
     y_gpu = cupy.asarray(y_pts)
     z_gpu = cupy.asarray(z_pts)
