@@ -7670,3 +7670,20 @@ class TestMergeIntegerDtype:
         computed = result.data.compute()
         assert isinstance(computed, cp.ndarray)
         assert computed.dtype == np.int16
+
+    def test_merge_rejects_inf_nodata(self):
+        # Explicit nodata now goes through _detect_nodata, matching
+        # reproject(): inf is rejected because it breaks np.isnan masks.
+        from xrspatial.reproject import merge
+        with pytest.raises(ValueError, match='finite'):
+            merge([self._tile_3262(-5, np.float64),
+                   self._tile_3262(5, np.float64)], nodata=np.inf)
+
+    def test_merge_explicit_int_sentinel_lands_as_float_attr(self):
+        # Same convention as reproject(): the resolved sentinel is a
+        # float even when passed as an int.
+        from xrspatial.reproject import merge
+        result = merge([self._tile_3262(-5), self._tile_3262(5)],
+                       nodata=-7)
+        assert result.attrs['nodata'] == -7.0
+        assert isinstance(result.attrs['nodata'], float)
