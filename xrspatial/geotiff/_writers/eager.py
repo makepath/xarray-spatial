@@ -390,7 +390,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         integer dtype must be restored, the ``ValueError`` is raised at
         call time for numpy-backed data; for dask-backed data the check
         runs per chunk inside the write's compute (issue #3235), so the
-        error surfaces during the write. The write itself stays atomic
+        error surfaces during the write. The same timing applies to
+        pixels whose packed value is non-finite or falls outside the
+        packed integer dtype's range: the cast would silently wrap
+        them, so the write is refused with ``ValueError`` instead
+        (issue #3260). The write itself stays atomic
         (temp file plus rename), so no partial output is left at the
         destination path.
 

@@ -136,8 +136,14 @@ def _helmert14_point(X, Y, Z,
                      t_epoch, t_obs, position_vector):
     """Apply 14-parameter Helmert transform to a single ECEF point.
 
-    Parameters are in metres (translations), ppb (scale), and
-    arcseconds (rotations).  Rates are per year.
+    Parameters are in metres (translations), ppm (scale), and
+    arcseconds (rotations).  Rates are per year. The units match
+    PROJ's ``+proj=helmert`` definition, which is what the ITRF data
+    files this module parses are written against: the published
+    ppb-magnitude ITRF scale terms appear in the files as ppm values
+    (e.g. ITRF2014->ITRF2000 carries ``+s=0.00212`` ppm = 2.12 ppb).
+    Treating them as ppb made the scale term 1000x too small, a ~2 cm
+    error at the Earth's surface (GH #3276).
     """
     dt = t_obs - t_epoch
 
@@ -145,7 +151,7 @@ def _helmert14_point(X, Y, Z,
     tx_e = tx + dtx * dt
     ty_e = ty + dty * dt
     tz_e = tz + dtz * dt
-    s_e = 1.0 + (s + ds * dt) * 1e-9  # ppb -> scale factor
+    s_e = 1.0 + (s + ds * dt) * 1e-6  # ppm -> scale factor
     # Rotations: arcsec -> radians
     AS2RAD = math.pi / (180.0 * 3600.0)
     rx_e = (rx + drx * dt) * AS2RAD

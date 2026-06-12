@@ -7,14 +7,18 @@ Python float, i.e. float64 -- and widened the packed file. The fix records
 the source dtype on ``unpack=True`` reads of float sources too, and stops
 the fallback from keying off float-typed sentinels.
 
-GPU / dask+GPU pack round-trips are covered by ``test_pack_3064.py``
-(crash fixed in #3112); this file exercises the numpy and dask+numpy legs.
+Basic GPU / dask+GPU pack round-trips are covered by ``test_pack_3064.py``
+(crash fixed in #3112). The float32-width contract is exercised on all four
+backends here: ``gpu=True`` legs were added once ``pack=True`` accepted cupy
+input (#3240 / #3266).
 """
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
+
+from .._helpers.markers import requires_gpu
 
 
 def _write_f32_tiff(path, data, *, nodata=None, scale=None, offset=None):
@@ -191,3 +195,40 @@ def test_pack_still_rejects_no_op_float_unpack_read(tmp_path, chunks):
     with pytest.raises(ValueError, match="no unpack state"):
         decoded.xrs.to_geotiff(
             str(tmp_path / "out_f32_noop_3080.tif"), pack=True)
+
+
+# ---------------------------------------------------------------------------
+# GPU legs: ``pack=True`` accepts cupy / dask+cupy input since #3240, so the
+# float32-width contract must hold there too (#3266).
+# ---------------------------------------------------------------------------
+
+
+@requires_gpu
+@pytest.mark.parametrize("chunks", [None, 2], ids=["gpu", "dask-gpu"])
+def test_pack_preserves_float32_width_gpu(tmp_path, chunks):
+    """A ``gpu=True`` unpack read of a float32 source packs back to
+    float32, with values matching the CPU leg."""
+    data = np.array([[1.5, 2.5, -9999.0], [4.5, 5.5, 6.5]], dtype=np.float32)
+    src = _write_f32_tiff(
+        tmp_path / "src_f32_gpu_3266.tif", data,
+        nodata=-9999.0, scale=2.0, offset=10.0)
+
+    decoded = _reopen(src, chunks, unpack=True, gpu=True)
+    assert decoded.dtype == np.float32
+    assert decoded.attrs.get("mask_and_scale_dtype") == "float32"
+
+    out = str(tmp_path / f"out_f32_gpu_3266_{chunks}.tif")
+    decoded.xrs.to_geotiff(out, pack=True)
+
+    # Raw read: float32 width and the stored values round-trip exactly
+    # (1.5 / 2.0 / 10.0 are all binary-exact in float32).
+    back = open_geotiff(out)
+    assert str(back.dtype) == "float32"
+    np.testing.assert_array_equal(np.asarray(back.data), data)
+
+    # Parity with the CPU eager leg: the re-packed file unpacks to the
+    # same values the CPU read of the source produces.
+    cpu_decoded = open_geotiff(src, unpack=True)
+    np.testing.assert_allclose(
+        np.asarray(open_geotiff(out, unpack=True).data),
+        np.asarray(cpu_decoded.data), equal_nan=True)

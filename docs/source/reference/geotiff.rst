@@ -414,7 +414,9 @@ turn the process into a port scanner. The knobs are:
 * ``max_cloud_bytes`` (kwarg) / ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES``
   (env). Per-call total byte budget for a remote read. The kwarg wins
   over the env var; the env var wins over the built-in default. Pass
-  ``max_cloud_bytes=None`` to disable the cap on a single call. Locked
+  ``max_cloud_bytes=None`` to disable the cap on a single call. A
+  breach raises :class:`xrspatial.geotiff.CloudSizeLimitError` (a
+  ``ValueError`` subclass). Locked
   by ``xrspatial/geotiff/tests/integration/test_http_sources.py``
   (max_cloud_bytes_dispatcher and max_cloud_bytes_annot sections, plus
   the http_read_all_bounded section).

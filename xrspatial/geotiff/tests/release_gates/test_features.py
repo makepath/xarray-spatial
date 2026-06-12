@@ -2860,8 +2860,20 @@ class TestPublicAPI:
             # ``stable_only=True`` is rejected because those readers are
             # advanced-tier.
             'RemoteStableSourcesOnlyError',
+            # Typed rejection when the parsed VRT declares a feature the
+            # read pipeline does not honour (CRS / dtype / band / nodata /
+            # transform / pixel-size / window / resampling mismatch).
+            # Exported in issue #3265 so callers can catch it without
+            # importing from the private ``_errors`` module.
+            'VRTUnsupportedError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
+            # Safety-cap rejections on public read paths (issue #3265):
+            # ``max_cloud_bytes`` breaches and ``max_pixels`` breaches.
+            # Both are ``ValueError`` subclasses, exported so callers can
+            # catch the specific cap without private-module imports.
+            'CloudSizeLimitError',
+            'PixelSafetyLimitError',
             # Canonical georef_status constants. Exposed so downstream
             # code can branch on the five reader states via constants
             # rather than string literals.
