@@ -241,3 +241,16 @@ class TestCudaLaeaInverseParity:
         assert cpu is not None and gpu is not None
         np.testing.assert_allclose(cp.asnumpy(gpu[0]), cpu[0], atol=1e-9)
         np.testing.assert_allclose(cp.asnumpy(gpu[1]), cpu[1], atol=1e-9)
+
+
+class TestLaeaEquatorialInverse:
+    def test_laea_equit_inverse(self):
+        """EQUIT-mode LAEA (lat_0=0) shares the fixed OBLIQ code path."""
+        laea_eq = pyproj.CRS(
+            "+proj=laea +lat_0=0 +lon_0=20 +x_0=0 +y_0=0 "
+            "+ellps=WGS84 +units=m +no_defs"
+        )
+        rng = np.random.default_rng(3274)
+        lons = rng.uniform(-20, 60, 500)
+        lats = rng.uniform(-40, 40, 500)
+        assert _inverse_parity_max_err_m(laea_eq, lons, lats) < 0.05

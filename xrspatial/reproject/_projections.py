@@ -885,7 +885,13 @@ def _laea_inv_point(x, y, lon0, sinb1, cosb1,
         rho = math.hypot(xn, yn)
         if rho < 1e-30:
             return math.degrees(lon0), math.degrees(math.asin(sinb1))
-        sce = 2.0 * math.asin(0.5 * rho / rq)
+        # Clamp the asin argument: points beyond the projection disc
+        # (rho > 2*rq) are invalid input; clamping matches the ratio
+        # clamps elsewhere in this kernel instead of emitting NaN.
+        half_rho_rq = 0.5 * rho / rq
+        if half_rho_rq > 1.0:
+            half_rho_rq = 1.0
+        sce = 2.0 * math.asin(half_rho_rq)
         sinz = math.sin(sce)
         cosz = math.cos(sce)
         if mode == 0:  # OBLIQ
