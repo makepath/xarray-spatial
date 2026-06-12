@@ -1710,7 +1710,10 @@ def _extract_scale_offset(gdal_metadata, band=None, *, malformed=False):
 
 
 def _pack_fill_nan(chunk, fill):
-    """NaN -> sentinel fill for ``_pack``, at the buffer level.
+    """NaN -> sentinel fill for ``_pack``'s float targets, at the buffer
+    level. Integer targets route through :func:`_pack_restore_int`
+    instead, which assigns the sentinel at the target dtype's native
+    width (issue #3264).
 
     ``DataArray.fillna`` routes through xarray's ``duck_array_ops.where``,
     which breaks on cupy-backed arrays (issue #3112): eager cupy hits
@@ -1727,6 +1730,45 @@ def _pack_fill_nan(chunk, fill):
         return chunk
     out = chunk.copy()
     out[np.isnan(out)] = float(fill)
+    return out
+
+
+def _pack_restore_int(chunk, fill, tgt_name):
+    """NaN -> sentinel fill plus integer restore for ``_pack``, at the
+    target dtype's native width.
+
+    Filling the float64 buffer first and casting afterwards corrupts
+    64-bit sentinels above 2**53: ``float(INT64_MAX)`` rounds to 2**63,
+    the cast overflows, and the holes land on INT64_MIN (0 for
+    UINT64_MAX) while the GDAL_NODATA tag still declares the original
+    sentinel, so a masked re-read returns them as valid pixels (issue
+    #3264). Instead, park the holes at zero for the round + cast, then
+    assign the sentinel as a Python int -- exact at any width, the same
+    way the eager and GPU writers fill via ``dtype.type(nodata)``.
+    Works on numpy and cupy chunks alike: ``np.isnan`` dispatches on
+    the array type and the masked assignments take Python scalars.
+
+    Runs :func:`_pack_guard_int_range` between the round and the cast:
+    this is the only integer restore the sentinel path takes, and the
+    chunk is already integer-typed by the time ``_pack``'s body-level
+    guard block runs, so the range / finiteness check (issue #3260)
+    must happen here. ``+/-Inf`` is not NaN and therefore survives the
+    hole mask; the parked holes hold 0.0, in range for every integer
+    dtype, so they pass the guard.
+    """
+    tgt = np.dtype(tgt_name)
+    if chunk.dtype.kind != 'f':
+        # Integer buffers cannot hold NaN; nothing to fill.
+        return chunk.astype(tgt)
+    mask = np.isnan(chunk)
+    out = chunk.copy()
+    out[mask] = 0.0
+    out = out.round()
+    info = np.iinfo(tgt)
+    _pack_guard_int_range(out, tgt.name, float(info.min),
+                          float(int(info.max) + 1))
+    out = out.astype(tgt)
+    out[mask] = int(fill)
     return out
 
 
@@ -1886,11 +1928,19 @@ def _pack(data, nodata=None):
         # The attrs sentinel fits the source dtype by construction (the
         # reader validated it against GDAL_NODATA). The kwarg has no such
         # guarantee: an out-of-range or fractional value would wrap /
-        # round in the ``astype`` below, silently recreating the
-        # fill-vs-tag disagreement this override exists to prevent.
+        # round in the fill below, silently recreating the fill-vs-tag
+        # disagreement this override exists to prevent. Compare as
+        # integers, not through float(): float64 cannot represent 64-bit
+        # values above 2**53, so a float round-trip rejected INT64_MAX
+        # even though it fits int64 exactly (issue #3264).
         info = np.iinfo(tgt)
-        fv = float(nodata_kwarg)
-        if not (info.min <= fv <= info.max) or fv != int(fv):
+        try:
+            iv = int(nodata_kwarg)
+            representable = (iv == nodata_kwarg
+                             and info.min <= iv <= info.max)
+        except (OverflowError, ValueError):
+            representable = False  # inf / nan
+        if not representable:
             raise ValueError(
                 f"pack=True: nodata={nodata_kwarg!r} cannot be represented "
                 f"in the packed integer dtype {tgt.name} (valid range "
@@ -1904,11 +1954,24 @@ def _pack(data, nodata=None):
         # GDAL_NODATA tag that still declares the sentinel, leaving an
         # inconsistent file that non-masking readers misread (#3078).
         # Not ``fillna``: that routes through xarray's where(), which
-        # crashes on cupy-backed arrays (#3112). ``_pack_fill_nan``
-        # fills at the buffer level on all four backends; dask backings
-        # keep the fill lazy via the same map_blocks shape as the
-        # no-sentinel guard below.
-        if hasattr(out.data, 'dask'):
+        # crashes on cupy-backed arrays (#3112). The helpers fill at the
+        # buffer level on all four backends; dask backings keep the fill
+        # lazy via the same map_blocks shape as the no-sentinel guard
+        # below.
+        if tgt.kind in ('i', 'u'):
+            # Integer restore: fill, round, and cast in one step so the
+            # sentinel is assigned at the target dtype's native width.
+            # Filling the float64 buffer first corrupts 64-bit sentinels
+            # above 2**53 -- INT64_MAX wrapped to INT64_MIN in the cast
+            # while GDAL_NODATA kept declaring INT64_MAX (issue #3264).
+            if hasattr(out.data, 'dask'):
+                out = out.copy(data=out.data.map_blocks(
+                    _pack_restore_int, nodata, tgt.name,
+                    dtype=tgt, meta=out.data._meta.astype(tgt)))
+            else:
+                out = out.copy(
+                    data=_pack_restore_int(out.data, nodata, tgt.name))
+        elif hasattr(out.data, 'dask'):
             out = out.copy(data=out.data.map_blocks(
                 _pack_fill_nan, nodata,
                 dtype=out.dtype, meta=out.data._meta))
@@ -1939,7 +2002,10 @@ def _pack(data, nodata=None):
             # cupy take the same path here.
             _pack_guard_no_nan(out.data, tgt.name)
 
-    if tgt.kind in ('i', 'u'):
+    # The integer-with-sentinel path above already rounded and cast at
+    # the chunk level; its ``out`` is integer-typed here, so the round
+    # is skipped and the astype is a no-op cast.
+    if tgt.kind in ('i', 'u') and out.dtype.kind == 'f':
         out = out.round()
         # Out-of-range and non-finite packed values would silently wrap
         # in the astype below, exactly the corruption the NaN guard
