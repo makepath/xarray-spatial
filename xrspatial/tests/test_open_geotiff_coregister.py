@@ -431,6 +431,32 @@ def test_coregister_auto_selects_overview(tmp_path, monkeypatch):
     assert np.allclose(vals, np.asarray(full.data), atol=8.0)
 
 
+def test_coregister_auto_overview_crs_mismatch(tmp_path, monkeypatch):
+    # The caller resolution that drives level selection is estimated in
+    # file-CRS units from the transformed bbox; a 3857 template over a
+    # 4326 file exercises that conversion (the same-CRS tests run it
+    # with an identity transform only).
+    from pyproj import Transformer
+    path = _cog_4326(tmp_path, 'cg_ov_auto_3857.tif')
+    tr = Transformer.from_crs(4326, 3857, always_xy=True)
+    x0, y0 = tr.transform(-120.4, 45.4)
+    x1, y1 = tr.transform(-119.6, 44.6)
+    template = xr.DataArray(
+        np.zeros((8, 8), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={'y': np.linspace(max(y0, y1), min(y0, y1), 8),
+                'x': np.linspace(min(x0, x1), max(x0, x1), 8)},
+        attrs={'crs': 3857},
+    )
+    seen = _spy_read_overview_level(monkeypatch)
+    out = template.xrs.open_geotiff(path, coregister=True)
+    # ~0.1 deg per template cell vs 0.0078 deg file pixels: level 2
+    # (0.031 deg) is the coarsest that still meets the template.
+    assert seen['overview_level'] == 2
+    vals = np.asarray(out.data)
+    assert not np.isnan(vals).any()
+
+
 def test_coregister_explicit_overview_level_wins_over_auto(tmp_path,
                                                            monkeypatch):
     path = _cog_4326(tmp_path, 'cg_ov_explicit_wins.tif')

@@ -229,14 +229,15 @@ def _validate_template_grid(obj):
             else (diffs < 0).all()
         )
         if not sign_ok:
+            if direction == 'descending':
+                hint = f".sortby('{axis}', ascending=False)"
+            else:
+                hint = f".sortby('{axis}')"
             raise ValueError(
                 f"coregister=True needs the caller's {axis} coords in "
                 f"{direction} order to line up cell-for-cell with "
                 f"reproject's output; sort the caller along {axis} "
-                f"first (e.g. .sortby('{axis}'"
-                + (", ascending=False)" if direction == 'descending'
-                   else ")")
-                + ")."
+                f"first (e.g. {hint})."
             )
         if coord.size >= 3:
             steps = np.abs(diffs)
@@ -259,6 +260,12 @@ def _select_overview_level(source, base_transform, res_x, res_y):
     or ``None`` when the full-resolution read is the right choice (no
     overviews, or the caller grid is too fine to benefit). Levels are
     probed in order, so a missing level ends the search.
+
+    Each probe re-parses the header: sub-millisecond mmap work for
+    local paths, one bounded range fetch per level for fsspec / HTTP
+    sources. Real pyramids top out around 8 levels, and the probes
+    replace full-resolution tile fetches that can run to gigabytes on
+    remote COGs, so the trade holds on both source types.
     """
     from .geotiff import _read_geo_info
 
