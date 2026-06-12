@@ -3152,7 +3152,7 @@ def rasterize(
     column: Optional[str] = None,
     columns: Optional[Sequence[str]] = None,
     fill: float = np.nan,
-    dtype: Optional[np.dtype] = None,
+    dtype: Optional[Union[str, np.dtype, type]] = None,
     all_touched: bool = False,
     gpu: bool = False,
     name: str = 'rasterize',
@@ -3222,10 +3222,13 @@ def rasterize(
         ``nodata`` / ``_FillValue`` attrs would disagree.  Pass a fill the
         dtype can hold (e.g. ``fill=0`` or ``fill=-9999`` for integers,
         ``fill=False`` for bool) or use a floating dtype.
-    dtype : numpy dtype, optional
-        Data type of the output array.  Defaults to np.float64, or
-        to the dtype of ``like`` if provided.  When this resolves to an
-        integer type, burn values are validated against the float64 safe
+    dtype : numpy dtype, dtype name, or scalar type, optional
+        Data type of the output array.  Accepts anything ``np.dtype()``
+        can parse: an ``np.dtype`` instance, a dtype name string
+        (``'int32'``), or a numpy scalar type (``np.int32``).  Defaults
+        to np.float64, or to the dtype of ``like`` if provided.  When
+        this resolves to an integer type, burn values are validated
+        against the float64 safe
         integer range: the rasterizer computes in float64, so a value
         with magnitude above ``2**53 - 1`` cannot be cast back to an
         exact integer (e.g. ``2**53 + 1`` would land on ``2**53``).  Such
