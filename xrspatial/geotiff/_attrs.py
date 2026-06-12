@@ -1730,6 +1730,44 @@ def _pack_fill_nan(chunk, fill):
     return out
 
 
+def _pack_guard_int_range(chunk, tgt_name, lo, hi_excl):
+    """Per-chunk range / finiteness guard for ``_pack``'s integer restore.
+
+    Runs after the round and before the ``astype``. Raises ``ValueError``
+    when the chunk holds non-finite values or values outside the target
+    integer dtype's range -- the cast would silently wrap them into
+    valid-looking integers (issue #3260). Returns the chunk unchanged
+    when clean.
+
+    ``lo`` is ``iinfo.min`` and ``hi_excl`` is ``iinfo.max + 1``, both as
+    floats. The exclusive upper bound matters for the 64-bit dtypes:
+    ``float(iinfo.max)`` rounds up to ``2**63`` / ``2**64``, so a
+    ``chunk > float(iinfo.max)`` test would pass a value that still wraps
+    in the cast. ``iinfo.max + 1`` is a power of two for every integer
+    dtype and therefore exact in float64. ``iinfo.min`` is likewise a
+    power of two (or zero) and exact.
+
+    Mapped over dask blocks so the scan fuses with the write's single
+    compute (same shape as :func:`_pack_guard_no_nan`); numpy and cupy
+    buffers are checked eagerly at ``_pack`` call time. ``np.isfinite``
+    and the comparisons dispatch on the array type, so the one function
+    covers all four backends.
+    """
+    if chunk.dtype.kind == 'f':
+        bad = ~np.isfinite(chunk)
+        bad |= chunk < lo
+        bad |= chunk >= hi_excl
+        if bool(bad.any()):
+            raise ValueError(
+                f"pack=True: data contains values that the packed "
+                f"integer dtype {tgt_name} cannot represent (valid "
+                f"range {int(lo)}..{int(hi_excl) - 1} after the "
+                f"scale/offset reversal) or that are not finite; the "
+                f"cast would silently wrap them. Clip the data to the "
+                f"packed range or rescale before writing.")
+    return chunk
+
+
 def _pack_guard_no_nan(chunk, tgt_name):
     """Per-chunk NaN guard for ``_pack``'s no-sentinel integer restore.
 
@@ -1785,12 +1823,16 @@ def _pack(data, nodata=None):
 
     Raises ``ValueError`` when ``data`` carries no unpack state to
     reverse, when an integer dtype must be restored but NaN pixels are
-    present with no declared sentinel to fill them, or when the ``nodata``
+    present with no declared sentinel to fill them, when the ``nodata``
     kwarg cannot be represented in the packed integer dtype (out of range
     or fractional) -- the cast would wrap or round the fill value away
-    from what the GDAL_NODATA tag declares.
+    from what the GDAL_NODATA tag declares -- or when any pixel's packed
+    value is non-finite or falls outside the packed integer dtype's
+    range, where the cast would silently wrap it into a valid-looking
+    integer (issue #3260).
 
-    Error timing for the NaN-with-no-sentinel case depends on the
+    Error timing for the NaN-with-no-sentinel and packed-range cases
+    depends on the
     backing: numpy-backed data raises here, at call time. dask-backed
     data defers the scan into the graph (one per-chunk check fused with
     the write's single compute) so the upstream graph is not executed a
@@ -1887,14 +1929,36 @@ def _pack(data, nodata=None):
             out = out.copy(data=out.data.map_blocks(
                 _pack_guard_no_nan, tgt.name,
                 dtype=out.dtype, meta=out.data._meta))
-        elif bool(out.isnull().any()):
-            raise ValueError(
-                f"pack=True: cannot restore integer dtype {tgt.name}: "
-                "NaN pixels are present but no nodata sentinel is "
-                "declared to fill them.")
+        else:
+            # Buffer-level scan, not ``bool(out.isnull().any())``: the
+            # xarray reduction materialises through ``np.asarray`` and
+            # raised TypeError on cupy-backed eager input, crashing
+            # every no-sentinel integer pack on the gpu backend before
+            # the scan could answer (#3260). ``_pack_guard_no_nan``
+            # dispatches ``np.isnan`` on the array type, so numpy and
+            # cupy take the same path here.
+            _pack_guard_no_nan(out.data, tgt.name)
 
     if tgt.kind in ('i', 'u'):
         out = out.round()
+        # Out-of-range and non-finite packed values would silently wrap
+        # in the astype below, exactly the corruption the NaN guard
+        # above exists to prevent: a finite value whose packed form
+        # exceeds the dtype range wraps (40000 -> -25536 in int16), and
+        # +/-Inf casts to a platform-defined integer (issue #3260).
+        # Runs after the round so a value like 32767.4 that rounds back
+        # into range is not rejected. Same eager/lazy split as the NaN
+        # guard: numpy / cupy raise here, dask raises from the write's
+        # single compute.
+        info = np.iinfo(tgt)
+        lo = float(info.min)
+        hi_excl = float(int(info.max) + 1)
+        if hasattr(out.data, 'dask'):
+            out = out.copy(data=out.data.map_blocks(
+                _pack_guard_int_range, tgt.name, lo, hi_excl,
+                dtype=out.dtype, meta=out.data._meta))
+        else:
+            _pack_guard_int_range(out.data, tgt.name, lo, hi_excl)
 
     out = out.astype(tgt)
 
