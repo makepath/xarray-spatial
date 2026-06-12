@@ -55,6 +55,7 @@ from xrspatial.utils import (
     has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
 )
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import _dask_task_name_kwargs
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -657,7 +658,7 @@ def _surface_distance_dask_bounded(source_da, elev_da,
         boundary=np.nan,
         dtype=np.float32,
         meta=np.array((), dtype=np.float32),
-        name=_MODE_TASK_NAMES[mode],
+        **_dask_task_name_kwargs(_MODE_TASK_NAMES[mode]),
     )
 
 
@@ -1181,7 +1182,7 @@ def _assemble_sd(source_da, elev_da, boundaries, elev_bdry,
         source_da, elev_da,
         dtype=np.float32,
         meta=np.array((), dtype=np.float32),
-        name=_MODE_TASK_NAMES[mode],
+        **_dask_task_name_kwargs(_MODE_TASK_NAMES[mode]),
     )
 
 
@@ -1266,7 +1267,7 @@ def _surface_distance_dask_cupy(source_da, elev_da,
             boundary=np.nan,
             dtype=np.float32,
             meta=cp.array((), dtype=cp.float32),
-            name=_MODE_TASK_NAMES[_mode],
+            **_dask_task_name_kwargs(_MODE_TASK_NAMES[_mode]),
         )
 
     # Unbounded: convert to dask+numpy, use CPU path

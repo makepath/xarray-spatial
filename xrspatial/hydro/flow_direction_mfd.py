@@ -29,6 +29,7 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import _dask_task_name_kwargs
 
 # Neighbor order: E, SE, S, SW, W, NW, N, NE
 NEIGHBOR_NAMES = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE']
@@ -323,7 +324,7 @@ def _run_dask_numpy(data: da.Array,
                                 depth=(1, 1),
                                 boundary=bnd,
                                 meta=np.array(()),
-                                name=f'xrspatial.flow_direction_mfd_band{band_idx}')
+                                **_dask_task_name_kwargs(f'xrspatial.flow_direction_mfd_band{band_idx}'))
         bands.append(band)
 
     return da.stack(bands, axis=0)
@@ -378,7 +379,7 @@ def _run_dask_cupy(data: da.Array,
                                 depth=(1, 1),
                                 boundary=bnd,
                                 meta=cupy.array(()),
-                                name=f'xrspatial.flow_direction_mfd_band{band_idx}')
+                                **_dask_task_name_kwargs(f'xrspatial.flow_direction_mfd_band{band_idx}'))
         bands.append(band)
 
     return da.stack(bands, axis=0)

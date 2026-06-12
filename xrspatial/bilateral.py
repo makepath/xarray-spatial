@@ -39,6 +39,7 @@ from xrspatial.utils import (
     ngjit,
 )
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.utils import _dask_task_name_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ def _bilateral_dask_numpy(data, radius, sigma_spatial, sigma_range,
         depth=(radius, radius),
         boundary=_boundary_to_dask(boundary),
         meta=np.array(()),
-        name='xrspatial.bilateral',
+        **_dask_task_name_kwargs('xrspatial.bilateral'),
     )
     return out
 
@@ -199,7 +200,7 @@ def _bilateral_dask_cupy(data, radius, sigma_spatial, sigma_range,
         depth=(radius, radius),
         boundary=_boundary_to_dask(boundary, is_cupy=True),
         meta=cupy.array(()),
-        name='xrspatial.bilateral',
+        **_dask_task_name_kwargs('xrspatial.bilateral'),
     )
     return out
 
