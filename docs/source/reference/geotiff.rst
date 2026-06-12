@@ -253,9 +253,29 @@ These combinations raise ``ValueError``:
 * A single-cell caller without ``attrs['res']`` or
   ``attrs['transform']`` -- resolution cannot be inferred from one
   coordinate. The caller must carry ``y``/``x`` coordinates either way.
+* ``allow_rotated=True``. A rotated file reads as an ungeoreferenced
+  pixel grid, which reproject would mis-place wholesale, so the
+  combination is refused up front (#3253).
+* A file that does not overlap the caller's grid at all -- the result
+  would be entirely NaN, so the read raises instead (#3253).
+* An irregular caller grid, or one with ``x`` descending or ``y``
+  ascending. The grid snap assumes a regular x-ascending /
+  y-descending template (reproject's output convention); anything else
+  would misalign silently, so it raises with a ``sortby`` hint
+  (#3253).
 
 What you should know about the output:
 
+* COG overviews are used automatically (#3253). When the caller's grid
+  is coarser than the file's full-resolution pixels and the file
+  carries overviews, the read probes the pyramid with header-only
+  reads and decodes the coarsest overview that still meets the
+  caller's resolution on both axes. Overview pixels are resampled at
+  write time, so values can differ slightly from a full-resolution
+  read; pass ``overview_level=0`` to force full resolution, or
+  ``overview_level=N`` to pick a level yourself (the window is
+  computed in that level's pixel space). Plain TIFFs without
+  overviews read at full resolution as before.
 * The caller's grid always wins. The output shape and coords exactly
   match the caller, and the grid snap (a resample) happens even when
   the CRS already matches. The file's native resolution is not
@@ -277,28 +297,27 @@ What you should know about the output:
 * ``resampling='auto'`` picks ``'nearest'`` for integer dtypes or
   paletted rasters and ``'bilinear'`` otherwise, and can guess wrong
   in both directions. An int16 continuous DEM is treated as
-  categorical and gets blocky ``'nearest'`` output (pass
-  ``resampling='bilinear'``). An integer class raster carrying nodata
-  is promoted to float by the forced unpack and gets ``'bilinear'``,
-  which smears class IDs (pass ``resampling='nearest'``). Only
-  ``'nearest'``, ``'bilinear'``, and ``'cubic'`` are available.
+  categorical and gets blocky ``'nearest'`` output; since #3253 a
+  ``UserWarning`` flags this case (integer dtype, no colormap) with
+  the override spelled out (pass ``resampling='bilinear'``). An
+  integer class raster carrying nodata is promoted to float by the
+  forced unpack and gets ``'bilinear'``, which smears class IDs (pass
+  ``resampling='nearest'``). Only ``'nearest'``, ``'bilinear'``, and
+  ``'cubic'`` are available.
 * Dask output follows an explicit ``chunks=`` kwarg when given, and
   otherwise the caller's chunk layout, rather than
   :func:`~xrspatial.reproject.reproject`'s 512x512 default (#3236).
 
 Untested under coregister:
 
-* Multi-band reads. Extra kwargs (``band=``, ``overview_level=``, the
-  per-source opt-ins) forward to ``open_geotiff``, but the coregister
-  test suite covers single-band, axis-aligned sources with a parseable
-  CRS only.
-* Rotated sources. The underlying read rejects them by default
-  (``allow_rotated=False``), and the coregister windowing math assumes
-  an axis-aligned file transform, so the opt-in is not expected to
-  work here.
-* Extreme reprojections. The CRS-mismatch bbox transform samples 20
-  points per edge to handle curvature, but polar and antimeridian
-  cases are not covered by tests.
+* Multi-band reads. Extra kwargs (``band=``, the per-source opt-ins)
+  forward to ``open_geotiff``, but the coregister test suite covers
+  single-band, axis-aligned sources with a parseable CRS only.
+* Polar reprojections. The CRS-mismatch bbox transform samples 20
+  points per edge to handle curvature, but polar cases are not
+  covered by tests. A caller grid crossing the antimeridian is
+  detected and handled (#3253): the read warns and falls back to the
+  full file width, which is a correct superset, just slower.
 
 Writing
 =======

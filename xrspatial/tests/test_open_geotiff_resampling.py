@@ -26,8 +26,12 @@ def test_auto_float_no_colormap_picks_bilinear():
 
 
 def test_auto_integer_picks_nearest():
-    assert _resolve_resampling('auto', _da('int16')) == 'nearest'
-    assert _resolve_resampling('auto', _da('uint8')) == 'nearest'
+    # integer-without-colormap also fires the is-this-really-categorical
+    # advisory alongside the 'nearest' choice
+    with pytest.warns(UserWarning, match="nearest"):
+        assert _resolve_resampling('auto', _da('int16')) == 'nearest'
+    with pytest.warns(UserWarning, match="nearest"):
+        assert _resolve_resampling('auto', _da('uint8')) == 'nearest'
 
 
 def test_auto_float_with_colormap_picks_nearest():
@@ -102,7 +106,8 @@ def test_auto_float_forwards_bilinear(tmp_path, reproject_spy):
 def test_auto_integer_forwards_nearest(tmp_path, reproject_spy):
     template, path = _mismatch_template_and_file(
         tmp_path, np.int16, 'rs3067_int.tif')
-    template.xrs.open_geotiff(path, auto_reproject=True)
+    with pytest.warns(UserWarning, match="nearest"):
+        template.xrs.open_geotiff(path, auto_reproject=True)
     assert reproject_spy['resampling'] == 'nearest'
 
 
@@ -131,7 +136,8 @@ def test_categorical_real_reproject_preserves_class_ids(tmp_path):
     )
     to_geotiff(file_da, path, compression='none')
 
-    result = template.xrs.open_geotiff(path, auto_reproject=True)
+    with pytest.warns(UserWarning, match="nearest"):
+        result = template.xrs.open_geotiff(path, auto_reproject=True)
     vals = np.asarray(result.data)
     finite = vals[np.isfinite(vals)]
     assert finite.size > 0

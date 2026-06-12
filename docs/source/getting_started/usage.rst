@@ -36,13 +36,16 @@ arguments.
    ndvi_result = ndvi(my_dataset, nir='band_5', red='band_4')
 
 
-Check out the user guide `here <https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/user_guide>`_.
+Check out the :doc:`user guide </user_guide/index>` for worked examples of every module.
 
 
 Dependencies
 ============
 
-``xarray-spatial`` currently depends on Datashader, but will soon be updated to depend only on ``xarray`` and ``numba``\ , while still being able to make use of Datashader output when available. 
+``xarray-spatial`` has a small required core: ``numpy``, ``numba``, ``scipy``,
+``xarray``, ``urllib3``, and ``zstandard``. Everything else (plotting, vector
+rasterization, dask, GPU support, CRS handling) is an optional extra; see
+:doc:`installation`.
 
 
 .. image:: ../_static/img/dependencies.svg
