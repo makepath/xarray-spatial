@@ -471,6 +471,8 @@ def _aea_params(crs):
         return None
     if d.get('proj') != 'aea':
         return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
 
     lat_1 = math.radians(d.get('lat_1', 0.0))
     lat_2 = math.radians(d.get('lat_2', lat_1))
@@ -574,6 +576,8 @@ def _cea_params(crs):
     except Exception:
         return None
     if d.get('proj') != 'cea':
+        return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
         return None
 
     lon_0 = math.radians(d.get('lon_0', 0.0))
@@ -1771,10 +1775,34 @@ def _is_wgs84_compatible_ellipsoid(crs):
     Returns True for WGS84/NAD83 (no shift needed) and for datums
     with known Helmert parameters (NAD27, etc.) since the dispatch
     will wrap the projection with a datum shift.
+
+    CRSes that define the ellipsoid through explicit axes instead of an
+    ``ellps``/``datum`` name are only accepted when the axes match
+    WGS84/GRS80. PROJ normalizes a spherical definition (``+a=R +b=R``)
+    to a single ``R`` key with no ``ellps``, so without the axis check a
+    sphere-based CRS such as the MODIS sinusoidal grid
+    (``+proj=sinu +a=6371007.181 +b=6371007.181``) sailed through the
+    empty-string match and ran the WGS84 kernels, landing ~19 km off
+    (GH #3275).
     """
     try:
         d = _crs_to_dict(crs)
     except Exception:
+        return False
+    # Explicit sphere radius: never WGS84-compatible.
+    if 'R' in d:
+        return False
+    # Explicit semi-axes must match WGS84/GRS80. The two ellipsoids
+    # differ by ~1e-4 m in b, so a 0.5 m tolerance keeps GRS80 in while
+    # rejecting every other ellipsoid (Bessel, Clarke, intl, spheres).
+    a_axis = d.get('a')
+    if a_axis is not None and abs(float(a_axis) - _WGS84_A) > 0.5:
+        return False
+    b_axis = d.get('b')
+    if b_axis is not None and abs(float(b_axis) - _WGS84_B) > 0.5:
+        return False
+    rf = d.get('rf')
+    if rf is not None and abs(float(rf) - 1.0 / _WGS84_F) > 0.01:
         return False
     ellps = d.get('ellps', '')
     datum = d.get('datum', '')
