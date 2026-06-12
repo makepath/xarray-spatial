@@ -108,16 +108,15 @@ def test_mask_chunk_mismatch_matches_aligned_mask(
     _assert_results_equal(expected, actual)
 
 
-@dask_array_available
-def test_mask_chunk_mismatch_excludes_correct_pixels():
+@pytest.mark.parametrize("backend", _BACKEND_PARAMS)
+def test_mask_chunk_mismatch_excludes_correct_pixels(backend):
     """Sanity anchor with exact geometry: a single-chunk mask over a
     multi-chunk raster excludes exactly the masked pixel."""
     data = np.ones(_SHAPE, dtype=np.int64)
     mask = np.ones(_SHAPE, dtype=bool)
     mask[7, 9] = False  # interior pixel away from chunk corners
 
-    raster = xr.DataArray(da.from_array(data, chunks=_RASTER_CHUNKS))
-    mask_da = xr.DataArray(da.from_array(mask, chunks=_SHAPE))
+    raster, mask_da = _make_pair(data, mask, backend, _SHAPE)
     values, polygons = polygonize(raster, mask=mask_da, connectivity=4)
 
     assert values == [1]
