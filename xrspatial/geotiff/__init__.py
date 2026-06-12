@@ -71,9 +71,13 @@ from ._errors import (ConflictingCRSError, ConflictingNodataError, DuplicateIFDT
                       NonRepresentableEPSGCRSError, NonUniformCoordsError,
                       RemoteStableSourcesOnlyError, RotatedTransformError, UnknownCRSModelTypeError,
                       UnparseableCRSError, UnsupportedGeoTIFFFeatureError,
-                      VRTStableSourcesOnlyError)
+                      VRTStableSourcesOnlyError, VRTUnsupportedError)
 from ._geotags import RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT, GeoTransform  # noqa: F401
-from ._reader import _MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, UnsafeURLError
+# ``PixelSafetyLimitError`` is defined in ``_layout`` and re-exported by
+# ``_reader`` (the historical import surface); bind it here so callers can
+# catch the ``max_pixels`` rejection without a private-module import.
+from ._reader import (_MAX_CLOUD_BYTES_SENTINEL, CloudSizeLimitError, PixelSafetyLimitError,
+                      UnsafeURLError)
 from ._reader import read_to_array as _read_to_array
 from ._runtime import (_CRS_WKT_DEPRECATED_SENTINEL, _GPU_DEPRECATED_SENTINEL,  # noqa: F401
                        _MASK_AND_SCALE_DEPRECATED_SENTINEL, _MASK_NODATA_DEPRECATED_SENTINEL,
@@ -103,6 +107,7 @@ from ._writers.vrt import _build_vrt  # noqa: F401
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
 # and emits a ``DeprecationWarning`` when called.
 __all__ = [
+    'CloudSizeLimitError',
     'ConflictingCRSError',
     'ConflictingNodataError',
     'DuplicateIFDTagError',
@@ -121,6 +126,7 @@ __all__ = [
     'MixedBandMetadataError',
     'NonRepresentableEPSGCRSError',
     'NonUniformCoordsError',
+    'PixelSafetyLimitError',
     'RemoteStableSourcesOnlyError',
     'RotatedTransformError',
     'SUPPORTED_FEATURES',
@@ -129,6 +135,7 @@ __all__ = [
     'UnsafeURLError',
     'UnsupportedGeoTIFFFeatureError',
     'VRTStableSourcesOnlyError',
+    'VRTUnsupportedError',
     'open_geotiff',
     'to_geotiff',
 ]
