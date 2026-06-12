@@ -3226,8 +3226,9 @@ def rasterize(
         Data type of the output array.  Accepts anything ``np.dtype()``
         can parse: an ``np.dtype`` instance, a dtype name string
         (``'int32'``), or a numpy scalar type (``np.int32``).  Defaults
-        to np.float64, or to the dtype of ``like`` if provided.  When this resolves to an
-        integer type, burn values are validated against the float64 safe
+        to np.float64, or to the dtype of ``like`` if provided.  When
+        this resolves to an integer type, burn values are validated
+        against the float64 safe
         integer range: the rasterizer computes in float64, so a value
         with magnitude above ``2**53 - 1`` cannot be cast back to an
         exact integer (e.g. ``2**53 + 1`` would land on ``2**53``).  Such

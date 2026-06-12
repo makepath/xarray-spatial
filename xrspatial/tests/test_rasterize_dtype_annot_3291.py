@@ -16,9 +16,6 @@ import pytest
 
 from xrspatial.rasterize import rasterize
 
-shapely = pytest.importorskip("shapely")
-from shapely.geometry import box  # noqa: E402
-
 
 def test_dtype_annotation_accepts_str_dtype_and_type():
     hints = typing.get_type_hints(rasterize)
@@ -35,6 +32,9 @@ def test_dtype_annotation_accepts_str_dtype_and_type():
     ids=["str-name", "scalar-type", "dtype-instance"],
 )
 def test_dtype_forms_accepted_at_runtime(dtype_arg):
+    pytest.importorskip("shapely")
+    from shapely.geometry import box
+
     result = rasterize(
         [(box(0, 0, 5, 5), 1.0)],
         width=4, height=4, bounds=(0, 0, 10, 10),
