@@ -123,6 +123,7 @@ def _bilateral_dask_numpy(data, radius, sigma_spatial, sigma_range,
         depth=(radius, radius),
         boundary=_boundary_to_dask(boundary),
         meta=np.array(()),
+        name='xrspatial.bilateral',
     )
     return out
 
@@ -198,6 +199,7 @@ def _bilateral_dask_cupy(data, radius, sigma_spatial, sigma_range,
         depth=(radius, radius),
         boundary=_boundary_to_dask(boundary, is_cupy=True),
         meta=cupy.array(()),
+        name='xrspatial.bilateral',
     )
     return out
 

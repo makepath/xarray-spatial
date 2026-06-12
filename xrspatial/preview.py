@@ -153,6 +153,7 @@ def _reduce_dask(agg, factor_y, factor_x, method, y_dim, x_dim):
         _reduce_block, data,
         dtype=agg.dtype,
         chunks=(out_chunks_y, out_chunks_x),
+        name='xrspatial.preview',
     )
 
     out_h = sum(out_chunks_y)
@@ -227,6 +228,7 @@ def _bilinear_dask(agg, out_h, out_w, y_dim, x_dim):
         _zoom_block, agg.data,
         dtype=agg.dtype,
         chunks=(out_chunks_y, out_chunks_x),
+        name='xrspatial.preview',
     )
 
     coords = {}

@@ -396,7 +396,8 @@ def _convolve_2d_dask_numpy(data, kernel, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array(()),
+                           name='xrspatial.convolve_2d')
     return out
 
 
@@ -470,7 +471,8 @@ def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array(()),
+                           name='xrspatial.convolve_2d')
     return out
 
 

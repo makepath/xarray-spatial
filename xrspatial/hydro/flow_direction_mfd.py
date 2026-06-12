@@ -320,7 +320,8 @@ def _run_dask_numpy(data: da.Array,
         band = data.map_overlap(_band_k,
                                 depth=(1, 1),
                                 boundary=bnd,
-                                meta=np.array(()))
+                                meta=np.array(()),
+                                name=f'xrspatial.flow_direction_mfd_band{band_idx}')
         bands.append(band)
 
     return da.stack(bands, axis=0)
@@ -372,7 +373,8 @@ def _run_dask_cupy(data: da.Array,
         band = data.map_overlap(_band_k,
                                 depth=(1, 1),
                                 boundary=bnd,
-                                meta=cupy.array(()))
+                                meta=cupy.array(()),
+                                name=f'xrspatial.flow_direction_mfd_band{band_idx}')
         bands.append(band)
 
     return da.stack(bands, axis=0)

@@ -991,6 +991,7 @@ def _assemble_result(fractions_da, boundaries, frac_bdry,
     return da.map_blocks(
         _tile, fractions_da, drop_axis=0,
         dtype=np.float64, meta=np.array((), dtype=np.float64),
+        name='xrspatial.flow_length_mfd',
     )
 
 

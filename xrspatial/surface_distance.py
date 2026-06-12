@@ -64,6 +64,14 @@ DISTANCE = 0
 ALLOCATION = 1
 DIRECTION = 2
 
+# Dask task-name prefix per mode, so .visualize() and the distributed
+# dashboard label tasks with the public function they belong to.
+_MODE_TASK_NAMES = {
+    DISTANCE: 'xrspatial.surface_distance',
+    ALLOCATION: 'xrspatial.surface_allocation',
+    DIRECTION: 'xrspatial.surface_direction',
+}
+
 
 # ---------------------------------------------------------------------------
 # Memory guards
@@ -649,6 +657,7 @@ def _surface_distance_dask_bounded(source_da, elev_da,
         boundary=np.nan,
         dtype=np.float32,
         meta=np.array((), dtype=np.float32),
+        name=_MODE_TASK_NAMES[mode],
     )
 
 
@@ -1172,6 +1181,7 @@ def _assemble_sd(source_da, elev_da, boundaries, elev_bdry,
         source_da, elev_da,
         dtype=np.float32,
         meta=np.array((), dtype=np.float32),
+        name=_MODE_TASK_NAMES[mode],
     )
 
 
@@ -1256,6 +1266,7 @@ def _surface_distance_dask_cupy(source_da, elev_da,
             boundary=np.nan,
             dtype=np.float32,
             meta=cp.array((), dtype=cp.float32),
+            name=_MODE_TASK_NAMES[_mode],
         )
 
     # Unbounded: convert to dask+numpy, use CPU path

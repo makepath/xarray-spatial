@@ -288,7 +288,8 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         return out
 
     return da.map_blocks(_chunk_terrain, data, dtype=np.float32,
-                         meta=np.array((), dtype=np.float32))
+                         meta=np.array((), dtype=np.float32),
+                         name='xrspatial.terrain')
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +552,8 @@ def _terrain_dask_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         return out
 
     data = da.map_blocks(_chunk_terrain, data, dtype=cupy.float32,
-                         meta=cupy.array((), dtype=cupy.float32))
+                         meta=cupy.array((), dtype=cupy.float32),
+                         name='xrspatial.terrain')
 
     data = da.clip(data, -1, 1)
     data = (data + 1) / 2

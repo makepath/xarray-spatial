@@ -179,7 +179,8 @@ def _run_dask_numpy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array((), dtype=np.float32))
+                           meta=np.array((), dtype=np.float32),
+                           name='xrspatial.aspect')
     return out
 
 
@@ -192,7 +193,8 @@ def _run_dask_cupy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array((), dtype=cupy.float32))
+                           meta=cupy.array((), dtype=cupy.float32),
+                           name='xrspatial.aspect')
     return out
 
 
@@ -298,6 +300,7 @@ def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='n
         depth=(0, 1, 1),
         boundary={0: np.nan, 1: dask_bnd, 2: dask_bnd},
         meta=np.array((), dtype=np.float32),
+        name='xrspatial.aspect',
     )
     return out[0]
 
@@ -330,6 +333,7 @@ def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='na
         depth=(0, 1, 1),
         boundary={0: cupy.nan, 1: dask_bnd, 2: dask_bnd},
         meta=cupy.array((), dtype=cupy.float32),
+        name='xrspatial.aspect',
     )
     return out[0]
 
