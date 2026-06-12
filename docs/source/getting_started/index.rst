@@ -9,4 +9,4 @@ Getting started
 
    installation
    raster_huh
-   usage
+   quickstart
