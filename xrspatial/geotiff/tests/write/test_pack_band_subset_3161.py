@@ -195,8 +195,9 @@ def test_pack_band_subset_round_trips_per_band_scale_gpu(tmp_path, chunks):
     )
 
     decoded = _open(src, chunks, band=1, unpack=True, gpu=True)
+    decoded_host = _to_host(decoded.data)
     np.testing.assert_allclose(
-        _to_host(decoded.data), data[:, :, 1].astype(np.float64) * 0.2)
+        decoded_host, data[:, :, 1].astype(np.float64) * 0.2)
 
     out = str(tmp_path / f"packed_subset_gpu_3266_{chunks}.tif")
     to_geotiff(decoded, out, pack=True)
@@ -210,6 +211,12 @@ def test_pack_band_subset_round_trips_per_band_scale_gpu(tmp_path, chunks):
     # SCALE (0.2), not the source's stale band-0 entry.
     back = open_geotiff(out, unpack=True)
     np.testing.assert_allclose(
-        np.asarray(back.data), _to_host(decoded.data), equal_nan=True)
+        np.asarray(back.data), decoded_host, equal_nan=True)
     md = back.attrs.get("gdal_metadata") or {}
     assert not any(isinstance(k, tuple) for k in md)
+
+    # band=0 (the only band of the output) applies the same rewritten
+    # pair, mirroring the CPU test's stale-band-0-SCALE regression check.
+    back0 = open_geotiff(out, unpack=True, band=0)
+    np.testing.assert_allclose(
+        np.asarray(back0.data), decoded_host, equal_nan=True)
