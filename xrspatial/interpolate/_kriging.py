@@ -496,7 +496,9 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
             attrs=template.attrs,
         )
         if return_variance:
-            return prediction, prediction.copy()
+            variance = prediction.copy()
+            variance.name = f'{name}_variance'
+            return prediction, variance
         return prediction
 
     mapper = ArrayTypeFunctionMapping(

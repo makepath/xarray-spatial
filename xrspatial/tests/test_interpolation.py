@@ -420,6 +420,31 @@ class TestKriging:
         assert isinstance(pred, xr.DataArray)
         assert isinstance(var, xr.DataArray)
         assert pred.shape == var.shape
+        assert pred.name == 'kriging'
+        assert var.name == 'kriging_variance'
+
+    def test_return_variance_name_on_singular_fallback(self, monkeypatch):
+        """Singular-matrix fallback names the variance '{name}_variance'.
+
+        Regression test for #3285: the fallback path returned
+        prediction.copy(), which kept the prediction's name, so both
+        arrays came back with the same name and anything keying on
+        .name (e.g. xr.merge) collapsed the pair.
+        """
+        monkeypatch.setattr(
+            'xrspatial.interpolate._kriging._build_kriging_matrix',
+            lambda *args, **kwargs: None,
+        )
+
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        pred, var = kriging(x, y, z, template, return_variance=True,
+                            name='krig')
+
+        assert pred.name == 'krig'
+        assert var.name == 'krig_variance'
+        assert np.all(np.isnan(pred.values))
+        assert np.all(np.isnan(var.values))
 
     def test_variogram_models(self):
         """All three variogram models should produce finite output."""
