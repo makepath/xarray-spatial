@@ -224,14 +224,12 @@ def test_polygonize_invalid_return_type_rejected_before_compute(
 
     monkeypatch.setattr(polygonize_module, "_polygonize_numpy", spy)
     raster = xr.DataArray(raster_3x3)
-    with pytest.raises(ValueError, match="Invalid return_type 'qwerty'"):
+    with pytest.raises(
+            ValueError,
+            match="Invalid return_type 'qwerty'") as excinfo:
         polygonize_module.polygonize(raster, return_type="qwerty")
     assert calls == []
-
-    try:
-        polygonize_module.polygonize(raster, return_type="qwerty")
-    except ValueError as e:
-        assert "Allowed values are" in str(e)
+    assert "Allowed values are" in str(excinfo.value)
 
 
 @pytest.mark.parametrize(
