@@ -710,7 +710,12 @@ def open_geotiff(source: str | BinaryIO, *,
         inverse of the writer's ``pack`` option.
         The applied values are recorded on ``attrs['scale_factor']`` /
         ``attrs['add_offset']``. A source without scale / offset metadata
-        is a no-op. A dataset-level scale / offset, or per-band values that
+        skips the scaling step, but the sentinel-to-NaN mask still runs:
+        a declared nodata sentinel is replaced with NaN and an integer
+        source is promoted to ``float64`` (matching rioxarray's
+        ``mask_and_scale``). Only a source with neither scale / offset
+        metadata nor a nodata sentinel reads unchanged.
+        A dataset-level scale / offset, or per-band values that
         agree across bands, applies to the whole array. A source whose
         per-band scale / offset differ raises ``MixedBandMetadataError``
         unless ``band=`` selects a single band, in which case that band's
