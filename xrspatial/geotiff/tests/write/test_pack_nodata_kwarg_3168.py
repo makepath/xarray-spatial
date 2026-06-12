@@ -15,6 +15,8 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
+from .._helpers.markers import requires_gpu
+
 
 def _write_int_tiff(path, data, *, nodata=None, scale=None, offset=None):
     """Write ``data`` (an integer ndarray) as a GeoTIFF, optionally carrying
@@ -38,9 +40,13 @@ def _write_int_tiff(path, data, *, nodata=None, scale=None, offset=None):
     return path
 
 
-def _reopen(path, chunks):
-    return (open_geotiff(path, unpack=True) if chunks is None
-            else open_geotiff(path, unpack=True, chunks=chunks))
+def _reopen(path, chunks, gpu=False):
+    kwargs = {"unpack": True}
+    if gpu:
+        kwargs["gpu"] = True
+    if chunks is not None:
+        kwargs["chunks"] = chunks
+    return open_geotiff(path, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -159,3 +165,40 @@ def test_pack_rejects_nodata_kwarg_outside_packed_dtype_range(tmp_path):
         decoded.xrs.to_geotiff(out, pack=True, nodata=-1)
     with pytest.raises(ValueError, match="cannot be represented"):
         decoded.xrs.to_geotiff(out, pack=True, nodata=250.5)
+
+
+# ---------------------------------------------------------------------------
+# GPU legs: ``pack=True`` accepts cupy / dask+cupy input since #3240, so the
+# kwarg-driven fill must hold there too (#3266).
+# ---------------------------------------------------------------------------
+
+
+@requires_gpu
+@pytest.mark.parametrize("chunks", [None, 2], ids=["gpu", "dask-gpu"])
+def test_pack_nodata_kwarg_fills_holes_with_kwarg_gpu(tmp_path, chunks):
+    """A ``gpu=True`` unpack read packed with ``nodata=-1``: the holes in
+    the cupy buffer carry the kwarg sentinel and the tag agrees, so a
+    masked re-read masks them again."""
+    data = np.array([[10, 20, -32768], [40, -32768, 60]], dtype=np.int16)
+    src = _write_int_tiff(
+        tmp_path / "src_i16_gpu_3266.tif", data, nodata=-32768)
+
+    decoded = _reopen(src, chunks, gpu=True)
+    hole_mask = data == -32768
+
+    out = str(tmp_path / f"out_i16_gpu_3266_{chunks}.tif")
+    decoded.xrs.to_geotiff(out, pack=True, nodata=-1)
+
+    # Raw read: the holes carry the kwarg sentinel, and the tag agrees.
+    raw = open_geotiff(out)
+    assert str(raw.dtype) == "int16"
+    raw_vals = np.asarray(raw.data)
+    np.testing.assert_array_equal(raw_vals[hole_mask], -1)
+    assert raw.attrs.get("nodata") == -1
+    assert not (raw_vals == -32768).any()
+
+    # Masked re-read: the holes come back as NaN, not as valid pixels.
+    masked = open_geotiff(out, masked=True)
+    masked_vals = np.asarray(masked.data)
+    np.testing.assert_array_equal(np.isnan(masked_vals), hole_mask)
+    np.testing.assert_array_equal(masked_vals[~hole_mask], data[~hole_mask])
