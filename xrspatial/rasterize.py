@@ -1108,6 +1108,13 @@ def _burn_lines_supercover_cpu(out, written, x0_arr, y0_arr, x1_arr, y1_arr,
 # geometry per pixel, even for self-crossing lines.  Points are left
 # alone -- GDAL burns once per point, so a MultiPoint with duplicated
 # coordinates adding twice already matches.
+#
+# Memory tradeoff: line cells are materialized as O(pixels traversed)
+# int32 arrays instead of O(vertices) segment endpoints.  That is the
+# same order as the work the burn kernel does anyway, but it is
+# allocated up front (per tile on the dask backends), so very long
+# lines on very large eager rasters cost a few extra bytes per
+# traversed pixel while the burn runs.
 # ---------------------------------------------------------------------------
 
 @ngjit
@@ -1287,6 +1294,10 @@ def _dedup_cells(rows, cols, gids, height, width):
     non-negative and bounded by the raster dimensions / geometry
     count), uniques it, and unpacks.  Output order is irrelevant to
     the commutative merges this feeds.
+
+    The key only overflows when n_geometries * height * width exceeds
+    2**63, by which point the cell arrays being deduplicated could not
+    have been allocated in the first place.
     """
     if len(rows) == 0:
         return rows, cols, gids
