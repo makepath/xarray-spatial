@@ -4,6 +4,8 @@
 Installation
 ************
 
+``xarray-spatial`` requires Python 3.12 or newer.
+
 .. code-block:: bash
 
    # via pip
