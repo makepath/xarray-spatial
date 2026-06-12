@@ -134,6 +134,23 @@ def test_geometrycollection_bad_leaf_dropped_good_leaf_kept():
 
 
 @skip_no_shapely
+def test_mixed_collection_and_toplevel_nonfinite_warns_once():
+    """A GeometryCollection in the input routes everything through the
+    slow path; a top-level non-finite geometry must produce exactly one
+    warning, not one from each detection path."""
+    gc = GeometryCollection([_ok_poly()])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = rasterize([(_nan_poly(), 7.0), (gc, 1.0)], **_KW)
+    nonfinite_warnings = [
+        w for w in caught if _WARN_MATCH in str(w.message)]
+    assert len(nonfinite_warnings) == 1
+    v = _values(result)
+    assert np.count_nonzero(v == 1.0) == 36
+    assert np.count_nonzero(v == 7.0) == 0
+
+
+@skip_no_shapely
 def test_int32_overflow_off_raster_polygon_burns_nothing():
     """The issue reproduction: used to burn a 60-pixel phantom block."""
     result = rasterize([(_off_raster_overflow_poly(), 9.0)], **_KW)

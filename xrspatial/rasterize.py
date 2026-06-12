@@ -324,17 +324,23 @@ def _classify_geometries(geometries, props_array):
     # coordinates when computing bounds, so a bbox check cannot detect
     # these; inspect the coordinates directly.  GeometryCollections are
     # excluded here -- their members are checked per-leaf in the slow
-    # path below, which is the only path that unpacks them.
-    coords_all, coord_owner = shapely.get_coordinates(
-        geom_arr, return_index=True)
-    nonfinite_coord = ~np.all(np.isfinite(coords_all), axis=1)
-    if np.any(nonfinite_coord):
-        nonfinite_geom = np.zeros(n, dtype=bool)
-        nonfinite_geom[coord_owner[nonfinite_coord]] = True
-        nonfinite_geom &= valid & (type_ids != 7)
-        if np.any(nonfinite_geom):
-            _warn_nonfinite_geometries(int(np.count_nonzero(nonfinite_geom)))
-            valid = valid & ~nonfinite_geom
+    # path below, which is the only path that unpacks them.  When any
+    # GeometryCollection is present the slow path runs over every input
+    # and owns both the per-leaf check and the warning, so the
+    # vectorized check is skipped entirely to avoid warning twice for
+    # the same geometry.
+    if not np.any(valid & (type_ids == 7)):
+        coords_all, coord_owner = shapely.get_coordinates(
+            geom_arr, return_index=True)
+        nonfinite_coord = ~np.all(np.isfinite(coords_all), axis=1)
+        if np.any(nonfinite_coord):
+            nonfinite_geom = np.zeros(n, dtype=bool)
+            nonfinite_geom[coord_owner[nonfinite_coord]] = True
+            nonfinite_geom &= valid
+            if np.any(nonfinite_geom):
+                _warn_nonfinite_geometries(
+                    int(np.count_nonzero(nonfinite_geom)))
+                valid = valid & ~nonfinite_geom
 
     # Type ID mapping:
     # 0=Point, 1=LineString, 2=LinearRing, 3=Polygon,
