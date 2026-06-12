@@ -642,7 +642,9 @@ def open_geotiff(source: str | BinaryIO, *,
         each chunk's decode buffer instead, so a small ``max_pixels``
         no longer rejects a large lazy raster up front. None uses the
         default (~1 billion). Raise it to read legitimately large
-        files.
+        files. Exceeding the cap raises
+        :class:`~xrspatial.geotiff.PixelSafetyLimitError` (a
+        ``ValueError`` subclass).
     max_cloud_bytes : int or None, optional
         [advanced] fsspec cloud reads can run up cost on large objects;
         the budget defends against accidental large downloads but the
@@ -650,7 +652,9 @@ def open_geotiff(source: str | BinaryIO, *,
         Byte ceiling for eager reads from fsspec sources (``s3://``,
         ``gs://``, ``az://``, ``abfs://``, ``memory://``, ...). The
         compressed object size is checked against this budget before
-        any bytes are downloaded. Default is 256 MiB, overridable via
+        any bytes are downloaded; a breach raises
+        :class:`~xrspatial.geotiff.CloudSizeLimitError` (a
+        ``ValueError`` subclass). Default is 256 MiB, overridable via
         the ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` env var. Pass
         ``None`` to skip the check entirely. The HTTP path already
         reads only what it needs via range requests and is not subject
