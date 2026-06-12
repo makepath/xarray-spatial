@@ -1,0 +1,42 @@
+name: docs
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'setup.cfg'
+      - '.readthedocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+jobs:
+  # Job id/name kept distinct from the pytest workflow's `run` job:
+  # duplicate check names across workflows get deduplicated in the PR
+  # checks UI and can hide failures.
+  docs-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        # Match the Read the Docs build (.readthedocs.yml).
+        python-version: '3.12'
+    - name: Install pandoc
+      # nbsphinx needs the pandoc binary; the `pandoc` pip package in
+      # the doc extra does not ship it.
+      run: sudo apt-get update && sudo apt-get install -y pandoc
+    - name: Install dependencies
+      # Same extras as the Read the Docs pre_build step, so this job
+      # and RTD cannot drift apart.
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e '.[doc,tests]'
+    - name: Build HTML
+      # No -W: the build carries a handful of pre-existing warnings in
+      # notebooks and reference pages. Gate on errors only.
+      run: sphinx-build -b html docs/source docs/build/html
+    - name: Link check
+      # External links flake; report but never fail the job.
+      continue-on-error: true
+      run: sphinx-build -b linkcheck docs/source docs/build/linkcheck
