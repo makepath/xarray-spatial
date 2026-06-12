@@ -41,10 +41,7 @@ def _unpacked(path, *, gpu=False):
     kwargs = {"unpack": True}
     if gpu:
         kwargs["gpu"] = True
-    da = open_geotiff(path, **kwargs)
-    out = da.copy()
-    out.attrs = dict(da.attrs)
-    return out
+    return open_geotiff(path, **kwargs).copy()
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +169,10 @@ def test_pack_float_target_not_range_guarded(tmp_path):
     mod.data[0, 0] = 1e30
     out = str(tmp_path / "out_float_3260.tif")
     to_geotiff(mod, out, pack=True)
-    back = open_geotiff(src)
+    back = open_geotiff(out)
     assert str(back.dtype) == "float32"
+    # Packed value is 1e30 / SCALE = 5e29, well inside float32 range.
+    assert np.asarray(back.data)[0, 0] == np.float32(5e29)
 
 
 # ---------------------------------------------------------------------------
