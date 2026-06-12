@@ -17,8 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     # Bound a hung linkcheck: continue-on-error keeps it from gating,
     # but without a cap a stalled external link holds the runner for
-    # the default 6-hour job timeout.
-    timeout-minutes: 30
+    # the default 6-hour job timeout. Normal runs take ~26 minutes
+    # (HTML build ~11, linkcheck ~14), so 45 leaves headroom without
+    # letting a wedged run camp on a runner.
+    timeout-minutes: 45
     steps:
     - uses: actions/checkout@v4
     - name: Setup Python
