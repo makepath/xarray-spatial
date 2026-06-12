@@ -2744,6 +2744,17 @@ def polygonize(
             f"connectivity must be either 4 or 8, not {connectivity}")
     connectivity_8 = (connectivity == 8)
 
+    # Check return_type before running the (possibly expensive)
+    # polygonize computation, matching contours().  Checking it only at
+    # the dispatch below meant a typo cost the caller the entire
+    # computation before the error surfaced.
+    if return_type not in (
+            "numpy", "awkward", "geopandas", "spatialpandas", "geojson"):
+        raise ValueError(
+            f"Invalid return_type '{return_type}'. Allowed values are "
+            "'numpy', 'awkward', 'geopandas', 'spatialpandas' and "
+            "'geojson'.")
+
     # Check transform.  When the caller did not pass an explicit
     # transform, fall back to one carried on the raster (attrs[
     # 'transform'] or rio.transform()).  This keeps the
@@ -2824,7 +2835,5 @@ def polygonize(
         return _to_geopandas(column, polygon_points, column_name, crs=crs)
     elif return_type == "spatialpandas":
         return _to_spatialpandas(column, polygon_points, column_name)
-    elif return_type == "geojson":
+    else:  # "geojson"; invalid values were rejected before the computation.
         return _to_geojson(column, polygon_points, column_name)
-    else:
-        raise ValueError(f"Invalid return_type '{return_type}'")
