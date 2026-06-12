@@ -46,8 +46,9 @@ With `uv <https://docs.astral.sh/uv/>`_:
 Optional dependencies
 =====================
 
-The base install covers every compute function plus GeoTIFF / COG read
-and write. The extras below add features on top. Combine them as needed:
+The base install covers the raster compute functions plus GeoTIFF / COG
+read and write. The extras below add features on top. Combine them as
+needed:
 
 .. code-block:: bash
 
@@ -119,8 +120,10 @@ Cloud storage
 ``open_geotiff`` reads ``s3://``, ``gs://``, and ``az://`` URLs through
 ``fsspec``. Install ``fsspec`` plus the filesystem package you need:
 ``s3fs`` for S3, ``gcsfs`` for Google Cloud Storage, or ``adlfs`` for
-Azure. Plain ``http(s)://`` URLs work with no extra packages. See
-:doc:`/reference/geotiff` for the details of remote reads.
+Azure. Plain ``http(s)://`` URLs work with no extra packages. Remote
+reads are an advanced-tier feature (see the feature matrix in the README
+and :doc:`/user_guide/stability_policy`); :doc:`/reference/geotiff` has
+the details.
 
 Verifying the install
 =====================
