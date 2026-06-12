@@ -70,6 +70,27 @@ class PolygonizeCuPy:
         polygonize(self.raster, mask=self.mask)
 
 
+class PolygonizeDaskFloat:
+    """Benchmark the float dask path: per-chunk jitted ranges scan plus
+    cross-chunk merge (#3303)."""
+    params = ([100, 300, 1000],)
+    param_names = ("nx",)
+
+    def setup(self, nx):
+        try:
+            import dask.array as da
+        except ImportError:
+            raise NotImplementedError("dask not available")
+        ny = nx // 2
+        rng = np.random.default_rng(9461713)
+        raster = rng.integers(low=0, high=4, size=(ny, nx)).astype(np.float64)
+        chunks = (max(ny // 4, 1), max(nx // 4, 1))
+        self.raster = xr.DataArray(da.from_array(raster, chunks=chunks))
+
+    def time_polygonize(self, nx):
+        polygonize(self.raster)
+
+
 class PolygonizeCCL:
     """Benchmark connected-component labeling phase."""
     params = ([100, 300, 1000], ["numpy", "cupy"])

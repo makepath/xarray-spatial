@@ -1548,6 +1548,10 @@ def _compute_region_value_ranges(block, mask_block, connectivity_8,
     if regions is None:
         regions = _calculate_regions(
             values_flat, mask_flat, connectivity_8, nx_eff, ny, atol, rtol)
+    elif len(regions) != nx_eff * ny:
+        raise ValueError(
+            f"regions length {len(regions)} does not match the block's "
+            f"padded flat size {nx_eff * ny}")
 
     # Which chunk edges are internal (shared with a neighbour chunk)?
     track_cells = ny_total is not None and nx_total is not None
