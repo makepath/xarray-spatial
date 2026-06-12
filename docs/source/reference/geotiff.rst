@@ -226,6 +226,80 @@ the top level, so ``from xrspatial import open_geotiff`` and
 
     xrspatial.geotiff.open_geotiff
 
+Coregistered reads (experimental)
+=================================
+
+``myarr.xrs.open_geotiff(source, coregister=True)`` reads a file
+windowed to ``myarr``'s extent, unpacks it (``unpack=True``: scale and
+offset applied, nodata masked to NaN), reprojects it into ``myarr``'s
+CRS, and resamples it onto ``myarr``'s exact grid, so the result shares
+``myarr``'s ``y``/``x`` coordinates and shape. The feature is tagged
+``experimental`` in :data:`xrspatial.geotiff.SUPPORTED_FEATURES`
+(``reader.coregister``): it works and is tested
+(``xrspatial/tests/test_open_geotiff_coregister.py``), but the surface
+can shift without a deprecation window.
+
+These combinations raise ``ValueError``:
+
+* GPU input. ``coregister=True`` with ``gpu=True``, or with a CuPy or
+  dask+CuPy caller, raises -- the unpack-and-reproject pipeline runs on
+  CPU only. NumPy and dask+NumPy callers work.
+* ``.vrt`` sources. GeoTIFF files only.
+* No CRS anywhere. A CRS must exist on the caller (``attrs['crs']``)
+  or in the file. When only the file lacks one, the file is assumed to
+  share the caller's CRS and the read degrades to a pure resample; if
+  that assumption is wrong, the data lands in the wrong place with no
+  error.
+* A single-cell caller without ``attrs['res']`` or
+  ``attrs['transform']`` -- resolution cannot be inferred from one
+  coordinate. The caller must carry ``y``/``x`` coordinates either way.
+
+What you should know about the output:
+
+* The caller's grid always wins. The output shape and coords exactly
+  match the caller, and the grid snap (a resample) happens even when
+  the CRS already matches. The file's native resolution is not
+  recoverable from the result; use ``auto_reproject=True`` instead if
+  you want to keep it.
+* Cells outside the file footprint come back NaN. When the file
+  covers less than 10% of the caller's grid, a ``UserWarning`` flags
+  that the result will be mostly NaN (#3247); above that threshold the
+  NaN fill is silent. To avoid a mostly-NaN result, open the small
+  file first, crop the caller to its bounds, then coregister.
+* ``unpack=True`` is forced, overriding an explicit ``unpack=False``.
+  Integer rasters carrying a nodata sentinel are promoted to float;
+  ``attrs['nodata']`` keeps the raw sentinel. The unpack round-trip
+  caveat applies: the source's SCALE / OFFSET tags survive on
+  ``attrs['gdal_metadata']`` / ``attrs['gdal_metadata_xml']``, so
+  writing the result with ``to_geotiff`` and reading that file back
+  with ``unpack=True`` applies the scale twice unless those attrs are
+  dropped before the write.
+* ``resampling='auto'`` picks ``'nearest'`` for integer dtypes or
+  paletted rasters and ``'bilinear'`` otherwise, and can guess wrong
+  in both directions. An int16 continuous DEM is treated as
+  categorical and gets blocky ``'nearest'`` output (pass
+  ``resampling='bilinear'``). An integer class raster carrying nodata
+  is promoted to float by the forced unpack and gets ``'bilinear'``,
+  which smears class IDs (pass ``resampling='nearest'``). Only
+  ``'nearest'``, ``'bilinear'``, and ``'cubic'`` are available.
+* Dask output follows an explicit ``chunks=`` kwarg when given, and
+  otherwise the caller's chunk layout, rather than
+  :func:`~xrspatial.reproject.reproject`'s 512x512 default (#3236).
+
+Untested under coregister:
+
+* Multi-band reads. Extra kwargs (``band=``, ``overview_level=``, the
+  per-source opt-ins) forward to ``open_geotiff``, but the coregister
+  test suite covers single-band, axis-aligned sources with a parseable
+  CRS only.
+* Rotated sources. The underlying read rejects them by default
+  (``allow_rotated=False``), and the coregister windowing math assumes
+  an axis-aligned file transform, so the opt-in is not expected to
+  work here.
+* Extreme reprojections. The CRS-mismatch bbox transform samples 20
+  points per edge to handle curvature, but polar and antimeridian
+  cases are not covered by tests.
+
 Writing
 =======
 ``to_geotiff`` is the single write entry point (``gpu=True`` or CuPy data
