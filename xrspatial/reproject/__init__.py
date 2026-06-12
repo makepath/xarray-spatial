@@ -632,6 +632,14 @@ def _reproject_chunk_cupy(
     # signature mismatch (#2027).
     if window.ndim == 3:
         n_bands = window.shape[2]
+        # The coordinate arrays are shared by every band. On the CPU
+        # transform fallback they arrive as numpy; convert them to the
+        # device once here, otherwise _resample_cupy_native re-uploads
+        # the same two chunk-sized arrays on every band iteration (#3268).
+        if not isinstance(local_row, cp.ndarray):
+            local_row = cp.asarray(local_row)
+        if not isinstance(local_col, cp.ndarray):
+            local_col = cp.asarray(local_col)
         bands = []
         for b in range(n_bands):
             band_data = window[:, :, b].astype(cp.float64)
