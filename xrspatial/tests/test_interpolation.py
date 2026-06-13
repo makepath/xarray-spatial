@@ -123,14 +123,67 @@ class TestIDW:
         np.testing.assert_allclose(result.values, [[7.0]])
 
     def test_output_metadata(self):
-        """Output DataArray preserves template coords and dims."""
+        """Output DataArray preserves template coords, dims, and attrs."""
         template = _make_template([0.0, 1.0], [0.0, 1.0])
+        template.attrs['res'] = (1.0, 1.0)
+        template.attrs['crs'] = 'EPSG:4326'
         result = idw([0.0], [0.0], [1.0], template, name='my_idw')
         assert result.name == 'my_idw'
         assert result.dims == template.dims
         assert result.shape == template.shape
+        assert result.attrs == template.attrs
         np.testing.assert_array_equal(result.coords['x'].values,
                                       template.coords['x'].values)
+
+    def test_power_changes_weighting(self):
+        """Non-default power values change the distance weighting.
+
+        One grid pixel at x=1 between points at distance 1 (z=0) and
+        distance 2 (z=10): the IDW estimate is
+        10 * (1/2^p) / (1 + 1/2^p) = 10 / (2^p + 1).
+        """
+        x = np.array([0.0, 3.0])
+        y = np.array([0.0, 0.0])
+        z = np.array([0.0, 10.0])
+        template = _make_template([0.0], [1.0])
+        for power in (1.0, 2.0, 3.0):
+            result = idw(x, y, z, template, power=power)
+            expected = 10.0 / (2.0 ** power + 1.0)
+            np.testing.assert_allclose(
+                result.values, [[expected]],
+                err_msg=f"power={power}")
+
+    def test_fill_value_zero_weight(self):
+        """fill_value is returned when all weights underflow to zero.
+
+        A point at distance ~1e200 with power=4 makes 1/d^p underflow
+        to 0.0, so the pixel has zero total weight and must get
+        fill_value rather than a division result.
+        """
+        template = _make_template([0.0], [0.0])
+        result = idw([1e200], [0.0], [7.0], template,
+                     power=4.0, fill_value=-999.0)
+        np.testing.assert_allclose(result.values, [[-999.0]])
+
+    @dask_array_available
+    def test_dask_fill_value_zero_weight(self):
+        """Zero-total-weight pixels get fill_value on the dask backend."""
+        template = _make_template([0.0], [0.0], backend='dask')
+        result = idw([1e200], [0.0], [7.0], template,
+                     power=4.0, fill_value=-999.0)
+        np.testing.assert_allclose(_to_numpy(result), [[-999.0]])
+
+    @cuda_and_cupy_available
+    def test_cupy_fill_value_zero_weight(self):
+        """Zero-total-weight pixels get fill_value on the cupy backend.
+
+        Also covers dask+cupy transitively: _idw_dask_cupy delegates
+        each chunk to _idw_cupy, so this is the same code path.
+        """
+        template = _make_template([0.0], [0.0], backend='cupy')
+        result = idw([1e200], [0.0], [7.0], template,
+                     power=4.0, fill_value=-999.0)
+        np.testing.assert_allclose(_to_numpy(result), [[-999.0]])
 
     @dask_array_available
     def test_dask_matches_numpy(self):
@@ -345,6 +398,32 @@ class TestSpline:
         result = spline(x, y, z, template, smoothing=0.0)
         np.testing.assert_allclose(
             result.values, [[10.0, 15.0, 20.0]], atol=1e-6)
+
+    def test_collinear_points_lstsq_fallback(self):
+        """Collinear points fall back to the least-squares solve.
+
+        With all points on the x-axis the P block's y column is zero,
+        the augmented TPS system is exactly singular, and
+        _tps_build_and_solve must recover via lstsq instead of raising.
+        The fitted surface is the line z = 1 + x, constant along y.
+        """
+        x = np.array([0.0, 1.0, 2.0])
+        y = np.array([0.0, 0.0, 0.0])
+        z = np.array([1.0, 2.0, 3.0])
+        template = _make_template([0.0, 1.0], [0.0, 1.0, 2.0])
+        result = spline(x, y, z, template, smoothing=0.0)
+        np.testing.assert_allclose(
+            result.values, [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]], atol=1e-6)
+
+    def test_1x1_template(self):
+        """spline runs end-to-end on a single-pixel template."""
+        x = np.array([0.0, 1.0, 2.0, 0.5])
+        y = np.array([0.0, 0.0, 1.0, 1.5])
+        z = np.array([1.0, 2.0, 3.0, 4.0])
+        template = _make_template([0.5], [0.5])
+        result = spline(x, y, z, template)
+        assert result.shape == (1, 1)
+        assert np.isfinite(result.values[0, 0])
 
     def test_output_metadata(self):
         """Output DataArray preserves template coords, dims, and name."""
@@ -805,6 +884,58 @@ class TestKriging:
             result = kriging(x, y, z, template)
         assert np.all(np.isfinite(result.values))
 
+    def test_duplicate_points(self):
+        """Duplicate input points produce finite output.
+
+        A repeated point gives a zero pairwise distance in the
+        experimental variogram and two near-identical rows in the
+        kriging matrix; neither may crash or poison the prediction.
+        """
+        x, y, z = self._spatial_data()
+        x = np.append(x, x[0])
+        y = np.append(y, y[0])
+        z = np.append(z, z[0])
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        result = kriging(x, y, z, template)
+        assert np.all(np.isfinite(result.values))
+
+    def test_all_equal_z(self):
+        """All-equal z values (zero variance) predict that constant.
+
+        The experimental variogram is identically zero, which stresses
+        the curve_fit initialisation; the prediction must still come
+        out as the constant everywhere.
+        """
+        x, y, _ = self._spatial_data()
+        z = np.full_like(x, 5.0)
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        result = kriging(x, y, z, template)
+        np.testing.assert_allclose(result.values, 5.0)
+
+    def test_singular_matrix_regularisation_retry(self):
+        """An exactly singular kriging matrix is regularised and solved.
+
+        An all-zero variogram makes the first n rows of K identical
+        ([0, ..., 0, 1]), so the first inversion raises LinAlgError and
+        _build_kriging_matrix must retry with the 1e-10 jitter instead
+        of giving up.
+        """
+        from xrspatial.interpolate._kriging import _build_kriging_matrix
+
+        x = np.array([0.0, 1.0, 2.0])
+        y = np.zeros(3)
+        k_inv = _build_kriging_matrix(x, y, lambda h: np.zeros_like(h))
+        assert k_inv is not None
+        assert np.all(np.isfinite(k_inv))
+
+    def test_1x1_template(self):
+        """kriging runs end-to-end on a single-pixel template."""
+        x, y, z = self._spatial_data()
+        template = _make_template([0.5], [0.5])
+        result = kriging(x, y, z, template)
+        assert result.shape == (1, 1)
+        assert np.isfinite(result.values[0, 0])
+
     def test_output_metadata(self):
         """Output preserves template coords, dims, attrs, and name."""
         x, y, z = self._spatial_data()
@@ -881,6 +1012,48 @@ class TestValidation:
         template = _make_template([0.0], [0.5])
         result = idw(x, y, z, template)
         assert np.isfinite(result.values[0, 0])
+
+    def test_inf_points_are_dropped(self):
+        """Inf/-Inf points are removed just like NaN points.
+
+        Only the single finite point survives filtering, so the whole
+        grid takes its value.
+        """
+        x = np.array([0.0, np.inf, 1.0])
+        y = np.array([0.0, 0.0, -np.inf])
+        z = np.array([5.0, 99.0, 77.0])
+        template = _make_template([0.0], [0.5])
+        result = idw(x, y, z, template)
+        np.testing.assert_allclose(result.values, [[5.0]])
+
+    def test_spline_all_inf_points(self):
+        """All-Inf input leaves no valid points and raises."""
+        template = _make_template([0.0], [0.0])
+        with pytest.raises(ValueError, match='no valid'):
+            spline([np.inf], [np.inf], [-np.inf], template)
+
+    @pytest.mark.parametrize('func', [idw, spline, kriging],
+                             ids=['idw', 'spline', 'kriging'])
+    def test_nondefault_dim_names_propagate(self, func):
+        """Templates with lat/lon dims keep those dims in the output.
+
+        Uses the spread-out kriging point set rather than _grid_points
+        so the kriging case fills enough variogram lag bins to avoid
+        the fewer-than-3-bins UserWarning.
+        """
+        x, y, z = TestKriging._spatial_data()
+        data = np.zeros((2, 2))
+        template = xr.DataArray(data, dims=['lat', 'lon'])
+        template['lat'] = np.array([0.5, 1.5])
+        template['lon'] = np.array([0.5, 1.5])
+        result = func(x, y, z, template)
+        assert result.dims == ('lat', 'lon')
+
+    def test_idw_empty_template(self):
+        """A zero-column template yields an empty raster, not an error."""
+        template = _make_template([0.0], [])
+        result = idw([0.0], [0.0], [5.0], template)
+        assert result.shape == (1, 0)
 
 
 # ===================================================================
