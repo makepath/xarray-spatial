@@ -700,6 +700,23 @@ class TestGeoDataFrame:
         assert len(gdf) > 0
         assert gdf.crs == agg.attrs['crs']
 
+    def test_geopandas_no_georef_marker_suppresses_crs(self):
+        """attrs['_xrspatial_no_georef']=True suppresses CRS propagation.
+
+        contours() resolves its CRS through polygonize._detect_raster_crs,
+        which returns None when the geotiff reader's no-georeference
+        marker is set (#3293).  The geometries are not georeferenced on
+        that path, so attaching the CRS would misrepresent them.
+        """
+        pytest.importorskip("geopandas")
+        data = _make_peak()
+        agg = xr.DataArray(
+            data, dims=['y', 'x'],
+            attrs={'crs': 4326, '_xrspatial_no_georef': True})
+        gdf = contours(agg, levels=[1.5], return_type="geopandas")
+        assert len(gdf) > 0
+        assert gdf.crs is None
+
     def test_geopandas_empty_result_keeps_crs(self):
         """Levels with no crossings return an empty GeoDataFrame with the CRS.
 
