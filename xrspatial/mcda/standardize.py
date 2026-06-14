@@ -9,6 +9,8 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
+from xrspatial.utils import _dask_task_name_kwargs
+
 
 def standardize(
     agg: xr.DataArray,
@@ -279,7 +281,8 @@ def _piecewise(data, *, breakpoints, values):
             # can be non-contiguous views (no-op for contiguous numpy).
             return xp_b.interp(xp_b.ascontiguousarray(block), bp_t, vl_t)
 
-        result = da.map_blocks(_interp_block, data, dtype=np.float64)
+        result = da.map_blocks(_interp_block, data, dtype=np.float64,
+                               **_dask_task_name_kwargs('xrspatial.standardize_piecewise'))
         result = da.where(da.isfinite(data), result, np.nan)
         return result
 
@@ -313,7 +316,8 @@ def _categorical(data, *, mapping):
                 out[block == k] = v
             return out
 
-        result = da.map_blocks(_apply_mapping, data, dtype=np.float64)
+        result = da.map_blocks(_apply_mapping, data, dtype=np.float64,
+                               **_dask_task_name_kwargs('xrspatial.standardize_categorical'))
         return result
 
     out = xp.full(data.shape, np.nan, dtype=np.float64)

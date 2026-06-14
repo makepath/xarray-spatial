@@ -33,6 +33,7 @@ from xrspatial.hydro.flow_accumulation_dinf import _angle_to_neighbors
 from xrspatial.hydro.flow_path_dinf import _angle_to_neighbors_py
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -635,6 +636,7 @@ def _watershed_dinf_dask(flow_dir_da, pour_points_da):
         flow_dir_da, pour_points_da,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.watershed_dinf'),
     )
 
 

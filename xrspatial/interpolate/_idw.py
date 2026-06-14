@@ -6,8 +6,8 @@ import numpy as np
 import xarray as xr
 from numba import cuda
 
-from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, _validate_scalar,
-                             cuda_args, ngjit)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             _validate_scalar, cuda_args, ngjit)
 
 from ._validation import extract_grid_coords, validate_points
 
@@ -204,7 +204,8 @@ def _idw_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
         return _idw_numpy(x_pts, y_pts, z_pts, x_sl, y_sl,
                           power, k, fill_value, None, tree=tree)
 
-    return da.map_blocks(_chunk, template_data, dtype=np.float64)
+    return da.map_blocks(_chunk, template_data, dtype=np.float64,
+                         **_dask_task_name_kwargs('xrspatial.idw'))
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +242,7 @@ def _idw_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
     return da.map_blocks(
         _chunk, template_data, dtype=np.float64,
         meta=cupy.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.idw'),
     )
 
 

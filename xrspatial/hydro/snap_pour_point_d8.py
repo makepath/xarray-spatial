@@ -35,7 +35,8 @@ except ImportError:
     da = None
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import _validate_raster, has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, has_cuda_and_cupy,
+                             is_cupy_array, is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -319,6 +320,7 @@ def _snap_pour_point_dask(flow_accum_data, pour_points_data, search_radius):
         _has_pp, pour_points_data,
         dtype=np.int8,
         chunks=tuple((1,) * len(c) for c in pour_points_data.chunks),
+        **_dask_task_name_kwargs('xrspatial.snap_pour_point_d8_flags'),
     ).compute()  # tiny array: one byte per chunk
 
     # --- Phase 2: load only flagged chunks, extract coordinates ----
@@ -411,6 +413,7 @@ def _snap_pour_point_dask(flow_accum_data, pour_points_data, search_radius):
         _assemble_block, dummy,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.snap_pour_point_d8_assemble'),
     )
 
 
@@ -440,6 +443,7 @@ def _snap_pour_point_dask_cupy(flow_accum_data, pour_points_data, search_radius)
         _has_pp, pour_points_data,
         dtype=np.int8,
         chunks=tuple((1,) * len(c) for c in pour_points_data.chunks),
+        **_dask_task_name_kwargs('xrspatial.snap_pour_point_d8_flags'),
     ).compute()
 
     # Phase 2: extract coordinates from flagged chunks
@@ -527,6 +531,7 @@ def _snap_pour_point_dask_cupy(flow_accum_data, pour_points_data, search_radius)
         _assemble_block, dummy,
         dtype=np.float64,
         meta=cp.array((), dtype=cp.float64),
+        **_dask_task_name_kwargs('xrspatial.snap_pour_point_d8_assemble'),
     )
 
 

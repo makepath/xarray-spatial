@@ -33,8 +33,8 @@ except ImportError:
 
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.hydro._boundary_store import BoundaryStore
-from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
-                             is_dask_cupy, ngjit)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
+                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
 
 
 def _to_numpy_f64(arr):
@@ -814,6 +814,7 @@ def _assemble_watershed(flow_dir_da, pour_points_da,
         flow_dir_da, pour_points_da,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.watershed_d8'),
     )
 
 
@@ -947,6 +948,7 @@ def _assemble_watershed_cupy(flow_dir_da, pour_points_da,
         flow_dir_da, pour_points_da,
         dtype=np.float64,
         meta=cp.array((), dtype=cp.float64),
+        **_dask_task_name_kwargs('xrspatial.watershed_d8'),
     )
 
 

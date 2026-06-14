@@ -26,7 +26,14 @@ except ImportError:
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset
 from xrspatial.hydro.watershed_d8 import _code_to_offset_py
-from xrspatial.utils import _validate_raster, has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit
+from xrspatial.utils import (
+    _dask_task_name_kwargs,
+    _validate_raster,
+    has_cuda_and_cupy,
+    is_cupy_array,
+    is_dask_cupy,
+    ngjit,
+)
 
 # =====================================================================
 # Memory guards
@@ -898,6 +905,7 @@ def _assemble_hand(flow_dir_da, flow_accum_da, elev_da,
         flow_dir_da, flow_accum_da, elev_da,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.hand_d8'),
     )
 
 

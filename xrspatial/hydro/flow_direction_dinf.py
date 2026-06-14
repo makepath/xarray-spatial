@@ -21,6 +21,7 @@ from numba import cuda
 
 from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import _boundary_to_dask
+from xrspatial.utils import _dask_task_name_kwargs
 from xrspatial.utils import _pad_array
 from xrspatial.utils import _validate_boundary
 from xrspatial.utils import _validate_raster
@@ -323,7 +324,8 @@ def _run_dask_numpy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array(()),
+                           **_dask_task_name_kwargs('xrspatial.flow_direction_dinf'))
     return out
 
 
@@ -363,7 +365,8 @@ def _run_dask_cupy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array(()),
+                           **_dask_task_name_kwargs('xrspatial.flow_direction_dinf'))
     return out
 
 

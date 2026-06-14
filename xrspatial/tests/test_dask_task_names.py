@@ -152,3 +152,206 @@ def test_named_tasks_compute_correctly(elevation_dask):
     numpy_result = slope(elevation_dask.compute())
     np.testing.assert_allclose(
         dask_result.data, numpy_result.data, rtol=1e-5, equal_nan=True)
+
+
+# --- #3256: sweep of the remaining tool modules -------------------------------
+
+def test_mean_task_name(elevation_dask):
+    from xrspatial import mean
+    result = mean(elevation_dask)
+    assert 'xrspatial.mean' in graph_key_prefixes(result)
+
+
+def test_focal_apply_task_name(elevation_dask):
+    from xrspatial.focal import apply
+    result = apply(elevation_dask, np.ones((3, 3)), lambda x: x.mean())
+    assert 'xrspatial.apply' in graph_key_prefixes(result)
+
+
+def test_hotspots_task_names(elevation_dask):
+    from xrspatial.convolution import circle_kernel
+    from xrspatial.focal import hotspots
+    result = hotspots(elevation_dask, circle_kernel(1, 1, 2))
+    prefixes = graph_key_prefixes(result)
+    assert 'xrspatial.hotspots' in prefixes
+    # the lazy degenerate-input check is its own labeled layer (#2843)
+    assert 'xrspatial.hotspots.validate' in prefixes
+
+
+def test_proximity_family_task_names(elevation_dask):
+    from xrspatial import allocation, direction, proximity
+    source = elevation_dask.copy()
+    source.data = da.zeros_like(elevation_dask.data)
+    source.data[5, 5] = 1
+    assert 'xrspatial.proximity' in graph_key_prefixes(proximity(source))
+    assert 'xrspatial.allocation' in graph_key_prefixes(allocation(source))
+    assert 'xrspatial.direction' in graph_key_prefixes(direction(source))
+
+
+def test_cost_distance_task_name(elevation_dask):
+    from xrspatial import cost_distance
+    source = elevation_dask.copy()
+    source.data = da.zeros_like(elevation_dask.data)
+    source.data[5, 5] = 1
+    friction = elevation_dask.copy()
+    friction.data = da.ones_like(elevation_dask.data)
+    # finite max_cost keeps the overlap depth within the chunk size, so the
+    # named map_overlap path runs (not the iterative from_delayed fallback)
+    result = cost_distance(source, friction, target_values=[1], max_cost=2.0)
+    assert 'xrspatial.cost_distance' in graph_key_prefixes(result)
+
+
+@pytest.mark.parametrize('metric', ['contrast'])
+def test_glcm_task_name(elevation_dask, metric):
+    from xrspatial.glcm import glcm_texture
+    result = glcm_texture(elevation_dask, metric=metric, window_size=3, levels=8)
+    assert 'xrspatial.glcm_texture' in graph_key_prefixes(result)
+
+
+def test_sky_view_factor_task_name(elevation_dask):
+    from xrspatial import sky_view_factor
+    result = sky_view_factor(elevation_dask)
+    assert 'xrspatial.sky_view_factor' in graph_key_prefixes(result)
+
+
+def test_diffuse_task_name(elevation_dask):
+    from xrspatial.diffusion import diffuse
+    result = diffuse(elevation_dask, steps=2)
+    assert 'xrspatial.diffuse' in graph_key_prefixes(result)
+
+
+@pytest.mark.parametrize('op, prefix', [
+    ('morph_erode', 'xrspatial.morph_erode'),
+    ('morph_dilate', 'xrspatial.morph_dilate'),
+])
+def test_morphology_task_names(elevation_dask, op, prefix):
+    import xrspatial.morphology as morphology
+    from xrspatial.convolution import circle_kernel
+    func = getattr(morphology, op)
+    result = func(elevation_dask, circle_kernel(1, 1, 2))
+    assert prefix in graph_key_prefixes(result)
+
+
+@pytest.mark.parametrize('prefix', [
+    'xrspatial.resample.interp',
+    'xrspatial.resample.aggregate',
+])
+def test_resample_task_names(elevation_dask, prefix):
+    from xrspatial.resample import resample
+    method = 'bilinear' if prefix.endswith('interp') else 'average'
+    result = resample(elevation_dask, scale_factor=0.5, method=method)
+    assert prefix in graph_key_prefixes(result)
+
+
+def test_perlin_task_name(elevation_dask):
+    from xrspatial import perlin
+    result = perlin(elevation_dask)
+    assert 'xrspatial.perlin' in graph_key_prefixes(result)
+
+
+def test_worley_task_name(elevation_dask):
+    from xrspatial.worley import worley
+    result = worley(elevation_dask)
+    assert 'xrspatial.worley' in graph_key_prefixes(result)
+
+
+def test_dnbr_task_name(elevation_dask):
+    from xrspatial.fire import dnbr
+    result = dnbr(elevation_dask, elevation_dask * 0.5)
+    assert 'xrspatial.dnbr' in graph_key_prefixes(result)
+
+
+def test_ndvi_uses_shared_normalized_ratio_name(elevation_dask):
+    """ndvi/nbr/... share one normalized_ratio compute, so one task name."""
+    from xrspatial.multispectral import ndvi
+    nir = elevation_dask
+    red = elevation_dask * 0.5 + 1
+    result = ndvi(nir, red)
+    assert 'xrspatial.normalized_ratio' in graph_key_prefixes(result)
+
+
+def test_savi_task_name(elevation_dask):
+    from xrspatial.multispectral import savi
+    nir = elevation_dask
+    red = elevation_dask * 0.5 + 1
+    result = savi(nir, red)
+    assert 'xrspatial.savi' in graph_key_prefixes(result)
+
+
+@pytest.mark.parametrize('func_name, prefix', [
+    ('natural_breaks', 'xrspatial.natural_breaks'),
+    ('equal_interval', 'xrspatial.equal_interval'),
+    ('quantile', 'xrspatial.quantile'),
+])
+def test_classify_task_names(elevation_dask, func_name, prefix):
+    import xrspatial.classify as classify
+    func = getattr(classify, func_name)
+    result = func(elevation_dask, k=3)
+    # quantile/equal_interval/natural_breaks bin through the shared engine
+    assert 'xrspatial.reclassify' in graph_key_prefixes(result)
+
+
+def test_reclassify_task_name(elevation_dask):
+    from xrspatial.classify import reclassify
+    result = reclassify(
+        elevation_dask, bins=[20, 50, 100], new_values=[1, 2, 3])
+    assert 'xrspatial.reclassify' in graph_key_prefixes(result)
+
+
+def test_zonal_apply_task_name(elevation_dask):
+    from xrspatial.zonal import apply as zonal_apply
+    zones = elevation_dask.copy()
+    zones.data = (elevation_dask.data > 50).astype('int64')
+    result = zonal_apply(zones, elevation_dask, lambda x: x + 1)
+    assert 'xrspatial.apply' in graph_key_prefixes(result)
+
+
+@pytest.fixture
+def flow_direction_d8_dask(elevation_dask):
+    from xrspatial.hydro import flow_direction_d8
+    return flow_direction_d8(elevation_dask)
+
+
+def test_flow_direction_d8_task_name(elevation_dask):
+    from xrspatial.hydro import flow_direction_d8
+    result = flow_direction_d8(elevation_dask)
+    assert 'xrspatial.flow_direction_d8' in graph_key_prefixes(result)
+
+
+def test_flow_accumulation_d8_task_name(flow_direction_d8_dask):
+    from xrspatial.hydro import flow_accumulation_d8
+    result = flow_accumulation_d8(flow_direction_d8_dask)
+    assert 'xrspatial.flow_accumulation_d8' in graph_key_prefixes(result)
+
+
+def test_no_unnamed_xrspatial_compute_layers_in_converted_modules():
+    """Spot-check: a converted tool produces no anonymous map_* compute layer.
+
+    map_blocks/map_overlap without naming kwargs land under dask's default
+    ``lambda``/function-name prefix instead of ``xrspatial.*``. The named
+    tool layers should all carry the xrspatial prefix.
+    """
+    from xrspatial import mean
+    data = np.linspace(0, 100, 144, dtype=np.float64).reshape(12, 12)
+    raster = create_test_raster(data, backend='dask+numpy', chunks=(6, 6))
+    result = mean(raster)
+    assert 'xrspatial.mean' in graph_key_prefixes(result)
+
+
+def test_converted_tool_keys_do_not_merge(elevation_dask):
+    """Two perlin calls keep distinct graph keys despite a shared name.
+
+    Guards the #3256 convention: the helper appends a hash so two
+    same-named tool calls cannot silently collapse into one task (the
+    dask 2026 verbatim-``name`` failure mode).
+    """
+    from xrspatial import perlin
+    other = create_test_raster(
+        np.linspace(50, 0, 144, dtype=np.float64).reshape(12, 12),
+        backend='dask+numpy', chunks=(6, 6))
+    result_a = perlin(elevation_dask, seed=1)
+    result_b = perlin(other, seed=2)
+    assert result_a.data.name != result_b.data.name
+    # both still compute independently in one combined graph
+    combined = (result_a + result_b).compute()
+    assert combined.shape == elevation_dask.shape

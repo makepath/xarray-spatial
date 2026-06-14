@@ -13,6 +13,7 @@ from xrspatial.mcda.combine import (
     wpm,
 )
 from xrspatial.mcda.standardize import _get_xp
+from xrspatial.utils import _dask_task_name_kwargs
 
 
 def sensitivity(
@@ -248,6 +249,7 @@ def _monte_carlo(criteria, weights, combine_method, n_samples, seed, name):
             weight_matrix=ordered_weights, combine_method=combine_method,
             drop_axis=0, dtype=np.float64,
             meta=stacked._meta.sum(axis=0),
+            **_dask_task_name_kwargs('xrspatial.sensitivity'),
         )
     else:
         stacked = np.stack([criteria[v].data for v in var_order])

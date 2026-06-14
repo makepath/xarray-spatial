@@ -26,6 +26,7 @@ import numpy as np
 
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _dask_task_name_kwargs,
     _validate_raster,
     _validate_scalar,
     cuda_args,
@@ -74,7 +75,7 @@ def _run_numpy_binary(data, values):
 
 def _run_dask_numpy_binary(data, values):
     _func = partial(_run_numpy_binary, values=values)
-    out = data.map_blocks(_func)
+    out = data.map_blocks(_func, **_dask_task_name_kwargs('xrspatial.binary'))
     return out
 
 
@@ -104,7 +105,8 @@ def _run_cupy_binary(data, values):
 
 
 def _run_dask_cupy_binary(data, values_cupy):
-    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy), meta=cupy.array(()))
+    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy), meta=cupy.array(()),
+                          **_dask_task_name_kwargs('xrspatial.binary'))
     return out
 
 
@@ -224,7 +226,7 @@ def _run_dask_numpy_bin(data, bins, new_values):
                     bins=bins,
                     new_values=new_values)
 
-    out = data.map_blocks(_func)
+    out = data.map_blocks(_func, **_dask_task_name_kwargs('xrspatial.reclassify'))
     return out
 
 
@@ -281,7 +283,8 @@ def _run_cupy_bin(data, bins, new_values):
 def _run_dask_cupy_bin(data, bins_cupy, new_values_cupy):
     out = data.map_blocks(lambda da:
                           _run_cupy_bin(da, bins_cupy, new_values_cupy),
-                          meta=cupy.array(()))
+                          meta=cupy.array(()),
+                          **_dask_task_name_kwargs('xrspatial.reclassify'))
     return out
 
 

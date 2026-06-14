@@ -7,7 +7,8 @@ import warnings
 import numpy as np
 import xarray as xr
 
-from xrspatial.utils import ArrayTypeFunctionMapping, _validate_raster, _validate_scalar
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             _validate_scalar)
 
 from ._validation import extract_grid_coords, validate_points
 
@@ -254,7 +255,8 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
             return pred
 
         prediction = da.map_blocks(_chunk_pred, template_data,
-                                   dtype=np.float64)
+                                   dtype=np.float64,
+                                   **_dask_task_name_kwargs('xrspatial.kriging'))
         return prediction, None
 
     # Prediction and variance fall out of the same per-chunk pipeline
@@ -274,6 +276,7 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
     stacked = da.map_blocks(
         _chunk_both, template_data, dtype=np.float64,
         new_axis=0, chunks=((2,),) + template_data.chunks,
+        **_dask_task_name_kwargs('xrspatial.kriging_variance'),
     )
     return stacked[0], stacked[1]
 
@@ -379,6 +382,7 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
         prediction = da.map_blocks(
             _chunk_pred, template_data, dtype=np.float64,
             meta=cupy.array((), dtype=np.float64),
+            **_dask_task_name_kwargs('xrspatial.kriging'),
         )
         return prediction, None
 
@@ -397,6 +401,7 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
         _chunk_both, template_data, dtype=np.float64,
         new_axis=0, chunks=((2,),) + template_data.chunks,
         meta=cupy.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.kriging_variance'),
     )
     return stacked[0], stacked[1]
 

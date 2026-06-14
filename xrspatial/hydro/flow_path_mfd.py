@@ -29,6 +29,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_matching_shape,
     _validate_mfd_fractions,
     _validate_raster,
@@ -247,6 +248,7 @@ def _flow_path_mfd_dask(fractions_data, start_points_data, chunks_y, chunks_x):
         _has_sp, start_points_data,
         dtype=np.int8,
         chunks=tuple((1,) * len(c) for c in start_points_data.chunks),
+        **_dask_task_name_kwargs('xrspatial.flow_path_mfd_flags'),
     ).compute()
 
     # Phase 2: extract start points
@@ -389,6 +391,7 @@ def _flow_path_mfd_dask(fractions_data, start_points_data, chunks_y, chunks_x):
         _assemble_block, dummy,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_path_mfd_assemble'),
     )
 
 

@@ -23,8 +23,8 @@ import numba as nb
 from numba import cuda, jit
 
 from xrspatial.perlin import _make_perm_table
-from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster,
-                             cuda_args, not_implemented_func)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs,
+                             _validate_raster, cuda_args, not_implemented_func)
 
 
 @jit(nopython=True, nogil=True)
@@ -186,7 +186,8 @@ def _worley_dask_numpy(data, freq, seed):
                        chunks=data.chunks[0][0])
     x, y = da.meshgrid(linx, liny)
     _func = partial(_worley_numpy_xy, p)
-    out = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32))
+    out = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32),
+                        **_dask_task_name_kwargs('xrspatial.worley'))
     return out
 
 
@@ -208,7 +209,8 @@ def _worley_dask_cupy(data, freq, seed):
         return out
 
     out = da.map_blocks(_chunk_worley, data, dtype=cupy.float32,
-                        meta=cupy.array((), dtype=cupy.float32))
+                        meta=cupy.array((), dtype=cupy.float32),
+                        **_dask_task_name_kwargs('xrspatial.worley'))
     return out
 
 

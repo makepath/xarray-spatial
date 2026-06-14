@@ -33,6 +33,7 @@ except ImportError:
 
 from xrspatial.hydro.flow_accumulation_dinf import _angle_to_neighbors
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -245,6 +246,7 @@ def _flow_path_dinf_dask(flow_dir_data, start_points_data):
         _has_sp, start_points_data,
         dtype=np.int8,
         chunks=tuple((1,) * len(c) for c in start_points_data.chunks),
+        **_dask_task_name_kwargs('xrspatial.flow_path_dinf_flags'),
     ).compute()
 
     # Phase 2: extract start point coordinates
@@ -371,6 +373,7 @@ def _flow_path_dinf_dask(flow_dir_data, start_points_data):
         _assemble_block, dummy,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_path_dinf_assemble'),
     )
 
 

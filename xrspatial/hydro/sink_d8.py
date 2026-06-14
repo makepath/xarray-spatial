@@ -22,8 +22,8 @@ except ImportError:
     da = None
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
-                             is_dask_cupy, ngjit)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
+                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -412,6 +412,7 @@ def _merge_cross_tile_labels(labels_da):
         _remap_block,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.sink_d8_merge'),
     )
 
 
@@ -431,6 +432,7 @@ def _run_dask_numpy(data):
         _tile_fn, data,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.sink_d8_tile'),
     )
 
     return _merge_cross_tile_labels(per_tile)

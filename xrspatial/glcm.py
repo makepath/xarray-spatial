@@ -21,6 +21,7 @@ except ImportError:
 
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _dask_task_name_kwargs,
     _validate_raster,
     _validate_scalar,
     is_cupy_array,
@@ -394,6 +395,7 @@ def _glcm_dask_numpy(agg, metrics, window_size, levels, distance, angle):
         layer = da.map_overlap(
             _chunk_func, quantized,
             depth=depth, boundary=-1, dtype=np.float64,
+            **_dask_task_name_kwargs('xrspatial.glcm_texture'),
         )
         layers.append(layer)
 
@@ -466,6 +468,7 @@ def _glcm_dask_cupy(agg, metrics, window_size, levels, distance, angle):
         layer = da.map_overlap(
             _chunk_func, quantized,
             depth=depth, boundary=-1, dtype=np.float64,
+            **_dask_task_name_kwargs('xrspatial.glcm_texture'),
         )
         layers.append(layer)
 

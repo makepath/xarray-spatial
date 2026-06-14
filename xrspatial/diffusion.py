@@ -33,6 +33,7 @@ except ImportError:
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
     _boundary_to_dask,
+    _dask_task_name_kwargs,
     _pad_array,
     _validate_boundary,
     _validate_raster,
@@ -267,6 +268,7 @@ def _diffuse_dask_numpy(data, alpha, steps, dt_over_dx2, boundary):
                 depth=(1, 1),
                 boundary=_boundary_to_dask(boundary),
                 meta=np.array(()),
+                **_dask_task_name_kwargs('xrspatial.diffuse'),
             )
         else:
             # Pass alpha as a second dask argument to map_overlap
@@ -278,6 +280,7 @@ def _diffuse_dask_numpy(data, alpha, steps, dt_over_dx2, boundary):
                 meta=np.array(()),
                 steps=1,
                 dt_over_dx2=dt_over_dx2,
+                **_dask_task_name_kwargs('xrspatial.diffuse'),
             )
     return u
 
@@ -318,6 +321,7 @@ def _diffuse_dask_cupy(data, alpha, steps, dt_over_dx2, boundary):
                 depth=(1, 1),
                 boundary=_boundary_to_dask(boundary, is_cupy=True),
                 meta=cp.array(()),
+                **_dask_task_name_kwargs('xrspatial.diffuse'),
             )
         else:
             u = da.map_overlap(
@@ -327,6 +331,7 @@ def _diffuse_dask_cupy(data, alpha, steps, dt_over_dx2, boundary):
                 boundary=_boundary_to_dask(boundary, is_cupy=True),
                 meta=cp.array(()),
                 dt_over_dx2=dt_over_dx2,
+                **_dask_task_name_kwargs('xrspatial.diffuse'),
             )
     return u
 

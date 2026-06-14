@@ -20,7 +20,8 @@ import xarray as xr
 from numba import cuda
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask,
+                             _dask_task_name_kwargs, _pad_array,
                              _validate_boundary, _validate_raster, cuda_args,
                              get_dataarray_resolution, ngjit)
 
@@ -212,7 +213,8 @@ def _run_dask_numpy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array(()))
+                           meta=np.array(()),
+                           **_dask_task_name_kwargs('xrspatial.flow_direction_d8'))
     return out
 
 
@@ -252,7 +254,8 @@ def _run_dask_cupy(data: da.Array,
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array(()))
+                           meta=cupy.array(()),
+                           **_dask_task_name_kwargs('xrspatial.flow_direction_d8'))
     return out
 
 

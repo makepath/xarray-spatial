@@ -29,6 +29,7 @@ except ImportError:
 
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_matching_shape,
     _validate_mfd_fractions,
     _validate_raster,
@@ -625,6 +626,7 @@ def _watershed_mfd_dask(fractions_da, pour_points_da, chunks_y, chunks_x):
     return da.map_blocks(
         _tile, fractions_da, pour_points_da, drop_axis=0,
         dtype=np.float64, meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.watershed_mfd'),
     )
 
 
