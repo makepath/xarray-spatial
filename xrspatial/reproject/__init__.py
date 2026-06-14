@@ -48,13 +48,14 @@ _X_NAMES = {'x', 'lon', 'longitude', 'X', 'Lon', 'Longitude'}
 _MERGE_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
 
 # Byte budget above which reproject() auto-promotes an in-memory raster
-# to the lazy dask path. Compared against the input array size and one
-# float64 output array independently, not against total memory: the
-# eager numpy path holds ~7 output-sized float64 temporaries (coordinate
-# grids, pixel-index grids, result), so eager-path peak RSS can reach
-# ~7x this budget. That multiplier is why a small input upsampled to a
-# large output exhausted memory long before the _MAX_OUTPUT_PIXELS
-# guard tripped (#3267).
+# (numpy or cupy) to the chunked dask path. Compared against the input
+# array size and one float64 output array independently, not against
+# total memory: the eager numpy path holds ~7 output-sized float64
+# temporaries (coordinate grids, pixel-index grids, result), so
+# eager-path peak RSS can reach ~7x this budget. That multiplier is why a
+# small input upsampled to a large output exhausted memory long before
+# the _MAX_OUTPUT_PIXELS guard tripped (#3267). The same budget gates the
+# cupy promotion added in #3281.
 _REPROJECT_OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
 
 # Map friendly vertical datum tokens to EPSG codes so attrs['vertical_crs']
