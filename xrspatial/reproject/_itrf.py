@@ -25,6 +25,12 @@ import threading
 import numpy as np
 from numba import njit, prange
 
+# Serializes parallel=True kernel launches; numba's workqueue threading
+# layer aborts the process when two host threads enter parallel regions
+# at the same time (#3141). Shared with the projection kernels because
+# the hazard spans kernels, not instances of one kernel.
+from ._projections import _PARALLEL_KERNEL_LOCK
+
 # ---------------------------------------------------------------------------
 # Parse PROJ ITRF parameter files
 # ---------------------------------------------------------------------------
@@ -361,14 +367,15 @@ def itrf_transform(lon, lat, h=0.0, *, src, tgt, epoch):
     out_lat = np.empty(n, dtype=np.float64)
     out_h = np.empty(n, dtype=np.float64)
 
-    _itrf_batch(
-        lon_arr, lat_arr, h_arr,
-        out_lon, out_lat, out_h,
-        tx, ty, tz, s, rx, ry, rz,
-        dtx, dty, dtz, ds, drx, dry, drz,
-        t_epoch, float(epoch), position_vector,
-        _A, _F,
-    )
+    with _PARALLEL_KERNEL_LOCK:
+        _itrf_batch(
+            lon_arr, lat_arr, h_arr,
+            out_lon, out_lat, out_h,
+            tx, ty, tz, s, rx, ry, rz,
+            dtx, dty, dtz, ds, drx, dry, drz,
+            t_epoch, float(epoch), position_vector,
+            _A, _F,
+        )
 
     if scalar:
         return float(out_lon[0]), float(out_lat[0]), float(out_h[0])

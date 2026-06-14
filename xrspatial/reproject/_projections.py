@@ -34,7 +34,10 @@ from numba import njit, prange
 # threads enter a parallel region at the same time. Both the streaming
 # tile pool (_process_tile_batch) and dask's threaded scheduler call into
 # this module from worker threads, so every public entry point that
-# launches a parallel kernel takes this lock first. See #3093.
+# launches a parallel kernel takes this lock first. The hazard applies to
+# any two parallel regions running at once, not just the same kernel, so
+# _vertical.py and _itrf.py serialize their parallel=True kernels behind
+# this same lock. See #3141.
 _PARALLEL_KERNEL_LOCK = threading.Lock()
 
 # ---------------------------------------------------------------------------

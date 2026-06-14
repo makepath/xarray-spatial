@@ -1342,6 +1342,7 @@ def _apply_vertical_shift_numpy(data, y_arr, x_arr,
     matches the input), the behaviour is in-place on a copy of the
     input -- same as before this signature was added.
     """
+    from ._projections import _PARALLEL_KERNEL_LOCK
     from ._vertical import _interp_geoid_2d, _load_geoid
 
     # Determine if we need inverse projection (output CRS is projected)
@@ -1418,8 +1419,12 @@ def _apply_vertical_shift_numpy(data, y_arr, x_arr,
         N_total = np.zeros((n_rows, out_w), dtype=np.float64)
         for (grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w), sign in zip(geoids, signs):
             N_strip = np.empty((n_rows, out_w), dtype=np.float64)
-            _interp_geoid_2d(xx_strip, yy_strip, N_strip,
-                             grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w)
+            # This runs per-chunk under dask's threaded scheduler (via
+            # _apply_vertical_shift_dask), and the kernel is parallel=True,
+            # so the launch must be serialized (#3141).
+            with _PARALLEL_KERNEL_LOCK:
+                _interp_geoid_2d(xx_strip, yy_strip, N_strip,
+                                 grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w)
             N_total += sign * N_strip
 
         # Apply to each band slice. For 2-D this loop runs once.
@@ -1541,6 +1546,12 @@ def _process_tile_batch(batch, source_data, src_bounds, src_shape, y_desc,
 
     Uses ThreadPoolExecutor for intra-worker parallelism (Numba
     releases the GIL).  Memory bounded by max_memory_bytes.
+
+    The numba coordinate-transform fast path uses parallel=True kernels,
+    which must not run concurrently from multiple host threads (the
+    workqueue threading layer aborts the process, #3141).
+    try_numba_transform serializes those launches behind
+    _projections._PARALLEL_KERNEL_LOCK; resampling stays concurrent.
 
     Returns list of (row_offset, col_offset, tile_data) tuples.
     """
