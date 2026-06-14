@@ -301,7 +301,9 @@ def test_gdal_metadata_round_trips_via_gpu_writer(tmp_path):
                                  'CUSTOM_KEY': 'val_1563'}},
     )
     out = str(tmp_path / 'gdal_meta_1563.tif')
-    _write_geotiff_gpu(da_gpu, out, compression='none')
+    # gdal_metadata dict is an experimental rich-tag write (#3320).
+    _write_geotiff_gpu(da_gpu, out, compression='none',
+                       allow_experimental_codecs=True)
 
     rd = open_geotiff(out)
     meta = rd.attrs.get('gdal_metadata') or {}

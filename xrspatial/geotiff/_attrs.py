@@ -531,6 +531,11 @@ def _validate_write_rich_tag_optin(
     triggered: list[str] = []
     if attrs.get('gdal_metadata_xml') is not None:
         triggered.append("attrs['gdal_metadata_xml']")
+    # ``_extract_rich_tags`` only builds GDAL XML from ``gdal_metadata``
+    # when it is a dict (and ``gdal_metadata_xml`` is absent); a non-dict
+    # value is ignored by the writer, so it does not need gating.
+    if isinstance(attrs.get('gdal_metadata'), dict):
+        triggered.append("attrs['gdal_metadata']")
     if attrs.get('extra_tags') is not None:
         triggered.append("attrs['extra_tags']")
     if gdal_metadata_xml_kwarg is not None:

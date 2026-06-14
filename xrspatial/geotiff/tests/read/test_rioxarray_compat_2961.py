@@ -48,7 +48,9 @@ def _scale_offset_tiff(path, scale=2.0, offset=10.0, sentinel=255):
             "gdal_metadata": {"SCALE": str(scale), "OFFSET": str(offset)},
         },
     )
-    to_geotiff(da, path)
+    # gdal_metadata dict on a fresh array is an experimental rich-tag
+    # write (#3320).
+    to_geotiff(da, path, allow_experimental_codecs=True)
     return path
 
 
@@ -261,7 +263,9 @@ def _malformed_scale_tiff(path, scale="abc", offset="0"):
             "gdal_metadata": {"SCALE": scale, "OFFSET": offset},
         },
     )
-    to_geotiff(da, path)
+    # gdal_metadata dict on a fresh array is an experimental rich-tag
+    # write (#3320).
+    to_geotiff(da, path, allow_experimental_codecs=True)
     return path
 
 
@@ -486,7 +490,9 @@ def _per_band_scale_tiff(path, scales, offsets):
         },
         attrs={"crs": 4326, "gdal_metadata": meta},
     )
-    to_geotiff(da, path)
+    # gdal_metadata dict on a fresh array is an experimental rich-tag
+    # write (#3320).
+    to_geotiff(da, path, allow_experimental_codecs=True)
     return path
 
 

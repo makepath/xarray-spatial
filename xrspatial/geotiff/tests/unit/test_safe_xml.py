@@ -116,7 +116,8 @@ class TestToGeotiffMetadataRoundTrip:
         }
 
         path = tmp_path / "meta.tif"
-        to_geotiff(da, str(path))
+        # gdal_metadata dict is an experimental rich-tag write (#3320).
+        to_geotiff(da, str(path), allow_experimental_codecs=True)
 
         opened = open_geotiff(str(path))
         round_tripped = opened.attrs.get("gdal_metadata")

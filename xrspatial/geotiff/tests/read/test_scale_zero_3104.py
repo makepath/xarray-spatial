@@ -38,7 +38,9 @@ def _scale_tiff(path, scale, offset="0", nodata=None):
         coords={"y": [1.5, 0.5], "x": [0.5, 1.5, 2.5]},
         attrs=attrs,
     )
-    to_geotiff(da, path)
+    # gdal_metadata dict on a fresh array is an experimental rich-tag
+    # write (#3320).
+    to_geotiff(da, path, allow_experimental_codecs=True)
     return path
 
 

@@ -106,7 +106,7 @@ category. The `Key` column matches the runtime key.
 | `writer.bigtiff` | advanced | `bigtiff=True` (or auto-promotion above 4 GiB) writes BigTIFF magic, 8-byte offsets, and 20-byte IFD entries. |
 | `writer.bigtiff_cog` | advanced | BigTIFF plus COG. Tracked separately because the combination has its own external-interop surface. |
 | `writer.gpu` | experimental | GPU write path. |
-| `writer.gdal_metadata_xml` | experimental | `attrs['gdal_metadata_xml']` is escaped before serialisation. |
+| `writer.gdal_metadata_xml` | experimental | `attrs['gdal_metadata_xml']` is escaped before serialisation. A dict `attrs['gdal_metadata']` rides the same gate: writers build the XML from it, so a fresh DataArray carrying it also requires `allow_experimental_codecs=True` (#3320). |
 | `writer.extra_tags` | experimental | Pass-through of TIFF tags outside the structured set via `attrs['extra_tags']`. |
 | `writer.pack` | experimental | `pack=True` on `to_geotiff`; inverse of `reader.unpack`. Re-applies the recorded scale/offset, restores the integer source dtype, and fills NaN back to the nodata sentinel. Tracked at the same tier as `reader.unpack` (#3112, #3114). |
 

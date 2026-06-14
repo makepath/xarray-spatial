@@ -831,7 +831,8 @@ class TestVrtTiledMetadataParity:
     def test_nodatavals_alias_propagates_to_tiles(self, tmp_path):
         da = _tiled_metadata_make_rioxarray_style()
         vrt = str(tmp_path / 'nodatavals.vrt')
-        to_geotiff(da, vrt, tile_size=16)
+        # gdal_metadata dict is an experimental rich-tag write (#3320).
+        to_geotiff(da, vrt, tile_size=16, allow_experimental_codecs=True)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
         assert tile_da.attrs.get('nodata') == -9999.0
 
@@ -847,7 +848,7 @@ class TestVrtTiledMetadataParity:
     def test_gdal_metadata_propagates_to_tiles(self, tmp_path):
         da = _tiled_metadata_make_rioxarray_style()
         vrt = str(tmp_path / 'gdal_meta.vrt')
-        to_geotiff(da, vrt, tile_size=16)
+        to_geotiff(da, vrt, tile_size=16, allow_experimental_codecs=True)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
         gm = tile_da.attrs.get('gdal_metadata')
         assert gm == {'AREA_OR_POINT': 'Area', 'foo': 'bar'}
@@ -855,7 +856,7 @@ class TestVrtTiledMetadataParity:
     def test_resolution_tags_propagate_to_tiles(self, tmp_path):
         da = _tiled_metadata_make_rioxarray_style()
         vrt = str(tmp_path / 'resolution.vrt')
-        to_geotiff(da, vrt, tile_size=16)
+        to_geotiff(da, vrt, tile_size=16, allow_experimental_codecs=True)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
         assert tile_da.attrs.get('x_resolution') == 96.0
         assert tile_da.attrs.get('y_resolution') == 96.0
@@ -864,7 +865,7 @@ class TestVrtTiledMetadataParity:
     def test_raster_type_point_propagates_to_tiles(self, tmp_path):
         da = _tiled_metadata_make_rioxarray_style()
         vrt = str(tmp_path / 'point.vrt')
-        to_geotiff(da, vrt, tile_size=16)
+        to_geotiff(da, vrt, tile_size=16, allow_experimental_codecs=True)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
         assert tile_da.attrs.get('raster_type') == 'point'
 
@@ -873,8 +874,8 @@ class TestVrtTiledMetadataParity:
         da = _tiled_metadata_make_rioxarray_style()
         tif_path = str(tmp_path / 'parity.tif')
         vrt_path = str(tmp_path / 'parity.vrt')
-        to_geotiff(da, tif_path, tile_size=16)
-        to_geotiff(da, vrt_path, tile_size=16)
+        to_geotiff(da, tif_path, tile_size=16, allow_experimental_codecs=True)
+        to_geotiff(da, vrt_path, tile_size=16, allow_experimental_codecs=True)
         tif_da = open_geotiff(tif_path)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt_path))
         keys = ('nodata', 'gdal_metadata', 'raster_type', 'x_resolution', 'y_resolution', 'resolution_unit')  # noqa: E501
@@ -934,7 +935,8 @@ class TestVrtTiledMetadataDask:
         da_np = xr.DataArray(arr, dims=('y', 'x'), coords={'y': np.arange(8.0), 'x': np.arange(8.0)}, attrs={'nodatavals': (-9999.0,), 'crs': 4326, 'gdal_metadata': {'k': 'v'}})  # noqa: E501
         da = xr.DataArray(dska.from_array(arr, chunks=4), dims=da_np.dims, coords=da_np.coords, attrs=da_np.attrs)  # noqa: E501
         vrt = str(tmp_path / 'dask.vrt')
-        to_geotiff(da, vrt, tile_size=16)
+        # gdal_metadata dict is an experimental rich-tag write (#3320).
+        to_geotiff(da, vrt, tile_size=16, allow_experimental_codecs=True)
         tile_da = open_geotiff(_tiled_metadata_first_tile_path(vrt))
         assert tile_da.attrs.get('nodata') == -9999.0
         assert tile_da.attrs.get('gdal_metadata') == {'k': 'v'}

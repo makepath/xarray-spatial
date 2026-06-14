@@ -28,7 +28,9 @@ def _write_packed_no_sentinel_tiff(path, data, *, scale="0.1", offset="5.0"):
         attrs={"crs": 4326,
                "gdal_metadata": {"SCALE": scale, "OFFSET": offset}},
     )
-    to_geotiff(da, str(path))
+    # gdal_metadata dict on a fresh array is an experimental rich-tag
+    # write (#3320).
+    to_geotiff(da, str(path), allow_experimental_codecs=True)
     return str(path)
 
 

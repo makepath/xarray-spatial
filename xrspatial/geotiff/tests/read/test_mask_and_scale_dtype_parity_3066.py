@@ -23,12 +23,15 @@ def _write(path, data, *, nodata=None, scale=None, offset=None):
             "SCALE": str(scale if scale is not None else 1.0),
             "OFFSET": str(offset if offset is not None else 0.0),
         }
+    # gdal_metadata SCALE/OFFSET dict on a fresh array is an experimental
+    # rich-tag write (#3320).
     to_geotiff(
         xr.DataArray(
             data, dims=("y", "x"),
             coords={"y": np.arange(h, 0, -1) - 0.5, "x": np.arange(w) + 0.5},
             attrs=attrs),
-        path)
+        path,
+        allow_experimental_codecs="gdal_metadata" in attrs)
     return path
 
 
