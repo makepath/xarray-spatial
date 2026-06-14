@@ -33,6 +33,19 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_a
                              is_cupy_array, is_dask_cupy, ngjit)
 
 
+def _is_empty_raster(agg):
+    """True if *agg* has a degenerate spatial axis (0 rows or 0 cols).
+
+    An empty raster has no cells to filter, but the GPU and dask paths
+    crash on it rather than no-op: ``cuda_args`` hands ``cuLaunchKernel``
+    a zero-sized grid, and ``map_overlap`` rejects a depth that exceeds
+    the (zero-length) axis. The numpy path already returns an empty
+    result with the input shape preserved, so the focal APIs short
+    circuit empty input to match it on every backend (issue #3225).
+    """
+    return agg.shape[-2] == 0 or agg.shape[-1] == 0
+
+
 def _validate_binary_kernel(kernel, func_name):
     """Reject non-binary kernels for the mask-based focal APIs.
 
@@ -441,6 +454,16 @@ def mean(agg, passes=1, excludes=None, name='mean', boundary='nan'):
         return _apply_per_band(mean, agg, passes=passes, excludes=excludes,
                                name=name, boundary=boundary)
 
+    if _is_empty_raster(agg):
+        # No cells to filter; return an empty result of the input shape
+        # and dtype contract, matching the numpy path on every backend
+        # (issue #3225).
+        return DataArray(agg.data.astype(_promote_float(agg.dtype)),
+                         name=name,
+                         dims=agg.dims,
+                         coords=agg.coords,
+                         attrs=agg.attrs)
+
     # Preserve the input float dtype, promoting ints to float32 -- the same
     # contract as apply() / focal_stats() (#2769) and convolve_2d() (#1096).
     # Cast excludes to the working dtype so value matching behaves the same
@@ -758,6 +781,15 @@ def apply(agg=None, kernel=None, func=None, name='focal_apply',
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='apply',
                                    chunks=getattr(agg.data, 'chunks', None),
                                    itemsize=itemsize)
+
+    if _is_empty_raster(agg):
+        # No cells to filter; return an empty result of the input shape,
+        # matching the numpy path on every backend (issue #3225).
+        return DataArray(agg.data.astype(_promote_float(agg.dtype)),
+                         name=name,
+                         coords=agg.coords,
+                         dims=agg.dims,
+                         attrs=agg.attrs)
 
     # apply kernel to raster values
     # if agg is a numpy or dask with numpy backed data array,
@@ -1402,6 +1434,16 @@ def focal_stats(agg,
                                    chunks=getattr(agg.data, 'chunks', None),
                                    itemsize=itemsize)
 
+    if _is_empty_raster(agg):
+        # No cells to filter; build the empty stacked result the same way
+        # the real paths do, reusing apply()'s empty short circuit so the
+        # output matches the numpy path on every backend (issue #3225).
+        stats_aggs = [apply(agg, kernel, boundary=boundary) for _ in stats_funcs]
+        result = xr.concat(stats_aggs,
+                           pd.Index(stats_funcs, name='stats', dtype=object))
+        result.name = name
+        return result
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
         cupy_func=partial(_focal_stats_cupy_boundary, boundary=boundary),
@@ -1804,6 +1846,15 @@ def hotspots(agg=None, kernel=None, name='hotspots', boundary='nan', *,
     # 4 bytes/cell budget is correct here (issue #3223).
     _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots',
                                    chunks=getattr(agg.data, 'chunks', None))
+
+    if _is_empty_raster(agg):
+        # An empty raster has no valid cells, so Gi* is undefined. Raise the
+        # same clear error the numpy path already raises, before the cupy and
+        # dask backends crash on a zero-sized reduction or overlap (#3225).
+        raise ValueError(
+            "hotspots() needs at least 2 valid (non-NaN) cells to "
+            "compute the Getis-Ord Gi* statistic."
+        )
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_hotspots_numpy, boundary=boundary),
