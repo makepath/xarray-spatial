@@ -764,6 +764,98 @@ def _extract_lines_vectorized(geometries, bounds, height, width):
     return (r0[v], c0[v], r1[v], c1[v], seg_geom_idx[v])
 
 
+def _extract_line_segments_float(geometries, bounds, height, width):
+    """LineString/MultiLineString segments in float pixel space.
+
+    Variant of :func:`_extract_line_segments` that keeps sub-pixel
+    precision so the supercover grid walker can pick up every cell a
+    segment crosses (issue #3102, the line counterpart to the polygon
+    boundary path).  World-space clipping uses the same Liang-Barsky
+    pass; the result is converted to pixel coordinates
+    (``cx`` = x in pixels, ``cy`` = y in pixels, increasing downward)
+    without rounding.
+
+    Returns ``(cx0, cy0, cx1, cy1, geom_idx)`` as float64 arrays (and
+    int32 ids into the per-type props table).
+    """
+    if not geometries:
+        return _EMPTY_LINES_FLOAT
+
+    shapely = _require_shapely()
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    geom_arr = np.array(geometries, dtype=object)
+    idx_arr = np.arange(len(geometries), dtype=np.int32)
+
+    # Explode MultiLineStrings to individual LineStrings
+    parts, part_idx = shapely.get_parts(geom_arr, return_index=True)
+    part_geom_idx = idx_arr[part_idx]
+
+    if len(parts) == 0:
+        return _EMPTY_LINES_FLOAT
+
+    coords, coord_line_idx = shapely.get_coordinates(
+        parts, return_index=True)
+    n_coords = len(coords)
+    if n_coords < 2:
+        return _EMPTY_LINES_FLOAT
+
+    # Mark last coordinate of each line (don't form cross-line segments)
+    is_last = np.zeros(n_coords, dtype=bool)
+    changes = np.nonzero(np.diff(coord_line_idx))[0]
+    is_last[changes] = True
+    is_last[-1] = True
+
+    start_idx = np.nonzero(~is_last)[0]
+    end_idx = start_idx + 1
+    seg_geom_idx = part_geom_idx[coord_line_idx[start_idx]].astype(np.int32)
+
+    x0 = coords[start_idx, 0].astype(np.float64)
+    y0 = coords[start_idx, 1].astype(np.float64)
+    x1 = coords[end_idx, 0].astype(np.float64)
+    y1 = coords[end_idx, 1].astype(np.float64)
+
+    # Vectorized Liang-Barsky clip to raster world-space bounds.
+    dx = x1 - x0
+    dy = y1 - y0
+    p = np.array([-dx, dx, -dy, dy])
+    q = np.array([x0 - xmin, xmax - x0, y0 - ymin, ymax - y0])
+
+    t0 = np.zeros(len(x0))
+    t1 = np.ones(len(x0))
+    valid = np.ones(len(x0), dtype=bool)
+
+    for i in range(4):
+        parallel = p[i] == 0.0
+        valid &= ~(parallel & (q[i] < 0.0))
+        neg = (~parallel) & (p[i] < 0.0)
+        pos = (~parallel) & (p[i] > 0.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t_neg = np.where(neg, q[i] / p[i], 0.0)
+            t_pos = np.where(pos, q[i] / p[i], 1.0)
+        t0 = np.where(neg, np.maximum(t0, t_neg), t0)
+        t1 = np.where(pos, np.minimum(t1, t_pos), t1)
+
+    valid &= (t0 <= t1)
+
+    cx0_w = x0 + t0 * dx
+    cy0_w = y0 + t0 * dy
+    cx1_w = x0 + t1 * dx
+    cy1_w = y0 + t1 * dy
+
+    # World -> float pixel coordinates. ymax is the top of the raster,
+    # row 0 is at the top, so y increases downward in pixel space.
+    cx0 = (cx0_w - xmin) / px
+    cy0 = (ymax - cy0_w) / py
+    cx1 = (cx1_w - xmin) / px
+    cy1 = (ymax - cy1_w) / py
+
+    v = valid
+    return (cx0[v], cy0[v], cx1[v], cy1[v], seg_geom_idx[v])
+
+
 # ---------------------------------------------------------------------------
 # Polygon boundary segments (for all_touched mode)
 # ---------------------------------------------------------------------------
@@ -1636,24 +1728,46 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
                     poly_props, height, width, poly_global,
                     merge_fn, should_write, order)
 
-    # 2. Lines.  sum/count: enumerate + dedup cells so the connecting
-    #    vertex of consecutive segments is burned once (issue #3304).
-    r0, c0, r1, c1, line_idx = _extract_line_segments(
-        line_geoms, bounds, height, width)
-    if len(r0) > 0:
-        if dedup:
-            lrows, lcols, lgids = _bresenham_cells(
-                r0, c0, r1, c1, line_idx, height, width)
-            lrows, lcols, lgids = _dedup_cells(
-                lrows, lcols, lgids, height, width)
-            if len(lrows) > 0:
-                _burn_points_cpu(out, written, lrows, lcols, lgids,
-                                 line_props, line_global,
-                                 merge_fn, should_write, order)
-        else:
-            _burn_lines_cpu(out, written, r0, c0, r1, c1, line_idx,
-                            line_props, height, width, line_global,
-                            merge_fn, should_write, order)
+    # 2. Lines.  all_touched burns every cell a segment crosses via the
+    #    supercover walk (issue #3102), matching the polygon-boundary
+    #    path and rasterio; otherwise the Bresenham burner runs.
+    #    sum/count: enumerate + dedup cells so the connecting vertex of
+    #    consecutive segments is burned once (issue #3304).
+    if all_touched and line_geoms:
+        lx0, ly0, lx1, ly1, line_idx = _extract_line_segments_float(
+            line_geoms, bounds, height, width)
+        if len(lx0) > 0:
+            if dedup:
+                lrows, lcols, lgids = _supercover_cells(
+                    lx0, ly0, lx1, ly1, line_idx, height, width)
+                lrows, lcols, lgids = _dedup_cells(
+                    lrows, lcols, lgids, height, width)
+                if len(lrows) > 0:
+                    _burn_points_cpu(out, written, lrows, lcols, lgids,
+                                     line_props, line_global,
+                                     merge_fn, should_write, order)
+            else:
+                _burn_lines_supercover_cpu(
+                    out, written, lx0, ly0, lx1, ly1, line_idx,
+                    line_props, height, width, line_global,
+                    merge_fn, should_write, order)
+    else:
+        r0, c0, r1, c1, line_idx = _extract_line_segments(
+            line_geoms, bounds, height, width)
+        if len(r0) > 0:
+            if dedup:
+                lrows, lcols, lgids = _bresenham_cells(
+                    r0, c0, r1, c1, line_idx, height, width)
+                lrows, lcols, lgids = _dedup_cells(
+                    lrows, lcols, lgids, height, width)
+                if len(lrows) > 0:
+                    _burn_points_cpu(out, written, lrows, lcols, lgids,
+                                     line_props, line_global,
+                                     merge_fn, should_write, order)
+            else:
+                _burn_lines_cpu(out, written, r0, c0, r1, c1, line_idx,
+                                line_props, height, width, line_global,
+                                merge_fn, should_write, order)
 
     # 3. Points
     prows, pcols, pt_idx = _extract_points(
@@ -2588,26 +2702,50 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
                     cupy.asarray(bidx), poly_props_gpu,
                     poly_global_gpu, len(bx0))
 
-    r0, c0, r1, c1, line_idx = _extract_line_segments(
-        line_geoms, bounds, height, width)
+    # all_touched routes lines through the supercover walk (issue #3102),
+    # the same float-segment kernel the polygon boundaries use.
     line_launch = None
-    if len(r0) > 0:
-        if dedup:
-            lrows, lcols, lgids = _bresenham_cells(
-                r0, c0, r1, c1, line_idx, height, width)
-            lrows, lcols, lgids = _dedup_cells(
-                lrows, lcols, lgids, height, width)
-            if len(lrows) > 0:
-                extra_point_launches.append((
-                    cupy.asarray(lrows), cupy.asarray(lcols),
-                    cupy.asarray(lgids), cupy.asarray(line_props),
-                    cupy.asarray(line_global), len(lrows)))
-        else:
-            line_launch = (
-                cupy.asarray(r0), cupy.asarray(c0),
-                cupy.asarray(r1), cupy.asarray(c1),
-                cupy.asarray(line_idx), cupy.asarray(line_props),
-                cupy.asarray(line_global), len(r0))
+    line_supercover_launch = None
+    if all_touched and line_geoms:
+        lx0, ly0, lx1, ly1, line_idx = _extract_line_segments_float(
+            line_geoms, bounds, height, width)
+        if len(lx0) > 0:
+            if dedup:
+                lrows, lcols, lgids = _supercover_cells(
+                    lx0, ly0, lx1, ly1, line_idx, height, width)
+                lrows, lcols, lgids = _dedup_cells(
+                    lrows, lcols, lgids, height, width)
+                if len(lrows) > 0:
+                    extra_point_launches.append((
+                        cupy.asarray(lrows), cupy.asarray(lcols),
+                        cupy.asarray(lgids), cupy.asarray(line_props),
+                        cupy.asarray(line_global), len(lrows)))
+            else:
+                line_supercover_launch = (
+                    cupy.asarray(lx0), cupy.asarray(ly0),
+                    cupy.asarray(lx1), cupy.asarray(ly1),
+                    cupy.asarray(line_idx), cupy.asarray(line_props),
+                    cupy.asarray(line_global), len(lx0))
+    else:
+        r0, c0, r1, c1, line_idx = _extract_line_segments(
+            line_geoms, bounds, height, width)
+        if len(r0) > 0:
+            if dedup:
+                lrows, lcols, lgids = _bresenham_cells(
+                    r0, c0, r1, c1, line_idx, height, width)
+                lrows, lcols, lgids = _dedup_cells(
+                    lrows, lcols, lgids, height, width)
+                if len(lrows) > 0:
+                    extra_point_launches.append((
+                        cupy.asarray(lrows), cupy.asarray(lcols),
+                        cupy.asarray(lgids), cupy.asarray(line_props),
+                        cupy.asarray(line_global), len(lrows)))
+            else:
+                line_launch = (
+                    cupy.asarray(r0), cupy.asarray(c0),
+                    cupy.asarray(r1), cupy.asarray(c1),
+                    cupy.asarray(line_idx), cupy.asarray(line_props),
+                    cupy.asarray(line_global), len(r0))
 
     prows, pcols, pt_idx = _extract_points(
         point_geoms, bounds, height, width)
@@ -2643,6 +2781,18 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
                               line_launch[2], line_launch[3],
                               line_launch[4], line_launch[5],
                               line_launch[6], n_segs, height, width)
+        if line_supercover_launch is not None:
+            n_lsegs = line_supercover_launch[7]
+            bpg = (n_lsegs + tpb - 1) // tpb
+            k_boundary[bpg, tpb](out, written, order,
+                                 line_supercover_launch[0],
+                                 line_supercover_launch[1],
+                                 line_supercover_launch[2],
+                                 line_supercover_launch[3],
+                                 line_supercover_launch[4],
+                                 line_supercover_launch[5],
+                                 line_supercover_launch[6],
+                                 n_lsegs, height, width)
         if point_launch is not None:
             n_pts = point_launch[5]
             bpg = (n_pts + tpb - 1) // tpb
@@ -2798,6 +2948,27 @@ def _segments_for_tile(r0, c0, r1, c1, geom_idx, seg_bboxes,
             geom_idx[mask])
 
 
+def _float_segments_for_tile(x0, y0, x1, y1, seg_bboxes,
+                             r_start, r_end, c_start, c_end):
+    """Filter float line segments with the same mask as integer segments.
+
+    Uses the integer ``seg_bboxes`` (computed from the Bresenham
+    endpoints) so the selection matches :func:`_segments_for_tile`
+    exactly, keeping the float supercover segments aligned with the
+    integer ``seg_geom_idx`` for the same tile (issue #3102).  Float
+    endpoints are offset to tile-local pixel space; the supercover walk's
+    bounds check handles endpoints landing outside the tile.
+    """
+    if len(x0) == 0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty, empty, empty
+    seg_rmin, seg_rmax, seg_cmin, seg_cmax = seg_bboxes
+    mask = ((seg_rmax >= r_start) & (seg_rmin < r_end) &
+            (seg_cmax >= c_start) & (seg_cmin < c_end))
+    return (x0[mask] - c_start, y0[mask] - r_start,
+            x1[mask] - c_start, y1[mask] - r_start)
+
+
 def _points_for_tile(rows, cols, geom_idx, r_start, r_end, c_start, c_end):
     """Filter points within the tile, offset to tile-local coordinates.
 
@@ -2875,7 +3046,8 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                           seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
                           line_props, line_global,
                           pt_rows, pt_cols, pt_geom_idx,
-                          point_props, point_global):
+                          point_props, point_global,
+                          lseg_x0, lseg_y0, lseg_x1, lseg_y1):
     """Rasterize a single tile.
 
     Polygons are passed as WKB bytes (cheap to pickle) and deserialized
@@ -2883,6 +3055,12 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
     pixel coordinates with geometry indices into their respective props
     tables.  Each per-type global-input-index array carries the original
     input position so order-sensitive merges work across types.
+
+    Under ``all_touched`` the line segments arrive as float tile-local
+    pixel coordinates (``lseg_*``) so the supercover walk can pick up
+    every cell crossed, matching the eager path (issue #3102); the
+    integer ``seg_*`` arrays carry the Bresenham endpoints used
+    otherwise.  ``seg_geom_idx`` indexes ``line_props`` for both.
     """
     out = np.full((tile_h, tile_w), fill, dtype=np.float64)
     written = np.zeros((tile_h, tile_w), dtype=np.int8)
@@ -2931,10 +3109,29 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                         poly_props_2d, tile_h, tile_w,
                         poly_global_2d, merge_fn, should_write, order)
 
-    # 2. Lines (tile-local segments, Bresenham with bounds check).
-    #    sum/count dedup the visited cells first (issue #3304); cells
-    #    partition across tiles, so per-tile dedup equals global dedup.
-    if len(seg_r0) > 0:
+    # 2. Lines (tile-local segments).  all_touched walks float segments
+    #    with the supercover traversal (issue #3102); otherwise Bresenham
+    #    runs on the integer endpoints.  sum/count dedup the visited cells
+    #    first (issue #3304); cells partition across tiles, so per-tile
+    #    dedup equals global dedup.
+    if all_touched:
+        if len(lseg_x0) > 0:
+            if dedup:
+                lrows, lcols, lgids = _supercover_cells(
+                    lseg_x0, lseg_y0, lseg_x1, lseg_y1, seg_geom_idx,
+                    tile_h, tile_w)
+                lrows, lcols, lgids = _dedup_cells(
+                    lrows, lcols, lgids, tile_h, tile_w)
+                if len(lrows) > 0:
+                    _burn_points_cpu(out, written, lrows, lcols, lgids,
+                                     line_props, line_global,
+                                     merge_fn, should_write, order)
+            else:
+                _burn_lines_supercover_cpu(
+                    out, written, lseg_x0, lseg_y0, lseg_x1, lseg_y1,
+                    seg_geom_idx, line_props, tile_h, tile_w,
+                    line_global, merge_fn, should_write, order)
+    elif len(seg_r0) > 0:
         if dedup:
             lrows, lcols, lgids = _bresenham_cells(
                 seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
@@ -2979,6 +3176,16 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
     pt_rows, pt_cols, pt_geom_idx = _extract_points(
         point_geoms, bounds, height, width)
 
+    # Float line segments for the supercover walk under all_touched
+    # (issue #3102).  Shares the clipping logic of _extract_line_segments
+    # so it produces the same number of segments in the same order, which
+    # keeps it aligned with seg_geom_idx and the per-tile filter mask.
+    if all_touched:
+        lseg_x0, lseg_y0, lseg_x1, lseg_y1, _ = _extract_line_segments_float(
+            line_geoms, bounds, height, width)
+    else:
+        lseg_x0 = lseg_y0 = lseg_x1 = lseg_y1 = None
+
     # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely).
     # Store as object array for single-pass boolean indexing per tile.
     if poly_geoms:
@@ -3021,6 +3228,16 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
             tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
 
+            # all_touched: float supercover segments, filtered by the
+            # identical mask so they stay aligned with ts geom indices.
+            if all_touched:
+                lts = _float_segments_for_tile(
+                    lseg_x0, lseg_y0, lseg_x1, lseg_y1, seg_bboxes,
+                    r_start, r_end, c_start, c_end)
+            else:
+                _empty_f = np.empty(0, dtype=np.float64)
+                lts = (_empty_f, _empty_f, _empty_f, _empty_f)
+
             # Slice line_props / point_props (and their global-idx
             # companions) to only the geometries this tile actually
             # references, remapping the geom_idx arrays to local indices.
@@ -3036,7 +3253,8 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
                 tile_h, tile_w, fill, dtype, all_touched,
                 merge_fn, should_write,
                 *ts, tile_line_props, tile_line_global,
-                *tp, tile_point_props, tile_point_global)
+                *tp, tile_point_props, tile_point_global,
+                *lts)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype)
             ri += 1
@@ -3057,7 +3275,9 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                          seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
                          line_props, line_global,
                          pt_rows, pt_cols, pt_geom_idx,
-                         point_props, point_global, merge_name=None):
+                         point_props, point_global,
+                         lseg_x0, lseg_y0, lseg_x1, lseg_y1,
+                         merge_name=None):
     """GPU tile rasterization: polygons as WKB, lines/points as segments.
 
     When ``merge_name`` selects an atomic built-in merge, the per-tile
@@ -3140,8 +3360,31 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                         cupy.asarray(bidx), poly_props_2d_gpu,
                         poly_global_2d_gpu, len(bx0))
 
+    # all_touched routes lines through the supercover walk on float
+    # segments (issue #3102); otherwise Bresenham runs on the integer
+    # endpoints.
     line_launch = None
-    if len(seg_r0) > 0:
+    line_supercover_launch = None
+    if all_touched:
+        if len(lseg_x0) > 0:
+            if dedup:
+                lrows, lcols, lgids = _supercover_cells(
+                    lseg_x0, lseg_y0, lseg_x1, lseg_y1, seg_geom_idx,
+                    tile_h, tile_w)
+                lrows, lcols, lgids = _dedup_cells(
+                    lrows, lcols, lgids, tile_h, tile_w)
+                if len(lrows) > 0:
+                    extra_point_launches.append((
+                        cupy.asarray(lrows), cupy.asarray(lcols),
+                        cupy.asarray(lgids), _ensure_cupy(line_props),
+                        _ensure_cupy(line_global), len(lrows)))
+            else:
+                line_supercover_launch = (
+                    cupy.asarray(lseg_x0), cupy.asarray(lseg_y0),
+                    cupy.asarray(lseg_x1), cupy.asarray(lseg_y1),
+                    cupy.asarray(seg_geom_idx), _ensure_cupy(line_props),
+                    _ensure_cupy(line_global), len(lseg_x0))
+    elif len(seg_r0) > 0:
         if dedup:
             lrows, lcols, lgids = _bresenham_cells(
                 seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
@@ -3193,6 +3436,18 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, poly_global_2d, tile_bounds,
                               line_launch[2], line_launch[3],
                               line_launch[4], line_launch[5],
                               line_launch[6], n_segs, tile_h, tile_w)
+        if line_supercover_launch is not None:
+            n_lsegs = line_supercover_launch[7]
+            bpg = (n_lsegs + tpb - 1) // tpb
+            k_boundary[bpg, tpb](out, written, order,
+                                 line_supercover_launch[0],
+                                 line_supercover_launch[1],
+                                 line_supercover_launch[2],
+                                 line_supercover_launch[3],
+                                 line_supercover_launch[4],
+                                 line_supercover_launch[5],
+                                 line_supercover_launch[6],
+                                 n_lsegs, tile_h, tile_w)
         if point_launch is not None:
             n_pts = point_launch[5]
             bpg = (n_pts + tpb - 1) // tpb
@@ -3242,6 +3497,14 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
         line_geoms, bounds, height, width)
     pt_rows, pt_cols, pt_geom_idx = _extract_points(
         point_geoms, bounds, height, width)
+
+    # Float line segments for the supercover walk under all_touched
+    # (issue #3102); aligned with seg_geom_idx via the shared clip logic.
+    if all_touched:
+        lseg_x0, lseg_y0, lseg_x1, lseg_y1, _ = _extract_line_segments_float(
+            line_geoms, bounds, height, width)
+    else:
+        lseg_x0 = lseg_y0 = lseg_x1 = lseg_y1 = None
 
     # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely).
     if poly_geoms:
@@ -3293,6 +3556,15 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
             tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
 
+            # all_touched: float supercover segments, same mask as ts.
+            if all_touched:
+                lts = _float_segments_for_tile(
+                    lseg_x0, lseg_y0, lseg_x1, lseg_y1, seg_bboxes,
+                    r_start, r_end, c_start, c_end)
+            else:
+                _empty_f = np.empty(0, dtype=np.float64)
+                lts = (_empty_f, _empty_f, _empty_f, _empty_f)
+
             ts_local_idx, tile_line_props, tile_line_global = \
                 _slice_per_tile(ts[4], line_props, line_global)
             ts = (*ts[:4], ts_local_idx)
@@ -3306,7 +3578,7 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
                 merge_fn, should_write,
                 *ts, tile_line_props, tile_line_global,
                 *tp, tile_point_props, tile_point_global,
-                merge_name)
+                *lts, merge_name)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype,
                 meta=cupy.empty(()))
@@ -3745,13 +4017,15 @@ def rasterize(
         for int32, ``True`` for bool).  ``merge='count'`` is exempt
         because it burns overlap counts, never the property values.
     all_touched : bool, default False
-        If True, every pixel a polygon boundary passes through is
-        burned in addition to the normal center-fill, using a
-        supercover (Amanatides & Woo) grid traversal. Output matches
-        ``rasterio.features.rasterize(..., all_touched=True)``
+        If True, every pixel a geometry passes through is burned, using
+        a supercover (Amanatides & Woo) grid traversal: polygon
+        boundaries in addition to the normal center-fill, and every
+        cell a line crosses rather than only the Bresenham path. Output
+        matches ``rasterio.features.rasterize(..., all_touched=True)``
         pixel-for-pixel up to rasterization tie-breaking on shared
-        edges. If False, only pixels whose centers fall inside a
-        polygon are burned.
+        edges and exact cell-corner crossings. If False, only pixels
+        whose centers fall inside a polygon (or on the Bresenham line)
+        are burned.
     gpu : bool, default False
         If True, use the CuPy/CUDA backend.  Same convention as
         ``open_geotiff(gpu=True)``; combine with ``chunks`` for the
