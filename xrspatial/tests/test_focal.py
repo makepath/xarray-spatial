@@ -2573,17 +2573,45 @@ def test_focal_strip_raster_3220(backend, shape, chunks):
         _materialize(fs.data).reshape(shape), expected, rtol=1e-6)
 
 
-def test_focal_empty_raster_numpy_3220():
-    # A 0-row raster passes through the numpy backend with its shape
-    # preserved. The cupy and dask backends currently crash on empty
-    # input (issue #3225), so only the numpy behavior is pinned here.
-    data = np.empty((0, 5))
-    agg = create_test_raster(data, backend='numpy')
-    assert mean(agg).shape == (0, 5)
-    assert apply(agg, _sweep_cross_kernel).shape == (0, 5)
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+@pytest.mark.parametrize("shape", [(0, 5), (5, 0), (0, 0)])
+def test_focal_empty_raster_3220(backend, shape):
+    # A raster with a 0-length spatial axis has no cells to filter. numpy
+    # returns an empty result with the input shape preserved; the cupy and
+    # dask backends used to crash on it (a zero-sized kernel grid or an
+    # overlap depth larger than the axis). After issue #3225 every backend
+    # matches numpy: an empty result of the input shape and backend type.
+    _skip_unavailable_backend(backend)
+    data = np.empty(shape, dtype=np.float64)
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+
+    mean_result = mean(agg)
+    assert mean_result.shape == shape
+    assert isinstance(mean_result.data, type(agg.data))
+    assert _materialize(mean_result.data).shape == shape
+
+    apply_result = apply(agg, _sweep_cross_kernel, _apply_func_for(backend))
+    assert apply_result.shape == shape
+    assert isinstance(apply_result.data, type(agg.data))
+
     fs = focal_stats(agg, custom_kernel(_sweep_cross_kernel),
                      stats_funcs=['mean'])
-    assert fs.shape == (1, 0, 5)
+    assert fs.shape == (1, *shape)
+    assert isinstance(fs.data, type(agg.data))
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+@pytest.mark.parametrize("shape", [(0, 5), (5, 0), (0, 0)])
+def test_hotspots_empty_raster_3225(backend, shape):
+    # An empty raster has no valid cells, so Gi* is undefined. numpy already
+    # raises a clear "needs at least 2 valid cells" error; the cupy and dask
+    # backends used to crash on a zero-sized reduction or overlap. Every
+    # backend now raises the same error up front (issue #3225).
+    _skip_unavailable_backend(backend)
+    data = np.empty(shape, dtype=np.float64)
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    with pytest.raises(ValueError, match="needs at least 2 valid"):
+        hotspots(agg, np.ones((3, 3)))
 
 
 @dask_array_available
