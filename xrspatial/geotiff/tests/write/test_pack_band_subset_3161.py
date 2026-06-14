@@ -33,7 +33,9 @@ def _write_two_band_tiff(path, *, gdal_metadata, nodata=65535):
         coords={"y": [1.5, 0.5], "x": [0.5, 1.5, 2.5]},
         attrs={"crs": 4326, "nodata": nodata, "gdal_metadata": gdal_metadata},
     )
-    to_geotiff(da, path)
+    # gdal_metadata dict on a fresh array is an experimental rich-tag
+    # write (#3320).
+    to_geotiff(da, path, allow_experimental_codecs=True)
     return path, data
 
 

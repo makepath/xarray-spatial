@@ -762,11 +762,48 @@ def test_validate_write_rich_tag_optin_rejects_extra_tags():
         )
 
 
+def test_validate_write_rich_tag_optin_rejects_gdal_metadata_dict():
+    """A dict ``attrs['gdal_metadata']`` is written to disk as XML by
+    ``_extract_rich_tags``; it must trip the same gate (#3320).
+    """
+    with pytest.raises(ValueError, match=r"attrs\['gdal_metadata'\]"):
+        _validate_write_rich_tag_optin(
+            {'gdal_metadata': {'AREA_OR_POINT': 'Area'}},
+            allow_experimental_codecs=False,
+        )
+
+
+def test_validate_write_rich_tag_optin_names_both_xml_and_gdal_metadata():
+    """When both ``gdal_metadata_xml`` and a dict ``gdal_metadata`` are
+    present without the opt-in, the rejection names both attrs (#3320)."""
+    with pytest.raises(ValueError) as exc:
+        _validate_write_rich_tag_optin(
+            {'gdal_metadata_xml': '<GDALMetadata/>',
+             'gdal_metadata': {'AREA_OR_POINT': 'Area'}},
+            allow_experimental_codecs=False,
+        )
+    msg = str(exc.value)
+    assert "attrs['gdal_metadata_xml']" in msg
+    assert "attrs['gdal_metadata']" in msg
+
+
+def test_validate_write_rich_tag_optin_ignores_non_dict_gdal_metadata():
+    """Only a dict ``gdal_metadata`` builds XML in ``_extract_rich_tags``;
+    a non-dict value is ignored by the writer, so the gate stays quiet
+    (#3320).
+    """
+    _validate_write_rich_tag_optin(
+        {'gdal_metadata': 'not-a-dict'},
+        allow_experimental_codecs=False,
+    )
+
+
 def test_validate_write_rich_tag_optin_accepts_with_flag():
-    """``allow_experimental_codecs=True`` accepts both rich-tag attrs."""
+    """``allow_experimental_codecs=True`` accepts all rich-tag attrs."""
     _validate_write_rich_tag_optin(
         {'gdal_metadata_xml': '<GDALMetadata/>',
-         'extra_tags': [(700, 1, 0, b'')]},
+         'extra_tags': [(700, 1, 0, b'')],
+         'gdal_metadata': {'AREA_OR_POINT': 'Area'}},
         allow_experimental_codecs=True,
     )
 
@@ -780,6 +817,7 @@ def test_validate_write_rich_tag_optin_exempts_round_trip():
     _validate_write_rich_tag_optin(
         {'gdal_metadata_xml': '<GDALMetadata/>',
          'extra_tags': [(700, 1, 0, b'')],
+         'gdal_metadata': {'AREA_OR_POINT': 'Area'},
          '_xrspatial_geotiff_contract': 2},
         allow_experimental_codecs=False,
     )

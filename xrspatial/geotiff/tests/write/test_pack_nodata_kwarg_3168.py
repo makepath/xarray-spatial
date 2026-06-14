@@ -36,7 +36,9 @@ def _write_int_tiff(path, data, *, nodata=None, scale=None, offset=None):
         coords={"y": np.arange(h, 0, -1) - 0.5, "x": np.arange(w) + 0.5},
         attrs=attrs,
     )
-    to_geotiff(da, path)
+    # A gdal_metadata SCALE/OFFSET dict on a fresh array is an
+    # experimental rich-tag write (#3320).
+    to_geotiff(da, path, allow_experimental_codecs="gdal_metadata" in attrs)
     return path
 
 

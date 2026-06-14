@@ -347,6 +347,49 @@ def test_canonical_keys_present_per_backend(tmp_path, opener, label):
     )
 
 
+def _make_gdal_metadata_da():
+    """Fresh DataArray (no contract marker) carrying only a dict
+    ``gdal_metadata``. The writer turns this into on-disk GDAL XML, so it
+    must trip the experimental rich-tag gate (#3320)."""
+    data = np.arange(4, dtype=np.float32).reshape(2, 2)
+    return xr.DataArray(
+        data, dims=('y', 'x'),
+        coords={'y': [240.0, 230.0], 'x': [100.0, 110.0]},
+        attrs={'crs': 4326, 'gdal_metadata': {'AREA_OR_POINT': 'Area'}},
+    )
+
+
+def test_gdal_metadata_dict_requires_optin_3320(tmp_path):
+    """A fresh DataArray whose only rich-tag attr is a dict
+    ``gdal_metadata`` writes GDAL XML to disk, so ``to_geotiff`` must
+    reject it without ``allow_experimental_codecs`` and accept it with
+    the flag (#3320)."""
+    da = _make_gdal_metadata_da()
+    rejected = str(tmp_path / 'gdal_metadata_optin_3320_rejected.tif')
+    with pytest.raises(ValueError, match=r"attrs\['gdal_metadata'\]"):
+        to_geotiff(da, rejected)
+    assert not os.path.exists(rejected)
+
+    accepted = str(tmp_path / 'gdal_metadata_optin_3320_accepted.tif')
+    to_geotiff(da, accepted, allow_experimental_codecs=True)
+    assert os.path.exists(accepted)
+
+
+def test_gdal_metadata_dict_roundtrip_writes_flag_free_3320(tmp_path):
+    """A read-back DataArray carries the contract marker, so writing its
+    ``gdal_metadata`` back is the canonical round-trip and stays
+    flag-free even without the opt-in (#3320)."""
+    da = _make_gdal_metadata_da()
+    src = str(tmp_path / 'gdal_metadata_roundtrip_3320_src.tif')
+    to_geotiff(da, src, allow_experimental_codecs=True)
+
+    rd = open_geotiff(src)
+    assert '_xrspatial_geotiff_contract' in rd.attrs
+    out = str(tmp_path / 'gdal_metadata_roundtrip_3320_out.tif')
+    to_geotiff(rd, out)
+    assert os.path.exists(out)
+
+
 # ``raster_type`` lives outside the shared fixture because the canonical
 # default ('area') is encoded as *absence* in attrs. The two branches
 # need different fixtures.

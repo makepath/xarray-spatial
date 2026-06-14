@@ -1519,7 +1519,8 @@ class TestGDALMetadata:
             attrs={'gdal_metadata': meta},
         )
         path = str(tmp_path / 'da_meta.tif')
-        to_geotiff(da, path, compression='none')
+        # gdal_metadata dict is an experimental rich-tag write (#3320).
+        to_geotiff(da, path, compression='none', allow_experimental_codecs=True)
 
         result = open_geotiff(path)
         assert result.attrs['gdal_metadata']['Source'] == 'test'

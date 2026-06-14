@@ -33,7 +33,8 @@ def _write_scaled_int16(path, *, nodata=None):
         coords={"y": [1.5, 0.5], "x": [0.5, 1.5]},
         attrs=attrs,
     )
-    to_geotiff(da, str(path), nodata=nodata)
+    to_geotiff(da, str(path), nodata=nodata,
+               allow_experimental_codecs=True)
     return str(path)
 
 
@@ -79,7 +80,7 @@ def test_pack_rejects_underflow_unsigned(tmp_path, chunks):
                "gdal_metadata": {"SCALE": "0.5", "OFFSET": "0.0"}},
     )
     src = str(tmp_path / "src_u16_underflow_3260.tif")
-    to_geotiff(da, src)
+    to_geotiff(da, src, allow_experimental_codecs=True)
 
     mod = _unpacked(src)
     mod.data[0, 0] = -1.0  # packs to -2, below uint16 min
@@ -127,7 +128,7 @@ def test_pack_accepts_full_dtype_range(tmp_path, chunks):
                "gdal_metadata": {"SCALE": "0.1", "OFFSET": "0.0"}},
     )
     src = str(tmp_path / "src_bounds_3260.tif")
-    to_geotiff(da, src)
+    to_geotiff(da, src, allow_experimental_codecs=True)
 
     mod = _unpacked(src)
     if chunks is not None:
@@ -163,7 +164,8 @@ def test_pack_float_target_not_range_guarded(tmp_path):
                "gdal_metadata": {"SCALE": "2.0", "OFFSET": "0.0"}},
     )
     src = str(tmp_path / "src_float_3260.tif")
-    to_geotiff(da, src, nodata=-9999.0)
+    to_geotiff(da, src, nodata=-9999.0,
+               allow_experimental_codecs=True)
 
     mod = _unpacked(src)
     mod.data[0, 0] = 1e30
