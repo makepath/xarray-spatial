@@ -49,7 +49,7 @@ Download everything and open the notebooks:
 
 Notebooks live under ``user_guide/`` and cover surface analysis,
 proximity, classification, remote sensing, and the rest of the modules.
-The data they read sits in the ``data/`` folder next to them. The same
+Downloaded datasets land in ``xrspatial-examples/data/``. The same
 notebooks are rendered in the :doc:`user guide </user_guide/index>` if
 you would rather read than run.
 
