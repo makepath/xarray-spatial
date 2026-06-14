@@ -42,6 +42,7 @@ from xrspatial.dataset_support import supports_dataset
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
     _boundary_to_dask,
+    _dask_task_name_kwargs,
     _validate_raster,
     _validate_scalar,
     cuda_args,
@@ -261,6 +262,7 @@ def _run_dask_numpy(data, max_radius, n_directions, cellsize_x, cellsize_y):
         depth=(max_radius, max_radius),
         boundary=np.nan,
         meta=np.array(()),
+        **_dask_task_name_kwargs('xrspatial.sky_view_factor'),
     )
     return out
 
@@ -279,6 +281,7 @@ def _run_dask_cupy(data, max_radius, n_directions, cellsize_x, cellsize_y):
         depth=(max_radius, max_radius),
         boundary=cupy.nan,
         meta=cupy.array(()),
+        **_dask_task_name_kwargs('xrspatial.sky_view_factor'),
     )
     return out
 

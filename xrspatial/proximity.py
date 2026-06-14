@@ -25,8 +25,8 @@ except ImportError:
 
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.pathfinding import _available_memory_bytes
-from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
-                             is_dask_cupy, ngjit)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
+                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
 
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1
@@ -35,6 +35,14 @@ MANHATTAN = 2
 PROXIMITY = 0
 ALLOCATION = 1
 DIRECTION = 2
+
+# Map the runtime process_mode to the public function name so the shared
+# _process compute layers label their dask tasks under the op that called them.
+_PROCESS_MODE_TASK_NAMES = {
+    PROXIMITY: 'xrspatial.proximity',
+    ALLOCATION: 'xrspatial.allocation',
+    DIRECTION: 'xrspatial.direction',
+}
 
 
 def _distance_metric_mapping():
@@ -731,6 +739,7 @@ def _process_dask_cupy(raster, x_coords, y_coords, target_values,
         depth=(pad_y, pad_x),
         boundary=np.nan,
         meta=cp.array((), dtype=cp.float32),
+        **_dask_task_name_kwargs(_PROCESS_MODE_TASK_NAMES[process_mode]),
     )
 
 
@@ -1223,6 +1232,7 @@ def _build_global_kdtree(raster, y_coords, x_coords, target_values,
         raster.data,
         dtype=np.float32,
         meta=np.array((), dtype=np.float32),
+        **_dask_task_name_kwargs(_PROCESS_MODE_TASK_NAMES[process_mode]),
     )
 
 
@@ -1415,6 +1425,7 @@ def _process(
             depth=(pad_y, pad_x),
             boundary=np.nan,
             meta=np.array((), dtype=np.float32),
+            **_dask_task_name_kwargs(_PROCESS_MODE_TASK_NAMES[process_mode]),
         )
         return out
 

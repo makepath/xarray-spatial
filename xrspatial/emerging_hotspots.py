@@ -30,6 +30,7 @@ from xrspatial.focal import (
 )
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _dask_task_name_kwargs,
     _validate_boundary,
     ngjit,
     not_implemented_func,
@@ -608,6 +609,7 @@ def _emerging_hotspots_dask_numpy(raster, kernel, boundary='nan'):
         gi_zscore,
         dtype=np.int8,
         meta=np.array((), dtype=np.int8),
+        **_dask_task_name_kwargs('xrspatial.emerging_hotspots.gi_bin'),
     )
 
     # Pass 3: Mann-Kendall + classification via map_blocks
@@ -620,6 +622,7 @@ def _emerging_hotspots_dask_numpy(raster, kernel, boundary='nan'):
         drop_axis=0,
         new_axis=0,
         meta=np.array((), dtype=np.float32),
+        **_dask_task_name_kwargs('xrspatial.emerging_hotspots.mk_classify'),
     )
 
     return gi_zscore, gi_bin, mk_result
@@ -690,6 +693,7 @@ def _emerging_hotspots_dask_cupy(raster, kernel, boundary='nan'):
         gi_zscore,
         dtype=np.int8,
         meta=cupy.array((), dtype=cupy.int8),
+        **_dask_task_name_kwargs('xrspatial.emerging_hotspots.gi_bin'),
     )
 
     # Pass 3: Mann-Kendall + classification via map_blocks
@@ -701,6 +705,7 @@ def _emerging_hotspots_dask_cupy(raster, kernel, boundary='nan'):
         drop_axis=0,
         new_axis=0,
         meta=cupy.array((), dtype=cupy.float32),
+        **_dask_task_name_kwargs('xrspatial.emerging_hotspots.mk_classify'),
     )
 
     return gi_zscore, gi_bin, mk_result

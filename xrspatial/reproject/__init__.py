@@ -14,7 +14,7 @@ import math
 import numpy as np
 import xarray as xr
 
-from xrspatial.utils import _validate_raster
+from xrspatial.utils import _dask_task_name_kwargs, _validate_raster
 
 from ._crs_utils import _detect_band_nodata, _detect_nodata, _detect_source_crs, _resolve_crs
 from ._grid import (_MAX_OUTPUT_PIXELS, _chunk_bounds, _compute_chunk_layout, _compute_output_grid,
@@ -1494,7 +1494,8 @@ def _apply_vertical_shift_dask(data, y_arr, x_arr,
     # ``meta`` hardcodes a numpy template to match the assumption above
     # that incoming chunks are numpy-backed. Revisit if dask-of-cupy is
     # ever plumbed through.
-    return da.map_blocks(_block, data, dtype=out_dtype, meta=np.array((), dtype=out_dtype))
+    return da.map_blocks(_block, data, dtype=out_dtype, meta=np.array((), dtype=out_dtype),
+                         **_dask_task_name_kwargs('xrspatial.reproject_vertical_shift'))
 
 
 def _reproject_inmemory_numpy(
@@ -2183,6 +2184,7 @@ def _reproject_dask(
         template,
         dtype=out_dtype,
         meta=np.array((), dtype=out_dtype),
+        **_dask_task_name_kwargs('xrspatial.reproject'),
     )
 
 
@@ -2942,4 +2944,5 @@ def _merge_dask(
         template,
         dtype=out_dtype,
         meta=np.array((), dtype=out_dtype),
+        **_dask_task_name_kwargs('xrspatial.merge'),
     )

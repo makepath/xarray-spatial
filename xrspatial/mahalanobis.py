@@ -15,6 +15,7 @@ import xarray as xr
 
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _dask_task_name_kwargs,
     _validate_raster,
     has_cuda_and_cupy,
     has_dask_array,
@@ -340,6 +341,7 @@ def _mahalanobis_dask_numpy(bands_data, mu, inv_cov):
         drop_axis=0,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.mahalanobis'),
     )
 
 
@@ -357,6 +359,7 @@ def _mahalanobis_dask_cupy(bands_data, mu, inv_cov):
         drop_axis=0,
         dtype=np.float64,
         meta=cupy.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.mahalanobis'),
     )
 
 

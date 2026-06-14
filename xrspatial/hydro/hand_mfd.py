@@ -27,6 +27,7 @@ from xrspatial.hydro.watershed_mfd import (
     _to_numpy_f64,
 )
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_matching_shape,
     _validate_mfd_fractions,
     _validate_raster,
@@ -641,6 +642,7 @@ def _hand_mfd_dask(fractions_da, flow_accum_da, elev_da, threshold,
         flow_accum_da, elev_da,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.hand_mfd'),
     )
 
 

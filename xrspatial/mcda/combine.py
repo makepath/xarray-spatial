@@ -11,6 +11,8 @@ import warnings
 import numpy as np
 import xarray as xr
 
+from xrspatial.utils import _dask_task_name_kwargs
+
 # =====================================================================
 # Memory guards
 # =====================================================================
@@ -415,6 +417,7 @@ def _sort_descending(data, axis):
             return data.map_blocks(
                 lambda block: -np.sort(-block, axis=axis),
                 meta=data._meta,
+                **_dask_task_name_kwargs('xrspatial.owa'),
             )
     except ImportError:
         pass

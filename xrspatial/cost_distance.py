@@ -49,6 +49,7 @@ except ImportError:
         ndarray = False
 
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_raster,
     cuda_args, get_dataarray_resolution, ngjit,
     has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
@@ -506,6 +507,7 @@ def _cost_distance_dask_cupy(source_da, friction_da,
             boundary=np.nan,
             dtype=np.float32,
             meta=cp.array((), dtype=cp.float32),
+            **_dask_task_name_kwargs('xrspatial.cost_distance'),
         )
 
     # Unbounded or padding too large: convert to dask+numpy, use CPU path
@@ -1187,6 +1189,7 @@ def _cost_distance_dask(source_da, friction_da, cellsize_x, cellsize_y,
         boundary=np.nan,
         dtype=np.float32,
         meta=np.array((), dtype=np.float32),
+        **_dask_task_name_kwargs('xrspatial.cost_distance'),
     )
     return out
 

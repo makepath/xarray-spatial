@@ -33,6 +33,7 @@ from xrspatial.hydro.watershed_dinf import (
     _to_numpy_f64,
 )
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -621,6 +622,7 @@ def _hand_dinf_dask(flow_dir_da, flow_accum_da, elev_da, threshold):
         flow_dir_da, flow_accum_da, elev_da,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.hand_dinf'),
     )
 
 

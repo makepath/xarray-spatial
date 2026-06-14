@@ -37,6 +37,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_matching_shape,
     _validate_mfd_fractions,
     _validate_raster,
@@ -1350,6 +1351,7 @@ def _stream_order_mfd_dask_strahler(fractions_da, accum_da, threshold):
     return da.map_blocks(
         _tile, accum_da,
         dtype=np.float64, meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.stream_order_mfd_strahler'),
     )
 
 
@@ -1427,6 +1429,7 @@ def _stream_order_mfd_dask_shreve(fractions_da, accum_da, threshold):
     return da.map_blocks(
         _tile, accum_da,
         dtype=np.float64, meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.stream_order_mfd_shreve'),
     )
 
 

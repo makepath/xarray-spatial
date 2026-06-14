@@ -30,6 +30,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_mfd_fractions,
     _validate_raster,
     cuda_args,
@@ -794,6 +795,7 @@ def _assemble_result_mfd(fractions_da, boundaries, frac_bdry,
     return da.map_blocks(
         _tile, fractions_da, drop_axis=0,
         dtype=np.float64, meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_accumulation_mfd'),
     )
 
 

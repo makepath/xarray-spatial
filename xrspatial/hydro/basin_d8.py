@@ -27,8 +27,8 @@ except ImportError:
     da = None
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import (_validate_raster, cuda_args, has_cuda_and_cupy, is_cupy_array,
-                             is_dask_cupy, ngjit)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, cuda_args,
+                             has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit)
 
 # =====================================================================
 # Memory guards
@@ -372,7 +372,8 @@ def _basins_dask_iterative(flow_dir_da):
 
     pour_points_da = da.map_blocks(
         _basins_make_pp_block, flow_dir_da,
-        dtype=np.float64, meta=np.array((), dtype=np.float64))
+        dtype=np.float64, meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.basin_d8'))
 
     return _watershed_dask_iterative(flow_dir_da, pour_points_da)
 
@@ -403,7 +404,8 @@ def _basins_dask_cupy(flow_dir_da):
 
     pour_points_da = da.map_blocks(
         _basins_make_pp_block, flow_dir_da,
-        dtype=np.float64, meta=cp.array((), dtype=cp.float64))
+        dtype=np.float64, meta=cp.array((), dtype=cp.float64),
+        **_dask_task_name_kwargs('xrspatial.basin_d8'))
 
     return _watershed_dask_cupy(flow_dir_da, pour_points_da)
 

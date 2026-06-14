@@ -34,7 +34,14 @@ except ImportError:
 
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
-from xrspatial.utils import _validate_raster, has_cuda_and_cupy, is_cupy_array, is_dask_cupy, ngjit
+from xrspatial.utils import (
+    _dask_task_name_kwargs,
+    _validate_raster,
+    has_cuda_and_cupy,
+    is_cupy_array,
+    is_dask_cupy,
+    ngjit,
+)
 
 # =====================================================================
 # Memory guards
@@ -275,6 +282,7 @@ def _flow_path_dask(flow_dir_data, start_points_data):
         _has_sp, start_points_data,
         dtype=np.int8,
         chunks=tuple((1,) * len(c) for c in start_points_data.chunks),
+        **_dask_task_name_kwargs('xrspatial.flow_path_d8_flags'),
     ).compute()
 
     # --- Phase 2: load only flagged chunks, extract coordinates -------
@@ -406,6 +414,7 @@ def _flow_path_dask(flow_dir_data, start_points_data):
         _assemble_block, dummy,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_path_d8_assemble'),
     )
 
 

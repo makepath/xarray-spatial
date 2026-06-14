@@ -35,6 +35,7 @@ except ImportError:
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
     _boundary_to_dask,
+    _dask_task_name_kwargs,
     _pad_array,
     _validate_boundary,
     _validate_raster,
@@ -351,6 +352,7 @@ def _morph_dask_numpy(data, kernel, op, boundary):
         depth=(hy, hx),
         boundary=_boundary_to_dask(boundary),
         meta=np.array(()),
+        **_dask_task_name_kwargs(f'xrspatial.morph_{op}'),
     )
 
 
@@ -407,6 +409,7 @@ def _morph_dask_cupy(data, kernel, op, boundary):
         depth=(hy, hx),
         boundary=_boundary_to_dask(boundary, is_cupy=True),
         meta=cp.array(()),
+        **_dask_task_name_kwargs(f'xrspatial.morph_{op}'),
     )
 
 

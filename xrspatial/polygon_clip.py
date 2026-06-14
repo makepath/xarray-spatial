@@ -17,8 +17,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import (_validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array,
-                             is_dask_cupy)
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster, has_cuda_and_cupy,
+                             has_dask_array, is_cupy_array, is_dask_cupy)
 
 
 def _resolve_geometry(geometry):
@@ -271,6 +271,7 @@ def clip_polygon(
             out = da.map_blocks(
                 _apply_mask, raster.data, cond,
                 dtype=out_dtype,
+                **_dask_task_name_kwargs('xrspatial.clip_polygon'),
             )
             result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
         else:

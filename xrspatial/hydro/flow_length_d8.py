@@ -24,7 +24,8 @@ from xrspatial.dataset_support import supports_dataset
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset
 from xrspatial.hydro.watershed_d8 import _code_to_offset_py
-from xrspatial.utils import (_validate_raster, get_dataarray_resolution, has_cuda_and_cupy,
+from xrspatial.utils import (_dask_task_name_kwargs, _validate_raster,
+                             get_dataarray_resolution, has_cuda_and_cupy,
                              is_cupy_array, is_dask_cupy, ngjit)
 
 # =====================================================================
@@ -1074,6 +1075,7 @@ def _assemble_result(flow_dir_da, boundaries, flow_bdry,
         flow_dir_da,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_length_d8'),
     )
 
 

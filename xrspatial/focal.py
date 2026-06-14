@@ -28,9 +28,9 @@ except ImportError:
 from xrspatial.convolution import (_available_memory_bytes, _promote_float, convolve_2d,
                                    custom_kernel)
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
-                             _validate_boundary, _validate_raster, _validate_scalar, cuda_args,
-                             is_cupy_array, is_dask_cupy, ngjit)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _dask_task_name_kwargs,
+                             _pad_array, _validate_boundary, _validate_raster, _validate_scalar,
+                             cuda_args, is_cupy_array, is_dask_cupy, ngjit)
 
 
 def _is_empty_raster(agg):
@@ -223,7 +223,8 @@ def _mean_dask_numpy(data, excludes, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array((), dtype=data.dtype))
+                           meta=np.array((), dtype=data.dtype),
+                           **_dask_task_name_kwargs('xrspatial.mean'))
     return out
 
 
@@ -233,7 +234,8 @@ def _mean_dask_cupy(data, excludes, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array((), dtype=data.dtype))
+                           meta=cupy.array((), dtype=data.dtype),
+                           **_dask_task_name_kwargs('xrspatial.mean'))
     return out
 
 
@@ -588,7 +590,8 @@ def _apply_dask_numpy(data, kernel, func, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary),
-                           meta=np.array((), dtype=data.dtype))
+                           meta=np.array((), dtype=data.dtype),
+                           **_dask_task_name_kwargs('xrspatial.apply'))
     return out
 
 
@@ -618,7 +621,8 @@ def _apply_dask_cupy(data, kernel, func, boundary='nan'):
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
                            boundary=_boundary_to_dask(boundary, is_cupy=True),
-                           meta=cupy.array((), dtype=data.dtype))
+                           meta=cupy.array((), dtype=data.dtype),
+                           **_dask_task_name_kwargs('xrspatial.apply'))
     return out
 
 
@@ -1278,7 +1282,8 @@ def _focal_stats_dask_cupy(agg, kernel, stats_funcs, boundary='nan'):
         data = agg.data.astype(_promote_float(agg.data.dtype))
         stats_data = data.map_overlap(
             _func, depth=(pad_h, pad_w),
-            boundary=dask_bnd, meta=cupy.array((), dtype=data.dtype))
+            boundary=dask_bnd, meta=cupy.array((), dtype=data.dtype),
+            **_dask_task_name_kwargs('xrspatial.focal_stats'))
         stats_agg = xr.DataArray(
             stats_data, dims=agg.dims, coords=agg.coords, attrs=agg.attrs)
         stats_aggs.append(stats_agg)
@@ -1629,9 +1634,11 @@ def _hotspots_dask_numpy(raster, kernel, boundary='nan'):
     # all-NaN / single-valid-cell rasters raise at compute time instead of
     # classifying to a silent all-zeros raster (issue #2843).
     z_array = da.map_blocks(_gistar_validate_lazy, z_array, global_std, n,
-                            dtype=z_array.dtype, meta=z_array._meta)
+                            dtype=z_array.dtype, meta=z_array._meta,
+                            **_dask_task_name_kwargs('xrspatial.hotspots.validate'))
     out = z_array.map_blocks(_calc_hotspots_numpy,
-                             meta=np.array((), dtype=np.int8))
+                             meta=np.array((), dtype=np.int8),
+                             **_dask_task_name_kwargs('xrspatial.hotspots'))
     return out
 
 
@@ -1669,9 +1676,11 @@ def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
     # all-NaN / single-valid-cell rasters raise at compute time instead of
     # classifying to a silent all-zeros raster (issue #2843).
     z_array = da.map_blocks(_gistar_validate_lazy, z_array, global_std, n,
-                            dtype=z_array.dtype, meta=z_array._meta)
+                            dtype=z_array.dtype, meta=z_array._meta,
+                            **_dask_task_name_kwargs('xrspatial.hotspots.validate'))
     out = z_array.map_blocks(_calc_hotspots_cupy,
-                             meta=cupy.array((), dtype=cupy.int8))
+                             meta=cupy.array((), dtype=cupy.int8),
+                             **_dask_task_name_kwargs('xrspatial.hotspots'))
     return out
 
 

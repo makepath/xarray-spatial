@@ -23,7 +23,13 @@ except ImportError:
     cupy = None
 
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.utils import ArrayTypeFunctionMapping, _validate_raster, calc_res, ngjit
+from xrspatial.utils import (
+    ArrayTypeFunctionMapping,
+    _dask_task_name_kwargs,
+    _validate_raster,
+    calc_res,
+    ngjit,
+)
 
 # -- Constants ---------------------------------------------------------------
 
@@ -1124,7 +1130,9 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
                      depth_y=depth_y, depth_x=depth_x, order=order,
                      work_dtype=work_dt, out_dtype=out_dt)
         return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                             dtype=out_dt, meta=meta)
+                             dtype=out_dt, meta=meta,
+                             **_dask_task_name_kwargs(
+                                 'xrspatial.resample.interp'))
 
     import math
 
@@ -1164,7 +1172,9 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
                  depth_y=depth_y, depth_x=depth_x,
                  out_dtype=out_dt)
     return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                         dtype=out_dt, meta=meta)
+                         dtype=out_dt, meta=meta,
+                         **_dask_task_name_kwargs(
+                             'xrspatial.resample.aggregate'))
 
 
 def _run_dask_cupy(data, scale_y, scale_x, method):
@@ -1220,7 +1230,9 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
                      depth_y=depth_y, depth_x=depth_x, order=order,
                      work_dtype=work_dt, out_dtype=out_dt)
         return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                             dtype=out_dt, meta=meta)
+                             dtype=out_dt, meta=meta,
+                             **_dask_task_name_kwargs(
+                                 'xrspatial.resample.interp'))
 
     import math
 
@@ -1260,7 +1272,9 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
                  depth_y=depth_y, depth_x=depth_x,
                  out_dtype=out_dt)
     return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                         dtype=out_dt, meta=meta)
+                         dtype=out_dt, meta=meta,
+                         **_dask_task_name_kwargs(
+                             'xrspatial.resample.aggregate'))
 
 
 # -- Public API --------------------------------------------------------------

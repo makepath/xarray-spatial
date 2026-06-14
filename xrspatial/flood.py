@@ -29,6 +29,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_raster,
     has_cuda_and_cupy,
     is_cupy_array,
@@ -627,6 +628,7 @@ def _veg_roughness_nlcd_dask(data, lut):
     return _da.map_blocks(
         _apply_lut, data, dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.vegetation_roughness_nlcd'),
     )
 
 
@@ -669,6 +671,7 @@ def _veg_roughness_ndvi_dask(data):
     return _da.map_blocks(
         _apply, data, dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.vegetation_roughness_ndvi'),
     )
 
 
@@ -795,6 +798,7 @@ def _veg_cn_dask(lc, sg, lut):
     return _da.map_blocks(
         _apply, lc, sg, dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.vegetation_curve_number'),
     )
 
 

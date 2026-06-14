@@ -52,6 +52,7 @@ except ImportError:
 
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _dask_task_name_kwargs,
     has_cuda_and_cupy,
     has_dask_array,
     is_cupy_array,
@@ -293,6 +294,7 @@ def _disaggregate_dask_numpy(zones_da, weight_da, values_dict, method,
         method=method,
         nodata_zone=nodata_zone,
         dtype=np.float64,
+        **_dask_task_name_kwargs('xrspatial.disaggregate'),
     )
     return result
 

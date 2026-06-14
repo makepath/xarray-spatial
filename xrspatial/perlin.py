@@ -25,8 +25,8 @@ import numba as nb
 from numba import cuda, jit
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args,
-                             not_implemented_func)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs,
+                             _validate_raster, cuda_args, not_implemented_func)
 
 
 def _make_perm_table(seed):
@@ -121,7 +121,8 @@ def _perlin_dask_numpy(data: da.Array,
     x, y = da.meshgrid(linx, liny)
 
     _func = partial(_perlin, p)
-    data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32))
+    data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32),
+                         **_dask_task_name_kwargs('xrspatial.perlin'))
 
     # persist so min/ptp don't recompute the noise from scratch
     (data,) = dask.persist(data)
@@ -271,7 +272,8 @@ def _perlin_dask_cupy(data: da.Array,
         return out
 
     data = da.map_blocks(_chunk_perlin, data, dtype=cupy.float32,
-                         meta=cupy.array((), dtype=cupy.float32))
+                         meta=cupy.array((), dtype=cupy.float32),
+                         **_dask_task_name_kwargs('xrspatial.perlin'))
 
     # persist so min/max don't recompute the noise from scratch
     (data,) = dask.persist(data)

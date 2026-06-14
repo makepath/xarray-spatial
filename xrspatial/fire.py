@@ -26,6 +26,7 @@ from numba import cuda
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _dask_task_name_kwargs,
     _validate_raster,
     _validate_scalar,
     cuda_args,
@@ -165,7 +166,8 @@ def _dnbr_gpu(pre_data, post_data, out):
 
 
 def _dnbr_dask(pre_data, post_data):
-    return da.map_blocks(_dnbr_cpu, pre_data, post_data, meta=np.array(()))
+    return da.map_blocks(_dnbr_cpu, pre_data, post_data, meta=np.array(()),
+                         **_dask_task_name_kwargs('xrspatial.dnbr'))
 
 
 def _dnbr_cupy(pre_data, post_data):
@@ -178,7 +180,8 @@ def _dnbr_cupy(pre_data, post_data):
 
 def _dnbr_dask_cupy(pre_data, post_data):
     return da.map_blocks(_dnbr_cupy, pre_data, post_data,
-                         dtype=cupy.float32, meta=cupy.array(()))
+                         dtype=cupy.float32, meta=cupy.array(()),
+                         **_dask_task_name_kwargs('xrspatial.dnbr'))
 
 
 def dnbr(pre_nbr_agg: xr.DataArray,
@@ -256,7 +259,8 @@ def _rdnbr_gpu(dnbr_data, pre_data, out):
 
 
 def _rdnbr_dask(dnbr_data, pre_data):
-    return da.map_blocks(_rdnbr_cpu, dnbr_data, pre_data, meta=np.array(()))
+    return da.map_blocks(_rdnbr_cpu, dnbr_data, pre_data, meta=np.array(()),
+                         **_dask_task_name_kwargs('xrspatial.rdnbr'))
 
 
 def _rdnbr_cupy(dnbr_data, pre_data):
@@ -269,7 +273,8 @@ def _rdnbr_cupy(dnbr_data, pre_data):
 
 def _rdnbr_dask_cupy(dnbr_data, pre_data):
     return da.map_blocks(_rdnbr_cupy, dnbr_data, pre_data,
-                         dtype=cupy.float32, meta=cupy.array(()))
+                         dtype=cupy.float32, meta=cupy.array(()),
+                         **_dask_task_name_kwargs('xrspatial.rdnbr'))
 
 
 def rdnbr(dnbr_agg: xr.DataArray,
@@ -382,7 +387,8 @@ def _bsc_gpu(data, out):
 
 
 def _bsc_dask(data):
-    return da.map_blocks(_bsc_cpu, data, dtype=np.int8, meta=np.array(()))
+    return da.map_blocks(_bsc_cpu, data, dtype=np.int8, meta=np.array(()),
+                         **_dask_task_name_kwargs('xrspatial.burn_severity_class'))
 
 
 def _bsc_cupy(data):
@@ -394,7 +400,8 @@ def _bsc_cupy(data):
 
 def _bsc_dask_cupy(data):
     return da.map_blocks(_bsc_cupy, data,
-                         dtype=np.int8, meta=cupy.array(()))
+                         dtype=np.int8, meta=cupy.array(()),
+                         **_dask_task_name_kwargs('xrspatial.burn_severity_class'))
 
 
 @supports_dataset
@@ -464,7 +471,8 @@ def _fli_gpu(fuel_data, spread_data, heat_content, out):
 
 def _fli_dask(fuel_data, spread_data, heat_content):
     return da.map_blocks(_fli_cpu, fuel_data, spread_data, heat_content,
-                         meta=np.array(()))
+                         meta=np.array(()),
+                         **_dask_task_name_kwargs('xrspatial.fireline_intensity'))
 
 
 def _fli_cupy(fuel_data, spread_data, heat_content):
@@ -477,7 +485,8 @@ def _fli_cupy(fuel_data, spread_data, heat_content):
 
 def _fli_dask_cupy(fuel_data, spread_data, heat_content):
     return da.map_blocks(_fli_cupy, fuel_data, spread_data, heat_content,
-                         dtype=cupy.float32, meta=cupy.array(()))
+                         dtype=cupy.float32, meta=cupy.array(()),
+                         **_dask_task_name_kwargs('xrspatial.fireline_intensity'))
 
 
 def fireline_intensity(fuel_consumed_agg: xr.DataArray,
@@ -562,7 +571,8 @@ def _fl_gpu(intensity_data, out):
 
 
 def _fl_dask(intensity_data):
-    return da.map_blocks(_fl_cpu, intensity_data, meta=np.array(()))
+    return da.map_blocks(_fl_cpu, intensity_data, meta=np.array(()),
+                         **_dask_task_name_kwargs('xrspatial.flame_length'))
 
 
 def _fl_cupy(intensity_data):
@@ -575,7 +585,8 @@ def _fl_cupy(intensity_data):
 
 def _fl_dask_cupy(intensity_data):
     return da.map_blocks(_fl_cupy, intensity_data,
-                         dtype=cupy.float32, meta=cupy.array(()))
+                         dtype=cupy.float32, meta=cupy.array(()),
+                         **_dask_task_name_kwargs('xrspatial.flame_length'))
 
 
 @supports_dataset
@@ -733,6 +744,7 @@ def _ros_dask(slope_data, wind_data, moisture_data,
         w_0, h, M_x, beta, rho_b, Gamma, eta_s, xi, epsilon,
         C_w, B_w, E_w,
         meta=np.array(()),
+        **_dask_task_name_kwargs('xrspatial.rate_of_spread'),
     )
 
 
@@ -758,6 +770,7 @@ def _ros_dask_cupy(slope_data, wind_data, moisture_data,
         w_0, h, M_x, beta, rho_b, Gamma, eta_s, xi, epsilon,
         C_w, B_w, E_w,
         dtype=cupy.float32, meta=cupy.array(()),
+        **_dask_task_name_kwargs('xrspatial.rate_of_spread'),
     )
 
 
@@ -907,6 +920,7 @@ def _kbdi_dask(kbdi_prev_data, max_temp_data, precip_data, annual_precip):
     return da.map_blocks(
         _kbdi_cpu, kbdi_prev_data, max_temp_data, precip_data, annual_precip,
         meta=np.array(()),
+        **_dask_task_name_kwargs('xrspatial.kbdi'),
     )
 
 
@@ -926,6 +940,7 @@ def _kbdi_dask_cupy(kbdi_prev_data, max_temp_data, precip_data,
         _kbdi_cupy, kbdi_prev_data, max_temp_data, precip_data,
         annual_precip,
         dtype=cupy.float32, meta=cupy.array(()),
+        **_dask_task_name_kwargs('xrspatial.kbdi'),
     )
 
 

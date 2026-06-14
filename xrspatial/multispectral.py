@@ -9,8 +9,8 @@ import xarray as xr
 from numba import cuda
 from xarray import DataArray
 
-from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args, ngjit,
-                             not_implemented_func, validate_arrays)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _dask_task_name_kwargs, _validate_raster,
+                             cuda_args, ngjit, not_implemented_func, validate_arrays)
 from xrspatial.dataset_support import supports_dataset_bands
 
 # 3rd-party
@@ -131,7 +131,8 @@ def _arvi_gpu(nir_data, red_data, blue_data, out):
 
 def _arvi_dask(nir_data, red_data, blue_data):
     out = da.map_blocks(_arvi_cpu, nir_data, red_data, blue_data,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.arvi'))
     return out
 
 
@@ -145,7 +146,8 @@ def _arvi_cupy(nir_data, red_data, blue_data):
 
 def _arvi_dask_cupy(nir_data, red_data, blue_data):
     out = da.map_blocks(_arvi_cupy, nir_data, red_data, blue_data,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.arvi'))
     return out
 
 
@@ -280,7 +282,8 @@ def _evi_gpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out):
 
 def _evi_dask(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
     out = da.map_blocks(_evi_cpu, nir_data, red_data, blue_data,
-                        c1, c2, soil_factor, gain, meta=np.array(()))
+                        c1, c2, soil_factor, gain, meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.evi'))
     return out
 
 
@@ -296,7 +299,8 @@ def _evi_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
 def _evi_dask_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
     out = da.map_blocks(_evi_cupy, nir_data, red_data, blue_data,
                         c1, c2, soil_factor, gain,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.evi'))
     return out
 
 
@@ -452,7 +456,8 @@ def _gci_gpu(nir_data, green_data, out):
 
 
 def _gci_dask(nir_data, green_data):
-    out = da.map_blocks(_gci_cpu, nir_data, green_data, meta=np.array(()))
+    out = da.map_blocks(_gci_cpu, nir_data, green_data, meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.gci'))
     return out
 
 
@@ -466,7 +471,8 @@ def _gci_cupy(nir_data, green_data):
 
 def _gci_dask_cupy(nir_data, green_data):
     out = da.map_blocks(_gci_cupy, nir_data, green_data,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.gci'))
     return out
 
 
@@ -1095,7 +1101,8 @@ def _normalized_ratio_cpu(arr1, arr2):
 
 def _run_normalized_ratio_dask(arr1, arr2):
     out = da.map_blocks(_normalized_ratio_cpu, arr1, arr2,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.normalized_ratio'))
     return out
 
 
@@ -1121,7 +1128,8 @@ def _run_normalized_ratio_cupy(arr1, arr2):
 
 def _run_normalized_ratio_dask_cupy(arr1, arr2):
     out = da.map_blocks(_run_normalized_ratio_cupy, arr1, arr2,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.normalized_ratio'))
     return out
 
 
@@ -1155,7 +1163,8 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
 
 def _savi_dask(nir_data, red_data, soil_factor):
     out = da.map_blocks(_savi_cpu, nir_data, red_data, soil_factor,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.savi'))
     return out
 
 
@@ -1169,7 +1178,8 @@ def _savi_cupy(nir_data, red_data, soil_factor):
 
 def _savi_dask_cupy(nir_data, red_data, soil_factor):
     out = da.map_blocks(_savi_cupy, nir_data, red_data, soil_factor,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.savi'))
     return out
 
 
@@ -1298,7 +1308,8 @@ def _sipi_gpu(nir_data, red_data, blue_data, out):
 
 def _sipi_dask(nir_data, red_data, blue_data):
     out = da.map_blocks(_sipi_cpu, nir_data, red_data, blue_data,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.sipi'))
     return out
 
 
@@ -1312,7 +1323,8 @@ def _sipi_cupy(nir_data, red_data, blue_data):
 
 def _sipi_dask_cupy(nir_data, red_data, blue_data):
     out = da.map_blocks(_sipi_cupy, nir_data, red_data, blue_data,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.sipi'))
     return out
 
 
@@ -1445,7 +1457,8 @@ def _ebbi_gpu(red_data, swir_data, tir_data, out):
 
 def _ebbi_dask(red_data, swir_data, tir_data):
     out = da.map_blocks(_ebbi_cpu, red_data, swir_data, tir_data,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.ebbi'))
     return out
 
 
@@ -1459,7 +1472,8 @@ def _ebbi_cupy(red_data, swir_data, tir_data):
 
 def _ebbi_dask_cupy(red_data, swir_data, tir_data):
     out = da.map_blocks(_ebbi_cupy, red_data, swir_data, tir_data,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.ebbi'))
     return out
 
 
@@ -1626,7 +1640,8 @@ def _normalize_data_dask(data, pixel_max, c, th):
     max_val = da.nanmax(data)
     out = da.map_blocks(
         _normalize_data_cpu, data, min_val, max_val, pixel_max,
-        c, th, meta=np.array(())
+        c, th, meta=np.array(()),
+        **_dask_task_name_kwargs('xrspatial.true_color')
     )
     return out
 
@@ -1658,7 +1673,8 @@ def _normalize_data_dask_cupy(data, pixel_max, c, th):
     max_val = da.nanmax(data)
     out = da.map_blocks(
         _normalize_data_cupy_block, data, min_val, max_val, pixel_max,
-        c, th, meta=cupy.array(())
+        c, th, meta=cupy.array(()),
+        **_dask_task_name_kwargs('xrspatial.true_color')
     )
     return out
 
@@ -2010,7 +2026,8 @@ def _bai_gpu(red_data, nir_data, out):
 
 def _bai_dask(red_data, nir_data):
     out = da.map_blocks(_bai_cpu, red_data, nir_data,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.bai'))
     return out
 
 
@@ -2024,7 +2041,8 @@ def _bai_cupy(red_data, nir_data):
 
 def _bai_dask_cupy(red_data, nir_data):
     out = da.map_blocks(_bai_cupy, red_data, nir_data,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.bai'))
     return out
 
 
@@ -2135,7 +2153,8 @@ def _msavi2_gpu(nir_data, red_data, out):
 
 def _msavi2_dask(nir_data, red_data):
     out = da.map_blocks(_msavi2_cpu, nir_data, red_data,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.msavi2'))
     return out
 
 
@@ -2149,7 +2168,8 @@ def _msavi2_cupy(nir_data, red_data):
 
 def _msavi2_dask_cupy(nir_data, red_data):
     out = da.map_blocks(_msavi2_cupy, nir_data, red_data,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.msavi2'))
     return out
 
 
@@ -2255,7 +2275,8 @@ def _osavi_gpu(nir_data, red_data, out):
 
 def _osavi_dask(nir_data, red_data):
     out = da.map_blocks(_osavi_cpu, nir_data, red_data,
-                        meta=np.array(()))
+                        meta=np.array(()),
+                        **_dask_task_name_kwargs('xrspatial.osavi'))
     return out
 
 
@@ -2269,7 +2290,8 @@ def _osavi_cupy(nir_data, red_data):
 
 def _osavi_dask_cupy(nir_data, red_data):
     out = da.map_blocks(_osavi_cupy, nir_data, red_data,
-                        dtype=cupy.float32, meta=cupy.array(()))
+                        dtype=cupy.float32, meta=cupy.array(()),
+                        **_dask_task_name_kwargs('xrspatial.osavi'))
     return out
 
 

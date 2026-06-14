@@ -35,9 +35,9 @@ except ImportError:
         ndarray = False
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, _classify_backend, _validate_raster,
-                             cuda_args, has_cuda_and_cupy, has_dask_array, is_cupy_array,
-                             is_dask_cupy, ngjit, validate_arrays)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _classify_backend, _dask_task_name_kwargs,
+                             _validate_raster, cuda_args, has_cuda_and_cupy, has_dask_array,
+                             is_cupy_array, is_dask_cupy, ngjit, validate_arrays)
 
 TOTAL_COUNT = '_total_count'
 
@@ -1680,6 +1680,7 @@ def _hi_dask_numpy(zones_data, values_data, nodata):
     return da.map_blocks(
         _paint, zones_data, values_data, hi_lookup_arr,
         dtype=np.float64, meta=np.array(()),
+        **_dask_task_name_kwargs('xrspatial.hypsometric_integral'),
     )
 
 
@@ -1839,6 +1840,7 @@ def _apply_dask_numpy(zones_data, values_data, func, nodata):
         return da.map_blocks(
             _chunk_fn, zones_data, values_data,
             dtype=values_data.dtype, meta=np.array(()),
+            **_dask_task_name_kwargs('xrspatial.apply'),
         )
     else:
         layers = []
@@ -1847,6 +1849,7 @@ def _apply_dask_numpy(zones_data, values_data, func, nodata):
             layers.append(da.map_blocks(
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=np.array(()),
+                **_dask_task_name_kwargs('xrspatial.apply'),
             ))
         stacked = da.stack(layers, axis=2)
         # da.stack produces unit chunks along the new axis; merge back
@@ -1882,6 +1885,7 @@ def _apply_dask_cupy(zones_data, values_data, func, nodata):
         return da.map_blocks(
             _chunk_fn, zones_data, values_data,
             dtype=values_data.dtype, meta=cupy.array(()),
+            **_dask_task_name_kwargs('xrspatial.apply'),
         )
     else:
         layers = []
@@ -1890,6 +1894,7 @@ def _apply_dask_cupy(zones_data, values_data, func, nodata):
             layers.append(da.map_blocks(
                 _chunk_fn, zones_data, layer,
                 dtype=values_data.dtype, meta=cupy.array(()),
+                **_dask_task_name_kwargs('xrspatial.apply'),
             ))
         stacked = da.stack(layers, axis=2)
         # da.stack produces unit chunks along the new axis; merge back

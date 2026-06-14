@@ -21,6 +21,7 @@ from numba import cuda
 
 from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import _boundary_to_dask
+from xrspatial.utils import _dask_task_name_kwargs
 from xrspatial.utils import _pad_array
 from xrspatial.utils import _validate_boundary
 from xrspatial.utils import _validate_raster
@@ -172,7 +173,7 @@ def _roughness_run_gpu(data, out):
 # Backend wrapper factory
 # ---------------------------------------------------------------------------
 
-def _make_backends(cpu_kernel, gpu_global_kernel):
+def _make_backends(cpu_kernel, gpu_global_kernel, task_name):
     """Return (run_numpy, run_cupy, run_dask_numpy, run_dask_cupy) tuple."""
 
     def _run_numpy(data: np.ndarray,
@@ -191,7 +192,8 @@ def _make_backends(cpu_kernel, gpu_global_kernel):
         out = data.map_overlap(_func,
                                depth=(1, 1),
                                boundary=_boundary_to_dask(boundary),
-                               meta=np.array(()))
+                               meta=np.array(()),
+                               **_dask_task_name_kwargs(task_name))
         return out
 
     def _run_cupy(data: cupy.ndarray,
@@ -215,15 +217,17 @@ def _make_backends(cpu_kernel, gpu_global_kernel):
         out = data.map_overlap(_func,
                                depth=(1, 1),
                                boundary=_boundary_to_dask(boundary, is_cupy=True),
-                               meta=cupy.array(()))
+                               meta=cupy.array(()),
+                               **_dask_task_name_kwargs(task_name))
         return out
 
     return _run_numpy, _run_cupy, _run_dask_numpy, _run_dask_cupy
 
 
-_tri_backends = _make_backends(_tri_cpu, _tri_run_gpu)
-_tpi_backends = _make_backends(_tpi_cpu, _tpi_run_gpu)
-_roughness_backends = _make_backends(_roughness_cpu, _roughness_run_gpu)
+_tri_backends = _make_backends(_tri_cpu, _tri_run_gpu, 'xrspatial.tri')
+_tpi_backends = _make_backends(_tpi_cpu, _tpi_run_gpu, 'xrspatial.tpi')
+_roughness_backends = _make_backends(
+    _roughness_cpu, _roughness_run_gpu, 'xrspatial.roughness')
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +486,8 @@ def _tpi_radius_dask_np(data, radius, kernel):
     _func = partial(_tpi_radius_np, kernel=kernel)
     return data.map_overlap(
         _func, depth=(radius, radius),
-        boundary=np.nan, meta=np.array(()))
+        boundary=np.nan, meta=np.array(()),
+        **_dask_task_name_kwargs('xrspatial.landforms'))
 
 
 def _tpi_radius_dask_cupy(data, radius, kernel_np):
@@ -490,7 +495,8 @@ def _tpi_radius_dask_cupy(data, radius, kernel_np):
     _func = partial(_tpi_radius_cupy, kernel_np=kernel_np)
     return data.map_overlap(
         _func, depth=(radius, radius),
-        boundary=cupy.nan, meta=cupy.array(()))
+        boundary=cupy.nan, meta=cupy.array(()),
+        **_dask_task_name_kwargs('xrspatial.landforms'))
 
 
 def _compute_tpi_at_radius(agg, radius):

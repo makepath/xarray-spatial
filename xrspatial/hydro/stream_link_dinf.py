@@ -41,6 +41,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_raster,
     cuda_args,
     has_cuda_and_cupy,
@@ -1118,7 +1119,8 @@ def _stream_link_dinf_dask(flow_dir_da, accum_da, threshold):
 
     return da.map_blocks(
         _tile_fn, flow_dir_da, accum_da,
-        dtype=np.float64, meta=np.array((), dtype=np.float64))
+        dtype=np.float64, meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.stream_link_dinf'))
 
 
 # =====================================================================
@@ -1233,7 +1235,8 @@ def _stream_link_dinf_dask_cupy(flow_dir_da, accum_da, threshold):
 
     return da.map_blocks(
         _tile_fn, flow_dir_da, accum_da,
-        dtype=np.float64, meta=cp.array((), dtype=cp.float64))
+        dtype=np.float64, meta=cp.array((), dtype=cp.float64),
+        **_dask_task_name_kwargs('xrspatial.stream_link_dinf'))
 
 
 # =====================================================================

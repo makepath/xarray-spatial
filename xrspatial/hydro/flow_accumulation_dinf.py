@@ -30,6 +30,7 @@ except ImportError:
     da = None
 
 from xrspatial.utils import (
+    _dask_task_name_kwargs,
     _validate_raster,
     cuda_args,
     has_cuda_and_cupy,
@@ -820,6 +821,7 @@ def _assemble_result_dinf(flow_dir_da, boundaries, flow_bdry,
         flow_dir_da,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_accumulation_dinf'),
     )
 
 
@@ -881,6 +883,7 @@ def _assemble_result_dinf_cupy(flow_dir_da, boundaries, flow_bdry,
         flow_dir_da,
         dtype=np.float64,
         meta=cp.array((), dtype=cp.float64),
+        **_dask_task_name_kwargs('xrspatial.flow_accumulation_dinf'),
     )
 
 
