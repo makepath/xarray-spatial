@@ -2211,6 +2211,11 @@ def _finalize_eager_read(
     # ``_validation``; local import keeps ``_attrs`` free of a top-level
     # validation dependency for parity with ``_validate_read_geo_info``.
     dtype_cast_attr: str | None = None
+    # Capture float-ness BEFORE the caller's ``dtype=`` cast so ``masked``
+    # below reflects masking-promotion, not the cast (issue #3323). A
+    # caller casting an unmasked int buffer to float must not flip
+    # ``masked_nodata`` to True.
+    pre_cast_is_float = np.dtype(str(arr.dtype)).kind == 'f'
     if dtype is not None:
         from ._validation import _validate_dtype_cast
         target = np.dtype(dtype)
@@ -2219,16 +2224,18 @@ def _finalize_eager_read(
         dtype_cast_attr = target.name
 
     # Stamp the nodata lifecycle attrs. ``masked`` is True iff
-    # the caller opted into masking AND the final buffer dtype is float.
+    # the caller opted into masking AND the pre-cast buffer dtype is float.
     # ``_apply_eager_nodata_mask`` promotes a maskable integer source to
     # float64 whenever masking is on (issue #2990), so an ``int`` buffer +
     # ``mask_nodata=True`` here means the sentinel was unmaskable
     # (out-of-range / non-finite / fractional) and could never match, not
     # that masking was disabled. Either way ``masked`` is correctly False
-    # because the literal sentinel still occupies its integer slot.
+    # because the literal sentinel still occupies its integer slot. Using
+    # the pre-cast dtype keeps a caller ``dtype=<float>`` cast from
+    # flipping ``masked`` True on that unmasked int buffer (issue #3323).
     _set_nodata_attrs(
         attrs, nodata,
-        masked=(effective_mask and np.dtype(str(arr.dtype)).kind == 'f'),
+        masked=(effective_mask and pre_cast_is_float),
         pixels_present=nodata_pixels_present,
         dtype_cast=dtype_cast_attr,
     )
