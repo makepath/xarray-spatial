@@ -773,6 +773,20 @@ def test_validate_write_rich_tag_optin_rejects_gdal_metadata_dict():
         )
 
 
+def test_validate_write_rich_tag_optin_names_both_xml_and_gdal_metadata():
+    """When both ``gdal_metadata_xml`` and a dict ``gdal_metadata`` are
+    present without the opt-in, the rejection names both attrs (#3320)."""
+    with pytest.raises(ValueError) as exc:
+        _validate_write_rich_tag_optin(
+            {'gdal_metadata_xml': '<GDALMetadata/>',
+             'gdal_metadata': {'AREA_OR_POINT': 'Area'}},
+            allow_experimental_codecs=False,
+        )
+    msg = str(exc.value)
+    assert "attrs['gdal_metadata_xml']" in msg
+    assert "attrs['gdal_metadata']" in msg
+
+
 def test_validate_write_rich_tag_optin_ignores_non_dict_gdal_metadata():
     """Only a dict ``gdal_metadata`` builds XML in ``_extract_rich_tags``;
     a non-dict value is ignored by the writer, so the gate stays quiet
