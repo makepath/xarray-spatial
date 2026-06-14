@@ -884,6 +884,87 @@ class TestKriging:
             result = kriging(x, y, z, template)
         assert np.all(np.isfinite(result.values))
 
+    @staticmethod
+    def _force_singular(monkeypatch):
+        """Force the K_inv-is-None fallback path in kriging()."""
+        monkeypatch.setattr(
+            'xrspatial.interpolate._kriging._build_kriging_matrix',
+            lambda *args, **kwargs: None,
+        )
+
+    def test_singular_fallback_metadata(self, monkeypatch):
+        """Singular-matrix fallback keeps metadata and names the variance.
+
+        The variance raster must be named '<name>_variance' like the
+        normal path, not inherit the prediction's name (issue #3288).
+        """
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        template.attrs['res'] = (2.0, 2.0)
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert pred.name == 'kriging'
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, np.ndarray)
+            assert result.dims == template.dims
+            assert result.attrs == template.attrs
+            assert result.dtype == np.float64
+            assert np.all(np.isnan(result.values))
+
+    @dask_array_available
+    def test_singular_fallback_dask_stays_lazy(self, monkeypatch):
+        """Singular-matrix fallback returns a lazy dask result (#3288)."""
+        import dask.array as dask_array
+
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='dask', chunks=(2, 2))
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, dask_array.Array)
+            assert result.data.chunks == template.data.chunks
+            assert np.all(np.isnan(result.values))
+
+    @cuda_and_cupy_available
+    def test_singular_fallback_cupy_backend(self, monkeypatch):
+        """Singular-matrix fallback returns a cupy-backed result (#3288)."""
+        import cupy
+
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='cupy')
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, cupy.ndarray)
+            assert np.all(np.isnan(_to_numpy(result)))
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_singular_fallback_dask_cupy_backend(self, monkeypatch):
+        """Singular-matrix fallback keeps the dask+cupy backend (#3288)."""
+        import cupy
+        import dask.array as dask_array
+
+        self._force_singular(monkeypatch)
+        x, y, z = self._spatial_data()
+        template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                  backend='dask_cupy', chunks=(2, 2))
+        pred, var = kriging(x, y, z, template, return_variance=True)
+
+        assert var.name == 'kriging_variance'
+        for result in (pred, var):
+            assert isinstance(result.data, dask_array.Array)
+            assert isinstance(result.data._meta, cupy.ndarray)
+            assert np.all(np.isnan(_to_numpy(result)))
+
     def test_duplicate_points(self):
         """Duplicate input points produce finite output.
 
