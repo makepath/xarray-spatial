@@ -204,6 +204,34 @@ def test_polygonize_invalid_return_type(raster_3x3):
         polygonize(raster, return_type=return_type)
 
 
+@pytest.mark.parametrize("dtype", [np.uint64])
+def test_polygonize_invalid_return_type_rejected_before_compute(
+        raster_3x3, monkeypatch):
+    # An invalid return_type must raise before the backend runs, not
+    # after the whole raster has been polygonized (#3307).  The error
+    # lists the allowed values, like contours().
+    # importlib because the package re-exports the polygonize function
+    # under the same name as the module.
+    import importlib
+    polygonize_module = importlib.import_module("xrspatial.polygonize")
+
+    calls = []
+    orig = polygonize_module._polygonize_numpy
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(polygonize_module, "_polygonize_numpy", spy)
+    raster = xr.DataArray(raster_3x3)
+    with pytest.raises(
+            ValueError,
+            match="Invalid return_type 'qwerty'") as excinfo:
+        polygonize_module.polygonize(raster, return_type="qwerty")
+    assert calls == []
+    assert "Allowed values are" in str(excinfo.value)
+
+
 @pytest.mark.parametrize(
     "dtype",
     [np.int32, np.int64, np.float32, np.float64])
