@@ -391,6 +391,9 @@ def _write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # dispatcher applies upstream (#3167). Runs before the
         # experimental-codec opt-in warning below so a rejected call
         # raises without warning first, matching to_geotiff's order.
+        # to_geotiff also rejects non-int / bool compression_level
+        # upstream (#3321), so the range comparison here is type-safe on
+        # the normal dispatch path.
         if compression_level is not None:
             _level_range = _LEVEL_RANGES.get(_gpu_codec)
             if _level_range is not None:

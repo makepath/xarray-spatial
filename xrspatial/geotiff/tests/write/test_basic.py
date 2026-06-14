@@ -208,6 +208,54 @@ class TestWriteInvalidInput:
         with pytest.raises(TypeError, match="compression must be a str"):
             write(arr, path, compression=None)
 
+    # compression_level is documented as ``int | None`` but historically
+    # only got a range check, so ``True`` slipped through as level 1 (bool
+    # is an int subclass) and non-int junk raised a raw comparison
+    # TypeError or was silently ignored for codecs without a level range
+    # (#3321). The type guard runs in ``to_geotiff`` before backend
+    # dispatch, so one numpy test exercises the path every backend shares.
+    def test_to_geotiff_compression_level_bool_rejected_3321(self, tmp_path):
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_3321_level_bool.tif')
+        with pytest.raises(TypeError, match="compression_level must be"):
+            to_geotiff(arr, path, compression='deflate',
+                       compression_level=True)
+
+    @pytest.mark.parametrize('bad', ['9', [9], 9.0, object()])
+    def test_to_geotiff_compression_level_non_int_rejected_3321(
+            self, tmp_path, bad):
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_3321_level_nonint.tif')
+        with pytest.raises(TypeError, match="compression_level must be"):
+            to_geotiff(arr, path, compression='deflate',
+                       compression_level=bad)
+
+    def test_to_geotiff_compression_level_non_int_rejected_no_range_3321(
+            self, tmp_path):
+        # lzw has no ``_LEVEL_RANGES`` entry, so the old range block was
+        # skipped and junk passed through. The type guard must still fire.
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_3321_level_nonint_lzw.tif')
+        with pytest.raises(TypeError, match="compression_level must be"):
+            to_geotiff(arr, path, compression='lzw',
+                       compression_level=[9])
+
+    def test_to_geotiff_compression_level_valid_int_still_writes_3321(
+            self, tmp_path):
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        path = str(tmp_path / 'tmp_3321_level_valid.tif')
+        to_geotiff(arr, path, compression='deflate', compression_level=6)
+        assert os.path.exists(path)
+
+    def test_to_geotiff_compression_level_out_of_range_still_valueerror_3321(
+            self, tmp_path):
+        # Valid type, bad value: the existing ValueError contract is kept.
+        arr = np.zeros((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'tmp_3321_level_oor.tif')
+        with pytest.raises(ValueError, match="out of range"):
+            to_geotiff(arr, path, compression='deflate',
+                       compression_level=999)
+
 
 # -------------------------------------------------------------------------
 # Section: writer dtype x compression matrix
