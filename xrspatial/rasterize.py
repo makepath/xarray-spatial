@@ -249,6 +249,22 @@ def _warn_dropped_geometries(types):
     )
 
 
+def _warn_nonfinite_geometries(count):
+    """Warn that geometries with non-finite coordinates are being dropped.
+
+    A NaN or infinite coordinate has no defined location on the raster
+    grid; letting it through poisons the pixel-space int casts downstream
+    (issue #3295).
+    """
+    warnings.warn(
+        f"rasterize: dropping {count} geometr"
+        f"{'y' if count == 1 else 'ies'} with non-finite coordinates "
+        f"(NaN or infinity); they have no defined location on the "
+        f"raster grid.",
+        stacklevel=2,
+    )
+
+
 def _classify_geometries(geometries, props_array):
     """Classify geometries by type in a single pass.
 
@@ -299,6 +315,33 @@ def _classify_geometries(geometries, props_array):
     # ``geom is None`` guard rather than warned about as an unsupported type.
     valid = ~empty & (type_ids >= 0)
 
+    # Drop geometries containing non-finite coordinates (NaN / inf).
+    # They have no defined raster location, and letting them through
+    # poisons the pixel-space float -> int casts downstream: a NaN
+    # vertex survives the horizontal-edge filter (NaN != NaN) and turns
+    # into a phantom full-height edge, while an inf vertex burns pixels
+    # outside the polygon's real extent (issue #3295).  GEOS skips NaN
+    # coordinates when computing bounds, so a bbox check cannot detect
+    # these; inspect the coordinates directly.  GeometryCollections are
+    # excluded here -- their members are checked per-leaf in the slow
+    # path below, which is the only path that unpacks them.  When any
+    # GeometryCollection is present the slow path runs over every input
+    # and owns both the per-leaf check and the warning, so the
+    # vectorized check is skipped entirely to avoid warning twice for
+    # the same geometry.
+    if not np.any(valid & (type_ids == 7)):
+        coords_all, coord_owner = shapely.get_coordinates(
+            geom_arr, return_index=True)
+        nonfinite_coord = ~np.all(np.isfinite(coords_all), axis=1)
+        if np.any(nonfinite_coord):
+            nonfinite_geom = np.zeros(n, dtype=bool)
+            nonfinite_geom[coord_owner[nonfinite_coord]] = True
+            nonfinite_geom &= valid
+            if np.any(nonfinite_geom):
+                _warn_nonfinite_geometries(
+                    int(np.count_nonzero(nonfinite_geom)))
+                valid = valid & ~nonfinite_geom
+
     # Type ID mapping:
     # 0=Point, 1=LineString, 2=LinearRing, 3=Polygon,
     # 4=MultiPoint, 5=MultiLineString, 6=MultiPolygon,
@@ -348,12 +391,21 @@ def _classify_geometries(geometries, props_array):
     line_geoms, line_prop_rows = [], []
     point_geoms, point_prop_rows = [], []
     poly_counter = 0
+    nonfinite_count = 0
 
     def _classify_one(geom, prop_row, global_idx):
-        nonlocal poly_counter
+        nonlocal poly_counter, nonfinite_count
         if geom is None or geom.is_empty:
             return
         gt = geom.geom_type
+        # Per-leaf counterpart of the fast path's non-finite coordinate
+        # drop (issue #3295).  Collections recurse below, so each member
+        # is checked individually rather than dropping the whole
+        # collection for one bad leaf.
+        if gt != 'GeometryCollection' and not np.all(
+                np.isfinite(shapely.get_coordinates(geom))):
+            nonfinite_count += 1
+            return
         if gt in ('Polygon', 'MultiPolygon'):
             poly_geoms.append(geom)
             poly_prop_rows.append(prop_row)
@@ -376,6 +428,9 @@ def _classify_geometries(geometries, props_array):
 
     for idx, geom in enumerate(geometries):
         _classify_one(geom, props_array[idx], idx)
+
+    if nonfinite_count:
+        _warn_nonfinite_geometries(nonfinite_count)
 
     def _to_2d(rows):
         if rows:
@@ -494,15 +549,29 @@ def _extract_edges_vectorized(geometries, geom_ids, bounds,
     inv_slope = (bot_c - top_c) / dr
     del bot_c
 
+    # Clamp the cast inputs to a narrow band around the raster before
+    # converting to int32.  Row values beyond +/-2**31 otherwise
+    # overflow the cast (numpy lands them on INT_MIN, and the ``- 1``
+    # below wraps INT_MIN to INT_MAX), turning an edge that lies
+    # entirely off-raster into a phantom full-height edge instead of
+    # being filtered by the ``ry_min <= ry_max`` check (issue #3295).
+    # Clamping is exact for the visible region: any value at or beyond
+    # the band edges produces the same ry_min / ry_max as the original
+    # out-of-range value would have, without the overflow.  Only the
+    # cast inputs are clamped -- ``x_at_ymin`` below extrapolates from
+    # the original ``top_r`` so x intersections stay correct for edges
+    # entering the raster from far away.
+    top_r_cast = np.clip(top_r, -2.0, float(height) + 2.0)
+    bot_r_cast = np.clip(bot_r, -2.0, float(height) + 2.0)
     if all_touched:
-        ry_min = np.maximum(np.floor(top_r - 0.5).astype(np.int32), 0)
+        ry_min = np.maximum(np.floor(top_r_cast - 0.5).astype(np.int32), 0)
         ry_max = np.minimum(
-            np.ceil(bot_r + 0.5).astype(np.int32) - 1, height - 1)
+            np.ceil(bot_r_cast + 0.5).astype(np.int32) - 1, height - 1)
     else:
-        ry_min = np.maximum(np.ceil(top_r).astype(np.int32), 0)
+        ry_min = np.maximum(np.ceil(top_r_cast).astype(np.int32), 0)
         ry_max = np.minimum(
-            np.ceil(bot_r).astype(np.int32) - 1, height - 1)
-    del bot_r
+            np.ceil(bot_r_cast).astype(np.int32) - 1, height - 1)
+    del bot_r, top_r_cast, bot_r_cast
 
     x_at_ymin = top_c + (ry_min.astype(np.float64) - top_r) * inv_slope
     del top_c, top_r
@@ -3613,7 +3682,9 @@ def rasterize(
     - **GeometryCollection** -- recursively unpacked
 
     A non-empty geometry of any other type is dropped with a warning rather
-    than silently discarded.
+    than silently discarded.  Likewise, a geometry containing non-finite
+    coordinates (NaN or infinity) has no defined location on the raster
+    grid and is dropped with a warning.
 
     Parameters
     ----------
