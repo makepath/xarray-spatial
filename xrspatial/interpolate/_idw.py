@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import xarray as xr
 from numba import cuda
 
-from xrspatial.utils import (
-    ArrayTypeFunctionMapping,
-    _validate_raster,
-    _validate_scalar,
-    cuda_args,
-    ngjit,
-)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, _validate_scalar,
+                             cuda_args, ngjit)
 
 from ._validation import extract_grid_coords, validate_points
 
@@ -76,11 +69,12 @@ def _idw_cpu_allpoints(x_pts, y_pts, z_pts, n_pts,
 # ---------------------------------------------------------------------------
 
 def _idw_knearest_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
-                        power, k, fill_value):
-    from scipy.spatial import cKDTree
+                        power, k, fill_value, tree=None):
+    if tree is None:
+        from scipy.spatial import cKDTree
 
-    pts = np.column_stack([x_pts, y_pts])
-    tree = cKDTree(pts)
+        pts = np.column_stack([x_pts, y_pts])
+        tree = cKDTree(pts)
 
     gx, gy = np.meshgrid(x_grid, y_grid)
     query_pts = np.column_stack([gx.ravel(), gy.ravel()])
@@ -109,10 +103,10 @@ def _idw_knearest_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
 # ---------------------------------------------------------------------------
 
 def _idw_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
-               power, k, fill_value, template_data):
+               power, k, fill_value, template_data, tree=None):
     if k is not None:
         return _idw_knearest_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
-                                   power, k, fill_value)
+                                   power, k, fill_value, tree=tree)
     return _idw_cpu_allpoints(x_pts, y_pts, z_pts, len(x_pts),
                               x_grid, y_grid, power, fill_value)
 
@@ -159,6 +153,9 @@ def _idw_cuda_kernel(x_pts, y_pts, z_pts, n_pts,
 
 def _idw_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
               power, k, fill_value, template_data):
+    # The point arrays may arrive either on the host or already on the
+    # device (from _idw_dask_cupy); cupy.asarray is a no-op for the
+    # latter.
     if k is not None:
         raise NotImplementedError(
             "idw(): k-nearest mode is not supported on GPU. "
@@ -190,6 +187,14 @@ def _idw_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
 def _idw_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
                     power, k, fill_value, template_data):
 
+    # The k-d tree depends only on the input points, so build it once
+    # here instead of once per chunk inside _idw_knearest_numpy.
+    tree = None
+    if k is not None:
+        from scipy.spatial import cKDTree
+
+        tree = cKDTree(np.column_stack([x_pts, y_pts]))
+
     def _chunk(block, block_info=None):
         if block_info is None:
             return block
@@ -197,7 +202,7 @@ def _idw_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
         y_sl = y_grid[loc[0][0]:loc[0][1]]
         x_sl = x_grid[loc[1][0]:loc[1][1]]
         return _idw_numpy(x_pts, y_pts, z_pts, x_sl, y_sl,
-                          power, k, fill_value, None)
+                          power, k, fill_value, None, tree=tree)
 
     return da.map_blocks(_chunk, template_data, dtype=np.float64)
 
@@ -213,13 +218,24 @@ def _idw_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
             "idw(): k-nearest mode is not supported on GPU."
         )
 
+    # The point arrays are the same for every chunk, so upload them to
+    # the device once instead of once per chunk.  _idw_cupy passes them
+    # through cupy.asarray, which is a no-op for device-resident arrays.
+    # Under the threaded/synchronous scheduler the per-chunk closure
+    # shares these device buffers by reference; a distributed scheduler
+    # would re-serialise them per task, which is no worse than the
+    # previous per-chunk upload.
+    x_gpu = cupy.asarray(x_pts)
+    y_gpu = cupy.asarray(y_pts)
+    z_gpu = cupy.asarray(z_pts)
+
     def _chunk(block, block_info=None):
         if block_info is None:
             return block
         loc = block_info[0]['array-location']
         y_sl = y_grid[loc[0][0]:loc[0][1]]
         x_sl = x_grid[loc[1][0]:loc[1][1]]
-        return _idw_cupy(x_pts, y_pts, z_pts, x_sl, y_sl,
+        return _idw_cupy(x_gpu, y_gpu, z_gpu, x_sl, y_sl,
                          power, None, fill_value, None)
 
     return da.map_blocks(

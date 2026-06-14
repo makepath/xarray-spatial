@@ -7,6 +7,6 @@ Getting started
 .. toctree::
    :maxdepth: 2
 
+   why_xarray_spatial
    installation
-   raster_huh
    quickstart

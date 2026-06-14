@@ -1656,6 +1656,35 @@ class TestPolygonizeCRSPropagation:
         assert df.crs is not None
         assert df.crs.to_epsg() == 4326
 
+    def test_no_georef_marker_suppresses_crs(self):
+        """attrs['_xrspatial_no_georef']=True suppresses CRS propagation.
+
+        The geotiff reader emits this attrs shape for a file with CRS
+        geokeys but no geotransform tags (georef_status == 'crs_only').
+        The marker also suppresses transform auto-detection, so the
+        geometries stay in pixel space; attaching the CRS would claim
+        they are in EPSG:4326 coordinates (#3293).
+        """
+        data = np.array([[1, 1, 2], [1, 1, 2], [2, 2, 2]], dtype=np.int32)
+        raster = xr.DataArray(
+            data, dims=('y', 'x'),
+            attrs={'crs': 4326, '_xrspatial_no_georef': True})
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is None
+        # Geometries are in pixel space, consistent with the missing CRS.
+        bounds = df.geometry.total_bounds
+        assert bounds[2] <= 3.0 + 1e-6
+        assert bounds[3] <= 3.0 + 1e-6
+
+    def test_no_georef_marker_suppresses_crs_wkt(self):
+        """The marker suppresses the crs_wkt fallback too (#3293)."""
+        pyproj = pytest.importorskip("pyproj")
+        wkt = pyproj.CRS.from_epsg(4326).to_wkt()
+        raster = self._raster_with_attrs(
+            crs_wkt=wkt, _xrspatial_no_georef=True)
+        df = polygonize(raster, return_type="geopandas")
+        assert df.crs is None
+
 
 # --- transform attr propagation tests (issue #2536) ---
 #

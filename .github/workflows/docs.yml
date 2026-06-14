@@ -1,0 +1,77 @@
+name: docs
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'setup.cfg'
+      - '.readthedocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+  schedule:
+    # Weekly linkcheck (Monday 06:00 UTC). External links rot on their
+    # own schedule, not the PR schedule; checking them per-PR cost ~10
+    # minutes of runner time and its failures were masked by
+    # continue-on-error anyway.
+    - cron: '0 6 * * 1'
+
+jobs:
+  # Job id/name kept distinct from the pytest workflow's `run` job:
+  # duplicate check names across workflows get deduplicated in the PR
+  # checks UI and can hide failures.
+  docs-build:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    # Normal runs take ~4 minutes (install ~1, HTML build ~3 with
+    # parallel read), so 15 leaves headroom without letting a wedged
+    # run camp on a runner.
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        # Match the Read the Docs build (.readthedocs.yml).
+        python-version: '3.12'
+    - name: Install pandoc
+      # nbsphinx needs the pandoc binary; the `pandoc` pip package in
+      # the doc extra does not ship it.
+      run: sudo apt-get update && sudo apt-get install -y pandoc
+    - name: Install dependencies
+      # Same extras as the Read the Docs pre_build step, so this job
+      # and RTD cannot drift apart.
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e '.[doc,tests]'
+    - name: Build HTML
+      # No -W: the build carries a handful of pre-existing warnings in
+      # notebooks and reference pages. Gate on errors only.
+      #
+      # -j auto: the read phase is dominated by plot-directive examples
+      # in the reference docstrings (sample data load + numba compile
+      # per page, 30-60s each); all extensions in conf.py declare
+      # parallel_read_safe, so this fans them out across the runner's
+      # cores.
+      run: sphinx-build -b html -j auto docs/source docs/build/html
+
+  # Linkcheck runs on the weekly schedule (or manual dispatch), not on
+  # PRs: it took ~10 minutes per PR and never gated anything. Here it
+  # is allowed to fail loudly so broken links actually surface.
+  linkcheck:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install pandoc
+      run: sudo apt-get update && sudo apt-get install -y pandoc
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e '.[doc,tests]'
+    - name: Link check
+      run: sphinx-build -b linkcheck docs/source docs/build/linkcheck
